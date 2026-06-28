@@ -41,7 +41,7 @@ Ask interactively in a human-friendly format:
 - If the agent surface supports structured prompts, use a separate prompt for each value, not one prompt with a custom free-form block.
 - Do not require the developer to type environment variable names such as `PLATFORM_PATH` or `SOURCE_INFOBASE_PATH`.
 - Variable names may be mentioned only as internal storage hints after the human-readable label.
-- For passwords that may be empty, first ask a yes/no question such as "Is an infobase password set?" or "Is a repository password set?". Ask for the password value only when the answer is yes. When the answer is no, store an empty value and do not require the developer to type phrases like "без пароля" or "no password". When launching 1C with a user name, pass the password argument too, even if it is an empty string, so 1C does not open an interactive password dialog.
+- For passwords that may be empty, first ask a yes/no question such as "Is an infobase password set?" or "Is a repository password set?". Ask for the password value only when the answer is yes. When the answer is no, store an empty value and do not require the developer to type phrases like "без пароля" or "no password". When launching 1C, omit password command-line options when the password is empty; do not pass an empty password argument because Windows PowerShell can drop it and shift the next 1C option into the password position.
 
 Required for initial project setup:
 

@@ -780,8 +780,8 @@ function New-InfobaseArgs {
 
     if ($User) {
         $args += @("/N", $User)
-        $args += @("/P", ([string]$Password))
-    } elseif ($Password) {
+    }
+    if (-not [string]::IsNullOrEmpty($Password)) {
         $args += @("/P", $Password)
     }
 
@@ -854,8 +854,12 @@ function Update-BaseFromRepository {
     $repositoryPath = Get-RepositoryPath
     $repositoryArgs = @(
         "/ConfigurationRepositoryF", $repositoryPath,
-        "/ConfigurationRepositoryN", $repositoryUser,
-        "/ConfigurationRepositoryP", $repositoryPassword,
+        "/ConfigurationRepositoryN", $repositoryUser
+    )
+    if (-not [string]::IsNullOrEmpty($repositoryPassword)) {
+        $repositoryArgs += @("/ConfigurationRepositoryP", $repositoryPassword)
+    }
+    $repositoryArgs += @(
         "/ConfigurationRepositoryUpdateCfg", "-force",
         "/UpdateDBCfg", "-WarningsAsErrors"
     )

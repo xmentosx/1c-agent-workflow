@@ -42,7 +42,7 @@ Ask for missing required parameters at the start of the selected workflow. Do no
 
 When collecting parameters from the developer, ask one value at a time and expect the answer to contain only the value. Never ask for a grouped `KEY=value` block, never show one large question that lists all missing variables, and never require the developer to type variable names.
 
-For optional passwords, ask a yes/no question first and ask for the password value only when the password is set. Treat "no password" as an empty value, not as literal password text. When invoking 1C with a user name, still pass the password option with an empty value so 1C does not open an interactive password dialog.
+For optional passwords, ask a yes/no question first and ask for the password value only when the password is set. Treat "no password" as an empty value, not as literal password text. When invoking 1C, omit password command-line options when the password value is empty; do not pass an empty password argument because Windows PowerShell can drop it and shift the next 1C option into the password position.
 
 Use fixed project defaults: `master` is the main branch and `src/cf` is the configuration dump path. Do not ask the developer for these values during initialization.
 
