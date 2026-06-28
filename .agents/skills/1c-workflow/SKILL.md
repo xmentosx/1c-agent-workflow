@@ -70,6 +70,8 @@ For file infobases, verify that the directory exists and contains `1Cv8.1CD` bef
 
 All feature changes load into the copied feature infobase. Never load feature changes directly into the source infobase connected to the 1C configuration repository.
 
+When invoking 1C Designer against the source infobase connected to the 1C configuration repository, always pass repository connection arguments (`/ConfigurationRepositoryF`, `/ConfigurationRepositoryN`, `/ConfigurationRepositoryP`). This applies to source synchronization and source configuration dumps. Do not pass repository connection arguments when working with the copied feature infobase after it has been unbound from storage.
+
 When unlinking the feature copy from the 1C configuration repository, do not pass repository credentials or repository address. The unbind operation is local to the copy.
 
 If any 1C command, Git command, or publication command fails, stop the workflow and report the log path.

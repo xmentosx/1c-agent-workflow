@@ -281,6 +281,19 @@ function Test-GitHasAnyCommit {
     return ($LASTEXITCODE -eq 0)
 }
 
+function Test-GitBranchExists {
+    param([string]$Branch)
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & git -C $script:ProjectRoot show-ref --verify --quiet "refs/heads/$Branch"
+        return ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
 function Get-GitHeadBranch {
     $branch = & git -C $script:ProjectRoot symbolic-ref --quiet --short HEAD 2>$null
     if ($LASTEXITCODE -eq 0 -and $branch) {
@@ -924,14 +937,20 @@ function Invoke-Designer {
     return $logPath
 }
 
-function Update-BaseFromRepository {
+function New-RepositoryConnectionArgs {
     $repositoryUser = Require-Value "REPOSITORY_USER" (Get-EnvValue -Name "REPOSITORY_USER")
     $repositoryPassword = ConvertFrom-OptionalPasswordAnswer ([string](Get-EnvValue -Name "REPOSITORY_PASSWORD" -Default ""))
     $repositoryPath = Get-RepositoryPath
-    $repositoryArgs = @(
+
+    return @(
         "/ConfigurationRepositoryF", $repositoryPath,
         "/ConfigurationRepositoryN", $repositoryUser,
-        "/ConfigurationRepositoryP", (ConvertTo-NativeEmptyStringArgument $repositoryPassword),
+        "/ConfigurationRepositoryP", (ConvertTo-NativeEmptyStringArgument $repositoryPassword)
+    )
+}
+
+function Update-BaseFromRepository {
+    $repositoryArgs = (New-RepositoryConnectionArgs) + @(
         "/ConfigurationRepositoryUpdateCfg", "-force",
         "/UpdateDBCfg", "-WarningsAsErrors"
     )
@@ -1089,7 +1108,7 @@ function Dump-ConfigToFiles {
     $dumpInfoPath = Join-Path $absoluteExportPath "ConfigDumpInfo.xml"
     $children = @(Get-ChildItem -LiteralPath $absoluteExportPath -Force)
     $isIncremental = Test-Path -LiteralPath $dumpInfoPath -PathType Leaf
-    $designerArgs = @("/DumpConfigToFiles", $absoluteExportPath, "-Format", "Hierarchical")
+    $designerArgs = (New-RepositoryConnectionArgs) + @("/DumpConfigToFiles", $absoluteExportPath, "-Format", "Hierarchical")
     if ($isIncremental) {
         $designerArgs += @("-update", "-force")
     } elseif ($children.Count -gt 0) {
@@ -1385,8 +1404,7 @@ function Start-Feature {
     Assert-CleanGit
     Checkout-Master
 
-    & git -C $script:ProjectRoot rev-parse --verify $FeatureBranch *> $null
-    if ($LASTEXITCODE -eq 0) {
+    if (Test-GitBranchExists -Branch $FeatureBranch) {
         throw "Feature branch already exists: $FeatureBranch"
     }
     Invoke-Git @("checkout", "-b", $FeatureBranch)

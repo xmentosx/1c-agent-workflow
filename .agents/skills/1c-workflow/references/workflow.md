@@ -164,6 +164,7 @@ Before destructive or stateful actions:
 9. Create `logsPath`, `artifactsPath`, and `.agent-1c/features`.
 10. Ensure `.dev.env`, `*.cf`, `*.dt`, and logs are ignored by Git.
 11. Run 1C Designer operations strictly sequentially. The helper must wait for the previous `1cv8.exe` process to exit before starting the next Designer command against the same infobase.
+12. Pass repository connection arguments on every 1C Designer launch against the source infobase connected to storage. Do not pass repository connection arguments for feature infobases after they are unbound from storage.
 
 ## Git Rules
 
@@ -197,6 +198,7 @@ Goal: create the baseline project state.
 6. Checkout or create `master`.
 7. Update the source infobase from 1C configuration repository storage.
 8. Dump configuration files into `src/cf`.
+   - Because the source infobase is connected to storage, pass `/ConfigurationRepositoryF`, `/ConfigurationRepositoryN`, and `/ConfigurationRepositoryP` to this dump command too.
    - First dump: if `src/cf` is empty, run a full dump.
    - Next dumps: if `src/cf/ConfigDumpInfo.xml` exists, run incremental dump with `-update -force`.
    - Unsafe state: if `src/cf` is not empty and `ConfigDumpInfo.xml` is missing, stop and ask the user to clean the folder or restore `ConfigDumpInfo.xml`.
@@ -268,6 +270,7 @@ Goal: refresh `master` from storage.
 3. Pull with `--ff-only` when a remote/upstream exists.
 4. Update source infobase from storage.
 5. Dump configuration files into `src/cf` using the same full/incremental rules as `INIT_PROJECT`.
+   - Pass repository connection arguments to both source infobase Designer launches.
 6. Commit changes with `sync: refresh 1C configuration from repository`.
 
 ## FINISH_FEATURE

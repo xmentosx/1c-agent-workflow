@@ -188,6 +188,7 @@ This performs:
 3. Checkout or creation of local `master`.
 4. Source infobase update from 1C configuration repository storage.
 5. Dump of configuration files into fixed `src/cf`.
+   - The source infobase is connected to storage, so the dump command must also pass `/ConfigurationRepositoryF`, `/ConfigurationRepositoryN`, and `/ConfigurationRepositoryP`.
    - First dump is full when `src/cf` is empty.
    - Later dumps are incremental with `-update -force` when `src/cf/ConfigDumpInfo.xml` exists.
    - If `src/cf` is not empty and `ConfigDumpInfo.xml` is missing, initialization stops with a clear error.
