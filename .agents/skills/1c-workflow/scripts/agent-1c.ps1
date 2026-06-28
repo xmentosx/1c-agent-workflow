@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "init-project", "sync-master", "start-feature", "load-feature", "refresh-feature", "export-feature-cf", "finish-feature", "switch-master", "switch-feature", "list-features", "dump-cf")]
+    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "init-project", "sync-master", "start-feature", "load-feature", "refresh-feature", "export-feature-cf", "finish-feature", "switch-master", "switch-feature", "list-features", "dump-cf")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -77,7 +77,10 @@ function New-TimestampedFilePath {
 }
 
 function Import-DotEnv {
-    param([string]$Path)
+    param(
+        [string]$Path,
+        [switch]$Overwrite
+    )
     if (-not (Test-Path -LiteralPath $Path)) {
         return
     }
@@ -98,7 +101,7 @@ function Import-DotEnv {
             $value = $value.Substring(1, $value.Length - 2)
         }
 
-        if (-not [Environment]::GetEnvironmentVariable($name, "Process")) {
+        if ($Overwrite -or -not [Environment]::GetEnvironmentVariable($name, "Process")) {
             [Environment]::SetEnvironmentVariable($name, $value, "Process")
         }
     }
@@ -794,6 +797,8 @@ function Get-ApacheConfigCandidates {
         & $addCandidate $configuredConf "APACHE_HTTPD_CONF_PATH"
     }
 
+    & $addCandidate (Join-Path (Get-ApacheInstallRoot) "conf\httpd.conf") "APACHE_INSTALL_ROOT"
+
     try {
         $services = @(Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | Where-Object {
             ($_.PathName -match 'httpd\.exe') -or ($_.Name -match 'apache|httpd') -or ($_.DisplayName -match 'apache|httpd')
@@ -855,7 +860,7 @@ function Find-ApacheConfig {
         }
     }
 
-    $message = "Apache httpd.conf was not found. Install Apache 2.4 or set APACHE_HTTPD_CONF_PATH, then rerun detect-apache or check-tools."
+    $message = "Apache httpd.conf was not found. Run install-apache after explicit developer confirmation, install Apache 2.4 manually, or set APACHE_HTTPD_CONF_PATH, then rerun detect-apache or check-tools."
     if ($errors.Count -gt 0) {
         $message += " Checked candidates: $($errors -join '; ')"
     }
@@ -930,6 +935,511 @@ function Get-EffectiveApacheSettings {
         publicationUrlBase = $publicationUrlBase
         manualPublicationRoot = $hasManualPublicationRoot
     }
+}
+
+function Set-DotEnvValues {
+    param([hashtable]$Values)
+
+    $path = Join-Path $script:ProjectRoot ".dev.env"
+    $lines = @()
+    if (Test-Path -LiteralPath $path) {
+        $lines = @(Read-Utf8Lines -Path $path)
+    }
+
+    $seen = @{}
+    $updated = New-Object System.Collections.ArrayList
+    foreach ($line in $lines) {
+        $replacement = $line
+        if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=') {
+            $name = $matches[1]
+            if ($Values.ContainsKey($name)) {
+                $replacement = "$name=$($Values[$name])"
+                $seen[$name] = $true
+            }
+        }
+        [void]$updated.Add($replacement)
+    }
+
+    foreach ($name in @($Values.Keys | Sort-Object)) {
+        if (-not $seen.ContainsKey($name)) {
+            [void]$updated.Add("$name=$($Values[$name])")
+        }
+    }
+
+    Write-Utf8Text -Path $path -Value ((@($updated) -join [Environment]::NewLine) + [Environment]::NewLine)
+}
+
+function Get-ApacheInstallRoot {
+    $value = Get-Setting -EnvName "APACHE_INSTALL_ROOT" -ConfigName "web.apacheInstallRoot" -Default "C:\Apache24"
+    return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables(([string]$value).Trim()))
+}
+
+function Get-ApacheServiceName {
+    return [string](Get-Setting -EnvName "APACHE_SERVICE_NAME" -ConfigName "web.apacheServiceName" -Default "Apache24")
+}
+
+function Get-ApachePreferredPort {
+    $value = Get-Setting -EnvName "APACHE_LISTEN_PORT" -ConfigName "web.apacheListenPort"
+    if (-not $value) {
+        return $null
+    }
+
+    $port = 0
+    if (-not [int]::TryParse(([string]$value).Trim(), [ref]$port) -or $port -lt 1 -or $port -gt 65535) {
+        throw "Invalid APACHE_LISTEN_PORT value: $value"
+    }
+
+    return $port
+}
+
+function Test-IsAdministrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal $identity
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Test-ApacheSkipServiceInstall {
+    return ConvertTo-BoolSetting -Value (Get-EnvValue -Name "APACHE_SKIP_SERVICE") -Default $false
+}
+
+function Test-ApacheSkipVcRedistInstall {
+    return ConvertTo-BoolSetting -Value (Get-EnvValue -Name "APACHE_SKIP_VCREDIST") -Default $false
+}
+
+function Test-ApacheAllowNonAdminInstall {
+    return ConvertTo-BoolSetting -Value (Get-EnvValue -Name "APACHE_ALLOW_NONADMIN") -Default $false
+}
+
+function Test-TcpPortAvailable {
+    param([int]$Port)
+
+    $listener = $null
+    try {
+        $listener = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Any), $Port
+        $listener.Start()
+        return $true
+    } catch {
+        return $false
+    } finally {
+        if ($listener) {
+            $listener.Stop()
+        }
+    }
+}
+
+function Get-ApacheInstallPort {
+    $preferred = Get-ApachePreferredPort
+    if ($preferred) {
+        if (-not (Test-TcpPortAvailable -Port $preferred)) {
+            throw "Configured Apache listen port is busy: $preferred"
+        }
+        return $preferred
+    }
+
+    foreach ($port in @(80) + (8080..8090)) {
+        if (Test-TcpPortAvailable -Port $port) {
+            return $port
+        }
+    }
+
+    throw "No free Apache listen port found. Checked 80 and 8080..8090."
+}
+
+function Get-ApacheLoungeDownloadFromWinget {
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if (-not $winget) {
+        return $null
+    }
+
+    try {
+        $output = & $winget.Source show --id ApacheLounge.httpd -e --accept-source-agreements 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            return $null
+        }
+
+        $text = (@($output) -join "`n")
+        $urlMatch = [regex]::Match($text, 'https?://\S*apachelounge\.com/\S*httpd-[^\s]+?Win64[^\s]+?\.zip', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if (-not $urlMatch.Success) {
+            $urlMatch = [regex]::Match($text, 'https?://\S+?httpd-[^\s]+?\.zip', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        }
+        if (-not $urlMatch.Success) {
+            return $null
+        }
+
+        $shaMatch = [regex]::Match($text, '\b[A-Fa-f0-9]{64}\b')
+        return [pscustomobject]@{
+            url = $urlMatch.Value.Trim()
+            expectedSha256 = $(if ($shaMatch.Success) { $shaMatch.Value.ToLowerInvariant() } else { "" })
+            source = "winget show ApacheLounge.httpd"
+        }
+    } catch {
+        return $null
+    }
+}
+
+function Get-ApacheDownloadInfo {
+    $override = Get-EnvValue -Name "APACHE_ARCHIVE_URL"
+    if ($override) {
+        return [pscustomobject]@{
+            url = [string]$override
+            expectedSha256 = ""
+            source = "APACHE_ARCHIVE_URL"
+        }
+    }
+
+    $wingetInfo = Get-ApacheLoungeDownloadFromWinget
+    if ($wingetInfo) {
+        return $wingetInfo
+    }
+
+    return [pscustomobject]@{
+        url = "https://www.apachelounge.com/download/VS18/binaries/httpd-2.4.68-260610-Win64-VS18.zip"
+        expectedSha256 = ""
+        source = "Apache Lounge fallback URL"
+    }
+}
+
+function Get-ApacheCacheDirectory {
+    return (Join-Path $env:TEMP "1c-agent-workflow\apache")
+}
+
+function ConvertFrom-FileUri {
+    param([string]$Value)
+
+    if ($Value -match '^file:') {
+        return ([System.Uri]$Value).LocalPath
+    }
+
+    return $Value
+}
+
+function Save-ApacheArchive {
+    param([object]$DownloadInfo)
+
+    $cacheDir = Get-ApacheCacheDirectory
+    New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+    $archivePath = Join-Path $cacheDir "apache-httpd.zip"
+    $source = [string]$DownloadInfo.url
+
+    Write-Host "Apache archive source: $source"
+    if (Test-Path -LiteralPath (ConvertFrom-FileUri -Value $source) -PathType Leaf -ErrorAction SilentlyContinue) {
+        Copy-Item -LiteralPath (ConvertFrom-FileUri -Value $source) -Destination $archivePath -Force
+    } else {
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        } catch {
+            # Best effort for older Windows PowerShell hosts.
+        }
+        Invoke-WebRequest -Uri $source -UseBasicParsing -OutFile $archivePath
+    }
+
+    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
+    Write-Host "Apache archive SHA256: $hash"
+
+    $expected = [string]$DownloadInfo.expectedSha256
+    if ($expected) {
+        $expected = $expected.ToLowerInvariant()
+        if ($hash -eq $expected) {
+            Write-Host "Apache archive hash matches metadata from $($DownloadInfo.source)."
+        } else {
+            Write-Host "[WARN] Apache archive hash differs from metadata from $($DownloadInfo.source). Continuing because winget metadata can be stale; actual SHA256 is logged above."
+        }
+    }
+
+    return $archivePath
+}
+
+function Find-ApacheFolderInExtractedArchive {
+    param([string]$ExtractRoot)
+
+    $direct = Join-Path $ExtractRoot "Apache24"
+    if ((Test-Path -LiteralPath (Join-Path $direct "bin\httpd.exe") -PathType Leaf -ErrorAction SilentlyContinue) -and
+        (Test-Path -LiteralPath (Join-Path $direct "conf\httpd.conf") -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $direct
+    }
+
+    foreach ($dir in Get-ChildItem -LiteralPath $ExtractRoot -Directory -Recurse -ErrorAction SilentlyContinue) {
+        if ((Test-Path -LiteralPath (Join-Path $dir.FullName "bin\httpd.exe") -PathType Leaf -ErrorAction SilentlyContinue) -and
+            (Test-Path -LiteralPath (Join-Path $dir.FullName "conf\httpd.conf") -PathType Leaf -ErrorAction SilentlyContinue)) {
+            return $dir.FullName
+        }
+    }
+
+    throw "Downloaded Apache archive does not contain an Apache24 folder with bin\httpd.exe and conf\httpd.conf."
+}
+
+function Expand-ApacheArchiveToInstallRoot {
+    param(
+        [string]$ArchivePath,
+        [string]$InstallRoot
+    )
+
+    $httpdExe = Join-Path $InstallRoot "bin\httpd.exe"
+    $httpdConf = Join-Path $InstallRoot "conf\httpd.conf"
+    if ((Test-Path -LiteralPath $httpdExe -PathType Leaf -ErrorAction SilentlyContinue) -and
+        (Test-Path -LiteralPath $httpdConf -PathType Leaf -ErrorAction SilentlyContinue)) {
+        Write-Host "Apache files already exist: $InstallRoot"
+        return
+    }
+
+    if (Test-Path -LiteralPath $InstallRoot -ErrorAction SilentlyContinue) {
+        $children = @(Get-ChildItem -LiteralPath $InstallRoot -Force -ErrorAction SilentlyContinue)
+        if ($children.Count -gt 0) {
+            throw "Apache install root already exists but does not look like Apache: $InstallRoot"
+        }
+    } else {
+        New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
+    }
+
+    $extractRoot = Join-Path (Get-ApacheCacheDirectory) ("extract-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
+    try {
+        Expand-Archive -LiteralPath $ArchivePath -DestinationPath $extractRoot -Force
+        $apacheFolder = Find-ApacheFolderInExtractedArchive -ExtractRoot $extractRoot
+        Copy-Item -Path (Join-Path $apacheFolder "*") -Destination $InstallRoot -Recurse -Force
+    } finally {
+        Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    if (-not (Test-Path -LiteralPath $httpdExe -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "Apache httpd.exe was not installed to expected path: $httpdExe"
+    }
+    if (-not (Test-Path -LiteralPath $httpdConf -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "Apache httpd.conf was not installed to expected path: $httpdConf"
+    }
+}
+
+function Set-ApacheHttpdConfig {
+    param(
+        [string]$InstallRoot,
+        [int]$Port
+    )
+
+    $confPath = Join-Path $InstallRoot "conf\httpd.conf"
+    if (-not (Test-Path -LiteralPath $confPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "Apache httpd.conf was not found: $confPath"
+    }
+
+    $serverRoot = ($InstallRoot -replace "\\", "/")
+    $lines = @(Read-Utf8Lines -Path $confPath)
+    $result = New-Object System.Collections.ArrayList
+    $definedSrvRoot = $false
+    $serverRootSet = $false
+    $listenSet = $false
+    $serverNameSet = $false
+
+    foreach ($line in $lines) {
+        if ($line -match '^\s*Define\s+SRVROOT\b') {
+            [void]$result.Add("Define SRVROOT `"$serverRoot`"")
+            $definedSrvRoot = $true
+            continue
+        }
+        if ($line -match '^\s*ServerRoot\b') {
+            [void]$result.Add('ServerRoot "${SRVROOT}"')
+            $serverRootSet = $true
+            continue
+        }
+        if (-not $listenSet -and $line -match '^\s*Listen\s+') {
+            [void]$result.Add("Listen $Port")
+            $listenSet = $true
+            continue
+        }
+        if (-not $serverNameSet -and $line -match '^\s*#?\s*ServerName\s+') {
+            [void]$result.Add("ServerName localhost:$Port")
+            $serverNameSet = $true
+            continue
+        }
+
+        [void]$result.Add($line)
+    }
+
+    if (-not $definedSrvRoot) {
+        [void]$result.Insert(0, "Define SRVROOT `"$serverRoot`"")
+    }
+    if (-not $serverRootSet) {
+        [void]$result.Add('ServerRoot "${SRVROOT}"')
+    }
+    if (-not $listenSet) {
+        [void]$result.Add("Listen $Port")
+    }
+    if (-not $serverNameSet) {
+        [void]$result.Add("ServerName localhost:$Port")
+    }
+
+    Write-Utf8Text -Path $confPath -Value ((@($result) -join [Environment]::NewLine) + [Environment]::NewLine)
+    Write-Host "Apache httpd.conf configured: $confPath"
+    Write-Host "Apache Listen port: $Port"
+}
+
+function Install-VcRedistForApache {
+    if (Test-ApacheSkipVcRedistInstall) {
+        Write-Host "Skipping VC++ Redistributable install because APACHE_SKIP_VCREDIST is true."
+        return
+    }
+
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if (-not $winget) {
+        throw "winget was not found. Install Microsoft Visual C++ Redistributable 2015-2022 x64 manually, then rerun install-apache."
+    }
+
+    Write-Host "Ensuring Microsoft Visual C++ Redistributable 2015-2022 x64 is installed..."
+    & $winget.Source install --id Microsoft.VCRedist.2015+.x64 -e --accept-package-agreements --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) {
+        throw "VC++ Redistributable install failed with exit code $LASTEXITCODE"
+    }
+}
+
+function Install-ApacheService {
+    param([string]$InstallRoot)
+
+    if (Test-ApacheSkipServiceInstall) {
+        Write-Host "Skipping Apache service install/start because APACHE_SKIP_SERVICE is true."
+        return
+    }
+
+    $serviceName = Get-ApacheServiceName
+    $httpdExe = Join-Path $InstallRoot "bin\httpd.exe"
+    if (-not (Test-Path -LiteralPath $httpdExe -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "Apache httpd.exe was not found: $httpdExe"
+    }
+
+    $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+    if (-not $service) {
+        Write-Host "Installing Apache service: $serviceName"
+        & $httpdExe -k install -n $serviceName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Apache service install failed with exit code $LASTEXITCODE"
+        }
+    } else {
+        Write-Host "Apache service already exists: $serviceName"
+    }
+
+    $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+    if ($service -and $service.Status -ne "Running") {
+        Write-Host "Starting Apache service: $serviceName"
+        & $httpdExe -k start -n $serviceName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Apache service start failed with exit code $LASTEXITCODE"
+        }
+    } elseif ($service) {
+        Write-Host "Apache service is already running: $serviceName"
+    } else {
+        throw "Apache service was not found after install: $serviceName"
+    }
+}
+
+function Save-ApacheDetectedSettingsToDotEnv {
+    $settings = Get-EffectiveApacheSettings
+    $values = @{
+        WEB_PUBLISH_BY_DEFAULT = "true"
+        APACHE_KIND = $settings.apacheKind
+    }
+
+    if ($settings.webInstPath) {
+        $values["WEBINST_PATH"] = $settings.webInstPath
+    }
+    if ($settings.httpdConfPath) {
+        $values["APACHE_HTTPD_CONF_PATH"] = $settings.httpdConfPath
+    }
+    if ($settings.publicationRoot) {
+        $values["WEB_PUBLICATION_ROOT"] = $settings.publicationRoot
+    }
+    if ($settings.publicationUrlBase) {
+        $values["WEB_PUBLICATION_URL_BASE"] = $settings.publicationUrlBase
+    }
+
+    Set-DotEnvValues -Values $values
+    Write-Host "Apache settings saved to .dev.env"
+    return $settings
+}
+
+function Invoke-ElevatedInstallApache {
+    $scriptPath = $PSCommandPath
+    if (-not $scriptPath) {
+        throw "Cannot determine helper script path for elevated Apache install."
+    }
+
+    $powershell = (Get-Command powershell -ErrorAction SilentlyContinue).Source
+    if (-not $powershell) {
+        throw "powershell.exe was not found for elevated Apache install."
+    }
+
+    $arguments = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $scriptPath,
+        "-Action", "install-apache",
+        "-ProjectRoot", $script:ProjectRoot,
+        "-ConfigPath", $script:ConfigPath
+    )
+    $argumentLine = Join-NativeCommandLineArguments -Arguments $arguments
+    $commandPreview = "$(ConvertTo-NativeCommandLineArgument $powershell) $argumentLine"
+
+    Write-Host "Apache install needs administrator privileges."
+    Write-Host "Elevated command: $commandPreview"
+    try {
+        $process = Start-Process -FilePath $powershell -ArgumentList $argumentLine -Verb RunAs -Wait -PassThru
+    } catch {
+        throw "Failed to start elevated PowerShell. Run this command as Administrator: $commandPreview"
+    }
+
+    if ($null -eq $process) {
+        throw "Failed to start elevated PowerShell. Run this command as Administrator: $commandPreview"
+    }
+    if ($process.ExitCode -ne 0) {
+        throw "Elevated Apache install failed with exit code $($process.ExitCode)."
+    }
+}
+
+function Install-Apache {
+    Write-Section "Install Apache"
+
+    $existing = Find-ApacheConfig
+    if ($existing.found) {
+        Write-Host "Apache is already detected: $($existing.httpdConfPath)"
+        Save-ApacheDetectedSettingsToDotEnv | Out-Null
+        Detect-Apache
+        return
+    }
+
+    if (-not (Test-IsAdministrator) -and -not (Test-ApacheSkipServiceInstall) -and -not (Test-ApacheAllowNonAdminInstall)) {
+        Invoke-ElevatedInstallApache
+        Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+        Detect-Apache
+        return
+    }
+
+    $installRoot = Get-ApacheInstallRoot
+    Write-Host "Apache install root: $installRoot"
+
+    $httpdExe = Join-Path $installRoot "bin\httpd.exe"
+    $httpdConf = Join-Path $installRoot "conf\httpd.conf"
+    $apacheFilesExist = ((Test-Path -LiteralPath $httpdExe -PathType Leaf -ErrorAction SilentlyContinue) -and
+        (Test-Path -LiteralPath $httpdConf -PathType Leaf -ErrorAction SilentlyContinue))
+    if (-not $apacheFilesExist -and (Test-Path -LiteralPath $installRoot -ErrorAction SilentlyContinue)) {
+        $children = @(Get-ChildItem -LiteralPath $installRoot -Force -ErrorAction SilentlyContinue)
+        if ($children.Count -gt 0) {
+            throw "Apache install root already exists but does not look like Apache: $installRoot"
+        }
+    }
+
+    Install-VcRedistForApache
+
+    if (-not $apacheFilesExist) {
+        $downloadInfo = Get-ApacheDownloadInfo
+        Write-Host "Apache download metadata source: $($downloadInfo.source)"
+        $archivePath = Save-ApacheArchive -DownloadInfo $downloadInfo
+        Expand-ApacheArchiveToInstallRoot -ArchivePath $archivePath -InstallRoot $installRoot
+    } else {
+        Write-Host "Apache files already exist: $installRoot"
+    }
+
+    $port = Get-ApacheInstallPort
+    Set-ApacheHttpdConfig -InstallRoot $installRoot -Port $port
+    Install-ApacheService -InstallRoot $installRoot
+
+    Save-ApacheDetectedSettingsToDotEnv | Out-Null
+    Detect-Apache
 }
 
 function Find-Installed1CPlatforms {
@@ -1194,7 +1704,7 @@ function Check-Tools {
             -Required $true `
             -Ok ([bool]($apacheSettings.apacheFound -or $apacheSettings.manualPublicationRoot)) `
             -Detail $apacheDetail `
-            -Offer (Get-ToolOffer -Id "apache-webinst" -Fallback "Install/configure Apache 2.4 so httpd.conf can be detected, or set APACHE_HTTPD_CONF_PATH for a nonstandard installation, then rerun detect-apache.")
+            -Offer (Get-ToolOffer -Id "apache-webinst" -Fallback "Run helper action install-apache after explicit developer confirmation, or install/configure Apache 2.4 manually and rerun detect-apache.")
 
         $publicationDetail = if ($apacheSettings.publicationRoot) {
             "$($apacheSettings.publicationRoot) -> $($apacheSettings.publicationUrlBase)"
@@ -2200,7 +2710,7 @@ function Detect-Apache {
     }
 
     if (-not $settings.ready) {
-        throw "Apache publication is not ready. Install/configure Apache 2.4 and make sure webinst.exe exists next to 1cv8.exe, then rerun detect-apache."
+        throw "Apache publication is not ready. Run helper action install-apache after explicit developer confirmation, or install/configure Apache 2.4 manually and make sure webinst.exe exists next to 1cv8.exe, then rerun detect-apache."
     }
 }
 
@@ -2237,6 +2747,7 @@ Actions:
   check-tools         Check Git, 1C platform, and optional web tools.
   list-platforms      Show installed 1C platform versions found in Program Files.
   detect-apache       Detect Apache/httpd settings for web publication.
+  install-apache      Install Apache Lounge httpd from official archive after confirmation.
   init-project        Sync source infobase, dump config to master, install rules.
   sync-master         Refresh master from source infobase connected to storage.
   start-feature       Create feature branch and feature infobase copy.
@@ -2253,6 +2764,7 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-platforms
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action detect-apache
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action start-feature -FeatureName "order-discounts"
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action load-feature
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-feature
@@ -2272,6 +2784,7 @@ try {
         "check-tools" { Check-Tools -StopOnMissing }
         "list-platforms" { List-Platforms }
         "detect-apache" { Detect-Apache }
+        "install-apache" { Install-Apache }
         "init-project" { Initialize-Project }
         "sync-master" { Sync-Master }
         "start-feature" { Start-Feature }

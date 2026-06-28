@@ -97,6 +97,8 @@ APACHE_KIND=apache24
 APACHE_HTTPD_CONF_PATH=
 WEB_PUBLICATION_ROOT=
 WEB_PUBLICATION_URL_BASE=
+# Optional install override. Normal automatic install uses C:\Apache24.
+APACHE_INSTALL_ROOT=
 ```
 
 ## Tools Manifest
@@ -107,7 +109,7 @@ Default checks:
 
 - `git`: check `git --version`; offer `winget install --id Git.Git -e`.
 - `1c-platform`: check `PLATFORM_PATH` or `project.platformPath`; when missing/invalid, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` and offer the discovered `...\bin` or `...\bin\1cv8.exe` paths before manual input. Either standard folder may be absent; skip missing folders without error. Do not offer the common root `C:\Program Files\1cv8` as a version.
-- `apache-webinst`: check only when web publication is enabled/requested. If `WEBINST_PATH` is empty, use `webinst.exe` found next to the selected `1cv8.exe`; detect Apache settings from installed httpd.
+- `apache-webinst`: check only when web publication is enabled/requested. If `WEBINST_PATH` is empty, use `webinst.exe` found next to the selected `1cv8.exe`; detect Apache settings from installed httpd. If Apache is not detected, offer `install-apache` only after explicit developer confirmation.
 
 ## Required Questions
 
@@ -138,7 +140,7 @@ For project initialization:
 - Validate the grouped questionnaire line/value count before running 1C. If the count is wrong, ask the developer to repeat only the grouped questionnaire. After parsing, summarize the values without passwords and ask for confirmation.
 - Directory for feature infobase copies: do not ask by default. Use `.agent-1c/infobases/features` inside the project and ignore `.agent-1c/infobases/` in Git. Ask only if the developer explicitly wants a custom location.
 - Apache web-client testing: ask only whether new feature infobases should be published to Apache by default. Store the answer locally in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`, never in committed project JSON.
-- If Apache publishing is enabled, run `detect-apache` and save detected local values to `.dev.env`. Do not ask for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf` in the ordinary initialization flow.
+- If Apache publishing is enabled, run `detect-apache` and save detected local values to `.dev.env`. Do not ask for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf` in the ordinary initialization flow. If Apache is not detected, ask whether to install it automatically. On "yes", run `install-apache`, then rerun `detect-apache`/`check-tools`; on "no", offer only to disable publication or stop initialization until Apache is configured manually.
 - Do not ask whether the project is for Codex or Kilo Code. Configure the current agent surface; when it cannot be detected, use Codex as the fallback.
 
 For starting a feature:
@@ -147,7 +149,7 @@ For starting a feature:
 - Feature branch if not `feature/<safe-feature-name>`.
 - Feature infobase path if not derived from `featureInfoBaseRoot`.
 - Whether to publish to Apache only when the project was not configured during initialization or the developer wants a one-off override.
-- If publishing is requested and Apache settings are missing, run `detect-apache`; do not ask for Apache paths in the ordinary workflow.
+- If publishing is requested and Apache settings are missing, run `detect-apache`; if Apache is missing, ask whether to run `install-apache`; do not ask for Apache paths in the ordinary workflow.
 
 For finishing a feature:
 
@@ -190,7 +192,22 @@ Goal: verify the local machine is ready and provide install suggestions without 
    - For 1C platform, list discovered versions from standard `1cv8` folders when `PLATFORM_PATH` is missing or invalid.
 3. If web publication is enabled/requested through `WEB_PUBLISH_BY_DEFAULT=true`, `project.web.publishByDefault=true`, or `-PublishToApache`, check Apache/webinst settings too. Apache detection uses `APACHE_HTTPD_CONF_PATH`, Windows services, `httpd.exe` in `PATH`, and standard folders such as `C:\Apache24`.
 4. Report `[OK]` and `[MISSING]` lines.
-5. If required software is missing during `INIT_PROJECT`, stop after showing suggested install/setup commands.
+5. If required software is missing during `INIT_PROJECT`, stop after showing suggested install/setup commands. When the missing component is Apache/httpd and publication is enabled, the preferred suggestion is `install-apache` after explicit developer confirmation.
+
+## INSTALL_APACHE
+
+Goal: install a local Apache/httpd for 1C web publication when the developer enabled Apache publishing and confirmed automatic installation.
+
+1. Never run this action without explicit developer confirmation.
+2. First run `detect-apache`; if Apache is already detected, save detected values to `.dev.env` and continue.
+3. Download the official Apache Lounge zip. Prefer the URL reported by `winget show ApacheLounge.httpd`; if `winget install ApacheLounge.httpd` fails because of a stale hash, this is not a blocker.
+4. Log the actual SHA256 of the downloaded archive. Do not hide hash mismatch warnings, but do not use stale winget metadata as the only blocker for an official Apache Lounge archive.
+5. Unpack Apache to `C:\Apache24`. If that directory exists and does not look like an Apache installation, stop without overwriting it.
+6. Ensure Microsoft Visual C++ Redistributable 2015-2022 x64 is installed.
+7. Configure `conf\httpd.conf`: set `SRVROOT`, choose port 80 when free, otherwise the first free port from 8080..8090, and set `ServerName localhost:<port>`.
+8. Register and start the `Apache24` service. If administrator privileges are required, the helper should launch an elevated PowerShell process or print the exact command to run as Administrator.
+9. Rerun Apache detection, save `WEB_PUBLISH_BY_DEFAULT`, `WEBINST_PATH`, `APACHE_KIND`, `APACHE_HTTPD_CONF_PATH`, `WEB_PUBLICATION_ROOT`, and `WEB_PUBLICATION_URL_BASE` to `.dev.env` when available.
+10. Resume the interrupted init/check-tools flow.
 
 ## INIT_PROJECT
 
@@ -199,7 +216,7 @@ Goal: create the baseline project state.
 1. Show the current working directory as project root and confirm the developer wants to initialize there.
 2. Collect missing parameters. Do not ask for `featureInfoBaseRoot` during normal initialization; use `.agent-1c/infobases/features`.
    - For the platform path, first offer discovered installed 1C versions; do not make the developer type `C:\Program Files\1cv8\...\bin\1cv8.exe` when it can be selected.
-   - Ask whether feature infobases should be published to Apache for web-client testing. If no, write `WEB_PUBLISH_BY_DEFAULT=false` and do not ask Apache paths. If yes, write `WEB_PUBLISH_BY_DEFAULT=true`, run `detect-apache`, and save detected local Apache settings to `.dev.env`.
+   - Ask whether feature infobases should be published to Apache for web-client testing. If no, write `WEB_PUBLISH_BY_DEFAULT=false` and do not ask Apache paths. If yes, write `WEB_PUBLISH_BY_DEFAULT=true`, run `detect-apache`, and save detected local Apache settings to `.dev.env`. If Apache is not detected, ask whether to run `install-apache`; after success, rerun `detect-apache`/`check-tools`.
 3. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing. Write them as UTF-8.
 4. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.
 5. Initialize local Git if needed.
@@ -340,7 +357,7 @@ Stop immediately when:
 - Feature copy cannot be unbound from storage.
 - 1C Designer returns a non-zero exit code.
 - CF export fails.
-- Apache publication is requested but `webinst.exe` or Apache kind is missing.
+- Apache publication is requested but `webinst.exe` or Apache/httpd is missing and the developer declined automatic install or manual setup.
 
 ## Troubleshooting
 

@@ -17,7 +17,7 @@ For infobase and repository password lines, exact answers `нет` and `-` mean 
 
 Before asking for `1cv8.exe`, search installed 1C versions under existing `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` folders. Either folder may be absent; skip missing folders without error. Offer the found versions as choices and use the selected `bin\1cv8.exe` path. Do not offer the common `C:\Program Files\1cv8` root as a version.
 
-Ask whether feature infobases should be published to Apache for web-client testing. Store the answer locally in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true` or `false`. If the answer is no, do not touch Apache. If yes, run `detect-apache`, save detected values to `.dev.env`, and do not ask the developer for Apache paths.
+Ask whether feature infobases should be published to Apache for web-client testing. Store the answer locally in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true` or `false`. If the answer is no, do not touch Apache. If yes, run `detect-apache`, save detected values to `.dev.env`, and do not ask the developer for Apache paths. If Apache is not detected, ask whether to install it automatically. After explicit agreement, run `install-apache`, then rerun `detect-apache`/`check-tools` and continue initialization. If the developer declines, offer only to disable publication or stop initialization until Apache is configured manually.
 
 Prefer the PowerShell helper:
 

@@ -16,6 +16,7 @@ Map user intent to one workflow:
 - `HELP`: user asks what actions are available, asks for commands, asks for help, or runs `/1c`.
 - `INIT_PROJECT`: user asks to initialize/bootstrap/create a 1C agent project.
 - `CHECK_TOOLS`: user asks to check required software, setup, Git, 1C platform, Apache, or webinst.
+- `INSTALL_APACHE`: user agreed to automatically install Apache/httpd for 1C web publication.
 - `START_FEATURE`: user asks to start or begin a feature, task, branch, customization, or subproject.
 - `SYNC_MASTER`: user asks to refresh/sync master from 1C repository storage.
 - `LOAD_FEATURE`: user asks to load current branch files into the feature infobase.
@@ -52,7 +53,7 @@ Use `.agent-1c/infobases/features` as the default feature infobase copy root ins
 
 Before asking for the 1C platform path, scan existing standard installation folders for installed versions and offer the discovered version `bin`/`bin\1cv8.exe` paths as choices. Missing `C:\Program Files\1cv8` or `C:\Program Files (x86)\1cv8` folders are normal; skip them without error. Do not offer the common `C:\Program Files\1cv8` root as a version. Ask for a custom path only when no version is found or the developer chooses manual input.
 
-During initialization, ask only whether feature infobases should be published to Apache for web-client testing. Store the local answer in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`; do not store it in committed project JSON. If publishing is enabled, run `detect-apache` and save detected local Apache values to `.dev.env`. Do not ask the developer for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf` in the ordinary flow.
+During initialization, ask only whether feature infobases should be published to Apache for web-client testing. Store the local answer in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`; do not store it in committed project JSON. If publishing is enabled, run `detect-apache` and save detected local Apache values to `.dev.env`. If Apache is missing, ask the developer whether to install Apache automatically; after explicit agreement, run `install-apache`, then rerun `detect-apache`/`check-tools`. Do not ask the developer for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf` in the ordinary flow.
 
 Use the current working directory as the project root. During initialization, show its absolute path and ask the developer to confirm before continuing; do not ask them to enter a project path.
 
@@ -89,6 +90,7 @@ From the project root:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action help
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action start-feature -FeatureName "order-discounts"
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action load-feature
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-feature
