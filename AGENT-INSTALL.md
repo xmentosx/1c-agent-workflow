@@ -52,6 +52,7 @@ Required for initial project setup:
 - Current agent target. Do not ask the developer to choose Codex/Kilo; use the agent surface that is running this bootstrap. If it cannot be detected, use `codex`.
 - Directory for feature infobase copies: do not ask during normal initialization. Use `.agent-1c/infobases/features` inside the project and ensure `.agent-1c/infobases/` is ignored by Git. Ask only if the developer explicitly wants a custom location.
 - 1C platform version/path. Before asking for a manual path, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`. Either folder may be absent; treat missing folders as normal and skip them without error. If versions are found, ask the developer to choose one of them and store the selected `...\bin\1cv8.exe` path. Do not offer the common root `C:\Program Files\1cv8` as a platform version. Ask for a custom full path only when no installed version is found or the developer chooses manual input.
+- Apache web-client testing. Ask whether new feature infobases should be published to Apache by default. Store `WEB_PUBLISH_BY_DEFAULT=true|false` in local `.dev.env`, not in committed `project.json`. If the answer is no, do not ask Apache paths. If the answer is yes, ask one compact questionnaire for `webinst.exe`, Apache kind default `apache24`, publication root, URL base default `http://localhost`, and optional `httpd.conf` path. If `webinst.exe` exists next to the chosen `1cv8.exe`, offer it as the default.
 - Source infobase kind: `file` or `server`; ask this before the grouped questionnaire.
 - For `file`, ask the source infobase and repository questionnaire as 6 values:
   1. Source infobase directory.
@@ -76,8 +77,8 @@ Required for feature setup:
 - Feature name.
 - Feature branch if not `feature/<safe-feature-name>`.
 - Feature infobase path if not derived from `FEATURE_INFOBASE_ROOT`.
-- Whether to publish to Apache.
-- If publishing: `webinst.exe`, Apache kind, publication root, and URL base.
+- Whether to publish to Apache only when the project was not configured during initialization or the developer wants a one-off override.
+- If publishing: `webinst.exe`, Apache kind, publication root, URL base, and optional `httpd.conf` path.
 
 Secrets must go to `.dev.env` or process environment variables. Never commit secrets.
 
@@ -110,7 +111,7 @@ Encoding rules:
 
 5. Create `.agent-1c/tools.json` from `templates/tools.json` when missing. Keep it committed so the team can adjust required software checks and install suggestions.
 
-6. Create `.dev.env` from `templates/dev.env.example` when missing. Fill local paths and secrets. Write it as UTF-8 and ensure `.dev.env` is ignored by Git.
+6. Create `.dev.env` from `templates/dev.env.example` when missing. Fill local paths, secrets, and local Apache preference. Write it as UTF-8 and ensure `.dev.env` is ignored by Git.
 
 7. Append `templates/gitignore.append` lines to `.gitignore` if absent.
 
@@ -139,7 +140,7 @@ Default checks come from `.agent-1c/tools.json`:
 
 - Git: `git --version`, offer `winget install --id Git.Git -e`.
 - 1C platform: check `PLATFORM_PATH` or `platformPath`; when missing/invalid, search installed versions in existing standard `1cv8` folders and offer the discovered `...\bin\1cv8.exe` paths before asking for manual input. Missing `Program Files`/`Program Files (x86)` `1cv8` folders are not errors.
-- Apache/webinst: check only when web publication is enabled/requested.
+- Apache/webinst: check only when web publication is enabled/requested. Prefer `WEB_PUBLISH_BY_DEFAULT` from local `.dev.env`; fall back to `project.web.publishByDefault` only for compatibility. If `WEBINST_PATH` is empty, use `webinst.exe` found next to the selected `1cv8.exe`.
 
 When the workflow helper is available, the agent may list installed 1C versions with:
 

@@ -174,6 +174,33 @@ function Get-Setting {
     return Get-ConfigValue -Path $ConfigName -Default $Default
 }
 
+function ConvertTo-BoolSetting {
+    param(
+        [AllowNull()][object]$Value,
+        [bool]$Default = $false
+    )
+
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) {
+        return $Default
+    }
+
+    if ($Value -is [bool]) {
+        return [bool]$Value
+    }
+
+    $text = ([string]$Value).Trim().ToLowerInvariant()
+    $yesMarker = -join ([char[]](0x0434, 0x0430))
+    $noMarker = -join ([char[]](0x043D, 0x0435, 0x0442))
+    if (@("1", "true", "yes", "y", "on", $yesMarker) -contains $text) {
+        return $true
+    }
+    if (@("0", "false", "no", "n", "off", $noMarker) -contains $text) {
+        return $false
+    }
+
+    throw "Invalid boolean setting value: $Value"
+}
+
 function Require-Value {
     param(
         [string]$Name,
@@ -514,6 +541,48 @@ function Get-PlatformPath {
     return Resolve-PlatformExecutablePath -Path $value
 }
 
+function Get-WebPublishByDefault {
+    $envValue = Get-EnvValue -Name "WEB_PUBLISH_BY_DEFAULT"
+    if ($null -ne $envValue -and -not [string]::IsNullOrWhiteSpace([string]$envValue)) {
+        return ConvertTo-BoolSetting -Value $envValue -Default $false
+    }
+
+    return ConvertTo-BoolSetting -Value (Get-ConfigValue -Path "web.publishByDefault" -Default $false) -Default $false
+}
+
+function Get-DefaultWebInstPath {
+    $rawPlatformPath = Get-Setting -EnvName "PLATFORM_PATH" -ConfigName "platformPath"
+    if (-not $rawPlatformPath) {
+        return ""
+    }
+
+    $platformPath = Resolve-PlatformExecutablePath -Path $rawPlatformPath
+    if (-not $platformPath) {
+        return ""
+    }
+
+    $platformDirectory = Split-Path -Parent $platformPath
+    if (-not $platformDirectory) {
+        return ""
+    }
+
+    $candidate = Join-Path $platformDirectory "webinst.exe"
+    if (Test-Path -LiteralPath $candidate -PathType Leaf -ErrorAction SilentlyContinue) {
+        return $candidate
+    }
+
+    return ""
+}
+
+function Get-WebInstPath {
+    $configured = Get-Setting -EnvName "WEBINST_PATH" -ConfigName "web.webInstPath"
+    if ($configured) {
+        return [Environment]::ExpandEnvironmentVariables(([string]$configured).Trim())
+    }
+
+    return Get-DefaultWebInstPath
+}
+
 function Find-Installed1CPlatforms {
     $roots = @()
 
@@ -751,17 +820,45 @@ function Check-Tools {
         -Detail $(if ($platformOk) { $platformPath } elseif ($rawPlatformPath) { "Configured path does not exist: $platformPath" } else { "PLATFORM_PATH/project.platformPath is missing" }) `
         -Offer $platformOffer
 
-    $publishDefault = [bool](Get-ConfigValue -Path "web.publishByDefault" -Default $false)
+    $publishDefault = Get-WebPublishByDefault
     if ($PublishToApache -or $publishDefault) {
-        $webInstPath = Get-Setting -EnvName "WEBINST_PATH" -ConfigName "web.webInstPath"
+        $webInstPath = Get-WebInstPath
         $webInstOk = ($webInstPath -and (Test-Path -LiteralPath $webInstPath))
+        $webInstDetail = if ($webInstPath) { $webInstPath } else { "WEBINST_PATH is missing and webinst.exe was not found next to PLATFORM_PATH" }
         $results += New-ToolResult `
             -Id "apache-webinst" `
             -Name "Apache/webinst" `
             -Required $true `
             -Ok ([bool]$webInstOk) `
-            -Detail $(if ($webInstPath) { $webInstPath } else { "WEBINST_PATH/project.web.webInstPath is missing" }) `
+            -Detail $webInstDetail `
             -Offer (Get-ToolOffer -Id "apache-webinst" -Fallback "Install Apache and 1C web server extension manually, then set WEBINST_PATH and APACHE_KIND.")
+
+        $apacheKind = Get-Setting -EnvName "APACHE_KIND" -ConfigName "web.apacheKind" -Default "apache24"
+        $results += New-ToolResult `
+            -Id "apache-kind" `
+            -Name "Apache kind" `
+            -Required $true `
+            -Ok (-not [string]::IsNullOrWhiteSpace([string]$apacheKind)) `
+            -Detail $(if ($apacheKind) { $apacheKind } else { "APACHE_KIND is missing" }) `
+            -Offer "Set APACHE_KIND=apache24 in .dev.env, unless your local Apache integration requires another 1C webinst kind."
+
+        $publicationRoot = Get-Setting -EnvName "WEB_PUBLICATION_ROOT" -ConfigName "web.publicationRoot"
+        $results += New-ToolResult `
+            -Id "web-publication-root" `
+            -Name "Web publication root" `
+            -Required $true `
+            -Ok (-not [string]::IsNullOrWhiteSpace([string]$publicationRoot)) `
+            -Detail $(if ($publicationRoot) { $publicationRoot } else { "WEB_PUBLICATION_ROOT is missing" }) `
+            -Offer "Set WEB_PUBLICATION_ROOT to the local Apache publication directory, for example C:\Apache24\htdocs\1c."
+
+        $publicationUrlBase = Get-Setting -EnvName "WEB_PUBLICATION_URL_BASE" -ConfigName "web.publicationUrlBase" -Default "http://localhost"
+        $results += New-ToolResult `
+            -Id "web-publication-url-base" `
+            -Name "Web publication URL base" `
+            -Required $true `
+            -Ok (-not [string]::IsNullOrWhiteSpace([string]$publicationUrlBase)) `
+            -Detail $(if ($publicationUrlBase) { $publicationUrlBase } else { "WEB_PUBLICATION_URL_BASE is missing" }) `
+            -Offer "Set WEB_PUBLICATION_URL_BASE=http://localhost in .dev.env, or use your local Apache base URL."
     }
 
     $missingRequired = @()
@@ -1386,13 +1483,13 @@ function Publish-FeatureToApache {
         [string]$SafeFeatureName
     )
 
-    $webInstPath = Get-Setting -EnvName "WEBINST_PATH" -ConfigName "web.webInstPath"
+    $webInstPath = Get-WebInstPath
     $apacheKind = Get-Setting -EnvName "APACHE_KIND" -ConfigName "web.apacheKind" -Default "apache24"
     $publicationRoot = Get-Setting -EnvName "WEB_PUBLICATION_ROOT" -ConfigName "web.publicationRoot"
     $urlBase = Get-Setting -EnvName "WEB_PUBLICATION_URL_BASE" -ConfigName "web.publicationUrlBase" -Default "http://localhost"
     $confPath = Get-Setting -EnvName "APACHE_HTTPD_CONF_PATH" -ConfigName "web.apacheHttpdConfPath"
 
-    Require-Value "WEBINST_PATH or project.web.webInstPath" $webInstPath | Out-Null
+    Require-Value "WEBINST_PATH, web.webInstPath, or webinst.exe next to PLATFORM_PATH" $webInstPath | Out-Null
     Require-Value "WEB_PUBLICATION_ROOT or project.web.publicationRoot" $publicationRoot | Out-Null
 
     if (-not (Test-Path -LiteralPath $webInstPath)) {
@@ -1501,7 +1598,7 @@ function Start-Feature {
         -InfoBaseKind $kind `
         -DesignerArgs @("/ConfigurationRepositoryUnbindCfg", "-force") | Out-Null
 
-    $publishDefault = [bool](Get-ConfigValue -Path "web.publishByDefault" -Default $false)
+    $publishDefault = Get-WebPublishByDefault
     $publicationUrl = ""
     if ($PublishToApache -or $publishDefault) {
         $publicationUrl = Publish-FeatureToApache -FeaturePath $FeatureInfoBasePath -SafeFeatureName $safe

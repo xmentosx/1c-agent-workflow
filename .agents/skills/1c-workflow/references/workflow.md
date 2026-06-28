@@ -89,6 +89,7 @@ REPOSITORY_USER=
 REPOSITORY_PASSWORD=
 # Optional override. By default feature infobase copies are stored under .agent-1c\infobases\features and ignored by Git.
 FEATURE_INFOBASE_ROOT=
+WEB_PUBLISH_BY_DEFAULT=false
 WEBINST_PATH=C:\Program Files\1cv8\8.3.xx.xxxx\bin\webinst.exe
 APACHE_KIND=apache24
 APACHE_HTTPD_CONF_PATH=
@@ -104,7 +105,7 @@ Default checks:
 
 - `git`: check `git --version`; offer `winget install --id Git.Git -e`.
 - `1c-platform`: check `PLATFORM_PATH` or `project.platformPath`; when missing/invalid, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` and offer the discovered `...\bin` or `...\bin\1cv8.exe` paths before manual input. Either standard folder may be absent; skip missing folders without error. Do not offer the common root `C:\Program Files\1cv8` as a version.
-- `apache-webinst`: check `WEBINST_PATH`/`web.webInstPath` only when web publication is enabled/requested.
+- `apache-webinst`: check `WEBINST_PATH`/`web.webInstPath` only when web publication is enabled/requested. If `WEBINST_PATH` is empty, use `webinst.exe` found next to the selected `1cv8.exe`.
 
 ## Required Questions
 
@@ -134,6 +135,8 @@ For project initialization:
 - For a server infobase, ask one grouped questionnaire with exactly 7 values: 1C server name, source infobase name, infobase user, infobase password or `нет`/`-`, configuration repository path/address, configuration repository user, configuration repository password or `нет`/`-`. Build the connection string as `Srvr="<server>";Ref="<base>";`.
 - Validate the grouped questionnaire line/value count before running 1C. If the count is wrong, ask the developer to repeat only the grouped questionnaire. After parsing, summarize the values without passwords and ask for confirmation.
 - Directory for feature infobase copies: do not ask by default. Use `.agent-1c/infobases/features` inside the project and ignore `.agent-1c/infobases/` in Git. Ask only if the developer explicitly wants a custom location.
+- Apache web-client testing: ask whether new feature infobases should be published to Apache by default. Store the answer locally in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`, never in committed project JSON.
+- If Apache publishing is enabled, ask one compact questionnaire for local Apache settings: `webinst.exe` path, Apache kind default `apache24`, publication root, URL base default `http://localhost`, and optional `httpd.conf` path. If `webinst.exe` exists next to the chosen `1cv8.exe`, offer it as the default.
 - Do not ask whether the project is for Codex or Kilo Code. Configure the current agent surface; when it cannot be detected, use Codex as the fallback.
 
 For starting a feature:
@@ -183,7 +186,7 @@ Goal: verify the local machine is ready and provide install suggestions without 
 1. Read `.agent-1c/tools.json` when present.
 2. Check required tools: Git, 1C platform, and optional Apache/webinst.
    - For 1C platform, list discovered versions from standard `1cv8` folders when `PLATFORM_PATH` is missing or invalid.
-3. If web publication is enabled/requested, check Apache/webinst settings too.
+3. If web publication is enabled/requested through `WEB_PUBLISH_BY_DEFAULT=true`, `project.web.publishByDefault=true`, or `-PublishToApache`, check Apache/webinst settings too.
 4. Report `[OK]` and `[MISSING]` lines.
 5. If required software is missing during `INIT_PROJECT`, stop after showing suggested install/setup commands.
 
@@ -194,6 +197,7 @@ Goal: create the baseline project state.
 1. Show the current working directory as project root and confirm the developer wants to initialize there.
 2. Collect missing parameters. Do not ask for `featureInfoBaseRoot` during normal initialization; use `.agent-1c/infobases/features`.
    - For the platform path, first offer discovered installed 1C versions; do not make the developer type `C:\Program Files\1cv8\...\bin\1cv8.exe` when it can be selected.
+   - Ask whether feature infobases should be published to Apache for web-client testing. If no, write `WEB_PUBLISH_BY_DEFAULT=false` and do not ask Apache paths. If yes, write `WEB_PUBLISH_BY_DEFAULT=true` and collect local Apache settings in `.dev.env`.
 3. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing. Write them as UTF-8.
 4. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.
 5. Initialize local Git if needed.
