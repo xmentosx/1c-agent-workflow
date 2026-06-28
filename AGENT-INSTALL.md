@@ -176,6 +176,7 @@ This performs:
    - First dump is full when `src/cf` is empty.
    - Later dumps are incremental with `-update -force` when `src/cf/ConfigDumpInfo.xml` exists.
    - If `src/cf` is not empty and `ConfigDumpInfo.xml` is missing, initialization stops with a clear error.
+   - After the dump, `src/cf/ConfigDumpInfo.xml` must exist and the initial dump must be committed to `master`; if not, initialization stops.
 6. Commit of the baseline dump.
 7. Installation of `ai_rules_1c`.
 8. Commit of workflow/rules files.

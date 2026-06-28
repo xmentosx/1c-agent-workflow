@@ -363,13 +363,34 @@ function Checkout-Master {
     }
 }
 
+function Test-GitHasStagedChanges {
+    & git -C $script:ProjectRoot diff --cached --quiet
+    if ($LASTEXITCODE -eq 0) {
+        return $false
+    }
+    if ($LASTEXITCODE -eq 1) {
+        return $true
+    }
+    throw "Cannot read staged Git changes"
+}
+
 function Commit-IfChanged {
-    param([string]$Message)
-    Invoke-Git @("add", ".")
-    if (Test-GitHasChanges) {
+    param(
+        [string]$Message,
+        [string[]]$PathSpec = @("."),
+        [switch]$RequireChanges
+    )
+
+    $addArgs = @("add", "--") + @($PathSpec)
+    Invoke-Git $addArgs
+    if (Test-GitHasStagedChanges) {
         Invoke-Git @("commit", "-m", $Message)
+        return $true
+    } elseif ($RequireChanges) {
+        throw "No Git changes to commit for: $($PathSpec -join ', '). Expected files from the 1C configuration dump."
     } else {
-        Write-Host "No Git changes to commit."
+        Write-Host "No Git changes to commit for: $($PathSpec -join ', ')"
+        return $false
     }
 }
 
@@ -991,8 +1012,9 @@ function Dump-ConfigToFiles {
 
     $dumpInfoPath = Join-Path $absoluteExportPath "ConfigDumpInfo.xml"
     $children = @(Get-ChildItem -LiteralPath $absoluteExportPath -Force)
+    $isIncremental = Test-Path -LiteralPath $dumpInfoPath -PathType Leaf
     $designerArgs = @("/DumpConfigToFiles", $absoluteExportPath, "-Format", "Hierarchical")
-    if (Test-Path -LiteralPath $dumpInfoPath) {
+    if ($isIncremental) {
         $designerArgs += @("-update", "-force")
     } elseif ($children.Count -gt 0) {
         throw "Export path '$absoluteExportPath' is not empty and ConfigDumpInfo.xml is missing. Clean the folder manually or restore ConfigDumpInfo.xml before dumping config files."
@@ -1002,6 +1024,22 @@ function Dump-ConfigToFiles {
         -InfoBasePath (Get-SourceInfoBasePath) `
         -InfoBaseKind (Get-InfoBaseKind) `
         -DesignerArgs $designerArgs | Out-Null
+
+    if (-not (Test-Path -LiteralPath $dumpInfoPath -PathType Leaf)) {
+        throw "1C configuration dump did not create ConfigDumpInfo.xml in '$absoluteExportPath'. Check the 1C log: $script:LastLogPath"
+    }
+
+    $dumpedFiles = @(Get-ChildItem -LiteralPath $absoluteExportPath -Force)
+    if ($dumpedFiles.Count -eq 0) {
+        throw "1C configuration dump produced no files in '$absoluteExportPath'. Check the 1C log: $script:LastLogPath"
+    }
+
+    return [pscustomobject]@{
+        exportPath = $exportPath
+        absoluteExportPath = $absoluteExportPath
+        incremental = $isIncremental
+        logPath = $script:LastLogPath
+    }
 }
 
 function Load-ConfigFromFiles {
@@ -1244,8 +1282,8 @@ function Initialize-Project {
     Checkout-Master
 
     Update-BaseFromRepository
-    Dump-ConfigToFiles
-    Commit-IfChanged "sync: export 1C configuration from repository"
+    $dumpResult = Dump-ConfigToFiles
+    Commit-IfChanged -Message "sync: export 1C configuration from repository" -PathSpec @($dumpResult.exportPath) -RequireChanges | Out-Null
 
     Install-AiRules1c
     Update-UserRules
@@ -1257,8 +1295,8 @@ function Sync-Master {
     Assert-CleanGit
     Checkout-Master
     Update-BaseFromRepository
-    Dump-ConfigToFiles
-    Commit-IfChanged "sync: refresh 1C configuration from repository"
+    $dumpResult = Dump-ConfigToFiles
+    Commit-IfChanged -Message "sync: refresh 1C configuration from repository" -PathSpec @($dumpResult.exportPath) | Out-Null
 }
 
 function Start-Feature {
