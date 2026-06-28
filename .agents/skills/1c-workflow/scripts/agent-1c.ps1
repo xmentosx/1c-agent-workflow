@@ -759,11 +759,37 @@ function New-InfobaseArgs {
 
     if ($User) {
         $args += @("/N", $User)
-    }
-    if ($Password) {
+        $args += @("/P", ([string]$Password))
+    } elseif ($Password) {
         $args += @("/P", $Password)
     }
+
     return $args
+}
+
+function Format-SafeCommandLine {
+    param(
+        [string]$Command,
+        [string[]]$Arguments
+    )
+
+    $secretKeys = @("/P", "/ConfigurationRepositoryP")
+    $parts = @($Command)
+    $maskNext = $false
+    foreach ($arg in $Arguments) {
+        if ($maskNext) {
+            $parts += "<hidden>"
+            $maskNext = $false
+            continue
+        }
+
+        $parts += $(if ($arg -match "\s") { '"' + $arg + '"' } else { $arg })
+        if ($secretKeys -contains $arg) {
+            $maskNext = $true
+        }
+    }
+
+    return ($parts -join " ")
 }
 
 function Invoke-Designer {
@@ -790,6 +816,9 @@ function Invoke-Designer {
     $ibArgs = New-InfobaseArgs -Kind $InfoBaseKind -Path $InfoBasePath -User $User -Password $Password
     $args = @("DESIGNER") + $ibArgs + @("/DisableStartupMessages", "/Out", $logPath) + $DesignerArgs
 
+    Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
+    Write-Host "1C log: $logPath"
+
     & $platformPath @args
     if ($LASTEXITCODE -ne 0) {
         throw "1C Designer failed with exit code $LASTEXITCODE. Log: $logPath"
@@ -800,16 +829,12 @@ function Invoke-Designer {
 
 function Update-BaseFromRepository {
     $repositoryUser = Require-Value "REPOSITORY_USER" (Get-EnvValue -Name "REPOSITORY_USER")
-    $repositoryPassword = Get-EnvValue -Name "REPOSITORY_PASSWORD"
+    $repositoryPassword = [string](Get-EnvValue -Name "REPOSITORY_PASSWORD" -Default "")
     $repositoryPath = Get-RepositoryPath
     $repositoryArgs = @(
         "/ConfigurationRepositoryF", $repositoryPath,
-        "/ConfigurationRepositoryN", $repositoryUser
-    )
-    if ($repositoryPassword) {
-        $repositoryArgs += @("/ConfigurationRepositoryP", $repositoryPassword)
-    }
-    $repositoryArgs += @(
+        "/ConfigurationRepositoryN", $repositoryUser,
+        "/ConfigurationRepositoryP", $repositoryPassword,
         "/ConfigurationRepositoryUpdateCfg", "-force",
         "/UpdateDBCfg", "-WarningsAsErrors"
     )
