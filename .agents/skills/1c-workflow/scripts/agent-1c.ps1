@@ -788,6 +788,18 @@ function New-InfobaseArgs {
     return $args
 }
 
+function ConvertTo-NativeEmptyStringArgument {
+    param([string]$Value)
+
+    if ([string]::IsNullOrEmpty($Value)) {
+        # Windows PowerShell drops plain empty native arguments. Passing "" keeps
+        # an empty argv value so the next 1C option is not shifted into its place.
+        return '""'
+    }
+
+    return $Value
+}
+
 function Format-SafeCommandLine {
     param(
         [string]$Command,
@@ -854,12 +866,8 @@ function Update-BaseFromRepository {
     $repositoryPath = Get-RepositoryPath
     $repositoryArgs = @(
         "/ConfigurationRepositoryF", $repositoryPath,
-        "/ConfigurationRepositoryN", $repositoryUser
-    )
-    if (-not [string]::IsNullOrEmpty($repositoryPassword)) {
-        $repositoryArgs += @("/ConfigurationRepositoryP", $repositoryPassword)
-    }
-    $repositoryArgs += @(
+        "/ConfigurationRepositoryN", $repositoryUser,
+        "/ConfigurationRepositoryP", (ConvertTo-NativeEmptyStringArgument $repositoryPassword),
         "/ConfigurationRepositoryUpdateCfg", "-force",
         "/UpdateDBCfg", "-WarningsAsErrors"
     )

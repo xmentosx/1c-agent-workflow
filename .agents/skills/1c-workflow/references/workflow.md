@@ -121,7 +121,7 @@ Interactive question style:
 - Do not make the developer type variable names such as `PLATFORM_PATH`, `FEATURE_INFOBASE_ROOT`, `SOURCE_INFOBASE_PATH`, `SOURCE_SERVER_NAME`, or `REPOSITORY_PATH`.
 - Use human labels in questions, for example: "Выберите версию платформы 1С", "Введите адрес хранилища конфигурации".
 - For `file/server` or yes/no choices, ask a normal choice question first; then ask only the values relevant to that choice.
-- For optional passwords, never ask the developer to type a placeholder text. Ask a yes/no question first: "Пароль базы задан?" or "Пароль хранилища задан?". If the answer is no, store an empty value and skip the password-value question. If the answer is yes, ask for the password value in a separate prompt. When invoking 1C, omit password command-line options when the password value is empty; never pass an empty password argument because Windows PowerShell can drop it and shift the next 1C option into the password position.
+- For optional passwords, never ask the developer to type a placeholder text. Ask a yes/no question first: "Пароль базы задан?" or "Пароль хранилища задан?". If the answer is no, store an empty value and skip the password-value question. If the answer is yes, ask for the password value in a separate prompt. When invoking 1C, omit the infobase `/P` option when the infobase password is empty. For repository login, always pass `/ConfigurationRepositoryP`; when the repository password is empty, pass it as a quoted empty native argument (`""`) so 1C does not open an interactive repository login dialog and the next option is not shifted into the password position.
 
 For project initialization:
 
@@ -132,7 +132,7 @@ For project initialization:
 - For a server infobase: server name and infobase name. Build the connection string as `Srvr="<server>";Ref="<base>";`.
 - 1C infobase user. Then ask whether the infobase password is set; ask the password value only if it is set.
 - Configuration repository address/path.
-- Configuration repository user. Then ask whether the repository password is set; ask the password value only if it is set. Empty repository password is valid and must not block validation. The helper omits `/ConfigurationRepositoryP` when the repository password is empty.
+- Configuration repository user. Then ask whether the repository password is set; ask the password value only if it is set. Empty repository password is valid and must not block validation. The helper still passes `/ConfigurationRepositoryP` for an empty repository password, using a quoted empty native argument (`""`).
 - Directory for feature infobase copies: do not ask by default. Use `.agent-1c/infobases/features` inside the project and ignore `.agent-1c/infobases/` in Git. Ask only if the developer explicitly wants a custom location.
 - Do not ask whether the project is for Codex or Kilo Code. Configure the current agent surface; when it cannot be detected, use Codex as the fallback.
 
