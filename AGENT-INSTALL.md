@@ -33,15 +33,18 @@ Ask for missing values only. If `.agent-1c/project.json` or `.dev.env` already c
 
 Ask interactively in a human-friendly format:
 
-- Ask one value at a time.
-- The developer's answer must be the raw value only, for example `C:\Program Files\1cv8\8.3.xx.xxxx\bin\1cv8.exe`.
+- Ask unrelated setup values one value at a time.
+- Ask source infobase and configuration repository values as one compact grouped questionnaire after the source infobase kind is known.
+- If the agent surface supports several structured fields/questions in one prompt, use that grouped form.
+- If structured grouped prompts are not available, ask one numbered block and tell the developer to answer with one value per line in the same order.
+- The developer's answer must contain raw values only, for example `C:\Program Files\1cv8\8.3.xx.xxxx\bin\1cv8.exe`.
 - Do not ask the developer to answer in `KEY=value` format.
-- Do not group several required values into one free-form answer.
-- Do not show one large question that lists all missing variables.
-- If the agent surface supports structured prompts, use a separate prompt for each value, not one prompt with a custom free-form block.
+- Do not require variable names in grouped answers.
+- Do not show one large question that lists all missing project variables; grouping is allowed only for the source infobase and configuration repository values.
 - Do not require the developer to type environment variable names such as `PLATFORM_PATH` or `SOURCE_INFOBASE_PATH`.
 - Variable names may be mentioned only as internal storage hints after the human-readable label.
-- For passwords that may be empty, first ask a yes/no question such as "Is an infobase password set?" or "Is a repository password set?". Ask for the password value only when the answer is yes. When the answer is no, store an empty value and do not require the developer to type phrases like "без пароля" or "no password". When launching 1C, omit the infobase `/P` option when the infobase password is empty. For repository login, always pass `/ConfigurationRepositoryP`; when the repository password is empty, pass it as a quoted empty native argument (`""`) so 1C does not open an interactive repository login dialog and the next option is not shifted into the password position.
+- In password lines of the grouped questionnaire, exact values `нет` and `-` mean an empty password. Compare these markers case-insensitively after trimming whitespace. Do not store the marker text as a password.
+- When launching 1C, omit the infobase `/P` option when the infobase password is empty. For repository login, always pass `/ConfigurationRepositoryP`; when the repository password is empty, pass it as a quoted empty native argument (`""`) so 1C does not open an interactive repository login dialog and the next option is not shifted into the password position.
 
 Required for initial project setup:
 
@@ -49,12 +52,24 @@ Required for initial project setup:
 - Current agent target. Do not ask the developer to choose Codex/Kilo; use the agent surface that is running this bootstrap. If it cannot be detected, use `codex`.
 - Directory for feature infobase copies: do not ask during normal initialization. Use `.agent-1c/infobases/features` inside the project and ensure `.agent-1c/infobases/` is ignored by Git. Ask only if the developer explicitly wants a custom location.
 - 1C platform version/path. Before asking for a manual path, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`. Either folder may be absent; treat missing folders as normal and skip them without error. If versions are found, ask the developer to choose one of them and store the selected `...\bin\1cv8.exe` path. Do not offer the common root `C:\Program Files\1cv8` as a platform version. Ask for a custom full path only when no installed version is found or the developer chooses manual input.
-- Source infobase kind: `file` or `server`.
-- For a file infobase: source infobase directory.
-- For a server infobase: server name and infobase name. The agent must build the connection string as `Srvr="<server>";Ref="<base>";`.
-- Infobase user, then ask whether an infobase password is set. If yes, ask for the password. If no, store `IB_PASSWORD=` or leave it absent.
-- 1C configuration repository path/address.
-- 1C configuration repository user, then ask whether a repository password is set. If yes, ask for the password. If no, store `REPOSITORY_PASSWORD=` or leave it absent.
+- Source infobase kind: `file` or `server`; ask this before the grouped questionnaire.
+- For `file`, ask the source infobase and repository questionnaire as 6 values:
+  1. Source infobase directory.
+  2. Infobase user.
+  3. Infobase password, or `нет`/`-` if empty.
+  4. Configuration repository path/address.
+  5. Configuration repository user.
+  6. Configuration repository password, or `нет`/`-` if empty.
+- For `server`, ask the source infobase and repository questionnaire as 7 values:
+  1. 1C server name.
+  2. Source infobase name.
+  3. Infobase user.
+  4. Infobase password, or `нет`/`-` if empty.
+  5. Configuration repository path/address.
+  6. Configuration repository user.
+  7. Configuration repository password, or `нет`/`-` if empty.
+- For a server infobase, build the connection string as `Srvr="<server>";Ref="<base>";`.
+- Validate the number of questionnaire values before running 1C. If the count is wrong, ask the developer to repeat only this questionnaire. After parsing, summarize the values without passwords and ask for confirmation.
 
 Required for feature setup:
 

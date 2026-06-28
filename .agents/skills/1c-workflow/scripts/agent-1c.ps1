@@ -778,6 +778,7 @@ function New-InfobaseArgs {
         throw "Unknown infobase kind: $Kind"
     }
 
+    $Password = ConvertFrom-OptionalPasswordAnswer $Password
     if ($User) {
         $args += @("/N", $User)
     }
@@ -786,6 +787,22 @@ function New-InfobaseArgs {
     }
 
     return $args
+}
+
+function ConvertFrom-OptionalPasswordAnswer {
+    param([AllowNull()][string]$Value)
+
+    if ($null -eq $Value) {
+        return ""
+    }
+
+    $trimmed = $Value.Trim()
+    $noMarker = -join ([char[]](0x043D, 0x0435, 0x0442))
+    if ($trimmed -eq "-" -or [string]::Equals($trimmed, $noMarker, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return ""
+    }
+
+    return $Value
 }
 
 function ConvertTo-NativeEmptyStringArgument {
@@ -862,7 +879,7 @@ function Invoke-Designer {
 
 function Update-BaseFromRepository {
     $repositoryUser = Require-Value "REPOSITORY_USER" (Get-EnvValue -Name "REPOSITORY_USER")
-    $repositoryPassword = [string](Get-EnvValue -Name "REPOSITORY_PASSWORD" -Default "")
+    $repositoryPassword = ConvertFrom-OptionalPasswordAnswer ([string](Get-EnvValue -Name "REPOSITORY_PASSWORD" -Default ""))
     $repositoryPath = Get-RepositoryPath
     $repositoryArgs = @(
         "/ConfigurationRepositoryF", $repositoryPath,
