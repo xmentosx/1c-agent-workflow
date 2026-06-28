@@ -74,7 +74,14 @@ Secrets must go to `.dev.env` or process environment variables. Never commit sec
 
 8. Append `templates/USER-RULES.append.md` to `USER-RULES.md` if absent.
 
-9. Do not edit installer-managed `AGENTS.md` directly. If `ai_rules_1c` later creates or updates `AGENTS.md`, treat it as managed.
+9. Copy developer-facing docs into the target project when present:
+
+```text
+<project>/DEVELOPER-GUIDE.ru.md
+<project>/FEATURE-DEVELOPMENT.ru.md
+```
+
+10. Do not edit installer-managed `AGENTS.md` directly. If `ai_rules_1c` later creates or updates `AGENTS.md`, treat it as managed.
 
 ## Check Required Software
 

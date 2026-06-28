@@ -22,12 +22,21 @@ DEVELOPER-GUIDE.ru.md
 
 В нем описан полный рабочий процесс: первый запуск, старт фичи, загрузка изменений в базу подпроекта, обновление из хранилища, выгрузка `CF`, завершение фичи и переключение веток.
 
+Отдельная инструкция по самой разработке внутри ветки фичи:
+
+```text
+FEATURE-DEVELOPMENT.ru.md
+```
+
+В ней описано, когда использовать quick-fix, когда оформлять изменение через OpenSpec, как согласовывать proposal/tasks и как запускать review.
+
 ## Что входит в пакет
 
 - `.agents/skills/1c-workflow` - общий Agent Skill для Codex и Kilo Code.
 - `.kilo/commands` - slash-команды для Kilo Code.
 - `AGENT-INSTALL.md` - bootstrap-инструкция для агента.
 - `DEVELOPER-GUIDE.ru.md` - инструкция для разработчика.
+- `FEATURE-DEVELOPMENT.ru.md` - процесс разработки фичи внутри ветки.
 - `templates/project.json` - шаблон настроек проекта без секретов.
 - `templates/tools.json` - список проверяемого софта и подсказки по установке.
 - `templates/dev.env.example` - пример локальных настроек и секретов.

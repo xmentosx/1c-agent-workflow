@@ -32,6 +32,8 @@ If intent is unclear, do not guess. Show the short menu from `references/workflo
 
 Before executing any lifecycle workflow, read `references/workflow.md`.
 
+When the user asks to develop, implement, fix, review, or plan work inside an already started feature branch, also read `references/feature-development.md` and follow its quick-fix/OpenSpec process.
+
 Use `scripts/agent-1c.ps1` when PowerShell is available. Prefer the script over retyping command-line calls because 1C Designer operations are fragile and benefit from deterministic logging and path checks.
 
 ## Operating Rules
