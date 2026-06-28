@@ -153,7 +153,7 @@ if (Test-Path $rulesDir) {
 }
 
 $tools = "codex" # use "kilocode" when this bootstrap is running from Kilo Code
-& (Join-Path $rulesDir "install.ps1") init -Source $rulesDir -Tools $tools
+& (Join-Path $rulesDir "install.ps1") -Command init -ProjectRoot (Get-Location).Path -Source $rulesDir -Tools $tools -AssumeYes
 ```
 
 If the installer asks which tools to configure, choose the current agent surface. If it cannot be detected, choose Codex.

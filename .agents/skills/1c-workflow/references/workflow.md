@@ -200,7 +200,7 @@ Goal: create the baseline project state.
    - Next dumps: if `src/cf/ConfigDumpInfo.xml` exists, run incremental dump with `-update -force`.
    - Unsafe state: if `src/cf` is not empty and `ConfigDumpInfo.xml` is missing, stop and ask the user to clean the folder or restore `ConfigDumpInfo.xml`.
 9. Commit the dump to `master` when there are changes.
-10. Install `ai_rules_1c` per project from `https://github.com/comol/ai_rules_1c`, using the current agent target (`codex`, `kilocode`, or fallback `codex`).
+10. Install `ai_rules_1c` per project from `https://github.com/comol/ai_rules_1c`, using the current agent target (`codex`, `kilocode`, or fallback `codex`). Invoke its installer with named parameters: `-Command init -ProjectRoot <project> -Source <rulesDir> -Tools <tools> -AssumeYes`.
 11. Install this workflow skill into `.agents/skills/1c-workflow`.
 12. If the current agent is Kilo Code, install slash wrappers into `.kilo/commands`.
 13. Add project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.

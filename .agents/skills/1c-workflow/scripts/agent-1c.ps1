@@ -1070,7 +1070,9 @@ function Install-AiRules1c {
     $repo = Get-ConfigValue -Path "aiRules.repo" -Default "https://github.com/comol/ai_rules_1c.git"
     $tools = Get-ConfigValue -Path "aiRules.tools" -Default ""
     if (-not $tools) {
-        $tools = (Get-AgentTargets) -join ","
+        $tools = Get-AgentTargets
+    } elseif ($tools -is [string]) {
+        $tools = @($tools.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     }
     $rulesDir = Join-Path $env:TEMP "ai_rules_1c"
 
@@ -1093,7 +1095,12 @@ function Install-AiRules1c {
 
     Push-Location $script:ProjectRoot
     try {
-        $installArgs = @("init", "-Source", $rulesDir, "-Tools", $tools)
+        $installArgs = @(
+            "-Command", "init",
+            "-ProjectRoot", $script:ProjectRoot,
+            "-Source", $rulesDir,
+            "-Tools"
+        ) + @($tools) + @("-AssumeYes")
         & $installScript @installArgs
         if ($LASTEXITCODE -ne 0) {
             throw "ai_rules_1c installer failed with exit code $LASTEXITCODE"
