@@ -163,6 +163,7 @@ Before destructive or stateful actions:
 8. Verify `src/cf` resolves inside the project root before dumping config files.
 9. Create `logsPath`, `artifactsPath`, and `.agent-1c/features`.
 10. Ensure `.dev.env`, `*.cf`, `*.dt`, and logs are ignored by Git.
+11. Run 1C Designer operations strictly sequentially. The helper must wait for the previous `1cv8.exe` process to exit before starting the next Designer command against the same infobase.
 
 ## Git Rules
 
@@ -329,3 +330,7 @@ Stop immediately when:
 - 1C Designer returns a non-zero exit code.
 - CF export fails.
 - Apache publication is requested but `webinst.exe` or Apache kind is missing.
+
+## Troubleshooting
+
+- "Ошибка блокировки информационной базы для конфигурирования" during initialization means another Designer process still holds the infobase lock. This can be a manually opened Configurator or a previous `1cv8.exe` process that has not exited yet. Close the manual Configurator; the workflow helper must wait between its own consecutive Designer launches.

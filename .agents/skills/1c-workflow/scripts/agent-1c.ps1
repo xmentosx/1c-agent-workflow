@@ -806,15 +806,40 @@ function ConvertFrom-OptionalPasswordAnswer {
 }
 
 function ConvertTo-NativeEmptyStringArgument {
-    param([string]$Value)
+    param([AllowNull()][string]$Value)
 
-    if ([string]::IsNullOrEmpty($Value)) {
-        # Windows PowerShell drops plain empty native arguments. Passing "" keeps
-        # an empty argv value so the next 1C option is not shifted into its place.
-        return '""'
+    if ($null -eq $Value) {
+        return ""
     }
 
     return $Value
+}
+
+function ConvertTo-NativeCommandLineArgument {
+    param([AllowNull()][string]$Argument)
+
+    if ($null -eq $Argument -or $Argument.Length -eq 0) {
+        return '""'
+    }
+
+    if ($Argument -notmatch '[\s"]') {
+        return $Argument
+    }
+
+    $escaped = $Argument -replace '(\\*)"', '$1$1\"'
+    $escaped = $escaped -replace '(\\+)$', '$1$1'
+    return '"' + $escaped + '"'
+}
+
+function Join-NativeCommandLineArguments {
+    param([string[]]$Arguments)
+
+    $quoted = @()
+    foreach ($arg in $Arguments) {
+        $quoted += ConvertTo-NativeCommandLineArgument $arg
+    }
+
+    return ($quoted -join " ")
 }
 
 function Format-SafeCommandLine {
@@ -824,7 +849,7 @@ function Format-SafeCommandLine {
     )
 
     $secretKeys = @("/P", "/ConfigurationRepositoryP")
-    $parts = @($Command)
+    $parts = @((ConvertTo-NativeCommandLineArgument $Command))
     $maskNext = $false
     foreach ($arg in $Arguments) {
         if ($maskNext) {
@@ -833,13 +858,35 @@ function Format-SafeCommandLine {
             continue
         }
 
-        $parts += $(if ($arg -match "\s") { '"' + $arg + '"' } else { $arg })
+        $parts += ConvertTo-NativeCommandLineArgument $arg
         if ($secretKeys -contains $arg) {
             $maskNext = $true
         }
     }
 
     return ($parts -join " ")
+}
+
+function Invoke-NativeProcessAndWait {
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments
+    )
+
+    $argumentLine = Join-NativeCommandLineArguments -Arguments $Arguments
+    $process = Start-Process `
+        -FilePath $FilePath `
+        -ArgumentList $argumentLine `
+        -WorkingDirectory $script:ProjectRoot `
+        -WindowStyle Hidden `
+        -Wait `
+        -PassThru
+
+    if ($null -eq $process) {
+        throw "Failed to start process: $FilePath"
+    }
+
+    return $process.ExitCode
 }
 
 function Invoke-Designer {
@@ -869,9 +916,9 @@ function Invoke-Designer {
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
 
-    & $platformPath @args
-    if ($LASTEXITCODE -ne 0) {
-        throw "1C Designer failed with exit code $LASTEXITCODE. Log: $logPath"
+    $exitCode = Invoke-NativeProcessAndWait -FilePath $platformPath -Arguments $args
+    if ($exitCode -ne 0) {
+        throw "1C Designer failed with exit code $exitCode. Log: $logPath"
     }
 
     return $logPath

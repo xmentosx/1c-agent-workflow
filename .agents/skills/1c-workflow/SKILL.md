@@ -74,6 +74,8 @@ When unlinking the feature copy from the 1C configuration repository, do not pas
 
 If any 1C command, Git command, or publication command fails, stop the workflow and report the log path.
 
+Run 1C Designer operations strictly sequentially. The helper must wait for each `1cv8.exe` process to exit before starting the next Designer command against the same infobase.
+
 ## Script Usage
 
 From the project root:
