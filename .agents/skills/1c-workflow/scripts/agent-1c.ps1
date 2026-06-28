@@ -195,6 +195,32 @@ function Resolve-ProjectPath {
     return [System.IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path))
 }
 
+function Test-DirectoryExists {
+    param([string]$Path)
+    if (-not $Path) {
+        return $false
+    }
+
+    try {
+        return [System.IO.Directory]::Exists($Path)
+    } catch {
+        return $false
+    }
+}
+
+function Get-ChildDirectoriesSafe {
+    param([string]$Path)
+    if (-not (Test-DirectoryExists -Path $Path)) {
+        return @()
+    }
+
+    try {
+        return @(Get-ChildItem -LiteralPath $Path -Directory -ErrorAction Stop)
+    } catch {
+        return @()
+    }
+}
+
 function Resolve-InfoBasePath {
     param([string]$Path)
     if (-not $Path) {
@@ -354,7 +380,7 @@ function Resolve-PlatformExecutablePath {
     }
 
     $resolvedPath = [Environment]::ExpandEnvironmentVariables($Path.Trim())
-    if ((Test-Path -LiteralPath $resolvedPath -PathType Container)) {
+    if (Test-DirectoryExists -Path $resolvedPath) {
         return (Join-Path $resolvedPath "1cv8.exe")
     }
 
@@ -388,13 +414,9 @@ function Find-Installed1CPlatforms {
     $items = @()
     $seen = @{}
     foreach ($root in $roots) {
-        if (-not (Test-Path -LiteralPath $root)) {
-            continue
-        }
-
-        foreach ($dir in Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue) {
+        foreach ($dir in Get-ChildDirectoriesSafe -Path $root) {
             $exePath = Join-Path $dir.FullName "bin\1cv8.exe"
-            if (-not (Test-Path -LiteralPath $exePath)) {
+            if (-not (Test-Path -LiteralPath $exePath -PathType Leaf -ErrorAction SilentlyContinue)) {
                 continue
             }
 

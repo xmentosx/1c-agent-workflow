@@ -48,7 +48,7 @@ Required for initial project setup:
 - Current working directory is the project root. Show its absolute path and ask the developer to confirm initialization in this folder.
 - Current agent target. Do not ask the developer to choose Codex/Kilo; use the agent surface that is running this bootstrap. If it cannot be detected, use `codex`.
 - Directory for feature infobase copies (`FEATURE_INFOBASE_ROOT` / `featureInfoBaseRoot`).
-- 1C platform version/path. Before asking for a manual path, scan installed versions under `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`. If versions are found, ask the developer to choose one of them and store the selected `...\bin\1cv8.exe` path. Do not offer the common root `C:\Program Files\1cv8` as a platform version. Ask for a custom full path only when no installed version is found or the developer chooses manual input.
+- 1C platform version/path. Before asking for a manual path, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`. Either folder may be absent; treat missing folders as normal and skip them without error. If versions are found, ask the developer to choose one of them and store the selected `...\bin\1cv8.exe` path. Do not offer the common root `C:\Program Files\1cv8` as a platform version. Ask for a custom full path only when no installed version is found or the developer chooses manual input.
 - Source infobase kind: `file` or `server`.
 - For a file infobase: source infobase directory.
 - For a server infobase: server name and infobase name. The agent must build the connection string as `Srvr="<server>";Ref="<base>";`.
@@ -123,7 +123,7 @@ The agent must only offer install/setup commands. It must not install software w
 Default checks come from `.agent-1c/tools.json`:
 
 - Git: `git --version`, offer `winget install --id Git.Git -e`.
-- 1C platform: check `PLATFORM_PATH` or `platformPath`; when missing/invalid, search installed versions in standard `1cv8` folders and offer the discovered `...\bin\1cv8.exe` paths before asking for manual input.
+- 1C platform: check `PLATFORM_PATH` or `platformPath`; when missing/invalid, search installed versions in existing standard `1cv8` folders and offer the discovered `...\bin\1cv8.exe` paths before asking for manual input. Missing `Program Files`/`Program Files (x86)` `1cv8` folders are not errors.
 - Apache/webinst: check only when web publication is enabled/requested.
 
 When the workflow helper is available, the agent may list installed 1C versions with:

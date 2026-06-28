@@ -102,7 +102,7 @@ Create `.agent-1c/tools.json` from `templates/tools.json`. The helper reads inst
 Default checks:
 
 - `git`: check `git --version`; offer `winget install --id Git.Git -e`.
-- `1c-platform`: check `PLATFORM_PATH` or `project.platformPath`; when missing/invalid, scan installed versions under `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` and offer the discovered `...\bin` or `...\bin\1cv8.exe` paths before manual input. Do not offer the common root `C:\Program Files\1cv8` as a version.
+- `1c-platform`: check `PLATFORM_PATH` or `project.platformPath`; when missing/invalid, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` and offer the discovered `...\bin` or `...\bin\1cv8.exe` paths before manual input. Either standard folder may be absent; skip missing folders without error. Do not offer the common root `C:\Program Files\1cv8` as a version.
 - `apache-webinst`: check `WEBINST_PATH`/`web.webInstPath` only when web publication is enabled/requested.
 
 ## Required Questions
@@ -125,7 +125,7 @@ Interactive question style:
 For project initialization:
 
 - Do not ask for project root. Use the agent's current working directory as the project root, show its absolute path to the developer, and ask for confirmation before initialization.
-- 1C platform executable path (`1cv8.exe`): before asking for manual input, search installed versions under `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`. If one or more versions are found, ask the developer to choose a version and use its `bin\1cv8.exe` path. A manually entered version `bin` folder is acceptable; the helper resolves it to `bin\1cv8.exe`. Ask for a custom full path only when no version is found or the developer chooses manual input.
+- 1C platform executable path (`1cv8.exe`): before asking for manual input, search installed versions under existing `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` folders. If a standard folder is absent, skip it silently. If one or more versions are found, ask the developer to choose a version and use its `bin\1cv8.exe` path. A manually entered version `bin` folder is acceptable; the helper resolves it to `bin\1cv8.exe`. Ask for a custom full path only when no version is found or the developer chooses manual input.
 - Source infobase kind: `file` or `server`.
 - For a file infobase: source infobase directory.
 - For a server infobase: server name and infobase name. Build the connection string as `Srvr="<server>";Ref="<base>";`.
