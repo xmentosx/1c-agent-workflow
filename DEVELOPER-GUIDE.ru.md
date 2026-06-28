@@ -23,8 +23,10 @@ Git используется как рабочая история изменен
 Откройте папку будущего проекта в Codex или Kilo Code и попросите агента:
 
 ```text
-Инициализируй 1С-проект по AGENT-INSTALL.md из репозитория https://github.com/xmentosx/1c-agent-workflow
+Инициализируй 1С-проект по файлу https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTALL.md
 ```
+
+Используйте именно полную ссылку на файл. Так агенту не нужно угадывать ветку репозитория и искать `AGENT-INSTALL.md` самостоятельно.
 
 Текущая папка агента считается папкой проекта. Перед инициализацией агент должен показать ее абсолютный путь и спросить, продолжать ли инициализацию именно в этой папке.
 
@@ -296,7 +298,7 @@ Git используется как рабочая история изменен
 ## 14. Короткий пример полного цикла
 
 ```text
-Инициализируй 1С-проект по AGENT-INSTALL.md из репозитория https://github.com/xmentosx/1c-agent-workflow
+Инициализируй 1С-проект по файлу https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTALL.md
 ```
 
 ```text

@@ -3,10 +3,18 @@
 This public file is the bootstrap contract for agents. A developer can say:
 
 ```text
-Initialize a 1C agent project using this file: https://github.com/xmentosx/1c-agent-workflow/blob/master/AGENT-INSTALL.md
+Initialize a 1C agent project using this file: https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTALL.md
 ```
 
 The agent must read this file, ask for missing inputs, install the shared workflow files into the target project, then run the project initialization lifecycle.
+
+Canonical bootstrap source:
+
+- Repository: `https://github.com/xmentosx/1c-agent-workflow.git`
+- Branch: `master`
+- Bootstrap file: `AGENT-INSTALL.md`
+
+Do not infer or try `main` for this package unless the user explicitly provides a different branch or URL.
 
 ## Supported Agents
 
@@ -61,7 +69,8 @@ Secrets must go to `.dev.env` or process environment variables. Never commit sec
 
 1. Determine the source directory containing this bootstrap package.
    - If this file was read from a cloned repository, use that repository root.
-   - If this file was read from a URL and the repository root is unknown, ask the user for the repository URL, clone it to a temporary directory, and use that clone.
+   - If this file was read from the canonical URL and the repository root is unknown, clone `https://github.com/xmentosx/1c-agent-workflow.git` with `--branch master --single-branch` to a temporary directory, and use that clone.
+   - If the user provided a different bootstrap URL, derive the repository and branch from that URL. If the branch is not present in the URL, ask one short clarifying question instead of guessing `main`.
 
 2. Copy the common skill into the target project:
 
