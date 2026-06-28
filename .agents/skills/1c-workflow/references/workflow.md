@@ -36,6 +36,8 @@ Create and maintain:
 
 Never store passwords in committed files.
 
+All workflow state files and `.dev.env` must be UTF-8. Preserve Cyrillic usernames, infobase paths, and repository paths exactly as the developer entered them.
+
 ## Project Config Shape
 
 Use this as `.agent-1c/project.json`:
@@ -154,7 +156,7 @@ Before destructive or stateful actions:
 2. Verify `git` is available before Git operations.
 3. Verify `1cv8.exe` exists before 1C Designer operations.
 4. Verify `featureInfoBaseRoot` is set during initialization and before feature creation.
-5. Verify the source file infobase has `1Cv8.1CD` when `infoBaseKind` is `file`.
+5. Verify the source file infobase has `1Cv8.1CD` when `infoBaseKind` is `file`; stop before launching 1C Designer if the file is missing.
 6. Verify source server name and infobase name are set when `infoBaseKind` is `server`, unless legacy `sourceInfoBasePath` is explicitly configured.
 7. Verify the Git worktree is clean before switching branches.
 8. Verify `src/cf` resolves inside the project root before dumping config files.
@@ -186,7 +188,7 @@ Goal: create the baseline project state.
 1. Show the current working directory as project root and confirm the developer wants to initialize there.
 2. Collect missing parameters, including `featureInfoBaseRoot`.
    - For the platform path, first offer discovered installed 1C versions; do not make the developer type `C:\Program Files\1cv8\...\bin\1cv8.exe` when it can be selected.
-3. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing.
+3. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing. Write them as UTF-8.
 4. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.
 5. Initialize local Git if needed.
 6. Checkout or create `master`.

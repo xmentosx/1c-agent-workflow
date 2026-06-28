@@ -12,4 +12,6 @@ Before asking for the 1C platform path, search standard `C:\Program Files\1cv8` 
 
 Do not edit installer-managed `AGENTS.md` directly. Store secrets only in local `.dev.env`.
 
+Write `.dev.env` and `.agent-1c/*.json` files as UTF-8 so Cyrillic usernames and paths are preserved.
+
 Feature changes must be loaded only into the feature infobase copy, never directly into the source infobase connected to 1C configuration repository storage.

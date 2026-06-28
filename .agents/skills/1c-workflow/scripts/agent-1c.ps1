@@ -34,13 +34,55 @@ function Write-Section {
     Write-Host "== $Text =="
 }
 
+function Get-Utf8Encoding {
+    return New-Object System.Text.UTF8Encoding $false
+}
+
+function Read-Utf8Text {
+    param([string]$Path)
+    return [System.IO.File]::ReadAllText($Path, (Get-Utf8Encoding))
+}
+
+function Read-Utf8Lines {
+    param([string]$Path)
+    return [System.IO.File]::ReadAllLines($Path, (Get-Utf8Encoding))
+}
+
+function Write-Utf8Text {
+    param(
+        [string]$Path,
+        [string]$Value
+    )
+    [System.IO.File]::WriteAllText($Path, $Value, (Get-Utf8Encoding))
+}
+
+function Add-Utf8Text {
+    param(
+        [string]$Path,
+        [string]$Value
+    )
+    [System.IO.File]::AppendAllText($Path, $Value, (Get-Utf8Encoding))
+}
+
+function New-TimestampedFilePath {
+    param(
+        [string]$Directory,
+        [string]$Prefix,
+        [string]$Extension
+    )
+
+    $suffix = [guid]::NewGuid().ToString("N").Substring(0, 8)
+    $name = "{0}{1}-{2}-{3}{4}" -f $Prefix, (Get-Date -Format "yyyyMMdd-HHmmss-fff"), $PID, $suffix, $Extension
+    return Join-Path $Directory $name
+}
+
 function Import-DotEnv {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) {
         return
     }
 
-    foreach ($line in Get-Content -LiteralPath $Path) {
+    foreach ($line in Read-Utf8Lines -Path $Path) {
         $trimmed = $line.Trim()
         if (-not $trimmed -or $trimmed.StartsWith("#")) {
             continue
@@ -64,7 +106,7 @@ function Import-DotEnv {
 
 function Read-ProjectConfig {
     if (Test-Path -LiteralPath $script:ConfigPath) {
-        $script:Config = Get-Content -LiteralPath $script:ConfigPath -Raw | ConvertFrom-Json
+        $script:Config = Read-Utf8Text -Path $script:ConfigPath | ConvertFrom-Json
     } else {
         $script:Config = [pscustomobject]@{}
     }
@@ -151,6 +193,17 @@ function Resolve-ProjectPath {
         return [System.IO.Path]::GetFullPath($Path)
     }
     return [System.IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path))
+}
+
+function Resolve-InfoBasePath {
+    param([string]$Path)
+    if (-not $Path) {
+        return $Path
+    }
+    if ([System.IO.Path]::IsPathRooted($Path)) {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+    return Resolve-ProjectPath $Path
 }
 
 function ConvertTo-SafeName {
@@ -276,7 +329,7 @@ function Ensure-GitIgnore {
     )
 
     if (Test-Path -LiteralPath $gitignorePath) {
-        $current = Get-Content -LiteralPath $gitignorePath
+        $current = Read-Utf8Lines -Path $gitignorePath
     } else {
         $current = @()
     }
@@ -289,7 +342,7 @@ function Ensure-GitIgnore {
     }
 
     if ($linesToAdd.Count -gt 0) {
-        Add-Content -LiteralPath $gitignorePath -Value $linesToAdd
+        Add-Utf8Text -Path $gitignorePath -Value (($linesToAdd -join [Environment]::NewLine) + [Environment]::NewLine)
     }
 }
 
@@ -452,7 +505,7 @@ function Read-ToolsManifest {
     $script:ToolsManifestLoaded = $true
     $path = Join-Path $script:ProjectRoot ".agent-1c\tools.json"
     if (Test-Path -LiteralPath $path) {
-        $script:ToolsManifest = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        $script:ToolsManifest = Read-Utf8Text -Path $path | ConvertFrom-Json
     }
     return $script:ToolsManifest
 }
@@ -607,6 +660,33 @@ function List-Platforms {
     }
 }
 
+function Assert-InfoBaseAvailable {
+    param(
+        [string]$Kind,
+        [string]$Path,
+        [string]$SettingName = "infobase path"
+    )
+
+    if ($Kind -eq "file") {
+        $resolvedPath = Resolve-InfoBasePath $Path
+        if (-not $resolvedPath) {
+            throw "File infobase path is empty: $SettingName"
+        }
+        if (-not (Test-Path -LiteralPath $resolvedPath -PathType Container)) {
+            throw "File infobase directory was not found: $resolvedPath. Check $SettingName before running 1C Designer."
+        }
+
+        $dbFile = Join-Path $resolvedPath "1Cv8.1CD"
+        if (-not (Test-Path -LiteralPath $dbFile -PathType Leaf)) {
+            throw "File infobase database file was not found: $dbFile. Check $SettingName; the helper will not let 1C create a new empty infobase during this workflow."
+        }
+    } elseif ($Kind -eq "server") {
+        Require-Value $SettingName $Path | Out-Null
+    } else {
+        throw "Unknown infobase kind: $Kind"
+    }
+}
+
 function New-InfobaseArgs {
     param(
         [string]$Kind,
@@ -617,7 +697,7 @@ function New-InfobaseArgs {
 
     $args = @()
     if ($Kind -eq "file") {
-        $args += @("/F", $Path)
+        $args += @("/F", (Resolve-InfoBasePath $Path))
     } elseif ($Kind -eq "server") {
         $args += @("/S", $Path)
     } else {
@@ -647,9 +727,11 @@ function Invoke-Designer {
         throw "1cv8.exe was not found: $platformPath"
     }
 
+    Assert-InfoBaseAvailable -Kind $InfoBaseKind -Path $InfoBasePath -SettingName "infobase path"
+
     $logsPath = Resolve-ProjectPath (Get-ConfigValue -Path "logsPath" -Default "logs/1c")
     New-Item -ItemType Directory -Force -Path $logsPath | Out-Null
-    $logPath = Join-Path $logsPath ("1c-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".log")
+    $logPath = New-TimestampedFilePath -Directory $logsPath -Prefix "1c-" -Extension ".log"
     $script:LastLogPath = $logPath
 
     $ibArgs = New-InfobaseArgs -Kind $InfoBaseKind -Path $InfoBasePath -User $User -Password $Password
@@ -803,9 +885,8 @@ function New-ConfigLoadListFile {
     $logsPath = Resolve-ProjectPath (Get-ConfigValue -Path "logsPath" -Default "logs/1c")
     New-Item -ItemType Directory -Force -Path $logsPath | Out-Null
     $safeFeatureName = Get-StateValue -State $State -Name "safeFeatureName" -Default "feature"
-    $listFilePath = Join-Path $logsPath ("load-files-" + $safeFeatureName + "-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".txt")
-    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllLines($listFilePath, [string[]]$Files, $utf8NoBom)
+    $listFilePath = New-TimestampedFilePath -Directory $logsPath -Prefix ("load-files-" + $safeFeatureName + "-") -Extension ".txt"
+    [System.IO.File]::WriteAllLines($listFilePath, [string[]]$Files, (Get-Utf8Encoding))
     return $listFilePath
 }
 
@@ -957,13 +1038,13 @@ Do not edit installer-managed `AGENTS.md` directly. Store secrets only in local 
 "@
 
     if (Test-Path -LiteralPath $path) {
-        $current = Get-Content -LiteralPath $path -Raw
+        $current = Read-Utf8Text -Path $path
         if ($current.Contains($marker)) {
             return
         }
-        Add-Content -LiteralPath $path -Value $block
+        Add-Utf8Text -Path $path -Value ($block + [Environment]::NewLine)
     } else {
-        Set-Content -LiteralPath $path -Value $block.TrimStart()
+        Write-Utf8Text -Path $path -Value $block.TrimStart()
     }
 }
 
@@ -976,7 +1057,7 @@ function Save-FeatureState {
     $featuresDir = Join-Path $script:ProjectRoot ".agent-1c\features"
     New-Item -ItemType Directory -Force -Path $featuresDir | Out-Null
     $path = Join-Path $featuresDir ($SafeFeatureName + ".json")
-    $State | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $path
+    Write-Utf8Text -Path $path -Value (($State | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
     return $path
 }
 
@@ -1021,7 +1102,7 @@ function Read-FeatureState {
     if (-not (Test-Path -LiteralPath $path)) {
         throw "Feature state not found: $path"
     }
-    return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    return Read-Utf8Text -Path $path | ConvertFrom-Json
 }
 
 function Publish-FeatureToApache {
@@ -1285,7 +1366,7 @@ function List-Features {
     $states = @()
     foreach ($file in Get-ChildItem -LiteralPath $featuresDir -Filter "*.json" -File) {
         try {
-            $state = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+            $state = Read-Utf8Text -Path $file.FullName | ConvertFrom-Json
             $state | Add-Member -NotePropertyName statePath -NotePropertyValue $file.FullName -Force
             if (-not (Get-StateValue -State $state -Name "finishedAt")) {
                 $states += $state
@@ -1364,12 +1445,7 @@ function Validate-Project {
 
     $kind = Get-InfoBaseKind
     $source = Get-SourceInfoBasePath
-    if ($kind -eq "file") {
-        $dbFile = Join-Path $source "1Cv8.1CD"
-        if (-not (Test-Path -LiteralPath $dbFile)) {
-            throw "File infobase was not found: $dbFile"
-        }
-    }
+    Assert-InfoBaseAvailable -Kind $kind -Path $source -SettingName "source infobase"
 
     Get-RepositoryPath | Out-Null
     Require-Value "REPOSITORY_USER" (Get-EnvValue -Name "REPOSITORY_USER") | Out-Null

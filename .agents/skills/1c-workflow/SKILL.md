@@ -58,9 +58,13 @@ Load feature files into 1C with a generated `-listFile` of changed files under `
 
 Never store passwords in Git, `AGENTS.md`, `USER-RULES.md`, or committed JSON. Store secrets only in local `.dev.env` or process environment variables.
 
+Read and write `.dev.env`, `.agent-1c/project.json`, `.agent-1c/tools.json`, and feature state JSON as UTF-8. Preserve Cyrillic paths and usernames exactly.
+
 Do not edit installer-managed `AGENTS.md` directly. Put project-specific workflow notes in `USER-RULES.md` or `.agent-1c/`.
 
 Before switching branches, copying bases, dumping configuration files, or running 1C Designer, check the working tree and stop on unexpected uncommitted changes.
+
+For file infobases, verify that the directory exists and contains `1Cv8.1CD` before launching 1C Designer. Do not let 1C open the interactive "create new infobase" dialog during this workflow.
 
 All feature changes load into the copied feature infobase. Never load feature changes directly into the source infobase connected to the 1C configuration repository.
 

@@ -66,6 +66,12 @@ Required for feature setup:
 
 Secrets must go to `.dev.env` or process environment variables. Never commit secrets.
 
+Encoding rules:
+
+- Create and update `.dev.env`, `.agent-1c/*.json`, and `.agent-1c/features/*.json` as UTF-8.
+- Preserve developer input exactly, including Cyrillic usernames and paths such as `D:\Git\PM5 КОРП 4`.
+- Do not recode values through OEM/ANSI console encodings before writing them to files.
+
 ## Install Files Into Target Project
 
 1. Determine the source directory containing this bootstrap package.
@@ -89,7 +95,7 @@ Secrets must go to `.dev.env` or process environment variables. Never commit sec
 
 5. Create `.agent-1c/tools.json` from `templates/tools.json` when missing. Keep it committed so the team can adjust required software checks and install suggestions.
 
-6. Create `.dev.env` from `templates/dev.env.example` when missing. Fill local paths and secrets. Ensure `.dev.env` is ignored by Git.
+6. Create `.dev.env` from `templates/dev.env.example` when missing. Fill local paths and secrets. Write it as UTF-8 and ensure `.dev.env` is ignored by Git.
 
 7. Append `templates/gitignore.append` lines to `.gitignore` if absent.
 
