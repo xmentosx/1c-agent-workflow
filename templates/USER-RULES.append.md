@@ -6,6 +6,8 @@ Use `FEATURE-DEVELOPMENT.ru.md` for the development process inside a feature bra
 
 When asking the developer for missing setup values, ask one value at a time and accept the raw value only. Do not ask for `KEY=value` blocks, one large free-form block with all missing variables, or variable names.
 
+Before asking for the 1C platform path, search standard `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` folders and offer installed versions as choices. Do not offer the common `C:\Program Files\1cv8` root as a version.
+
 Do not edit installer-managed `AGENTS.md` directly. Store secrets only in local `.dev.env`.
 
 Feature changes must be loaded only into the feature infobase copy, never directly into the source infobase connected to 1C configuration repository storage.

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "init-project", "sync-master", "start-feature", "load-feature", "refresh-feature", "export-feature-cf", "finish-feature", "switch-master", "switch-feature", "list-features", "dump-cf")]
+    [ValidateSet("help", "validate", "check-tools", "list-platforms", "init-project", "sync-master", "start-feature", "load-feature", "refresh-feature", "export-feature-cf", "finish-feature", "switch-master", "switch-feature", "list-features", "dump-cf")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -293,8 +293,95 @@ function Ensure-GitIgnore {
     }
 }
 
+function Resolve-PlatformExecutablePath {
+    param([string]$Path)
+
+    if (-not $Path) {
+        return $Path
+    }
+
+    $resolvedPath = [Environment]::ExpandEnvironmentVariables($Path.Trim())
+    if ((Test-Path -LiteralPath $resolvedPath -PathType Container)) {
+        return (Join-Path $resolvedPath "1cv8.exe")
+    }
+
+    return $resolvedPath
+}
+
 function Get-PlatformPath {
-    return Require-Value "PLATFORM_PATH or project.platformPath" (Get-Setting -EnvName "PLATFORM_PATH" -ConfigName "platformPath")
+    $value = Require-Value "PLATFORM_PATH or project.platformPath" (Get-Setting -EnvName "PLATFORM_PATH" -ConfigName "platformPath")
+    return Resolve-PlatformExecutablePath -Path $value
+}
+
+function Find-Installed1CPlatforms {
+    $roots = @()
+
+    $programFiles = [Environment]::GetFolderPath("ProgramFiles")
+    if ($programFiles) {
+        $roots += (Join-Path $programFiles "1cv8")
+    }
+
+    $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)", "Process")
+    if (-not $programFilesX86) {
+        $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)", "Machine")
+    }
+    if ($programFilesX86) {
+        $roots += (Join-Path $programFilesX86 "1cv8")
+    }
+
+    $roots += @("C:\Program Files\1cv8", "C:\Program Files (x86)\1cv8")
+    $roots = @($roots | Where-Object { $_ } | Select-Object -Unique)
+
+    $items = @()
+    $seen = @{}
+    foreach ($root in $roots) {
+        if (-not (Test-Path -LiteralPath $root)) {
+            continue
+        }
+
+        foreach ($dir in Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue) {
+            $exePath = Join-Path $dir.FullName "bin\1cv8.exe"
+            if (-not (Test-Path -LiteralPath $exePath)) {
+                continue
+            }
+
+            $key = $exePath.ToLowerInvariant()
+            if ($seen.ContainsKey($key)) {
+                continue
+            }
+            $seen[$key] = $true
+
+            $parsedVersion = $null
+            $versionOk = [System.Version]::TryParse($dir.Name, [ref]$parsedVersion)
+            $items += [pscustomobject]@{
+                version = $dir.Name
+                parsedVersion = $(if ($versionOk) { $parsedVersion } else { [System.Version]"0.0" })
+                binPath = (Split-Path -Parent $exePath)
+                exePath = $exePath
+                root = $root
+            }
+        }
+    }
+
+    return @($items | Sort-Object @{ Expression = { $_.parsedVersion }; Descending = $true }, @{ Expression = { $_.exePath }; Descending = $false })
+}
+
+function Format-Installed1CPlatformOptions {
+    param([object[]]$Platforms)
+
+    $items = @($Platforms)
+    if ($items.Count -eq 0) {
+        return "No installed 1C platform versions were found under C:\Program Files\1cv8 or C:\Program Files (x86)\1cv8."
+    }
+
+    $lines = @("Installed 1C platform versions detected:")
+    $index = 1
+    foreach ($item in $items) {
+        $lines += "$index. $($item.version) - $($item.exePath)"
+        $index++
+    }
+    $lines += "Choose one of these 1cv8.exe paths for PLATFORM_PATH, or enter a custom full path."
+    return ($lines -join "`n")
 }
 
 function Get-InfoBaseKind {
@@ -449,15 +536,23 @@ function Check-Tools {
         -Detail $(if ($gitCommand) { $gitCheck.detail } else { "git command not found" }) `
         -Offer (Get-ToolOffer -Id "git" -Fallback "winget install --id Git.Git -e")
 
-    $platformPath = Get-Setting -EnvName "PLATFORM_PATH" -ConfigName "platformPath"
+    $rawPlatformPath = Get-Setting -EnvName "PLATFORM_PATH" -ConfigName "platformPath"
+    $platformPath = Resolve-PlatformExecutablePath -Path $rawPlatformPath
     $platformOk = ($platformPath -and (Test-Path -LiteralPath $platformPath))
+    $platformOffer = Get-ToolOffer -Id "1c-platform" -Fallback "Install 1C:Enterprise platform manually, then set PLATFORM_PATH in .dev.env."
+    if (-not $platformOk) {
+        $foundPlatforms = @(Find-Installed1CPlatforms)
+        if ($foundPlatforms.Count -gt 0) {
+            $platformOffer = Format-Installed1CPlatformOptions -Platforms $foundPlatforms
+        }
+    }
     $results += New-ToolResult `
         -Id "1c-platform" `
         -Name "1C platform" `
         -Required $true `
         -Ok ([bool]$platformOk) `
-        -Detail $(if ($platformPath) { $platformPath } else { "PLATFORM_PATH/project.platformPath is missing" }) `
-        -Offer (Get-ToolOffer -Id "1c-platform" -Fallback "Install 1C:Enterprise platform manually, then set PLATFORM_PATH in .dev.env.")
+        -Detail $(if ($platformOk) { $platformPath } elseif ($rawPlatformPath) { "Configured path does not exist: $platformPath" } else { "PLATFORM_PATH/project.platformPath is missing" }) `
+        -Offer $platformOffer
 
     $publishDefault = [bool](Get-ConfigValue -Path "web.publishByDefault" -Default $false)
     if ($PublishToApache -or $publishDefault) {
@@ -491,6 +586,24 @@ function Check-Tools {
 
     if ($StopOnMissing -and $missingRequired.Count -gt 0) {
         throw "Required tools are missing. Install or configure them, then rerun this action."
+    }
+}
+
+function List-Platforms {
+    Write-Section "Installed 1C platforms"
+    $platforms = @(Find-Installed1CPlatforms)
+    if ($platforms.Count -eq 0) {
+        Write-Host "No installed 1C platform versions were found under C:\Program Files\1cv8 or C:\Program Files (x86)\1cv8."
+        Write-Host "Install 1C:Enterprise platform manually or enter the full path to bin\1cv8.exe."
+        return
+    }
+
+    $index = 1
+    foreach ($platform in $platforms) {
+        Write-Host "$index. Version: $($platform.version)"
+        Write-Host "   bin: $($platform.binPath)"
+        Write-Host "   1cv8.exe: $($platform.exePath)"
+        $index++
     }
 }
 
@@ -1267,6 +1380,7 @@ Actions:
   help                Show this help.
   validate            Check required local settings.
   check-tools         Check Git, 1C platform, and optional web tools.
+  list-platforms      Show installed 1C platform versions found in Program Files.
   init-project        Sync source infobase, dump config to master, install rules.
   sync-master         Refresh master from source infobase connected to storage.
   start-feature       Create feature branch and feature infobase copy.
@@ -1281,6 +1395,7 @@ Actions:
 
 Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-platforms
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action start-feature -FeatureName "order-discounts"
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action load-feature
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-feature
@@ -1298,6 +1413,7 @@ try {
         "help" { Show-Help }
         "validate" { Validate-Project }
         "check-tools" { Check-Tools }
+        "list-platforms" { List-Platforms }
         "init-project" { Initialize-Project }
         "sync-master" { Sync-Master }
         "start-feature" { Start-Feature }

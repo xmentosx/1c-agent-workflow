@@ -44,6 +44,8 @@ When collecting parameters from the developer, ask one value at a time and expec
 
 Use fixed project defaults: `master` is the main branch and `src/cf` is the configuration dump path. Do not ask the developer for these values during initialization.
 
+Before asking for the 1C platform path, scan standard installation folders for installed versions and offer the discovered version `bin`/`bin\1cv8.exe` paths as choices. Do not offer the common `C:\Program Files\1cv8` root as a version. Ask for a custom path only when no version is found or the developer chooses manual input.
+
 Use the current working directory as the project root. During initialization, show its absolute path and ask the developer to confirm before continuing; do not ask them to enter a project path.
 
 Do not ask whether to configure Codex or Kilo Code. Use the agent surface currently running the workflow; if it cannot be detected, use Codex as the fallback.

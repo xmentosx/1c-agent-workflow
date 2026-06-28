@@ -98,7 +98,7 @@ Create `.agent-1c/tools.json` from `templates/tools.json`. The helper reads inst
 Default checks:
 
 - `git`: check `git --version`; offer `winget install --id Git.Git -e`.
-- `1c-platform`: check `PLATFORM_PATH` or `project.platformPath`; manual install suggestion.
+- `1c-platform`: check `PLATFORM_PATH` or `project.platformPath`; when missing/invalid, scan installed versions under `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` and offer the discovered `...\bin` or `...\bin\1cv8.exe` paths before manual input. Do not offer the common root `C:\Program Files\1cv8` as a version.
 - `apache-webinst`: check `WEBINST_PATH`/`web.webInstPath` only when web publication is enabled/requested.
 
 ## Required Questions
@@ -114,13 +114,13 @@ Interactive question style:
 - Never show one large setup question that lists all missing variables.
 - If the chat surface supports forms or structured prompts, create one prompt per value instead of one custom free-form answer.
 - Do not make the developer type variable names such as `PLATFORM_PATH`, `FEATURE_INFOBASE_ROOT`, `SOURCE_INFOBASE_PATH`, `SOURCE_SERVER_NAME`, or `REPOSITORY_PATH`.
-- Use human labels in questions, for example: "Введите путь к 1cv8.exe", "Введите каталог копий баз подпроектов", "Введите адрес хранилища конфигурации".
+- Use human labels in questions, for example: "Выберите версию платформы 1С", "Введите каталог копий баз подпроектов", "Введите адрес хранилища конфигурации".
 - For `file/server` or yes/no choices, ask a normal choice question first; then ask only the values relevant to that choice.
 
 For project initialization:
 
 - Do not ask for project root. Use the agent's current working directory as the project root, show its absolute path to the developer, and ask for confirmation before initialization.
-- 1C platform executable path (`1cv8.exe`).
+- 1C platform executable path (`1cv8.exe`): before asking for manual input, search installed versions under `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`. If one or more versions are found, ask the developer to choose a version and use its `bin\1cv8.exe` path. A manually entered version `bin` folder is acceptable; the helper resolves it to `bin\1cv8.exe`. Ask for a custom full path only when no version is found or the developer chooses manual input.
 - Source infobase kind: `file` or `server`.
 - For a file infobase: source infobase directory.
 - For a server infobase: server name and infobase name. Build the connection string as `Srvr="<server>";Ref="<base>";`.
@@ -171,6 +171,7 @@ Goal: verify the local machine is ready and provide install suggestions without 
 
 1. Read `.agent-1c/tools.json` when present.
 2. Check required tools: Git, 1C platform, and optional Apache/webinst.
+   - For 1C platform, list discovered versions from standard `1cv8` folders when `PLATFORM_PATH` is missing or invalid.
 3. If web publication is enabled/requested, check Apache/webinst settings too.
 4. Report `[OK]` and `[MISSING]` lines.
 5. If required software is missing during `INIT_PROJECT`, stop after showing suggested install/setup commands.
@@ -181,6 +182,7 @@ Goal: create the baseline project state.
 
 1. Show the current working directory as project root and confirm the developer wants to initialize there.
 2. Collect missing parameters, including `featureInfoBaseRoot`.
+   - For the platform path, first offer discovered installed 1C versions; do not make the developer type `C:\Program Files\1cv8\...\bin\1cv8.exe` when it can be selected.
 3. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing.
 4. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.
 5. Initialize local Git if needed.

@@ -19,7 +19,7 @@
       "install": {
         "policy": "manual",
         "commands": [
-          "Install 1C:Enterprise platform manually, then set PLATFORM_PATH in .dev.env."
+          "Choose an installed 1C version from C:\\Program Files\\1cv8\\*\\bin\\1cv8.exe or C:\\Program Files (x86)\\1cv8\\*\\bin\\1cv8.exe, then set PLATFORM_PATH in .dev.env. If no version is found, install 1C:Enterprise platform manually."
         ]
       }
     },

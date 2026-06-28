@@ -9,6 +9,8 @@ Read `.agents/skills/1c-workflow/references/workflow.md`, ask for missing requir
 
 Ask one value at a time. The developer should answer with the value only; do not ask for `KEY=value` input or one large free-form block with all missing variables.
 
+Before asking for `1cv8.exe`, search installed 1C versions under `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`; offer the found versions as choices and use the selected `bin\1cv8.exe` path. Do not offer the common `C:\Program Files\1cv8` root as a version.
+
 Prefer the PowerShell helper:
 
 ```powershell
