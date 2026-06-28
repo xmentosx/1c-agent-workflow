@@ -3,7 +3,7 @@
 This public file is the bootstrap contract for agents. A developer can say:
 
 ```text
-Initialize a 1C agent project using this file: <URL-to-AGENT-INSTALL.md>
+Initialize a 1C agent project using this file: https://github.com/xmentosx/1c-agent-workflow/blob/master/AGENT-INSTALL.md
 ```
 
 The agent must read this file, ask for missing inputs, install the shared workflow files into the target project, then run the project initialization lifecycle.
