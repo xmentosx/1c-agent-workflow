@@ -5,7 +5,9 @@ agent: code
 
 Use the `1c-workflow` skill and execute `INIT_PROJECT`.
 
-Read `.agents/skills/1c-workflow/references/workflow.md`, ask for missing required parameters including the feature infobase copies directory, create/update the project state files, check required software, then run the project initialization workflow.
+Read `.agents/skills/1c-workflow/references/workflow.md`, ask for missing required parameters, create/update the project state files, check required software, then run the project initialization workflow.
+
+Do not ask for the feature infobase copies directory during normal initialization. Use `.agent-1c/infobases/features` inside the project and ensure `.agent-1c/infobases/` is ignored by Git.
 
 Ask one value at a time. The developer should answer with the value only; do not ask for `KEY=value` input or one large free-form block with all missing variables.
 

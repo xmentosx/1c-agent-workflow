@@ -47,7 +47,7 @@ Required for initial project setup:
 
 - Current working directory is the project root. Show its absolute path and ask the developer to confirm initialization in this folder.
 - Current agent target. Do not ask the developer to choose Codex/Kilo; use the agent surface that is running this bootstrap. If it cannot be detected, use `codex`.
-- Directory for feature infobase copies (`FEATURE_INFOBASE_ROOT` / `featureInfoBaseRoot`).
+- Directory for feature infobase copies: do not ask during normal initialization. Use `.agent-1c/infobases/features` inside the project and ensure `.agent-1c/infobases/` is ignored by Git. Ask only if the developer explicitly wants a custom location.
 - 1C platform version/path. Before asking for a manual path, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`. Either folder may be absent; treat missing folders as normal and skip them without error. If versions are found, ask the developer to choose one of them and store the selected `...\bin\1cv8.exe` path. Do not offer the common root `C:\Program Files\1cv8` as a platform version. Ask for a custom full path only when no installed version is found or the developer chooses manual input.
 - Source infobase kind: `file` or `server`.
 - For a file infobase: source infobase directory.
@@ -91,7 +91,7 @@ Encoding rules:
 <project>/.kilo/commands/
 ```
 
-4. Create `.agent-1c/project.json` from `templates/project.json` when missing. Fill non-secret values gathered from the user, including `featureInfoBaseRoot`.
+4. Create `.agent-1c/project.json` from `templates/project.json` when missing. Use the default `featureInfoBaseRoot` unless the developer explicitly requested a custom location.
 
 5. Create `.agent-1c/tools.json` from `templates/tools.json` when missing. Keep it committed so the team can adjust required software checks and install suggestions.
 

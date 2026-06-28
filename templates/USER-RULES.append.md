@@ -14,4 +14,6 @@ Do not edit installer-managed `AGENTS.md` directly. Store secrets only in local 
 
 Write `.dev.env` and `.agent-1c/*.json` files as UTF-8 so Cyrillic usernames and paths are preserved.
 
+Use `.agent-1c/infobases/features` as the default feature infobase copy root and keep `.agent-1c/infobases/` ignored by Git.
+
 Feature changes must be loaded only into the feature infobase copy, never directly into the source infobase connected to 1C configuration repository storage.

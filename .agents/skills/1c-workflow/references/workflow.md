@@ -55,7 +55,7 @@ Use this as `.agent-1c/project.json`:
   "sourceServerName": "",
   "sourceInfoBaseName": "",
   "repositoryPath": "",
-  "featureInfoBaseRoot": "",
+  "featureInfoBaseRoot": ".agent-1c/infobases/features",
   "serverBaseCopyScript": "",
   "aiRules": {
     "repo": "https://github.com/comol/ai_rules_1c.git",
@@ -87,7 +87,8 @@ REPOSITORY_PATH=\\server\repo
 REPOSITORY_USER=
 # Empty value means the repository password is not set.
 REPOSITORY_PASSWORD=
-FEATURE_INFOBASE_ROOT=C:\1c\bases\features
+# Optional override. By default feature infobase copies are stored under .agent-1c\infobases\features and ignored by Git.
+FEATURE_INFOBASE_ROOT=
 WEBINST_PATH=C:\Program Files\1cv8\8.3.xx.xxxx\bin\webinst.exe
 APACHE_KIND=apache24
 APACHE_HTTPD_CONF_PATH=
@@ -118,7 +119,7 @@ Interactive question style:
 - Never show one large setup question that lists all missing variables.
 - If the chat surface supports forms or structured prompts, create one prompt per value instead of one custom free-form answer.
 - Do not make the developer type variable names such as `PLATFORM_PATH`, `FEATURE_INFOBASE_ROOT`, `SOURCE_INFOBASE_PATH`, `SOURCE_SERVER_NAME`, or `REPOSITORY_PATH`.
-- Use human labels in questions, for example: "Выберите версию платформы 1С", "Введите каталог копий баз подпроектов", "Введите адрес хранилища конфигурации".
+- Use human labels in questions, for example: "Выберите версию платформы 1С", "Введите адрес хранилища конфигурации".
 - For `file/server` or yes/no choices, ask a normal choice question first; then ask only the values relevant to that choice.
 - For optional passwords, never ask the developer to type a placeholder text. Ask a yes/no question first: "Пароль базы задан?" or "Пароль хранилища задан?". If the answer is no, store an empty value and skip the password-value question. If the answer is yes, ask for the password value in a separate prompt.
 
@@ -132,7 +133,7 @@ For project initialization:
 - 1C infobase user. Then ask whether the infobase password is set; ask the password value only if it is set.
 - Configuration repository address/path.
 - Configuration repository user. Then ask whether the repository password is set; ask the password value only if it is set. Empty repository password is valid and must not block validation.
-- Directory for feature infobase copies (`featureInfoBaseRoot` / `FEATURE_INFOBASE_ROOT`).
+- Directory for feature infobase copies: do not ask by default. Use `.agent-1c/infobases/features` inside the project and ignore `.agent-1c/infobases/` in Git. Ask only if the developer explicitly wants a custom location.
 - Do not ask whether the project is for Codex or Kilo Code. Configure the current agent surface; when it cannot be detected, use Codex as the fallback.
 
 For starting a feature:
@@ -155,7 +156,7 @@ Before destructive or stateful actions:
 1. Run `CHECK_TOOLS` during project initialization.
 2. Verify `git` is available before Git operations.
 3. Verify `1cv8.exe` exists before 1C Designer operations.
-4. Verify `featureInfoBaseRoot` is set during initialization and before feature creation.
+4. Use default `featureInfoBaseRoot` `.agent-1c/infobases/features` when no override is configured.
 5. Verify the source file infobase has `1Cv8.1CD` when `infoBaseKind` is `file`; stop before launching 1C Designer if the file is missing.
 6. Verify source server name and infobase name are set when `infoBaseKind` is `server`, unless legacy `sourceInfoBasePath` is explicitly configured.
 7. Verify the Git worktree is clean before switching branches.
@@ -186,7 +187,7 @@ Goal: verify the local machine is ready and provide install suggestions without 
 Goal: create the baseline project state.
 
 1. Show the current working directory as project root and confirm the developer wants to initialize there.
-2. Collect missing parameters, including `featureInfoBaseRoot`.
+2. Collect missing parameters. Do not ask for `featureInfoBaseRoot` during normal initialization; use `.agent-1c/infobases/features`.
    - For the platform path, first offer discovered installed 1C versions; do not make the developer type `C:\Program Files\1cv8\...\bin\1cv8.exe` when it can be selected.
 3. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing. Write them as UTF-8.
 4. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.

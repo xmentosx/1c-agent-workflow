@@ -10,7 +10,7 @@
   "sourceServerName": "",
   "sourceInfoBaseName": "",
   "repositoryPath": "",
-  "featureInfoBaseRoot": "",
+  "featureInfoBaseRoot": ".agent-1c/infobases/features",
   "serverBaseCopyScript": "",
   "aiRules": {
     "repo": "https://github.com/comol/ai_rules_1c.git",

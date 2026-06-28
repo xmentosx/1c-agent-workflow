@@ -4,3 +4,4 @@ build/cf/
 *.dt
 *.log
 logs/
+.agent-1c/infobases/

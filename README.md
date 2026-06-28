@@ -62,6 +62,8 @@ FEATURE-DEVELOPMENT.ru.md
 
 Файлы `.dev.env` и `.agent-1c/*.json` должны записываться в UTF-8. Это важно для путей и пользователей с кириллицей.
 
+Копии баз фич по умолчанию создаются внутри проекта в `.agent-1c/infobases/features`. Каталог `.agent-1c/infobases/` добавляется в `.gitignore`, поэтому базы не попадают в Git.
+
 ## Основные команды Kilo Code
 
 ```text

@@ -351,7 +351,8 @@ function Ensure-GitIgnore {
         "*.cf",
         "*.dt",
         "*.log",
-        "logs/"
+        "logs/",
+        ".agent-1c/infobases/"
     )
 
     if (Test-Path -LiteralPath $gitignorePath) {
@@ -488,7 +489,7 @@ function Get-RepositoryPath {
 }
 
 function Get-FeatureInfoBaseRoot {
-    return Require-Value "FEATURE_INFOBASE_ROOT or project.featureInfoBaseRoot" (Get-Setting -EnvName "FEATURE_INFOBASE_ROOT" -ConfigName "featureInfoBaseRoot")
+    return Get-Setting -EnvName "FEATURE_INFOBASE_ROOT" -ConfigName "featureInfoBaseRoot" -Default ".agent-1c/infobases/features"
 }
 
 function Get-AgentTargets {
