@@ -52,7 +52,7 @@ Required for initial project setup:
 - Current agent target. Do not ask the developer to choose Codex/Kilo; use the agent surface that is running this bootstrap. If it cannot be detected, use `codex`.
 - Directory for feature infobase copies: do not ask during normal initialization. Use `.agent-1c/infobases/features` inside the project and ensure `.agent-1c/infobases/` is ignored by Git. Ask only if the developer explicitly wants a custom location.
 - 1C platform version/path. Before asking for a manual path, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`. Either folder may be absent; treat missing folders as normal and skip them without error. If versions are found, ask the developer to choose one of them and store the selected `...\bin\1cv8.exe` path. Do not offer the common root `C:\Program Files\1cv8` as a platform version. Ask for a custom full path only when no installed version is found or the developer chooses manual input.
-- Apache web-client testing. Ask whether new feature infobases should be published to Apache by default. Store `WEB_PUBLISH_BY_DEFAULT=true|false` in local `.dev.env`, not in committed `project.json`. If the answer is no, do not ask Apache paths. If the answer is yes, ask one compact questionnaire for `webinst.exe`, Apache kind default `apache24`, publication root, URL base default `http://localhost`, and optional `httpd.conf` path. If `webinst.exe` exists next to the chosen `1cv8.exe`, offer it as the default.
+- Apache web-client testing. Ask only whether new feature infobases should be published to Apache by default. Store `WEB_PUBLISH_BY_DEFAULT=true|false` in local `.dev.env`, not in committed `project.json`. If the answer is no, do not ask Apache paths. If the answer is yes, run `detect-apache`, save the detected local values to `.dev.env`, and do not ask the developer for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf`.
 - Source infobase kind: `file` or `server`; ask this before the grouped questionnaire.
 - For `file`, ask the source infobase and repository questionnaire as 6 values:
   1. Source infobase directory.
@@ -78,7 +78,7 @@ Required for feature setup:
 - Feature branch if not `feature/<safe-feature-name>`.
 - Feature infobase path if not derived from `FEATURE_INFOBASE_ROOT`.
 - Whether to publish to Apache only when the project was not configured during initialization or the developer wants a one-off override.
-- If publishing: `webinst.exe`, Apache kind, publication root, URL base, and optional `httpd.conf` path.
+- If publishing is requested and Apache settings are missing, run `detect-apache`. Do not ask for Apache paths in the ordinary workflow.
 
 Secrets must go to `.dev.env` or process environment variables. Never commit secrets.
 
@@ -140,12 +140,18 @@ Default checks come from `.agent-1c/tools.json`:
 
 - Git: `git --version`, offer `winget install --id Git.Git -e`.
 - 1C platform: check `PLATFORM_PATH` or `platformPath`; when missing/invalid, search installed versions in existing standard `1cv8` folders and offer the discovered `...\bin\1cv8.exe` paths before asking for manual input. Missing `Program Files`/`Program Files (x86)` `1cv8` folders are not errors.
-- Apache/webinst: check only when web publication is enabled/requested. Prefer `WEB_PUBLISH_BY_DEFAULT` from local `.dev.env`; fall back to `project.web.publishByDefault` only for compatibility. If `WEBINST_PATH` is empty, use `webinst.exe` found next to the selected `1cv8.exe`.
+- Apache/webinst: check only when web publication is enabled/requested. Prefer `WEB_PUBLISH_BY_DEFAULT` from local `.dev.env`; fall back to `project.web.publishByDefault` only for compatibility. If `WEBINST_PATH` is empty, use `webinst.exe` found next to the selected `1cv8.exe`. Detect Apache from `APACHE_HTTPD_CONF_PATH`, Windows services, `httpd.exe` in `PATH`, or standard folders such as `C:\Apache24`.
 
 When the workflow helper is available, the agent may list installed 1C versions with:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-platforms
+```
+
+When Apache publication is enabled, detect local Apache settings with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action detect-apache
 ```
 
 ## Install ai_rules_1c

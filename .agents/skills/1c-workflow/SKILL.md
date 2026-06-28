@@ -52,7 +52,7 @@ Use `.agent-1c/infobases/features` as the default feature infobase copy root ins
 
 Before asking for the 1C platform path, scan existing standard installation folders for installed versions and offer the discovered version `bin`/`bin\1cv8.exe` paths as choices. Missing `C:\Program Files\1cv8` or `C:\Program Files (x86)\1cv8` folders are normal; skip them without error. Do not offer the common `C:\Program Files\1cv8` root as a version. Ask for a custom path only when no version is found or the developer chooses manual input.
 
-During initialization, ask whether feature infobases should be published to Apache for web-client testing. Store the local answer in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`; do not store it in committed project JSON. If publishing is enabled, collect local Apache settings in one compact questionnaire. If `webinst.exe` is found next to the selected `1cv8.exe`, offer it as the default.
+During initialization, ask only whether feature infobases should be published to Apache for web-client testing. Store the local answer in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`; do not store it in committed project JSON. If publishing is enabled, run `detect-apache` and save detected local Apache values to `.dev.env`. Do not ask the developer for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf` in the ordinary flow.
 
 Use the current working directory as the project root. During initialization, show its absolute path and ask the developer to confirm before continuing; do not ask them to enter a project path.
 

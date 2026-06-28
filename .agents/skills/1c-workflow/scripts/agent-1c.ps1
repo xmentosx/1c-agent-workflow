@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "list-platforms", "init-project", "sync-master", "start-feature", "load-feature", "refresh-feature", "export-feature-cf", "finish-feature", "switch-master", "switch-feature", "list-features", "dump-cf")]
+    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "init-project", "sync-master", "start-feature", "load-feature", "refresh-feature", "export-feature-cf", "finish-feature", "switch-master", "switch-feature", "list-features", "dump-cf")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -583,6 +583,355 @@ function Get-WebInstPath {
     return Get-DefaultWebInstPath
 }
 
+function Remove-ApacheInlineComment {
+    param([string]$Line)
+
+    $inQuote = $false
+    for ($i = 0; $i -lt $Line.Length; $i++) {
+        $ch = $Line[$i]
+        if ($ch -eq '"') {
+            $inQuote = -not $inQuote
+        } elseif ($ch -eq '#' -and -not $inQuote) {
+            return $Line.Substring(0, $i)
+        }
+    }
+
+    return $Line
+}
+
+function ConvertFrom-ApacheConfigToken {
+    param([AllowNull()][string]$Value)
+
+    if ($null -eq $Value) {
+        return ""
+    }
+
+    $text = $Value.Trim()
+    if (($text.StartsWith('"') -and $text.EndsWith('"')) -or ($text.StartsWith("'") -and $text.EndsWith("'"))) {
+        $text = $text.Substring(1, $text.Length - 2)
+    }
+    return $text
+}
+
+function Resolve-ApacheConfigPathValue {
+    param(
+        [AllowNull()][string]$Value,
+        [hashtable]$Variables,
+        [string]$BasePath
+    )
+
+    $text = ConvertFrom-ApacheConfigToken -Value $Value
+    if (-not $text) {
+        return ""
+    }
+
+    foreach ($key in @($Variables.Keys)) {
+        $text = $text.Replace(('${' + $key + '}'), [string]$Variables[$key])
+    }
+    $text = [Environment]::ExpandEnvironmentVariables($text)
+
+    if (-not [System.IO.Path]::IsPathRooted($text) -and $BasePath) {
+        $text = Join-Path $BasePath $text
+    }
+
+    try {
+        return [System.IO.Path]::GetFullPath($text)
+    } catch {
+        return $text
+    }
+}
+
+function Get-ApacheListenPort {
+    param([string]$Value)
+
+    $token = ConvertFrom-ApacheConfigToken -Value (($Value.Trim() -split "\s+")[0])
+    if ($token -match '^\d+$') {
+        return [int]$token
+    }
+    if ($token -match ':(\d+)$') {
+        return [int]$matches[1]
+    }
+    if ($token -match '\]:(\d+)$') {
+        return [int]$matches[1]
+    }
+    return 80
+}
+
+function Read-ApacheHttpdConfig {
+    param([string]$Path)
+
+    $fullPath = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path))
+    $confDirectory = Split-Path -Parent $fullPath
+    $defaultServerRoot = Split-Path -Parent $confDirectory
+    $variables = @{}
+    $serverRoot = $defaultServerRoot
+    $documentRoot = ""
+    $listenPort = 80
+
+    foreach ($rawLine in Read-Utf8Lines -Path $fullPath) {
+        $line = (Remove-ApacheInlineComment -Line $rawLine).Trim()
+        if (-not $line) {
+            continue
+        }
+
+        if ($line -match '^\s*Define\s+([^\s]+)\s+(.+)$') {
+            $name = $matches[1]
+            $value = Resolve-ApacheConfigPathValue -Value $matches[2] -Variables $variables -BasePath $serverRoot
+            $variables[$name] = $value
+            continue
+        }
+
+        if ($line -match '^\s*ServerRoot\s+(.+)$') {
+            $serverRoot = Resolve-ApacheConfigPathValue -Value $matches[1] -Variables $variables -BasePath $serverRoot
+            continue
+        }
+
+        if (-not $documentRoot -and $line -match '^\s*DocumentRoot\s+(.+)$') {
+            $documentRoot = Resolve-ApacheConfigPathValue -Value $matches[1] -Variables $variables -BasePath $serverRoot
+            continue
+        }
+
+        if ($line -match '^\s*Listen\s+(.+)$') {
+            $listenPort = Get-ApacheListenPort -Value $matches[1]
+            continue
+        }
+    }
+
+    if (-not $documentRoot) {
+        throw "DocumentRoot was not found in Apache config: $fullPath"
+    }
+
+    $urlBase = if ($listenPort -eq 80) { "http://localhost" } else { "http://localhost:$listenPort" }
+    return [pscustomobject]@{
+        found = $true
+        httpdConfPath = $fullPath
+        documentRoot = $documentRoot
+        listenPort = $listenPort
+        publicationRoot = (Join-Path $documentRoot "1c")
+        publicationUrlBase = $urlBase
+    }
+}
+
+function Get-ExecutablePathFromCommandLine {
+    param([AllowNull()][string]$CommandLine)
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+        return ""
+    }
+
+    $text = $CommandLine.Trim()
+    if ($text.StartsWith('"')) {
+        $endQuote = $text.IndexOf('"', 1)
+        if ($endQuote -gt 1) {
+            return $text.Substring(1, $endQuote - 1)
+        }
+    }
+
+    if ($text -match '^(.*?\.exe)(\s|$)') {
+        return $matches[1]
+    }
+
+    return ""
+}
+
+function Get-CommandLineSwitchValue {
+    param(
+        [AllowNull()][string]$CommandLine,
+        [string]$Switch
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+        return ""
+    }
+
+    $pattern = '(?i)(?:^|\s)' + [regex]::Escape($Switch) + '\s+(?:"([^"]+)"|(\S+))'
+    if ($CommandLine -match $pattern) {
+        if ($matches[1]) {
+            return $matches[1]
+        }
+        return $matches[2]
+    }
+
+    return ""
+}
+
+function New-ApacheConfigCandidate {
+    param(
+        [string]$Path,
+        [string]$Source
+    )
+
+    if (-not $Path) {
+        return $null
+    }
+
+    $resolved = [Environment]::ExpandEnvironmentVariables($Path)
+    if (-not (Test-Path -LiteralPath $resolved -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+
+    return [pscustomobject]@{
+        path = [System.IO.Path]::GetFullPath($resolved)
+        source = $Source
+    }
+}
+
+function Get-ApacheConfigCandidates {
+    $candidates = New-Object System.Collections.ArrayList
+    $seen = @{}
+
+    $addCandidate = {
+        param([string]$Path, [string]$Source)
+        $candidate = New-ApacheConfigCandidate -Path $Path -Source $Source
+        if ($candidate -and -not $seen.ContainsKey($candidate.path.ToLowerInvariant())) {
+            $seen[$candidate.path.ToLowerInvariant()] = $true
+            [void]$candidates.Add($candidate)
+        }
+    }
+
+    $configuredConf = Get-Setting -EnvName "APACHE_HTTPD_CONF_PATH" -ConfigName "web.apacheHttpdConfPath"
+    if ($configuredConf) {
+        & $addCandidate $configuredConf "APACHE_HTTPD_CONF_PATH"
+    }
+
+    try {
+        $services = @(Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | Where-Object {
+            ($_.PathName -match 'httpd\.exe') -or ($_.Name -match 'apache|httpd') -or ($_.DisplayName -match 'apache|httpd')
+        })
+        foreach ($service in $services) {
+            $serviceRoot = Get-CommandLineSwitchValue -CommandLine $service.PathName -Switch "-d"
+            $serviceConf = Get-CommandLineSwitchValue -CommandLine $service.PathName -Switch "-f"
+            if ($serviceConf) {
+                if (-not [System.IO.Path]::IsPathRooted($serviceConf) -and $serviceRoot) {
+                    $serviceConf = Join-Path $serviceRoot $serviceConf
+                }
+                & $addCandidate $serviceConf "Windows service $($service.Name)"
+            }
+
+            $serviceExe = Get-ExecutablePathFromCommandLine -CommandLine $service.PathName
+            if ($serviceExe) {
+                $exeRoot = Split-Path -Parent (Split-Path -Parent $serviceExe)
+                & $addCandidate (Join-Path $exeRoot "conf\httpd.conf") "Windows service $($service.Name)"
+            }
+        }
+    } catch {
+        # Service discovery is best-effort; continue with PATH and standard folders.
+    }
+
+    $httpdCommand = Get-Command httpd.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($httpdCommand -and $httpdCommand.Source) {
+        $httpdRoot = Split-Path -Parent (Split-Path -Parent $httpdCommand.Source)
+        & $addCandidate (Join-Path $httpdRoot "conf\httpd.conf") "PATH httpd.exe"
+    }
+
+    $standardRoots = @(
+        "C:\Apache24",
+        "C:\Apache2.4",
+        "C:\Apache",
+        (Join-Path ([Environment]::GetFolderPath("ProgramFiles")) "Apache24"),
+        (Join-Path ([Environment]::GetFolderPath("ProgramFiles")) "Apache Software Foundation\Apache2.4")
+    )
+    $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)", "Process")
+    if ($programFilesX86) {
+        $standardRoots += (Join-Path $programFilesX86 "Apache Software Foundation\Apache2.4")
+    }
+
+    foreach ($root in @($standardRoots | Where-Object { $_ } | Select-Object -Unique)) {
+        & $addCandidate (Join-Path $root "conf\httpd.conf") "standard path"
+    }
+
+    return @($candidates)
+}
+
+function Find-ApacheConfig {
+    $errors = @()
+    foreach ($candidate in Get-ApacheConfigCandidates) {
+        try {
+            $parsed = Read-ApacheHttpdConfig -Path $candidate.path
+            $parsed | Add-Member -NotePropertyName source -NotePropertyValue $candidate.source -Force
+            return $parsed
+        } catch {
+            $errors += "$($candidate.path): $($_.Exception.Message)"
+        }
+    }
+
+    $message = "Apache httpd.conf was not found. Install Apache 2.4 or set APACHE_HTTPD_CONF_PATH, then rerun detect-apache or check-tools."
+    if ($errors.Count -gt 0) {
+        $message += " Checked candidates: $($errors -join '; ')"
+    }
+
+    return [pscustomobject]@{
+        found = $false
+        httpdConfPath = ""
+        documentRoot = ""
+        listenPort = $null
+        publicationRoot = ""
+        publicationUrlBase = ""
+        source = ""
+        message = $message
+    }
+}
+
+function Get-ConfigUrlBaseOverride {
+    $envValue = Get-EnvValue -Name "WEB_PUBLICATION_URL_BASE"
+    if ($envValue) {
+        return $envValue
+    }
+
+    $configValue = Get-ConfigValue -Path "web.publicationUrlBase"
+    if ($configValue -and $configValue -ne "http://localhost") {
+        return $configValue
+    }
+
+    return ""
+}
+
+function Get-EffectiveApacheSettings {
+    $detected = Find-ApacheConfig
+    $webInstPath = Get-WebInstPath
+    $publicationRootOverride = Get-Setting -EnvName "WEB_PUBLICATION_ROOT" -ConfigName "web.publicationRoot"
+    $publicationUrlOverride = Get-ConfigUrlBaseOverride
+    $apacheKind = Get-Setting -EnvName "APACHE_KIND" -ConfigName "web.apacheKind" -Default "apache24"
+
+    $publicationRoot = $publicationRootOverride
+    if (-not $publicationRoot -and $detected.found) {
+        $publicationRoot = $detected.publicationRoot
+    }
+
+    $publicationUrlBase = $publicationUrlOverride
+    if (-not $publicationUrlBase -and $detected.found) {
+        $publicationUrlBase = $detected.publicationUrlBase
+    }
+    if (-not $publicationUrlBase) {
+        $publicationUrlBase = "http://localhost"
+    }
+
+    $httpdConfPath = ""
+    if ($detected.found) {
+        $httpdConfPath = $detected.httpdConfPath
+    }
+
+    $hasManualPublicationRoot = -not [string]::IsNullOrWhiteSpace([string]$publicationRootOverride)
+    $webInstOk = ($webInstPath -and (Test-Path -LiteralPath $webInstPath -PathType Leaf -ErrorAction SilentlyContinue))
+    $ready = ([bool]$webInstOk -and -not [string]::IsNullOrWhiteSpace([string]$publicationRoot) -and ($detected.found -or $hasManualPublicationRoot))
+
+    return [pscustomobject]@{
+        ready = $ready
+        webInstPath = $webInstPath
+        webInstOk = [bool]$webInstOk
+        apacheKind = $apacheKind
+        apacheFound = [bool]$detected.found
+        apacheSource = $detected.source
+        message = $(if ($detected.found) { "Apache detected from $($detected.source)" } else { $detected.message })
+        httpdConfPath = $httpdConfPath
+        documentRoot = $detected.documentRoot
+        listenPort = $detected.listenPort
+        publicationRoot = $publicationRoot
+        publicationUrlBase = $publicationUrlBase
+        manualPublicationRoot = $hasManualPublicationRoot
+    }
+}
+
 function Find-Installed1CPlatforms {
     $roots = @()
 
@@ -822,43 +1171,43 @@ function Check-Tools {
 
     $publishDefault = Get-WebPublishByDefault
     if ($PublishToApache -or $publishDefault) {
-        $webInstPath = Get-WebInstPath
-        $webInstOk = ($webInstPath -and (Test-Path -LiteralPath $webInstPath))
-        $webInstDetail = if ($webInstPath) { $webInstPath } else { "WEBINST_PATH is missing and webinst.exe was not found next to PLATFORM_PATH" }
+        $apacheSettings = Get-EffectiveApacheSettings
+        $webInstDetail = if ($apacheSettings.webInstPath) { $apacheSettings.webInstPath } else { "webinst.exe was not found next to PLATFORM_PATH and WEBINST_PATH is not set" }
         $results += New-ToolResult `
             -Id "apache-webinst" `
             -Name "Apache/webinst" `
             -Required $true `
-            -Ok ([bool]$webInstOk) `
+            -Ok ([bool]$apacheSettings.webInstOk) `
             -Detail $webInstDetail `
-            -Offer (Get-ToolOffer -Id "apache-webinst" -Fallback "Install Apache and 1C web server extension manually, then set WEBINST_PATH and APACHE_KIND.")
+            -Offer (Get-ToolOffer -Id "apache-webinst" -Fallback "Use the 1C webinst.exe located next to the selected 1cv8.exe, or set WEBINST_PATH only for a nonstandard 1C platform layout.")
 
-        $apacheKind = Get-Setting -EnvName "APACHE_KIND" -ConfigName "web.apacheKind" -Default "apache24"
+        $apacheDetail = if ($apacheSettings.apacheFound) {
+            "Config: $($apacheSettings.httpdConfPath); DocumentRoot: $($apacheSettings.documentRoot); URL base: $($apacheSettings.publicationUrlBase)"
+        } elseif ($apacheSettings.manualPublicationRoot) {
+            "Manual publication root: $($apacheSettings.publicationRoot); URL base: $($apacheSettings.publicationUrlBase)"
+        } else {
+            $apacheSettings.message
+        }
         $results += New-ToolResult `
-            -Id "apache-kind" `
-            -Name "Apache kind" `
+            -Id "apache-httpd" `
+            -Name "Apache/httpd config" `
             -Required $true `
-            -Ok (-not [string]::IsNullOrWhiteSpace([string]$apacheKind)) `
-            -Detail $(if ($apacheKind) { $apacheKind } else { "APACHE_KIND is missing" }) `
-            -Offer "Set APACHE_KIND=apache24 in .dev.env, unless your local Apache integration requires another 1C webinst kind."
+            -Ok ([bool]($apacheSettings.apacheFound -or $apacheSettings.manualPublicationRoot)) `
+            -Detail $apacheDetail `
+            -Offer (Get-ToolOffer -Id "apache-webinst" -Fallback "Install/configure Apache 2.4 so httpd.conf can be detected, or set APACHE_HTTPD_CONF_PATH for a nonstandard installation, then rerun detect-apache.")
 
-        $publicationRoot = Get-Setting -EnvName "WEB_PUBLICATION_ROOT" -ConfigName "web.publicationRoot"
+        $publicationDetail = if ($apacheSettings.publicationRoot) {
+            "$($apacheSettings.publicationRoot) -> $($apacheSettings.publicationUrlBase)"
+        } else {
+            "Publication root could not be derived because Apache was not detected."
+        }
         $results += New-ToolResult `
-            -Id "web-publication-root" `
-            -Name "Web publication root" `
+            -Id "web-publication" `
+            -Name "Web publication target" `
             -Required $true `
-            -Ok (-not [string]::IsNullOrWhiteSpace([string]$publicationRoot)) `
-            -Detail $(if ($publicationRoot) { $publicationRoot } else { "WEB_PUBLICATION_ROOT is missing" }) `
-            -Offer "Set WEB_PUBLICATION_ROOT to the local Apache publication directory, for example C:\Apache24\htdocs\1c."
-
-        $publicationUrlBase = Get-Setting -EnvName "WEB_PUBLICATION_URL_BASE" -ConfigName "web.publicationUrlBase" -Default "http://localhost"
-        $results += New-ToolResult `
-            -Id "web-publication-url-base" `
-            -Name "Web publication URL base" `
-            -Required $true `
-            -Ok (-not [string]::IsNullOrWhiteSpace([string]$publicationUrlBase)) `
-            -Detail $(if ($publicationUrlBase) { $publicationUrlBase } else { "WEB_PUBLICATION_URL_BASE is missing" }) `
-            -Offer "Set WEB_PUBLICATION_URL_BASE=http://localhost in .dev.env, or use your local Apache base URL."
+            -Ok (-not [string]::IsNullOrWhiteSpace([string]$apacheSettings.publicationRoot)) `
+            -Detail $publicationDetail `
+            -Offer "After Apache is detected, the default publication root is DocumentRoot\1c and the URL base is derived from Listen."
     }
 
     $missingRequired = @()
@@ -1483,17 +1832,21 @@ function Publish-FeatureToApache {
         [string]$SafeFeatureName
     )
 
-    $webInstPath = Get-WebInstPath
-    $apacheKind = Get-Setting -EnvName "APACHE_KIND" -ConfigName "web.apacheKind" -Default "apache24"
-    $publicationRoot = Get-Setting -EnvName "WEB_PUBLICATION_ROOT" -ConfigName "web.publicationRoot"
-    $urlBase = Get-Setting -EnvName "WEB_PUBLICATION_URL_BASE" -ConfigName "web.publicationUrlBase" -Default "http://localhost"
-    $confPath = Get-Setting -EnvName "APACHE_HTTPD_CONF_PATH" -ConfigName "web.apacheHttpdConfPath"
+    $apacheSettings = Get-EffectiveApacheSettings
+    $webInstPath = $apacheSettings.webInstPath
+    $apacheKind = $apacheSettings.apacheKind
+    $publicationRoot = $apacheSettings.publicationRoot
+    $urlBase = $apacheSettings.publicationUrlBase
+    $confPath = $apacheSettings.httpdConfPath
 
     Require-Value "WEBINST_PATH, web.webInstPath, or webinst.exe next to PLATFORM_PATH" $webInstPath | Out-Null
-    Require-Value "WEB_PUBLICATION_ROOT or project.web.publicationRoot" $publicationRoot | Out-Null
+    Require-Value "Apache publication root from autodetect or WEB_PUBLICATION_ROOT override" $publicationRoot | Out-Null
 
     if (-not (Test-Path -LiteralPath $webInstPath)) {
         throw "webinst.exe was not found: $webInstPath"
+    }
+    if (-not ($apacheSettings.apacheFound -or $apacheSettings.manualPublicationRoot)) {
+        throw "Apache was not detected. Run detect-apache, install/configure Apache, or set APACHE_HTTPD_CONF_PATH for a nonstandard installation."
     }
 
     $publicationName = $SafeFeatureName -replace "[^a-zA-Z0-9_]", "_"
@@ -1508,7 +1861,7 @@ function Publish-FeatureToApache {
     }
 
     $args = @("-publish", "-$apacheKind", "-wsdir", $publicationName, "-dir", $publicationDir, "-connstr", $connStr)
-    if ($confPath) {
+    if ($confPath -and (Test-Path -LiteralPath $confPath -PathType Leaf -ErrorAction SilentlyContinue)) {
         $args += @("-confpath", $confPath)
     }
 
@@ -1801,6 +2154,56 @@ function Switch-Feature {
     }
 }
 
+function Detect-Apache {
+    Write-Section "Detect Apache"
+    $settings = Get-EffectiveApacheSettings
+
+    if ($settings.webInstOk) {
+        Write-Host "[OK] webinst.exe: $($settings.webInstPath)"
+    } elseif ($settings.webInstPath) {
+        Write-Host "[MISSING] webinst.exe was configured or derived but does not exist: $($settings.webInstPath)"
+    } else {
+        Write-Host "[MISSING] webinst.exe was not found next to PLATFORM_PATH and WEBINST_PATH is not set."
+    }
+
+    if ($settings.apacheFound) {
+        Write-Host "[OK] Apache config: $($settings.httpdConfPath)"
+        Write-Host "Source: $($settings.apacheSource)"
+        Write-Host "DocumentRoot: $($settings.documentRoot)"
+        Write-Host "Listen port: $($settings.listenPort)"
+    } elseif ($settings.manualPublicationRoot) {
+        Write-Host "[OK] Apache publication root is set manually: $($settings.publicationRoot)"
+    } else {
+        Write-Host "[MISSING] $($settings.message)"
+    }
+
+    if ($settings.publicationRoot) {
+        Write-Host "Publication root: $($settings.publicationRoot)"
+        Write-Host "Publication URL base: $($settings.publicationUrlBase)"
+    }
+
+    Write-Host ""
+    Write-Host "Values for .dev.env:"
+    Write-Host "WEB_PUBLISH_BY_DEFAULT=true"
+    if ($settings.webInstPath) {
+        Write-Host "WEBINST_PATH=$($settings.webInstPath)"
+    }
+    Write-Host "APACHE_KIND=$($settings.apacheKind)"
+    if ($settings.httpdConfPath) {
+        Write-Host "APACHE_HTTPD_CONF_PATH=$($settings.httpdConfPath)"
+    }
+    if ($settings.publicationRoot) {
+        Write-Host "WEB_PUBLICATION_ROOT=$($settings.publicationRoot)"
+    }
+    if ($settings.publicationUrlBase) {
+        Write-Host "WEB_PUBLICATION_URL_BASE=$($settings.publicationUrlBase)"
+    }
+
+    if (-not $settings.ready) {
+        throw "Apache publication is not ready. Install/configure Apache 2.4 and make sure webinst.exe exists next to 1cv8.exe, then rerun detect-apache."
+    }
+}
+
 function Validate-Project {
     Write-Section "Validate project"
     Require-Value "project root" $script:ProjectRoot | Out-Null
@@ -1833,6 +2236,7 @@ Actions:
   validate            Check required local settings.
   check-tools         Check Git, 1C platform, and optional web tools.
   list-platforms      Show installed 1C platform versions found in Program Files.
+  detect-apache       Detect Apache/httpd settings for web publication.
   init-project        Sync source infobase, dump config to master, install rules.
   sync-master         Refresh master from source infobase connected to storage.
   start-feature       Create feature branch and feature infobase copy.
@@ -1848,6 +2252,7 @@ Actions:
 Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-platforms
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action detect-apache
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action start-feature -FeatureName "order-discounts"
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action load-feature
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-feature
@@ -1864,8 +2269,9 @@ try {
     switch ($Action) {
         "help" { Show-Help }
         "validate" { Validate-Project }
-        "check-tools" { Check-Tools }
+        "check-tools" { Check-Tools -StopOnMissing }
         "list-platforms" { List-Platforms }
+        "detect-apache" { Detect-Apache }
         "init-project" { Initialize-Project }
         "sync-master" { Sync-Master }
         "start-feature" { Start-Feature }

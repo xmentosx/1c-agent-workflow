@@ -30,7 +30,7 @@
       "install": {
         "policy": "manual",
         "commands": [
-          "Install Apache and 1C web server extension manually, then set WEBINST_PATH and APACHE_KIND."
+          "Install/configure Apache 2.4 so httpd.conf can be detected, then run the helper action detect-apache. webinst.exe is expected next to the selected 1cv8.exe; set WEBINST_PATH only for nonstandard 1C platform layouts."
         ]
       }
     }
