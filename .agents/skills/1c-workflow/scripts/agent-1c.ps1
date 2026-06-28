@@ -276,6 +276,27 @@ function Test-GitCommitExists {
     return ($LASTEXITCODE -eq 0)
 }
 
+function Test-GitHasAnyCommit {
+    & git -C $script:ProjectRoot rev-parse --verify --quiet HEAD *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Get-GitHeadBranch {
+    $branch = & git -C $script:ProjectRoot symbolic-ref --quiet --short HEAD 2>$null
+    if ($LASTEXITCODE -eq 0 -and $branch) {
+        return ([string]$branch).Trim()
+    }
+    return ""
+}
+
+function Set-GitHeadBranch {
+    param([string]$Branch)
+    & git -C $script:ProjectRoot symbolic-ref HEAD "refs/heads/$Branch"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Git failed: git -C `"$script:ProjectRoot`" symbolic-ref HEAD refs/heads/$Branch"
+    }
+}
+
 function Test-GitHasRemote {
     $remote = & git -C $script:ProjectRoot remote
     if ($LASTEXITCODE -ne 0) {
@@ -321,7 +342,16 @@ function Checkout-Master {
     $masterBranch = Get-MasterBranch
     Ensure-GitRepository
 
-    & git -C $script:ProjectRoot rev-parse --verify $masterBranch *> $null
+    if (-not (Test-GitHasAnyCommit)) {
+        $currentBranch = Get-GitHeadBranch
+        if ($currentBranch -ne $masterBranch) {
+            Set-GitHeadBranch -Branch $masterBranch
+        }
+        Write-Host "Using empty Git repository on branch: $masterBranch"
+        return
+    }
+
+    & git -C $script:ProjectRoot rev-parse --verify --quiet $masterBranch *> $null
     if ($LASTEXITCODE -eq 0) {
         Invoke-Git @("checkout", $masterBranch)
     } else {

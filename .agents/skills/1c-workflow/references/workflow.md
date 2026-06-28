@@ -167,6 +167,7 @@ Before destructive or stateful actions:
 ## Git Rules
 
 - If `.git` is absent during initialization, create a local Git repository.
+- If the repository has no commits yet, treat the current HEAD as an unborn branch. Set/keep HEAD on `master` without running `git checkout -b master` over an existing unborn branch.
 - Do not ask for, create, or configure a Git remote during initialization.
 - Do not pull automatically during simple branch switching.
 - Require a clean worktree before branch switching, feature refresh, feature CF export, or feature finish.
