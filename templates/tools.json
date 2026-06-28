@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "tools": [
+    {
+      "id": "git",
+      "name": "Git",
+      "required": true,
+      "install": {
+        "policy": "offer",
+        "commands": [
+          "winget install --id Git.Git -e"
+        ]
+      }
+    },
+    {
+      "id": "1c-platform",
+      "name": "1C platform",
+      "required": true,
+      "install": {
+        "policy": "manual",
+        "commands": [
+          "Install 1C:Enterprise platform manually, then set PLATFORM_PATH in .dev.env."
+        ]
+      }
+    },
+    {
+      "id": "codex",
+      "name": "Codex",
+      "requiredWhenTarget": "codex",
+      "install": {
+        "policy": "offer",
+        "commands": [
+          "Install Codex using your team's standard OpenAI Codex setup."
+        ]
+      }
+    },
+    {
+      "id": "kilocode",
+      "name": "Kilo Code",
+      "requiredWhenTarget": "kilocode",
+      "install": {
+        "policy": "offer",
+        "commands": [
+          "code --install-extension kilocode.Kilo-Code --pre-release"
+        ]
+      }
+    },
+    {
+      "id": "apache-webinst",
+      "name": "Apache/webinst",
+      "requiredWhenWebPublication": true,
+      "install": {
+        "policy": "manual",
+        "commands": [
+          "Install Apache and 1C web server extension manually, then set WEBINST_PATH and APACHE_KIND."
+        ]
+      }
+    }
+  ]
+}

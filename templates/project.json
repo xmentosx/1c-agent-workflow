@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "gitRemoteUrl": "",
+  "masterBranch": "master",
+  "exportPath": "src/cf",
+  "artifactsPath": "build/cf",
+  "logsPath": "logs/1c",
+  "platformPath": "",
+  "infoBaseKind": "file",
+  "sourceInfoBasePath": "",
+  "repositoryPath": "",
+  "featureInfoBaseRoot": "",
+  "serverBaseCopyScript": "",
+  "aiRules": {
+    "repo": "https://github.com/comol/ai_rules_1c.git",
+    "tools": ""
+  },
+  "web": {
+    "publishByDefault": false,
+    "webInstPath": "",
+    "apacheKind": "apache24",
+    "apacheHttpdConfPath": "",
+    "publicationRoot": "",
+    "publicationUrlBase": "http://localhost"
+  }
+}

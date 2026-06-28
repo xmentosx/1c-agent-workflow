@@ -1,0 +1,9 @@
+.dev.env
+*.cf
+*.dt
+*.log
+*.zip
+build/
+logs/
+tmp/
+temp/
