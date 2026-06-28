@@ -41,6 +41,7 @@ Ask interactively in a human-friendly format:
 - If the agent surface supports structured prompts, use a separate prompt for each value, not one prompt with a custom free-form block.
 - Do not require the developer to type environment variable names such as `PLATFORM_PATH` or `SOURCE_INFOBASE_PATH`.
 - Variable names may be mentioned only as internal storage hints after the human-readable label.
+- For passwords that may be empty, first ask a yes/no question such as "Is an infobase password set?" or "Is a repository password set?". Ask for the password value only when the answer is yes. When the answer is no, store an empty value and do not require the developer to type phrases like "без пароля" or "no password".
 
 Required for initial project setup:
 
@@ -51,9 +52,9 @@ Required for initial project setup:
 - Source infobase kind: `file` or `server`.
 - For a file infobase: source infobase directory.
 - For a server infobase: server name and infobase name. The agent must build the connection string as `Srvr="<server>";Ref="<base>";`.
-- Infobase user/password if required.
+- Infobase user, then ask whether an infobase password is set. If yes, ask for the password. If no, store `IB_PASSWORD=` or leave it absent.
 - 1C configuration repository path/address.
-- 1C configuration repository user/password.
+- 1C configuration repository user, then ask whether a repository password is set. If yes, ask for the password. If no, store `REPOSITORY_PASSWORD=` or leave it absent.
 
 Required for feature setup:
 

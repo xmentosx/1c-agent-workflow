@@ -665,19 +665,24 @@ function Invoke-Designer {
 
 function Update-BaseFromRepository {
     $repositoryUser = Require-Value "REPOSITORY_USER" (Get-EnvValue -Name "REPOSITORY_USER")
-    $repositoryPassword = Require-Value "REPOSITORY_PASSWORD" (Get-EnvValue -Name "REPOSITORY_PASSWORD")
+    $repositoryPassword = Get-EnvValue -Name "REPOSITORY_PASSWORD"
     $repositoryPath = Get-RepositoryPath
+    $repositoryArgs = @(
+        "/ConfigurationRepositoryF", $repositoryPath,
+        "/ConfigurationRepositoryN", $repositoryUser
+    )
+    if ($repositoryPassword) {
+        $repositoryArgs += @("/ConfigurationRepositoryP", $repositoryPassword)
+    }
+    $repositoryArgs += @(
+        "/ConfigurationRepositoryUpdateCfg", "-force",
+        "/UpdateDBCfg", "-WarningsAsErrors"
+    )
 
     Invoke-Designer `
         -InfoBasePath (Get-SourceInfoBasePath) `
         -InfoBaseKind (Get-InfoBaseKind) `
-        -DesignerArgs @(
-            "/ConfigurationRepositoryF", $repositoryPath,
-            "/ConfigurationRepositoryN", $repositoryUser,
-            "/ConfigurationRepositoryP", $repositoryPassword,
-            "/ConfigurationRepositoryUpdateCfg", "-force",
-            "/UpdateDBCfg", "-WarningsAsErrors"
-        ) | Out-Null
+        -DesignerArgs $repositoryArgs | Out-Null
 }
 
 function Assert-ExportPathInsideProject {
@@ -1368,7 +1373,6 @@ function Validate-Project {
 
     Get-RepositoryPath | Out-Null
     Require-Value "REPOSITORY_USER" (Get-EnvValue -Name "REPOSITORY_USER") | Out-Null
-    Require-Value "REPOSITORY_PASSWORD" (Get-EnvValue -Name "REPOSITORY_PASSWORD") | Out-Null
     Write-Host "Validation passed."
 }
 

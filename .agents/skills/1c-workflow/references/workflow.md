@@ -79,9 +79,11 @@ SOURCE_INFOBASE_PATH=C:\1c\bases\source
 SOURCE_SERVER_NAME=
 SOURCE_INFOBASE_NAME=
 IB_USER=
+# Empty value means the infobase password is not set.
 IB_PASSWORD=
 REPOSITORY_PATH=\\server\repo
 REPOSITORY_USER=
+# Empty value means the repository password is not set.
 REPOSITORY_PASSWORD=
 FEATURE_INFOBASE_ROOT=C:\1c\bases\features
 WEBINST_PATH=C:\Program Files\1cv8\8.3.xx.xxxx\bin\webinst.exe
@@ -116,6 +118,7 @@ Interactive question style:
 - Do not make the developer type variable names such as `PLATFORM_PATH`, `FEATURE_INFOBASE_ROOT`, `SOURCE_INFOBASE_PATH`, `SOURCE_SERVER_NAME`, or `REPOSITORY_PATH`.
 - Use human labels in questions, for example: "Выберите версию платформы 1С", "Введите каталог копий баз подпроектов", "Введите адрес хранилища конфигурации".
 - For `file/server` or yes/no choices, ask a normal choice question first; then ask only the values relevant to that choice.
+- For optional passwords, never ask the developer to type a placeholder text. Ask a yes/no question first: "Пароль базы задан?" or "Пароль хранилища задан?". If the answer is no, store an empty value and skip the password-value question. If the answer is yes, ask for the password value in a separate prompt.
 
 For project initialization:
 
@@ -124,9 +127,9 @@ For project initialization:
 - Source infobase kind: `file` or `server`.
 - For a file infobase: source infobase directory.
 - For a server infobase: server name and infobase name. Build the connection string as `Srvr="<server>";Ref="<base>";`.
-- 1C infobase user/password if required.
+- 1C infobase user. Then ask whether the infobase password is set; ask the password value only if it is set.
 - Configuration repository address/path.
-- Configuration repository user/password.
+- Configuration repository user. Then ask whether the repository password is set; ask the password value only if it is set. Empty repository password is valid and must not block validation.
 - Directory for feature infobase copies (`featureInfoBaseRoot` / `FEATURE_INFOBASE_ROOT`).
 - Do not ask whether the project is for Codex or Kilo Code. Configure the current agent surface; when it cannot be detected, use Codex as the fallback.
 

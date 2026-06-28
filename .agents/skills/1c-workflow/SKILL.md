@@ -42,6 +42,8 @@ Ask for missing required parameters at the start of the selected workflow. Do no
 
 When collecting parameters from the developer, ask one value at a time and expect the answer to contain only the value. Never ask for a grouped `KEY=value` block, never show one large question that lists all missing variables, and never require the developer to type variable names.
 
+For optional passwords, ask a yes/no question first and ask for the password value only when the password is set. Treat "no password" as an empty value, not as literal password text.
+
 Use fixed project defaults: `master` is the main branch and `src/cf` is the configuration dump path. Do not ask the developer for these values during initialization.
 
 Before asking for the 1C platform path, scan standard installation folders for installed versions and offer the discovered version `bin`/`bin\1cv8.exe` paths as choices. Do not offer the common `C:\Program Files\1cv8` root as a version. Ask for a custom path only when no version is found or the developer chooses manual input.
