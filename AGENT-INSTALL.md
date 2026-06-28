@@ -23,6 +23,17 @@ Do not rely on Codex-only custom prompts for this workflow. They are local to on
 
 Ask for missing values only. If `.agent-1c/project.json` or `.dev.env` already contains a value, reuse it.
 
+Ask interactively in a human-friendly format:
+
+- Ask one value at a time.
+- The developer's answer must be the raw value only, for example `C:\Program Files\1cv8\8.3.xx.xxxx\bin\1cv8.exe`.
+- Do not ask the developer to answer in `KEY=value` format.
+- Do not group several required values into one free-form answer.
+- Do not show one large question that lists all missing variables.
+- If the agent surface supports structured prompts, use a separate prompt for each value, not one prompt with a custom free-form block.
+- Do not require the developer to type environment variable names such as `PLATFORM_PATH` or `SOURCE_INFOBASE_PATH`.
+- Variable names may be mentioned only as internal storage hints after the human-readable label.
+
 Required for initial project setup:
 
 - Current working directory is the project root. Show its absolute path and ask the developer to confirm initialization in this folder.

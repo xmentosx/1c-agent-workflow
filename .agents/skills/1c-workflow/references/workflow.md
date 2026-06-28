@@ -105,6 +105,18 @@ Default checks:
 
 Ask only for values that are missing from `.agent-1c/project.json`, `.agent-1c/tools.json`, `.dev.env`, or the current prompt.
 
+Interactive question style:
+
+- Ask exactly one missing value per question.
+- The developer answers with the value only.
+- Never ask for a `KEY=value` block.
+- Never ask for several values in one free-form answer.
+- Never show one large setup question that lists all missing variables.
+- If the chat surface supports forms or structured prompts, create one prompt per value instead of one custom free-form answer.
+- Do not make the developer type variable names such as `PLATFORM_PATH`, `FEATURE_INFOBASE_ROOT`, `SOURCE_INFOBASE_PATH`, `SOURCE_SERVER_NAME`, or `REPOSITORY_PATH`.
+- Use human labels in questions, for example: "Введите путь к 1cv8.exe", "Введите каталог копий баз подпроектов", "Введите адрес хранилища конфигурации".
+- For `file/server` or yes/no choices, ask a normal choice question first; then ask only the values relevant to that choice.
+
 For project initialization:
 
 - Do not ask for project root. Use the agent's current working directory as the project root, show its absolute path to the developer, and ask for confirmation before initialization.

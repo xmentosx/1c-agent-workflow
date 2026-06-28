@@ -40,6 +40,8 @@ Use `scripts/agent-1c.ps1` when PowerShell is available. Prefer the script over 
 
 Ask for missing required parameters at the start of the selected workflow. Do not ask for parameters that are already present in `.agent-1c/project.json` or `.dev.env`.
 
+When collecting parameters from the developer, ask one value at a time and expect the answer to contain only the value. Never ask for a grouped `KEY=value` block, never show one large question that lists all missing variables, and never require the developer to type variable names.
+
 Use fixed project defaults: `master` is the main branch and `src/cf` is the configuration dump path. Do not ask the developer for these values during initialization.
 
 Use the current working directory as the project root. During initialization, show its absolute path and ask the developer to confirm before continuing; do not ask them to enter a project path.
