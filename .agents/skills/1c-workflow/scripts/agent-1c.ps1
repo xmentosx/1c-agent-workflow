@@ -377,34 +377,91 @@ function Checkout-Master {
 }
 
 function Test-GitHasStagedChanges {
-    & git -C $script:ProjectRoot diff --cached --quiet
-    if ($LASTEXITCODE -eq 0) {
-        return $false
+    param([string[]]$PathSpec = @("."))
+
+    $arguments = @("diff", "--cached", "--quiet", "--") + @($PathSpec)
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & git -C $script:ProjectRoot @arguments
+        if ($LASTEXITCODE -eq 0) {
+            return $false
+        }
+        if ($LASTEXITCODE -eq 1) {
+            return $true
+        }
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
     }
-    if ($LASTEXITCODE -eq 1) {
-        return $true
+    throw "Cannot read staged Git changes for: $($PathSpec -join ', ')"
+}
+
+function Test-GitHeadContainsPath {
+    param([string]$RepoPath)
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & git -C $script:ProjectRoot cat-file -e "HEAD:$RepoPath" *> $null
+        return ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
     }
-    throw "Cannot read staged Git changes"
+}
+
+function Get-GitStatusForPathSpec {
+    param([string[]]$PathSpec = @("."))
+
+    $arguments = @("status", "--short", "--") + @($PathSpec)
+    $output = & git -C $script:ProjectRoot @arguments
+    if ($LASTEXITCODE -ne 0) {
+        return "<cannot read git status>"
+    }
+    if (-not $output) {
+        return "<empty>"
+    }
+    return ($output -join [Environment]::NewLine)
 }
 
 function Commit-IfChanged {
     param(
         [string]$Message,
         [string[]]$PathSpec = @("."),
-        [switch]$RequireChanges
+        [switch]$RequireChanges,
+        [switch]$ForceAdd
     )
 
-    $addArgs = @("add", "--") + @($PathSpec)
+    $addArgs = @("add", "--all")
+    if ($ForceAdd) {
+        $addArgs += "--force"
+    }
+    $addArgs += "--"
+    $addArgs += @($PathSpec)
     Invoke-Git $addArgs
-    if (Test-GitHasStagedChanges) {
-        Invoke-Git @("commit", "-m", $Message)
+    if (Test-GitHasStagedChanges -PathSpec $PathSpec) {
+        $commitArgs = @("commit", "-m", $Message, "--") + @($PathSpec)
+        Invoke-Git $commitArgs
         return $true
     } elseif ($RequireChanges) {
-        throw "No Git changes to commit for: $($PathSpec -join ', '). Expected files from the 1C configuration dump."
+        $status = Get-GitStatusForPathSpec -PathSpec $PathSpec
+        throw "No Git changes to commit for: $($PathSpec -join ', '). Expected files from the 1C configuration dump. Git status for this path: $status"
     } else {
         Write-Host "No Git changes to commit for: $($PathSpec -join ', ')"
         return $false
     }
+}
+
+function Assert-BaselineDumpCommitted {
+    param([string]$ExportPath)
+
+    $normalizedExportPath = (($ExportPath -replace "\\", "/").TrimEnd("/"))
+    $dumpInfoRepoPath = "$normalizedExportPath/ConfigDumpInfo.xml"
+    if (Test-GitHeadContainsPath -RepoPath $dumpInfoRepoPath) {
+        return
+    }
+
+    $status = Get-GitStatusForPathSpec -PathSpec @($ExportPath)
+    throw "Baseline configuration dump was not committed to HEAD: $dumpInfoRepoPath. Git status for $($ExportPath): $status. Check .gitignore and make sure '$normalizedExportPath' is tracked."
 }
 
 function Ensure-GitIgnore {
@@ -1378,7 +1435,8 @@ function Initialize-Project {
 
     Update-BaseFromRepository
     $dumpResult = Dump-ConfigToFiles
-    Commit-IfChanged -Message "sync: export 1C configuration from repository" -PathSpec @($dumpResult.exportPath) -RequireChanges | Out-Null
+    Commit-IfChanged -Message "sync: export 1C configuration from repository" -PathSpec @($dumpResult.exportPath) -RequireChanges -ForceAdd | Out-Null
+    Assert-BaselineDumpCommitted -ExportPath $dumpResult.exportPath
 
     Install-AiRules1c
     Update-UserRules
@@ -1391,7 +1449,7 @@ function Sync-Master {
     Checkout-Master
     Update-BaseFromRepository
     $dumpResult = Dump-ConfigToFiles
-    Commit-IfChanged -Message "sync: refresh 1C configuration from repository" -PathSpec @($dumpResult.exportPath) | Out-Null
+    Commit-IfChanged -Message "sync: refresh 1C configuration from repository" -PathSpec @($dumpResult.exportPath) -ForceAdd | Out-Null
 }
 
 function Start-Feature {

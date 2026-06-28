@@ -173,6 +173,8 @@ Before destructive or stateful actions:
 - Do not ask for, create, or configure a Git remote during initialization.
 - Do not pull automatically during simple branch switching.
 - Require a clean worktree before branch switching, feature refresh, feature CF export, or feature finish.
+- `src/cf` is tracked project content. During source dumps, stage and commit only `src/cf`; do not include unrelated staged files in dump commits.
+- Force-add `src/cf` during source dump commits so broad ignore rules such as `src/` cannot hide the standard configuration dump.
 
 ## CHECK_TOOLS
 
@@ -202,7 +204,7 @@ Goal: create the baseline project state.
    - First dump: if `src/cf` is empty, run a full dump.
    - Next dumps: if `src/cf/ConfigDumpInfo.xml` exists, run incremental dump with `-update -force`.
    - Unsafe state: if `src/cf` is not empty and `ConfigDumpInfo.xml` is missing, stop and ask the user to clean the folder or restore `ConfigDumpInfo.xml`.
-9. Verify `src/cf/ConfigDumpInfo.xml` exists after the dump. During initial project creation, commit `src/cf` to `master` and stop if Git sees no dump files to commit.
+9. Verify `src/cf/ConfigDumpInfo.xml` exists after the dump. During initial project creation, commit only `src/cf` to `master`, then verify `HEAD:src/cf/ConfigDumpInfo.xml` exists. Stop if Git sees no dump files to commit or the file is missing from `HEAD`.
 10. Install `ai_rules_1c` per project from `https://github.com/comol/ai_rules_1c`, using the current agent target (`codex`, `kilocode`, or fallback `codex`). Invoke its installer with named parameters: `-Command init -ProjectRoot <project> -Source <rulesDir> -Tools <tools> -AssumeYes`.
 11. Install this workflow skill into `.agents/skills/1c-workflow`.
 12. If the current agent is Kilo Code, install slash wrappers into `.kilo/commands`.

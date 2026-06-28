@@ -46,6 +46,8 @@ In password lines of the grouped questionnaire, exact values `нет` and `-` me
 
 Use fixed project defaults: `master` is the main branch and `src/cf` is the configuration dump path. Do not ask the developer for these values during initialization.
 
+Treat `src/cf` as tracked project content. Source dump commits must include only `src/cf` and must verify `src/cf/ConfigDumpInfo.xml` is present in `HEAD` after initial project creation.
+
 Use `.agent-1c/infobases/features` as the default feature infobase copy root inside the project. Do not ask for this path during normal initialization; ensure `.agent-1c/infobases/` is ignored by Git.
 
 Before asking for the 1C platform path, scan existing standard installation folders for installed versions and offer the discovered version `bin`/`bin\1cv8.exe` paths as choices. Missing `C:\Program Files\1cv8` or `C:\Program Files (x86)\1cv8` folders are normal; skip them without error. Do not offer the common `C:\Program Files\1cv8` root as a version. Ask for a custom path only when no version is found or the developer chooses manual input.

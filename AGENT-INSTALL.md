@@ -193,6 +193,8 @@ This performs:
    - Later dumps are incremental with `-update -force` when `src/cf/ConfigDumpInfo.xml` exists.
    - If `src/cf` is not empty and `ConfigDumpInfo.xml` is missing, initialization stops with a clear error.
    - After the dump, `src/cf/ConfigDumpInfo.xml` must exist and the initial dump must be committed to `master`; if not, initialization stops.
+   - The dump commit must stage and commit only `src/cf`. Unrelated staged files must not be included.
+   - `src/cf` is tracked project content and must be force-added if a broad `.gitignore` rule such as `src/` would otherwise hide it.
    - 1C Designer commands must run strictly sequentially; the helper must wait for the repository update process to exit before starting the dump process.
 6. Commit of the baseline dump.
 7. Installation of `ai_rules_1c`.
