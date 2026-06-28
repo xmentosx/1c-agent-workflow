@@ -118,9 +118,10 @@ Ask only for values that are missing from `.agent-1c/project.json`, `.agent-1c/t
 Interactive question style:
 
 - Ask unrelated setup values one value at a time.
-- Ask source infobase and configuration repository values as one compact grouped questionnaire after the source infobase kind is known.
-- If the chat surface supports several structured fields/questions in one prompt, use that grouped form.
-- If structured grouped prompts are not available, ask one numbered block and tell the developer to answer with one raw value per line in the same order.
+- Ask source infobase and configuration repository values after the source infobase kind is known.
+- If the chat surface supports several structured fields/questions in one prompt, use one grouped form with separate short questions.
+- If structured grouped prompts are not available, ask the same values sequentially, one question at a time.
+- Never ask the developer to enter 6 or 7 lines into one free-form text answer; Enter may submit the first line in Codex/Kilo Code.
 - Never ask for a `KEY=value` block.
 - Never require variable names in grouped answers.
 - Never show one large setup question that lists all missing project variables; grouping is allowed only for the source infobase and configuration repository values.
@@ -135,9 +136,9 @@ For project initialization:
 - Do not ask for project root. Use the agent's current working directory as the project root, show its absolute path to the developer, and ask for confirmation before initialization.
 - 1C platform executable path (`1cv8.exe`): before asking for manual input, search installed versions under existing `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` folders. If a standard folder is absent, skip it silently. If one or more versions are found, ask the developer to choose a version and use its `bin\1cv8.exe` path. A manually entered version `bin` folder is acceptable; the helper resolves it to `bin\1cv8.exe`. Ask for a custom full path only when no version is found or the developer chooses manual input.
 - Source infobase kind: `file` or `server`.
-- For a file infobase, ask one grouped questionnaire with exactly 6 values: source infobase directory, infobase user, infobase password or `нет`/`-`, configuration repository path/address, configuration repository user, configuration repository password or `нет`/`-`.
-- For a server infobase, ask one grouped questionnaire with exactly 7 values: 1C server name, source infobase name, infobase user, infobase password or `нет`/`-`, configuration repository path/address, configuration repository user, configuration repository password or `нет`/`-`. Build the connection string as `Srvr="<server>";Ref="<base>";`.
-- Validate the grouped questionnaire line/value count before running 1C. If the count is wrong, ask the developer to repeat only the grouped questionnaire. After parsing, summarize the values without passwords and ask for confirmation.
+- For a file infobase, ask one grouped form or sequential set with exactly 6 separate values: source infobase directory, infobase user, infobase password or `нет`/`-`, configuration repository path/address, configuration repository user, configuration repository password or `нет`/`-`.
+- For a server infobase, ask one grouped form or sequential set with exactly 7 separate values: 1C server name, source infobase name, infobase user, infobase password or `нет`/`-`, configuration repository path/address, configuration repository user, configuration repository password or `нет`/`-`. Build the connection string as `Srvr="<server>";Ref="<base>";`.
+- Validate the collected questionnaire value count before running 1C. If only one value is received from an attempted multi-line answer or the count is otherwise wrong, repeat the collection as a grouped prompt or as sequential single-value questions. After parsing, summarize the values without passwords and ask for confirmation.
 - Directory for feature infobase copies: do not ask by default. Use `.agent-1c/infobases/features` inside the project and ignore `.agent-1c/infobases/` in Git. Ask only if the developer explicitly wants a custom location.
 - Apache web-client testing: ask only whether new feature infobases should be published to Apache by default. Store the answer locally in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`, never in committed project JSON.
 - If Apache publishing is enabled, run `detect-apache` and save detected local values to `.dev.env`. Do not ask for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf` in the ordinary initialization flow. If Apache is not detected, ask whether to install it automatically. On "yes", run `install-apache`, then rerun `detect-apache`/`check-tools`; on "no", offer only to disable publication or stop initialization until Apache is configured manually.
