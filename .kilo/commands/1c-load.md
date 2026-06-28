@@ -1,5 +1,5 @@
 ---
-description: Load current 1C config files into the feature infobase
+description: Load changed 1C config files into the feature infobase
 agent: code
 ---
 

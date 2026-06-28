@@ -10,15 +10,16 @@ When the user asks for help or the requested action is unclear, show this menu:
 Available 1C workflow actions:
 1. Initialize project: check tools, create a local Git project, sync master from a source infobase connected to 1C storage, and install project rules.
 2. Start feature: create a feature branch, copy the source infobase, unbind the copy from storage, optionally publish it to Apache.
-3. Load feature: load current branch config files into the feature infobase.
+3. Load feature: load changed current branch config files into the feature infobase.
 4. Refresh feature: sync master from 1C storage, merge master into the feature branch, and update the feature infobase.
 5. Export feature CF: export CF from the current feature branch without refreshing master.
 6. Sync master: refresh source infobase from 1C storage and update master dump.
 7. Finish feature: refresh master, merge master into the feature branch, update the feature infobase, export final CF, then switch to master.
-8. Switch branches: switch to master or to a saved feature branch.
+8. List features: show features in development and the current feature.
+9. Switch branches: switch to master or to a saved feature branch.
 ```
 
-For Kilo Code, project slash wrappers can expose these as `/1c`, `/1c-init`, `/1c-start`, `/1c-load`, `/1c-refresh`, `/1c-cf`, `/1c-sync`, `/1c-finish`, `/1c-master`, and `/1c-feature`.
+For Kilo Code, project slash wrappers can expose these as `/1c`, `/1c-init`, `/1c-start`, `/1c-load`, `/1c-refresh`, `/1c-cf`, `/1c-sync`, `/1c-finish`, `/1c-features`, `/1c-master`, and `/1c-feature`.
 
 For Codex, the skill can be chosen from `/skills` or invoked as `$1c-workflow`; enabled skills also appear in the app slash list when supported by the surface.
 
@@ -98,8 +99,6 @@ Default checks:
 
 - `git`: check `git --version`; offer `winget install --id Git.Git -e`.
 - `1c-platform`: check `PLATFORM_PATH` or `project.platformPath`; manual install suggestion.
-- `codex`: check `codex --version` when target includes Codex.
-- `kilocode`: check VS Code extension `kilocode.Kilo-Code` with `code --list-extensions`; offer `code --install-extension kilocode.Kilo-Code --pre-release`.
 - `apache-webinst`: check `WEBINST_PATH`/`web.webInstPath` only when web publication is enabled/requested.
 
 ## Required Questions
@@ -108,8 +107,7 @@ Ask only for values that are missing from `.agent-1c/project.json`, `.agent-1c/t
 
 For project initialization:
 
-- Project root.
-  Explain that this is the folder where the agent will create the local project, Git repository, service files, and configuration dump.
+- Do not ask for project root. Use the agent's current working directory as the project root, show its absolute path to the developer, and ask for confirmation before initialization.
 - 1C platform executable path (`1cv8.exe`).
 - Source infobase kind: `file` or `server`.
 - For a file infobase: source infobase directory.
@@ -118,7 +116,7 @@ For project initialization:
 - Configuration repository address/path.
 - Configuration repository user/password.
 - Directory for feature infobase copies (`featureInfoBaseRoot` / `FEATURE_INFOBASE_ROOT`).
-- Whether to install for Codex, Kilo Code, or both. If unknown, install the common skill and ask before adding Kilo slash commands.
+- Do not ask whether the project is for Codex or Kilo Code. Configure the current agent surface; when it cannot be detected, use Codex as the fallback.
 
 For starting a feature:
 
@@ -160,7 +158,7 @@ Before destructive or stateful actions:
 Goal: verify the local machine is ready and provide install suggestions without installing automatically.
 
 1. Read `.agent-1c/tools.json` when present.
-2. Check required tools based on selected target: Codex, Kilo Code, or both.
+2. Check required tools: Git, 1C platform, and optional Apache/webinst.
 3. If web publication is enabled/requested, check Apache/webinst settings too.
 4. Report `[OK]` and `[MISSING]` lines.
 5. If required software is missing during `INIT_PROJECT`, stop after showing suggested install/setup commands.
@@ -169,22 +167,23 @@ Goal: verify the local machine is ready and provide install suggestions without 
 
 Goal: create the baseline project state.
 
-1. Collect missing parameters, including `featureInfoBaseRoot`.
-2. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing.
-3. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.
-4. Initialize local Git if needed.
-5. Checkout or create `master`.
-6. Update the source infobase from 1C configuration repository storage.
-7. Dump configuration files into `src/cf`.
+1. Show the current working directory as project root and confirm the developer wants to initialize there.
+2. Collect missing parameters, including `featureInfoBaseRoot`.
+3. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing.
+4. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.
+5. Initialize local Git if needed.
+6. Checkout or create `master`.
+7. Update the source infobase from 1C configuration repository storage.
+8. Dump configuration files into `src/cf`.
    - First dump: if `src/cf` is empty, run a full dump.
    - Next dumps: if `src/cf/ConfigDumpInfo.xml` exists, run incremental dump with `-update -force`.
    - Unsafe state: if `src/cf` is not empty and `ConfigDumpInfo.xml` is missing, stop and ask the user to clean the folder or restore `ConfigDumpInfo.xml`.
-8. Commit the dump to `master` when there are changes.
-9. Install `ai_rules_1c` per project from `https://github.com/comol/ai_rules_1c`.
-10. Install this workflow skill into `.agents/skills/1c-workflow`.
-11. If Kilo Code is used, install slash wrappers into `.kilo/commands`.
-12. Add project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
-13. Commit rules and workflow files when there are changes.
+9. Commit the dump to `master` when there are changes.
+10. Install `ai_rules_1c` per project from `https://github.com/comol/ai_rules_1c`, using the current agent target (`codex`, `kilocode`, or fallback `codex`).
+11. Install this workflow skill into `.agents/skills/1c-workflow`.
+12. If the current agent is Kilo Code, install slash wrappers into `.kilo/commands`.
+13. Add project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
+14. Commit rules and workflow files when there are changes.
 
 ## START_FEATURE
 
@@ -206,9 +205,12 @@ Goal: create a branch and isolated feature infobase.
 Goal: apply current branch files to the feature infobase.
 
 1. Find feature state from `FeatureName` or current branch. In normal use, do not require a feature name when already on a `feature/<name>` branch.
-2. Run `/LoadConfigFromFiles` from `src/cf`.
-3. Run `/UpdateDBCfg`.
-4. Stop on errors and report the 1C log path.
+2. Build a UTF-8 list file in `logs/1c` from Git changes under `src/cf` relative to feature state `lastLoadedCommit`; include untracked files under `src/cf`.
+3. If no changed files are found, skip `/LoadConfigFromFiles` and report that the feature infobase already matches the current branch config files.
+4. Run `/LoadConfigFromFiles <src/cf> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
+5. Do not pass `-updateConfigDumpInfo`.
+6. After success, update feature state: `lastLoadedCommit`, `lastLoadAt`, `lastLoadListFile`, and latest 1C log path.
+7. Stop on errors and report the 1C log path.
 
 ## REFRESH_FEATURE
 
@@ -220,8 +222,8 @@ Goal: update a feature with the latest configuration from storage without finish
 4. Checkout the feature branch.
 5. Merge `master` into the feature branch.
 6. If conflicts occur, stop and resolve them in config files before continuing.
-7. Load the merged files into the feature infobase.
-8. Update feature state with refresh timestamp and latest 1C log path.
+7. Load only changed merged files into the feature infobase using the same partial load rules as `LOAD_FEATURE`.
+8. Update feature state with refresh timestamp, load metadata, and latest 1C log path.
 
 ## EXPORT_FEATURE_CF
 
@@ -230,10 +232,10 @@ Goal: create a CF from the current feature branch before full completion.
 1. Find feature state from `FeatureName` or current branch. In normal use, do not require a feature name when already on a `feature/<name>` branch.
 2. Require a clean Git worktree.
 3. Checkout the feature branch if needed.
-4. Load current branch files into the feature infobase.
+4. Load only changed current branch files into the feature infobase using the same partial load rules as `LOAD_FEATURE`.
 5. Export CF into `artifactsPath`.
 6. Do not refresh `master` or merge from storage unless the user explicitly requested `REFRESH_FEATURE` first.
-7. Update feature state with the CF path, timestamp, and latest 1C log path.
+7. Update feature state with load metadata, the CF path, timestamp, and latest 1C log path.
 
 ## SYNC_MASTER
 
@@ -256,12 +258,22 @@ Goal: prepare a tested feature for manual import into the storage-connected sour
 4. Checkout the feature branch.
 5. Merge `master` into the feature branch.
 6. If conflicts occur, stop and resolve them in config files before continuing.
-7. Load the merged files into the feature infobase.
+7. Load only changed merged files into the feature infobase using the same partial load rules as `LOAD_FEATURE`.
 8. Export final CF from the feature infobase into `artifactsPath`.
 9. Report branch, master commit, feature commit, CF path, latest 1C log path, and publication URL.
 10. Checkout `master` before completing.
 
 Do not load the feature directly into the source infobase connected to storage.
+
+## LIST_FEATURES
+
+Goal: show features currently in development and the active feature.
+
+1. Read `.agent-1c/features/*.json`.
+2. Show only feature states without `finishedAt`.
+3. Show current Git branch and current feature; if current branch is `master`, report current feature as `none`.
+4. Mark the feature whose saved branch matches the current Git branch.
+5. For each active feature, show feature name, branch, feature infobase path, publication URL if any, created timestamp, last load timestamp, and last refresh timestamp.
 
 ## SWITCH_MASTER
 

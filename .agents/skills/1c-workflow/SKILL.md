@@ -15,7 +15,7 @@ Map user intent to one workflow:
 
 - `HELP`: user asks what actions are available, asks for commands, asks for help, or runs `/1c`.
 - `INIT_PROJECT`: user asks to initialize/bootstrap/create a 1C agent project.
-- `CHECK_TOOLS`: user asks to check required software, setup, Git, Codex, Kilo Code, 1C platform, Apache, or webinst.
+- `CHECK_TOOLS`: user asks to check required software, setup, Git, 1C platform, Apache, or webinst.
 - `START_FEATURE`: user asks to start or begin a feature, task, branch, customization, or subproject.
 - `SYNC_MASTER`: user asks to refresh/sync master from 1C repository storage.
 - `LOAD_FEATURE`: user asks to load current branch files into the feature infobase.
@@ -24,6 +24,7 @@ Map user intent to one workflow:
 - `FINISH_FEATURE`: user asks to finish/complete a feature and prepare/export a CF.
 - `SWITCH_MASTER`: user asks to switch to master.
 - `SWITCH_FEATURE`: user asks to switch to a feature/subproject branch.
+- `LIST_FEATURES`: user asks to list/show active features, features in development, or the current feature.
 
 If intent is unclear, do not guess. Show the short menu from `references/workflow.md`.
 
@@ -39,7 +40,13 @@ Ask for missing required parameters at the start of the selected workflow. Do no
 
 Use fixed project defaults: `master` is the main branch and `src/cf` is the configuration dump path. Do not ask the developer for these values during initialization.
 
+Use the current working directory as the project root. During initialization, show its absolute path and ask the developer to confirm before continuing; do not ask them to enter a project path.
+
+Do not ask whether to configure Codex or Kilo Code. Use the agent surface currently running the workflow; if it cannot be detected, use Codex as the fallback.
+
 For `LOAD_FEATURE`, `REFRESH_FEATURE`, `EXPORT_FEATURE_CF`, and `FINISH_FEATURE`, infer the feature from the current `feature/<name>` branch. Only ask for or pass `FeatureName` when the current branch is not a feature branch and the action cannot be inferred.
+
+Load feature files into 1C with a generated `-listFile` of changed files under `src/cf`; do not full-load the entire dump unless the user explicitly asks for a manual recovery path.
 
 Never store passwords in Git, `AGENTS.md`, `USER-RULES.md`, or committed JSON. Store secrets only in local `.dev.env` or process environment variables.
 
@@ -67,6 +74,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action finish-feature
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-master
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-feature -FeatureName "order-discounts"
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-features
 ```
 
 The script is a helper, not a substitute for judgment. If project topology is unusual, adapt conservatively and document the deviation in the final report.

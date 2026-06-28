@@ -24,28 +24,6 @@
       }
     },
     {
-      "id": "codex",
-      "name": "Codex",
-      "requiredWhenTarget": "codex",
-      "install": {
-        "policy": "offer",
-        "commands": [
-          "Install Codex using your team's standard OpenAI Codex setup."
-        ]
-      }
-    },
-    {
-      "id": "kilocode",
-      "name": "Kilo Code",
-      "requiredWhenTarget": "kilocode",
-      "install": {
-        "policy": "offer",
-        "commands": [
-          "code --install-extension kilocode.Kilo-Code --pre-release"
-        ]
-      }
-    },
-    {
       "id": "apache-webinst",
       "name": "Apache/webinst",
       "requiredWhenWebPublication": true,

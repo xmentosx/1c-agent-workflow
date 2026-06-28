@@ -25,8 +25,8 @@ Ask for missing values only. If `.agent-1c/project.json` or `.dev.env` already c
 
 Required for initial project setup:
 
-- Target project root: the folder where the agent will create the local Git project, service files, and 1C configuration dump.
-- Active agent target: `codex`, `kilocode`, or `both`.
+- Current working directory is the project root. Show its absolute path and ask the developer to confirm initialization in this folder.
+- Current agent target. Do not ask the developer to choose Codex/Kilo; use the agent surface that is running this bootstrap. If it cannot be detected, use `codex`.
 - Directory for feature infobase copies (`FEATURE_INFOBASE_ROOT` / `featureInfoBaseRoot`).
 - `1cv8.exe` full path.
 - Source infobase kind: `file` or `server`.
@@ -58,7 +58,7 @@ Secrets must go to `.dev.env` or process environment variables. Never commit sec
 <project>/.agents/skills/1c-workflow/
 ```
 
-3. If the user selected Kilo Code or both, copy Kilo command wrappers into:
+3. If the current agent is Kilo Code, copy Kilo command wrappers into:
 
 ```text
 <project>/.kilo/commands/
@@ -90,8 +90,6 @@ Default checks come from `.agent-1c/tools.json`:
 
 - Git: `git --version`, offer `winget install --id Git.Git -e`.
 - 1C platform: check `PLATFORM_PATH` or `platformPath`, manual install.
-- Codex: check `codex --version` when target includes Codex.
-- Kilo Code: check VS Code extension `kilocode.Kilo-Code`; offer `code --install-extension kilocode.Kilo-Code --pre-release`.
 - Apache/webinst: check only when web publication is enabled/requested.
 
 ## Install ai_rules_1c
@@ -114,11 +112,11 @@ if (Test-Path $rulesDir) {
     git clone https://github.com/comol/ai_rules_1c.git $rulesDir
 }
 
-$tools = "codex,kilocode" # or "codex" / "kilocode" based on the user's selected target
+$tools = "codex" # use "kilocode" when this bootstrap is running from Kilo Code
 & (Join-Path $rulesDir "install.ps1") init -Source $rulesDir -Tools $tools
 ```
 
-If the installer asks which tools to configure, choose the target selected by the user: Codex, Kilo Code, or both.
+If the installer asks which tools to configure, choose the current agent surface. If it cannot be detected, choose Codex.
 
 ## Run Initial Lifecycle
 
@@ -159,6 +157,7 @@ For Kilo Code:
 /1c-cf
 /1c-sync
 /1c-finish
+/1c-features
 /1c-master
 /1c-feature <feature name>
 ```
@@ -180,6 +179,7 @@ Refresh the current 1C feature from storage.
 Export CF for the current 1C feature.
 Finish the current 1C feature and export CF.
 Sync master from 1C storage.
+List current 1C features.
 Switch to master.
 Switch to feature order discounts.
 What 1C workflow actions are available?

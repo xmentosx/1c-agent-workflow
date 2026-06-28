@@ -1,6 +1,6 @@
 ## 1C Project Lifecycle
 
-Use `.agents/skills/1c-workflow/SKILL.md` for project initialization, feature start, feature refresh, feature load, master sync, branch switching, feature finish, and CF export.
+Use `.agents/skills/1c-workflow/SKILL.md` for project initialization, feature start, feature refresh, feature load, master sync, feature listing, branch switching, feature finish, and CF export.
 
 Do not edit installer-managed `AGENTS.md` directly. Store secrets only in local `.dev.env`.
 

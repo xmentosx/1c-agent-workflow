@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "init-project", "sync-master", "start-feature", "load-feature", "refresh-feature", "export-feature-cf", "finish-feature", "switch-master", "switch-feature", "dump-cf")]
+    [ValidateSet("help", "validate", "check-tools", "init-project", "sync-master", "start-feature", "load-feature", "refresh-feature", "export-feature-cf", "finish-feature", "switch-master", "switch-feature", "list-features", "dump-cf")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -183,6 +183,20 @@ function Get-CurrentBranch {
     return (Get-GitOutput @("branch", "--show-current")).Trim()
 }
 
+function Get-CurrentCommit {
+    return (Get-GitOutput @("rev-parse", "HEAD")).Trim()
+}
+
+function Test-GitCommitExists {
+    param([string]$Commit)
+    if (-not $Commit) {
+        return $false
+    }
+
+    & git -C $script:ProjectRoot cat-file -e "$Commit^{commit}" *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+
 function Test-GitHasRemote {
     $remote = & git -C $script:ProjectRoot remote
     if ($LASTEXITCODE -ne 0) {
@@ -318,7 +332,7 @@ function Get-FeatureInfoBaseRoot {
 function Get-AgentTargets {
     $target = $AgentTarget
     if (-not $target) {
-        $target = Get-Setting -EnvName "AGENT_TOOLS" -ConfigName "aiRules.tools" -Default "both"
+        $target = Get-Setting -EnvName "AGENT_TOOLS" -ConfigName "aiRules.tools" -Default "codex"
     }
 
     $items = @()
@@ -337,7 +351,7 @@ function Get-AgentTargets {
     }
 
     if ($items.Count -eq 0) {
-        $items = @("codex", "kilocode")
+        $items = @("codex")
     }
 
     return $items | Select-Object -Unique
@@ -424,7 +438,6 @@ function Check-Tools {
 
     Write-Section "Check tools"
     $results = @()
-    $targets = @(Get-AgentTargets)
 
     $gitCommand = Get-Command git -ErrorAction SilentlyContinue
     $gitCheck = if ($gitCommand) { Invoke-ToolVersionCheck -Command "git" -Arguments @("--version") } else { $null }
@@ -445,42 +458,6 @@ function Check-Tools {
         -Ok ([bool]$platformOk) `
         -Detail $(if ($platformPath) { $platformPath } else { "PLATFORM_PATH/project.platformPath is missing" }) `
         -Offer (Get-ToolOffer -Id "1c-platform" -Fallback "Install 1C:Enterprise platform manually, then set PLATFORM_PATH in .dev.env.")
-
-    if ($targets -contains "codex") {
-        $codexCommand = Get-Command codex -ErrorAction SilentlyContinue
-        $codexCheck = if ($codexCommand) { Invoke-ToolVersionCheck -Command "codex" -Arguments @("--version") } else { $null }
-        $codexDetail = if ($codexCommand) { $codexCheck.detail } else { "codex command not found" }
-        $results += New-ToolResult `
-            -Id "codex" `
-            -Name "Codex" `
-            -Required $true `
-            -Ok ([bool]$codexCommand -and [bool]$codexCheck.ok) `
-            -Detail $codexDetail `
-            -Offer (Get-ToolOffer -Id "codex" -Fallback "Install Codex using your team's standard OpenAI Codex setup.")
-    }
-
-    if ($targets -contains "kilocode") {
-        $codeCommand = Get-Command code -ErrorAction SilentlyContinue
-        $kiloOk = $false
-        $kiloDetail = "VS Code code command not found"
-        if ($codeCommand) {
-            try {
-                $extensions = & code --list-extensions 2>$null
-                $kiloOk = [bool]($extensions | Where-Object { $_ -ieq "kilocode.Kilo-Code" } | Select-Object -First 1)
-                $kiloDetail = if ($kiloOk) { "kilocode.Kilo-Code extension installed" } else { "kilocode.Kilo-Code extension not found" }
-            } catch {
-                $kiloDetail = "code --list-extensions failed: $($_.Exception.Message)"
-            }
-        }
-
-        $results += New-ToolResult `
-            -Id "kilocode" `
-            -Name "Kilo Code" `
-            -Required $true `
-            -Ok $kiloOk `
-            -Detail $kiloDetail `
-            -Offer (Get-ToolOffer -Id "kilocode" -Fallback "code --install-extension kilocode.Kilo-Code --pre-release")
-    }
 
     $publishDefault = [bool](Get-ConfigValue -Path "web.publishByDefault" -Default $false)
     if ($PublishToApache -or $publishDefault) {
@@ -600,6 +577,136 @@ function Assert-ExportPathInsideProject {
     return $resolved
 }
 
+function Get-StateValue {
+    param(
+        [object]$State,
+        [string]$Name,
+        [object]$Default = $null
+    )
+
+    if ($null -eq $State) {
+        return $Default
+    }
+
+    $prop = $State.PSObject.Properties[$Name]
+    if ($null -eq $prop -or $null -eq $prop.Value -or [string]::IsNullOrWhiteSpace([string]$prop.Value)) {
+        return $Default
+    }
+
+    return $prop.Value
+}
+
+function Get-FeatureLoadBaseCommit {
+    param([object]$State)
+
+    foreach ($candidate in @(
+        (Get-StateValue -State $State -Name "lastLoadedCommit"),
+        (Get-StateValue -State $State -Name "createdFromCommit")
+    )) {
+        if (Test-GitCommitExists $candidate) {
+            return $candidate
+        }
+    }
+
+    $masterBranch = Get-MasterBranch
+    $mergeBase = & git -C $script:ProjectRoot merge-base HEAD $masterBranch 2>$null
+    if ($LASTEXITCODE -eq 0 -and $mergeBase) {
+        return ([string]$mergeBase).Trim()
+    }
+
+    return Get-CurrentCommit
+}
+
+function ConvertTo-ConfigLoadRelativePath {
+    param(
+        [string]$RepoPath,
+        [string]$ExportPath
+    )
+
+    $normalizedExportPath = ($ExportPath -replace "\\", "/").Trim("/")
+    $normalizedRepoPath = $RepoPath -replace "\\", "/"
+    if ($normalizedRepoPath -eq $normalizedExportPath) {
+        return $null
+    }
+
+    $prefix = $normalizedExportPath + "/"
+    if (-not $normalizedRepoPath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $null
+    }
+
+    $relative = $normalizedRepoPath.Substring($prefix.Length)
+    if (-not $relative -or $relative -ieq "ConfigDumpInfo.xml") {
+        return $null
+    }
+
+    return ($relative -replace "/", [System.IO.Path]::DirectorySeparatorChar)
+}
+
+function Get-ConfigLoadChangeSet {
+    param([object]$State)
+
+    $exportPath = Get-ExportPath
+    $absoluteExportPath = Assert-ExportPathInsideProject $exportPath
+    $baseCommit = Get-FeatureLoadBaseCommit -State $State
+
+    $tracked = & git -C $script:ProjectRoot diff --name-only --diff-filter=ACMRTUXBD $baseCommit -- $exportPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cannot calculate changed config files from commit: $baseCommit"
+    }
+
+    $untracked = & git -C $script:ProjectRoot ls-files --others --exclude-standard -- $exportPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cannot calculate untracked config files under $exportPath"
+    }
+
+    $files = @()
+    foreach ($path in @($tracked) + @($untracked)) {
+        $relative = ConvertTo-ConfigLoadRelativePath -RepoPath $path -ExportPath $exportPath
+        if ($relative) {
+            $files += $relative
+        }
+    }
+
+    $files = @($files | Sort-Object -Unique)
+    return [pscustomobject]@{
+        files = $files
+        baseCommit = $baseCommit
+        currentCommit = Get-CurrentCommit
+        absoluteExportPath = $absoluteExportPath
+    }
+}
+
+function New-ConfigLoadListFile {
+    param(
+        [object]$State,
+        [string[]]$Files
+    )
+
+    $logsPath = Resolve-ProjectPath (Get-ConfigValue -Path "logsPath" -Default "logs/1c")
+    New-Item -ItemType Directory -Force -Path $logsPath | Out-Null
+    $safeFeatureName = Get-StateValue -State $State -Name "safeFeatureName" -Default "feature"
+    $listFilePath = Join-Path $logsPath ("load-files-" + $safeFeatureName + "-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".txt")
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllLines($listFilePath, [string[]]$Files, $utf8NoBom)
+    return $listFilePath
+}
+
+function New-LoadStateUpdates {
+    param([object]$LoadResult)
+
+    $updates = @{
+        lastLoadedCommit = $LoadResult.currentCommit
+        lastLoadAt = (Get-Date).ToString("o")
+        lastLoadListFile = $LoadResult.listFile
+    }
+
+    if ($LoadResult.lastLogPath) {
+        $updates["lastLogPath"] = $LoadResult.lastLogPath
+    }
+
+    return $updates
+}
+
 function Dump-ConfigToFiles {
     $exportPath = Get-ExportPath
     $absoluteExportPath = Assert-ExportPathInsideProject $exportPath
@@ -623,16 +730,39 @@ function Dump-ConfigToFiles {
 function Load-ConfigFromFiles {
     param(
         [string]$InfoBasePath,
-        [string]$InfoBaseKind
+        [string]$InfoBaseKind,
+        [object]$State
     )
 
-    $exportPath = Get-ExportPath
-    $absoluteExportPath = Assert-ExportPathInsideProject $exportPath
+    $changeSet = Get-ConfigLoadChangeSet -State $State
+    if ($changeSet.files.Count -eq 0) {
+        Write-Host "No changed config files under $(Get-ExportPath) since $($changeSet.baseCommit)."
+        Write-Host "Feature infobase already matches current branch config files."
+        return [pscustomobject]@{
+            loaded = $false
+            fileCount = 0
+            listFile = ""
+            currentCommit = $changeSet.currentCommit
+            lastLogPath = $script:LastLogPath
+        }
+    }
+
+    $listFilePath = New-ConfigLoadListFile -State $State -Files $changeSet.files
+    Write-Host "Partial config load file count: $($changeSet.files.Count)"
+    Write-Host "Partial config load list: $listFilePath"
 
     Invoke-Designer `
         -InfoBasePath $InfoBasePath `
         -InfoBaseKind $InfoBaseKind `
-        -DesignerArgs @("/LoadConfigFromFiles", $absoluteExportPath, "/UpdateDBCfg", "-WarningsAsErrors") | Out-Null
+        -DesignerArgs @("/LoadConfigFromFiles", $changeSet.absoluteExportPath, "-listFile", $listFilePath, "-Format", "Hierarchical", "/UpdateDBCfg", "-WarningsAsErrors") | Out-Null
+
+    return [pscustomobject]@{
+        loaded = $true
+        fileCount = $changeSet.files.Count
+        listFile = $listFilePath
+        currentCommit = $changeSet.currentCommit
+        lastLogPath = $script:LastLogPath
+    }
 }
 
 function Dump-CF {
@@ -822,6 +952,7 @@ function Publish-FeatureToApache {
 function Initialize-Project {
     Write-Section "Initialize project"
     New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
+    Write-Host "Project root: $script:ProjectRoot"
     Check-Tools -StopOnMissing
     Get-FeatureInfoBaseRoot | Out-Null
     Ensure-GitRepository
@@ -906,6 +1037,8 @@ function Start-Feature {
         featureName = $FeatureName
         safeFeatureName = $safe
         branch = $FeatureBranch
+        createdFromCommit = Get-CurrentCommit
+        lastLoadedCommit = Get-CurrentCommit
         infoBaseKind = $kind
         featureInfoBasePath = $FeatureInfoBasePath
         publicationUrl = $publicationUrl
@@ -923,13 +1056,14 @@ function Start-Feature {
 
 function Load-Feature {
     $state = Read-FeatureState -Name $FeatureName
-    Load-ConfigFromFiles -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind
-    Update-FeatureState -State $state -Updates @{
-        lastLoadAt = (Get-Date).ToString("o")
-        lastLogPath = $script:LastLogPath
+    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
+    Update-FeatureState -State $state -Updates (New-LoadStateUpdates -LoadResult $loadResult)
+    if ($loadResult.loaded) {
+        Write-Host "Feature infobase updated: $($state.featureInfoBasePath)"
+        Write-Host "Last 1C log: $($loadResult.lastLogPath)"
+    } else {
+        Write-Host "Feature infobase unchanged: $($state.featureInfoBasePath)"
     }
-    Write-Host "Feature infobase updated: $($state.featureInfoBasePath)"
-    Write-Host "Last 1C log: $script:LastLogPath"
 }
 
 function Refresh-Feature {
@@ -938,14 +1072,17 @@ function Refresh-Feature {
     Sync-Master
     Invoke-Git @("checkout", $state.branch)
     Invoke-Git @("merge", (Get-MasterBranch))
-    Load-ConfigFromFiles -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind
-    Update-FeatureState -State $state -Updates @{
-        lastRefreshAt = (Get-Date).ToString("o")
-        lastLogPath = $script:LastLogPath
-    }
+    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
+    $updates = New-LoadStateUpdates -LoadResult $loadResult
+    $updates["lastRefreshAt"] = (Get-Date).ToString("o")
+    Update-FeatureState -State $state -Updates $updates
     Write-Host "Feature refreshed from master: $($state.branch)"
-    Write-Host "Feature infobase updated: $($state.featureInfoBasePath)"
-    Write-Host "Last 1C log: $script:LastLogPath"
+    if ($loadResult.loaded) {
+        Write-Host "Feature infobase updated: $($state.featureInfoBasePath)"
+        Write-Host "Last 1C log: $($loadResult.lastLogPath)"
+    } else {
+        Write-Host "Feature infobase unchanged: $($state.featureInfoBasePath)"
+    }
 }
 
 function Export-FeatureCF {
@@ -955,14 +1092,14 @@ function Export-FeatureCF {
     if ($currentBranch -ne $state.branch) {
         Invoke-Git @("checkout", $state.branch)
     }
-    Load-ConfigFromFiles -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind
+    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
     $cfPath = Dump-CF -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind -SafeFeatureName $state.safeFeatureName
-    $featureCommit = (Get-GitOutput @("rev-parse", "HEAD")).Trim()
-    Update-FeatureState -State $state -Updates @{
-        lastCfPath = $cfPath
-        lastCfAt = (Get-Date).ToString("o")
-        lastLogPath = $script:LastLogPath
-    }
+    $featureCommit = Get-CurrentCommit
+    $updates = New-LoadStateUpdates -LoadResult $loadResult
+    $updates["lastCfPath"] = $cfPath
+    $updates["lastCfAt"] = (Get-Date).ToString("o")
+    $updates["lastLogPath"] = $script:LastLogPath
+    Update-FeatureState -State $state -Updates $updates
     Write-Host "Branch: $($state.branch)"
     Write-Host "Feature commit: $featureCommit"
     Write-Host "CF saved: $cfPath"
@@ -977,18 +1114,18 @@ function Finish-Feature {
     Invoke-Git @("checkout", $state.branch)
     Invoke-Git @("merge", (Get-MasterBranch))
 
-    Load-ConfigFromFiles -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind
+    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
     $cfPath = Dump-CF -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind -SafeFeatureName $state.safeFeatureName
 
     $masterBranch = Get-MasterBranch
     $masterCommit = (Get-GitOutput @("rev-parse", $masterBranch)).Trim()
-    $featureCommit = (Get-GitOutput @("rev-parse", "HEAD")).Trim()
+    $featureCommit = Get-CurrentCommit
 
-    Update-FeatureState -State $state -Updates @{
-        finishedAt = (Get-Date).ToString("o")
-        finalCfPath = $cfPath
-        lastLogPath = $script:LastLogPath
-    }
+    $updates = New-LoadStateUpdates -LoadResult $loadResult
+    $updates["finishedAt"] = (Get-Date).ToString("o")
+    $updates["finalCfPath"] = $cfPath
+    $updates["lastLogPath"] = $script:LastLogPath
+    Update-FeatureState -State $state -Updates $updates
 
     Write-Host "Branch: $($state.branch)"
     Write-Host "Master commit: $masterCommit"
@@ -1000,9 +1137,70 @@ function Finish-Feature {
     }
 
     Invoke-Git @("checkout", $masterBranch)
-    $currentCommit = (Get-GitOutput @("rev-parse", "HEAD")).Trim()
+    $currentCommit = Get-CurrentCommit
     Write-Host "Switched to master branch: $masterBranch"
     Write-Host "Current commit: $currentCommit"
+}
+
+function List-Features {
+    Write-Section "Features"
+
+    $currentBranch = ""
+    if (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git")) {
+        $currentBranch = Get-CurrentBranch
+    }
+
+    $currentFeature = "none"
+    if ($currentBranch -like "feature/*") {
+        $currentFeature = $currentBranch.Substring("feature/".Length)
+    }
+
+    Write-Host "Current branch: $(if ($currentBranch) { $currentBranch } else { '<none>' })"
+    Write-Host "Current feature: $currentFeature"
+
+    $featuresDir = Join-Path $script:ProjectRoot ".agent-1c\features"
+    if (-not (Test-Path -LiteralPath $featuresDir)) {
+        Write-Host "No features in development."
+        return
+    }
+
+    $states = @()
+    foreach ($file in Get-ChildItem -LiteralPath $featuresDir -Filter "*.json" -File) {
+        try {
+            $state = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+            $state | Add-Member -NotePropertyName statePath -NotePropertyValue $file.FullName -Force
+            if (-not (Get-StateValue -State $state -Name "finishedAt")) {
+                $states += $state
+            }
+        } catch {
+            Write-Host "Skipping unreadable feature state: $($file.FullName)"
+        }
+    }
+
+    if ($states.Count -eq 0) {
+        Write-Host "No features in development."
+        return
+    }
+
+    foreach ($state in ($states | Sort-Object @{ Expression = { Get-StateValue -State $_ -Name "createdAt" -Default "" } }, @{ Expression = { Get-StateValue -State $_ -Name "featureName" -Default "" } })) {
+        $branch = Get-StateValue -State $state -Name "branch" -Default ""
+        $marker = if ($branch -and $branch -eq $currentBranch) { "*" } else { " " }
+        $name = Get-StateValue -State $state -Name "featureName" -Default (Get-StateValue -State $state -Name "safeFeatureName" -Default "<unknown>")
+        $infoBasePath = Get-StateValue -State $state -Name "featureInfoBasePath" -Default ""
+        $createdAt = Get-StateValue -State $state -Name "createdAt" -Default ""
+        $lastLoadAt = Get-StateValue -State $state -Name "lastLoadAt" -Default ""
+        $lastRefreshAt = Get-StateValue -State $state -Name "lastRefreshAt" -Default ""
+        Write-Host "$marker $name"
+        Write-Host "  Branch: $branch"
+        Write-Host "  Infobase: $infoBasePath"
+        $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
+        if ($publicationUrl) {
+            Write-Host "  Publication URL: $publicationUrl"
+        }
+        Write-Host "  Created: $createdAt"
+        Write-Host "  Last load: $lastLoadAt"
+        Write-Host "  Last refresh: $lastRefreshAt"
+    }
 }
 
 function Switch-Master {
@@ -1068,16 +1266,17 @@ function Show-Help {
 Actions:
   help                Show this help.
   validate            Check required local settings.
-  check-tools         Check Git, 1C platform, selected agents, and optional web tools.
+  check-tools         Check Git, 1C platform, and optional web tools.
   init-project        Sync source infobase, dump config to master, install rules.
   sync-master         Refresh master from source infobase connected to storage.
   start-feature       Create feature branch and feature infobase copy.
-  load-feature        Load current exported files into the feature infobase.
+  load-feature        Load changed config files into the feature infobase.
   refresh-feature     Refresh master from storage, merge it into the feature branch, update feature base.
   export-feature-cf   Export CF from the current feature branch without refreshing master.
   finish-feature      Refresh master, merge into feature branch, export final CF, switch to master.
   switch-master       Checkout the fixed master branch.
   switch-feature      Checkout a feature branch from saved feature state.
+  list-features       Show features in development and the current feature.
   dump-cf             Alias for export-feature-cf.
 
 Examples:
@@ -1087,6 +1286,7 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-feature
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-feature-cf
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action finish-feature
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-features
 "@
 }
 
@@ -1107,6 +1307,7 @@ try {
         "finish-feature" { Finish-Feature }
         "switch-master" { Switch-Master }
         "switch-feature" { Switch-Feature }
+        "list-features" { List-Features }
         "dump-cf" { Export-FeatureCF }
     }
 } catch {
