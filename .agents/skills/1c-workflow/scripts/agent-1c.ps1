@@ -8,7 +8,6 @@ param(
     [string]$FeatureName,
     [string]$FeatureBranch,
     [string]$FeatureInfoBasePath,
-    [string]$GitRemoteUrl,
     [ValidateSet("", "codex", "kilocode", "both")]
     [string]$AgentTarget = "",
     [switch]$PublishToApache,
@@ -211,33 +210,23 @@ function Assert-CleanGit {
     }
 }
 
-function Get-GitRemoteUrl {
-    if ($GitRemoteUrl) {
-        return $GitRemoteUrl
-    }
-    return Get-Setting -EnvName "GIT_REMOTE_URL" -ConfigName "gitRemoteUrl"
-}
-
 function Ensure-GitRepository {
-    param([string]$RemoteUrl)
-
     if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git"))) {
         Invoke-Git @("init")
     }
+}
 
-    if ($RemoteUrl) {
-        $currentOrigin = & git -C $script:ProjectRoot remote get-url origin 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            Invoke-Git @("remote", "add", "origin", $RemoteUrl)
-        } elseif ($currentOrigin.Trim() -ne $RemoteUrl) {
-            throw "Git origin already points to '$($currentOrigin.Trim())', expected '$RemoteUrl'."
-        }
-    }
+function Get-MasterBranch {
+    return "master"
+}
+
+function Get-ExportPath {
+    return "src/cf"
 }
 
 function Checkout-Master {
-    $masterBranch = Get-ConfigValue -Path "masterBranch" -Default "master"
-    Ensure-GitRepository -RemoteUrl ""
+    $masterBranch = Get-MasterBranch
+    Ensure-GitRepository
 
     & git -C $script:ProjectRoot rev-parse --verify $masterBranch *> $null
     if ($LASTEXITCODE -eq 0) {
@@ -299,6 +288,18 @@ function Get-InfoBaseKind {
 }
 
 function Get-SourceInfoBasePath {
+    $kind = Get-InfoBaseKind
+    if ($kind -eq "server") {
+        $legacyValue = Get-Setting -EnvName "SOURCE_INFOBASE_PATH" -ConfigName "sourceInfoBasePath"
+        if ($legacyValue) {
+            return $legacyValue
+        }
+
+        $serverName = Require-Value "SOURCE_SERVER_NAME or project.sourceServerName" (Get-Setting -EnvName "SOURCE_SERVER_NAME" -ConfigName "sourceServerName")
+        $infoBaseName = Require-Value "SOURCE_INFOBASE_NAME or project.sourceInfoBaseName" (Get-Setting -EnvName "SOURCE_INFOBASE_NAME" -ConfigName "sourceInfoBaseName")
+        return "Srvr=`"$serverName`";Ref=`"$infoBaseName`";"
+    }
+
     $value = Get-Setting -EnvName "SOURCE_INFOBASE_PATH" -ConfigName "sourceInfoBasePath"
     if (-not $value) {
         $value = Get-EnvValue -Name "INFOBASE_PATH"
@@ -600,16 +601,23 @@ function Assert-ExportPathInsideProject {
 }
 
 function Dump-ConfigToFiles {
-    $exportPath = Get-ConfigValue -Path "exportPath" -Default "src/cf"
+    $exportPath = Get-ExportPath
     $absoluteExportPath = Assert-ExportPathInsideProject $exportPath
     New-Item -ItemType Directory -Force -Path $absoluteExportPath | Out-Null
 
-    Get-ChildItem -LiteralPath $absoluteExportPath -Force | Remove-Item -Recurse -Force
+    $dumpInfoPath = Join-Path $absoluteExportPath "ConfigDumpInfo.xml"
+    $children = @(Get-ChildItem -LiteralPath $absoluteExportPath -Force)
+    $designerArgs = @("/DumpConfigToFiles", $absoluteExportPath, "-Format", "Hierarchical")
+    if (Test-Path -LiteralPath $dumpInfoPath) {
+        $designerArgs += @("-update", "-force")
+    } elseif ($children.Count -gt 0) {
+        throw "Export path '$absoluteExportPath' is not empty and ConfigDumpInfo.xml is missing. Clean the folder manually or restore ConfigDumpInfo.xml before dumping config files."
+    }
 
     Invoke-Designer `
         -InfoBasePath (Get-SourceInfoBasePath) `
         -InfoBaseKind (Get-InfoBaseKind) `
-        -DesignerArgs @("/DumpConfigToFiles", $absoluteExportPath, "-Format", "Hierarchical") | Out-Null
+        -DesignerArgs $designerArgs | Out-Null
 }
 
 function Load-ConfigFromFiles {
@@ -618,7 +626,7 @@ function Load-ConfigFromFiles {
         [string]$InfoBaseKind
     )
 
-    $exportPath = Get-ConfigValue -Path "exportPath" -Default "src/cf"
+    $exportPath = Get-ExportPath
     $absoluteExportPath = Assert-ExportPathInsideProject $exportPath
 
     Invoke-Designer `
@@ -757,7 +765,7 @@ function Read-FeatureState {
     }
 
     if (-not $Name) {
-        throw "FeatureName is required."
+        throw "Run this from a feature branch or pass -FeatureName."
     }
 
     $safe = ConvertTo-SafeName $Name
@@ -813,9 +821,10 @@ function Publish-FeatureToApache {
 
 function Initialize-Project {
     Write-Section "Initialize project"
+    New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
     Check-Tools -StopOnMissing
     Get-FeatureInfoBaseRoot | Out-Null
-    Ensure-GitRepository -RemoteUrl (Get-GitRemoteUrl)
+    Ensure-GitRepository
     Ensure-GitIgnore
     Checkout-Master
 
@@ -928,7 +937,7 @@ function Refresh-Feature {
     Assert-CleanGit
     Sync-Master
     Invoke-Git @("checkout", $state.branch)
-    Invoke-Git @("merge", (Get-ConfigValue -Path "masterBranch" -Default "master"))
+    Invoke-Git @("merge", (Get-MasterBranch))
     Load-ConfigFromFiles -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind
     Update-FeatureState -State $state -Updates @{
         lastRefreshAt = (Get-Date).ToString("o")
@@ -966,12 +975,12 @@ function Finish-Feature {
 
     Sync-Master
     Invoke-Git @("checkout", $state.branch)
-    Invoke-Git @("merge", (Get-ConfigValue -Path "masterBranch" -Default "master"))
+    Invoke-Git @("merge", (Get-MasterBranch))
 
     Load-ConfigFromFiles -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind
     $cfPath = Dump-CF -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind -SafeFeatureName $state.safeFeatureName
 
-    $masterBranch = Get-ConfigValue -Path "masterBranch" -Default "master"
+    $masterBranch = Get-MasterBranch
     $masterCommit = (Get-GitOutput @("rev-parse", $masterBranch)).Trim()
     $featureCommit = (Get-GitOutput @("rev-parse", "HEAD")).Trim()
 
@@ -998,8 +1007,8 @@ function Finish-Feature {
 
 function Switch-Master {
     Assert-CleanGit
-    $masterBranch = Get-ConfigValue -Path "masterBranch" -Default "master"
-    Ensure-GitRepository -RemoteUrl ""
+    $masterBranch = Get-MasterBranch
+    Ensure-GitRepository
     & git -C $script:ProjectRoot rev-parse --verify $masterBranch *> $null
     if ($LASTEXITCODE -ne 0) {
         throw "Master branch does not exist: $masterBranch"
@@ -1067,16 +1076,17 @@ Actions:
   refresh-feature     Refresh master from storage, merge it into the feature branch, update feature base.
   export-feature-cf   Export CF from the current feature branch without refreshing master.
   finish-feature      Refresh master, merge into feature branch, export final CF, switch to master.
-  switch-master       Checkout the configured master branch.
+  switch-master       Checkout the fixed master branch.
   switch-feature      Checkout a feature branch from saved feature state.
   dump-cf             Alias for export-feature-cf.
 
 Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action start-feature -FeatureName "order-discounts"
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-feature -FeatureName "order-discounts"
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-feature-cf -FeatureName "order-discounts"
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action finish-feature -FeatureName "order-discounts"
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action load-feature
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-feature
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-feature-cf
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action finish-feature
 "@
 }
 

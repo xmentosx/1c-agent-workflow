@@ -25,18 +25,16 @@ Ask for missing values only. If `.agent-1c/project.json` or `.dev.env` already c
 
 Required for initial project setup:
 
-- Target project root.
-- Git remote URL if the repository is not initialized and a remote is required.
+- Target project root: the folder where the agent will create the local Git project, service files, and 1C configuration dump.
 - Active agent target: `codex`, `kilocode`, or `both`.
 - Directory for feature infobase copies (`FEATURE_INFOBASE_ROOT` / `featureInfoBaseRoot`).
 - `1cv8.exe` full path.
 - Source infobase kind: `file` or `server`.
-- Source infobase path: file base directory or server infobase string.
+- For a file infobase: source infobase directory.
+- For a server infobase: server name and infobase name. The agent must build the connection string as `Srvr="<server>";Ref="<base>";`.
 - Infobase user/password if required.
 - 1C configuration repository path/address.
 - 1C configuration repository user/password.
-- Export path inside Git, default `src/cf`.
-- Master branch, default `master`.
 
 Required for feature setup:
 
@@ -134,13 +132,15 @@ This performs:
 
 1. Required software check with install suggestions.
 2. Git initialization when `.git` is absent.
-3. `origin` setup when a Git remote URL is configured and no origin exists.
-4. Checkout or creation of `master`.
-5. Source infobase update from 1C configuration repository storage.
-6. Dump of configuration files into `exportPath`.
-7. Commit of the baseline dump.
-8. Installation of `ai_rules_1c`.
-9. Commit of workflow/rules files.
+3. Checkout or creation of local `master`.
+4. Source infobase update from 1C configuration repository storage.
+5. Dump of configuration files into fixed `src/cf`.
+   - First dump is full when `src/cf` is empty.
+   - Later dumps are incremental with `-update -force` when `src/cf/ConfigDumpInfo.xml` exists.
+   - If `src/cf` is not empty and `ConfigDumpInfo.xml` is missing, initialization stops with a clear error.
+6. Commit of the baseline dump.
+7. Installation of `ai_rules_1c`.
+8. Commit of workflow/rules files.
 
 If PowerShell is unavailable, follow `.agents/skills/1c-workflow/references/workflow.md` manually with equivalent commands.
 
@@ -154,11 +154,11 @@ For Kilo Code:
 /1c
 /1c-init
 /1c-start <feature name>
-/1c-load <feature name>
-/1c-refresh <feature name>
-/1c-cf <feature name>
+/1c-load
+/1c-refresh
+/1c-cf
 /1c-sync
-/1c-finish <feature name>
+/1c-finish
 /1c-master
 /1c-feature <feature name>
 ```

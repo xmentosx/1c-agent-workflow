@@ -8,7 +8,7 @@ When the user asks for help or the requested action is unclear, show this menu:
 
 ```text
 Available 1C workflow actions:
-1. Initialize project: check tools, create/sync Git master from a source infobase connected to 1C storage, and install project rules.
+1. Initialize project: check tools, create a local Git project, sync master from a source infobase connected to 1C storage, and install project rules.
 2. Start feature: create a feature branch, copy the source infobase, unbind the copy from storage, optionally publish it to Apache.
 3. Load feature: load current branch config files into the feature infobase.
 4. Refresh feature: sync master from 1C storage, merge master into the feature branch, and update the feature infobase.
@@ -42,7 +42,6 @@ Use this as `.agent-1c/project.json`:
 ```json
 {
   "schemaVersion": 1,
-  "gitRemoteUrl": "",
   "masterBranch": "master",
   "exportPath": "src/cf",
   "artifactsPath": "build/cf",
@@ -50,6 +49,8 @@ Use this as `.agent-1c/project.json`:
   "platformPath": "",
   "infoBaseKind": "file",
   "sourceInfoBasePath": "",
+  "sourceServerName": "",
+  "sourceInfoBaseName": "",
   "repositoryPath": "",
   "featureInfoBaseRoot": "",
   "serverBaseCopyScript": "",
@@ -72,9 +73,10 @@ Values in `.dev.env` override or supplement JSON for local/secrets:
 
 ```dotenv
 PLATFORM_PATH=C:\Program Files\1cv8\8.3.xx.xxxx\bin\1cv8.exe
-GIT_REMOTE_URL=
 INFOBASE_KIND=file
 SOURCE_INFOBASE_PATH=C:\1c\bases\source
+SOURCE_SERVER_NAME=
+SOURCE_INFOBASE_NAME=
 IB_USER=
 IB_PASSWORD=
 REPOSITORY_PATH=\\server\repo
@@ -107,15 +109,14 @@ Ask only for values that are missing from `.agent-1c/project.json`, `.agent-1c/t
 For project initialization:
 
 - Project root.
-- Git remote URL if the repository is not initialized and a remote is needed.
+  Explain that this is the folder where the agent will create the local project, Git repository, service files, and configuration dump.
 - 1C platform executable path (`1cv8.exe`).
 - Source infobase kind: `file` or `server`.
-- Source infobase path: file base directory or server base string.
+- For a file infobase: source infobase directory.
+- For a server infobase: server name and infobase name. Build the connection string as `Srvr="<server>";Ref="<base>";`.
 - 1C infobase user/password if required.
 - Configuration repository address/path.
 - Configuration repository user/password.
-- Export path inside the repository, default `src/cf`.
-- Master branch, default `master`.
 - Directory for feature infobase copies (`featureInfoBaseRoot` / `FEATURE_INFOBASE_ROOT`).
 - Whether to install for Codex, Kilo Code, or both. If unknown, install the common skill and ask before adding Kilo slash commands.
 
@@ -141,16 +142,16 @@ Before destructive or stateful actions:
 3. Verify `1cv8.exe` exists before 1C Designer operations.
 4. Verify `featureInfoBaseRoot` is set during initialization and before feature creation.
 5. Verify the source file infobase has `1Cv8.1CD` when `infoBaseKind` is `file`.
-6. Verify the Git worktree is clean before switching branches.
-7. Verify export path resolves inside the project root before clearing it.
-8. Create `logsPath`, `artifactsPath`, and `.agent-1c/features`.
-9. Ensure `.dev.env`, `*.cf`, `*.dt`, and logs are ignored by Git.
+6. Verify source server name and infobase name are set when `infoBaseKind` is `server`, unless legacy `sourceInfoBasePath` is explicitly configured.
+7. Verify the Git worktree is clean before switching branches.
+8. Verify `src/cf` resolves inside the project root before dumping config files.
+9. Create `logsPath`, `artifactsPath`, and `.agent-1c/features`.
+10. Ensure `.dev.env`, `*.cf`, `*.dt`, and logs are ignored by Git.
 
 ## Git Rules
 
-- If `.git` is absent during initialization, create a Git repository.
-- If `gitRemoteUrl` or `GIT_REMOTE_URL` is set and `origin` is absent, add `origin`.
-- If `origin` exists and differs from the configured remote URL, stop and report the mismatch.
+- If `.git` is absent during initialization, create a local Git repository.
+- Do not ask for, create, or configure a Git remote during initialization.
 - Do not pull automatically during simple branch switching.
 - Require a clean worktree before branch switching, feature refresh, feature CF export, or feature finish.
 
@@ -171,10 +172,13 @@ Goal: create the baseline project state.
 1. Collect missing parameters, including `featureInfoBaseRoot`.
 2. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing.
 3. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.
-4. Initialize Git if needed; add `origin` if configured and absent.
+4. Initialize local Git if needed.
 5. Checkout or create `master`.
 6. Update the source infobase from 1C configuration repository storage.
-7. Dump configuration files into `exportPath`.
+7. Dump configuration files into `src/cf`.
+   - First dump: if `src/cf` is empty, run a full dump.
+   - Next dumps: if `src/cf/ConfigDumpInfo.xml` exists, run incremental dump with `-update -force`.
+   - Unsafe state: if `src/cf` is not empty and `ConfigDumpInfo.xml` is missing, stop and ask the user to clean the folder or restore `ConfigDumpInfo.xml`.
 8. Commit the dump to `master` when there are changes.
 9. Install `ai_rules_1c` per project from `https://github.com/comol/ai_rules_1c`.
 10. Install this workflow skill into `.agents/skills/1c-workflow`.
@@ -201,8 +205,8 @@ Goal: create a branch and isolated feature infobase.
 
 Goal: apply current branch files to the feature infobase.
 
-1. Find feature state from `FeatureName`, current branch, or the user.
-2. Run `/LoadConfigFromFiles` from `exportPath`.
+1. Find feature state from `FeatureName` or current branch. In normal use, do not require a feature name when already on a `feature/<name>` branch.
+2. Run `/LoadConfigFromFiles` from `src/cf`.
 3. Run `/UpdateDBCfg`.
 4. Stop on errors and report the 1C log path.
 
@@ -210,7 +214,7 @@ Goal: apply current branch files to the feature infobase.
 
 Goal: update a feature with the latest configuration from storage without finishing it.
 
-1. Find feature state from `FeatureName`, current branch, or the user.
+1. Find feature state from `FeatureName` or current branch. In normal use, do not require a feature name when already on a `feature/<name>` branch.
 2. Require a clean Git worktree.
 3. Run `SYNC_MASTER`.
 4. Checkout the feature branch.
@@ -223,7 +227,7 @@ Goal: update a feature with the latest configuration from storage without finish
 
 Goal: create a CF from the current feature branch before full completion.
 
-1. Find feature state from `FeatureName`, current branch, or the user.
+1. Find feature state from `FeatureName` or current branch. In normal use, do not require a feature name when already on a `feature/<name>` branch.
 2. Require a clean Git worktree.
 3. Checkout the feature branch if needed.
 4. Load current branch files into the feature infobase.
@@ -239,7 +243,7 @@ Goal: refresh `master` from storage.
 2. Checkout `master`.
 3. Pull with `--ff-only` when a remote/upstream exists.
 4. Update source infobase from storage.
-5. Dump configuration files into `exportPath`.
+5. Dump configuration files into `src/cf` using the same full/incremental rules as `INIT_PROJECT`.
 6. Commit changes with `sync: refresh 1C configuration from repository`.
 
 ## FINISH_FEATURE
@@ -261,10 +265,10 @@ Do not load the feature directly into the source infobase connected to storage.
 
 ## SWITCH_MASTER
 
-Goal: switch Git to the configured master branch.
+Goal: switch Git to the fixed `master` branch.
 
 1. Require a clean Git worktree.
-2. Checkout configured `masterBranch`.
+2. Checkout `master`.
 3. Report current commit.
 4. Do not pull and do not load files into 1C automatically.
 
@@ -272,7 +276,7 @@ Goal: switch Git to the configured master branch.
 
 Goal: switch Git to a saved feature branch.
 
-1. Find feature state from `FeatureName`, current branch, or the user.
+1. Find feature state from `FeatureName` or current branch.
 2. Require a clean Git worktree.
 3. Checkout the saved feature branch.
 4. Report current commit, feature infobase path, and publication URL if any.
@@ -287,7 +291,6 @@ Stop immediately when:
 - Source infobase cannot be opened.
 - Repository credentials are missing for source synchronization.
 - Git worktree is dirty before branch switching.
-- Git origin exists but differs from configured remote URL.
 - Feature infobase target already exists.
 - Feature copy cannot be unbound from storage.
 - 1C Designer returns a non-zero exit code.

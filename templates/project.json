@@ -1,6 +1,5 @@
 {
   "schemaVersion": 1,
-  "gitRemoteUrl": "",
   "masterBranch": "master",
   "exportPath": "src/cf",
   "artifactsPath": "build/cf",
@@ -8,6 +7,8 @@
   "platformPath": "",
   "infoBaseKind": "file",
   "sourceInfoBasePath": "",
+  "sourceServerName": "",
+  "sourceInfoBaseName": "",
   "repositoryPath": "",
   "featureInfoBaseRoot": "",
   "serverBaseCopyScript": "",

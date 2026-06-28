@@ -37,11 +37,15 @@ Use `scripts/agent-1c.ps1` when PowerShell is available. Prefer the script over 
 
 Ask for missing required parameters at the start of the selected workflow. Do not ask for parameters that are already present in `.agent-1c/project.json` or `.dev.env`.
 
+Use fixed project defaults: `master` is the main branch and `src/cf` is the configuration dump path. Do not ask the developer for these values during initialization.
+
+For `LOAD_FEATURE`, `REFRESH_FEATURE`, `EXPORT_FEATURE_CF`, and `FINISH_FEATURE`, infer the feature from the current `feature/<name>` branch. Only ask for or pass `FeatureName` when the current branch is not a feature branch and the action cannot be inferred.
+
 Never store passwords in Git, `AGENTS.md`, `USER-RULES.md`, or committed JSON. Store secrets only in local `.dev.env` or process environment variables.
 
 Do not edit installer-managed `AGENTS.md` directly. Put project-specific workflow notes in `USER-RULES.md` or `.agent-1c/`.
 
-Before switching branches, copying bases, clearing export folders, or running 1C Designer, check the working tree and stop on unexpected uncommitted changes.
+Before switching branches, copying bases, dumping configuration files, or running 1C Designer, check the working tree and stop on unexpected uncommitted changes.
 
 All feature changes load into the copied feature infobase. Never load feature changes directly into the source infobase connected to the 1C configuration repository.
 
@@ -57,10 +61,10 @@ From the project root:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action help
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action start-feature -FeatureName "order-discounts"
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action load-feature -FeatureName "order-discounts"
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-feature -FeatureName "order-discounts"
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-feature-cf -FeatureName "order-discounts"
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action finish-feature -FeatureName "order-discounts"
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action load-feature
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-feature
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-feature-cf
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action finish-feature
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-master
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-feature -FeatureName "order-discounts"
 ```
