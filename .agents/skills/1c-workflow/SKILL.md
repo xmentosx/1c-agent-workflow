@@ -83,6 +83,8 @@ If any 1C command, Git command, or publication command fails, stop the workflow 
 
 Run 1C Designer operations strictly sequentially. The helper must wait for each `1cv8.exe` process to exit before starting the next Designer command against the same infobase.
 
+When launching native Windows executables such as `1cv8.exe` through `Start-Process`, pass `-ArgumentList` as one joined and correctly quoted native command-line string, never as a PowerShell array. Paths with spaces break when native quoting is skipped and can make 1C Designer exit with code 1 or hang behind `-WindowStyle Hidden`. Prefer the helper's `Join-NativeCommandLineArguments`/`Invoke-NativeProcessAndWait` pattern, or the `&` call operator for simple calls.
+
 ## Script Usage
 
 From the project root:

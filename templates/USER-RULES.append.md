@@ -17,3 +17,5 @@ Write `.dev.env` and `.agent-1c/*.json` files as UTF-8 so Cyrillic usernames and
 Use `.agent-1c/infobases/features` as the default feature infobase copy root and keep `.agent-1c/infobases/` ignored by Git.
 
 Feature changes must be loaded only into the feature infobase copy, never directly into the source infobase connected to 1C configuration repository storage.
+
+When launching native Windows executables such as `1cv8.exe` from PowerShell, do not pass a PowerShell array to `Start-Process -ArgumentList`. Join and quote arguments into one native command-line string first, or use the `&` call operator for simple cases. Paths with spaces must remain one native argument; otherwise 1C Designer may exit with code 1 or hang behind `-WindowStyle Hidden`.
