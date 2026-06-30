@@ -15,7 +15,7 @@ Do not open the full workflow references before normal lifecycle execution. Open
 
 - initialize project quickly: `init-project`
 - create new development branch: `new-dev-branch`
-- load current development branch into its infobase: `load-dev-branch`
+- update current development branch infobase from branch files: `update-dev-branch-base`
 - refresh current development branch from master/source: `refresh-dev-branch`
 - export CF from current development branch: `export-dev-branch-cf`
 - sync master from source infobase: `sync-master`
@@ -39,7 +39,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-dev-branch -DevBranchName "<dev-branch-name>"
 ```
 
-For `load-dev-branch`, `refresh-dev-branch`, `export-dev-branch-cf`, and `close-dev-branch`, do not ask for a branch name. The helper infers it from the current `itldev/<name>` Git branch.
+For `update-dev-branch-base`, `refresh-dev-branch`, `export-dev-branch-cf`, and `close-dev-branch`, do not ask for a branch name. The helper infers it from the current `itldev/<name>` Git branch.
 
 ## Failure Handling
 

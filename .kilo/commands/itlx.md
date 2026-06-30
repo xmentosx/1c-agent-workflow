@@ -10,7 +10,7 @@ Fast commands run the PowerShell helper directly and are intended for routine li
 ```text
 /itlx-init-project
 /itlx-new-dev-branch <name>
-/itlx-load-dev-branch
+/itlx-update-dev-branch-base
 /itlx-refresh-dev-branch
 /itlx-export-dev-branch-cf
 /itlx-sync-master

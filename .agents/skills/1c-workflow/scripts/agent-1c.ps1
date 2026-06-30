@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "init-project", "sync-master", "new-dev-branch", "load-dev-branch", "refresh-dev-branch", "export-dev-branch-cf", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
+    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "init-project", "sync-master", "new-dev-branch", "update-dev-branch-base", "refresh-dev-branch", "export-dev-branch-cf", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -2742,7 +2742,7 @@ function New-DevBranch {
     }
 }
 
-function Load-DevBranch {
+function Update-DevBranchBase {
     $state = Read-DevBranchState -Name $DevBranchName
     $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
     Update-DevBranchState -State $state -Updates (New-LoadStateUpdates -LoadResult $loadResult)
@@ -3025,7 +3025,7 @@ Actions:
   init-project        Dump source infobase config to master and install rules.
   sync-master         Refresh master from storage or from the current source infobase state.
   new-dev-branch         Create an itldev/<name> development branch, infobase copy, and 1C launcher entry.
-  load-dev-branch        Load changed config files into the development branch infobase.
+  update-dev-branch-base Update the current development branch infobase from branch files.
   refresh-dev-branch     Refresh master, merge it into the development branch, update the branch base.
   export-dev-branch-cf   Export CF from the current development branch without refreshing master.
   close-dev-branch       Refresh master, merge into the development branch, export final CF, switch to master.
@@ -3039,7 +3039,7 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action detect-apache
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts"
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action load-dev-branch
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-dev-branch-base
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-dev-branch
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-dev-branch-cf
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action close-dev-branch
@@ -3061,7 +3061,7 @@ try {
         "init-project" { Initialize-Project }
         "sync-master" { Sync-Master }
         "new-dev-branch" { New-DevBranch }
-        "load-dev-branch" { Load-DevBranch }
+        "update-dev-branch-base" { Update-DevBranchBase }
         "refresh-dev-branch" { Refresh-DevBranch }
         "export-dev-branch-cf" { Export-DevBranchCF }
         "close-dev-branch" { Close-DevBranch }

@@ -10,7 +10,7 @@ When the user asks for help or the requested action is unclear, show this menu:
 Available 1C workflow actions:
 1. Initialize project: check tools, create a local Git project, dump master from the source infobase, and install project rules.
 2. New development branch: create an itldev/<name> branch, copy the source infobase, unbind the copy from storage when needed, register it in the 1C launcher list, optionally publish it to Apache.
-3. Load development branch: load changed current branch config files into the development branch infobase.
+3. Update development branch base: update the development branch infobase from changed current branch config files.
 4. Refresh development branch: sync master from storage or the current source infobase state, merge master into the development branch, and update the development branch infobase.
 5. Export development branch CF: export CF from the current development branch without refreshing master.
 6. Sync master: refresh master from storage or from the current source infobase state.
@@ -19,7 +19,7 @@ Available 1C workflow actions:
 9. Switch branches: switch to master or to a saved development branch.
 ```
 
-For Kilo Code, project slash wrappers can expose detailed commands as `/itl`, `/itl-init-project`, `/itl-new-dev-branch`, `/itl-load-dev-branch`, `/itl-refresh-dev-branch`, `/itl-export-dev-branch-cf`, `/itl-sync-master`, `/itl-close-dev-branch`, `/itl-list-dev-branches`, `/itl-switch-master`, and `/itl-switch-dev-branch`. Fast experimental wrappers use the `/itlx-*` prefix and call the PowerShell helper directly.
+For Kilo Code, project slash wrappers can expose detailed commands as `/itl`, `/itl-init-project`, `/itl-new-dev-branch`, `/itl-update-dev-branch-base`, `/itl-refresh-dev-branch`, `/itl-export-dev-branch-cf`, `/itl-sync-master`, `/itl-close-dev-branch`, `/itl-list-dev-branches`, `/itl-switch-master`, and `/itl-switch-dev-branch`. Fast experimental wrappers use the `/itlx-*` prefix and call the PowerShell helper directly.
 
 For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
@@ -260,9 +260,9 @@ Goal: create a development branch and isolated development branch infobase.
 8. Save development branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json`, including launcher registration metadata.
 9. Report branch, development branch infobase path, launcher folder/name, and publication URL if any.
 
-## LOAD_DEV_BRANCH
+## UPDATE_DEV_BRANCH_BASE
 
-Goal: apply current branch files to the development branch infobase.
+Goal: update the current development branch infobase from current branch files.
 
 1. Find development branch state from `DevBranchName` or current branch. In normal use, do not require a name when already on an `itldev/<name>` branch.
 2. Build a UTF-8 list file in `logs/1c` from Git changes under `src/cf` relative to development branch state `lastLoadedCommit`; include untracked files under `src/cf`.
@@ -282,7 +282,7 @@ Goal: update a development branch with the latest master dump without closing it
 4. Checkout the development branch.
 5. Merge `master` into the development branch.
 6. If conflicts occur, stop and resolve them in config files before continuing.
-7. Load only changed merged files into the development branch infobase using the same partial load rules as `LOAD_DEV_BRANCH`.
+7. Update only changed merged files in the development branch infobase using the same partial update rules as `UPDATE_DEV_BRANCH_BASE`.
 8. Update development branch state with refresh timestamp, load metadata, and latest 1C log path.
 
 ## EXPORT_DEV_BRANCH_CF
@@ -292,7 +292,7 @@ Goal: create a CF from the current development branch without closing it.
 1. Find development branch state from `DevBranchName` or current branch. In normal use, do not require a name when already on an `itldev/<name>` branch.
 2. Require a clean Git worktree.
 3. Checkout the development branch if needed.
-4. Load only changed current branch files into the development branch infobase using the same partial load rules as `LOAD_DEV_BRANCH`.
+4. Update only changed current branch files in the development branch infobase using the same partial update rules as `UPDATE_DEV_BRANCH_BASE`.
 5. Export CF into `artifactsPath`.
 6. Do not refresh `master` or merge fresh source changes unless the user explicitly requested `REFRESH_DEV_BRANCH` first.
 7. Update development branch state with load metadata, the CF path, timestamp, and latest 1C log path.
@@ -319,7 +319,7 @@ Goal: prepare tested current work for manual import into the source base and clo
 4. Checkout the development branch.
 5. Merge `master` into the development branch.
 6. If conflicts occur, stop and resolve them in config files before continuing.
-7. Load only changed merged files into the development branch infobase using the same partial load rules as `LOAD_DEV_BRANCH`.
+7. Update only changed merged files in the development branch infobase using the same partial update rules as `UPDATE_DEV_BRANCH_BASE`.
 8. Export final CF from the development branch infobase into `artifactsPath`.
 9. Set `closedAt` in development branch state.
 10. Report branch, master commit, development branch commit, CF path, latest 1C log path, and publication URL.
