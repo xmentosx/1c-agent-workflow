@@ -4,6 +4,8 @@
   "exportPath": "src/cf",
   "extensionsPath": "src/cfe",
   "artifactsPath": "build/result",
+  "testsPath": "tests/features",
+  "testResultsPath": "build/test-results/vanessa",
   "logsPath": "logs/1c",
   "platformPath": "",
   "infoBaseKind": "file",
@@ -25,5 +27,12 @@
     "apacheHttpdConfPath": "",
     "publicationRoot": "",
     "publicationUrlBase": "http://localhost"
+  },
+  "vanessaAutomation": {
+    "installRoot": ".agent-1c/tools/vanessa-automation",
+    "epfPath": "",
+    "version": "",
+    "featuresPath": "tests/features",
+    "reportsPath": "build/test-results/vanessa"
   }
 }

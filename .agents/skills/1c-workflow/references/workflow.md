@@ -13,14 +13,15 @@ Available 1C workflow actions:
 3. New extension branch: create an itldev/<name> branch for extension development; set the extension name later.
 4. Set/dump extension: remember the extension name, then dump extension files from the branch infobase into `src/cfe/<extension>`.
 5. Update development branch base: update configuration files or extension files in the branch infobase.
-6. Refresh development branch: sync master from storage or the current source infobase state, merge master into the branch, and update the branch base configuration.
-7. Export development branch result: export CF for configuration branches or CFE for extension branches.
-8. Sync master: refresh master from storage or from the current source infobase state.
-9. Close development branch: refresh master, merge master into the branch, export final CF/CFE result, mark the branch closed, then switch to master.
-10. List/switch branches: show active development branches, switch to master, or switch to a saved development branch.
+6. Run development branch tests: run Vanessa Automation scenarios against the already updated branch infobase.
+7. Refresh development branch: sync master from storage or the current source infobase state, merge master into the branch, and update the branch base configuration.
+8. Export development branch result: export CF for configuration branches or CFE for extension branches.
+9. Sync master: refresh master from storage or from the current source infobase state.
+10. Close development branch: refresh master, merge master into the branch, export final CF/CFE result, mark the branch closed, then switch to master.
+11. List/switch branches: show active development branches, switch to master, or switch to a saved development branch.
 ```
 
-For Kilo Code, project slash wrappers can expose detailed commands as `/itl`, `/itl-init-project`, `/itl-new-dev-branch`, `/itl-new-extension-dev-branch`, `/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`, `/itl-activate-dev-branch-context`, `/itl-update-dev-branch-base`, `/itl-refresh-dev-branch`, `/itl-export-dev-branch-result`, `/itl-sync-master`, `/itl-close-dev-branch`, `/itl-list-dev-branches`, `/itl-switch-master`, and `/itl-switch-dev-branch`. Fast experimental wrappers use the `/itlx-*` prefix and call the PowerShell helper directly.
+For Kilo Code, project slash wrappers can expose detailed commands as `/itl`, `/itl-init-project`, `/itl-new-dev-branch`, `/itl-new-extension-dev-branch`, `/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`, `/itl-activate-dev-branch-context`, `/itl-update-dev-branch-base`, `/itl-run-dev-branch-tests`, `/itl-install-vanessa-automation`, `/itl-refresh-dev-branch`, `/itl-export-dev-branch-result`, `/itl-sync-master`, `/itl-close-dev-branch`, `/itl-list-dev-branches`, `/itl-switch-master`, and `/itl-switch-dev-branch`. Fast experimental wrappers use the `/itlx-*` prefix and call the PowerShell helper directly.
 
 For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
@@ -51,6 +52,8 @@ Use this as `.agent-1c/project.json`:
   "exportPath": "src/cf",
   "extensionsPath": "src/cfe",
   "artifactsPath": "build/result",
+  "testsPath": "tests/features",
+  "testResultsPath": "build/test-results/vanessa",
   "logsPath": "logs/1c",
   "platformPath": "",
   "infoBaseKind": "file",
@@ -72,6 +75,13 @@ Use this as `.agent-1c/project.json`:
     "apacheHttpdConfPath": "",
     "publicationRoot": "",
     "publicationUrlBase": "http://localhost"
+  },
+  "vanessaAutomation": {
+    "installRoot": ".agent-1c/tools/vanessa-automation",
+    "epfPath": "",
+    "version": "",
+    "featuresPath": "tests/features",
+    "reportsPath": "build/test-results/vanessa"
   }
 }
 ```
@@ -104,6 +114,11 @@ WEB_PUBLICATION_ROOT=
 WEB_PUBLICATION_URL_BASE=
 # Optional install override. Normal automatic install uses C:\Apache24.
 APACHE_INSTALL_ROOT=
+# Vanessa Automation is installed locally during init and is required for executable branch tests.
+VANESSA_AUTOMATION_EPF=
+VANESSA_AUTOMATION_VERSION=
+VANESSA_FEATURES_PATH=tests/features
+VANESSA_REPORTS_PATH=build/test-results/vanessa
 ```
 
 ## Tools Manifest
@@ -115,6 +130,7 @@ Default checks:
 - `git`: check `git --version`; offer `winget install --id Git.Git -e`.
 - `1c-platform`: check `PLATFORM_PATH` or `project.platformPath`; when missing/invalid, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` and offer the discovered `...\bin` or `...\bin\1cv8.exe` paths before manual input. Either standard folder may be absent; skip missing folders without error. Do not offer the common root `C:\Program Files\1cv8` as a version.
 - `apache-webinst`: check only when web publication is enabled/requested. If `WEBINST_PATH` is empty, use `webinst.exe` found next to the selected `1cv8.exe`; detect Apache settings from installed httpd. If Apache is not detected, offer `install-apache` only after explicit developer confirmation.
+- `vanessa-automation`: check `VANESSA_AUTOMATION_EPF` or `.agent-1c/tools/vanessa-automation`; offer `install-vanessa-automation` after explicit developer confirmation.
 
 ## Required Questions
 
@@ -151,6 +167,7 @@ For project initialization:
 - Directory for development branch infobase copies: do not ask by default. Use `.agent-1c/infobases/dev-branches` inside the project and ignore `.agent-1c/infobases/` in Git. Ask only if the developer explicitly wants a custom location.
 - Apache web-client testing: ask only whether new development branch infobases should be published to Apache by default. Store the answer locally in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`, never in committed project JSON.
 - If Apache publishing is enabled, run `detect-apache` and save detected local values to `.dev.env`. Do not ask for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf` in the ordinary initialization flow. If Apache is not detected, ask whether to install it automatically. On "yes", run `install-apache`, then rerun `detect-apache`/`check-tools`; on "no", offer only to disable publication or stop initialization until Apache is configured manually.
+- Ensure Vanessa Automation is installed for executable branch tests. If no EPF is found, ask whether to install it automatically. On "yes", run `install-vanessa-automation`; on "no", stop initialization with the manual command.
 - Do not ask whether the project is for Codex or Kilo Code. Configure the current agent surface; when it cannot be detected, use Codex as the fallback.
 
 For creating a development branch:
@@ -199,11 +216,23 @@ Before destructive or stateful actions:
 Goal: verify the local machine is ready and provide install suggestions without installing automatically.
 
 1. Read `.agent-1c/tools.json` when present.
-2. Check required tools: Git, 1C platform, and optional Apache/webinst.
+2. Check required tools: Git, 1C platform, Vanessa Automation, and optional Apache/webinst.
    - For 1C platform, list discovered versions from standard `1cv8` folders when `PLATFORM_PATH` is missing or invalid.
 3. If web publication is enabled/requested through `WEB_PUBLISH_BY_DEFAULT=true`, `project.web.publishByDefault=true`, or `-PublishToApache`, check Apache/webinst settings too. Apache detection uses `APACHE_HTTPD_CONF_PATH`, Windows services, `httpd.exe` in `PATH`, and standard folders such as `C:\Apache24`.
 4. Report `[OK]` and `[MISSING]` lines.
 5. If required software is missing during `INIT_PROJECT`, stop after showing suggested install/setup commands. When the missing component is Apache/httpd and publication is enabled, the preferred suggestion is `install-apache` after explicit developer confirmation.
+
+## INSTALL_VANESSA_AUTOMATION
+
+Goal: install the standard executable test tool for ITL development branches.
+
+1. Never run this action without explicit developer confirmation or a direct install command.
+2. If `VANESSA_AUTOMATION_EPF` already points to an existing EPF, save it back to `.dev.env` and finish.
+3. Download the `vanessa-automation-single.*.zip` asset from the latest `Pr-Mex/vanessa-automation` GitHub release.
+4. Log the actual SHA256 of the downloaded archive.
+5. Unpack it under `.agent-1c/tools/vanessa-automation`.
+6. Save `VANESSA_AUTOMATION_EPF`, `VANESSA_AUTOMATION_VERSION`, `VANESSA_FEATURES_PATH=tests/features`, and `VANESSA_REPORTS_PATH=build/test-results/vanessa` to `.dev.env`.
+7. Ensure `tests/features` and `build/test-results/vanessa` directories exist. The downloaded tool and reports are local and ignored by Git.
 
 ## INSTALL_APACHE
 
@@ -229,6 +258,7 @@ Goal: create the baseline project state.
 3. The wizard collects missing parameters. Do not ask for `devBranchInfoBaseRoot` during normal initialization; use `.agent-1c/infobases/dev-branches`.
    - For the platform path, first offer discovered installed 1C versions; do not make the developer type `C:\Program Files\1cv8\...\bin\1cv8.exe` when it can be selected.
    - Ask whether development branch infobases should be published to Apache for web-client testing. If no, write `WEB_PUBLISH_BY_DEFAULT=false` and do not ask Apache paths. If yes, write `WEB_PUBLISH_BY_DEFAULT=true`, run `detect-apache`, and save detected local Apache settings to `.dev.env`. If Apache is not detected, ask whether to run `install-apache`; after success, rerun `detect-apache`/`check-tools`.
+   - Check Vanessa Automation. If missing, ask whether to install it automatically and run `install-vanessa-automation` after confirmation.
 4. For non-interactive automation, pass `-InitMode json -InitAnswersPath <answers.json>` with the same values the wizard would collect. If required fields are missing, stop before launching 1C.
 5. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing. Write them as UTF-8.
 6. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.
@@ -302,6 +332,20 @@ Goal: update the current development branch infobase from current branch files.
 7. For extension branches, run `/LoadConfigFromFiles <src/cfe/<name>> -Extension <extensionName> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
 8. Do not pass `-updateConfigDumpInfo`.
 9. Update separate configuration/extension base update fields in branch state and report the 1C log path.
+
+## RUN_DEV_BRANCH_TESTS
+
+Goal: run executable Vanessa Automation checks against the current development branch infobase without loading configuration files again.
+
+1. Find development branch state from `DevBranchName` or current branch. In normal use, do not require a name when already on an `itldev/<name>` branch.
+2. Activate the development branch context in `.dev.env`.
+3. Require Vanessa Automation EPF. If missing, stop and tell the developer to run `install-vanessa-automation`.
+4. Use `VANESSA_FEATURES_PATH` or `tests/features` as the feature directory. Stop clearly if no `.feature` files exist.
+5. Create a run directory under `VANESSA_REPORTS_PATH` or `build/test-results/vanessa`.
+6. Generate `VAParams.json` in the run directory.
+7. Launch `1cv8.exe ENTERPRISE` against the branch infobase with `/Execute <vanessa.epf>` and `StartFeaturePlayer;VAParams=<VAParams.json>`.
+8. Do not call `/LoadConfigFromFiles`, `/update1cbase`, or `/deploy-and-test`. The branch base must already have been updated by `UPDATE_DEV_BRANCH_BASE`.
+9. Save test report paths and latest 1C log path in development branch state.
 
 ## REFRESH_DEV_BRANCH
 

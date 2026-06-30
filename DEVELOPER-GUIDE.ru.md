@@ -28,7 +28,8 @@
 - версию платформы 1С, если ее нельзя выбрать из найденных установок;
 - тип исходной базы: файловая или серверная;
 - параметры исходной базы и, если она подключена к хранилищу, параметры хранилища;
-- нужно ли публиковать базы веток разработки на Apache для веб-клиента.
+- нужно ли публиковать базы веток разработки на Apache для веб-клиента;
+- установить ли Vanessa Automation для исполняемых тестов веток разработки.
 
 Агент отдельно спросит, подключена ли исходная база к хранилищу конфигурации. Если не подключена, вопросы про адрес, пользователя и пароль хранилища не задаются.
 
@@ -68,6 +69,8 @@
 - `.agent-1c/dev-branches/*.json` - состояние веток разработки.
 - `.agent-1c/infobases/dev-branches` - копии файловых баз веток разработки, не коммитятся.
 - `build/result` - выгруженные `CF`/`CFE`, не коммитятся.
+- `tests/features` - Vanessa Automation сценарии, хранятся в Git.
+- `build/test-results/vanessa` - отчеты Vanessa Automation, не коммитятся.
 - `logs/1c` - логи запусков 1С, не коммитятся.
 
 ## 4. Создание ветки разработки
@@ -145,6 +148,14 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 ```
 
 Агент обновляет базу ветки только измененными файлами из `src/cf`, формируя `listFile` и передавая его в 1С через `/LoadConfigFromFiles ... -listFile ... -Format Hierarchical`.
+
+После обновления базы запустите Vanessa Automation тесты:
+
+```text
+/itl-run-dev-branch-tests
+```
+
+Не используйте `/deploy-and-test` как обычный шаг проверки в ITL-ветке: он повторно загружает всю конфигурацию. Стандартный цикл - частичное обновление базы через `/itl-update-dev-branch-base`, затем тесты через Vanessa.
 
 ## 6. Обновление ветки свежим master
 
@@ -236,6 +247,8 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 /itl-dump-dev-branch-extension    Выгрузить расширение текущей ветки в src/cfe.
 /itl-activate-dev-branch-context  Записать базу текущей ветки в .dev.env для ai_rules_1c.
 /itl-update-dev-branch-base       Обновить базу текущей ветки разработки из файлов ветки.
+/itl-run-dev-branch-tests         Запустить тесты Vanessa Automation по текущей ветке.
+/itl-install-vanessa-automation   Установить Vanessa Automation локально в проект.
 /itl-refresh-dev-branch           Обновить текущую ветку свежим master.
 /itl-export-dev-branch-result     Выгрузить CF/CFE по текущей ветке без закрытия.
 /itl-sync-master                  Обновить только master.
@@ -256,6 +269,8 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 /itlx-dump-dev-branch-extension   Выгрузить расширение текущей ветки в src/cfe.
 /itlx-activate-dev-branch-context Записать базу текущей ветки в .dev.env для ai_rules_1c.
 /itlx-update-dev-branch-base      Обновить базу текущей ветки разработки из файлов ветки.
+/itlx-run-dev-branch-tests        Запустить тесты Vanessa Automation по текущей ветке.
+/itlx-install-vanessa-automation  Установить Vanessa Automation локально в проект.
 /itlx-refresh-dev-branch          Обновить текущую ветку свежим master.
 /itlx-export-dev-branch-result    Выгрузить CF/CFE по текущей ветке без закрытия.
 /itlx-sync-master                 Обновить только master.
@@ -269,7 +284,8 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 
 - Не коммитьте `.dev.env`, пароли, `*.cf`, `*.dt`, логи и локальные базы.
 - Не загружайте изменения ветки разработки напрямую в исходную базу.
-- Перед командами `ai_rules_1c`, которые работают с базой (`/update1cbase`, `/deploy-and-test`, `/loadfrom1cbase`, `/getconfigfiles`), в ветке `itldev/*` должен быть активирован контекст ветки: `/itl-activate-dev-branch-context` или `/itlx-activate-dev-branch-context`. Команды жизненного цикла делают это автоматически.
+- Перед командами `ai_rules_1c`, которые работают с базой (`/update1cbase`, `/loadfrom1cbase`, `/getconfigfiles`), в ветке `itldev/*` должен быть активирован контекст ветки: `/itl-activate-dev-branch-context` или `/itlx-activate-dev-branch-context`. Команды жизненного цикла делают это автоматически.
+- `/deploy-and-test` в ITL-ветке запускайте только по явной просьбе разработчика, потому что он делает полную загрузку файлов. Для обычной проверки используйте `/itl-run-dev-branch-tests`.
 - При переходе на `master` и при отдельном `/itl-sync-master` контекст базы ветки очищается, чтобы случайный `/update1cbase` не попал в исходную базу.
 - Перед переключением веток, обновлением `master` и выгрузкой результата Git-дерево должно быть чистым.
 - Если 1С или Git вернули ошибку, агент должен остановиться и показать путь к логу.

@@ -19,6 +19,8 @@ Before asking for `1cv8.exe`, search installed 1C versions under existing `C:\Pr
 
 Ask whether development branch infobases should be published to Apache for web-client testing. Store the answer locally in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true` or `false`. If the answer is no, do not touch Apache. If yes, run `detect-apache`, save detected values to `.dev.env`, and do not ask the developer for Apache paths. If Apache is not detected, ask whether to install it automatically. After explicit agreement, run `install-apache`, then rerun `detect-apache`/`check-tools` and continue initialization. If the developer declines, offer only to disable publication or stop initialization until Apache is configured manually.
 
+Vanessa Automation is required for executable branch tests. If it is not installed, the helper wizard must ask for explicit confirmation and run `install-vanessa-automation`; do not invent another test framework.
+
 Prefer the PowerShell helper:
 
 ```powershell

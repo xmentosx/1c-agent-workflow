@@ -6,3 +6,5 @@ build/result/
 *.log
 logs/
 .agent-1c/infobases/
+.agent-1c/tools/vanessa-automation/
+build/test-results/

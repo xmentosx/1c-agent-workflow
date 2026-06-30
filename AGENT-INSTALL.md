@@ -70,6 +70,7 @@ Required for initial project setup:
 - Development branch infobase copies must be registered automatically in the user's 1C launcher list `%APPDATA%\1C\1CEStart\ibases.v8i` under `/ITL/<project-root-name>`. Write that file as UTF-8 with BOM and create a timestamped backup before changing it.
 - 1C platform version/path. Before asking for a manual path, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`. Either folder may be absent; treat missing folders as normal and skip them without error. If versions are found, ask the developer to choose one of them and store the selected `...\bin\1cv8.exe` path. Do not offer the common root `C:\Program Files\1cv8` as a platform version. Ask for a custom full path only when no installed version is found or the developer chooses manual input.
 - Apache web-client testing. Ask only whether new development branch infobases should be published to Apache by default. Store `WEB_PUBLISH_BY_DEFAULT=true|false` in local `.dev.env`, not in committed `project.json`. If the answer is no, do not ask Apache paths. If the answer is yes, run `detect-apache`, save the detected local values to `.dev.env`, and do not ask the developer for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf`. If Apache is not detected, ask for explicit permission to install it automatically; after permission, run `install-apache`, then rerun `detect-apache`/`check-tools`.
+- Vanessa Automation. It is required for executable development branch tests. If `VANESSA_AUTOMATION_EPF` is missing or invalid, ask for explicit permission to install it automatically; after permission, run `install-vanessa-automation`. Store downloaded files under `.agent-1c/tools/vanessa-automation` and local paths in `.dev.env`.
 - Source infobase kind: `file` or `server`; ask this before the grouped questionnaire.
 - Ask whether the source infobase is connected to a 1C configuration repository. Store `SOURCE_USES_REPOSITORY=true|false`.
 - For `file` with storage, ask the source infobase and repository questionnaire as 6 separate questions:
@@ -161,6 +162,7 @@ Default checks come from `.agent-1c/tools.json`:
 
 - Git: `git --version`, offer `winget install --id Git.Git -e`.
 - 1C platform: check `PLATFORM_PATH` or `platformPath`; when missing/invalid, search installed versions in existing standard `1cv8` folders and offer the discovered `...\bin\1cv8.exe` paths before asking for manual input. Missing `Program Files`/`Program Files (x86)` `1cv8` folders are not errors.
+- Vanessa Automation: check `VANESSA_AUTOMATION_EPF` or `.agent-1c/tools/vanessa-automation`; if missing, offer `install-vanessa-automation` after explicit developer confirmation.
 - Apache/webinst: check only when web publication is enabled/requested. Prefer `WEB_PUBLISH_BY_DEFAULT` from local `.dev.env`; fall back to `project.web.publishByDefault` only for compatibility. If `WEBINST_PATH` is empty, use `webinst.exe` found next to the selected `1cv8.exe`. Detect Apache from `APACHE_HTTPD_CONF_PATH`, Windows services, `httpd.exe` in `PATH`, or standard folders such as `C:\Apache24`. If Apache is missing, offer `install-apache` after explicit developer confirmation.
 
 When the workflow helper is available, the agent may list installed 1C versions with:
@@ -182,6 +184,14 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 ```
 
 `install-apache` downloads the official Apache Lounge zip, logs the actual SHA256, unpacks Apache to `C:\Apache24`, configures `Listen`/`ServerName`, installs and starts the `Apache24` service, saves detected values to `.dev.env`, and reruns Apache detection. A stale or mismatched `winget install ApacheLounge.httpd` hash is not a blocker for this path.
+
+If Vanessa Automation is missing and the developer agrees to automatic installation, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-vanessa-automation
+```
+
+`install-vanessa-automation` downloads `vanessa-automation-single.*.zip` from the official `Pr-Mex/vanessa-automation` GitHub release, logs SHA256, unpacks the EPF under `.agent-1c/tools/vanessa-automation`, creates `tests/features` and `build/test-results/vanessa`, and saves `VANESSA_*` paths to `.dev.env`.
 
 ## Install ai_rules_1c
 
@@ -254,6 +264,8 @@ For Kilo Code, detailed commands:
 /itl-dump-dev-branch-extension
 /itl-activate-dev-branch-context
 /itl-update-dev-branch-base
+/itl-run-dev-branch-tests
+/itl-install-vanessa-automation
 /itl-refresh-dev-branch
 /itl-export-dev-branch-result
 /itl-sync-master
@@ -274,6 +286,8 @@ Fast experimental commands run the PowerShell helper directly and should not rea
 /itlx-dump-dev-branch-extension
 /itlx-activate-dev-branch-context
 /itlx-update-dev-branch-base
+/itlx-run-dev-branch-tests
+/itlx-install-vanessa-automation
 /itlx-refresh-dev-branch
 /itlx-export-dev-branch-result
 /itlx-sync-master

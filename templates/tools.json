@@ -34,6 +34,17 @@
           "If automatic install is declined, install/configure Apache 2.4 manually so httpd.conf can be detected, then run detect-apache. webinst.exe is expected next to the selected 1cv8.exe; set WEBINST_PATH only for nonstandard 1C platform layouts."
         ]
       }
+    },
+    {
+      "id": "vanessa-automation",
+      "name": "Vanessa Automation",
+      "required": true,
+      "install": {
+        "policy": "confirm-then-run",
+        "commands": [
+          "After explicit developer confirmation, run: powershell -ExecutionPolicy Bypass -File .\\.agents\\skills\\1c-workflow\\scripts\\agent-1c.ps1 -Action install-vanessa-automation"
+        ]
+      }
     }
   ]
 }

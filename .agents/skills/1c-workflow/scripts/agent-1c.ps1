@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
+    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "install-vanessa-automation", "run-dev-branch-tests", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -9,6 +9,8 @@ param(
     [string]$DevBranch,
     [string]$DevBranchInfoBasePath,
     [string]$ExtensionName,
+    [string]$VanessaFeaturePath,
+    [string]$VanessaFilterTags,
     [ValidateSet("configured", "wizard", "json")]
     [string]$InitMode = "configured",
     [string]$InitAnswersPath,
@@ -528,7 +530,9 @@ function Ensure-GitIgnore {
         "*.dt",
         "*.log",
         "logs/",
-        ".agent-1c/infobases/"
+        ".agent-1c/infobases/",
+        ".agent-1c/tools/vanessa-automation/",
+        "build/test-results/"
     )
 
     if (Test-Path -LiteralPath $gitignorePath) {
@@ -1006,6 +1010,8 @@ function New-DefaultProjectConfig {
         exportPath = "src/cf"
         extensionsPath = "src/cfe"
         artifactsPath = "build/result"
+        testsPath = "tests/features"
+        testResultsPath = "build/test-results/vanessa"
         logsPath = "logs/1c"
         platformPath = ""
         infoBaseKind = "file"
@@ -1027,6 +1033,13 @@ function New-DefaultProjectConfig {
             apacheHttpdConfPath = ""
             publicationRoot = ""
             publicationUrlBase = "http://localhost"
+        }
+        vanessaAutomation = [ordered]@{
+            installRoot = ".agent-1c/tools/vanessa-automation"
+            epfPath = ""
+            version = ""
+            featuresPath = "tests/features"
+            reportsPath = "build/test-results/vanessa"
         }
     }
 }
@@ -1062,6 +1075,17 @@ function New-DefaultToolsManifest {
                     commands = @(
                         "After explicit developer confirmation, run: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache",
                         "If automatic install is declined, install/configure Apache 2.4 manually so httpd.conf can be detected, then run detect-apache."
+                    )
+                }
+            },
+            [ordered]@{
+                id = "vanessa-automation"
+                name = "Vanessa Automation"
+                required = $true
+                install = [ordered]@{
+                    policy = "confirm-then-run"
+                    commands = @(
+                        "After explicit developer confirmation, run: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-vanessa-automation"
                     )
                 }
             }
@@ -1847,6 +1871,7 @@ function Normalize-InitAnswers {
         repositoryPassword = ConvertFrom-OptionalPasswordAnswer ([string](Get-AnswerValue -Answers $Answers -Names @("repositoryPassword", "REPOSITORY_PASSWORD") -Default ""))
         webPublishByDefault = $webPublishByDefault
         installApacheIfMissing = (ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("installApacheIfMissing", "INSTALL_APACHE_IF_MISSING") -Default $false) -Default $false)
+        installVanessaIfMissing = (ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("installVanessaIfMissing", "INSTALL_VANESSA_IF_MISSING") -Default $false) -Default $false)
     }
 }
 
@@ -1948,6 +1973,7 @@ function Prepare-InitProjectSettings {
     Assert-InitAnswers -Answers $answers
     Save-InitAnswers -Answers $answers
     Ensure-ApacheForInit -Answers $answers
+    Ensure-VanessaAutomationForInit -Answers $answers
     Read-ProjectConfig
 }
 
@@ -2120,6 +2146,20 @@ function Check-Tools {
         -Ok ([bool]$platformOk) `
         -Detail $(if ($platformOk) { $platformPath } elseif ($rawPlatformPath) { "Configured path does not exist: $platformPath" } else { "PLATFORM_PATH/project.platformPath is missing" }) `
         -Offer $platformOffer
+
+    $vanessa = Get-VanessaAutomationState
+    $vanessaDetail = if ($vanessa.ready) {
+        if ($vanessa.version) { "{0} ({1})" -f $vanessa.epfPath, $vanessa.version } else { $vanessa.epfPath }
+    } else {
+        $vanessa.message
+    }
+    $results += New-ToolResult `
+        -Id "vanessa-automation" `
+        -Name "Vanessa Automation" `
+        -Required $true `
+        -Ok ([bool]$vanessa.ready) `
+        -Detail $vanessaDetail `
+        -Offer (Get-ToolOffer -Id "vanessa-automation" -Fallback "Run helper action install-vanessa-automation after explicit developer confirmation.")
 
     $publishDefault = Get-WebPublishByDefault
     if ($PublishToApache -or $publishDefault) {
@@ -2390,6 +2430,401 @@ function Invoke-Designer {
     }
 
     return $logPath
+}
+
+function Invoke-Enterprise {
+    param(
+        [string]$InfoBasePath,
+        [string]$InfoBaseKind,
+        [string[]]$EnterpriseArgs,
+        [string]$User = (Get-EnvValue -Name "IB_USER"),
+        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
+    )
+
+    $platformPath = Get-PlatformPath
+    if (-not (Test-Path -LiteralPath $platformPath)) {
+        throw "1cv8.exe was not found: $platformPath"
+    }
+
+    Assert-InfoBaseAvailable -Kind $InfoBaseKind -Path $InfoBasePath -SettingName "infobase path"
+
+    $logsPath = Resolve-ProjectPath (Get-ConfigValue -Path "logsPath" -Default "logs/1c")
+    New-Item -ItemType Directory -Force -Path $logsPath | Out-Null
+    $logPath = New-TimestampedFilePath -Directory $logsPath -Prefix "1c-enterprise-" -Extension ".log"
+    $script:LastLogPath = $logPath
+
+    $ibArgs = New-InfobaseArgs -Kind $InfoBaseKind -Path $InfoBasePath -User $User -Password $Password
+    $args = @("ENTERPRISE") + $ibArgs + @("/DisableStartupMessages", "/Out", $logPath) + $EnterpriseArgs
+
+    Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
+    Write-Host "1C log: $logPath"
+
+    $exitCode = Invoke-NativeProcessAndWait -FilePath $platformPath -Arguments $args
+    if ($exitCode -ne 0) {
+        throw "1C Enterprise failed with exit code $exitCode. Log: $logPath"
+    }
+
+    return $logPath
+}
+
+function Get-VanessaInstallRoot {
+    $value = Get-Setting -EnvName "VANESSA_AUTOMATION_ROOT" -ConfigName "vanessaAutomation.installRoot" -Default ".agent-1c/tools/vanessa-automation"
+    return (Resolve-ProjectPath ([string]$value))
+}
+
+function Get-VanessaFeaturesPath {
+    if ($VanessaFeaturePath) {
+        return $VanessaFeaturePath
+    }
+
+    $value = Get-Setting -EnvName "VANESSA_FEATURES_PATH" -ConfigName "vanessaAutomation.featuresPath" -Default (Get-ConfigValue -Path "testsPath" -Default "tests/features")
+    return [string]$value
+}
+
+function Get-VanessaReportsPath {
+    $value = Get-Setting -EnvName "VANESSA_REPORTS_PATH" -ConfigName "vanessaAutomation.reportsPath" -Default (Get-ConfigValue -Path "testResultsPath" -Default "build/test-results/vanessa")
+    return [string]$value
+}
+
+function Find-VanessaAutomationEpf {
+    param([string]$Root)
+
+    if (-not $Root -or -not (Test-Path -LiteralPath $Root -ErrorAction SilentlyContinue)) {
+        return ""
+    }
+
+    if (Test-Path -LiteralPath $Root -PathType Leaf -ErrorAction SilentlyContinue) {
+        if ($Root -like "*.epf") {
+            return [System.IO.Path]::GetFullPath($Root)
+        }
+        return ""
+    }
+
+    $candidates = @(Get-ChildItem -LiteralPath $Root -Recurse -File -Filter "*.epf" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match "vanessa|automation|single" } |
+        Sort-Object @{ Expression = { if ($_.Name -match "single") { 0 } else { 1 } } }, FullName)
+    if ($candidates.Count -gt 0) {
+        return $candidates[0].FullName
+    }
+
+    $fallback = @(Get-ChildItem -LiteralPath $Root -Recurse -File -Filter "*.epf" -ErrorAction SilentlyContinue | Sort-Object FullName)
+    if ($fallback.Count -gt 0) {
+        return $fallback[0].FullName
+    }
+
+    return ""
+}
+
+function Get-VanessaAutomationEpfPath {
+    $configured = Get-Setting -EnvName "VANESSA_AUTOMATION_EPF" -ConfigName "vanessaAutomation.epfPath"
+    if ($configured) {
+        $path = [Environment]::ExpandEnvironmentVariables(([string]$configured).Trim())
+        if (-not [System.IO.Path]::IsPathRooted($path)) {
+            $path = Resolve-ProjectPath $path
+        }
+        if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) {
+            return [System.IO.Path]::GetFullPath($path)
+        }
+    }
+
+    return Find-VanessaAutomationEpf -Root (Get-VanessaInstallRoot)
+}
+
+function Get-VanessaAutomationState {
+    $epfPath = Get-VanessaAutomationEpfPath
+    $version = Get-Setting -EnvName "VANESSA_AUTOMATION_VERSION" -ConfigName "vanessaAutomation.version" -Default ""
+    if ($epfPath -and (Test-Path -LiteralPath $epfPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return [pscustomobject]@{
+            ready = $true
+            epfPath = $epfPath
+            version = [string]$version
+            message = "Vanessa Automation EPF found."
+        }
+    }
+
+    return [pscustomobject]@{
+        ready = $false
+        epfPath = ""
+        version = [string]$version
+        message = "Vanessa Automation EPF was not found. Run install-vanessa-automation."
+    }
+}
+
+function Get-VanessaAutomationDownloadInfo {
+    $override = Get-EnvValue -Name "VANESSA_AUTOMATION_ARCHIVE_URL"
+    if ($override) {
+        return [pscustomobject]@{
+            url = [string]$override
+            version = ""
+            source = "VANESSA_AUTOMATION_ARCHIVE_URL"
+        }
+    }
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch {
+        # Best effort for older Windows PowerShell hosts.
+    }
+
+    try {
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/Pr-Mex/vanessa-automation/releases/latest" -Headers @{ "User-Agent" = "1c-agent-workflow" }
+        $asset = @($release.assets | Where-Object { $_.name -like "vanessa-automation-single*.zip" } | Select-Object -First 1)
+        if ($asset.Count -gt 0) {
+            return [pscustomobject]@{
+                url = [string]$asset[0].browser_download_url
+                version = [string]$release.tag_name
+                source = "GitHub releases Pr-Mex/vanessa-automation"
+            }
+        }
+    } catch {
+        Write-Host "[WARN] Could not read Vanessa Automation latest release from GitHub API: $($_.Exception.Message)"
+    }
+
+    return [pscustomobject]@{
+        url = "https://github.com/Pr-Mex/vanessa-automation/releases/download/1.2.043.28/vanessa-automation-single.1.2.043.28.zip"
+        version = "1.2.043.28"
+        source = "fallback release URL"
+    }
+}
+
+function Get-VanessaCacheDirectory {
+    return (Join-Path $env:TEMP "1c-agent-workflow\vanessa-automation")
+}
+
+function Save-VanessaAutomationArchive {
+    param([object]$DownloadInfo)
+
+    $cacheDir = Get-VanessaCacheDirectory
+    New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+    $archivePath = Join-Path $cacheDir "vanessa-automation-single.zip"
+    $source = [string]$DownloadInfo.url
+
+    Write-Host "Vanessa Automation archive source: $source"
+    if (Test-Path -LiteralPath (ConvertFrom-FileUri -Value $source) -PathType Leaf -ErrorAction SilentlyContinue) {
+        Copy-Item -LiteralPath (ConvertFrom-FileUri -Value $source) -Destination $archivePath -Force
+    } else {
+        Invoke-WebRequest -Uri $source -UseBasicParsing -OutFile $archivePath
+    }
+
+    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
+    Write-Host "Vanessa Automation archive SHA256: $hash"
+    return $archivePath
+}
+
+function Expand-VanessaAutomationArchive {
+    param(
+        [string]$ArchivePath,
+        [string]$InstallRoot
+    )
+
+    $existingEpf = Find-VanessaAutomationEpf -Root $InstallRoot
+    if ($existingEpf) {
+        Write-Host "Vanessa Automation EPF already exists: $existingEpf"
+        return $existingEpf
+    }
+
+    if (Test-Path -LiteralPath $InstallRoot -ErrorAction SilentlyContinue) {
+        $children = @(Get-ChildItem -LiteralPath $InstallRoot -Force -ErrorAction SilentlyContinue)
+        if ($children.Count -gt 0) {
+            throw "Vanessa Automation install root already exists but does not contain an EPF: $InstallRoot"
+        }
+    } else {
+        New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
+    }
+
+    $extractRoot = Join-Path (Get-VanessaCacheDirectory) ("extract-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
+    try {
+        Expand-Archive -LiteralPath $ArchivePath -DestinationPath $extractRoot -Force
+        Copy-Item -Path (Join-Path $extractRoot "*") -Destination $InstallRoot -Recurse -Force
+    } finally {
+        Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    $epfPath = Find-VanessaAutomationEpf -Root $InstallRoot
+    if (-not $epfPath) {
+        throw "Downloaded Vanessa Automation archive did not contain a usable EPF."
+    }
+
+    return $epfPath
+}
+
+function Save-VanessaAutomationSettingsToDotEnv {
+    param(
+        [string]$EpfPath,
+        [string]$Version = ""
+    )
+
+    $featuresPath = Get-VanessaFeaturesPath
+    $reportsPath = Get-VanessaReportsPath
+    New-Item -ItemType Directory -Force -Path (Resolve-ProjectPath $featuresPath) | Out-Null
+    New-Item -ItemType Directory -Force -Path (Resolve-ProjectPath $reportsPath) | Out-Null
+
+    Set-DotEnvValues -Values @{
+        VANESSA_AUTOMATION_EPF = $EpfPath
+        VANESSA_AUTOMATION_VERSION = $Version
+        VANESSA_FEATURES_PATH = $featuresPath
+        VANESSA_REPORTS_PATH = $reportsPath
+    }
+    Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+    Write-Host "Vanessa Automation settings saved to .dev.env"
+}
+
+function Install-VanessaAutomation {
+    Write-Section "Install Vanessa Automation"
+
+    $state = Get-VanessaAutomationState
+    if ($state.ready) {
+        Write-Host "Vanessa Automation is already installed: $($state.epfPath)"
+        Save-VanessaAutomationSettingsToDotEnv -EpfPath $state.epfPath -Version $state.version
+        return
+    }
+
+    $installRoot = Get-VanessaInstallRoot
+    Write-Host "Vanessa Automation install root: $installRoot"
+    $downloadInfo = Get-VanessaAutomationDownloadInfo
+    Write-Host "Vanessa Automation download metadata source: $($downloadInfo.source)"
+    $archivePath = Save-VanessaAutomationArchive -DownloadInfo $downloadInfo
+    $epfPath = Expand-VanessaAutomationArchive -ArchivePath $archivePath -InstallRoot $installRoot
+    Save-VanessaAutomationSettingsToDotEnv -EpfPath $epfPath -Version $downloadInfo.version
+    Write-Host "Vanessa Automation EPF: $epfPath"
+}
+
+function Ensure-VanessaAutomationForInit {
+    param([object]$Answers)
+
+    $state = Get-VanessaAutomationState
+    if ($state.ready) {
+        Save-VanessaAutomationSettingsToDotEnv -EpfPath $state.epfPath -Version $state.version
+        return
+    }
+
+    Write-Host "Vanessa Automation is required for development branch tests and is not installed."
+    if ($InitMode -eq "wizard") {
+        if (Read-InitYesNo -Prompt "Install Vanessa Automation automatically now?" -Default $true) {
+            Install-VanessaAutomation
+            return
+        }
+        throw "Init stopped until Vanessa Automation is installed. Run install-vanessa-automation, then rerun init."
+    }
+
+    $install = $false
+    if ($Answers -and $Answers.PSObject.Properties["installVanessaIfMissing"]) {
+        $install = [bool]$Answers.installVanessaIfMissing
+    }
+    if ($install) {
+        Install-VanessaAutomation
+        return
+    }
+
+    throw "Vanessa Automation is required but missing. Run install-vanessa-automation after explicit confirmation or pass installVanessaIfMissing=true in init JSON."
+}
+
+function Get-VanessaFeatureFiles {
+    param([string]$FeaturePath)
+
+    $resolvedPath = Resolve-ProjectPath $FeaturePath
+    if (Test-Path -LiteralPath $resolvedPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        if ($resolvedPath -notlike "*.feature") {
+            throw "Vanessa feature path points to a file, but it is not a .feature file: $resolvedPath"
+        }
+        return @($resolvedPath)
+    }
+
+    if (-not (Test-Path -LiteralPath $resolvedPath -PathType Container -ErrorAction SilentlyContinue)) {
+        throw "Vanessa features path was not found: $resolvedPath"
+    }
+
+    return @(Get-ChildItem -LiteralPath $resolvedPath -Recurse -File -Filter "*.feature" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+}
+
+function New-VanessaRunDirectory {
+    $reportsRoot = Resolve-ProjectPath (Get-VanessaReportsPath)
+    New-Item -ItemType Directory -Force -Path $reportsRoot | Out-Null
+    $runDirectory = Join-Path $reportsRoot ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
+    New-Item -ItemType Directory -Force -Path $runDirectory | Out-Null
+    return $runDirectory
+}
+
+function New-VanessaParamsFile {
+    param(
+        [string]$FeaturePath,
+        [string]$RunDirectory,
+        [string]$StatusPath
+    )
+
+    $resolvedFeaturePath = Resolve-ProjectPath $FeaturePath
+    $params = [ordered]@{
+        featurepath = $resolvedFeaturePath
+        projectpath = $script:ProjectRoot
+        gherkinlanguage = "ru"
+        createlogs = $true
+        logpath = $StatusPath
+        junitcreatereport = $true
+        junitpath = $RunDirectory
+        allurecreatereport = $false
+        pendingequalfailed = $true
+        stoponerror = $false
+    }
+
+    if ($VanessaFilterTags) {
+        $params["filtertags"] = $VanessaFilterTags
+        $params["tags"] = $VanessaFilterTags
+    }
+
+    $path = Join-Path $RunDirectory "VAParams.json"
+    Write-Utf8Text -Path $path -Value (($params | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    return $path
+}
+
+function Run-DevBranchTests {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Sync-DevBranchContextToDotEnv -State $state
+
+    $vanessa = Get-VanessaAutomationState
+    if (-not $vanessa.ready) {
+        throw "Vanessa Automation is not installed. Run install-vanessa-automation first."
+    }
+
+    $featuresPath = Get-VanessaFeaturesPath
+    $featureFiles = @(Get-VanessaFeatureFiles -FeaturePath $featuresPath)
+    if ($featureFiles.Count -eq 0) {
+        throw "No Vanessa .feature files found under '$featuresPath'. Create tests in tests/features before running dev branch tests."
+    }
+
+    $runDirectory = New-VanessaRunDirectory
+    $statusPath = Join-Path $runDirectory "status.json"
+    $paramsPath = New-VanessaParamsFile -FeaturePath $featuresPath -RunDirectory $runDirectory -StatusPath $statusPath
+
+    Write-Host "Vanessa Automation EPF: $($vanessa.epfPath)"
+    Write-Host "Vanessa features: $(Resolve-ProjectPath $featuresPath)"
+    Write-Host "Vanessa report directory: $runDirectory"
+    Write-Host "Vanessa params: $paramsPath"
+    if ($VanessaFilterTags) {
+        Write-Host "Vanessa tag filter: $VanessaFilterTags"
+    }
+    Write-Host "Dev branch tests do not load configuration files. Run update-dev-branch-base before tests when files changed."
+
+    $command = "StartFeaturePlayer;VAParams=$paramsPath"
+    $enterpriseArgs = @("/Execute", $vanessa.epfPath, "/C$command")
+    $logPath = Invoke-Enterprise `
+        -InfoBasePath $state.devBranchInfoBasePath `
+        -InfoBaseKind $state.infoBaseKind `
+        -EnterpriseArgs $enterpriseArgs
+
+    Update-DevBranchState -State $state -Updates @{
+        lastVanessaTestAt = (Get-Date).ToString("o")
+        lastVanessaFeaturePath = $featuresPath
+        lastVanessaReportPath = $runDirectory
+        lastVanessaParamsPath = $paramsPath
+        lastVanessaStatusPath = $statusPath
+        lastVanessaLogPath = $logPath
+    }
+
+    Write-Host "Vanessa tests finished."
+    Write-Host "Report directory: $runDirectory"
+    Write-Host "Status file: $statusPath"
+    Write-Host "1C log: $logPath"
 }
 
 function New-RepositoryConnectionArgs {
@@ -2864,9 +3299,13 @@ function Update-UserRules {
 
 $marker
 
-Use `.agents/skills/1c-workflow/SKILL.md` for project initialization, development branch creation, development branch refresh, development branch base update, master sync, branch switching, development branch close, and CF/CFE result export.
+Use `.agents/skills/1c-workflow/SKILL.md` for project initialization, development branch creation, development branch refresh, development branch base update, Vanessa Automation test runs, master sync, branch switching, development branch close, and CF/CFE result export.
 
-Before running ai_rules_1c IB-bound commands such as `/update1cbase`, `/deploy-and-test`, `/loadfrom1cbase`, or `/getconfigfiles` inside an `itldev/*` branch, activate the current development branch context with `activate-dev-branch-context` or the `/itl-activate-dev-branch-context` command. This writes the current branch infobase path to `.dev.env` keys used by ai_rules_1c.
+Before running ai_rules_1c IB-bound commands such as `/update1cbase`, `/loadfrom1cbase`, or `/getconfigfiles` inside an `itldev/*` branch, activate the current development branch context with `activate-dev-branch-context` or the `/itl-activate-dev-branch-context` command. This writes the current branch infobase path to `.dev.env` keys used by ai_rules_1c.
+
+Do not use `/deploy-and-test` as the normal verification command in an ITL development branch because it reloads all files. The normal executable verification cycle is `update-dev-branch-base`, then `run-dev-branch-tests`.
+
+Use Vanessa Automation scenarios from `tests/features` for OpenSpec and quick-fix verification. For large OpenSpec changes, test each meaningful implementation slice separately. If Vanessa finds an error, analyze the report/log, fix it, update the branch base again, and rerun the relevant scenario. Stop and ask the developer only after 3 failed fix attempts for the same group of errors.
 
 When Git is on `master`, do not run `/update1cbase` unless the developer explicitly chooses a test infobase. The workflow clears active development branch infobase values when switching to `master`.
 
@@ -3787,6 +4226,10 @@ Actions:
   list-platforms      Show installed 1C platform versions found in Program Files.
   detect-apache       Detect Apache/httpd settings for web publication.
   install-apache      Install Apache Lounge httpd from official archive after confirmation.
+  install-vanessa-automation
+                      Install Vanessa Automation single EPF from official GitHub release.
+  run-dev-branch-tests
+                      Run Vanessa Automation tests against the current development branch base.
   init-project        Dump source infobase config to master and install rules.
   sync-master         Refresh master from storage or from the current source infobase state.
   new-dev-branch             Create a configuration development branch and infobase copy.
@@ -3809,12 +4252,14 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-platforms
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action detect-apache
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-vanessa-automation
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts"
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-extension-dev-branch -DevBranchName "bonus-extension"
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action set-dev-branch-extension -ExtensionName "BonusExtension"
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action dump-dev-branch-extension
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action activate-dev-branch-context
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-dev-branch-base
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action run-dev-branch-tests
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-dev-branch
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-dev-branch-result
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action close-dev-branch
@@ -3833,6 +4278,8 @@ try {
         "list-platforms" { List-Platforms }
         "detect-apache" { Detect-Apache }
         "install-apache" { Install-Apache }
+        "install-vanessa-automation" { Install-VanessaAutomation }
+        "run-dev-branch-tests" { Run-DevBranchTests }
         "init-project" { Initialize-Project }
         "sync-master" { Sync-Master }
         "new-dev-branch" { New-DevBranch }

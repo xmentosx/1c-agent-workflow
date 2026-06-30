@@ -1,6 +1,6 @@
 ## 1C Project Lifecycle
 
-Use `.agents/skills/1c-workflow/SKILL.md` for detailed project initialization, development branch creation, development branch refresh, development branch base update, master sync, development branch listing, branch switching, development branch close, and CF/CFE result export.
+Use `.agents/skills/1c-workflow/SKILL.md` for detailed project initialization, development branch creation, development branch refresh, development branch base update, Vanessa Automation test runs, master sync, development branch listing, branch switching, development branch close, and CF/CFE result export.
 
 For routine lifecycle operations in an already installed project, prefer `.agents/skills/1c-workflow-fast/SKILL.md` or Kilo `/itlx-*` commands. The fast path runs `.agents/skills/1c-workflow/scripts/agent-1c.ps1` directly and should read detailed workflow references only after helper failure or when the developer asks for explanation.
 
@@ -20,7 +20,11 @@ Use `.agent-1c/infobases/dev-branches` as the default development branch infobas
 
 Development branch changes must be loaded only into the development branch infobase copy, never directly into the source infobase connected to 1C configuration repository storage.
 
-Before running ai_rules_1c IB-bound commands such as `/update1cbase`, `/deploy-and-test`, `/loadfrom1cbase`, or `/getconfigfiles` inside an `itldev/*` branch, activate the current development branch context with `/itl-activate-dev-branch-context` or `/itlx-activate-dev-branch-context`. The ITL helper also does this automatically during branch lifecycle commands.
+Before running ai_rules_1c IB-bound commands such as `/update1cbase`, `/loadfrom1cbase`, or `/getconfigfiles` inside an `itldev/*` branch, activate the current development branch context with `/itl-activate-dev-branch-context` or `/itlx-activate-dev-branch-context`. The ITL helper also does this automatically during branch lifecycle commands.
+
+Do not use `/deploy-and-test` as the normal verification command in an ITL development branch because it reloads all files. The normal executable verification cycle is `/itl-update-dev-branch-base`, then `/itl-run-dev-branch-tests`.
+
+Use Vanessa Automation scenarios from `tests/features` for OpenSpec and quick-fix verification. For large OpenSpec changes, test each meaningful implementation slice separately. If Vanessa finds an error, analyze the report/log, fix it, update the branch base again, and rerun the relevant scenario. Stop and ask the developer only after 3 failed fix attempts for the same group of errors.
 
 When Git is on `master`, do not run `/update1cbase` unless the developer explicitly chooses a test infobase. The ITL workflow clears active development branch infobase values when switching to `master` or running standalone `sync-master`.
 

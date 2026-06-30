@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow
-description: Initialize and operate 1C configuration or extension development projects with Git, a source infobase that may or may not be connected to a 1C configuration repository, isolated development branch infobase copies, optional Apache web publication, config/extension dump/load, CF/CFE result export, development branch refresh from master, and branch switching. Use when the user asks to init a 1C project, check required tools, create or close a configuration or extension development branch, refresh a development branch from master/storage, sync master, update a development branch base from changed config or extension files, prepare a CF/CFE result, switch to master or a development branch, or asks what ITL 1C workflow commands are available.
+description: Initialize and operate 1C configuration or extension development projects with Git, a source infobase that may or may not be connected to a 1C configuration repository, isolated development branch infobase copies, optional Apache web publication, Vanessa Automation tests, config/extension dump/load, CF/CFE result export, development branch refresh from master, and branch switching. Use when the user asks to init a 1C project, check required tools, install Vanessa Automation, create or close a configuration or extension development branch, refresh a development branch from master/storage, sync master, update a development branch base from changed config or extension files, run branch tests, prepare a CF/CFE result, switch to master or a development branch, or asks what ITL 1C workflow commands are available.
 ---
 
 # 1C Workflow
@@ -19,6 +19,8 @@ Map user intent to one workflow:
 - `INIT_PROJECT`: user asks to initialize/bootstrap/create a 1C agent project.
 - `CHECK_TOOLS`: user asks to check required software, setup, Git, 1C platform, Apache, or webinst.
 - `INSTALL_APACHE`: user agreed to automatically install Apache/httpd for 1C web publication.
+- `INSTALL_VANESSA_AUTOMATION`: user asks to install Vanessa Automation for branch tests.
+- `RUN_DEV_BRANCH_TESTS`: user asks to run tests, Vanessa tests, executable checks, or OpenSpec verification for the current development branch.
 - `NEW_DEV_BRANCH`: user asks to create/start/begin a configuration development branch, task branch, customization branch, or parallel work branch.
 - `NEW_EXTENSION_DEV_BRANCH`: user asks to create/start/begin an extension development branch.
 - `SET_DEV_BRANCH_EXTENSION`: user asks to set or remember the extension name for the current extension development branch.
@@ -63,6 +65,8 @@ Before asking for the 1C platform path, scan existing standard installation fold
 
 During initialization, ask only whether development branch infobases should be published to Apache for web-client testing. Store the local answer in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`; do not store it in committed project JSON. If publishing is enabled, run `detect-apache` and save detected local Apache values to `.dev.env`. If Apache is missing, ask the developer whether to install Apache automatically; after explicit agreement, run `install-apache`, then rerun `detect-apache`/`check-tools`. Do not ask the developer for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf` in the ordinary flow.
 
+During initialization, ensure Vanessa Automation is available for executable branch tests. Prefer `install-vanessa-automation`, which downloads the official `vanessa-automation-single` release, stores it under `.agent-1c/tools/vanessa-automation`, and writes `VANESSA_AUTOMATION_EPF`, `VANESSA_AUTOMATION_VERSION`, `VANESSA_FEATURES_PATH`, and `VANESSA_REPORTS_PATH` to local `.dev.env`.
+
 Use the current working directory as the project root. During initialization, show its absolute path and ask the developer to confirm before continuing; do not ask them to enter a project path.
 
 Do not ask whether to configure Codex or Kilo Code. Use the agent surface currently running the workflow; if it cannot be detected, use Codex as the fallback.
@@ -70,6 +74,8 @@ Do not ask whether to configure Codex or Kilo Code. Use the agent surface curren
 For `UPDATE_DEV_BRANCH_BASE`, `REFRESH_DEV_BRANCH`, `EXPORT_DEV_BRANCH_RESULT`, `DUMP_DEV_BRANCH_EXTENSION`, and `CLOSE_DEV_BRANCH`, infer the development branch from the current `itldev/<name>` branch. Only ask for or pass `DevBranchName` when the current branch is not a development branch and the action cannot be inferred.
 
 For configuration branches, update the development branch infobase with a generated `-listFile` of changed files under `src/cf`. For extension branches, update the extension from `src/cfe/<safeExtensionName>` with `-Extension <extensionName>`. Do not full-load the entire dump unless the user explicitly asks for a manual recovery path.
+
+For branch verification, use Vanessa Automation through `run-dev-branch-tests`. Do not use `/deploy-and-test` as the normal ITL verification command because it deploys by loading all files. The standard cycle is: update the branch base once with `update-dev-branch-base`, then run Vanessa tests against that already updated branch infobase.
 
 For extension branches, the extension name is not collected during branch creation. Collect it at the beginning of extension development with `set-dev-branch-extension`, save it in branch state, then use it for dump/update/result commands.
 
@@ -109,12 +115,14 @@ From the project root:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action help
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode wizard
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-vanessa-automation
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts"
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-extension-dev-branch -DevBranchName "bonus-extension"
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action set-dev-branch-extension -ExtensionName "BonusExtension"
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action dump-dev-branch-extension
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action activate-dev-branch-context
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-dev-branch-base
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action run-dev-branch-tests
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-dev-branch
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-dev-branch-result
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action close-dev-branch
