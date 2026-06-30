@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow-fast
-description: Run routine 1C Agent Workflow lifecycle commands through the PowerShell helper with minimal context loading. Use for fast master sync, development branch creation, load, refresh, CF export, close, branch switching, and listing when the project is already installed.
+description: Run routine 1C Agent Workflow lifecycle commands through the PowerShell helper with minimal context loading. Use for fast master sync, configuration or extension development branch creation, extension setup/dump, branch base update, refresh, CF/CFE result export, close, branch switching, and listing when the project is already installed.
 ---
 
 # 1C Workflow Fast
@@ -14,10 +14,13 @@ Do not open the full workflow references before normal lifecycle execution. Open
 ## Intent Map
 
 - initialize project quickly: `init-project`
-- create new development branch: `new-dev-branch`
+- create new configuration development branch: `new-dev-branch`
+- create new extension development branch: `new-extension-dev-branch`
+- set extension name for current extension branch: `set-dev-branch-extension`
+- dump current extension branch files: `dump-dev-branch-extension`
 - update current development branch infobase from branch files: `update-dev-branch-base`
 - refresh current development branch from master/source: `refresh-dev-branch`
-- export CF from current development branch: `export-dev-branch-cf`
+- export CF or CFE result from current development branch: `export-dev-branch-result`
 - sync master from source infobase: `sync-master`
 - close current development branch: `close-dev-branch`
 - list development branches: `list-dev-branches`
@@ -36,10 +39,11 @@ For actions that require a branch name:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "<dev-branch-name>"
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-extension-dev-branch -DevBranchName "<dev-branch-name>"
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-dev-branch -DevBranchName "<dev-branch-name>"
 ```
 
-For `update-dev-branch-base`, `refresh-dev-branch`, `export-dev-branch-cf`, and `close-dev-branch`, do not ask for a branch name. The helper infers it from the current `itldev/<name>` Git branch.
+For `set-dev-branch-extension`, pass `-ExtensionName "<extension-name>"`. For `update-dev-branch-base`, `dump-dev-branch-extension`, `refresh-dev-branch`, `export-dev-branch-result`, and `close-dev-branch`, do not ask for a branch name. The helper infers it from the current `itldev/<name>` Git branch.
 
 ## Failure Handling
 

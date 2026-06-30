@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow
-description: Initialize and operate 1C configuration development projects with Git, a source infobase that may or may not be connected to a 1C configuration repository, isolated development branch infobase copies, optional Apache web publication, config dump/load, intermediate and final CF export, development branch refresh from master, and branch switching. Use when the user asks to init a 1C project, check required tools, create or close a development branch, refresh a development branch from master/storage, sync master, update a development branch base from changed config files, prepare a CF, switch to master or a development branch, or asks what ITL 1C workflow commands are available.
+description: Initialize and operate 1C configuration or extension development projects with Git, a source infobase that may or may not be connected to a 1C configuration repository, isolated development branch infobase copies, optional Apache web publication, config/extension dump/load, CF/CFE result export, development branch refresh from master, and branch switching. Use when the user asks to init a 1C project, check required tools, create or close a configuration or extension development branch, refresh a development branch from master/storage, sync master, update a development branch base from changed config or extension files, prepare a CF/CFE result, switch to master or a development branch, or asks what ITL 1C workflow commands are available.
 ---
 
 # 1C Workflow
@@ -19,12 +19,15 @@ Map user intent to one workflow:
 - `INIT_PROJECT`: user asks to initialize/bootstrap/create a 1C agent project.
 - `CHECK_TOOLS`: user asks to check required software, setup, Git, 1C platform, Apache, or webinst.
 - `INSTALL_APACHE`: user agreed to automatically install Apache/httpd for 1C web publication.
-- `NEW_DEV_BRANCH`: user asks to create/start/begin a development branch, task branch, customization branch, or parallel work branch.
+- `NEW_DEV_BRANCH`: user asks to create/start/begin a configuration development branch, task branch, customization branch, or parallel work branch.
+- `NEW_EXTENSION_DEV_BRANCH`: user asks to create/start/begin an extension development branch.
+- `SET_DEV_BRANCH_EXTENSION`: user asks to set or remember the extension name for the current extension development branch.
+- `DUMP_DEV_BRANCH_EXTENSION`: user asks to dump/export extension files from the current extension branch infobase into `src/cfe`.
 - `SYNC_MASTER`: user asks to refresh/sync master from 1C repository storage or from the current source infobase state.
 - `UPDATE_DEV_BRANCH_BASE`: user asks to update the current development branch infobase from branch files.
 - `REFRESH_DEV_BRANCH`: user asks to update a development branch from master, refresh the current branch, or merge fresh source/storage changes into a development branch.
-- `EXPORT_DEV_BRANCH_CF`: user asks to make/export a CF for the current development branch without closing it.
-- `CLOSE_DEV_BRANCH`: user asks to close/finish the current development branch and prepare/export final CF.
+- `EXPORT_DEV_BRANCH_RESULT`: user asks to make/export a CF or CFE result for the current development branch without closing it.
+- `CLOSE_DEV_BRANCH`: user asks to close/finish the current development branch and prepare/export final CF or CFE result.
 - `SWITCH_MASTER`: user asks to switch to master.
 - `SWITCH_DEV_BRANCH`: user asks to switch to a development branch.
 - `LIST_DEV_BRANCHES`: user asks to list/show active development branches or the current development branch.
@@ -61,9 +64,11 @@ Use the current working directory as the project root. During initialization, sh
 
 Do not ask whether to configure Codex or Kilo Code. Use the agent surface currently running the workflow; if it cannot be detected, use Codex as the fallback.
 
-For `UPDATE_DEV_BRANCH_BASE`, `REFRESH_DEV_BRANCH`, `EXPORT_DEV_BRANCH_CF`, and `CLOSE_DEV_BRANCH`, infer the development branch from the current `itldev/<name>` branch. Only ask for or pass `DevBranchName` when the current branch is not a development branch and the action cannot be inferred.
+For `UPDATE_DEV_BRANCH_BASE`, `REFRESH_DEV_BRANCH`, `EXPORT_DEV_BRANCH_RESULT`, `DUMP_DEV_BRANCH_EXTENSION`, and `CLOSE_DEV_BRANCH`, infer the development branch from the current `itldev/<name>` branch. Only ask for or pass `DevBranchName` when the current branch is not a development branch and the action cannot be inferred.
 
-Update the development branch infobase with a generated `-listFile` of changed files under `src/cf`; do not full-load the entire dump unless the user explicitly asks for a manual recovery path.
+For configuration branches, update the development branch infobase with a generated `-listFile` of changed files under `src/cf`. For extension branches, update the extension from `src/cfe/<safeExtensionName>` with `-Extension <extensionName>`. Do not full-load the entire dump unless the user explicitly asks for a manual recovery path.
+
+For extension branches, the extension name is not collected during branch creation. Collect it at the beginning of extension development with `set-dev-branch-extension`, save it in branch state, then use it for dump/update/result commands.
 
 Never store passwords in Git, `AGENTS.md`, `USER-RULES.md`, or committed JSON. Store secrets only in local `.dev.env` or process environment variables.
 
@@ -100,9 +105,12 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts"
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-extension-dev-branch -DevBranchName "bonus-extension"
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action set-dev-branch-extension -ExtensionName "BonusExtension"
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action dump-dev-branch-extension
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-dev-branch-base
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-dev-branch
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-dev-branch-cf
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-dev-branch-result
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action close-dev-branch
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-master
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-dev-branch -DevBranchName "order-discounts"

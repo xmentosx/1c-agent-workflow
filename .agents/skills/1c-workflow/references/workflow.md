@@ -9,17 +9,18 @@ When the user asks for help or the requested action is unclear, show this menu:
 ```text
 Available 1C workflow actions:
 1. Initialize project: check tools, create a local Git project, dump master from the source infobase, and install project rules.
-2. New development branch: create an itldev/<name> branch, copy the source infobase, unbind the copy from storage when needed, register it in the 1C launcher list, optionally publish it to Apache.
-3. Update development branch base: update the development branch infobase from changed current branch config files.
-4. Refresh development branch: sync master from storage or the current source infobase state, merge master into the development branch, and update the development branch infobase.
-5. Export development branch CF: export CF from the current development branch without refreshing master.
-6. Sync master: refresh master from storage or from the current source infobase state.
-7. Close development branch: refresh master, merge master into the development branch, update the branch infobase, export final CF, mark the branch closed, then switch to master.
-8. List development branches: show active development branches and the current development branch.
-9. Switch branches: switch to master or to a saved development branch.
+2. New configuration branch: create an itldev/<name> branch for configuration changes.
+3. New extension branch: create an itldev/<name> branch for extension development; set the extension name later.
+4. Set/dump extension: remember the extension name, then dump extension files from the branch infobase into `src/cfe/<extension>`.
+5. Update development branch base: update configuration files or extension files in the branch infobase.
+6. Refresh development branch: sync master from storage or the current source infobase state, merge master into the branch, and update the branch base configuration.
+7. Export development branch result: export CF for configuration branches or CFE for extension branches.
+8. Sync master: refresh master from storage or from the current source infobase state.
+9. Close development branch: refresh master, merge master into the branch, export final CF/CFE result, mark the branch closed, then switch to master.
+10. List/switch branches: show active development branches, switch to master, or switch to a saved development branch.
 ```
 
-For Kilo Code, project slash wrappers can expose detailed commands as `/itl`, `/itl-init-project`, `/itl-new-dev-branch`, `/itl-update-dev-branch-base`, `/itl-refresh-dev-branch`, `/itl-export-dev-branch-cf`, `/itl-sync-master`, `/itl-close-dev-branch`, `/itl-list-dev-branches`, `/itl-switch-master`, and `/itl-switch-dev-branch`. Fast experimental wrappers use the `/itlx-*` prefix and call the PowerShell helper directly.
+For Kilo Code, project slash wrappers can expose detailed commands as `/itl`, `/itl-init-project`, `/itl-new-dev-branch`, `/itl-new-extension-dev-branch`, `/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`, `/itl-update-dev-branch-base`, `/itl-refresh-dev-branch`, `/itl-export-dev-branch-result`, `/itl-sync-master`, `/itl-close-dev-branch`, `/itl-list-dev-branches`, `/itl-switch-master`, and `/itl-switch-dev-branch`. Fast experimental wrappers use the `/itlx-*` prefix and call the PowerShell helper directly.
 
 For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
@@ -48,7 +49,8 @@ Use this as `.agent-1c/project.json`:
   "schemaVersion": 1,
   "masterBranch": "master",
   "exportPath": "src/cf",
-  "artifactsPath": "build/cf",
+  "extensionsPath": "src/cfe",
+  "artifactsPath": "build/result",
   "logsPath": "logs/1c",
   "platformPath": "",
   "infoBaseKind": "file",
@@ -244,9 +246,9 @@ Goal: create the baseline project state.
 13. Add project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
 14. Commit rules and workflow files when there are changes.
 
-## NEW_DEV_BRANCH
+## NEW_DEV_BRANCH / NEW_EXTENSION_DEV_BRANCH
 
-Goal: create a development branch and isolated development branch infobase.
+Goal: create a configuration or extension development branch and isolated development branch infobase.
 
 1. Check the Git worktree is clean.
 2. Checkout `master` and pull with `--ff-only` when a remote/upstream exists.
@@ -257,20 +259,34 @@ Goal: create a development branch and isolated development branch infobase.
 5. If `sourceUsesRepository=true`, unbind the development branch copy from 1C configuration repository storage without repository parameters. If `false`, skip unbind.
 6. Register the development branch infobase in `%APPDATA%\1C\1CEStart\ibases.v8i` under folder `/ITL/<project-root-name>`.
 7. Optionally publish the development branch copy to Apache through `webinst`.
-8. Save development branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json`, including launcher registration metadata.
+8. Save development branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json`, including launcher registration metadata and `devBranchKind`.
 9. Report branch, development branch infobase path, launcher folder/name, and publication URL if any.
+
+For extension branches, do not ask for `extensionName` and do not create the extension during branch creation. The extension is created later in the copied branch infobase during development.
+
+## SET_DEV_BRANCH_EXTENSION / DUMP_DEV_BRANCH_EXTENSION
+
+Goal: attach an extension name to the current extension branch and dump extension files from the branch infobase.
+
+1. `SET_DEV_BRANCH_EXTENSION` works only in an extension branch and saves `extensionName`, `safeExtensionName`, and `extensionExportPath=src/cfe/<safeExtensionName>` in branch state.
+2. If the extension name is already set, require explicit overwrite confirmation before changing it.
+3. `DUMP_DEV_BRANCH_EXTENSION` works only in an extension branch and reads the extension name from state.
+4. Dump extension files through `/DumpConfigToFiles <src/cfe/<name>> -Extension <extensionName> -Format Hierarchical`.
+5. Use `-update -force` when `ConfigDumpInfo.xml` already exists.
+6. If the extension does not exist in the branch infobase yet, stop and tell the developer to create it in that copied base first.
 
 ## UPDATE_DEV_BRANCH_BASE
 
 Goal: update the current development branch infobase from current branch files.
 
 1. Find development branch state from `DevBranchName` or current branch. In normal use, do not require a name when already on an `itldev/<name>` branch.
-2. Build a UTF-8 list file in `logs/1c` from Git changes under `src/cf` relative to development branch state `lastLoadedCommit`; include untracked files under `src/cf`.
-3. If no changed files are found, skip `/LoadConfigFromFiles` and report that the development branch infobase already matches the current branch config files.
-4. Run `/LoadConfigFromFiles <src/cf> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
-5. Do not pass `-updateConfigDumpInfo`.
-6. After success, update development branch state: `lastLoadedCommit`, `lastLoadAt`, `lastLoadListFile`, and latest 1C log path.
-7. Stop on errors and report the 1C log path.
+2. For configuration branches, build a UTF-8 list file in `logs/1c` from Git changes under `src/cf`.
+3. For extension branches, require `extensionName` in state and build the list file from `src/cfe/<safeExtensionName>`.
+4. If no changed files are found, skip `/LoadConfigFromFiles` and report that the development branch infobase already matches current branch files.
+5. For configuration branches, run `/LoadConfigFromFiles <src/cf> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
+6. For extension branches, run `/LoadConfigFromFiles <src/cfe/<name>> -Extension <extensionName> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
+7. Do not pass `-updateConfigDumpInfo`.
+8. Update separate configuration/extension base update fields in branch state and report the 1C log path.
 
 ## REFRESH_DEV_BRANCH
 
@@ -282,20 +298,21 @@ Goal: update a development branch with the latest master dump without closing it
 4. Checkout the development branch.
 5. Merge `master` into the development branch.
 6. If conflicts occur, stop and resolve them in config files before continuing.
-7. Update only changed merged files in the development branch infobase using the same partial update rules as `UPDATE_DEV_BRANCH_BASE`.
-8. Update development branch state with refresh timestamp, load metadata, and latest 1C log path.
+7. For configuration branches, update changed merged `src/cf` files in the branch infobase.
+8. For extension branches, update only the base configuration from `src/cf`; do not update extension files during refresh.
+9. Update development branch state with refresh timestamp, config-base update metadata, and latest 1C log path.
 
-## EXPORT_DEV_BRANCH_CF
+## EXPORT_DEV_BRANCH_RESULT
 
-Goal: create a CF from the current development branch without closing it.
+Goal: create a CF or CFE result from the current development branch without closing it.
 
 1. Find development branch state from `DevBranchName` or current branch. In normal use, do not require a name when already on an `itldev/<name>` branch.
 2. Require a clean Git worktree.
 3. Checkout the development branch if needed.
-4. Update only changed current branch files in the development branch infobase using the same partial update rules as `UPDATE_DEV_BRANCH_BASE`.
-5. Export CF into `artifactsPath`.
+4. For configuration branches, update `src/cf` and export `.cf` into `artifactsPath`.
+5. For extension branches, update `src/cfe/<safeExtensionName>` with `-Extension <extensionName>` and export `.cfe` into `artifactsPath`.
 6. Do not refresh `master` or merge fresh source changes unless the user explicitly requested `REFRESH_DEV_BRANCH` first.
-7. Update development branch state with load metadata, the CF path, timestamp, and latest 1C log path.
+7. Update development branch state with update metadata, result path, timestamp, and latest 1C log path.
 
 ## SYNC_MASTER
 
@@ -319,10 +336,10 @@ Goal: prepare tested current work for manual import into the source base and clo
 4. Checkout the development branch.
 5. Merge `master` into the development branch.
 6. If conflicts occur, stop and resolve them in config files before continuing.
-7. Update only changed merged files in the development branch infobase using the same partial update rules as `UPDATE_DEV_BRANCH_BASE`.
-8. Export final CF from the development branch infobase into `artifactsPath`.
+7. Update merged `src/cf` files in the branch infobase. For extension branches, also update extension files from `src/cfe/<safeExtensionName>` before exporting the result.
+8. Export final CF or CFE result from the development branch infobase into `artifactsPath`.
 9. Set `closedAt` in development branch state.
-10. Report branch, master commit, development branch commit, CF path, latest 1C log path, and publication URL.
+10. Report branch, master commit, development branch commit, result path, latest 1C log path, and publication URL.
 11. Checkout `master` before completing.
 
 Do not load development branch changes directly into the source infobase.

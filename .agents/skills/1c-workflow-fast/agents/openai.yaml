@@ -1,4 +1,4 @@
 interface:
   display_name: "1C Workflow Fast"
   short_description: "Run routine 1C workflow actions through the helper directly"
-  default_prompt: "Use $1c-workflow-fast for fast routine 1C lifecycle actions such as sync, branch switch, branch base update, refresh, CF export, and close."
+  default_prompt: "Use $1c-workflow-fast for fast routine 1C lifecycle actions such as sync, branch switch, branch base update, extension dump, refresh, CF/CFE result export, and close."

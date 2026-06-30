@@ -235,9 +235,12 @@ For Kilo Code, detailed commands:
 /itl
 /itl-init-project
 /itl-new-dev-branch <branch name>
+/itl-new-extension-dev-branch <branch name>
+/itl-set-dev-branch-extension <extension name>
+/itl-dump-dev-branch-extension
 /itl-update-dev-branch-base
 /itl-refresh-dev-branch
-/itl-export-dev-branch-cf
+/itl-export-dev-branch-result
 /itl-sync-master
 /itl-close-dev-branch
 /itl-list-dev-branches
@@ -251,9 +254,12 @@ Fast experimental commands run the PowerShell helper directly and should not rea
 /itlx
 /itlx-init-project
 /itlx-new-dev-branch <branch name>
+/itlx-new-extension-dev-branch <branch name>
+/itlx-set-dev-branch-extension <extension name>
+/itlx-dump-dev-branch-extension
 /itlx-update-dev-branch-base
 /itlx-refresh-dev-branch
-/itlx-export-dev-branch-cf
+/itlx-export-dev-branch-result
 /itlx-sync-master
 /itlx-close-dev-branch
 /itlx-list-dev-branches

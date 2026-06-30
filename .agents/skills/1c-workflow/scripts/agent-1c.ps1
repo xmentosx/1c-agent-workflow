@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "init-project", "sync-master", "new-dev-branch", "update-dev-branch-base", "refresh-dev-branch", "export-dev-branch-cf", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
+    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "set-dev-branch-extension", "dump-dev-branch-extension", "update-dev-branch-base", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -8,9 +8,11 @@ param(
     [string]$DevBranchName,
     [string]$DevBranch,
     [string]$DevBranchInfoBasePath,
+    [string]$ExtensionName,
     [ValidateSet("", "codex", "kilocode", "both")]
     [string]$AgentTarget = "",
     [switch]$PublishToApache,
+    [switch]$Force,
     [switch]$SkipAiRules
 )
 
@@ -388,6 +390,10 @@ function Get-ExportPath {
     return "src/cf"
 }
 
+function Get-ExtensionsPath {
+    return (Get-ConfigValue -Path "extensionsPath" -Default "src/cfe")
+}
+
 function Checkout-Master {
     $masterBranch = Get-MasterBranch
     Ensure-GitRepository
@@ -505,8 +511,9 @@ function Ensure-GitIgnore {
     $gitignorePath = Join-Path $script:ProjectRoot ".gitignore"
     $required = @(
         ".dev.env",
-        "build/cf/",
+        "build/result/",
         "*.cf",
+        "*.cfe",
         "*.dt",
         "*.log",
         "logs/",
@@ -2022,10 +2029,78 @@ function Get-StateValue {
     return $prop.Value
 }
 
-function Get-DevBranchLoadBaseCommit {
+function Get-DevBranchKind {
+    param([object]$State)
+    return (Get-StateValue -State $State -Name "devBranchKind" -Default "configuration")
+}
+
+function Assert-DevBranchKind {
+    param(
+        [object]$State,
+        [ValidateSet("configuration", "extension")]
+        [string]$Expected
+    )
+
+    $actual = Get-DevBranchKind -State $State
+    if ($actual -ne $Expected) {
+        throw "This action requires a '$Expected' development branch, but current branch state is '$actual'."
+    }
+}
+
+function Get-ExtensionExportPath {
+    param([string]$SafeExtensionName)
+
+    $safe = Require-Value "safeExtensionName" $SafeExtensionName
+    $basePath = (Get-ExtensionsPath).TrimEnd("\", "/")
+    return (($basePath + "/" + $safe) -replace "\\", "/")
+}
+
+function Require-DevBranchExtensionName {
     param([object]$State)
 
+    Assert-DevBranchKind -State $State -Expected "extension"
+    $name = Get-StateValue -State $State -Name "extensionName" -Default ""
+    if (-not $name) {
+        throw "Extension name is not set for this development branch. Run set-dev-branch-extension first."
+    }
+    return $name
+}
+
+function Get-DevBranchExtensionExportPath {
+    param([object]$State)
+
+    $extensionName = Require-DevBranchExtensionName -State $State
+    $safeExtensionName = Get-StateValue -State $State -Name "safeExtensionName" -Default (ConvertTo-SafeName $extensionName)
+    $path = Get-StateValue -State $State -Name "extensionExportPath" -Default ""
+    if (-not $path) {
+        $path = Get-ExtensionExportPath -SafeExtensionName $safeExtensionName
+    }
+    return $path
+}
+
+function Assert-ExtensionFilesReady {
+    param([object]$State)
+
+    $extensionExportPath = Get-DevBranchExtensionExportPath -State $State
+    $absolutePath = Assert-ExportPathInsideProject $extensionExportPath
+    $dumpInfoPath = Join-Path $absolutePath "ConfigDumpInfo.xml"
+    if (-not (Test-Path -LiteralPath $dumpInfoPath -PathType Leaf)) {
+        throw "Extension files are not ready in '$extensionExportPath'. Create the extension in the development branch infobase, then run dump-dev-branch-extension."
+    }
+    return $extensionExportPath
+}
+
+function Get-DevBranchLoadBaseCommit {
+    param(
+        [object]$State,
+        [ValidateSet("configuration", "extension")]
+        [string]$ContentKind = "configuration"
+    )
+
+    $specificCommitField = if ($ContentKind -eq "extension") { "lastExtensionBaseUpdatedCommit" } else { "lastConfigBaseUpdatedCommit" }
+
     foreach ($candidate in @(
+        (Get-StateValue -State $State -Name $specificCommitField),
         (Get-StateValue -State $State -Name "lastLoadedCommit"),
         (Get-StateValue -State $State -Name "createdFromCommit")
     )) {
@@ -2069,25 +2144,29 @@ function ConvertTo-ConfigLoadRelativePath {
 }
 
 function Get-ConfigLoadChangeSet {
-    param([object]$State)
+    param(
+        [object]$State,
+        [string]$ExportPath = (Get-ExportPath),
+        [ValidateSet("configuration", "extension")]
+        [string]$ContentKind = "configuration"
+    )
 
-    $exportPath = Get-ExportPath
-    $absoluteExportPath = Assert-ExportPathInsideProject $exportPath
-    $baseCommit = Get-DevBranchLoadBaseCommit -State $State
+    $absoluteExportPath = Assert-ExportPathInsideProject $ExportPath
+    $baseCommit = Get-DevBranchLoadBaseCommit -State $State -ContentKind $ContentKind
 
-    $tracked = & git -C $script:ProjectRoot diff --name-only --diff-filter=ACMRTUXBD $baseCommit -- $exportPath
+    $tracked = & git -C $script:ProjectRoot diff --name-only --diff-filter=ACMRTUXBD $baseCommit -- $ExportPath
     if ($LASTEXITCODE -ne 0) {
         throw "Cannot calculate changed config files from commit: $baseCommit"
     }
 
-    $untracked = & git -C $script:ProjectRoot ls-files --others --exclude-standard -- $exportPath
+    $untracked = & git -C $script:ProjectRoot ls-files --others --exclude-standard -- $ExportPath
     if ($LASTEXITCODE -ne 0) {
-        throw "Cannot calculate untracked config files under $exportPath"
+        throw "Cannot calculate untracked config files under $ExportPath"
     }
 
     $files = @()
     foreach ($path in @($tracked) + @($untracked)) {
-        $relative = ConvertTo-ConfigLoadRelativePath -RepoPath $path -ExportPath $exportPath
+        $relative = ConvertTo-ConfigLoadRelativePath -RepoPath $path -ExportPath $ExportPath
         if ($relative) {
             $files += $relative
         }
@@ -2117,12 +2196,25 @@ function New-ConfigLoadListFile {
 }
 
 function New-LoadStateUpdates {
-    param([object]$LoadResult)
+    param(
+        [object]$LoadResult,
+        [ValidateSet("configuration", "extension")]
+        [string]$ContentKind = "configuration"
+    )
 
-    $updates = @{
-        lastLoadedCommit = $LoadResult.currentCommit
-        lastLoadAt = (Get-Date).ToString("o")
-        lastLoadListFile = $LoadResult.listFile
+    $now = (Get-Date).ToString("o")
+    if ($ContentKind -eq "extension") {
+        $updates = @{
+            lastExtensionBaseUpdatedCommit = $LoadResult.currentCommit
+            lastExtensionBaseUpdateAt = $now
+            lastExtensionBaseUpdateListFile = $LoadResult.listFile
+        }
+    } else {
+        $updates = @{
+            lastConfigBaseUpdatedCommit = $LoadResult.currentCommit
+            lastConfigBaseUpdateAt = $now
+            lastConfigBaseUpdateListFile = $LoadResult.listFile
+        }
     }
 
     if ($LoadResult.lastLogPath) {
@@ -2173,16 +2265,57 @@ function Dump-ConfigToFiles {
     }
 }
 
+function Dump-ExtensionToFiles {
+    param([object]$State)
+
+    Assert-DevBranchKind -State $State -Expected "extension"
+    $extensionName = Require-DevBranchExtensionName -State $State
+    $extensionExportPath = Get-DevBranchExtensionExportPath -State $State
+    $absoluteExportPath = Assert-ExportPathInsideProject $extensionExportPath
+    New-Item -ItemType Directory -Force -Path $absoluteExportPath | Out-Null
+
+    $dumpInfoPath = Join-Path $absoluteExportPath "ConfigDumpInfo.xml"
+    $children = @(Get-ChildItem -LiteralPath $absoluteExportPath -Force)
+    $isIncremental = Test-Path -LiteralPath $dumpInfoPath -PathType Leaf
+    $designerArgs = @("/DumpConfigToFiles", $absoluteExportPath, "-Extension", $extensionName, "-Format", "Hierarchical")
+    if ($isIncremental) {
+        $designerArgs += @("-update", "-force")
+    } elseif ($children.Count -gt 0) {
+        throw "Extension export path '$absoluteExportPath' is not empty and ConfigDumpInfo.xml is missing. Clean the folder manually or restore ConfigDumpInfo.xml before dumping extension files."
+    }
+
+    Invoke-Designer `
+        -InfoBasePath $state.devBranchInfoBasePath `
+        -InfoBaseKind $state.infoBaseKind `
+        -DesignerArgs $designerArgs | Out-Null
+
+    if (-not (Test-Path -LiteralPath $dumpInfoPath -PathType Leaf)) {
+        throw "1C extension dump did not create ConfigDumpInfo.xml in '$absoluteExportPath'. Make sure extension '$extensionName' exists in the development branch infobase. Check the 1C log: $script:LastLogPath"
+    }
+
+    return [pscustomobject]@{
+        extensionName = $extensionName
+        exportPath = $extensionExportPath
+        absoluteExportPath = $absoluteExportPath
+        incremental = $isIncremental
+        logPath = $script:LastLogPath
+    }
+}
+
 function Load-ConfigFromFiles {
     param(
         [string]$InfoBasePath,
         [string]$InfoBaseKind,
-        [object]$State
+        [object]$State,
+        [string]$ExportPath = (Get-ExportPath),
+        [ValidateSet("configuration", "extension")]
+        [string]$ContentKind = "configuration",
+        [string]$ExtensionName = ""
     )
 
-    $changeSet = Get-ConfigLoadChangeSet -State $State
+    $changeSet = Get-ConfigLoadChangeSet -State $State -ExportPath $ExportPath -ContentKind $ContentKind
     if ($changeSet.files.Count -eq 0) {
-        Write-Host "No changed config files under $(Get-ExportPath) since $($changeSet.baseCommit)."
+        Write-Host "No changed config files under $ExportPath since $($changeSet.baseCommit)."
         Write-Host "Development branch infobase already matches current branch config files."
         return [pscustomobject]@{
             loaded = $false
@@ -2197,10 +2330,16 @@ function Load-ConfigFromFiles {
     Write-Host "Partial config load file count: $($changeSet.files.Count)"
     Write-Host "Partial config load list: $listFilePath"
 
+    $designerArgs = @("/LoadConfigFromFiles", $changeSet.absoluteExportPath)
+    if ($ExtensionName) {
+        $designerArgs += @("-Extension", $ExtensionName)
+    }
+    $designerArgs += @("-listFile", $listFilePath, "-Format", "Hierarchical", "/UpdateDBCfg", "-WarningsAsErrors")
+
     Invoke-Designer `
         -InfoBasePath $InfoBasePath `
         -InfoBaseKind $InfoBaseKind `
-        -DesignerArgs @("/LoadConfigFromFiles", $changeSet.absoluteExportPath, "-listFile", $listFilePath, "-Format", "Hierarchical", "/UpdateDBCfg", "-WarningsAsErrors") | Out-Null
+        -DesignerArgs $designerArgs | Out-Null
 
     return [pscustomobject]@{
         loaded = $true
@@ -2211,23 +2350,39 @@ function Load-ConfigFromFiles {
     }
 }
 
-function Dump-CF {
+function Export-DevBranchResultFile {
     param(
+        [object]$State,
         [string]$InfoBasePath,
         [string]$InfoBaseKind,
-        [string]$SafeDevBranchName
+        [ValidateSet("configuration", "extension")]
+        [string]$ContentKind = "configuration"
     )
 
-    $artifactDir = Resolve-ProjectPath (Get-ConfigValue -Path "artifactsPath" -Default "build/cf")
+    $artifactDir = Resolve-ProjectPath (Get-ConfigValue -Path "artifactsPath" -Default "build/result")
     New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
-    $cfPath = Join-Path $artifactDir ($SafeDevBranchName + "-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".cf")
+
+    $safeDevBranchName = Get-StateValue -State $State -Name "safeDevBranchName" -Default "dev-branch"
+    $extensionName = ""
+    $extension = ".cf"
+    $designerArgs = @()
+    if ($ContentKind -eq "extension") {
+        $extensionName = Require-DevBranchExtensionName -State $State
+        $extension = ".cfe"
+    }
+
+    $resultPath = Join-Path $artifactDir ($safeDevBranchName + "-" + (Get-Date -Format "yyyyMMdd-HHmmss") + $extension)
+    $designerArgs += @("/DumpCfg", $resultPath)
+    if ($extensionName) {
+        $designerArgs += @("-Extension", $extensionName)
+    }
 
     Invoke-Designer `
         -InfoBasePath $InfoBasePath `
         -InfoBaseKind $InfoBaseKind `
-        -DesignerArgs @("/DumpCfg", $cfPath) | Out-Null
+        -DesignerArgs $designerArgs | Out-Null
 
-    return $cfPath
+    return $resultPath
 }
 
 function Install-AiRules1c {
@@ -2645,7 +2800,12 @@ function Sync-Master {
     Commit-IfChanged -Message $dumpMessage -PathSpec @($dumpResult.exportPath) -ForceAdd | Out-Null
 }
 
-function New-DevBranch {
+function New-DevBranchCore {
+    param(
+        [ValidateSet("configuration", "extension")]
+        [string]$DevBranchKind = "configuration"
+    )
+
     Require-Value "DevBranchName" $DevBranchName | Out-Null
     $safe = ConvertTo-SafeName $DevBranchName
     if (-not $DevBranch) {
@@ -2715,9 +2875,10 @@ function New-DevBranch {
     $statePath = Save-DevBranchState -SafeDevBranchName $safe -State @{
         devBranchName = $DevBranchName
         safeDevBranchName = $safe
+        devBranchKind = $DevBranchKind
         devBranch = $DevBranch
         createdFromCommit = Get-CurrentCommit
-        lastLoadedCommit = Get-CurrentCommit
+        lastConfigBaseUpdatedCommit = Get-CurrentCommit
         infoBaseKind = $kind
         devBranchInfoBasePath = $DevBranchInfoBasePath
         sourceUsesRepository = $sourceUsesRepository
@@ -2742,15 +2903,64 @@ function New-DevBranch {
     }
 }
 
+function New-DevBranch {
+    New-DevBranchCore -DevBranchKind "configuration"
+}
+
+function New-ExtensionDevBranch {
+    New-DevBranchCore -DevBranchKind "extension"
+}
+
+function Set-DevBranchExtension {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevBranchKind -State $state -Expected "extension"
+    Require-Value "ExtensionName" $ExtensionName | Out-Null
+
+    $existing = Get-StateValue -State $state -Name "extensionName" -Default ""
+    if ($existing -and $existing -ne $ExtensionName -and -not $Force) {
+        throw "Extension name is already set to '$existing'. Pass -Force to overwrite it."
+    }
+
+    $safeExtensionName = ConvertTo-SafeName $ExtensionName
+    $extensionExportPath = Get-ExtensionExportPath -SafeExtensionName $safeExtensionName
+    Update-DevBranchState -State $state -Updates @{
+        extensionName = $ExtensionName
+        safeExtensionName = $safeExtensionName
+        extensionExportPath = $extensionExportPath
+    }
+
+    Write-Host "Development branch extension: $ExtensionName"
+    Write-Host "Extension files path: $extensionExportPath"
+}
+
+function Write-BaseUpdateResult {
+    param(
+        [object]$State,
+        [object]$LoadResult,
+        [string]$Label
+    )
+
+    if ($LoadResult.loaded) {
+        Write-Host "$Label updated: $($State.devBranchInfoBasePath)"
+        Write-Host "Last 1C log: $($LoadResult.lastLogPath)"
+    } else {
+        Write-Host "$Label unchanged: $($State.devBranchInfoBasePath)"
+    }
+}
+
 function Update-DevBranchBase {
     $state = Read-DevBranchState -Name $DevBranchName
-    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
-    Update-DevBranchState -State $state -Updates (New-LoadStateUpdates -LoadResult $loadResult)
-    if ($loadResult.loaded) {
-        Write-Host "Development branch infobase updated: $($state.devBranchInfoBasePath)"
-        Write-Host "Last 1C log: $($loadResult.lastLogPath)"
+
+    if ((Get-DevBranchKind -State $state) -eq "extension") {
+        $extensionName = Require-DevBranchExtensionName -State $state
+        $extensionExportPath = Assert-ExtensionFilesReady -State $state
+        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath $extensionExportPath -ContentKind "extension" -ExtensionName $extensionName
+        Update-DevBranchState -State $state -Updates (New-LoadStateUpdates -LoadResult $loadResult -ContentKind "extension")
+        Write-BaseUpdateResult -State $state -LoadResult $loadResult -Label "Development branch extension"
     } else {
-        Write-Host "Development branch infobase unchanged: $($state.devBranchInfoBasePath)"
+        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
+        Update-DevBranchState -State $state -Updates (New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration")
+        Write-BaseUpdateResult -State $state -LoadResult $loadResult -Label "Development branch infobase"
     }
 }
 
@@ -2760,37 +2970,55 @@ function Refresh-DevBranch {
     Sync-Master
     Invoke-Git @("checkout", $state.devBranch)
     Invoke-Git @("merge", (Get-MasterBranch))
-    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
-    $updates = New-LoadStateUpdates -LoadResult $loadResult
+    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
+    $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
     $updates["lastRefreshAt"] = (Get-Date).ToString("o")
     Update-DevBranchState -State $state -Updates $updates
     Write-Host "Development branch refreshed from master: $($state.devBranch)"
-    if ($loadResult.loaded) {
-        Write-Host "Development branch infobase updated: $($state.devBranchInfoBasePath)"
-        Write-Host "Last 1C log: $($loadResult.lastLogPath)"
-    } else {
-        Write-Host "Development branch infobase unchanged: $($state.devBranchInfoBasePath)"
+    Write-BaseUpdateResult -State $state -LoadResult $loadResult -Label "Development branch configuration"
+    if ((Get-DevBranchKind -State $state) -eq "extension") {
+        Write-Host "Extension files were not loaded during refresh. Run update-dev-branch-base when you need to update the extension in the branch infobase."
     }
 }
 
-function Export-DevBranchCF {
+function Dump-DevBranchExtension {
+    $state = Read-DevBranchState -Name $DevBranchName
+    $dumpResult = Dump-ExtensionToFiles -State $state
+    Update-DevBranchState -State $state -Updates @{
+        lastExtensionDumpAt = (Get-Date).ToString("o")
+        lastExtensionDumpPath = $dumpResult.exportPath
+        lastLogPath = $dumpResult.logPath
+    }
+    Write-Host "Extension dumped: $($dumpResult.exportPath)"
+    Write-Host "Last 1C log: $($dumpResult.logPath)"
+}
+
+function Export-DevBranchResult {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-CleanGit
     $currentBranch = Get-CurrentBranch
     if ($currentBranch -ne $state.devBranch) {
         Invoke-Git @("checkout", $state.devBranch)
     }
-    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
-    $cfPath = Dump-CF -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -SafeDevBranchName $state.safeDevBranchName
+    $kind = Get-DevBranchKind -State $state
+    if ($kind -eq "extension") {
+        $extensionName = Require-DevBranchExtensionName -State $state
+        $extensionExportPath = Assert-ExtensionFilesReady -State $state
+        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath $extensionExportPath -ContentKind "extension" -ExtensionName $extensionName
+    } else {
+        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
+    }
+    $resultPath = Export-DevBranchResultFile -State $state -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -ContentKind $kind
     $devBranchCommit = Get-CurrentCommit
-    $updates = New-LoadStateUpdates -LoadResult $loadResult
-    $updates["lastCfPath"] = $cfPath
-    $updates["lastCfAt"] = (Get-Date).ToString("o")
+    $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind $kind
+    $updates["lastResultPath"] = $resultPath
+    $updates["lastResultKind"] = $(if ($kind -eq "extension") { "cfe" } else { "cf" })
+    $updates["lastResultAt"] = (Get-Date).ToString("o")
     $updates["lastLogPath"] = $script:LastLogPath
     Update-DevBranchState -State $state -Updates $updates
     Write-Host "Branch: $($state.devBranch)"
     Write-Host "Development branch commit: $devBranchCommit"
-    Write-Host "CF saved: $cfPath"
+    Write-Host "Result saved: $resultPath"
     Write-Host "Last 1C log: $script:LastLogPath"
 }
 
@@ -2802,23 +3030,34 @@ function Close-DevBranch {
     Invoke-Git @("checkout", $state.devBranch)
     Invoke-Git @("merge", (Get-MasterBranch))
 
-    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
-    $cfPath = Dump-CF -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -SafeDevBranchName $state.safeDevBranchName
+    $kind = Get-DevBranchKind -State $state
+    $configLoadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
+    $updates = New-LoadStateUpdates -LoadResult $configLoadResult -ContentKind "configuration"
+    if ($kind -eq "extension") {
+        $extensionName = Require-DevBranchExtensionName -State $state
+        $extensionExportPath = Assert-ExtensionFilesReady -State $state
+        $extensionLoadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath $extensionExportPath -ContentKind "extension" -ExtensionName $extensionName
+        $extensionUpdates = New-LoadStateUpdates -LoadResult $extensionLoadResult -ContentKind "extension"
+        foreach ($key in $extensionUpdates.Keys) {
+            $updates[$key] = $extensionUpdates[$key]
+        }
+    }
+    $resultPath = Export-DevBranchResultFile -State $state -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -ContentKind $kind
 
     $masterBranch = Get-MasterBranch
     $masterCommit = (Get-GitOutput @("rev-parse", $masterBranch)).Trim()
     $devBranchCommit = Get-CurrentCommit
 
-    $updates = New-LoadStateUpdates -LoadResult $loadResult
     $updates["closedAt"] = (Get-Date).ToString("o")
-    $updates["finalCfPath"] = $cfPath
+    $updates["finalResultPath"] = $resultPath
+    $updates["finalResultKind"] = $(if ($kind -eq "extension") { "cfe" } else { "cf" })
     $updates["lastLogPath"] = $script:LastLogPath
     Update-DevBranchState -State $state -Updates $updates
 
     Write-Host "Branch: $($state.devBranch)"
     Write-Host "Master commit: $masterCommit"
     Write-Host "Development branch commit: $devBranchCommit"
-    Write-Host "CF saved: $cfPath"
+    Write-Host "Result saved: $resultPath"
     Write-Host "Last 1C log: $script:LastLogPath"
     if ($state.publicationUrl) {
         Write-Host "Publication URL: $($state.publicationUrl)"
@@ -2875,11 +3114,18 @@ function List-DevBranches {
         $marker = if ($branch -and $branch -eq $currentBranch) { "*" } else { " " }
         $name = Get-StateValue -State $state -Name "devBranchName" -Default (Get-StateValue -State $state -Name "safeDevBranchName" -Default "<unknown>")
         $infoBasePath = Get-StateValue -State $state -Name "devBranchInfoBasePath" -Default ""
+        $kind = Get-DevBranchKind -State $state
+        $extensionName = Get-StateValue -State $state -Name "extensionName" -Default ""
         $createdAt = Get-StateValue -State $state -Name "createdAt" -Default ""
-        $lastLoadAt = Get-StateValue -State $state -Name "lastLoadAt" -Default ""
+        $lastConfigBaseUpdateAt = Get-StateValue -State $state -Name "lastConfigBaseUpdateAt" -Default ""
+        $lastExtensionBaseUpdateAt = Get-StateValue -State $state -Name "lastExtensionBaseUpdateAt" -Default ""
         $lastRefreshAt = Get-StateValue -State $state -Name "lastRefreshAt" -Default ""
         Write-Host "$marker $name"
         Write-Host "  Branch: $branch"
+        Write-Host "  Type: $kind"
+        if ($extensionName) {
+            Write-Host "  Extension: $extensionName"
+        }
         Write-Host "  Infobase: $infoBasePath"
         $launcherName = Get-StateValue -State $state -Name "launcherInfoBaseName" -Default ""
         $launcherFolder = Get-StateValue -State $state -Name "launcherFolder" -Default ""
@@ -2894,7 +3140,10 @@ function List-DevBranches {
             Write-Host "  Publication URL: $publicationUrl"
         }
         Write-Host "  Created: $createdAt"
-        Write-Host "  Last load: $lastLoadAt"
+        Write-Host "  Last config base update: $lastConfigBaseUpdateAt"
+        if ($kind -eq "extension") {
+            Write-Host "  Last extension base update: $lastExtensionBaseUpdateAt"
+        }
         Write-Host "  Last refresh: $lastRefreshAt"
     }
 }
@@ -3024,11 +3273,14 @@ Actions:
   install-apache      Install Apache Lounge httpd from official archive after confirmation.
   init-project        Dump source infobase config to master and install rules.
   sync-master         Refresh master from storage or from the current source infobase state.
-  new-dev-branch         Create an itldev/<name> development branch, infobase copy, and 1C launcher entry.
-  update-dev-branch-base Update the current development branch infobase from branch files.
-  refresh-dev-branch     Refresh master, merge it into the development branch, update the branch base.
-  export-dev-branch-cf   Export CF from the current development branch without refreshing master.
-  close-dev-branch       Refresh master, merge into the development branch, export final CF, switch to master.
+  new-dev-branch             Create a configuration development branch and infobase copy.
+  new-extension-dev-branch   Create an extension development branch and infobase copy.
+  set-dev-branch-extension   Set the extension name for the current extension branch.
+  dump-dev-branch-extension  Dump the current branch extension files to src/cfe/<extension>.
+  update-dev-branch-base     Update the current development branch infobase from branch files.
+  refresh-dev-branch         Refresh master, merge it into the development branch, update the branch base.
+  export-dev-branch-result   Export CF or CFE from the current development branch.
+  close-dev-branch           Refresh master, merge into the development branch, export final result, switch to master.
   switch-master       Checkout the fixed master branch.
   switch-dev-branch      Checkout a development branch from saved state.
   list-dev-branches      Show active development branches and the current branch.
@@ -3039,9 +3291,12 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action detect-apache
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts"
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-extension-dev-branch -DevBranchName "bonus-extension"
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action set-dev-branch-extension -ExtensionName "BonusExtension"
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action dump-dev-branch-extension
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-dev-branch-base
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-dev-branch
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-dev-branch-cf
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-dev-branch-result
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action close-dev-branch
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-dev-branches
 "@
@@ -3061,9 +3316,12 @@ try {
         "init-project" { Initialize-Project }
         "sync-master" { Sync-Master }
         "new-dev-branch" { New-DevBranch }
+        "new-extension-dev-branch" { New-ExtensionDevBranch }
+        "set-dev-branch-extension" { Set-DevBranchExtension }
+        "dump-dev-branch-extension" { Dump-DevBranchExtension }
         "update-dev-branch-base" { Update-DevBranchBase }
         "refresh-dev-branch" { Refresh-DevBranch }
-        "export-dev-branch-cf" { Export-DevBranchCF }
+        "export-dev-branch-result" { Export-DevBranchResult }
         "close-dev-branch" { Close-DevBranch }
         "switch-master" { Switch-Master }
         "switch-dev-branch" { Switch-DevBranch }

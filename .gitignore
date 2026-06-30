@@ -1,5 +1,6 @@
 .dev.env
 *.cf
+*.cfe
 *.dt
 *.log
 *.zip

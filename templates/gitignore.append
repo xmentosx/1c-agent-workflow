@@ -1,6 +1,7 @@
 .dev.env
-build/cf/
+build/result/
 *.cf
+*.cfe
 *.dt
 *.log
 logs/
