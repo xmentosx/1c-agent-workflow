@@ -32,7 +32,8 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 ## Состав пакета
 
 - `.agents/skills/1c-workflow` - общий Agent Skill для Codex и Kilo Code.
-- `.kilo/commands` - slash-команды Kilo Code с префиксом `/itl`.
+- `.agents/skills/1c-workflow-fast` - быстрый Skill для регулярных операций через PowerShell-helper без чтения полного workflow.
+- `.kilo/commands` - slash-команды Kilo Code с префиксом `/itl` и быстрым экспериментальным префиксом `/itlx`.
 - `AGENT-INSTALL.md` - bootstrap-инструкция для агента.
 - `templates/project.json` - шаблон настроек проекта без секретов.
 - `templates/dev.env.example` - пример локальных настроек и секретов.
@@ -78,7 +79,23 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 /itl-switch-dev-branch <name>     Переключиться на ветку разработки.
 ```
 
-В Codex можно писать те же действия обычным текстом или вызывать `$1c-workflow`.
+Для регулярных операций можно использовать быстрый контур `/itlx-*`. Он сразу запускает PowerShell-helper и читает подробные правила только при ошибке или по запросу:
+
+```text
+/itlx                             Показать быстрое меню.
+/itlx-init-project                Быстро попробовать init-project; при сложной анкете перейти на /itl-init-project.
+/itlx-new-dev-branch <name>       Создать ветку разработки.
+/itlx-load-dev-branch             Загрузить изменения текущей ветки в ее базу.
+/itlx-refresh-dev-branch          Обновить текущую ветку свежим master.
+/itlx-export-dev-branch-cf        Выгрузить CF по текущей ветке без закрытия ветки.
+/itlx-sync-master                 Обновить только master.
+/itlx-close-dev-branch            Закрыть текущую ветку, выгрузить финальный CF и перейти на master.
+/itlx-list-dev-branches           Показать активные ветки разработки и текущую ветку.
+/itlx-switch-master               Переключиться на master.
+/itlx-switch-dev-branch <name>    Переключиться на ветку разработки.
+```
+
+В Codex можно писать те же действия обычным текстом, вызывать `$1c-workflow` для подробного режима или `$1c-workflow-fast` для быстрых регулярных операций.
 
 ## Важные правила
 

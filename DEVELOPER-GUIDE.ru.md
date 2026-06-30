@@ -218,6 +218,22 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 /itl-switch-dev-branch <name>     Переключиться на ветку разработки.
 ```
 
+Для ежедневных операций можно использовать быстрые команды. Они сразу запускают PowerShell-helper и обычно тратят меньше времени и токенов агента:
+
+```text
+/itlx                             Показать быстрое меню.
+/itlx-init-project                Быстро попробовать инициализацию; при сложной анкете использовать /itl-init-project.
+/itlx-new-dev-branch <name>       Создать ветку разработки.
+/itlx-load-dev-branch             Загрузить изменения текущей ветки в ее базу.
+/itlx-refresh-dev-branch          Обновить текущую ветку свежим master.
+/itlx-export-dev-branch-cf        Выгрузить CF по текущей ветке без закрытия.
+/itlx-sync-master                 Обновить только master.
+/itlx-close-dev-branch            Закрыть текущую ветку и вернуться на master.
+/itlx-list-dev-branches           Показать активные ветки разработки.
+/itlx-switch-master               Переключиться на master.
+/itlx-switch-dev-branch <name>    Переключиться на ветку разработки.
+```
+
 ## 11. Правила безопасности
 
 - Не коммитьте `.dev.env`, пароли, `*.cf`, `*.dt`, логи и локальные базы.

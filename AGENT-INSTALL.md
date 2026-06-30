@@ -21,9 +21,10 @@ Do not infer or try `main` for this package unless the user explicitly provides 
 This package is designed for both Codex and Kilo Code:
 
 - Common workflow skill: `.agents/skills/1c-workflow`.
+- Fast routine workflow skill: `.agents/skills/1c-workflow-fast`.
 - Common project guidance: `AGENTS.md` and `USER-RULES.md`.
-- Kilo slash command wrappers: `.kilo/commands/itl*.md`.
-- Codex usage: choose the skill via `/skills`, invoke `$1c-workflow`, or use natural language that matches the skill description.
+- Kilo slash command wrappers: `.kilo/commands/itl*.md`, including detailed `/itl-*` and fast `/itlx-*` commands.
+- Codex usage: choose the skill via `/skills`, invoke `$1c-workflow` for detailed workflows or `$1c-workflow-fast` for routine helper-first commands, or use natural language that matches the skill description.
 
 Do not rely on Codex-only custom prompts for this workflow. They are local to one user and are not the team distribution mechanism.
 
@@ -100,10 +101,11 @@ Encoding rules:
    - If this file was read from the canonical URL and the repository root is unknown, clone `https://github.com/xmentosx/1c-agent-workflow.git` with `--branch master --single-branch` to a temporary directory, and use that clone.
    - If the user provided a different bootstrap URL, derive the repository and branch from that URL. If the branch is not present in the URL, ask one short clarifying question instead of guessing `main`.
 
-2. Copy the common skill into the target project:
+2. Copy the common skills into the target project:
 
 ```text
 <project>/.agents/skills/1c-workflow/
+<project>/.agents/skills/1c-workflow-fast/
 ```
 
 3. If the current agent is Kilo Code, copy Kilo command wrappers into:
@@ -227,7 +229,7 @@ If PowerShell is unavailable, follow `.agents/skills/1c-workflow/references/work
 
 Developers should not need to remember exact names.
 
-For Kilo Code:
+For Kilo Code, detailed commands:
 
 ```text
 /itl
@@ -243,6 +245,22 @@ For Kilo Code:
 /itl-switch-dev-branch <branch name>
 ```
 
+Fast experimental commands run the PowerShell helper directly and should not read the full workflow references unless the helper fails or the user asks for details:
+
+```text
+/itlx
+/itlx-init-project
+/itlx-new-dev-branch <branch name>
+/itlx-load-dev-branch
+/itlx-refresh-dev-branch
+/itlx-export-dev-branch-cf
+/itlx-sync-master
+/itlx-close-dev-branch
+/itlx-list-dev-branches
+/itlx-switch-master
+/itlx-switch-dev-branch <branch name>
+```
+
 Typing `/` shows available project commands.
 
 For Codex:
@@ -250,6 +268,7 @@ For Codex:
 ```text
 /skills -> 1C Workflow
 $1c-workflow
+$1c-workflow-fast
 ```
 
 Natural language is also supported:

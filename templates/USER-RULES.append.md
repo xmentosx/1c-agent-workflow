@@ -1,6 +1,8 @@
 ## 1C Project Lifecycle
 
-Use `.agents/skills/1c-workflow/SKILL.md` for project initialization, development branch creation, development branch refresh/load, master sync, development branch listing, branch switching, development branch close, and CF export.
+Use `.agents/skills/1c-workflow/SKILL.md` for detailed project initialization, development branch creation, development branch refresh/load, master sync, development branch listing, branch switching, development branch close, and CF export.
+
+For routine lifecycle operations in an already installed project, prefer `.agents/skills/1c-workflow-fast/SKILL.md` or Kilo `/itlx-*` commands. The fast path runs `.agents/skills/1c-workflow/scripts/agent-1c.ps1` directly and should read detailed workflow references only after helper failure or when the developer asks for explanation.
 
 Use `DEV-BRANCH-DEVELOPMENT.ru.md` for the development process inside a development branch: quick-fix for small local fixes, OpenSpec for business feature work or risky behavior changes.
 

@@ -9,6 +9,8 @@ description: Initialize and operate 1C configuration development projects with G
 
 Use this skill to run the standard lifecycle for agent-assisted 1C configuration development. The workflow is cross-agent: the same `.agents/skills/1c-workflow` directory works in Codex and Kilo Code, while Kilo-specific slash command wrappers can live in `.kilo/commands`.
 
+For routine lifecycle commands in an already installed project, prefer the separate fast skill `.agents/skills/1c-workflow-fast` or Kilo `/itlx-*` commands. The fast path calls the PowerShell helper directly and reads detailed workflow references only after helper failure or when the user asks for explanation.
+
 ## Intent Routing
 
 Map user intent to one workflow:

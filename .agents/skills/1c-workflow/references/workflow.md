@@ -19,9 +19,9 @@ Available 1C workflow actions:
 9. Switch branches: switch to master or to a saved development branch.
 ```
 
-For Kilo Code, project slash wrappers can expose these as `/itl`, `/itl-init-project`, `/itl-new-dev-branch`, `/itl-load-dev-branch`, `/itl-refresh-dev-branch`, `/itl-export-dev-branch-cf`, `/itl-sync-master`, `/itl-close-dev-branch`, `/itl-list-dev-branches`, `/itl-switch-master`, and `/itl-switch-dev-branch`.
+For Kilo Code, project slash wrappers can expose detailed commands as `/itl`, `/itl-init-project`, `/itl-new-dev-branch`, `/itl-load-dev-branch`, `/itl-refresh-dev-branch`, `/itl-export-dev-branch-cf`, `/itl-sync-master`, `/itl-close-dev-branch`, `/itl-list-dev-branches`, `/itl-switch-master`, and `/itl-switch-dev-branch`. Fast experimental wrappers use the `/itlx-*` prefix and call the PowerShell helper directly.
 
-For Codex, the skill can be chosen from `/skills` or invoked as `$1c-workflow`; enabled skills also appear in the app slash list when supported by the surface.
+For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
 ## State Files
 
@@ -31,7 +31,8 @@ Create and maintain:
 - `.agent-1c/tools.json`: configurable software checks and install suggestions.
 - `.agent-1c/dev-branches/<safe-dev-branch-name>.json`: development branch state.
 - `.dev.env`: local secrets and machine-specific values; never commit it.
-- `.agents/skills/1c-workflow/`: shared Agent Skill used by Codex and Kilo Code.
+- `.agents/skills/1c-workflow/`: shared detailed Agent Skill used by Codex and Kilo Code.
+- `.agents/skills/1c-workflow-fast/`: compact Agent Skill for routine helper-first lifecycle actions.
 - `.kilo/commands/`: optional Kilo Code slash command wrappers.
 
 Never store passwords in committed files.
@@ -238,7 +239,7 @@ Goal: create the baseline project state.
    - Unsafe state: if `src/cf` is not empty and `ConfigDumpInfo.xml` is missing, stop and ask the user to clean the folder or restore `ConfigDumpInfo.xml`.
 9. Verify `src/cf/ConfigDumpInfo.xml` exists after the dump. During initial project creation, commit only `src/cf` to `master`, then verify `HEAD:src/cf/ConfigDumpInfo.xml` exists. Stop if Git sees no dump files to commit or the file is missing from `HEAD`.
 10. Install `ai_rules_1c` per project from `https://github.com/comol/ai_rules_1c`, using the current agent target (`codex`, `kilocode`, or fallback `codex`). Invoke its installer with named parameters: `-Command init -ProjectRoot <project> -Source <rulesDir> -Tools <tools> -AssumeYes`.
-11. Install this workflow skill into `.agents/skills/1c-workflow`.
+11. Install this workflow skill into `.agents/skills/1c-workflow` and the fast routine skill into `.agents/skills/1c-workflow-fast`.
 12. If the current agent is Kilo Code, install slash wrappers into `.kilo/commands`.
 13. Add project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
 14. Commit rules and workflow files when there are changes.
