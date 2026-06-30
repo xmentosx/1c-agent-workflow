@@ -14,6 +14,7 @@
 В Kilo Code жизненный цикл ветки выполняется slash-командами:
 
 ```text
+/itl-activate-dev-branch-context  Записать базу текущей ветки в .dev.env для команд ai_rules_1c.
 /itl-update-dev-branch-base       Обновить базу ветки разработки из текущих файлов.
 /itl-refresh-dev-branch           Обновить ветку разработки свежим master из хранилища.
 /itl-export-dev-branch-result     Выгрузить CF/CFE по текущей ветке без закрытия ветки.
@@ -44,6 +45,8 @@
 ```
 
 Дальше `/itl-update-dev-branch-base` обновляет расширение в базе ветки из `src/cfe/<имя-расширения>`, а `/itl-export-dev-branch-result` выгружает `CFE`.
+
+Команды жизненного цикла автоматически активируют контекст базы ветки разработки для `ai_rules_1c`. Если разработчик вручную запускает `/update1cbase`, `/deploy-and-test`, `/loadfrom1cbase` или `/getconfigfiles`, перед этим нужно выполнить `/itl-activate-dev-branch-context`.
 
 ## Как выбрать режим
 

@@ -18,6 +18,7 @@ Do not open the full workflow references before normal lifecycle execution. Open
 - create new extension development branch: `new-extension-dev-branch`
 - set extension name for current extension branch: `set-dev-branch-extension`
 - dump current extension branch files: `dump-dev-branch-extension`
+- activate current development branch context for ai_rules_1c commands: `activate-dev-branch-context`
 - update current development branch infobase from branch files: `update-dev-branch-base`
 - refresh current development branch from master/source: `refresh-dev-branch`
 - export CF or CFE result from current development branch: `export-dev-branch-result`
@@ -43,7 +44,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-dev-branch -DevBranchName "<dev-branch-name>"
 ```
 
-For `set-dev-branch-extension`, pass `-ExtensionName "<extension-name>"`. For `update-dev-branch-base`, `dump-dev-branch-extension`, `refresh-dev-branch`, `export-dev-branch-result`, and `close-dev-branch`, do not ask for a branch name. The helper infers it from the current `itldev/<name>` Git branch.
+For `set-dev-branch-extension`, pass `-ExtensionName "<extension-name>"`. For `activate-dev-branch-context`, `update-dev-branch-base`, `dump-dev-branch-extension`, `refresh-dev-branch`, `export-dev-branch-result`, and `close-dev-branch`, do not ask for a branch name. The helper infers it from the current `itldev/<name>` Git branch.
 
 ## Failure Handling
 
@@ -55,4 +56,4 @@ If the helper exits with an error:
 4. Ask for only the missing value when the helper clearly identifies one.
 5. Use the full `1c-workflow` skill only for detailed recovery, unusual topology, or init questionnaire work.
 
-For first-time project bootstrap with many missing settings, prefer the full `1c-workflow` skill. This fast skill is optimized for regular branch operations.
+For first-time project bootstrap, run `init-project -InitMode wizard`; use `-InitMode json -InitAnswersPath <file>` for non-interactive automation. This fast skill is optimized for regular branch operations after installation.

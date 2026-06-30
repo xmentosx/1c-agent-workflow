@@ -20,7 +20,7 @@ Available 1C workflow actions:
 10. List/switch branches: show active development branches, switch to master, or switch to a saved development branch.
 ```
 
-For Kilo Code, project slash wrappers can expose detailed commands as `/itl`, `/itl-init-project`, `/itl-new-dev-branch`, `/itl-new-extension-dev-branch`, `/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`, `/itl-update-dev-branch-base`, `/itl-refresh-dev-branch`, `/itl-export-dev-branch-result`, `/itl-sync-master`, `/itl-close-dev-branch`, `/itl-list-dev-branches`, `/itl-switch-master`, and `/itl-switch-dev-branch`. Fast experimental wrappers use the `/itlx-*` prefix and call the PowerShell helper directly.
+For Kilo Code, project slash wrappers can expose detailed commands as `/itl`, `/itl-init-project`, `/itl-new-dev-branch`, `/itl-new-extension-dev-branch`, `/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`, `/itl-activate-dev-branch-context`, `/itl-update-dev-branch-base`, `/itl-refresh-dev-branch`, `/itl-export-dev-branch-result`, `/itl-sync-master`, `/itl-close-dev-branch`, `/itl-list-dev-branches`, `/itl-switch-master`, and `/itl-switch-dev-branch`. Fast experimental wrappers use the `/itlx-*` prefix and call the PowerShell helper directly.
 
 For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
@@ -118,7 +118,7 @@ Default checks:
 
 ## Required Questions
 
-Ask only for values that are missing from `.agent-1c/project.json`, `.agent-1c/tools.json`, `.dev.env`, or the current prompt.
+In `configured` mode, use values already present in `.agent-1c/project.json`, `.agent-1c/tools.json`, `.dev.env`, or the current prompt. In `wizard` mode, collect the local setup answers and overwrite `.dev.env` only after the developer confirms the summary.
 
 Interactive question style:
 
@@ -190,7 +190,7 @@ Before destructive or stateful actions:
 - If the repository has no commits yet, treat the current HEAD as an unborn branch. Set/keep HEAD on `master` without running `git checkout -b master` over an existing unborn branch.
 - Do not ask for, create, or configure a Git remote during initialization.
 - Do not pull automatically during simple branch switching.
-- Require a clean worktree before branch switching, development branch refresh, development branch CF export, or development branch close.
+- Require a clean worktree before branch switching, development branch refresh, development branch result export, or development branch close.
 - `src/cf` is tracked project content. During source dumps, stage and commit only `src/cf`; do not include unrelated staged files in dump commits.
 - Force-add `src/cf` during source dump commits so broad ignore rules such as `src/` cannot hide the standard configuration dump.
 
@@ -224,27 +224,29 @@ Goal: install a local Apache/httpd for 1C web publication when the developer ena
 
 Goal: create the baseline project state.
 
-1. Show the current working directory as project root and confirm the developer wants to initialize there.
-2. Collect missing parameters. Do not ask for `devBranchInfoBaseRoot` during normal initialization; use `.agent-1c/infobases/dev-branches`.
+1. Prefer the helper script wizard: `agent-1c.ps1 -Action init-project -InitMode wizard`.
+2. The wizard shows the current working directory as project root and confirms the developer wants to initialize there.
+3. The wizard collects missing parameters. Do not ask for `devBranchInfoBaseRoot` during normal initialization; use `.agent-1c/infobases/dev-branches`.
    - For the platform path, first offer discovered installed 1C versions; do not make the developer type `C:\Program Files\1cv8\...\bin\1cv8.exe` when it can be selected.
    - Ask whether development branch infobases should be published to Apache for web-client testing. If no, write `WEB_PUBLISH_BY_DEFAULT=false` and do not ask Apache paths. If yes, write `WEB_PUBLISH_BY_DEFAULT=true`, run `detect-apache`, and save detected local Apache settings to `.dev.env`. If Apache is not detected, ask whether to run `install-apache`; after success, rerun `detect-apache`/`check-tools`.
-3. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing. Write them as UTF-8.
-4. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.
-5. Initialize local Git if needed.
-6. Checkout or create `master`.
-7. If `sourceUsesRepository=true`, update the source infobase from 1C configuration repository storage. If `false`, skip repository update and use the source infobase exactly as it is.
-8. Dump configuration files into `src/cf`.
+4. For non-interactive automation, pass `-InitMode json -InitAnswersPath <answers.json>` with the same values the wizard would collect. If required fields are missing, stop before launching 1C.
+5. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing. Write them as UTF-8.
+6. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.
+7. Initialize local Git if needed.
+8. Checkout or create `master`.
+9. If `sourceUsesRepository=true`, update the source infobase from 1C configuration repository storage. If `false`, skip repository update and use the source infobase exactly as it is.
+10. Dump configuration files into `src/cf`.
    - If `sourceUsesRepository=true`, pass `/ConfigurationRepositoryF`, `/ConfigurationRepositoryN`, and `/ConfigurationRepositoryP` to this dump command too.
    - If `sourceUsesRepository=false`, do not ask for or pass repository settings. The developer must update the source infobase manually before syncing master when fresh external changes are needed.
    - First dump: if `src/cf` is empty, run a full dump.
    - Next dumps: if `src/cf/ConfigDumpInfo.xml` exists, run incremental dump with `-update -force`.
    - Unsafe state: if `src/cf` is not empty and `ConfigDumpInfo.xml` is missing, stop and ask the user to clean the folder or restore `ConfigDumpInfo.xml`.
-9. Verify `src/cf/ConfigDumpInfo.xml` exists after the dump. During initial project creation, commit only `src/cf` to `master`, then verify `HEAD:src/cf/ConfigDumpInfo.xml` exists. Stop if Git sees no dump files to commit or the file is missing from `HEAD`.
-10. Install `ai_rules_1c` per project from `https://github.com/comol/ai_rules_1c`, using the current agent target (`codex`, `kilocode`, or fallback `codex`). Invoke its installer with named parameters: `-Command init -ProjectRoot <project> -Source <rulesDir> -Tools <tools> -AssumeYes`.
-11. Install this workflow skill into `.agents/skills/1c-workflow` and the fast routine skill into `.agents/skills/1c-workflow-fast`.
-12. If the current agent is Kilo Code, install slash wrappers into `.kilo/commands`.
-13. Add project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
-14. Commit rules and workflow files when there are changes.
+11. Verify `src/cf/ConfigDumpInfo.xml` exists after the dump. During initial project creation, commit only `src/cf` to `master`, then verify `HEAD:src/cf/ConfigDumpInfo.xml` exists. Stop if Git sees no dump files to commit or the file is missing from `HEAD`.
+12. Install `ai_rules_1c` per project from `https://github.com/comol/ai_rules_1c`, using the current agent target (`codex`, `kilocode`, or fallback `codex`). Invoke its installer with named parameters: `-Command init -ProjectRoot <project> -Source <rulesDir> -Tools <tools> -AssumeYes`.
+13. Install this workflow skill into `.agents/skills/1c-workflow` and the fast routine skill into `.agents/skills/1c-workflow-fast`.
+14. If the current agent is Kilo Code, install slash wrappers into `.kilo/commands`.
+15. Add project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
+16. Commit rules and workflow files when there are changes.
 
 ## NEW_DEV_BRANCH / NEW_EXTENSION_DEV_BRANCH
 
@@ -260,7 +262,8 @@ Goal: create a configuration or extension development branch and isolated develo
 6. Register the development branch infobase in `%APPDATA%\1C\1CEStart\ibases.v8i` under folder `/ITL/<project-root-name>`.
 7. Optionally publish the development branch copy to Apache through `webinst`.
 8. Save development branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json`, including launcher registration metadata and `devBranchKind`.
-9. Report branch, development branch infobase path, launcher folder/name, and publication URL if any.
+9. Activate the development branch context in `.dev.env` for ai_rules_1c infobase-bound commands. For extension branches with no extension name yet, clear `INFOBASE_PATH` and tell the developer to run `set-dev-branch-extension` before `/update1cbase`.
+10. Report branch, development branch infobase path, launcher folder/name, and publication URL if any.
 
 For extension branches, do not ask for `extensionName` and do not create the extension during branch creation. The extension is created later in the copied branch infobase during development.
 
@@ -275,18 +278,30 @@ Goal: attach an extension name to the current extension branch and dump extensio
 5. Use `-update -force` when `ConfigDumpInfo.xml` already exists.
 6. If the extension does not exist in the branch infobase yet, stop and tell the developer to create it in that copied base first.
 
+## ACTIVATE_DEV_BRANCH_CONTEXT
+
+Goal: make ai_rules_1c infobase-bound commands use the current ITL development branch infobase.
+
+1. Read current branch state from `.agent-1c/dev-branches/<name>.json`.
+2. For configuration branches, write `.dev.env`: `INFOBASE_KIND`, `INFOBASE_PATH=<devBranchInfoBasePath>`, `EXPORT_PATH=src/cf`, empty `EXTENSION_NAME`, and `INFOBASE_PUBLISH_URL` from branch state when present.
+3. For extension branches, require `extensionName` in state and write `EXPORT_PATH=src/cfe/<safeExtensionName>` plus `EXTENSION_NAME=<extensionName>`.
+4. Do not modify source/repository settings or credentials.
+5. Add diagnostic keys `ITL_ACTIVE_DEV_BRANCH`, `ITL_ACTIVE_DEV_BRANCH_KIND`, and `ITL_ACTIVE_CONTEXT_UPDATED_AT`.
+6. When switching to `master` or running standalone `sync-master`, clear `INFOBASE_PATH`, `INFOBASE_PUBLISH_URL`, `EXPORT_PATH`, `EXTENSION_NAME`, and active ITL diagnostics so `/update1cbase` cannot accidentally target the source base.
+
 ## UPDATE_DEV_BRANCH_BASE
 
 Goal: update the current development branch infobase from current branch files.
 
 1. Find development branch state from `DevBranchName` or current branch. In normal use, do not require a name when already on an `itldev/<name>` branch.
-2. For configuration branches, build a UTF-8 list file in `logs/1c` from Git changes under `src/cf`.
-3. For extension branches, require `extensionName` in state and build the list file from `src/cfe/<safeExtensionName>`.
-4. If no changed files are found, skip `/LoadConfigFromFiles` and report that the development branch infobase already matches current branch files.
-5. For configuration branches, run `/LoadConfigFromFiles <src/cf> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
-6. For extension branches, run `/LoadConfigFromFiles <src/cfe/<name>> -Extension <extensionName> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
-7. Do not pass `-updateConfigDumpInfo`.
-8. Update separate configuration/extension base update fields in branch state and report the 1C log path.
+2. Activate the development branch context in `.dev.env`.
+3. For configuration branches, build a UTF-8 list file in `logs/1c` from Git changes under `src/cf`.
+4. For extension branches, require `extensionName` in state and build the list file from `src/cfe/<safeExtensionName>`.
+5. If no changed files are found, skip `/LoadConfigFromFiles` and report that the development branch infobase already matches current branch files.
+6. For configuration branches, run `/LoadConfigFromFiles <src/cf> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
+7. For extension branches, run `/LoadConfigFromFiles <src/cfe/<name>> -Extension <extensionName> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
+8. Do not pass `-updateConfigDumpInfo`.
+9. Update separate configuration/extension base update fields in branch state and report the 1C log path.
 
 ## REFRESH_DEV_BRANCH
 
@@ -352,7 +367,7 @@ Goal: show active development branches and the current development branch.
 2. Show only development branch states without `closedAt`.
 3. Show current Git branch and current development branch; if current branch is `master`, report current development branch as `none`.
 4. Mark the development branch whose saved branch matches the current Git branch.
-5. For each active development branch, show name, branch, development branch infobase path, launcher folder/name, publication URL if any, created timestamp, last load timestamp, and last refresh timestamp.
+5. For each active development branch, show name, branch, development branch infobase path, launcher folder/name, publication URL if any, created timestamp, last base update timestamp, and last refresh timestamp.
 
 ## SWITCH_MASTER
 
@@ -360,8 +375,9 @@ Goal: switch Git to the fixed `master` branch.
 
 1. Require a clean Git worktree.
 2. Checkout `master`.
-3. Report current commit.
-4. Do not pull and do not load files into 1C automatically.
+3. Clear active development branch context in `.dev.env` (`INFOBASE_PATH`, `INFOBASE_PUBLISH_URL`, `EXPORT_PATH`, `EXTENSION_NAME`, and diagnostics).
+4. Report current commit.
+5. Do not pull and do not load files into 1C automatically.
 
 ## SWITCH_DEV_BRANCH
 
@@ -370,8 +386,9 @@ Goal: switch Git to a saved development branch.
 1. Find development branch state from `DevBranchName` or current branch.
 2. Require a clean Git worktree.
 3. Checkout the saved development branch.
-4. Report current commit, development branch infobase path, and publication URL if any.
-5. Do not load files into 1C automatically.
+4. Activate the saved development branch context in `.dev.env`. If it is an extension branch without an extension name yet, clear infobase-bound values and tell the developer to run `set-dev-branch-extension`.
+5. Report current commit, development branch infobase path, and publication URL if any.
+6. Do not load files into 1C automatically.
 
 ## Failure Rules
 
@@ -385,7 +402,7 @@ Stop immediately when:
 - Development branch infobase target already exists.
 - Development branch copy cannot be unbound from storage when `sourceUsesRepository=true`.
 - 1C Designer returns a non-zero exit code.
-- CF export fails.
+- CF/CFE result export fails.
 - Apache publication is requested but `webinst.exe` or Apache/httpd is missing and the developer declined automatic install or manual setup.
 
 ## Troubleshooting

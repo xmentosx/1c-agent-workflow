@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "set-dev-branch-extension", "dump-dev-branch-extension", "update-dev-branch-base", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
+    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -9,6 +9,9 @@ param(
     [string]$DevBranch,
     [string]$DevBranchInfoBasePath,
     [string]$ExtensionName,
+    [ValidateSet("configured", "wizard", "json")]
+    [string]$InitMode = "configured",
+    [string]$InitAnswersPath,
     [ValidateSet("", "codex", "kilocode", "both")]
     [string]$AgentTarget = "",
     [switch]$PublishToApache,
@@ -59,6 +62,10 @@ function Write-Utf8Text {
         [string]$Path,
         [string]$Value
     )
+    $directory = Split-Path -Parent $Path
+    if ($directory) {
+        New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    }
     [System.IO.File]::WriteAllText($Path, $Value, (Get-Utf8Encoding))
 }
 
@@ -67,6 +74,10 @@ function Add-Utf8Text {
         [string]$Path,
         [string]$Value
     )
+    $directory = Split-Path -Parent $Path
+    if ($directory) {
+        New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    }
     [System.IO.File]::AppendAllText($Path, $Value, (Get-Utf8Encoding))
 }
 
@@ -988,6 +999,94 @@ function Set-DotEnvValues {
     Write-Utf8Text -Path $path -Value ((@($updated) -join [Environment]::NewLine) + [Environment]::NewLine)
 }
 
+function New-DefaultProjectConfig {
+    return [ordered]@{
+        schemaVersion = 1
+        masterBranch = "master"
+        exportPath = "src/cf"
+        extensionsPath = "src/cfe"
+        artifactsPath = "build/result"
+        logsPath = "logs/1c"
+        platformPath = ""
+        infoBaseKind = "file"
+        sourceUsesRepository = $true
+        sourceInfoBasePath = ""
+        sourceServerName = ""
+        sourceInfoBaseName = ""
+        repositoryPath = ""
+        devBranchInfoBaseRoot = ".agent-1c/infobases/dev-branches"
+        serverBaseCopyScript = ""
+        aiRules = [ordered]@{
+            repo = "https://github.com/comol/ai_rules_1c.git"
+            tools = ""
+        }
+        web = [ordered]@{
+            publishByDefault = $false
+            webInstPath = ""
+            apacheKind = "apache24"
+            apacheHttpdConfPath = ""
+            publicationRoot = ""
+            publicationUrlBase = "http://localhost"
+        }
+    }
+}
+
+function New-DefaultToolsManifest {
+    return [ordered]@{
+        schemaVersion = 1
+        tools = @(
+            [ordered]@{
+                id = "git"
+                name = "Git"
+                required = $true
+                install = [ordered]@{
+                    policy = "offer"
+                    commands = @("winget install --id Git.Git -e")
+                }
+            },
+            [ordered]@{
+                id = "1c-platform"
+                name = "1C platform"
+                required = $true
+                install = [ordered]@{
+                    policy = "manual"
+                    commands = @("Choose an installed 1C version from C:\Program Files\1cv8\*\bin\1cv8.exe or C:\Program Files (x86)\1cv8\*\bin\1cv8.exe, then set PLATFORM_PATH in .dev.env. If no version is found, install 1C:Enterprise platform manually.")
+                }
+            },
+            [ordered]@{
+                id = "apache-webinst"
+                name = "Apache/webinst"
+                requiredWhenWebPublication = $true
+                install = [ordered]@{
+                    policy = "confirm-then-run"
+                    commands = @(
+                        "After explicit developer confirmation, run: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache",
+                        "If automatic install is declined, install/configure Apache 2.4 manually so httpd.conf can be detected, then run detect-apache."
+                    )
+                }
+            }
+        )
+    }
+}
+
+function Ensure-WorkflowProjectFiles {
+    $agentDir = Join-Path $script:ProjectRoot ".agent-1c"
+    New-Item -ItemType Directory -Force -Path $agentDir | Out-Null
+
+    if (-not (Test-Path -LiteralPath $script:ConfigPath -PathType Leaf)) {
+        Write-Utf8Text -Path $script:ConfigPath -Value (((New-DefaultProjectConfig) | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    }
+
+    $toolsPath = Join-Path $agentDir "tools.json"
+    if (-not (Test-Path -LiteralPath $toolsPath -PathType Leaf)) {
+        Write-Utf8Text -Path $toolsPath -Value (((New-DefaultToolsManifest) | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+        $script:ToolsManifestLoaded = $false
+        $script:ToolsManifest = $null
+    }
+
+    Ensure-GitIgnore
+}
+
 function Get-ApacheInstallRoot {
     $value = Get-Setting -EnvName "APACHE_INSTALL_ROOT" -ConfigName "web.apacheInstallRoot" -Default "C:\Apache24"
     return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables(([string]$value).Trim()))
@@ -1526,6 +1625,330 @@ function Format-Installed1CPlatformOptions {
     }
     $lines += "Choose one of these 1cv8.exe paths for PLATFORM_PATH, or enter a custom full path."
     return ($lines -join "`n")
+}
+
+function Test-InteractiveInputAvailable {
+    try {
+        return (-not [Console]::IsInputRedirected)
+    } catch {
+        return $false
+    }
+}
+
+function ConvertTo-YesNoBool {
+    param(
+        [AllowNull()][object]$Value,
+        [bool]$Default = $false
+    )
+
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) {
+        return $Default
+    }
+
+    if ($Value -is [bool]) {
+        return [bool]$Value
+    }
+
+    $text = ([string]$Value).Trim().ToLowerInvariant()
+    $yesMarker = -join ([char[]](0x0434, 0x0430))
+    $noMarker = -join ([char[]](0x043D, 0x0435, 0x0442))
+    if (@("1", "true", "yes", "y", "on", $yesMarker) -contains $text) {
+        return $true
+    }
+    if (@("0", "false", "no", "n", "off", $noMarker, "-") -contains $text) {
+        return $false
+    }
+
+    throw "Expected yes/no value, got: $Value"
+}
+
+function Read-InitRequired {
+    param([string]$Prompt)
+
+    while ($true) {
+        $value = Read-Host $Prompt
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            return $value
+        }
+        Write-Host "Value is required."
+    }
+}
+
+function Read-InitOptional {
+    param([string]$Prompt)
+    return (Read-Host $Prompt)
+}
+
+function Read-InitYesNo {
+    param(
+        [string]$Prompt,
+        [bool]$Default = $false
+    )
+
+    $suffix = if ($Default) { " [Y/n]" } else { " [y/N]" }
+    while ($true) {
+        $answer = Read-Host ($Prompt + $suffix)
+        try {
+            return ConvertTo-YesNoBool -Value $answer -Default $Default
+        } catch {
+            Write-Host "Answer yes or no."
+        }
+    }
+}
+
+function Read-InitInfoBaseKind {
+    while ($true) {
+        $answer = (Read-Host "Source infobase kind: file or server [file]").Trim().ToLowerInvariant()
+        if (-not $answer) {
+            return "file"
+        }
+        if ($answer -eq "file" -or $answer -eq "server") {
+            return $answer
+        }
+        Write-Host "Enter 'file' or 'server'."
+    }
+}
+
+function Read-InitPlatformPath {
+    $platforms = @(Find-Installed1CPlatforms)
+    if ($platforms.Count -gt 0) {
+        Write-Host "Installed 1C platform versions:"
+        for ($i = 0; $i -lt $platforms.Count; $i++) {
+            Write-Host ("{0}. {1} - {2}" -f ($i + 1), $platforms[$i].version, $platforms[$i].exePath)
+        }
+
+        while ($true) {
+            $answer = Read-Host "Choose platform number or enter full path to 1cv8.exe"
+            $index = 0
+            if ([int]::TryParse($answer, [ref]$index) -and $index -ge 1 -and $index -le $platforms.Count) {
+                return $platforms[$index - 1].exePath
+            }
+            if (-not [string]::IsNullOrWhiteSpace($answer)) {
+                return $answer
+            }
+        }
+    }
+
+    return Read-InitRequired "Full path to 1cv8.exe"
+}
+
+function Get-AnswerValue {
+    param(
+        [object]$Answers,
+        [string[]]$Names,
+        [object]$Default = $null
+    )
+
+    foreach ($name in $Names) {
+        $prop = $Answers.PSObject.Properties[$name]
+        if ($null -ne $prop) {
+            return $prop.Value
+        }
+    }
+    return $Default
+}
+
+function Read-InitAnswersFromJson {
+    $path = Require-Value "InitAnswersPath" $InitAnswersPath
+    $resolvedPath = Resolve-ProjectPath $path
+    if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf)) {
+        throw "Init answers JSON was not found: $resolvedPath"
+    }
+    return Read-Utf8Text -Path $resolvedPath | ConvertFrom-Json
+}
+
+function Read-InitAnswersFromWizard {
+    if (-not (Test-InteractiveInputAvailable)) {
+        throw "Interactive init wizard needs terminal input. Run this command from an interactive terminal or pass -InitMode json -InitAnswersPath <file>."
+    }
+
+    Write-Section "Init wizard"
+    Write-Host "Project root: $script:ProjectRoot"
+    if (-not (Read-InitYesNo -Prompt "Initialize the 1C project in this folder?" -Default $true)) {
+        throw "Init canceled by developer."
+    }
+
+    $platformPath = Read-InitPlatformPath
+    $infoBaseKind = Read-InitInfoBaseKind
+    $sourceUsesRepository = Read-InitYesNo -Prompt "Is the source infobase connected to 1C configuration repository?" -Default $true
+
+    $answers = [ordered]@{
+        platformPath = $platformPath
+        infoBaseKind = $infoBaseKind
+        sourceUsesRepository = $sourceUsesRepository
+        ibUser = ""
+        ibPassword = ""
+        repositoryPath = ""
+        repositoryUser = ""
+        repositoryPassword = ""
+        webPublishByDefault = $false
+    }
+
+    if ($infoBaseKind -eq "server") {
+        $answers.sourceServerName = Read-InitRequired "1C server name"
+        $answers.sourceInfoBaseName = Read-InitRequired "Source infobase name"
+    } else {
+        $answers.sourceInfoBasePath = Read-InitRequired "Source file infobase directory"
+    }
+
+    $answers.ibUser = Read-InitOptional "Infobase user (empty if none)"
+    $answers.ibPassword = ConvertFrom-OptionalPasswordAnswer (Read-InitOptional "Infobase password (empty or '-' if none)")
+
+    if ($sourceUsesRepository) {
+        $answers.repositoryPath = Read-InitRequired "Configuration repository path"
+        $answers.repositoryUser = Read-InitRequired "Configuration repository user"
+        $answers.repositoryPassword = ConvertFrom-OptionalPasswordAnswer (Read-InitOptional "Configuration repository password (empty or '-' if none)")
+    }
+
+    $answers.webPublishByDefault = Read-InitYesNo -Prompt "Publish development branch infobases to Apache for web-client testing?" -Default $false
+
+    Write-Section "Init summary"
+    Write-Host "Project root: $script:ProjectRoot"
+    Write-Host "Platform: $($answers.platformPath)"
+    Write-Host "Source kind: $($answers.infoBaseKind)"
+    if ($infoBaseKind -eq "server") {
+        Write-Host "Source server: $($answers.sourceServerName)"
+        Write-Host "Source infobase: $($answers.sourceInfoBaseName)"
+    } else {
+        Write-Host "Source infobase: $($answers.sourceInfoBasePath)"
+    }
+    Write-Host "Infobase user: $($answers.ibUser)"
+    Write-Host "Source uses repository: $($answers.sourceUsesRepository)"
+    if ($sourceUsesRepository) {
+        Write-Host "Repository path: $($answers.repositoryPath)"
+        Write-Host "Repository user: $($answers.repositoryUser)"
+    }
+    Write-Host "Apache publication by default: $($answers.webPublishByDefault)"
+    Write-Host "Passwords: hidden"
+    if (-not (Read-InitYesNo -Prompt "Continue with these values?" -Default $true)) {
+        throw "Init canceled by developer."
+    }
+
+    return [pscustomobject]$answers
+}
+
+function Normalize-InitAnswers {
+    param([object]$Answers)
+
+    $sourceUsesRepository = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("sourceUsesRepository", "SOURCE_USES_REPOSITORY") -Default $true) -Default $true
+    $webPublishByDefault = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("webPublishByDefault", "WEB_PUBLISH_BY_DEFAULT") -Default $false) -Default $false
+
+    return [pscustomobject]@{
+        platformPath = [string](Get-AnswerValue -Answers $Answers -Names @("platformPath", "PLATFORM_PATH"))
+        infoBaseKind = ([string](Get-AnswerValue -Answers $Answers -Names @("infoBaseKind", "INFOBASE_KIND") -Default "file")).Trim().ToLowerInvariant()
+        sourceUsesRepository = $sourceUsesRepository
+        sourceInfoBasePath = [string](Get-AnswerValue -Answers $Answers -Names @("sourceInfoBasePath", "SOURCE_INFOBASE_PATH") -Default "")
+        sourceServerName = [string](Get-AnswerValue -Answers $Answers -Names @("sourceServerName", "SOURCE_SERVER_NAME") -Default "")
+        sourceInfoBaseName = [string](Get-AnswerValue -Answers $Answers -Names @("sourceInfoBaseName", "SOURCE_INFOBASE_NAME") -Default "")
+        ibUser = [string](Get-AnswerValue -Answers $Answers -Names @("ibUser", "IB_USER") -Default "")
+        ibPassword = ConvertFrom-OptionalPasswordAnswer ([string](Get-AnswerValue -Answers $Answers -Names @("ibPassword", "IB_PASSWORD") -Default ""))
+        repositoryPath = [string](Get-AnswerValue -Answers $Answers -Names @("repositoryPath", "REPOSITORY_PATH") -Default "")
+        repositoryUser = [string](Get-AnswerValue -Answers $Answers -Names @("repositoryUser", "REPOSITORY_USER") -Default "")
+        repositoryPassword = ConvertFrom-OptionalPasswordAnswer ([string](Get-AnswerValue -Answers $Answers -Names @("repositoryPassword", "REPOSITORY_PASSWORD") -Default ""))
+        webPublishByDefault = $webPublishByDefault
+        installApacheIfMissing = (ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("installApacheIfMissing", "INSTALL_APACHE_IF_MISSING") -Default $false) -Default $false)
+    }
+}
+
+function Assert-InitAnswers {
+    param([object]$Answers)
+
+    $missing = @()
+    if (-not $Answers.platformPath) { $missing += "platformPath" }
+    if ($Answers.infoBaseKind -ne "file" -and $Answers.infoBaseKind -ne "server") { $missing += "infoBaseKind(file|server)" }
+    if ($Answers.infoBaseKind -eq "server") {
+        if (-not $Answers.sourceServerName) { $missing += "sourceServerName" }
+        if (-not $Answers.sourceInfoBaseName) { $missing += "sourceInfoBaseName" }
+    } else {
+        if (-not $Answers.sourceInfoBasePath) { $missing += "sourceInfoBasePath" }
+    }
+    if ($Answers.sourceUsesRepository) {
+        if (-not $Answers.repositoryPath) { $missing += "repositoryPath" }
+        if (-not $Answers.repositoryUser) { $missing += "repositoryUser" }
+    }
+
+    if ($missing.Count -gt 0) {
+        throw "Init answers are incomplete. Missing: $($missing -join ', ')"
+    }
+}
+
+function Save-InitAnswers {
+    param([object]$Answers)
+
+    $values = @{
+        PLATFORM_PATH = $Answers.platformPath
+        INFOBASE_KIND = $Answers.infoBaseKind
+        SOURCE_USES_REPOSITORY = $(if ($Answers.sourceUsesRepository) { "true" } else { "false" })
+        SOURCE_INFOBASE_PATH = $(if ($Answers.infoBaseKind -eq "file") { $Answers.sourceInfoBasePath } else { "" })
+        SOURCE_SERVER_NAME = $(if ($Answers.infoBaseKind -eq "server") { $Answers.sourceServerName } else { "" })
+        SOURCE_INFOBASE_NAME = $(if ($Answers.infoBaseKind -eq "server") { $Answers.sourceInfoBaseName } else { "" })
+        IB_USER = $Answers.ibUser
+        IB_PASSWORD = $Answers.ibPassword
+        REPOSITORY_PATH = $(if ($Answers.sourceUsesRepository) { $Answers.repositoryPath } else { "" })
+        REPOSITORY_USER = $(if ($Answers.sourceUsesRepository) { $Answers.repositoryUser } else { "" })
+        REPOSITORY_PASSWORD = $(if ($Answers.sourceUsesRepository) { $Answers.repositoryPassword } else { "" })
+        WEB_PUBLISH_BY_DEFAULT = $(if ($Answers.webPublishByDefault) { "true" } else { "false" })
+    }
+
+    Set-DotEnvValues -Values $values
+    Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+}
+
+function Ensure-ApacheForInit {
+    param([object]$Answers)
+
+    if (-not $Answers.webPublishByDefault) {
+        return
+    }
+
+    $settings = Get-EffectiveApacheSettings
+    if ($settings.ready) {
+        Save-ApacheDetectedSettingsToDotEnv | Out-Null
+        Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+        return
+    }
+
+    Write-Host "Apache publication is enabled, but Apache is not ready: $($settings.message)"
+    if ($InitMode -eq "wizard") {
+        if (Read-InitYesNo -Prompt "Install Apache automatically now?" -Default $false) {
+            Install-Apache
+            Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+            return
+        }
+        if (Read-InitYesNo -Prompt "Disable Apache publication and continue init?" -Default $true) {
+            Set-DotEnvValues -Values @{ WEB_PUBLISH_BY_DEFAULT = "false" }
+            Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+            return
+        }
+        throw "Init stopped until Apache is installed or publication is disabled."
+    }
+
+    if ($Answers.installApacheIfMissing) {
+        Install-Apache
+        Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+        return
+    }
+
+    throw "Apache publication is enabled but Apache is not ready. Run install-apache after explicit confirmation or set WEB_PUBLISH_BY_DEFAULT=false."
+}
+
+function Prepare-InitProjectSettings {
+    Ensure-WorkflowProjectFiles
+    Read-ProjectConfig
+
+    $rawAnswers = if ($InitMode -eq "json") {
+        Read-InitAnswersFromJson
+    } elseif ($InitMode -eq "wizard") {
+        Read-InitAnswersFromWizard
+    } else {
+        return
+    }
+
+    $answers = Normalize-InitAnswers -Answers $rawAnswers
+    Assert-InitAnswers -Answers $answers
+    Save-InitAnswers -Answers $answers
+    Ensure-ApacheForInit -Answers $answers
+    Read-ProjectConfig
 }
 
 function Get-InfoBaseKind {
@@ -2441,7 +2864,11 @@ function Update-UserRules {
 
 $marker
 
-Use `.agents/skills/1c-workflow/SKILL.md` for project initialization, development branch creation, development branch refresh/load, master sync, branch switching, development branch close, and CF export.
+Use `.agents/skills/1c-workflow/SKILL.md` for project initialization, development branch creation, development branch refresh, development branch base update, master sync, branch switching, development branch close, and CF/CFE result export.
+
+Before running ai_rules_1c IB-bound commands such as `/update1cbase`, `/deploy-and-test`, `/loadfrom1cbase`, or `/getconfigfiles` inside an `itldev/*` branch, activate the current development branch context with `activate-dev-branch-context` or the `/itl-activate-dev-branch-context` command. This writes the current branch infobase path to `.dev.env` keys used by ai_rules_1c.
+
+When Git is on `master`, do not run `/update1cbase` unless the developer explicitly chooses a test infobase. The workflow clears active development branch infobase values when switching to `master`.
 
 Do not edit installer-managed `AGENTS.md` directly. Store secrets only in local `.dev.env`.
 "@
@@ -2512,6 +2939,73 @@ function Read-DevBranchState {
         throw "Development branch state not found: $path"
     }
     return Read-Utf8Text -Path $path | ConvertFrom-Json
+}
+
+function Clear-DevBranchContext {
+    Set-DotEnvValues -Values @{
+        INFOBASE_PATH = ""
+        INFOBASE_PUBLISH_URL = ""
+        EXTENSION_NAME = ""
+        EXPORT_PATH = ""
+        ITL_ACTIVE_DEV_BRANCH = ""
+        ITL_ACTIVE_DEV_BRANCH_KIND = ""
+        ITL_ACTIVE_CONTEXT_UPDATED_AT = (Get-Date).ToString("o")
+    }
+    Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+    Write-Host "Development branch context cleared in .dev.env."
+}
+
+function Sync-DevBranchContextToDotEnv {
+    param(
+        [object]$State,
+        [switch]$AllowIncompleteExtension
+    )
+
+    $kind = Get-DevBranchKind -State $State
+    $values = @{
+        INFOBASE_KIND = (Get-StateValue -State $State -Name "infoBaseKind" -Default (Get-InfoBaseKind))
+        INFOBASE_PATH = (Require-Value "devBranchInfoBasePath" (Get-StateValue -State $State -Name "devBranchInfoBasePath"))
+        INFOBASE_PUBLISH_URL = (Get-StateValue -State $State -Name "publicationUrl" -Default "")
+        EXPORT_PATH = (Get-ExportPath)
+        EXTENSION_NAME = ""
+        ITL_ACTIVE_DEV_BRANCH = (Get-StateValue -State $State -Name "devBranch" -Default "")
+        ITL_ACTIVE_DEV_BRANCH_KIND = $kind
+        ITL_ACTIVE_CONTEXT_UPDATED_AT = (Get-Date).ToString("o")
+    }
+
+    if ($kind -eq "extension") {
+        $extensionName = Get-StateValue -State $State -Name "extensionName" -Default ""
+        if (-not $extensionName) {
+            if ($AllowIncompleteExtension) {
+                $values["INFOBASE_PATH"] = ""
+                $values["INFOBASE_PUBLISH_URL"] = ""
+                $values["EXPORT_PATH"] = ""
+                $values["EXTENSION_NAME"] = ""
+                Set-DotEnvValues -Values $values
+                Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+                Write-Host "Development branch context is incomplete: extension name is not set. Run set-dev-branch-extension before using /update1cbase."
+                return
+            }
+            Require-DevBranchExtensionName -State $State | Out-Null
+        }
+        $values["EXTENSION_NAME"] = $extensionName
+        $values["EXPORT_PATH"] = Get-DevBranchExtensionExportPath -State $State
+    }
+
+    Set-DotEnvValues -Values $values
+    Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+    Write-Host "Development branch context activated in .dev.env."
+    Write-Host "Branch: $($values["ITL_ACTIVE_DEV_BRANCH"])"
+    Write-Host "Infobase: $($values["INFOBASE_PATH"])"
+    Write-Host "Export path: $($values["EXPORT_PATH"])"
+    if ($values["EXTENSION_NAME"]) {
+        Write-Host "Extension: $($values["EXTENSION_NAME"])"
+    }
+}
+
+function Activate-DevBranchContext {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Sync-DevBranchContextToDotEnv -State $state
 }
 
 function ConvertTo-LauncherLabel {
@@ -2771,6 +3265,12 @@ function Initialize-Project {
     Write-Section "Initialize project"
     New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
     Write-Host "Project root: $script:ProjectRoot"
+    if ($InitMode -eq "wizard" -or $InitMode -eq "json") {
+        Prepare-InitProjectSettings
+    } else {
+        Ensure-WorkflowProjectFiles
+        Read-ProjectConfig
+    }
     Check-Tools -StopOnMissing
     Get-DevBranchInfoBaseRoot | Out-Null
     Ensure-GitRepository
@@ -2793,6 +3293,7 @@ function Sync-Master {
     Write-Section "Sync master"
     Assert-CleanGit
     Checkout-Master
+    Clear-DevBranchContext
     $sourceUsesRepository = Get-SourceUsesRepository
     Update-BaseFromRepository
     $dumpResult = Dump-ConfigToFiles
@@ -2901,6 +3402,8 @@ function New-DevBranchCore {
     if ($publicationUrl) {
         Write-Host "Publication URL: $publicationUrl"
     }
+    $state = Read-Utf8Text -Path $statePath | ConvertFrom-Json
+    Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
 }
 
 function New-DevBranch {
@@ -2928,6 +3431,8 @@ function Set-DevBranchExtension {
         safeExtensionName = $safeExtensionName
         extensionExportPath = $extensionExportPath
     }
+    $updatedState = Read-DevBranchState -Name $DevBranchName
+    Sync-DevBranchContextToDotEnv -State $updatedState
 
     Write-Host "Development branch extension: $ExtensionName"
     Write-Host "Extension files path: $extensionExportPath"
@@ -2950,6 +3455,7 @@ function Write-BaseUpdateResult {
 
 function Update-DevBranchBase {
     $state = Read-DevBranchState -Name $DevBranchName
+    Sync-DevBranchContextToDotEnv -State $state
 
     if ((Get-DevBranchKind -State $state) -eq "extension") {
         $extensionName = Require-DevBranchExtensionName -State $state
@@ -2967,9 +3473,11 @@ function Update-DevBranchBase {
 function Refresh-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-CleanGit
+    Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     Sync-Master
     Invoke-Git @("checkout", $state.devBranch)
     Invoke-Git @("merge", (Get-MasterBranch))
+    Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
     $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
     $updates["lastRefreshAt"] = (Get-Date).ToString("o")
@@ -2989,6 +3497,8 @@ function Dump-DevBranchExtension {
         lastExtensionDumpPath = $dumpResult.exportPath
         lastLogPath = $dumpResult.logPath
     }
+    $updatedState = Read-DevBranchState -Name $DevBranchName
+    Sync-DevBranchContextToDotEnv -State $updatedState
     Write-Host "Extension dumped: $($dumpResult.exportPath)"
     Write-Host "Last 1C log: $($dumpResult.logPath)"
 }
@@ -2996,6 +3506,7 @@ function Dump-DevBranchExtension {
 function Export-DevBranchResult {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-CleanGit
+    Sync-DevBranchContextToDotEnv -State $state
     $currentBranch = Get-CurrentBranch
     if ($currentBranch -ne $state.devBranch) {
         Invoke-Git @("checkout", $state.devBranch)
@@ -3025,10 +3536,12 @@ function Export-DevBranchResult {
 function Close-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-CleanGit
+    Sync-DevBranchContextToDotEnv -State $state
 
     Sync-Master
     Invoke-Git @("checkout", $state.devBranch)
     Invoke-Git @("merge", (Get-MasterBranch))
+    Sync-DevBranchContextToDotEnv -State $state
 
     $kind = Get-DevBranchKind -State $state
     $configLoadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
@@ -3064,6 +3577,7 @@ function Close-DevBranch {
     }
 
     Invoke-Git @("checkout", $masterBranch)
+    Clear-DevBranchContext
     $currentCommit = Get-CurrentCommit
     Write-Host "Switched to master branch: $masterBranch"
     Write-Host "Current commit: $currentCommit"
@@ -3157,6 +3671,7 @@ function Switch-Master {
         throw "Master branch does not exist: $masterBranch"
     }
     Invoke-Git @("checkout", $masterBranch)
+    Clear-DevBranchContext
     $currentCommit = (Get-GitOutput @("rev-parse", "HEAD")).Trim()
     Write-Host "Switched to master branch: $masterBranch"
     Write-Host "Current commit: $currentCommit"
@@ -3166,6 +3681,7 @@ function Switch-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-CleanGit
     Invoke-Git @("checkout", $state.devBranch)
+    Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     $currentCommit = (Get-GitOutput @("rev-parse", "HEAD")).Trim()
     Write-Host "Switched to development branch: $($state.devBranch)"
     Write-Host "Current commit: $currentCommit"
@@ -3277,6 +3793,8 @@ Actions:
   new-extension-dev-branch   Create an extension development branch and infobase copy.
   set-dev-branch-extension   Set the extension name for the current extension branch.
   dump-dev-branch-extension  Dump the current branch extension files to src/cfe/<extension>.
+  activate-dev-branch-context
+                      Write current development branch infobase context to .dev.env for ai_rules_1c commands.
   update-dev-branch-base     Update the current development branch infobase from branch files.
   refresh-dev-branch         Refresh master, merge it into the development branch, update the branch base.
   export-dev-branch-result   Export CF or CFE from the current development branch.
@@ -3286,7 +3804,8 @@ Actions:
   list-dev-branches      Show active development branches and the current branch.
 
 Examples:
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode wizard
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode json -InitAnswersPath .\init.answers.json
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-platforms
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action detect-apache
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache
@@ -3294,6 +3813,7 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-extension-dev-branch -DevBranchName "bonus-extension"
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action set-dev-branch-extension -ExtensionName "BonusExtension"
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action dump-dev-branch-extension
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action activate-dev-branch-context
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-dev-branch-base
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-dev-branch
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-dev-branch-result
@@ -3319,6 +3839,7 @@ try {
         "new-extension-dev-branch" { New-ExtensionDevBranch }
         "set-dev-branch-extension" { Set-DevBranchExtension }
         "dump-dev-branch-extension" { Dump-DevBranchExtension }
+        "activate-dev-branch-context" { Activate-DevBranchContext }
         "update-dev-branch-base" { Update-DevBranchBase }
         "refresh-dev-branch" { Refresh-DevBranch }
         "export-dev-branch-result" { Export-DevBranchResult }

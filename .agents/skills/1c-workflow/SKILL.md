@@ -23,6 +23,7 @@ Map user intent to one workflow:
 - `NEW_EXTENSION_DEV_BRANCH`: user asks to create/start/begin an extension development branch.
 - `SET_DEV_BRANCH_EXTENSION`: user asks to set or remember the extension name for the current extension development branch.
 - `DUMP_DEV_BRANCH_EXTENSION`: user asks to dump/export extension files from the current extension branch infobase into `src/cfe`.
+- `ACTIVATE_DEV_BRANCH_CONTEXT`: user asks to make `/update1cbase` or another ai_rules_1c infobase command use the current development branch infobase.
 - `SYNC_MASTER`: user asks to refresh/sync master from 1C repository storage or from the current source infobase state.
 - `UPDATE_DEV_BRANCH_BASE`: user asks to update the current development branch infobase from branch files.
 - `REFRESH_DEV_BRANCH`: user asks to update a development branch from master, refresh the current branch, or merge fresh source/storage changes into a development branch.
@@ -44,7 +45,9 @@ Use `scripts/agent-1c.ps1` when PowerShell is available. Prefer the script over 
 
 ## Operating Rules
 
-Ask for missing required parameters at the start of the selected workflow. Do not ask for parameters that are already present in `.agent-1c/project.json` or `.dev.env`.
+For project initialization, prefer the helper script wizard: run `init-project -InitMode wizard`. The wizard collects setup values, writes `.dev.env` and `.agent-1c/project.json`, summarizes values without passwords, and then runs the initialization lifecycle. Use `-InitMode json -InitAnswersPath <file>` only when the agent has already collected structured answers and needs a non-interactive init.
+
+Ask for missing required parameters at the start of the selected workflow only when the helper cannot collect them itself. Do not ask for parameters that are already present in `.agent-1c/project.json` or `.dev.env`.
 
 When collecting unrelated setup parameters from the developer, ask one value at a time and expect the answer to contain only the value. During project initialization, collect source infobase values after the source infobase kind is known, and collect configuration repository values only when the developer says the source infobase is connected to storage. If the agent surface supports several structured fields/questions in one prompt, use one grouped form with separate short questions; otherwise ask the same values sequentially, one question at a time. Never ask the developer to enter 6 or 7 lines into one free-form text answer, because Enter may submit the first line in Codex/Kilo Code. Never ask for a grouped `KEY=value` block, never show one large question that lists all missing project variables, and never require the developer to type variable names.
 
@@ -69,6 +72,8 @@ For `UPDATE_DEV_BRANCH_BASE`, `REFRESH_DEV_BRANCH`, `EXPORT_DEV_BRANCH_RESULT`, 
 For configuration branches, update the development branch infobase with a generated `-listFile` of changed files under `src/cf`. For extension branches, update the extension from `src/cfe/<safeExtensionName>` with `-Extension <extensionName>`. Do not full-load the entire dump unless the user explicitly asks for a manual recovery path.
 
 For extension branches, the extension name is not collected during branch creation. Collect it at the beginning of extension development with `set-dev-branch-extension`, save it in branch state, then use it for dump/update/result commands.
+
+Before running ai_rules_1c infobase-bound commands such as `/update1cbase`, `/deploy-and-test`, `/loadfrom1cbase`, or `/getconfigfiles` inside an `itldev/*` branch, activate the ITL development branch context. The helper does this automatically during lifecycle commands and exposes `activate-dev-branch-context` for manual activation. When on `master`, do not run `/update1cbase` unless the developer explicitly chooses a test infobase; `switch-master` and standalone `sync-master` clear the active development branch context.
 
 Never store passwords in Git, `AGENTS.md`, `USER-RULES.md`, or committed JSON. Store secrets only in local `.dev.env` or process environment variables.
 
@@ -102,12 +107,13 @@ From the project root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action help
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode wizard
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts"
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-extension-dev-branch -DevBranchName "bonus-extension"
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action set-dev-branch-extension -ExtensionName "BonusExtension"
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action dump-dev-branch-extension
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action activate-dev-branch-context
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-dev-branch-base
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-dev-branch
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-dev-branch-result

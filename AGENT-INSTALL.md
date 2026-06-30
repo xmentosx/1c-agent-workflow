@@ -6,7 +6,7 @@ This public file is the bootstrap contract for agents. A developer can say:
 Initialize a 1C agent project using this file: https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTALL.md
 ```
 
-The agent must read this file, ask for missing inputs, install the shared workflow files into the target project, then run the project initialization lifecycle.
+The agent must read this file, install the shared workflow files into the target project, then run the PowerShell helper script wizard. The wizard collects missing inputs, writes local settings, and runs the project initialization lifecycle.
 
 Canonical bootstrap source:
 
@@ -30,7 +30,21 @@ Do not rely on Codex-only custom prompts for this workflow. They are local to on
 
 ## Agent Input Collection
 
-Ask for missing values only. If `.agent-1c/project.json` or `.dev.env` already contains a value, reuse it.
+Prefer the PowerShell helper script wizard for initialization. The wizard collects local setup values, writes `.dev.env`, ensures `.agent-1c/project.json` exists, and then runs the lifecycle. Use `-InitMode configured` only when `.agent-1c/project.json` and `.dev.env` are already prepared.
+
+Default initialization command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode wizard
+```
+
+For non-interactive automation, write a JSON answers file and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode json -InitAnswersPath <answers.json>
+```
+
+The agent should ask setup questions itself only when preparing a JSON answers file or recovering from helper failure.
 
 Ask interactively in a human-friendly format:
 
@@ -197,13 +211,13 @@ If the installer asks which tools to configure, choose the current agent surface
 
 ## Run Initial Lifecycle
 
-After installing the workflow files and filling project state, run:
+After installing the workflow files, run the script wizard:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode wizard
 ```
 
-This performs:
+The wizard collects setup values, writes `.dev.env` and `.agent-1c/project.json`, and then performs:
 
 1. Required software check with install suggestions.
 2. Git initialization when `.git` is absent.
@@ -238,6 +252,7 @@ For Kilo Code, detailed commands:
 /itl-new-extension-dev-branch <branch name>
 /itl-set-dev-branch-extension <extension name>
 /itl-dump-dev-branch-extension
+/itl-activate-dev-branch-context
 /itl-update-dev-branch-base
 /itl-refresh-dev-branch
 /itl-export-dev-branch-result
@@ -257,6 +272,7 @@ Fast experimental commands run the PowerShell helper directly and should not rea
 /itlx-new-extension-dev-branch <branch name>
 /itlx-set-dev-branch-extension <extension name>
 /itlx-dump-dev-branch-extension
+/itlx-activate-dev-branch-context
 /itlx-update-dev-branch-base
 /itlx-refresh-dev-branch
 /itlx-export-dev-branch-result
@@ -282,8 +298,8 @@ Natural language is also supported:
 ```text
 Create a 1C development branch named order discounts.
 Refresh the current 1C development branch from fresh master.
-Export CF for the current 1C development branch.
-Close the current 1C development branch and export CF.
+Export the result for the current 1C development branch.
+Close the current 1C development branch and export the final result.
 Sync master from storage or from the current source infobase state.
 List current 1C development branches.
 Switch to master.
@@ -299,7 +315,7 @@ After each lifecycle action, report:
 - Git branch.
 - Relevant commit hash.
 - Source or development branch infobase path.
-- CF path when exported.
+- CF/CFE result path when exported.
 - Latest 1C log path.
 - Publication URL when created.
 - Any open risks or manual follow-up.

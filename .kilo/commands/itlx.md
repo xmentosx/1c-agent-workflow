@@ -13,6 +13,7 @@ Fast commands run the PowerShell helper directly and are intended for routine li
 /itlx-new-extension-dev-branch <name>
 /itlx-set-dev-branch-extension <extension name>
 /itlx-dump-dev-branch-extension
+/itlx-activate-dev-branch-context
 /itlx-update-dev-branch-base
 /itlx-refresh-dev-branch
 /itlx-export-dev-branch-result

@@ -5,7 +5,7 @@ agent: code
 
 Use the `1c-workflow` skill and execute `INIT_PROJECT`.
 
-Read `.agents/skills/1c-workflow/references/workflow.md`, ask for missing required parameters, create/update the project state files, check required software, then run the project initialization workflow.
+Run the helper script wizard first. It asks the setup questions, writes `.dev.env`/`.agent-1c/project.json`, checks required software, then runs the project initialization workflow. Read `.agents/skills/1c-workflow/references/workflow.md` only if the helper fails or the developer asks for detailed explanation.
 
 Do not ask for the development branch infobase copies directory during normal initialization. Use `.agent-1c/infobases/dev-branches` inside the project and ensure `.agent-1c/infobases/` is ignored by Git.
 
@@ -22,5 +22,5 @@ Ask whether development branch infobases should be published to Apache for web-c
 Prefer the PowerShell helper:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode wizard
 ```

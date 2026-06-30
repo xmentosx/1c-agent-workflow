@@ -20,4 +20,8 @@ Use `.agent-1c/infobases/dev-branches` as the default development branch infobas
 
 Development branch changes must be loaded only into the development branch infobase copy, never directly into the source infobase connected to 1C configuration repository storage.
 
+Before running ai_rules_1c IB-bound commands such as `/update1cbase`, `/deploy-and-test`, `/loadfrom1cbase`, or `/getconfigfiles` inside an `itldev/*` branch, activate the current development branch context with `/itl-activate-dev-branch-context` or `/itlx-activate-dev-branch-context`. The ITL helper also does this automatically during branch lifecycle commands.
+
+When Git is on `master`, do not run `/update1cbase` unless the developer explicitly chooses a test infobase. The ITL workflow clears active development branch infobase values when switching to `master` or running standalone `sync-master`.
+
 When launching native Windows executables such as `1cv8.exe` from PowerShell, do not pass a PowerShell array to `Start-Process -ArgumentList`. Join and quote arguments into one native command-line string first, or use the `&` call operator for simple cases. Paths with spaces must remain one native argument; otherwise 1C Designer may exit with code 1 or hang behind `-WindowStyle Hidden`.
