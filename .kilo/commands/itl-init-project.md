@@ -9,7 +9,7 @@ Read `.agents/skills/1c-workflow/references/workflow.md`, ask for missing requir
 
 Do not ask for the development branch infobase copies directory during normal initialization. Use `.agent-1c/infobases/dev-branches` inside the project and ensure `.agent-1c/infobases/` is ignored by Git.
 
-Ask source infobase and repository values after the infobase kind is known. Use one grouped form with separate short questions when Kilo Code can show grouped questions; otherwise ask the same values sequentially, one question at a time. The developer should answer each field with one raw value only. Do not ask for `KEY=value` input, one large free-form block with all missing variables, or a 6/7-line answer in one text field.
+Ask whether the source infobase is connected to a 1C configuration repository. Ask repository path/user/password only when it is connected. Use one grouped form with separate short questions when Kilo Code can show grouped questions; otherwise ask the same values sequentially, one question at a time. The developer should answer each field with one raw value only. Do not ask for `KEY=value` input, one large free-form block with all missing variables, or a multi-line answer in one text field.
 
 Write `.dev.env` and `.agent-1c/*.json` files as UTF-8; preserve Cyrillic paths and usernames exactly.
 

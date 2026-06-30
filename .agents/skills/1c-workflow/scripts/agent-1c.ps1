@@ -38,6 +38,10 @@ function Get-Utf8Encoding {
     return New-Object System.Text.UTF8Encoding $false
 }
 
+function Get-Utf8BomEncoding {
+    return New-Object System.Text.UTF8Encoding $true
+}
+
 function Read-Utf8Text {
     param([string]$Path)
     return [System.IO.File]::ReadAllText($Path, (Get-Utf8Encoding))
@@ -135,7 +139,10 @@ function Get-ConfigValue {
         $node = $prop.Value
     }
 
-    if ($null -eq $node -or $node -eq "") {
+    if ($null -eq $node) {
+        return $Default
+    }
+    if ($node -is [string] -and $node -eq "") {
         return $Default
     }
 
@@ -542,6 +549,11 @@ function Resolve-PlatformExecutablePath {
 function Get-PlatformPath {
     $value = Require-Value "PLATFORM_PATH or project.platformPath" (Get-Setting -EnvName "PLATFORM_PATH" -ConfigName "platformPath")
     return Resolve-PlatformExecutablePath -Path $value
+}
+
+function Get-SourceUsesRepository {
+    $value = Get-Setting -EnvName "SOURCE_USES_REPOSITORY" -ConfigName "sourceUsesRepository" -Default $true
+    return ConvertTo-BoolSetting -Value $value -Default $true
 }
 
 function Get-WebPublishByDefault {
@@ -1963,6 +1975,11 @@ function New-RepositoryConnectionArgs {
 }
 
 function Update-BaseFromRepository {
+    if (-not (Get-SourceUsesRepository)) {
+        Write-Host "Source infobase is configured without repository connection. Skipping repository update; dump will use the current source infobase state."
+        return $false
+    }
+
     $repositoryArgs = (New-RepositoryConnectionArgs) + @(
         "/ConfigurationRepositoryUpdateCfg", "-force",
         "/UpdateDBCfg", "-WarningsAsErrors"
@@ -1972,6 +1989,8 @@ function Update-BaseFromRepository {
         -InfoBasePath (Get-SourceInfoBasePath) `
         -InfoBaseKind (Get-InfoBaseKind) `
         -DesignerArgs $repositoryArgs | Out-Null
+
+    return $true
 }
 
 function Assert-ExportPathInsideProject {
@@ -2121,7 +2140,11 @@ function Dump-ConfigToFiles {
     $dumpInfoPath = Join-Path $absoluteExportPath "ConfigDumpInfo.xml"
     $children = @(Get-ChildItem -LiteralPath $absoluteExportPath -Force)
     $isIncremental = Test-Path -LiteralPath $dumpInfoPath -PathType Leaf
-    $designerArgs = (New-RepositoryConnectionArgs) + @("/DumpConfigToFiles", $absoluteExportPath, "-Format", "Hierarchical")
+    $designerArgs = @()
+    if (Get-SourceUsesRepository) {
+        $designerArgs += New-RepositoryConnectionArgs
+    }
+    $designerArgs += @("/DumpConfigToFiles", $absoluteExportPath, "-Format", "Hierarchical")
     if ($isIncremental) {
         $designerArgs += @("-update", "-force")
     } elseif ($children.Count -gt 0) {
@@ -2336,6 +2359,212 @@ function Read-DevBranchState {
     return Read-Utf8Text -Path $path | ConvertFrom-Json
 }
 
+function ConvertTo-LauncherLabel {
+    param([AllowNull()][string]$Value)
+
+    $text = [string]$Value
+    $text = ($text -replace "[\r\n\[\]]", " ").Trim()
+    $text = ($text -replace "\s+", " ")
+    if (-not $text) {
+        return "project"
+    }
+    return $text
+}
+
+function Get-LauncherListPath {
+    $appData = [Environment]::GetFolderPath("ApplicationData")
+    if (-not $appData) {
+        $appData = $env:APPDATA
+    }
+    if (-not $appData) {
+        throw "APPDATA path is not available; cannot update 1C infobase list."
+    }
+
+    return (Join-Path $appData "1C\1CEStart\ibases.v8i")
+}
+
+function Get-LauncherProjectFolder {
+    $projectName = Split-Path -Leaf $script:ProjectRoot
+    return "/ITL/" + (ConvertTo-LauncherLabel -Value $projectName)
+}
+
+function New-LauncherConnectString {
+    param(
+        [string]$InfoBaseKind,
+        [string]$InfoBasePath
+    )
+
+    if ($InfoBaseKind -eq "file") {
+        $resolved = Resolve-InfoBasePath $InfoBasePath
+        return "File=`"$resolved`";"
+    }
+    if ($InfoBaseKind -eq "server") {
+        return (Require-Value "development branch server infobase connection string" $InfoBasePath)
+    }
+
+    throw "Unknown infobase kind: $InfoBaseKind"
+}
+
+function Get-LauncherSections {
+    param([string[]]$Lines)
+
+    $sections = New-Object System.Collections.ArrayList
+    $current = $null
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        $line = $Lines[$i]
+        if ($line -match '^\[(.*)\]\s*$') {
+            if ($null -ne $current) {
+                $current["end"] = $i - 1
+                [void]$sections.Add([pscustomobject]$current)
+            }
+            $current = @{
+                name = $matches[1]
+                start = $i
+                end = $i
+                values = @{}
+            }
+            continue
+        }
+
+        if ($null -ne $current -and $line -match '^([^=]+)=(.*)$') {
+            $current["values"][$matches[1]] = $matches[2]
+        }
+    }
+
+    if ($null -ne $current) {
+        $current["end"] = $Lines.Count - 1
+        [void]$sections.Add([pscustomobject]$current)
+    }
+
+    return @($sections)
+}
+
+function Get-LauncherMaxIntValue {
+    param(
+        [object[]]$Sections,
+        [string]$Key
+    )
+
+    $max = 0
+    foreach ($section in $Sections) {
+        if (-not $section.values.ContainsKey($Key)) {
+            continue
+        }
+        $value = 0
+        if ([int]::TryParse([string]$section.values[$Key], [ref]$value) -and $value -gt $max) {
+            $max = $value
+        }
+    }
+    return $max
+}
+
+function Register-DevBranchInLauncher {
+    param(
+        [string]$InfoBaseKind,
+        [string]$InfoBasePath,
+        [string]$DevBranchName,
+        [string]$ExistingLauncherId = ""
+    )
+
+    $listPath = Get-LauncherListPath
+    $listDir = Split-Path -Parent $listPath
+    New-Item -ItemType Directory -Force -Path $listDir | Out-Null
+
+    $lines = @()
+    if (Test-Path -LiteralPath $listPath -PathType Leaf) {
+        $lines = @(Read-Utf8Lines -Path $listPath)
+    }
+
+    $sections = @(Get-LauncherSections -Lines $lines)
+    $projectName = ConvertTo-LauncherLabel -Value (Split-Path -Leaf $script:ProjectRoot)
+    $displayName = "ITL $projectName - $(ConvertTo-LauncherLabel -Value $DevBranchName)"
+    $folder = Get-LauncherProjectFolder
+    $connect = New-LauncherConnectString -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+
+    $target = $null
+    foreach ($section in $sections) {
+        if ($ExistingLauncherId -and $section.values.ContainsKey("ID") -and $section.values["ID"] -eq $ExistingLauncherId) {
+            $target = $section
+            break
+        }
+    }
+    if ($null -eq $target) {
+        foreach ($section in $sections) {
+            if ($section.values.ContainsKey("Connect") -and $section.values["Connect"] -eq $connect) {
+                $target = $section
+                break
+            }
+        }
+    }
+    if ($null -eq $target) {
+        foreach ($section in $sections) {
+            if ($section.name -eq $displayName) {
+                $target = $section
+                break
+            }
+        }
+    }
+
+    $id = if ($target -and $target.values.ContainsKey("ID") -and $target.values["ID"]) { $target.values["ID"] } else { [guid]::NewGuid().ToString() }
+    $orderInList = if ($target -and $target.values.ContainsKey("OrderInList")) { $target.values["OrderInList"] } else { [string]((Get-LauncherMaxIntValue -Sections $sections -Key "OrderInList") + 16384) }
+    $orderInTree = if ($target -and $target.values.ContainsKey("OrderInTree")) { $target.values["OrderInTree"] } else { [string]((Get-LauncherMaxIntValue -Sections $sections -Key "OrderInTree") + 256) }
+
+    $entry = @(
+        "[$displayName]",
+        "Connect=$connect",
+        "ID=$id",
+        "OrderInList=$orderInList",
+        "Folder=$folder",
+        "OrderInTree=$orderInTree",
+        "External=0",
+        "ClientConnectionSpeed=Normal",
+        "App=Auto",
+        "WA=1",
+        "Version=8.3"
+    )
+
+    $result = New-Object System.Collections.ArrayList
+    if ($target) {
+        for ($i = 0; $i -lt $target.start; $i++) {
+            [void]$result.Add($lines[$i])
+        }
+        foreach ($line in $entry) {
+            [void]$result.Add($line)
+        }
+        for ($i = $target.end + 1; $i -lt $lines.Count; $i++) {
+            [void]$result.Add($lines[$i])
+        }
+    } else {
+        foreach ($line in $lines) {
+            [void]$result.Add($line)
+        }
+        if ($result.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$result[$result.Count - 1])) {
+            [void]$result.Add("")
+        }
+        foreach ($line in $entry) {
+            [void]$result.Add($line)
+        }
+    }
+
+    if (Test-Path -LiteralPath $listPath -PathType Leaf) {
+        $backupPath = "$listPath.$(Get-Date -Format 'yyyyMMdd-HHmmss').bak"
+        Copy-Item -LiteralPath $listPath -Destination $backupPath -Force
+    }
+
+    [System.IO.File]::WriteAllLines($listPath, [string[]]$result.ToArray([string]), (Get-Utf8BomEncoding))
+    Write-Host "Registered development branch infobase in 1C launcher list: $displayName"
+    Write-Host "Launcher folder: $folder"
+
+    return [pscustomobject]@{
+        registered = $true
+        name = $displayName
+        folder = $folder
+        id = $id
+        listPath = $listPath
+        connect = $connect
+    }
+}
+
 function Publish-DevBranchToApache {
     param(
         [string]$DevBranchPath,
@@ -2393,9 +2622,11 @@ function Initialize-Project {
     Ensure-GitIgnore
     Checkout-Master
 
+    $sourceUsesRepository = Get-SourceUsesRepository
     Update-BaseFromRepository
     $dumpResult = Dump-ConfigToFiles
-    Commit-IfChanged -Message "sync: export 1C configuration from repository" -PathSpec @($dumpResult.exportPath) -RequireChanges -ForceAdd | Out-Null
+    $dumpMessage = if ($sourceUsesRepository) { "sync: export 1C configuration from repository" } else { "sync: export 1C configuration from source infobase" }
+    Commit-IfChanged -Message $dumpMessage -PathSpec @($dumpResult.exportPath) -RequireChanges -ForceAdd | Out-Null
     Assert-BaselineDumpCommitted -ExportPath $dumpResult.exportPath
 
     Install-AiRules1c
@@ -2407,9 +2638,11 @@ function Sync-Master {
     Write-Section "Sync master"
     Assert-CleanGit
     Checkout-Master
+    $sourceUsesRepository = Get-SourceUsesRepository
     Update-BaseFromRepository
     $dumpResult = Dump-ConfigToFiles
-    Commit-IfChanged -Message "sync: refresh 1C configuration from repository" -PathSpec @($dumpResult.exportPath) -ForceAdd | Out-Null
+    $dumpMessage = if ($sourceUsesRepository) { "sync: refresh 1C configuration from repository" } else { "sync: refresh 1C configuration from source infobase" }
+    Commit-IfChanged -Message $dumpMessage -PathSpec @($dumpResult.exportPath) -ForceAdd | Out-Null
 }
 
 function New-DevBranch {
@@ -2428,6 +2661,7 @@ function New-DevBranch {
     Invoke-Git @("checkout", "-b", $DevBranch)
 
     $kind = Get-InfoBaseKind
+    $sourceUsesRepository = Get-SourceUsesRepository
     $source = Get-SourceInfoBasePath
     if (-not $DevBranchInfoBasePath) {
         $rootPath = Resolve-ProjectPath (Get-DevBranchInfoBaseRoot)
@@ -2456,10 +2690,21 @@ function New-DevBranch {
         }
     }
 
-    Invoke-Designer `
-        -InfoBasePath $DevBranchInfoBasePath `
+    $repositoryUnbound = $false
+    if ($sourceUsesRepository) {
+        Invoke-Designer `
+            -InfoBasePath $DevBranchInfoBasePath `
+            -InfoBaseKind $kind `
+            -DesignerArgs @("/ConfigurationRepositoryUnbindCfg", "-force") | Out-Null
+        $repositoryUnbound = $true
+    } else {
+        Write-Host "Source infobase is configured without repository connection. Skipping repository unbind for development branch copy."
+    }
+
+    $launcherRegistration = Register-DevBranchInLauncher `
         -InfoBaseKind $kind `
-        -DesignerArgs @("/ConfigurationRepositoryUnbindCfg", "-force") | Out-Null
+        -InfoBasePath $DevBranchInfoBasePath `
+        -DevBranchName $DevBranchName
 
     $publishDefault = Get-WebPublishByDefault
     $publicationUrl = ""
@@ -2475,6 +2720,13 @@ function New-DevBranch {
         lastLoadedCommit = Get-CurrentCommit
         infoBaseKind = $kind
         devBranchInfoBasePath = $DevBranchInfoBasePath
+        sourceUsesRepository = $sourceUsesRepository
+        repositoryUnbound = $repositoryUnbound
+        launcherRegistered = $launcherRegistration.registered
+        launcherInfoBaseName = $launcherRegistration.name
+        launcherFolder = $launcherRegistration.folder
+        launcherInfoBaseId = $launcherRegistration.id
+        launcherListPath = $launcherRegistration.listPath
         publicationUrl = $publicationUrl
         createdAt = (Get-Date).ToString("o")
         lastLogPath = $script:LastLogPath
@@ -2483,6 +2735,8 @@ function New-DevBranch {
     Write-Host "Development branch: $DevBranch"
     Write-Host "Development branch infobase: $DevBranchInfoBasePath"
     Write-Host "Development branch state: $statePath"
+    Write-Host "1C launcher infobase: $($launcherRegistration.name)"
+    Write-Host "1C launcher folder: $($launcherRegistration.folder)"
     if ($publicationUrl) {
         Write-Host "Publication URL: $publicationUrl"
     }
@@ -2627,6 +2881,14 @@ function List-DevBranches {
         Write-Host "$marker $name"
         Write-Host "  Branch: $branch"
         Write-Host "  Infobase: $infoBasePath"
+        $launcherName = Get-StateValue -State $state -Name "launcherInfoBaseName" -Default ""
+        $launcherFolder = Get-StateValue -State $state -Name "launcherFolder" -Default ""
+        if ($launcherName) {
+            Write-Host "  1C launcher: $launcherName"
+        }
+        if ($launcherFolder) {
+            Write-Host "  1C launcher folder: $launcherFolder"
+        }
         $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
         if ($publicationUrl) {
             Write-Host "  Publication URL: $publicationUrl"
@@ -2659,6 +2921,14 @@ function Switch-DevBranch {
     Write-Host "Switched to development branch: $($state.devBranch)"
     Write-Host "Current commit: $currentCommit"
     Write-Host "Development branch infobase: $($state.devBranchInfoBasePath)"
+    $launcherName = Get-StateValue -State $state -Name "launcherInfoBaseName" -Default ""
+    $launcherFolder = Get-StateValue -State $state -Name "launcherFolder" -Default ""
+    if ($launcherName) {
+        Write-Host "1C launcher infobase: $launcherName"
+    }
+    if ($launcherFolder) {
+        Write-Host "1C launcher folder: $launcherFolder"
+    }
     if ($state.publicationUrl) {
         Write-Host "Publication URL: $($state.publicationUrl)"
     }
@@ -2732,8 +3002,12 @@ function Validate-Project {
     $source = Get-SourceInfoBasePath
     Assert-InfoBaseAvailable -Kind $kind -Path $source -SettingName "source infobase"
 
-    Get-RepositoryPath | Out-Null
-    Require-Value "REPOSITORY_USER" (Get-EnvValue -Name "REPOSITORY_USER") | Out-Null
+    if (Get-SourceUsesRepository) {
+        Get-RepositoryPath | Out-Null
+        Require-Value "REPOSITORY_USER" (Get-EnvValue -Name "REPOSITORY_USER") | Out-Null
+    } else {
+        Write-Host "Source repository connection: disabled"
+    }
     Write-Host "Validation passed."
 }
 
@@ -2748,11 +3022,11 @@ Actions:
   list-platforms      Show installed 1C platform versions found in Program Files.
   detect-apache       Detect Apache/httpd settings for web publication.
   install-apache      Install Apache Lounge httpd from official archive after confirmation.
-  init-project        Sync source infobase, dump config to master, install rules.
-  sync-master         Refresh master from source infobase connected to storage.
-  new-dev-branch         Create an itldev/<name> development branch and infobase copy.
+  init-project        Dump source infobase config to master and install rules.
+  sync-master         Refresh master from storage or from the current source infobase state.
+  new-dev-branch         Create an itldev/<name> development branch, infobase copy, and 1C launcher entry.
   load-dev-branch        Load changed config files into the development branch infobase.
-  refresh-dev-branch     Refresh master from storage, merge it into the development branch, update the branch base.
+  refresh-dev-branch     Refresh master, merge it into the development branch, update the branch base.
   export-dev-branch-cf   Export CF from the current development branch without refreshing master.
   close-dev-branch       Refresh master, merge into the development branch, export final CF, switch to master.
   switch-master       Checkout the fixed master branch.

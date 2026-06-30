@@ -6,6 +6,7 @@
   "logsPath": "logs/1c",
   "platformPath": "",
   "infoBaseKind": "file",
+  "sourceUsesRepository": true,
   "sourceInfoBasePath": "",
   "sourceServerName": "",
   "sourceInfoBaseName": "",

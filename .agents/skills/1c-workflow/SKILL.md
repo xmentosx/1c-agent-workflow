@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow
-description: Initialize and operate 1C configuration development projects with Git, a source infobase connected to a 1C configuration repository, isolated development branch infobase copies, optional Apache web publication, config dump/load, intermediate and final CF export, development branch refresh from storage, and branch switching. Use when the user asks to init a 1C project, check required tools, create or close a development branch, refresh a development branch from master/storage, sync master from 1C storage, load changed config files into a development branch base, prepare a CF, switch to master or a development branch, or asks what ITL 1C workflow commands are available.
+description: Initialize and operate 1C configuration development projects with Git, a source infobase that may or may not be connected to a 1C configuration repository, isolated development branch infobase copies, optional Apache web publication, config dump/load, intermediate and final CF export, development branch refresh from master, and branch switching. Use when the user asks to init a 1C project, check required tools, create or close a development branch, refresh a development branch from master/storage, sync master, load changed config files into a development branch base, prepare a CF, switch to master or a development branch, or asks what ITL 1C workflow commands are available.
 ---
 
 # 1C Workflow
@@ -18,9 +18,9 @@ Map user intent to one workflow:
 - `CHECK_TOOLS`: user asks to check required software, setup, Git, 1C platform, Apache, or webinst.
 - `INSTALL_APACHE`: user agreed to automatically install Apache/httpd for 1C web publication.
 - `NEW_DEV_BRANCH`: user asks to create/start/begin a development branch, task branch, customization branch, or parallel work branch.
-- `SYNC_MASTER`: user asks to refresh/sync master from 1C repository storage.
+- `SYNC_MASTER`: user asks to refresh/sync master from 1C repository storage or from the current source infobase state.
 - `LOAD_DEV_BRANCH`: user asks to load current branch files into the development branch infobase.
-- `REFRESH_DEV_BRANCH`: user asks to update a development branch from storage, refresh the current branch with the latest master, or merge fresh storage changes into a development branch.
+- `REFRESH_DEV_BRANCH`: user asks to update a development branch from master, refresh the current branch, or merge fresh source/storage changes into a development branch.
 - `EXPORT_DEV_BRANCH_CF`: user asks to make/export a CF for the current development branch without closing it.
 - `CLOSE_DEV_BRANCH`: user asks to close/finish the current development branch and prepare/export final CF.
 - `SWITCH_MASTER`: user asks to switch to master.
@@ -41,9 +41,9 @@ Use `scripts/agent-1c.ps1` when PowerShell is available. Prefer the script over 
 
 Ask for missing required parameters at the start of the selected workflow. Do not ask for parameters that are already present in `.agent-1c/project.json` or `.dev.env`.
 
-When collecting unrelated setup parameters from the developer, ask one value at a time and expect the answer to contain only the value. During project initialization, collect source infobase and configuration repository values after the source infobase kind is known. If the agent surface supports several structured fields/questions in one prompt, use one grouped form with separate short questions; otherwise ask the same values sequentially, one question at a time. Never ask the developer to enter 6 or 7 lines into one free-form text answer, because Enter may submit the first line in Codex/Kilo Code. Never ask for a grouped `KEY=value` block, never show one large question that lists all missing project variables, and never require the developer to type variable names.
+When collecting unrelated setup parameters from the developer, ask one value at a time and expect the answer to contain only the value. During project initialization, collect source infobase values after the source infobase kind is known, and collect configuration repository values only when the developer says the source infobase is connected to storage. If the agent surface supports several structured fields/questions in one prompt, use one grouped form with separate short questions; otherwise ask the same values sequentially, one question at a time. Never ask the developer to enter 6 or 7 lines into one free-form text answer, because Enter may submit the first line in Codex/Kilo Code. Never ask for a grouped `KEY=value` block, never show one large question that lists all missing project variables, and never require the developer to type variable names.
 
-In password lines of the grouped questionnaire, exact values `нет` and `-` mean an empty password. Compare these markers case-insensitively after trimming whitespace and store an empty value instead of the marker text. When invoking 1C, omit the infobase `/P` option when the infobase password is empty. For repository login, always pass `/ConfigurationRepositoryP`; when the repository password is empty, pass it as a quoted empty native argument (`""`) so 1C does not open an interactive repository login dialog and the next option is not shifted into the password position.
+In password lines of the grouped questionnaire, exact values `нет` and `-` mean an empty password. Compare these markers case-insensitively after trimming whitespace and store an empty value instead of the marker text. When invoking 1C, omit the infobase `/P` option when the infobase password is empty. For repository login, pass `/ConfigurationRepositoryP` only when `sourceUsesRepository=true`; when the repository password is empty, pass it as a quoted empty native argument (`""`) so 1C does not open an interactive repository login dialog and the next option is not shifted into the password position.
 
 Use fixed project defaults: `master` is the main branch and `src/cf` is the configuration dump path. Do not ask the developer for these values during initialization.
 
@@ -73,11 +73,15 @@ Before switching branches, copying bases, dumping configuration files, or runnin
 
 For file infobases, verify that the directory exists and contains `1Cv8.1CD` before launching 1C Designer. Do not let 1C open the interactive "create new infobase" dialog during this workflow.
 
-All development branch changes load into the copied development branch infobase. Never load them directly into the source infobase connected to the 1C configuration repository.
+All development branch changes load into the copied development branch infobase. Never load them directly into the source infobase.
 
-When invoking 1C Designer against the source infobase connected to the 1C configuration repository, always pass repository connection arguments (`/ConfigurationRepositoryF`, `/ConfigurationRepositoryN`, `/ConfigurationRepositoryP`). This applies to source synchronization and source configuration dumps. Do not pass repository connection arguments when working with the copied development branch infobase after it has been unbound from storage.
+During initialization, ask whether the source infobase is connected to a 1C configuration repository and store the answer as `SOURCE_USES_REPOSITORY=true|false`. If it is not connected, do not ask for repository path/user/password.
 
-When unlinking the development branch copy from the 1C configuration repository, do not pass repository credentials or repository address. The unbind operation is local to the copy.
+When invoking 1C Designer against the source infobase, pass repository connection arguments (`/ConfigurationRepositoryF`, `/ConfigurationRepositoryN`, `/ConfigurationRepositoryP`) only when `sourceUsesRepository=true`. This applies to source synchronization and source configuration dumps. Do not pass repository connection arguments in manual source mode or when working with the copied development branch infobase.
+
+When unlinking the development branch copy from the 1C configuration repository, do it only when `sourceUsesRepository=true` and do not pass repository credentials or repository address. The unbind operation is local to the copy. If `sourceUsesRepository=false`, skip unbind.
+
+After creating a development branch infobase copy, add it to the user's 1C launcher list `%APPDATA%\1C\1CEStart\ibases.v8i` under `/ITL/<project-root-name>`. Use UTF-8 with BOM for that file, create a timestamped backup before changes, and avoid duplicate launcher entries by matching the saved launcher ID or `Connect` string.
 
 If any 1C command, Git command, or publication command fails, stop the workflow and report the log path.
 
