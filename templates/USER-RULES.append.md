@@ -1,8 +1,8 @@
 ## 1C Project Lifecycle
 
-Use `.agents/skills/1c-workflow/SKILL.md` for project initialization, feature start, feature refresh, feature load, master sync, feature listing, branch switching, feature finish, and CF export.
+Use `.agents/skills/1c-workflow/SKILL.md` for project initialization, development branch creation, development branch refresh/load, master sync, development branch listing, branch switching, development branch close, and CF export.
 
-Use `FEATURE-DEVELOPMENT.ru.md` for the development process inside a feature branch: quick-fix for small local fixes, OpenSpec for feature work or risky behavior changes.
+Use `DEV-BRANCH-DEVELOPMENT.ru.md` for the development process inside a development branch: quick-fix for small local fixes, OpenSpec for business feature work or risky behavior changes.
 
 When asking the developer for missing setup values, ask one value at a time and accept the raw value only. Do not ask for `KEY=value` blocks, one large free-form block with all missing variables, or variable names.
 
@@ -14,8 +14,8 @@ Do not edit installer-managed `AGENTS.md` directly. Store secrets only in local 
 
 Write `.dev.env` and `.agent-1c/*.json` files as UTF-8 so Cyrillic usernames and paths are preserved.
 
-Use `.agent-1c/infobases/features` as the default feature infobase copy root and keep `.agent-1c/infobases/` ignored by Git.
+Use `.agent-1c/infobases/dev-branches` as the default development branch infobase copy root and keep `.agent-1c/infobases/` ignored by Git.
 
-Feature changes must be loaded only into the feature infobase copy, never directly into the source infobase connected to 1C configuration repository storage.
+Development branch changes must be loaded only into the development branch infobase copy, never directly into the source infobase connected to 1C configuration repository storage.
 
 When launching native Windows executables such as `1cv8.exe` from PowerShell, do not pass a PowerShell array to `Start-Process -ArgumentList`. Join and quote arguments into one native command-line string first, or use the `&` call operator for simple cases. Paths with spaces must remain one native argument; otherwise 1C Designer may exit with code 1 or hang behind `-WindowStyle Hidden`.

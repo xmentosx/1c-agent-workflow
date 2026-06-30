@@ -1,4 +1,4 @@
 interface:
   display_name: "1C Workflow"
-  short_description: "Initialize and run 1C feature workflows"
-  default_prompt: "Use $1c-workflow to initialize, start, sync, or finish a 1C configuration development workflow."
+  short_description: "Initialize and run 1C development branch workflows"
+  default_prompt: "Use $1c-workflow to initialize, create, sync, switch, or close a 1C development branch workflow."

@@ -22,7 +22,7 @@ This package is designed for both Codex and Kilo Code:
 
 - Common workflow skill: `.agents/skills/1c-workflow`.
 - Common project guidance: `AGENTS.md` and `USER-RULES.md`.
-- Kilo slash command wrappers: `.kilo/commands/1c*.md`.
+- Kilo slash command wrappers: `.kilo/commands/itl*.md`.
 - Codex usage: choose the skill via `/skills`, invoke `$1c-workflow`, or use natural language that matches the skill description.
 
 Do not rely on Codex-only custom prompts for this workflow. They are local to one user and are not the team distribution mechanism.
@@ -51,9 +51,9 @@ Required for initial project setup:
 
 - Current working directory is the project root. Show its absolute path and ask the developer to confirm initialization in this folder.
 - Current agent target. Do not ask the developer to choose Codex/Kilo; use the agent surface that is running this bootstrap. If it cannot be detected, use `codex`.
-- Directory for feature infobase copies: do not ask during normal initialization. Use `.agent-1c/infobases/features` inside the project and ensure `.agent-1c/infobases/` is ignored by Git. Ask only if the developer explicitly wants a custom location.
+- Directory for development branch infobase copies: do not ask during normal initialization. Use `.agent-1c/infobases/dev-branches` inside the project and ensure `.agent-1c/infobases/` is ignored by Git. Ask only if the developer explicitly wants a custom location.
 - 1C platform version/path. Before asking for a manual path, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`. Either folder may be absent; treat missing folders as normal and skip them without error. If versions are found, ask the developer to choose one of them and store the selected `...\bin\1cv8.exe` path. Do not offer the common root `C:\Program Files\1cv8` as a platform version. Ask for a custom full path only when no installed version is found or the developer chooses manual input.
-- Apache web-client testing. Ask only whether new feature infobases should be published to Apache by default. Store `WEB_PUBLISH_BY_DEFAULT=true|false` in local `.dev.env`, not in committed `project.json`. If the answer is no, do not ask Apache paths. If the answer is yes, run `detect-apache`, save the detected local values to `.dev.env`, and do not ask the developer for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf`. If Apache is not detected, ask for explicit permission to install it automatically; after permission, run `install-apache`, then rerun `detect-apache`/`check-tools`.
+- Apache web-client testing. Ask only whether new development branch infobases should be published to Apache by default. Store `WEB_PUBLISH_BY_DEFAULT=true|false` in local `.dev.env`, not in committed `project.json`. If the answer is no, do not ask Apache paths. If the answer is yes, run `detect-apache`, save the detected local values to `.dev.env`, and do not ask the developer for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf`. If Apache is not detected, ask for explicit permission to install it automatically; after permission, run `install-apache`, then rerun `detect-apache`/`check-tools`.
 - Source infobase kind: `file` or `server`; ask this before the grouped questionnaire.
 - For `file`, ask the source infobase and repository questionnaire as 6 separate questions:
   1. Source infobase directory.
@@ -73,11 +73,11 @@ Required for initial project setup:
 - For a server infobase, build the connection string as `Srvr="<server>";Ref="<base>";`.
 - Validate the number of collected questionnaire values before running 1C. If only one value is received from an attempted multi-line answer or the count is otherwise wrong, repeat the collection as a grouped prompt or as sequential single-value questions. After parsing, summarize the values without passwords and ask for confirmation.
 
-Required for feature setup:
+Required for development branch setup:
 
-- Feature name.
-- Feature branch if not `feature/<safe-feature-name>`.
-- Feature infobase path if not derived from `FEATURE_INFOBASE_ROOT`.
+- Development branch name.
+- Git branch if not `itldev/<safe-dev-branch-name>`.
+- Development branch infobase path if not derived from `DEV_BRANCH_INFOBASE_ROOT`.
 - Whether to publish to Apache only when the project was not configured during initialization or the developer wants a one-off override.
 - If publishing is requested and Apache settings are missing, run `detect-apache`. If Apache is missing, ask whether to run `install-apache`; otherwise do not ask for Apache paths in the ordinary workflow.
 
@@ -85,7 +85,7 @@ Secrets must go to `.dev.env` or process environment variables. Never commit sec
 
 Encoding rules:
 
-- Create and update `.dev.env`, `.agent-1c/*.json`, and `.agent-1c/features/*.json` as UTF-8.
+- Create and update `.dev.env`, `.agent-1c/*.json`, and `.agent-1c/dev-branches/*.json` as UTF-8.
 - Preserve developer input exactly, including Cyrillic usernames and paths such as `D:\Git\PM5 КОРП 4`.
 - Do not recode values through OEM/ANSI console encodings before writing them to files.
 
@@ -108,7 +108,7 @@ Encoding rules:
 <project>/.kilo/commands/
 ```
 
-4. Create `.agent-1c/project.json` from `templates/project.json` when missing. Use the default `featureInfoBaseRoot` unless the developer explicitly requested a custom location.
+4. Create `.agent-1c/project.json` from `templates/project.json` when missing. Use the default `devBranchInfoBaseRoot` unless the developer explicitly requested a custom location.
 
 5. Create `.agent-1c/tools.json` from `templates/tools.json` when missing. Keep it committed so the team can adjust required software checks and install suggestions.
 
@@ -122,7 +122,7 @@ Encoding rules:
 
 ```text
 <project>/DEVELOPER-GUIDE.ru.md
-<project>/FEATURE-DEVELOPMENT.ru.md
+<project>/DEV-BRANCH-DEVELOPMENT.ru.md
 ```
 
 10. Do not edit installer-managed `AGENTS.md` directly. If `ai_rules_1c` later creates or updates `AGENTS.md`, treat it as managed.
@@ -225,17 +225,17 @@ Developers should not need to remember exact names.
 For Kilo Code:
 
 ```text
-/1c
-/1c-init
-/1c-start <feature name>
-/1c-load
-/1c-refresh
-/1c-cf
-/1c-sync
-/1c-finish
-/1c-features
-/1c-master
-/1c-feature <feature name>
+/itl
+/itl-init-project
+/itl-new-dev-branch <branch name>
+/itl-load-dev-branch
+/itl-refresh-dev-branch
+/itl-export-dev-branch-cf
+/itl-sync-master
+/itl-close-dev-branch
+/itl-list-dev-branches
+/itl-switch-master
+/itl-switch-dev-branch <branch name>
 ```
 
 Typing `/` shows available project commands.
@@ -250,14 +250,14 @@ $1c-workflow
 Natural language is also supported:
 
 ```text
-Start a 1C feature named order discounts.
-Refresh the current 1C feature from storage.
-Export CF for the current 1C feature.
-Finish the current 1C feature and export CF.
+Create a 1C development branch named order discounts.
+Refresh the current 1C development branch from storage.
+Export CF for the current 1C development branch.
+Close the current 1C development branch and export CF.
 Sync master from 1C storage.
-List current 1C features.
+List current 1C development branches.
 Switch to master.
-Switch to feature order discounts.
+Switch to development branch order discounts.
 What 1C workflow actions are available?
 ```
 
@@ -268,7 +268,7 @@ After each lifecycle action, report:
 - Action executed.
 - Git branch.
 - Relevant commit hash.
-- Source or feature infobase path.
+- Source or development branch infobase path.
 - CF path when exported.
 - Latest 1C log path.
 - Publication URL when created.

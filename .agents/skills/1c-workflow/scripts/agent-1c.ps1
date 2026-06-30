@@ -1,13 +1,13 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "init-project", "sync-master", "start-feature", "load-feature", "refresh-feature", "export-feature-cf", "finish-feature", "switch-master", "switch-feature", "list-features", "dump-cf")]
+    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "init-project", "sync-master", "new-dev-branch", "load-dev-branch", "refresh-dev-branch", "export-dev-branch-cf", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
     [string]$ConfigPath,
-    [string]$FeatureName,
-    [string]$FeatureBranch,
-    [string]$FeatureInfoBasePath,
+    [string]$DevBranchName,
+    [string]$DevBranch,
+    [string]$DevBranchInfoBasePath,
     [ValidateSet("", "codex", "kilocode", "both")]
     [string]$AgentTarget = "",
     [switch]$PublishToApache,
@@ -266,7 +266,7 @@ function ConvertTo-SafeName {
     param([string]$Name)
     $safe = ($Name.Trim() -replace "[^a-zA-Z0-9_.-]+", "-").Trim("-").ToLowerInvariant()
     if (-not $safe) {
-        $safe = "feature-" + (Get-Date -Format "yyyyMMdd-HHmmss")
+        $safe = "dev-branch-" + (Get-Date -Format "yyyyMMdd-HHmmss")
     }
     return $safe
 }
@@ -1537,8 +1537,8 @@ function Get-RepositoryPath {
     return Require-Value "REPOSITORY_PATH or project.repositoryPath" (Get-Setting -EnvName "REPOSITORY_PATH" -ConfigName "repositoryPath")
 }
 
-function Get-FeatureInfoBaseRoot {
-    return Get-Setting -EnvName "FEATURE_INFOBASE_ROOT" -ConfigName "featureInfoBaseRoot" -Default ".agent-1c/infobases/features"
+function Get-DevBranchInfoBaseRoot {
+    return Get-Setting -EnvName "DEV_BRANCH_INFOBASE_ROOT" -ConfigName "devBranchInfoBaseRoot" -Default ".agent-1c/infobases/dev-branches"
 }
 
 function Get-AgentTargets {
@@ -2003,7 +2003,7 @@ function Get-StateValue {
     return $prop.Value
 }
 
-function Get-FeatureLoadBaseCommit {
+function Get-DevBranchLoadBaseCommit {
     param([object]$State)
 
     foreach ($candidate in @(
@@ -2054,7 +2054,7 @@ function Get-ConfigLoadChangeSet {
 
     $exportPath = Get-ExportPath
     $absoluteExportPath = Assert-ExportPathInsideProject $exportPath
-    $baseCommit = Get-FeatureLoadBaseCommit -State $State
+    $baseCommit = Get-DevBranchLoadBaseCommit -State $State
 
     $tracked = & git -C $script:ProjectRoot diff --name-only --diff-filter=ACMRTUXBD $baseCommit -- $exportPath
     if ($LASTEXITCODE -ne 0) {
@@ -2091,8 +2091,8 @@ function New-ConfigLoadListFile {
 
     $logsPath = Resolve-ProjectPath (Get-ConfigValue -Path "logsPath" -Default "logs/1c")
     New-Item -ItemType Directory -Force -Path $logsPath | Out-Null
-    $safeFeatureName = Get-StateValue -State $State -Name "safeFeatureName" -Default "feature"
-    $listFilePath = New-TimestampedFilePath -Directory $logsPath -Prefix ("load-files-" + $safeFeatureName + "-") -Extension ".txt"
+    $safeDevBranchName = Get-StateValue -State $State -Name "safeDevBranchName" -Default "dev-branch"
+    $listFilePath = New-TimestampedFilePath -Directory $logsPath -Prefix ("load-files-" + $safeDevBranchName + "-") -Extension ".txt"
     [System.IO.File]::WriteAllLines($listFilePath, [string[]]$Files, (Get-Utf8Encoding))
     return $listFilePath
 }
@@ -2160,7 +2160,7 @@ function Load-ConfigFromFiles {
     $changeSet = Get-ConfigLoadChangeSet -State $State
     if ($changeSet.files.Count -eq 0) {
         Write-Host "No changed config files under $(Get-ExportPath) since $($changeSet.baseCommit)."
-        Write-Host "Feature infobase already matches current branch config files."
+        Write-Host "Development branch infobase already matches current branch config files."
         return [pscustomobject]@{
             loaded = $false
             fileCount = 0
@@ -2192,12 +2192,12 @@ function Dump-CF {
     param(
         [string]$InfoBasePath,
         [string]$InfoBaseKind,
-        [string]$SafeFeatureName
+        [string]$SafeDevBranchName
     )
 
     $artifactDir = Resolve-ProjectPath (Get-ConfigValue -Path "artifactsPath" -Default "build/cf")
     New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
-    $cfPath = Join-Path $artifactDir ($SafeFeatureName + "-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".cf")
+    $cfPath = Join-Path $artifactDir ($SafeDevBranchName + "-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".cf")
 
     Invoke-Designer `
         -InfoBasePath $InfoBasePath `
@@ -2263,7 +2263,7 @@ function Update-UserRules {
 
 $marker
 
-Use `.agents/skills/1c-workflow/SKILL.md` for project initialization, feature start, feature refresh, feature load, master sync, branch switching, feature finish, and CF export.
+Use `.agents/skills/1c-workflow/SKILL.md` for project initialization, development branch creation, development branch refresh/load, master sync, branch switching, development branch close, and CF export.
 
 Do not edit installer-managed `AGENTS.md` directly. Store secrets only in local `.dev.env`.
 "@
@@ -2279,20 +2279,20 @@ Do not edit installer-managed `AGENTS.md` directly. Store secrets only in local 
     }
 }
 
-function Save-FeatureState {
+function Save-DevBranchState {
     param(
-        [string]$SafeFeatureName,
+        [string]$SafeDevBranchName,
         [hashtable]$State
     )
 
-    $featuresDir = Join-Path $script:ProjectRoot ".agent-1c\features"
-    New-Item -ItemType Directory -Force -Path $featuresDir | Out-Null
-    $path = Join-Path $featuresDir ($SafeFeatureName + ".json")
+    $devBranchesDir = Join-Path $script:ProjectRoot ".agent-1c\dev-branches"
+    New-Item -ItemType Directory -Force -Path $devBranchesDir | Out-Null
+    $path = Join-Path $devBranchesDir ($SafeDevBranchName + ".json")
     Write-Utf8Text -Path $path -Value (($State | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
     return $path
 }
 
-function Update-FeatureState {
+function Update-DevBranchState {
     param(
         [object]$State,
         [hashtable]$Updates
@@ -2306,40 +2306,40 @@ function Update-FeatureState {
         $stateHash[$key] = $Updates[$key]
     }
 
-    $safeName = $stateHash["safeFeatureName"]
+    $safeName = $stateHash["safeDevBranchName"]
     if (-not $safeName) {
-        $safeName = ConvertTo-SafeName $stateHash["featureName"]
-        $stateHash["safeFeatureName"] = $safeName
+        $safeName = ConvertTo-SafeName $stateHash["devBranchName"]
+        $stateHash["safeDevBranchName"] = $safeName
     }
-    Save-FeatureState -SafeFeatureName $safeName -State $stateHash | Out-Null
+    Save-DevBranchState -SafeDevBranchName $safeName -State $stateHash | Out-Null
 }
 
-function Read-FeatureState {
+function Read-DevBranchState {
     param([string]$Name)
 
     if (-not $Name) {
         $currentBranch = (Get-GitOutput @("branch", "--show-current")).Trim()
-        if ($currentBranch -like "feature/*") {
-            $Name = $currentBranch.Substring("feature/".Length)
+        if ($currentBranch -like "itldev/*") {
+            $Name = $currentBranch.Substring("itldev/".Length)
         }
     }
 
     if (-not $Name) {
-        throw "Run this from a feature branch or pass -FeatureName."
+        throw "Run this from a development branch or pass -DevBranchName."
     }
 
     $safe = ConvertTo-SafeName $Name
-    $path = Join-Path $script:ProjectRoot ".agent-1c\features\$safe.json"
+    $path = Join-Path $script:ProjectRoot ".agent-1c\dev-branches\$safe.json"
     if (-not (Test-Path -LiteralPath $path)) {
-        throw "Feature state not found: $path"
+        throw "Development branch state not found: $path"
     }
     return Read-Utf8Text -Path $path | ConvertFrom-Json
 }
 
-function Publish-FeatureToApache {
+function Publish-DevBranchToApache {
     param(
-        [string]$FeaturePath,
-        [string]$SafeFeatureName
+        [string]$DevBranchPath,
+        [string]$SafeDevBranchName
     )
 
     $apacheSettings = Get-EffectiveApacheSettings
@@ -2359,15 +2359,15 @@ function Publish-FeatureToApache {
         throw "Apache was not detected. Run detect-apache, install/configure Apache, or set APACHE_HTTPD_CONF_PATH for a nonstandard installation."
     }
 
-    $publicationName = $SafeFeatureName -replace "[^a-zA-Z0-9_]", "_"
+    $publicationName = $SafeDevBranchName -replace "[^a-zA-Z0-9_]", "_"
     $publicationDir = Join-Path $publicationRoot $publicationName
     New-Item -ItemType Directory -Force -Path $publicationDir | Out-Null
 
     $kind = Get-InfoBaseKind
     if ($kind -eq "file") {
-        $connStr = "File=`"$FeaturePath`";"
+        $connStr = "File=`"$DevBranchPath`";"
     } else {
-        $connStr = $FeaturePath
+        $connStr = $DevBranchPath
     }
 
     $args = @("-publish", "-$apacheKind", "-wsdir", $publicationName, "-dir", $publicationDir, "-connstr", $connStr)
@@ -2388,7 +2388,7 @@ function Initialize-Project {
     New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
     Write-Host "Project root: $script:ProjectRoot"
     Check-Tools -StopOnMissing
-    Get-FeatureInfoBaseRoot | Out-Null
+    Get-DevBranchInfoBaseRoot | Out-Null
     Ensure-GitRepository
     Ensure-GitIgnore
     Checkout-Master
@@ -2412,34 +2412,34 @@ function Sync-Master {
     Commit-IfChanged -Message "sync: refresh 1C configuration from repository" -PathSpec @($dumpResult.exportPath) -ForceAdd | Out-Null
 }
 
-function Start-Feature {
-    Require-Value "FeatureName" $FeatureName | Out-Null
-    $safe = ConvertTo-SafeName $FeatureName
-    if (-not $FeatureBranch) {
-        $FeatureBranch = "feature/$safe"
+function New-DevBranch {
+    Require-Value "DevBranchName" $DevBranchName | Out-Null
+    $safe = ConvertTo-SafeName $DevBranchName
+    if (-not $DevBranch) {
+        $DevBranch = "itldev/$safe"
     }
 
     Assert-CleanGit
     Checkout-Master
 
-    if (Test-GitBranchExists -Branch $FeatureBranch) {
-        throw "Feature branch already exists: $FeatureBranch"
+    if (Test-GitBranchExists -Branch $DevBranch) {
+        throw "Development branch already exists: $DevBranch"
     }
-    Invoke-Git @("checkout", "-b", $FeatureBranch)
+    Invoke-Git @("checkout", "-b", $DevBranch)
 
     $kind = Get-InfoBaseKind
     $source = Get-SourceInfoBasePath
-    if (-not $FeatureInfoBasePath) {
-        $rootPath = Resolve-ProjectPath (Get-FeatureInfoBaseRoot)
-        $FeatureInfoBasePath = Join-Path $rootPath $safe
+    if (-not $DevBranchInfoBasePath) {
+        $rootPath = Resolve-ProjectPath (Get-DevBranchInfoBaseRoot)
+        $DevBranchInfoBasePath = Join-Path $rootPath $safe
     }
 
     if ($kind -eq "file") {
-        if (Test-Path -LiteralPath $FeatureInfoBasePath) {
-            throw "Feature infobase path already exists: $FeatureInfoBasePath"
+        if (Test-Path -LiteralPath $DevBranchInfoBasePath) {
+            throw "Development branch infobase path already exists: $DevBranchInfoBasePath"
         }
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $FeatureInfoBasePath) | Out-Null
-        Copy-Item -LiteralPath $source -Destination $FeatureInfoBasePath -Recurse
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $DevBranchInfoBasePath) | Out-Null
+        Copy-Item -LiteralPath $source -Destination $DevBranchInfoBasePath -Recurse
     } else {
         $copyScript = Get-ConfigValue -Path "serverBaseCopyScript" -Default ""
         if (-not $copyScript) {
@@ -2448,122 +2448,122 @@ function Start-Feature {
         $copyScriptPath = Resolve-ProjectPath $copyScript
         & powershell -ExecutionPolicy Bypass -File $copyScriptPath `
             -ProjectRoot $script:ProjectRoot `
-            -FeatureName $FeatureName `
+            -DevBranchName $DevBranchName `
             -SourceInfoBasePath $source `
-            -FeatureInfoBasePath $FeatureInfoBasePath
+            -DevBranchInfoBasePath $DevBranchInfoBasePath
         if ($LASTEXITCODE -ne 0) {
             throw "Server infobase copy script failed with exit code $LASTEXITCODE"
         }
     }
 
     Invoke-Designer `
-        -InfoBasePath $FeatureInfoBasePath `
+        -InfoBasePath $DevBranchInfoBasePath `
         -InfoBaseKind $kind `
         -DesignerArgs @("/ConfigurationRepositoryUnbindCfg", "-force") | Out-Null
 
     $publishDefault = Get-WebPublishByDefault
     $publicationUrl = ""
     if ($PublishToApache -or $publishDefault) {
-        $publicationUrl = Publish-FeatureToApache -FeaturePath $FeatureInfoBasePath -SafeFeatureName $safe
+        $publicationUrl = Publish-DevBranchToApache -DevBranchPath $DevBranchInfoBasePath -SafeDevBranchName $safe
     }
 
-    $statePath = Save-FeatureState -SafeFeatureName $safe -State @{
-        featureName = $FeatureName
-        safeFeatureName = $safe
-        branch = $FeatureBranch
+    $statePath = Save-DevBranchState -SafeDevBranchName $safe -State @{
+        devBranchName = $DevBranchName
+        safeDevBranchName = $safe
+        devBranch = $DevBranch
         createdFromCommit = Get-CurrentCommit
         lastLoadedCommit = Get-CurrentCommit
         infoBaseKind = $kind
-        featureInfoBasePath = $FeatureInfoBasePath
+        devBranchInfoBasePath = $DevBranchInfoBasePath
         publicationUrl = $publicationUrl
         createdAt = (Get-Date).ToString("o")
         lastLogPath = $script:LastLogPath
     }
 
-    Write-Host "Feature branch: $FeatureBranch"
-    Write-Host "Feature infobase: $FeatureInfoBasePath"
-    Write-Host "Feature state: $statePath"
+    Write-Host "Development branch: $DevBranch"
+    Write-Host "Development branch infobase: $DevBranchInfoBasePath"
+    Write-Host "Development branch state: $statePath"
     if ($publicationUrl) {
         Write-Host "Publication URL: $publicationUrl"
     }
 }
 
-function Load-Feature {
-    $state = Read-FeatureState -Name $FeatureName
-    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
-    Update-FeatureState -State $state -Updates (New-LoadStateUpdates -LoadResult $loadResult)
+function Load-DevBranch {
+    $state = Read-DevBranchState -Name $DevBranchName
+    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
+    Update-DevBranchState -State $state -Updates (New-LoadStateUpdates -LoadResult $loadResult)
     if ($loadResult.loaded) {
-        Write-Host "Feature infobase updated: $($state.featureInfoBasePath)"
+        Write-Host "Development branch infobase updated: $($state.devBranchInfoBasePath)"
         Write-Host "Last 1C log: $($loadResult.lastLogPath)"
     } else {
-        Write-Host "Feature infobase unchanged: $($state.featureInfoBasePath)"
+        Write-Host "Development branch infobase unchanged: $($state.devBranchInfoBasePath)"
     }
 }
 
-function Refresh-Feature {
-    $state = Read-FeatureState -Name $FeatureName
+function Refresh-DevBranch {
+    $state = Read-DevBranchState -Name $DevBranchName
     Assert-CleanGit
     Sync-Master
-    Invoke-Git @("checkout", $state.branch)
+    Invoke-Git @("checkout", $state.devBranch)
     Invoke-Git @("merge", (Get-MasterBranch))
-    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
+    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
     $updates = New-LoadStateUpdates -LoadResult $loadResult
     $updates["lastRefreshAt"] = (Get-Date).ToString("o")
-    Update-FeatureState -State $state -Updates $updates
-    Write-Host "Feature refreshed from master: $($state.branch)"
+    Update-DevBranchState -State $state -Updates $updates
+    Write-Host "Development branch refreshed from master: $($state.devBranch)"
     if ($loadResult.loaded) {
-        Write-Host "Feature infobase updated: $($state.featureInfoBasePath)"
+        Write-Host "Development branch infobase updated: $($state.devBranchInfoBasePath)"
         Write-Host "Last 1C log: $($loadResult.lastLogPath)"
     } else {
-        Write-Host "Feature infobase unchanged: $($state.featureInfoBasePath)"
+        Write-Host "Development branch infobase unchanged: $($state.devBranchInfoBasePath)"
     }
 }
 
-function Export-FeatureCF {
-    $state = Read-FeatureState -Name $FeatureName
+function Export-DevBranchCF {
+    $state = Read-DevBranchState -Name $DevBranchName
     Assert-CleanGit
     $currentBranch = Get-CurrentBranch
-    if ($currentBranch -ne $state.branch) {
-        Invoke-Git @("checkout", $state.branch)
+    if ($currentBranch -ne $state.devBranch) {
+        Invoke-Git @("checkout", $state.devBranch)
     }
-    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
-    $cfPath = Dump-CF -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind -SafeFeatureName $state.safeFeatureName
-    $featureCommit = Get-CurrentCommit
+    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
+    $cfPath = Dump-CF -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -SafeDevBranchName $state.safeDevBranchName
+    $devBranchCommit = Get-CurrentCommit
     $updates = New-LoadStateUpdates -LoadResult $loadResult
     $updates["lastCfPath"] = $cfPath
     $updates["lastCfAt"] = (Get-Date).ToString("o")
     $updates["lastLogPath"] = $script:LastLogPath
-    Update-FeatureState -State $state -Updates $updates
-    Write-Host "Branch: $($state.branch)"
-    Write-Host "Feature commit: $featureCommit"
+    Update-DevBranchState -State $state -Updates $updates
+    Write-Host "Branch: $($state.devBranch)"
+    Write-Host "Development branch commit: $devBranchCommit"
     Write-Host "CF saved: $cfPath"
     Write-Host "Last 1C log: $script:LastLogPath"
 }
 
-function Finish-Feature {
-    $state = Read-FeatureState -Name $FeatureName
+function Close-DevBranch {
+    $state = Read-DevBranchState -Name $DevBranchName
     Assert-CleanGit
 
     Sync-Master
-    Invoke-Git @("checkout", $state.branch)
+    Invoke-Git @("checkout", $state.devBranch)
     Invoke-Git @("merge", (Get-MasterBranch))
 
-    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
-    $cfPath = Dump-CF -InfoBasePath $state.featureInfoBasePath -InfoBaseKind $state.infoBaseKind -SafeFeatureName $state.safeFeatureName
+    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state
+    $cfPath = Dump-CF -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -SafeDevBranchName $state.safeDevBranchName
 
     $masterBranch = Get-MasterBranch
     $masterCommit = (Get-GitOutput @("rev-parse", $masterBranch)).Trim()
-    $featureCommit = Get-CurrentCommit
+    $devBranchCommit = Get-CurrentCommit
 
     $updates = New-LoadStateUpdates -LoadResult $loadResult
-    $updates["finishedAt"] = (Get-Date).ToString("o")
+    $updates["closedAt"] = (Get-Date).ToString("o")
     $updates["finalCfPath"] = $cfPath
     $updates["lastLogPath"] = $script:LastLogPath
-    Update-FeatureState -State $state -Updates $updates
+    Update-DevBranchState -State $state -Updates $updates
 
-    Write-Host "Branch: $($state.branch)"
+    Write-Host "Branch: $($state.devBranch)"
     Write-Host "Master commit: $masterCommit"
-    Write-Host "Feature commit: $featureCommit"
+    Write-Host "Development branch commit: $devBranchCommit"
     Write-Host "CF saved: $cfPath"
     Write-Host "Last 1C log: $script:LastLogPath"
     if ($state.publicationUrl) {
@@ -2576,51 +2576,51 @@ function Finish-Feature {
     Write-Host "Current commit: $currentCommit"
 }
 
-function List-Features {
-    Write-Section "Features"
+function List-DevBranches {
+    Write-Section "Development branches"
 
     $currentBranch = ""
     if (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git")) {
         $currentBranch = Get-CurrentBranch
     }
 
-    $currentFeature = "none"
-    if ($currentBranch -like "feature/*") {
-        $currentFeature = $currentBranch.Substring("feature/".Length)
+    $currentDevBranch = "none"
+    if ($currentBranch -like "itldev/*") {
+        $currentDevBranch = $currentBranch.Substring("itldev/".Length)
     }
 
     Write-Host "Current branch: $(if ($currentBranch) { $currentBranch } else { '<none>' })"
-    Write-Host "Current feature: $currentFeature"
+    Write-Host "Current development branch: $currentDevBranch"
 
-    $featuresDir = Join-Path $script:ProjectRoot ".agent-1c\features"
-    if (-not (Test-Path -LiteralPath $featuresDir)) {
-        Write-Host "No features in development."
+    $devBranchesDir = Join-Path $script:ProjectRoot ".agent-1c\dev-branches"
+    if (-not (Test-Path -LiteralPath $devBranchesDir)) {
+        Write-Host "No active development branches."
         return
     }
 
     $states = @()
-    foreach ($file in Get-ChildItem -LiteralPath $featuresDir -Filter "*.json" -File) {
+    foreach ($file in Get-ChildItem -LiteralPath $devBranchesDir -Filter "*.json" -File) {
         try {
             $state = Read-Utf8Text -Path $file.FullName | ConvertFrom-Json
             $state | Add-Member -NotePropertyName statePath -NotePropertyValue $file.FullName -Force
-            if (-not (Get-StateValue -State $state -Name "finishedAt")) {
+            if (-not (Get-StateValue -State $state -Name "closedAt")) {
                 $states += $state
             }
         } catch {
-            Write-Host "Skipping unreadable feature state: $($file.FullName)"
+            Write-Host "Skipping unreadable development branch state: $($file.FullName)"
         }
     }
 
     if ($states.Count -eq 0) {
-        Write-Host "No features in development."
+        Write-Host "No active development branches."
         return
     }
 
-    foreach ($state in ($states | Sort-Object @{ Expression = { Get-StateValue -State $_ -Name "createdAt" -Default "" } }, @{ Expression = { Get-StateValue -State $_ -Name "featureName" -Default "" } })) {
-        $branch = Get-StateValue -State $state -Name "branch" -Default ""
+    foreach ($state in ($states | Sort-Object @{ Expression = { Get-StateValue -State $_ -Name "createdAt" -Default "" } }, @{ Expression = { Get-StateValue -State $_ -Name "devBranchName" -Default "" } })) {
+        $branch = Get-StateValue -State $state -Name "devBranch" -Default ""
         $marker = if ($branch -and $branch -eq $currentBranch) { "*" } else { " " }
-        $name = Get-StateValue -State $state -Name "featureName" -Default (Get-StateValue -State $state -Name "safeFeatureName" -Default "<unknown>")
-        $infoBasePath = Get-StateValue -State $state -Name "featureInfoBasePath" -Default ""
+        $name = Get-StateValue -State $state -Name "devBranchName" -Default (Get-StateValue -State $state -Name "safeDevBranchName" -Default "<unknown>")
+        $infoBasePath = Get-StateValue -State $state -Name "devBranchInfoBasePath" -Default ""
         $createdAt = Get-StateValue -State $state -Name "createdAt" -Default ""
         $lastLoadAt = Get-StateValue -State $state -Name "lastLoadAt" -Default ""
         $lastRefreshAt = Get-StateValue -State $state -Name "lastRefreshAt" -Default ""
@@ -2651,14 +2651,14 @@ function Switch-Master {
     Write-Host "Current commit: $currentCommit"
 }
 
-function Switch-Feature {
-    $state = Read-FeatureState -Name $FeatureName
+function Switch-DevBranch {
+    $state = Read-DevBranchState -Name $DevBranchName
     Assert-CleanGit
-    Invoke-Git @("checkout", $state.branch)
+    Invoke-Git @("checkout", $state.devBranch)
     $currentCommit = (Get-GitOutput @("rev-parse", "HEAD")).Trim()
-    Write-Host "Switched to feature branch: $($state.branch)"
+    Write-Host "Switched to development branch: $($state.devBranch)"
     Write-Host "Current commit: $currentCommit"
-    Write-Host "Feature infobase: $($state.featureInfoBasePath)"
+    Write-Host "Development branch infobase: $($state.devBranchInfoBasePath)"
     if ($state.publicationUrl) {
         Write-Host "Publication URL: $($state.publicationUrl)"
     }
@@ -2726,7 +2726,7 @@ function Validate-Project {
         throw "1cv8.exe was not found: $platformPath"
     }
 
-    Get-FeatureInfoBaseRoot | Out-Null
+    Get-DevBranchInfoBaseRoot | Out-Null
 
     $kind = Get-InfoBaseKind
     $source = Get-SourceInfoBasePath
@@ -2750,27 +2750,26 @@ Actions:
   install-apache      Install Apache Lounge httpd from official archive after confirmation.
   init-project        Sync source infobase, dump config to master, install rules.
   sync-master         Refresh master from source infobase connected to storage.
-  start-feature       Create feature branch and feature infobase copy.
-  load-feature        Load changed config files into the feature infobase.
-  refresh-feature     Refresh master from storage, merge it into the feature branch, update feature base.
-  export-feature-cf   Export CF from the current feature branch without refreshing master.
-  finish-feature      Refresh master, merge into feature branch, export final CF, switch to master.
+  new-dev-branch         Create an itldev/<name> development branch and infobase copy.
+  load-dev-branch        Load changed config files into the development branch infobase.
+  refresh-dev-branch     Refresh master from storage, merge it into the development branch, update the branch base.
+  export-dev-branch-cf   Export CF from the current development branch without refreshing master.
+  close-dev-branch       Refresh master, merge into the development branch, export final CF, switch to master.
   switch-master       Checkout the fixed master branch.
-  switch-feature      Checkout a feature branch from saved feature state.
-  list-features       Show features in development and the current feature.
-  dump-cf             Alias for export-feature-cf.
+  switch-dev-branch      Checkout a development branch from saved state.
+  list-dev-branches      Show active development branches and the current branch.
 
 Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-platforms
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action detect-apache
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action start-feature -FeatureName "order-discounts"
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action load-feature
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-feature
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-feature-cf
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action finish-feature
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-features
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts"
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action load-dev-branch
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-dev-branch
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-dev-branch-cf
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action close-dev-branch
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-dev-branches
 "@
 }
 
@@ -2787,15 +2786,14 @@ try {
         "install-apache" { Install-Apache }
         "init-project" { Initialize-Project }
         "sync-master" { Sync-Master }
-        "start-feature" { Start-Feature }
-        "load-feature" { Load-Feature }
-        "refresh-feature" { Refresh-Feature }
-        "export-feature-cf" { Export-FeatureCF }
-        "finish-feature" { Finish-Feature }
+        "new-dev-branch" { New-DevBranch }
+        "load-dev-branch" { Load-DevBranch }
+        "refresh-dev-branch" { Refresh-DevBranch }
+        "export-dev-branch-cf" { Export-DevBranchCF }
+        "close-dev-branch" { Close-DevBranch }
         "switch-master" { Switch-Master }
-        "switch-feature" { Switch-Feature }
-        "list-features" { List-Features }
-        "dump-cf" { Export-FeatureCF }
+        "switch-dev-branch" { Switch-DevBranch }
+        "list-dev-branches" { List-DevBranches }
     }
 } catch {
     [Console]::Error.WriteLine($_.Exception.Message)

@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow
-description: Initialize and operate 1C configuration development projects with Git, a source infobase connected to a 1C configuration repository, feature infobase copies, optional Apache web publication, config dump/load, intermediate and final CF export, feature refresh from storage, and branch switching. Use when the user asks to init a 1C project, check required tools, start or finish a 1C feature, refresh a feature from master/storage, sync master from 1C storage, load changed config files into a feature base, prepare a CF, switch to master or a feature branch, or asks what 1C workflow commands are available.
+description: Initialize and operate 1C configuration development projects with Git, a source infobase connected to a 1C configuration repository, isolated development branch infobase copies, optional Apache web publication, config dump/load, intermediate and final CF export, development branch refresh from storage, and branch switching. Use when the user asks to init a 1C project, check required tools, create or close a development branch, refresh a development branch from master/storage, sync master from 1C storage, load changed config files into a development branch base, prepare a CF, switch to master or a development branch, or asks what ITL 1C workflow commands are available.
 ---
 
 # 1C Workflow
@@ -13,19 +13,19 @@ Use this skill to run the standard lifecycle for agent-assisted 1C configuration
 
 Map user intent to one workflow:
 
-- `HELP`: user asks what actions are available, asks for commands, asks for help, or runs `/1c`.
+- `HELP`: user asks what actions are available, asks for commands, asks for help, or runs `/itl`.
 - `INIT_PROJECT`: user asks to initialize/bootstrap/create a 1C agent project.
 - `CHECK_TOOLS`: user asks to check required software, setup, Git, 1C platform, Apache, or webinst.
 - `INSTALL_APACHE`: user agreed to automatically install Apache/httpd for 1C web publication.
-- `START_FEATURE`: user asks to start or begin a feature, task, branch, customization, or subproject.
+- `NEW_DEV_BRANCH`: user asks to create/start/begin a development branch, task branch, customization branch, or parallel work branch.
 - `SYNC_MASTER`: user asks to refresh/sync master from 1C repository storage.
-- `LOAD_FEATURE`: user asks to load current branch files into the feature infobase.
-- `REFRESH_FEATURE`: user asks to update a feature branch from storage, refresh a feature with the latest master, or merge fresh storage changes into a feature.
-- `EXPORT_FEATURE_CF`: user asks to make/export a CF for the current feature before full completion.
-- `FINISH_FEATURE`: user asks to finish/complete a feature and prepare/export a CF.
+- `LOAD_DEV_BRANCH`: user asks to load current branch files into the development branch infobase.
+- `REFRESH_DEV_BRANCH`: user asks to update a development branch from storage, refresh the current branch with the latest master, or merge fresh storage changes into a development branch.
+- `EXPORT_DEV_BRANCH_CF`: user asks to make/export a CF for the current development branch without closing it.
+- `CLOSE_DEV_BRANCH`: user asks to close/finish the current development branch and prepare/export final CF.
 - `SWITCH_MASTER`: user asks to switch to master.
-- `SWITCH_FEATURE`: user asks to switch to a feature/subproject branch.
-- `LIST_FEATURES`: user asks to list/show active features, features in development, or the current feature.
+- `SWITCH_DEV_BRANCH`: user asks to switch to a development branch.
+- `LIST_DEV_BRANCHES`: user asks to list/show active development branches or the current development branch.
 
 If intent is unclear, do not guess. Show the short menu from `references/workflow.md`.
 
@@ -33,7 +33,7 @@ If intent is unclear, do not guess. Show the short menu from `references/workflo
 
 Before executing any lifecycle workflow, read `references/workflow.md`.
 
-When the user asks to develop, implement, fix, review, or plan work inside an already started feature branch, also read `references/feature-development.md` and follow its quick-fix/OpenSpec process.
+When the user asks to develop, implement, fix, review, or plan work inside an already started development branch, also read `references/dev-branch-development.md` and follow its quick-fix/OpenSpec process.
 
 Use `scripts/agent-1c.ps1` when PowerShell is available. Prefer the script over retyping command-line calls because 1C Designer operations are fragile and benefit from deterministic logging and path checks.
 
@@ -49,23 +49,23 @@ Use fixed project defaults: `master` is the main branch and `src/cf` is the conf
 
 Treat `src/cf` as tracked project content. Source dump commits must include only `src/cf` and must verify `src/cf/ConfigDumpInfo.xml` is present in `HEAD` after initial project creation.
 
-Use `.agent-1c/infobases/features` as the default feature infobase copy root inside the project. Do not ask for this path during normal initialization; ensure `.agent-1c/infobases/` is ignored by Git.
+Use `.agent-1c/infobases/dev-branches` as the default development branch infobase copy root inside the project. Do not ask for this path during normal initialization; ensure `.agent-1c/infobases/` is ignored by Git.
 
 Before asking for the 1C platform path, scan existing standard installation folders for installed versions and offer the discovered version `bin`/`bin\1cv8.exe` paths as choices. Missing `C:\Program Files\1cv8` or `C:\Program Files (x86)\1cv8` folders are normal; skip them without error. Do not offer the common `C:\Program Files\1cv8` root as a version. Ask for a custom path only when no version is found or the developer chooses manual input.
 
-During initialization, ask only whether feature infobases should be published to Apache for web-client testing. Store the local answer in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`; do not store it in committed project JSON. If publishing is enabled, run `detect-apache` and save detected local Apache values to `.dev.env`. If Apache is missing, ask the developer whether to install Apache automatically; after explicit agreement, run `install-apache`, then rerun `detect-apache`/`check-tools`. Do not ask the developer for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf` in the ordinary flow.
+During initialization, ask only whether development branch infobases should be published to Apache for web-client testing. Store the local answer in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`; do not store it in committed project JSON. If publishing is enabled, run `detect-apache` and save detected local Apache values to `.dev.env`. If Apache is missing, ask the developer whether to install Apache automatically; after explicit agreement, run `install-apache`, then rerun `detect-apache`/`check-tools`. Do not ask the developer for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf` in the ordinary flow.
 
 Use the current working directory as the project root. During initialization, show its absolute path and ask the developer to confirm before continuing; do not ask them to enter a project path.
 
 Do not ask whether to configure Codex or Kilo Code. Use the agent surface currently running the workflow; if it cannot be detected, use Codex as the fallback.
 
-For `LOAD_FEATURE`, `REFRESH_FEATURE`, `EXPORT_FEATURE_CF`, and `FINISH_FEATURE`, infer the feature from the current `feature/<name>` branch. Only ask for or pass `FeatureName` when the current branch is not a feature branch and the action cannot be inferred.
+For `LOAD_DEV_BRANCH`, `REFRESH_DEV_BRANCH`, `EXPORT_DEV_BRANCH_CF`, and `CLOSE_DEV_BRANCH`, infer the development branch from the current `itldev/<name>` branch. Only ask for or pass `DevBranchName` when the current branch is not a development branch and the action cannot be inferred.
 
-Load feature files into 1C with a generated `-listFile` of changed files under `src/cf`; do not full-load the entire dump unless the user explicitly asks for a manual recovery path.
+Load development branch files into 1C with a generated `-listFile` of changed files under `src/cf`; do not full-load the entire dump unless the user explicitly asks for a manual recovery path.
 
 Never store passwords in Git, `AGENTS.md`, `USER-RULES.md`, or committed JSON. Store secrets only in local `.dev.env` or process environment variables.
 
-Read and write `.dev.env`, `.agent-1c/project.json`, `.agent-1c/tools.json`, and feature state JSON as UTF-8. Preserve Cyrillic paths and usernames exactly.
+Read and write `.dev.env`, `.agent-1c/project.json`, `.agent-1c/tools.json`, and development branch state JSON as UTF-8. Preserve Cyrillic paths and usernames exactly.
 
 Do not edit installer-managed `AGENTS.md` directly. Put project-specific workflow notes in `USER-RULES.md` or `.agent-1c/`.
 
@@ -73,11 +73,11 @@ Before switching branches, copying bases, dumping configuration files, or runnin
 
 For file infobases, verify that the directory exists and contains `1Cv8.1CD` before launching 1C Designer. Do not let 1C open the interactive "create new infobase" dialog during this workflow.
 
-All feature changes load into the copied feature infobase. Never load feature changes directly into the source infobase connected to the 1C configuration repository.
+All development branch changes load into the copied development branch infobase. Never load them directly into the source infobase connected to the 1C configuration repository.
 
-When invoking 1C Designer against the source infobase connected to the 1C configuration repository, always pass repository connection arguments (`/ConfigurationRepositoryF`, `/ConfigurationRepositoryN`, `/ConfigurationRepositoryP`). This applies to source synchronization and source configuration dumps. Do not pass repository connection arguments when working with the copied feature infobase after it has been unbound from storage.
+When invoking 1C Designer against the source infobase connected to the 1C configuration repository, always pass repository connection arguments (`/ConfigurationRepositoryF`, `/ConfigurationRepositoryN`, `/ConfigurationRepositoryP`). This applies to source synchronization and source configuration dumps. Do not pass repository connection arguments when working with the copied development branch infobase after it has been unbound from storage.
 
-When unlinking the feature copy from the 1C configuration repository, do not pass repository credentials or repository address. The unbind operation is local to the copy.
+When unlinking the development branch copy from the 1C configuration repository, do not pass repository credentials or repository address. The unbind operation is local to the copy.
 
 If any 1C command, Git command, or publication command fails, stop the workflow and report the log path.
 
@@ -93,14 +93,14 @@ From the project root:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action help
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action start-feature -FeatureName "order-discounts"
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action load-feature
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-feature
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-feature-cf
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action finish-feature
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts"
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action load-dev-branch
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-dev-branch
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-dev-branch-cf
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action close-dev-branch
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-master
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-feature -FeatureName "order-discounts"
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-features
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-dev-branch -DevBranchName "order-discounts"
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-dev-branches
 ```
 
 The script is a helper, not a substitute for judgment. If project topology is unusual, adapt conservatively and document the deviation in the final report.

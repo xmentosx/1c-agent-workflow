@@ -9,17 +9,17 @@ When the user asks for help or the requested action is unclear, show this menu:
 ```text
 Available 1C workflow actions:
 1. Initialize project: check tools, create a local Git project, sync master from a source infobase connected to 1C storage, and install project rules.
-2. Start feature: create a feature branch, copy the source infobase, unbind the copy from storage, optionally publish it to Apache.
-3. Load feature: load changed current branch config files into the feature infobase.
-4. Refresh feature: sync master from 1C storage, merge master into the feature branch, and update the feature infobase.
-5. Export feature CF: export CF from the current feature branch without refreshing master.
+2. New development branch: create an itldev/<name> branch, copy the source infobase, unbind the copy from storage, optionally publish it to Apache.
+3. Load development branch: load changed current branch config files into the development branch infobase.
+4. Refresh development branch: sync master from 1C storage, merge master into the development branch, and update the development branch infobase.
+5. Export development branch CF: export CF from the current development branch without refreshing master.
 6. Sync master: refresh source infobase from 1C storage and update master dump.
-7. Finish feature: refresh master, merge master into the feature branch, update the feature infobase, export final CF, then switch to master.
-8. List features: show features in development and the current feature.
-9. Switch branches: switch to master or to a saved feature branch.
+7. Close development branch: refresh master, merge master into the development branch, update the branch infobase, export final CF, mark the branch closed, then switch to master.
+8. List development branches: show active development branches and the current development branch.
+9. Switch branches: switch to master or to a saved development branch.
 ```
 
-For Kilo Code, project slash wrappers can expose these as `/1c`, `/1c-init`, `/1c-start`, `/1c-load`, `/1c-refresh`, `/1c-cf`, `/1c-sync`, `/1c-finish`, `/1c-features`, `/1c-master`, and `/1c-feature`.
+For Kilo Code, project slash wrappers can expose these as `/itl`, `/itl-init-project`, `/itl-new-dev-branch`, `/itl-load-dev-branch`, `/itl-refresh-dev-branch`, `/itl-export-dev-branch-cf`, `/itl-sync-master`, `/itl-close-dev-branch`, `/itl-list-dev-branches`, `/itl-switch-master`, and `/itl-switch-dev-branch`.
 
 For Codex, the skill can be chosen from `/skills` or invoked as `$1c-workflow`; enabled skills also appear in the app slash list when supported by the surface.
 
@@ -29,7 +29,7 @@ Create and maintain:
 
 - `.agent-1c/project.json`: non-secret project settings.
 - `.agent-1c/tools.json`: configurable software checks and install suggestions.
-- `.agent-1c/features/<safe-feature-name>.json`: feature branch state.
+- `.agent-1c/dev-branches/<safe-dev-branch-name>.json`: development branch state.
 - `.dev.env`: local secrets and machine-specific values; never commit it.
 - `.agents/skills/1c-workflow/`: shared Agent Skill used by Codex and Kilo Code.
 - `.kilo/commands/`: optional Kilo Code slash command wrappers.
@@ -55,7 +55,7 @@ Use this as `.agent-1c/project.json`:
   "sourceServerName": "",
   "sourceInfoBaseName": "",
   "repositoryPath": "",
-  "featureInfoBaseRoot": ".agent-1c/infobases/features",
+  "devBranchInfoBaseRoot": ".agent-1c/infobases/dev-branches",
   "serverBaseCopyScript": "",
   "aiRules": {
     "repo": "https://github.com/comol/ai_rules_1c.git",
@@ -87,8 +87,8 @@ REPOSITORY_PATH=\\server\repo
 REPOSITORY_USER=
 # Empty value means the repository password is not set.
 REPOSITORY_PASSWORD=
-# Optional override. By default feature infobase copies are stored under .agent-1c\infobases\features and ignored by Git.
-FEATURE_INFOBASE_ROOT=
+# Optional override. By default development branch infobase copies are stored under .agent-1c\infobases\dev-branches and ignored by Git.
+DEV_BRANCH_INFOBASE_ROOT=
 WEB_PUBLISH_BY_DEFAULT=false
 # Optional override. By default webinst.exe is resolved next to PLATFORM_PATH.
 WEBINST_PATH=
@@ -125,7 +125,7 @@ Interactive question style:
 - Never ask for a `KEY=value` block.
 - Never require variable names in grouped answers.
 - Never show one large setup question that lists all missing project variables; grouping is allowed only for the source infobase and configuration repository values.
-- Do not make the developer type variable names such as `PLATFORM_PATH`, `FEATURE_INFOBASE_ROOT`, `SOURCE_INFOBASE_PATH`, `SOURCE_SERVER_NAME`, or `REPOSITORY_PATH`.
+- Do not make the developer type variable names such as `PLATFORM_PATH`, `DEV_BRANCH_INFOBASE_ROOT`, `SOURCE_INFOBASE_PATH`, `SOURCE_SERVER_NAME`, or `REPOSITORY_PATH`.
 - Use human labels in questions, for example: "Выберите версию платформы 1С", "Введите адрес хранилища конфигурации".
 - For `file/server` choices, ask a normal choice question first; then ask only the grouped values relevant to that choice.
 - In password lines of the grouped questionnaire, exact values `нет` and `-` mean an empty password. Compare these markers case-insensitively after trimming whitespace. Do not store the marker text as a password.
@@ -139,23 +139,23 @@ For project initialization:
 - For a file infobase, ask one grouped form or sequential set with exactly 6 separate values: source infobase directory, infobase user, infobase password or `нет`/`-`, configuration repository path/address, configuration repository user, configuration repository password or `нет`/`-`.
 - For a server infobase, ask one grouped form or sequential set with exactly 7 separate values: 1C server name, source infobase name, infobase user, infobase password or `нет`/`-`, configuration repository path/address, configuration repository user, configuration repository password or `нет`/`-`. Build the connection string as `Srvr="<server>";Ref="<base>";`.
 - Validate the collected questionnaire value count before running 1C. If only one value is received from an attempted multi-line answer or the count is otherwise wrong, repeat the collection as a grouped prompt or as sequential single-value questions. After parsing, summarize the values without passwords and ask for confirmation.
-- Directory for feature infobase copies: do not ask by default. Use `.agent-1c/infobases/features` inside the project and ignore `.agent-1c/infobases/` in Git. Ask only if the developer explicitly wants a custom location.
-- Apache web-client testing: ask only whether new feature infobases should be published to Apache by default. Store the answer locally in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`, never in committed project JSON.
+- Directory for development branch infobase copies: do not ask by default. Use `.agent-1c/infobases/dev-branches` inside the project and ignore `.agent-1c/infobases/` in Git. Ask only if the developer explicitly wants a custom location.
+- Apache web-client testing: ask only whether new development branch infobases should be published to Apache by default. Store the answer locally in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`, never in committed project JSON.
 - If Apache publishing is enabled, run `detect-apache` and save detected local values to `.dev.env`. Do not ask for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf` in the ordinary initialization flow. If Apache is not detected, ask whether to install it automatically. On "yes", run `install-apache`, then rerun `detect-apache`/`check-tools`; on "no", offer only to disable publication or stop initialization until Apache is configured manually.
 - Do not ask whether the project is for Codex or Kilo Code. Configure the current agent surface; when it cannot be detected, use Codex as the fallback.
 
-For starting a feature:
+For creating a development branch:
 
-- Feature name.
-- Feature branch if not `feature/<safe-feature-name>`.
-- Feature infobase path if not derived from `featureInfoBaseRoot`.
+- Development branch name.
+- Git branch if not `itldev/<safe-dev-branch-name>`.
+- Development branch infobase path if not derived from `devBranchInfoBaseRoot`.
 - Whether to publish to Apache only when the project was not configured during initialization or the developer wants a one-off override.
 - If publishing is requested and Apache settings are missing, run `detect-apache`; if Apache is missing, ask whether to run `install-apache`; do not ask for Apache paths in the ordinary workflow.
 
-For finishing a feature:
+For closing a development branch:
 
-- Feature name if the state file cannot be inferred from the current branch.
-- Confirmation that the developer has tested the feature and the Git tree is clean.
+- Development branch name if the state file cannot be inferred from the current branch.
+- Confirmation that the developer has tested the current work and the Git tree is clean.
 
 ## Preflight
 
@@ -164,15 +164,15 @@ Before destructive or stateful actions:
 1. Run `CHECK_TOOLS` during project initialization.
 2. Verify `git` is available before Git operations.
 3. Verify `1cv8.exe` exists before 1C Designer operations.
-4. Use default `featureInfoBaseRoot` `.agent-1c/infobases/features` when no override is configured.
+4. Use default `devBranchInfoBaseRoot` `.agent-1c/infobases/dev-branches` when no override is configured.
 5. Verify the source file infobase has `1Cv8.1CD` when `infoBaseKind` is `file`; stop before launching 1C Designer if the file is missing.
 6. Verify source server name and infobase name are set when `infoBaseKind` is `server`, unless legacy `sourceInfoBasePath` is explicitly configured.
 7. Verify the Git worktree is clean before switching branches.
 8. Verify `src/cf` resolves inside the project root before dumping config files.
-9. Create `logsPath`, `artifactsPath`, and `.agent-1c/features`.
+9. Create `logsPath`, `artifactsPath`, and `.agent-1c/dev-branches`.
 10. Ensure `.dev.env`, `*.cf`, `*.dt`, and logs are ignored by Git.
 11. Run 1C Designer operations strictly sequentially. The helper must wait for the previous `1cv8.exe` process to exit before starting the next Designer command against the same infobase.
-12. Pass repository connection arguments on every 1C Designer launch against the source infobase connected to storage. Do not pass repository connection arguments for feature infobases after they are unbound from storage.
+12. Pass repository connection arguments on every 1C Designer launch against the source infobase connected to storage. Do not pass repository connection arguments for development branch infobases after they are unbound from storage.
 13. When launching native Windows executables such as `1cv8.exe` with `Start-Process`, pass `-ArgumentList` as one joined and correctly quoted native command-line string, never as a PowerShell array. Prefer `Join-NativeCommandLineArguments` from `agent-1c.ps1` or the `&` call operator for simple calls.
 
 ## Git Rules
@@ -181,7 +181,7 @@ Before destructive or stateful actions:
 - If the repository has no commits yet, treat the current HEAD as an unborn branch. Set/keep HEAD on `master` without running `git checkout -b master` over an existing unborn branch.
 - Do not ask for, create, or configure a Git remote during initialization.
 - Do not pull automatically during simple branch switching.
-- Require a clean worktree before branch switching, feature refresh, feature CF export, or feature finish.
+- Require a clean worktree before branch switching, development branch refresh, development branch CF export, or development branch close.
 - `src/cf` is tracked project content. During source dumps, stage and commit only `src/cf`; do not include unrelated staged files in dump commits.
 - Force-add `src/cf` during source dump commits so broad ignore rules such as `src/` cannot hide the standard configuration dump.
 
@@ -216,9 +216,9 @@ Goal: install a local Apache/httpd for 1C web publication when the developer ena
 Goal: create the baseline project state.
 
 1. Show the current working directory as project root and confirm the developer wants to initialize there.
-2. Collect missing parameters. Do not ask for `featureInfoBaseRoot` during normal initialization; use `.agent-1c/infobases/features`.
+2. Collect missing parameters. Do not ask for `devBranchInfoBaseRoot` during normal initialization; use `.agent-1c/infobases/dev-branches`.
    - For the platform path, first offer discovered installed 1C versions; do not make the developer type `C:\Program Files\1cv8\...\bin\1cv8.exe` when it can be selected.
-   - Ask whether feature infobases should be published to Apache for web-client testing. If no, write `WEB_PUBLISH_BY_DEFAULT=false` and do not ask Apache paths. If yes, write `WEB_PUBLISH_BY_DEFAULT=true`, run `detect-apache`, and save detected local Apache settings to `.dev.env`. If Apache is not detected, ask whether to run `install-apache`; after success, rerun `detect-apache`/`check-tools`.
+   - Ask whether development branch infobases should be published to Apache for web-client testing. If no, write `WEB_PUBLISH_BY_DEFAULT=false` and do not ask Apache paths. If yes, write `WEB_PUBLISH_BY_DEFAULT=true`, run `detect-apache`, and save detected local Apache settings to `.dev.env`. If Apache is not detected, ask whether to run `install-apache`; after success, rerun `detect-apache`/`check-tools`.
 3. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing. Write them as UTF-8.
 4. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.
 5. Initialize local Git if needed.
@@ -236,57 +236,57 @@ Goal: create the baseline project state.
 13. Add project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
 14. Commit rules and workflow files when there are changes.
 
-## START_FEATURE
+## NEW_DEV_BRANCH
 
-Goal: create a branch and isolated feature infobase.
+Goal: create a development branch and isolated development branch infobase.
 
 1. Check the Git worktree is clean.
 2. Checkout `master` and pull with `--ff-only` when a remote/upstream exists.
-3. Create `feature/<safe-feature-name>` unless the user supplied a branch.
+3. Create `itldev/<safe-dev-branch-name>` unless the user supplied a branch.
 4. Copy the source infobase.
-   - File base: recursive directory copy under `featureInfoBaseRoot` unless a specific path is supplied.
+   - File base: recursive directory copy under `devBranchInfoBaseRoot` unless a specific path is supplied.
    - Server base: run the configured `serverBaseCopyScript`; do not invent server copy commands.
-5. Unbind the feature copy from 1C configuration repository storage without repository parameters.
-6. Optionally publish the feature copy to Apache through `webinst`.
-7. Save feature state to `.agent-1c/features/<safe-feature-name>.json`.
-8. Report branch, feature infobase path, and publication URL if any.
+5. Unbind the development branch copy from 1C configuration repository storage without repository parameters.
+6. Optionally publish the development branch copy to Apache through `webinst`.
+7. Save development branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json`.
+8. Report branch, development branch infobase path, and publication URL if any.
 
-## LOAD_FEATURE
+## LOAD_DEV_BRANCH
 
-Goal: apply current branch files to the feature infobase.
+Goal: apply current branch files to the development branch infobase.
 
-1. Find feature state from `FeatureName` or current branch. In normal use, do not require a feature name when already on a `feature/<name>` branch.
-2. Build a UTF-8 list file in `logs/1c` from Git changes under `src/cf` relative to feature state `lastLoadedCommit`; include untracked files under `src/cf`.
-3. If no changed files are found, skip `/LoadConfigFromFiles` and report that the feature infobase already matches the current branch config files.
+1. Find development branch state from `DevBranchName` or current branch. In normal use, do not require a name when already on an `itldev/<name>` branch.
+2. Build a UTF-8 list file in `logs/1c` from Git changes under `src/cf` relative to development branch state `lastLoadedCommit`; include untracked files under `src/cf`.
+3. If no changed files are found, skip `/LoadConfigFromFiles` and report that the development branch infobase already matches the current branch config files.
 4. Run `/LoadConfigFromFiles <src/cf> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
 5. Do not pass `-updateConfigDumpInfo`.
-6. After success, update feature state: `lastLoadedCommit`, `lastLoadAt`, `lastLoadListFile`, and latest 1C log path.
+6. After success, update development branch state: `lastLoadedCommit`, `lastLoadAt`, `lastLoadListFile`, and latest 1C log path.
 7. Stop on errors and report the 1C log path.
 
-## REFRESH_FEATURE
+## REFRESH_DEV_BRANCH
 
-Goal: update a feature with the latest configuration from storage without finishing it.
+Goal: update a development branch with the latest configuration from storage without closing it.
 
-1. Find feature state from `FeatureName` or current branch. In normal use, do not require a feature name when already on a `feature/<name>` branch.
+1. Find development branch state from `DevBranchName` or current branch. In normal use, do not require a name when already on an `itldev/<name>` branch.
 2. Require a clean Git worktree.
 3. Run `SYNC_MASTER`.
-4. Checkout the feature branch.
-5. Merge `master` into the feature branch.
+4. Checkout the development branch.
+5. Merge `master` into the development branch.
 6. If conflicts occur, stop and resolve them in config files before continuing.
-7. Load only changed merged files into the feature infobase using the same partial load rules as `LOAD_FEATURE`.
-8. Update feature state with refresh timestamp, load metadata, and latest 1C log path.
+7. Load only changed merged files into the development branch infobase using the same partial load rules as `LOAD_DEV_BRANCH`.
+8. Update development branch state with refresh timestamp, load metadata, and latest 1C log path.
 
-## EXPORT_FEATURE_CF
+## EXPORT_DEV_BRANCH_CF
 
-Goal: create a CF from the current feature branch before full completion.
+Goal: create a CF from the current development branch without closing it.
 
-1. Find feature state from `FeatureName` or current branch. In normal use, do not require a feature name when already on a `feature/<name>` branch.
+1. Find development branch state from `DevBranchName` or current branch. In normal use, do not require a name when already on an `itldev/<name>` branch.
 2. Require a clean Git worktree.
-3. Checkout the feature branch if needed.
-4. Load only changed current branch files into the feature infobase using the same partial load rules as `LOAD_FEATURE`.
+3. Checkout the development branch if needed.
+4. Load only changed current branch files into the development branch infobase using the same partial load rules as `LOAD_DEV_BRANCH`.
 5. Export CF into `artifactsPath`.
-6. Do not refresh `master` or merge from storage unless the user explicitly requested `REFRESH_FEATURE` first.
-7. Update feature state with load metadata, the CF path, timestamp, and latest 1C log path.
+6. Do not refresh `master` or merge from storage unless the user explicitly requested `REFRESH_DEV_BRANCH` first.
+7. Update development branch state with load metadata, the CF path, timestamp, and latest 1C log path.
 
 ## SYNC_MASTER
 
@@ -300,32 +300,33 @@ Goal: refresh `master` from storage.
    - Pass repository connection arguments to both source infobase Designer launches.
 6. Commit changes with `sync: refresh 1C configuration from repository`.
 
-## FINISH_FEATURE
+## CLOSE_DEV_BRANCH
 
-Goal: prepare a tested feature for manual import into the storage-connected source base.
+Goal: prepare tested current work for manual import into the storage-connected source base and close the development branch.
 
 1. Confirm the developer has finished testing.
 2. Check the Git worktree is clean.
 3. Run `SYNC_MASTER`.
-4. Checkout the feature branch.
-5. Merge `master` into the feature branch.
+4. Checkout the development branch.
+5. Merge `master` into the development branch.
 6. If conflicts occur, stop and resolve them in config files before continuing.
-7. Load only changed merged files into the feature infobase using the same partial load rules as `LOAD_FEATURE`.
-8. Export final CF from the feature infobase into `artifactsPath`.
-9. Report branch, master commit, feature commit, CF path, latest 1C log path, and publication URL.
-10. Checkout `master` before completing.
+7. Load only changed merged files into the development branch infobase using the same partial load rules as `LOAD_DEV_BRANCH`.
+8. Export final CF from the development branch infobase into `artifactsPath`.
+9. Set `closedAt` in development branch state.
+10. Report branch, master commit, development branch commit, CF path, latest 1C log path, and publication URL.
+11. Checkout `master` before completing.
 
-Do not load the feature directly into the source infobase connected to storage.
+Do not load development branch changes directly into the source infobase connected to storage.
 
-## LIST_FEATURES
+## LIST_DEV_BRANCHES
 
-Goal: show features currently in development and the active feature.
+Goal: show active development branches and the current development branch.
 
-1. Read `.agent-1c/features/*.json`.
-2. Show only feature states without `finishedAt`.
-3. Show current Git branch and current feature; if current branch is `master`, report current feature as `none`.
-4. Mark the feature whose saved branch matches the current Git branch.
-5. For each active feature, show feature name, branch, feature infobase path, publication URL if any, created timestamp, last load timestamp, and last refresh timestamp.
+1. Read `.agent-1c/dev-branches/*.json`.
+2. Show only development branch states without `closedAt`.
+3. Show current Git branch and current development branch; if current branch is `master`, report current development branch as `none`.
+4. Mark the development branch whose saved branch matches the current Git branch.
+5. For each active development branch, show name, branch, development branch infobase path, publication URL if any, created timestamp, last load timestamp, and last refresh timestamp.
 
 ## SWITCH_MASTER
 
@@ -336,14 +337,14 @@ Goal: switch Git to the fixed `master` branch.
 3. Report current commit.
 4. Do not pull and do not load files into 1C automatically.
 
-## SWITCH_FEATURE
+## SWITCH_DEV_BRANCH
 
-Goal: switch Git to a saved feature branch.
+Goal: switch Git to a saved development branch.
 
-1. Find feature state from `FeatureName` or current branch.
+1. Find development branch state from `DevBranchName` or current branch.
 2. Require a clean Git worktree.
-3. Checkout the saved feature branch.
-4. Report current commit, feature infobase path, and publication URL if any.
+3. Checkout the saved development branch.
+4. Report current commit, development branch infobase path, and publication URL if any.
 5. Do not load files into 1C automatically.
 
 ## Failure Rules
@@ -355,8 +356,8 @@ Stop immediately when:
 - Source infobase cannot be opened.
 - Repository credentials are missing for source synchronization.
 - Git worktree is dirty before branch switching.
-- Feature infobase target already exists.
-- Feature copy cannot be unbound from storage.
+- Development branch infobase target already exists.
+- Development branch copy cannot be unbound from storage.
 - 1C Designer returns a non-zero exit code.
 - CF export fails.
 - Apache publication is requested but `webinst.exe` or Apache/httpd is missing and the developer declined automatic install or manual setup.
