@@ -21,7 +21,7 @@ Available 1C workflow actions:
 11. Switch: show/open a saved development branch worktree or switch a legacy branch.
 ```
 
-For Kilo Code, project slash wrappers expose the short command surface: `/itl-init-project`, `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request.
+For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request. The direct `/itl-init-project` wrapper exists for explicit bootstrap use, but it is not part of the beginner menu after initialization.
 
 For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
@@ -271,24 +271,25 @@ Goal: create the baseline project state.
    - For the platform path, first offer discovered installed 1C versions; do not make the developer type `C:\Program Files\1cv8\...\bin\1cv8.exe` when it can be selected.
    - Ask whether development branch infobases should be published to Apache for web-client testing. If no, write `WEB_PUBLISH_BY_DEFAULT=false` and do not ask Apache paths. If yes, write `WEB_PUBLISH_BY_DEFAULT=true`, run `detect-apache`, and save detected local Apache settings to `.dev.env`. If Apache is not detected, ask whether to run `install-apache`; after success, rerun `detect-apache`/`check-tools`.
    - Check Vanessa Automation. If missing, ask whether to install it automatically and run `install-vanessa-automation` after confirmation.
-4. For non-interactive automation, pass `-InitMode json -InitAnswersPath <answers.json>` with the same values the wizard would collect. If required fields are missing, stop before launching 1C.
-5. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing. Write them as UTF-8.
-6. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.
-7. Initialize local Git if needed.
-8. Checkout or create `master`.
-9. If `sourceUsesRepository=true`, update the source infobase from 1C configuration repository storage. If `false`, skip repository update and use the source infobase exactly as it is.
-10. Dump configuration files into `src/cf`.
+4. If the wizard fails because terminal input is unavailable, do not collect the questionnaire in chat and do not continue the lifecycle manually. Open or suggest an interactive PowerShell window with the same wizard command, or use JSON mode only when the developer explicitly requested non-interactive initialization or an answers file already exists.
+5. For non-interactive automation, pass `-InitMode json -InitAnswersPath <answers.json>` with the same values the wizard would collect. If required fields are missing, stop before launching 1C.
+6. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing. Write them as UTF-8.
+7. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.
+8. Initialize local Git if needed.
+9. Checkout or create `master`.
+10. If `sourceUsesRepository=true`, update the source infobase from 1C configuration repository storage. If `false`, skip repository update and use the source infobase exactly as it is.
+11. Dump configuration files into `src/cf`.
    - If `sourceUsesRepository=true`, pass `/ConfigurationRepositoryF`, `/ConfigurationRepositoryN`, and `/ConfigurationRepositoryP` to this dump command too.
    - If `sourceUsesRepository=false`, do not ask for or pass repository settings. The developer must update the source infobase manually before syncing master when fresh external changes are needed.
    - First dump: if `src/cf` is empty, run a full dump.
    - Next dumps: if `src/cf/ConfigDumpInfo.xml` exists, run incremental dump with `-update -force`.
    - Unsafe state: if `src/cf` is not empty and `ConfigDumpInfo.xml` is missing, stop and ask the user to clean the folder or restore `ConfigDumpInfo.xml`.
-11. Verify `src/cf/ConfigDumpInfo.xml` exists after the dump. During initial project creation, commit only `src/cf` to `master`, then verify `HEAD:src/cf/ConfigDumpInfo.xml` exists. Stop if Git sees no dump files to commit or the file is missing from `HEAD`.
-12. Install `ai_rules_1c` per project from `https://github.com/comol/ai_rules_1c`, using the current agent target (`codex`, `kilocode`, or fallback `codex`). Invoke its installer with named parameters: `-Command init -ProjectRoot <project> -Source <rulesDir> -Tools <tools> -AssumeYes`.
-13. Install this workflow skill into `.agents/skills/1c-workflow` and the fast routine skill into `.agents/skills/1c-workflow-fast`.
-14. If the current agent is Kilo Code, install slash wrappers into `.kilo/commands`.
-15. Add project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
-16. Commit rules and workflow files when there are changes.
+12. Verify `src/cf/ConfigDumpInfo.xml` exists after the dump. During initial project creation, commit only `src/cf` to `master`, then verify `HEAD:src/cf/ConfigDumpInfo.xml` exists. Stop if Git sees no dump files to commit or the file is missing from `HEAD`.
+13. Install `ai_rules_1c` per project from `https://github.com/comol/ai_rules_1c`, using the current agent target (`codex`, `kilocode`, or fallback `codex`). Invoke its installer with named parameters: `-Command init -ProjectRoot <project> -Source <rulesDir> -Tools <tools> -AssumeYes`.
+14. Install this workflow skill into `.agents/skills/1c-workflow` and the fast routine skill into `.agents/skills/1c-workflow-fast`.
+15. If the current agent is Kilo Code, install slash wrappers into `.kilo/commands`.
+16. Add project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
+17. Commit rules and workflow files when there are changes.
 
 ## NEW_DEV_BRANCH / NEW_EXTENSION_DEV_BRANCH
 

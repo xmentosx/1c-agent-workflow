@@ -248,7 +248,6 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 ## 10. Полезные команды
 
 ```text
-/itl-init-project                Инициализировать текущий 1С-проект через helper wizard.
 /itl                              Показать меню действий.
 /itl-new-config-branch <name>     Создать worktree-ветку разработки конфигурации.
 /itl-new-extension-branch <name>  Создать worktree-ветку разработки расширения.

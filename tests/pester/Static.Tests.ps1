@@ -75,6 +75,42 @@ Describe "1C agent workflow static checks" {
         $text | Should -Match "-Action\s+init-project"
         $text | Should -Match "-InitMode\s+wizard"
         $text | Should -Match "Do not collect the initialization questionnaire"
+        $text | Should -Match "direct bootstrap-only wrapper"
+    }
+
+    It "does not advertise init-project in beginner command menus" {
+        $menuPaths = @(
+            ".kilo\commands\itl.md",
+            "README.md",
+            "DEVELOPER-GUIDE.ru.md"
+        ) | ForEach-Object { Join-Path $RepoRoot $_ }
+
+        foreach ($path in $menuPaths) {
+            $text = Get-Content -Encoding UTF8 -Raw $path
+            $text | Should -Not -Match "/itl-init-project"
+        }
+
+        $workflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
+        $shortSurfaceMatch = [regex]::Match($workflowText, "short command surface: (?<commands>.+?)\. These wrappers")
+        $shortSurfaceMatch.Success | Should -Be $true
+        $shortSurfaceMatch.Groups["commands"].Value | Should -Not -Match "/itl-init-project"
+    }
+
+    It "forbids manual init questionnaire fallback when terminal input is unavailable" {
+        $docTexts = @(
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")),
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\SKILL.md")),
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")),
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl-init-project.md"))
+        )
+
+        foreach ($text in $docTexts) {
+            $text | Should -Match "terminal input is unavailable"
+            $text | Should -Match "do not collect the (initialization )?questionnaire in chat"
+            $text | Should -Match "do not continue the lifecycle manually"
+        }
+
+        ($docTexts -join [Environment]::NewLine) | Should -Not -Match "recovering from helper failure"
     }
 
     It "ignores local runtime branch state in all gitignore surfaces" {

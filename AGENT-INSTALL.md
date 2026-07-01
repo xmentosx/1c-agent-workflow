@@ -30,7 +30,7 @@ Do not rely on Codex-only custom prompts for this workflow. They are local to on
 
 ## Agent Input Collection
 
-Prefer the PowerShell helper script wizard for initialization. The wizard collects local setup values, writes `.dev.env`, ensures `.agent-1c/project.json` exists, and then runs the lifecycle. In Kilo Code, the `/itl-init-project` wrapper must run this helper directly and must not expand initialization into Kilo Questions before the first helper attempt. Use `-InitMode configured` only when `.agent-1c/project.json` and `.dev.env` are already prepared.
+Prefer the PowerShell helper script wizard for initialization. The wizard collects local setup values, writes `.dev.env`, ensures `.agent-1c/project.json` exists, and then runs the lifecycle. In Kilo Code, the direct `/itl-init-project` wrapper must run this helper directly and must not expand initialization into Kilo Questions before the first helper attempt. Use `-InitMode configured` only when `.agent-1c/project.json` and `.dev.env` are already prepared.
 
 Default initialization command:
 
@@ -44,7 +44,9 @@ For non-interactive automation, write a JSON answers file and run:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode json -InitAnswersPath <answers.json>
 ```
 
-The agent should ask setup questions itself only when preparing a JSON answers file or recovering from helper failure.
+If the wizard fails because terminal input is unavailable, do not collect the initialization questionnaire in chat and do not continue the lifecycle manually. Open or suggest an interactive PowerShell window with the same wizard command, or use JSON mode only when the developer explicitly requested non-interactive initialization or an answers file already exists.
+
+The agent should ask setup questions itself only when preparing a JSON answers file. Manual collection is not a fallback for unavailable interactive terminal input.
 
 Ask interactively in a human-friendly format:
 

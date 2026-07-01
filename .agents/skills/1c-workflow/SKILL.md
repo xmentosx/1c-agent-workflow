@@ -49,7 +49,7 @@ Use `scripts/agent-1c.ps1` when PowerShell is available. Prefer the script over 
 
 ## Operating Rules
 
-For project initialization, first run the helper script wizard: `init-project -InitMode wizard`. The wizard collects setup values, writes `.dev.env` and `.agent-1c/project.json`, summarizes values without passwords, and then runs the initialization lifecycle. Do not collect the initialization questionnaire in chat or Kilo Questions before this first helper attempt. Use `-InitMode json -InitAnswersPath <file>` only when the developer explicitly requested non-interactive initialization, an answers file already exists, or the wizard failed because interactive terminal input is unavailable.
+For project initialization, first run the helper script wizard: `init-project -InitMode wizard`. The wizard collects setup values, writes `.dev.env` and `.agent-1c/project.json`, summarizes values without passwords, and then runs the initialization lifecycle. Do not collect the initialization questionnaire in chat or Kilo Questions before this first helper attempt. If the wizard fails because terminal input is unavailable, do not collect the questionnaire in chat and do not continue the lifecycle manually. Open or suggest an interactive PowerShell window with the same wizard command, or use `-InitMode json -InitAnswersPath <file>` only when the developer explicitly requested non-interactive initialization or an answers file already exists.
 
 Ask for missing required parameters at the start of the selected workflow only when the helper cannot collect them itself. Do not ask for parameters that are already present in `.agent-1c/project.json` or `.dev.env`.
 

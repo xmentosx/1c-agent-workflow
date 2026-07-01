@@ -79,7 +79,6 @@ Vanessa Automation устанавливается локально в `.agent-1c
 ## Команды Kilo Code
 
 ```text
-/itl-init-project                Инициализировать текущий 1С-проект через helper wizard.
 /itl                              Показать короткое меню.
 /itl-new-config-branch <name>     Создать worktree-ветку разработки конфигурации.
 /itl-new-extension-branch <name>  Создать worktree-ветку разработки расширения.
