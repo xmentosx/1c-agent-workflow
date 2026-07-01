@@ -2,13 +2,23 @@ Describe "1C agent workflow static checks" {
     BeforeAll {
         $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
         $HelperPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+        $LauncherPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"
         $HelperText = Get-Content -Encoding UTF8 -Raw $HelperPath
+        $LauncherText = Get-Content -Encoding UTF8 -Raw $LauncherPath
     }
 
     It "parses the PowerShell helper" {
         $tokens = $null
         $errors = $null
         [System.Management.Automation.Language.Parser]::ParseFile($HelperPath, [ref]$tokens, [ref]$errors) | Out-Null
+
+        @($errors).Count | Should -Be 0
+    }
+
+    It "parses the monitored window launcher" {
+        $tokens = $null
+        $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($LauncherPath, [ref]$tokens, [ref]$errors) | Out-Null
 
         @($errors).Count | Should -Be 0
     }
@@ -76,9 +86,10 @@ Describe "1C agent workflow static checks" {
         $wrapperPath = Join-Path $RepoRoot ".kilo\commands\itl-init-project.md"
         (Test-Path -LiteralPath $wrapperPath -PathType Leaf) | Should -Be $true
         $text = Get-Content -Encoding UTF8 -Raw $wrapperPath
-        $text | Should -Match ([regex]::Escape(".\.agents\skills\1c-workflow\scripts\agent-1c.ps1"))
+        $text | Should -Match ([regex]::Escape(".\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"))
         $text | Should -Match "-Action\s+init-project"
         $text | Should -Match "-InitMode\s+wizard"
+        $text | Should -Match ([regex]::Escape(".agent-1c/runs/<run>/status.json"))
         $text | Should -Match "Do not collect the initialization questionnaire"
         $text | Should -Match "direct bootstrap-only wrapper"
     }
@@ -123,6 +134,67 @@ Describe "1C agent workflow static checks" {
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
         $HelperText | Should -Match ([regex]::Escape($requiredPath))
+    }
+
+    It "ignores monitored run status and log artifacts" {
+        $requiredPath = ".agent-1c/runs/"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
+        $LauncherText | Should -Match ([regex]::Escape(".agent-1c\runs"))
+    }
+
+    It "warns clearly when source repository sync is disabled" {
+        $HelperText | Should -Match "WARNING: no repository update was performed; master dump uses current source infobase state"
+    }
+
+    It "writes run status on successful helper completion" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-status-success-" + [guid]::NewGuid().ToString("N"))
+        $statusPath = Join-Path $tempRoot "status.json"
+        $logPath = Join-Path $tempRoot "console.log"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action help -RunStatusPath $statusPath -RunLogPath $logPath *> $null
+            $LASTEXITCODE | Should -Be 0
+
+            (Test-Path -LiteralPath $statusPath -PathType Leaf) | Should -Be $true
+            $status = Get-Content -Encoding UTF8 -Raw $statusPath | ConvertFrom-Json
+            $status.status | Should -Be "succeeded"
+            $status.action | Should -Be "help"
+            $status.projectRoot | Should -Be ([System.IO.Path]::GetFullPath($tempRoot))
+            [int]$status.exitCode | Should -Be 0
+            $status.runLogPath | Should -Be ([System.IO.Path]::GetFullPath($logPath))
+            $status.errorMessage | Should -Be ""
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "writes run status on failed helper completion" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-status-failure-" + [guid]::NewGuid().ToString("N"))
+        $statusPath = Join-Path $tempRoot "status.json"
+        $logPath = Join-Path $tempRoot "console.log"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action validate -RunStatusPath $statusPath -RunLogPath $logPath *> $null
+            $LASTEXITCODE | Should -Be 1
+
+            (Test-Path -LiteralPath $statusPath -PathType Leaf) | Should -Be $true
+            $status = Get-Content -Encoding UTF8 -Raw $statusPath | ConvertFrom-Json
+            $status.status | Should -Be "failed"
+            $status.action | Should -Be "validate"
+            $status.projectRoot | Should -Be ([System.IO.Path]::GetFullPath($tempRoot))
+            [int]$status.exitCode | Should -Be 1
+            $status.runLogPath | Should -Be ([System.IO.Path]::GetFullPath($logPath))
+            $status.errorMessage | Should -Not -BeNullOrEmpty
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     It "wires result manifest creation into result and close actions" {

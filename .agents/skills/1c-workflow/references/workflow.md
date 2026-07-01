@@ -265,13 +265,13 @@ Goal: install a local Apache/httpd for 1C web publication when the developer ena
 
 Goal: create the baseline project state.
 
-1. First run the helper script wizard: `agent-1c.ps1 -Action init-project -InitMode wizard`. Do not collect the initialization questionnaire in chat or Kilo Questions before this first helper attempt.
-2. The wizard shows the current working directory as project root and confirms the developer wants to initialize there.
+1. First run the monitored helper script wizard: `run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard`. Do not collect the initialization questionnaire in chat or Kilo Questions before this first helper attempt.
+2. The monitored launcher opens the wizard in an external PowerShell window, writes `.agent-1c/runs/<run>/status.json` and `console.log`, and lets the agent detect completion without asking the developer to close the wizard manually. The wizard shows the current working directory as project root and confirms the developer wants to initialize there.
 3. The wizard collects missing parameters. Do not ask for `devBranchInfoBaseRoot` during normal initialization; use `.agent-1c/infobases/dev-branches`.
    - For the platform path, first offer discovered installed 1C versions; do not make the developer type `C:\Program Files\1cv8\...\bin\1cv8.exe` when it can be selected.
    - Ask whether development branch infobases should be published to Apache for web-client testing. If no, write `WEB_PUBLISH_BY_DEFAULT=false` and do not ask Apache paths. If yes, write `WEB_PUBLISH_BY_DEFAULT=true`, run `detect-apache`, and save detected local Apache settings to `.dev.env`. If Apache is not detected, ask whether to run `install-apache`; after success, rerun `detect-apache`/`check-tools`.
    - Check Vanessa Automation. If missing, ask whether to install it automatically and run `install-vanessa-automation` after confirmation.
-4. If the wizard fails because terminal input is unavailable, do not collect the questionnaire in chat and do not continue the lifecycle manually. Open or suggest an interactive PowerShell window with the same wizard command, or use JSON mode only when the developer explicitly requested non-interactive initialization or an answers file already exists.
+4. If the wizard fails because terminal input is unavailable, do not collect the questionnaire in chat and do not continue the lifecycle manually. Use the monitored wizard command, or use JSON mode only when the developer explicitly requested non-interactive initialization or an answers file already exists.
 5. For non-interactive automation, pass `-InitMode json -InitAnswersPath <answers.json>` with the same values the wizard would collect. If required fields are missing, stop before launching 1C.
 6. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing. Write them as UTF-8.
 7. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.

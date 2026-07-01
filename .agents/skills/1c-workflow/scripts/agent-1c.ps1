@@ -23,7 +23,10 @@ param(
     [switch]$AllowUnverifiedResult,
     [switch]$AllowUnverifiedClose,
     [switch]$UseCurrentWorktree,
-    [switch]$OfferOpenAgent
+    [switch]$OfferOpenAgent,
+    [string]$RunStatusPath,
+    [string]$RunLogPath,
+    [switch]$PauseOnFailure
 )
 
 Set-StrictMode -Version Latest
@@ -37,6 +40,9 @@ if (-not $ConfigPath) {
 }
 
 $script:LastLogPath = $null
+$script:RunStartedAt = Get-Date
+$script:ResolvedRunStatusPath = ""
+$script:ResolvedRunLogPath = ""
 $script:ProjectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
 $script:ConfigPath = [System.IO.Path]::GetFullPath($ConfigPath)
 $script:Config = $null
@@ -101,6 +107,59 @@ function New-TimestampedFilePath {
     $suffix = [guid]::NewGuid().ToString("N").Substring(0, 8)
     $name = "{0}{1}-{2}-{3}{4}" -f $Prefix, (Get-Date -Format "yyyyMMdd-HHmmss-fff"), $PID, $suffix, $Extension
     return Join-Path $Directory $name
+}
+
+function Resolve-RunFilePath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+    if ([System.IO.Path]::IsPathRooted($Path)) {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path))
+}
+
+function Write-RunStatus {
+    param(
+        [ValidateSet("running", "succeeded", "failed")]
+        [string]$Status,
+        [object]$ExitCode = $null,
+        [string]$ErrorMessage = ""
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RunStatusPath)) {
+        return
+    }
+
+    $script:ResolvedRunStatusPath = Resolve-RunFilePath -Path $RunStatusPath
+    if ($RunLogPath) {
+        $script:ResolvedRunLogPath = Resolve-RunFilePath -Path $RunLogPath
+    }
+
+    $now = Get-Date
+    $finishedAt = $null
+    if ($Status -ne "running") {
+        $finishedAt = $now.ToString("o")
+    }
+
+    $payload = [ordered]@{
+        schemaVersion = 1
+        status = $Status
+        action = $Action
+        projectRoot = $script:ProjectRoot
+        pid = $PID
+        startedAt = $script:RunStartedAt.ToString("o")
+        updatedAt = $now.ToString("o")
+        finishedAt = $finishedAt
+        exitCode = $ExitCode
+        lastLogPath = $(if ($script:LastLogPath) { [string]$script:LastLogPath } else { "" })
+        runLogPath = $script:ResolvedRunLogPath
+        errorMessage = $ErrorMessage
+    }
+
+    Write-Utf8Text -Path $script:ResolvedRunStatusPath -Value (($payload | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
 }
 
 function Import-DotEnv {
@@ -3297,7 +3356,8 @@ function New-RepositoryConnectionArgs {
 
 function Update-BaseFromRepository {
     if (-not (Get-SourceUsesRepository)) {
-        Write-Host "Source infobase is configured without repository connection. Skipping repository update; dump will use the current source infobase state."
+        Write-Host "WARNING: no repository update was performed; master dump uses current source infobase state."
+        Write-Host "Source infobase is configured without repository connection. Update it manually before sync-master or refresh-dev-branch when fresh external changes are needed."
         return $false
     }
 
@@ -5236,7 +5296,7 @@ Actions:
   list-dev-branches      Show active development branches, worktrees, and the current branch.
 
 Examples:
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode wizard
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode json -InitAnswersPath .\init.answers.json
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-platforms
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action detect-apache
@@ -5260,10 +5320,11 @@ Examples:
 "@
 }
 
-Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env")
-Read-ProjectConfig
-
 try {
+    Write-RunStatus -Status "running"
+    Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env")
+    Read-ProjectConfig
+
     switch ($Action) {
         "help" { Show-Help }
         "validate" { Validate-Project }
@@ -5290,7 +5351,22 @@ try {
         "switch-dev-branch" { Switch-DevBranch }
         "list-dev-branches" { List-DevBranches }
     }
+    Write-RunStatus -Status "succeeded" -ExitCode 0
 } catch {
-    [Console]::Error.WriteLine($_.Exception.Message)
+    $errorMessage = $_.Exception.Message
+    try {
+        Write-RunStatus -Status "failed" -ExitCode 1 -ErrorMessage $errorMessage
+    } catch {
+        [Console]::Error.WriteLine("Failed to write run status: $($_.Exception.Message)")
+    }
+    [Console]::Error.WriteLine($errorMessage)
+    if ($PauseOnFailure) {
+        Write-Host ""
+        try {
+            [void](Read-Host "ITL helper failed. Press Enter to close this window")
+        } catch {
+            Write-Host "ITL helper failed; unable to pause for input."
+        }
+    }
     exit 1
 }

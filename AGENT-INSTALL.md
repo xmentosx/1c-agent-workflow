@@ -6,7 +6,7 @@ This public file is the bootstrap contract for agents. A developer can say:
 Initialize a 1C agent project using this file: https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTALL.md
 ```
 
-The agent must read this file, install the shared workflow files into the target project, then run the PowerShell helper script wizard. The wizard collects missing inputs, writes local settings, and runs the project initialization lifecycle.
+The agent must read this file, install the shared workflow files into the target project, then run the monitored PowerShell helper script wizard. The wizard collects missing inputs, writes local settings, writes run status/log files, and runs the project initialization lifecycle.
 
 Canonical bootstrap source:
 
@@ -30,13 +30,15 @@ Do not rely on Codex-only custom prompts for this workflow. They are local to on
 
 ## Agent Input Collection
 
-Prefer the PowerShell helper script wizard for initialization. The wizard collects local setup values, writes `.dev.env`, ensures `.agent-1c/project.json` exists, and then runs the lifecycle. In Kilo Code, the direct `/itl-init-project` wrapper must run this helper directly and must not expand initialization into Kilo Questions before the first helper attempt. Use `-InitMode configured` only when `.agent-1c/project.json` and `.dev.env` are already prepared.
+Prefer the monitored PowerShell helper script wizard for initialization. The wizard collects local setup values, writes `.dev.env`, ensures `.agent-1c/project.json` exists, and then runs the lifecycle. In Kilo Code, the direct `/itl-init-project` wrapper must run this monitored helper directly and must not expand initialization into Kilo Questions before the first helper attempt. Use `-InitMode configured` only when `.agent-1c/project.json` and `.dev.env` are already prepared.
 
 Default initialization command:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode wizard
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard
 ```
+
+The monitored launcher opens the wizard in an external PowerShell window and writes `.agent-1c/runs/<run>/status.json` plus `console.log`, so the agent can detect completion without waiting for the developer to close the window manually.
 
 For non-interactive automation, write a JSON answers file and run:
 
@@ -44,7 +46,7 @@ For non-interactive automation, write a JSON answers file and run:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode json -InitAnswersPath <answers.json>
 ```
 
-If the wizard fails because terminal input is unavailable, do not collect the initialization questionnaire in chat and do not continue the lifecycle manually. Open or suggest an interactive PowerShell window with the same wizard command, or use JSON mode only when the developer explicitly requested non-interactive initialization or an answers file already exists.
+If the wizard fails because terminal input is unavailable, do not collect the initialization questionnaire in chat and do not continue the lifecycle manually. Run the monitored wizard command above, or use JSON mode only when the developer explicitly requested non-interactive initialization or an answers file already exists.
 
 The agent should ask setup questions itself only when preparing a JSON answers file. Manual collection is not a fallback for unavailable interactive terminal input.
 
@@ -228,13 +230,13 @@ If the installer asks which tools to configure, choose the current agent surface
 
 ## Run Initial Lifecycle
 
-After installing the workflow files, run the script wizard:
+After installing the workflow files, run the monitored script wizard:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode wizard
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard
 ```
 
-The wizard collects setup values, writes `.dev.env` and `.agent-1c/project.json`, and then performs:
+The wizard opens in an external PowerShell window, writes `.agent-1c/runs/<run>/status.json` plus `console.log`, collects setup values, writes `.dev.env` and `.agent-1c/project.json`, and then performs:
 
 1. Required software check with install suggestions.
 2. Git initialization when `.git` is absent.
