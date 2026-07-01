@@ -30,7 +30,7 @@ Do not rely on Codex-only custom prompts for this workflow. They are local to on
 
 ## Agent Input Collection
 
-Prefer the PowerShell helper script wizard for initialization. The wizard collects local setup values, writes `.dev.env`, ensures `.agent-1c/project.json` exists, and then runs the lifecycle. Use `-InitMode configured` only when `.agent-1c/project.json` and `.dev.env` are already prepared.
+Prefer the PowerShell helper script wizard for initialization. The wizard collects local setup values, writes `.dev.env`, ensures `.agent-1c/project.json` exists, and then runs the lifecycle. In Kilo Code, the `/itl-init-project` wrapper must run this helper directly and must not expand initialization into Kilo Questions before the first helper attempt. Use `-InitMode configured` only when `.agent-1c/project.json` and `.dev.env` are already prepared.
 
 Default initialization command:
 

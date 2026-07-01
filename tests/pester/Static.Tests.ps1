@@ -67,6 +67,16 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "keeps the Kilo init command on the helper wizard path" {
+        $wrapperPath = Join-Path $RepoRoot ".kilo\commands\itl-init-project.md"
+        (Test-Path -LiteralPath $wrapperPath -PathType Leaf) | Should -Be $true
+        $text = Get-Content -Encoding UTF8 -Raw $wrapperPath
+        $text | Should -Match ([regex]::Escape(".\.agents\skills\1c-workflow\scripts\agent-1c.ps1"))
+        $text | Should -Match "-Action\s+init-project"
+        $text | Should -Match "-InitMode\s+wizard"
+        $text | Should -Match "Do not collect the initialization questionnaire"
+    }
+
     It "ignores local runtime branch state in all gitignore surfaces" {
         $requiredPath = ".agent-1c/dev-branches/"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))

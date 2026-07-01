@@ -21,7 +21,7 @@ Available 1C workflow actions:
 11. Switch: show/open a saved development branch worktree or switch a legacy branch.
 ```
 
-For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request.
+For Kilo Code, project slash wrappers expose the short command surface: `/itl-init-project`, `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request.
 
 For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
@@ -265,7 +265,7 @@ Goal: install a local Apache/httpd for 1C web publication when the developer ena
 
 Goal: create the baseline project state.
 
-1. Prefer the helper script wizard: `agent-1c.ps1 -Action init-project -InitMode wizard`.
+1. First run the helper script wizard: `agent-1c.ps1 -Action init-project -InitMode wizard`. Do not collect the initialization questionnaire in chat or Kilo Questions before this first helper attempt.
 2. The wizard shows the current working directory as project root and confirms the developer wants to initialize there.
 3. The wizard collects missing parameters. Do not ask for `devBranchInfoBaseRoot` during normal initialization; use `.agent-1c/infobases/dev-branches`.
    - For the platform path, first offer discovered installed 1C versions; do not make the developer type `C:\Program Files\1cv8\...\bin\1cv8.exe` when it can be selected.

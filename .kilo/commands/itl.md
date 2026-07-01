@@ -6,6 +6,7 @@ agent: code
 Show this short ITL menu:
 
 ```text
+/itl-init-project                Initialize/bootstrap the current 1C project.
 /itl-new-config-branch <name>     Create a configuration development branch worktree.
 /itl-new-extension-branch <name>  Create an extension development branch worktree.
 /itl-status                       Show branch, infobase, and verification status.
