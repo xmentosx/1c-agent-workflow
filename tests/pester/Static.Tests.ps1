@@ -179,6 +179,37 @@ Describe "1C agent workflow static checks" {
         $defaultArgsMatch.Groups["args"].Value | Should -Not -Match "PauseOnFailure"
     }
 
+    It "suppresses PowerShell progress output in helper entrypoints" {
+        $HelperText | Should -Match '\$ProgressPreference\s*=\s*"SilentlyContinue"'
+        $LauncherText | Should -Match '\$ProgressPreference\s*=\s*"SilentlyContinue"'
+    }
+
+    It "documents init launcher timeout and preflight guardrails" {
+        $docPaths = @(
+            "AGENT-INSTALL.md",
+            ".agents\skills\1c-workflow\SKILL.md",
+            ".agents\skills\1c-workflow\references\workflow.md",
+            ".kilo\commands\itl-init-project.md"
+        ) | ForEach-Object { Join-Path $RepoRoot $_ }
+
+        foreach ($path in $docPaths) {
+            $text = Get-Content -Encoding UTF8 -Raw $path
+            $text | Should -Match "Test-Path"
+            $text | Should -Match "CLIXML"
+            $text | Should -Match "positive long timeout"
+            $text | Should -Match "timeout: 0"
+        }
+
+        $combinedText = ($docPaths | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_ }) -join [Environment]::NewLine
+        $combinedText | Should -Match "launcher validates the helper path"
+        $combinedText | Should -Not -Match "(?i)(use|set)\s+`?timeout:\s*0"
+    }
+
+    It "keeps helper path validation inside the monitored launcher" {
+        $LauncherText | Should -Match "Helper script was not found"
+        $LauncherText | Should -Match ([regex]::Escape('Test-Path -LiteralPath $helperFull'))
+    }
+
     It "warns clearly when source repository sync is disabled" {
         $HelperText | Should -Match "WARNING: no repository update was performed; master dump uses current source infobase state"
     }

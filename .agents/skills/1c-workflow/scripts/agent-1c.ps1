@@ -31,6 +31,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
 $script:ConsoleOutputEncoding = New-Object System.Text.UTF8Encoding $false
 [Console]::OutputEncoding = $script:ConsoleOutputEncoding
 $OutputEncoding = $script:ConsoleOutputEncoding

@@ -42,6 +42,8 @@ The monitored launcher opens the wizard in an external PowerShell window and wri
 
 Agents must run this command in the foreground and wait for it to exit. Do not wrap it in a background PowerShell process, do not keep the launched PowerShell session open after the script exits, and do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly as the default agent path.
 
+Do not run a separate `Test-Path` preflight before this launcher. The launcher validates the helper path itself and reports a clear error if it is missing. Raw PowerShell probes can emit serialized `CLIXML` progress records such as module preparation messages; those records are not the result of the check. If the agent shell tool accepts a timeout, use a positive long timeout such as `1800000` ms for this interactive wizard; never use `timeout: 0` or an infinite timeout sentinel.
+
 Use `run-agent-1c-window.ps1 -KeepWindowOnFailure -- -Action init-project -InitMode wizard` only for manual debugging when the developer explicitly wants the external window to stay open after a failure.
 
 For non-interactive automation, write a JSON answers file and run:
