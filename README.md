@@ -82,9 +82,6 @@ Vanessa Automation устанавливается локально в `.agent-1c
 /itl                              Показать короткое меню.
 /itl-new-config-branch <name>     Создать worktree-ветку разработки конфигурации.
 /itl-new-extension-branch <name>  Создать worktree-ветку разработки расширения.
-/itl-set-dev-branch-extension <name>
-                                  Задать имя расширения для текущей extension-ветки.
-/itl-dump-dev-branch-extension    Выгрузить файлы расширения из базы текущей ветки.
 /itl-status                       Показать текущую ветку, базу и статус проверки.
 /itl-update-base                  Обновить базу текущей ветки из файлов Git-ветки.
 /itl-verify                       Обновить базу ветки и запустить Vanessa Automation.

@@ -8,9 +8,6 @@ Show this short ITL menu:
 ```text
 /itl-new-config-branch <name>     Create a configuration development branch worktree.
 /itl-new-extension-branch <name>  Create an extension development branch worktree.
-/itl-set-dev-branch-extension <name>
-                                  Set the extension name for the current extension branch.
-/itl-dump-dev-branch-extension    Dump extension files from the current branch infobase.
 /itl-status                       Show branch, infobase, and verification status.
 /itl-update-base                  Update the current branch infobase from branch files.
 /itl-verify                       Update the branch base, then run Vanessa tests.
