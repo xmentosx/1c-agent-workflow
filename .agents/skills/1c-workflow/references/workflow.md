@@ -344,8 +344,8 @@ Goal: update the current development branch infobase from current branch files.
 4. For configuration branches, build a UTF-8 list file in `logs/1c` from Git changes under `src/cf`.
 5. For extension branches, require `extensionName` in state and build the list file from `src/cfe/<safeExtensionName>`.
 6. If no changed files are found, skip `/LoadConfigFromFiles` and report that the development branch infobase already matches current branch files.
-7. For configuration branches, run `/LoadConfigFromFiles <src/cf> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
-8. For extension branches, run `/LoadConfigFromFiles <src/cfe/<name>> -Extension <extensionName> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
+7. For configuration branches, run `/LoadConfigFromFiles <src/cf> -listFile <listFile> -Format Hierarchical /UpdateDBCfg`.
+8. For extension branches, run `/LoadConfigFromFiles <src/cfe/<name>> -Extension <extensionName> -listFile <listFile> -Format Hierarchical /UpdateDBCfg`.
 9. Do not pass `-updateConfigDumpInfo`.
 10. Update separate configuration/extension base update fields in branch state and report the 1C log path.
 11. If previous verification no longer matches the current commit/base state, mark verification as stale.

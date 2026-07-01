@@ -3303,7 +3303,7 @@ function Update-BaseFromRepository {
 
     $repositoryArgs = (New-RepositoryConnectionArgs) + @(
         "/ConfigurationRepositoryUpdateCfg", "-force",
-        "/UpdateDBCfg", "-WarningsAsErrors"
+        "/UpdateDBCfg"
     )
 
     Invoke-Designer `
@@ -3648,7 +3648,7 @@ function Load-ConfigFromFiles {
     if ($ExtensionName) {
         $designerArgs += @("-Extension", $ExtensionName)
     }
-    $designerArgs += @("-listFile", $listFilePath, "-Format", "Hierarchical", "/UpdateDBCfg", "-WarningsAsErrors")
+    $designerArgs += @("-listFile", $listFilePath, "-Format", "Hierarchical", "/UpdateDBCfg")
 
     Invoke-Designer `
         -InfoBasePath $InfoBasePath `

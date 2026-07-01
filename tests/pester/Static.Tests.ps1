@@ -13,6 +13,11 @@ Describe "1C agent workflow static checks" {
         @($errors).Count | Should -Be 0
     }
 
+    It "does not promote 1C Designer warnings to errors" {
+        $flag = "-Warnings" + "AsErrors"
+        $HelperText | Should -Not -Match ([regex]::Escape($flag))
+    }
+
     It "keeps Markdown files valid UTF-8 without mojibake markers" {
         $strictUtf8 = New-Object System.Text.UTF8Encoding $false, $true
         $mojibakePattern = "Рџ|Рђ|Р’|Рљ|Рњ|Рќ|Рћ|РЎ|Рў|РЈ|РЅРµС‚|СЂ|СЃ|С‚|Р°|Рµ|Рё|Рѕ"
