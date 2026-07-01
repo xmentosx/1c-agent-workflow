@@ -66,7 +66,8 @@ Required for initial project setup:
 
 - Current working directory is the project root. Show its absolute path and ask the developer to confirm initialization in this folder.
 - Current agent target. Do not ask the developer to choose Codex/Kilo; use the agent surface that is running this bootstrap. If it cannot be detected, use `codex`.
-- Directory for development branch infobase copies: do not ask during normal initialization. Use `.agent-1c/infobases/dev-branches` inside the project and ensure `.agent-1c/infobases/` is ignored by Git. Ask only if the developer explicitly wants a custom location.
+- Directory for development branch infobase copies: do not ask during normal initialization. Use `.agent-1c/infobases/dev-branches` inside the active branch worktree and ensure `.agent-1c/infobases/` is ignored by Git. Ask only if the developer explicitly wants a custom location.
+- Directory for development branch Git worktrees: do not ask during normal initialization. By default, create sibling worktrees under `<project-folder>-worktrees/<branch>`. Use `DEV_BRANCH_WORKTREE_ROOT` or `devBranchWorktreeRoot` only as an explicit override.
 - Development branch infobase copies must be registered automatically in the user's 1C launcher list `%APPDATA%\1C\1CEStart\ibases.v8i` under `/ITL/<project-root-name>`. Write that file as UTF-8 with BOM and create a timestamped backup before changing it.
 - 1C platform version/path. Before asking for a manual path, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`. Either folder may be absent; treat missing folders as normal and skip them without error. If versions are found, ask the developer to choose one of them and store the selected `...\bin\1cv8.exe` path. Do not offer the common root `C:\Program Files\1cv8` as a platform version. Ask for a custom full path only when no installed version is found or the developer chooses manual input.
 - Apache web-client testing. Ask only whether new development branch infobases should be published to Apache by default. Store `WEB_PUBLISH_BY_DEFAULT=true|false` in local `.dev.env`, not in committed `project.json`. If the answer is no, do not ask Apache paths. If the answer is yes, run `detect-apache`, save the detected local values to `.dev.env`, and do not ask the developer for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf`. If Apache is not detected, ask for explicit permission to install it automatically; after permission, run `install-apache`, then rerun `detect-apache`/`check-tools`.
@@ -97,6 +98,7 @@ Required for development branch setup:
 
 - Development branch name.
 - Git branch if not `itldev/<safe-dev-branch-name>`.
+- Development branch worktree path if not derived from `DEV_BRANCH_WORKTREE_ROOT`.
 - Development branch infobase path if not derived from `DEV_BRANCH_INFOBASE_ROOT`.
 - Whether to publish to Apache only when the project was not configured during initialization or the developer wants a one-off override.
 - If publishing is requested and Apache settings are missing, run `detect-apache`. If Apache is missing, ask whether to run `install-apache`; otherwise do not ask for Apache paths in the ordinary workflow.
@@ -108,6 +110,7 @@ Encoding rules:
 - Create and update `.dev.env`, `.agent-1c/*.json`, and `.agent-1c/dev-branches/*.json` as UTF-8.
 - Preserve developer input exactly, including Cyrillic usernames and paths such as `D:\Git\PM5 КОРП 4`.
 - Do not recode values through OEM/ANSI console encodings before writing them to files.
+- Treat `.agent-1c/dev-branches/*.json` as local runtime state. It is ignored by Git because it contains local paths, worktree paths, launcher metadata, verification status, and result paths.
 
 ## Install Files Into Target Project
 
@@ -193,6 +196,8 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 
 `install-vanessa-automation` downloads `vanessa-automation-single.*.zip` from the official `Pr-Mex/vanessa-automation` GitHub release, logs SHA256, unpacks the EPF under `.agent-1c/tools/vanessa-automation`, creates `tests/features` and `build/test-results/vanessa`, and saves `VANESSA_*` paths to `.dev.env`.
 
+The current workflow intentionally uses the latest available `ai_rules_1c` and Vanessa Automation by default. A stricter industrial setup should add a lock file with exact `ai_rules_1c` commit/tag, Vanessa version, and expected SHA256, but this package does not enforce that yet.
+
 ## Install ai_rules_1c
 
 After the first source infobase sync and configuration dump, install project rules from:
@@ -259,6 +264,8 @@ For Kilo Code, show only the short command surface:
 /itl
 /itl-new-config-branch <branch name>
 /itl-new-extension-branch <branch name>
+/itl-set-dev-branch-extension <extension name>
+/itl-dump-dev-branch-extension
 /itl-status
 /itl-update-base
 /itl-verify
@@ -267,6 +274,8 @@ For Kilo Code, show only the short command surface:
 /itl-close
 /itl-switch <master|branch name>
 ```
+
+New branch commands create a sibling Git worktree by default and leave the current project folder on `master`. After creation, report the printed worktree path and tell the developer to open a separate Codex/Kilo/IDE window there. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
 
 Typing `/` shows available project commands.
 
@@ -300,7 +309,9 @@ After each lifecycle action, report:
 - Git branch.
 - Relevant commit hash.
 - Source or development branch infobase path.
+- Development branch worktree path when created or selected.
 - CF/CFE result path when exported.
+- Result manifest path when exported.
 - Latest 1C log path.
 - Publication URL when created.
 - Any open risks or manual follow-up.

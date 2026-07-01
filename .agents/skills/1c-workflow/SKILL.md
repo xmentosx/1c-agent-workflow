@@ -61,7 +61,9 @@ Use fixed project defaults: `master` is the main branch and `src/cf` is the conf
 
 Treat `src/cf` as tracked project content. Source dump commits must include only `src/cf` and must verify `src/cf/ConfigDumpInfo.xml` is present in `HEAD` after initial project creation.
 
-Use `.agent-1c/infobases/dev-branches` as the default development branch infobase copy root inside the project. Do not ask for this path during normal initialization; ensure `.agent-1c/infobases/` is ignored by Git.
+Use sibling Git worktrees for new development branches by default. The main project folder stays on `master`; each active development line gets its own worktree under `<project-folder>-worktrees/<branch>` unless `DEV_BRANCH_WORKTREE_ROOT`, `devBranchWorktreeRoot`, or an explicit `-DevBranchWorktreePath` overrides it. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
+
+Use `.agent-1c/infobases/dev-branches` as the default development branch infobase copy root inside the active branch worktree. Do not ask for this path during normal initialization; ensure `.agent-1c/infobases/` is ignored by Git.
 
 Before asking for the 1C platform path, scan existing standard installation folders for installed versions and offer the discovered version `bin`/`bin\1cv8.exe` paths as choices. Missing `C:\Program Files\1cv8` or `C:\Program Files (x86)\1cv8` folders are normal; skip them without error. Do not offer the common `C:\Program Files\1cv8` root as a version. Ask for a custom path only when no version is found or the developer chooses manual input.
 
@@ -73,7 +75,7 @@ Use the current working directory as the project root. During initialization, sh
 
 Do not ask whether to configure Codex or Kilo Code. Use the agent surface currently running the workflow; if it cannot be detected, use Codex as the fallback.
 
-For `UPDATE_DEV_BRANCH_BASE`, `REFRESH_DEV_BRANCH`, `EXPORT_DEV_BRANCH_RESULT`, `DUMP_DEV_BRANCH_EXTENSION`, and `CLOSE_DEV_BRANCH`, infer the development branch from the current `itldev/<name>` branch. Only ask for or pass `DevBranchName` when the current branch is not a development branch and the action cannot be inferred.
+For `UPDATE_DEV_BRANCH_BASE`, `REFRESH_DEV_BRANCH`, `EXPORT_DEV_BRANCH_RESULT`, `DUMP_DEV_BRANCH_EXTENSION`, and `CLOSE_DEV_BRANCH`, infer the development branch from the current `itldev/<name>` branch. In worktree mode these actions must run from the branch worktree, not from the main `master` folder. Only ask for or pass `DevBranchName` when the current branch is not a development branch and the action cannot be inferred.
 
 For configuration branches, update the development branch infobase with a generated `-listFile` of changed files under `src/cf`. For extension branches, update the extension from `src/cfe/<safeExtensionName>` with `-Extension <extensionName>`. Do not full-load the entire dump unless the user explicitly asks for a manual recovery path.
 
@@ -87,13 +89,17 @@ Never store passwords in Git, `AGENTS.md`, `USER-RULES.md`, or committed JSON. S
 
 Read and write `.dev.env`, `.agent-1c/project.json`, `.agent-1c/tools.json`, and development branch state JSON as UTF-8. Preserve Cyrillic paths and usernames exactly.
 
+Treat `.agent-1c/dev-branches/*.json` as local runtime state. It is ignored by Git because it contains local paths, worktree paths, 1C launcher metadata, verification status, result paths, and unverified override history.
+
 Do not edit installer-managed `AGENTS.md` directly. Put project-specific workflow notes in `USER-RULES.md` or `.agent-1c/`.
 
-Before switching branches, copying bases, dumping configuration files, or running 1C Designer, check the working tree and stop on unexpected uncommitted changes.
+Before creating worktrees, legacy branch switching, copying bases, dumping configuration files, or running 1C Designer, check the working tree and stop on unexpected uncommitted changes.
 
 For file infobases, verify that the directory exists and contains `1Cv8.1CD` before launching 1C Designer. Do not let 1C open the interactive "create new infobase" dialog during this workflow.
 
 All development branch changes load into the copied development branch infobase. Never load them directly into the source infobase.
+
+For `/itl-result` and `/itl-close`, create `<artifact>.manifest.json` next to the exported CF/CFE. The manifest must include schema version, artifact SHA256, operation, branch metadata, master/development commits, verification status/report/log, latest 1C log path, publication URL, manual import note, and whether an unverified override was used.
 
 During initialization, ask whether the source infobase is connected to a 1C configuration repository and store the answer as `SOURCE_USES_REPOSITORY=true|false`. If it is not connected, do not ask for repository path/user/password.
 
@@ -109,6 +115,8 @@ Run 1C Designer operations strictly sequentially. The helper must wait for each 
 
 When launching native Windows executables such as `1cv8.exe` through `Start-Process`, pass `-ArgumentList` as one joined and correctly quoted native command-line string, never as a PowerShell array. Paths with spaces break when native quoting is skipped and can make 1C Designer exit with code 1 or hang behind `-WindowStyle Hidden`. Prefer the helper's `Join-NativeCommandLineArguments`/`Invoke-NativeProcessAndWait` pattern, or the `&` call operator for simple calls.
 
+Record current industrial compromises without enforcing them: ideal result/close gating would require fresh passed Vanessa, review, and test report, but the current workflow only warns and requires explicit unverified confirmation; ideal dependency management would use a lock file for `ai_rules_1c`, Vanessa Automation, and SHA256 hashes, but the current workflow uses latest versions and logs archive SHA256 where downloads happen; parallel independent development lines should use separate `itldev/*` branches/worktrees, while one development branch may remain long-lived and contain several sequential tasks.
+
 ## Script Usage
 
 From the project root:
@@ -119,6 +127,8 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-vanessa-automation
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts"
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts" -OfferOpenAgent
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts" -UseCurrentWorktree
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-extension-dev-branch -DevBranchName "bonus-extension"
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action set-dev-branch-extension -ExtensionName "BonusExtension"
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action dump-dev-branch-extension

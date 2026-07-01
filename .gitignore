@@ -8,4 +8,5 @@ build/
 logs/
 tmp/
 temp/
+.agent-1c/dev-branches/
 .agent-1c/tools/vanessa-automation/

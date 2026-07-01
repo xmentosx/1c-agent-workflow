@@ -14,8 +14,8 @@ Do not open the full workflow references before normal lifecycle execution. Open
 ## Intent Map
 
 - show ITL status: `status`
-- create new configuration development branch: `new-dev-branch`
-- create new extension development branch: `new-extension-dev-branch`
+- create new configuration development branch worktree: `new-dev-branch`
+- create new extension development branch worktree: `new-extension-dev-branch`
 - update current development branch infobase from branch files: `update-dev-branch-base`
 - verify current branch through update plus Vanessa tests: `verify-dev-branch`
 - refresh current development branch from master/source: `refresh-dev-branch`
@@ -39,6 +39,8 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-extension-dev-branch -DevBranchName "<dev-branch-name>"
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-dev-branch -DevBranchName "<dev-branch-name>"
 ```
+
+New branch commands create a sibling Git worktree by default. Report the printed worktree path and tell the developer to open a separate Codex/Kilo/IDE window there. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
 
 For `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`, and `close-dev-branch`, do not ask for a branch name. The helper infers it from the current `itldev/<name>` Git branch.
 

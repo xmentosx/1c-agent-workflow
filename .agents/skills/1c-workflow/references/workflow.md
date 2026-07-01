@@ -8,18 +8,20 @@ When the user asks for help or the requested action is unclear, show this menu:
 
 ```text
 Available 1C workflow actions:
-1. New configuration branch: create an itldev/<name> branch for configuration changes.
-2. New extension branch: create an itldev/<name> branch for extension development; set the extension name later.
-3. Status: show current Git branch, active development branch, infobase, publication URL, verification status, and latest result.
-4. Update base: update configuration files or extension files in the branch infobase.
-5. Verify: update the branch base, then run Vanessa Automation scenarios.
-6. Refresh: sync master from storage or the current source infobase state, merge master into the branch, and update the branch base configuration.
-7. Result: export CF for configuration branches or CFE for extension branches.
-8. Close: refresh master, merge master into the branch, export final CF/CFE result, mark the branch closed, then switch to master.
-9. Switch: switch to master or a saved development branch.
+1. New configuration branch: create an itldev/<name> branch worktree for configuration changes.
+2. New extension branch: create an itldev/<name> branch worktree for extension development; set the extension name later.
+3. Set extension name: remember the extension name for the current extension branch.
+4. Dump extension files: export extension files from the current branch infobase.
+5. Status: show current Git branch, active development branch, infobase, publication URL, verification status, and latest result.
+6. Update base: update configuration files or extension files in the branch infobase.
+7. Verify: update the branch base, then run Vanessa Automation scenarios.
+8. Refresh: sync master from storage or the current source infobase state, merge master into the branch, and update the branch base configuration.
+9. Result: export CF for configuration branches or CFE for extension branches.
+10. Close: refresh master, merge master into the branch, export final CF/CFE result, and mark the branch closed.
+11. Switch: show/open a saved development branch worktree or switch a legacy branch.
 ```
 
-For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request.
+For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request.
 
 For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
@@ -29,7 +31,7 @@ Create and maintain:
 
 - `.agent-1c/project.json`: non-secret project settings.
 - `.agent-1c/tools.json`: configurable software checks and install suggestions.
-- `.agent-1c/dev-branches/<safe-dev-branch-name>.json`: development branch state.
+- `.agent-1c/dev-branches/<safe-dev-branch-name>.json`: local development branch runtime state; ignored by Git.
 - `.dev.env`: local secrets and machine-specific values; never commit it.
 - `.agents/skills/1c-workflow/`: shared detailed Agent Skill used by Codex and Kilo Code.
 - `.agents/skills/1c-workflow-fast/`: compact Agent Skill for routine helper-first lifecycle actions.
@@ -37,7 +39,13 @@ Create and maintain:
 
 Never store passwords in committed files.
 
-All workflow state files and `.dev.env` must be UTF-8. Preserve Cyrillic usernames, infobase paths, and repository paths exactly as the developer entered them.
+All workflow state files and `.dev.env` must be UTF-8. Preserve Cyrillic usernames, infobase paths, and repository paths exactly as the developer entered them. `.agent-1c/dev-branches/*.json` is local state because it contains machine-specific paths, worktree paths, launcher metadata, verification status, result paths, and unverified override history.
+
+Current policy notes:
+
+- Ideal industrial gating would forbid result export and branch close without fresh passed Vanessa verification, code review, and a test report. The current workflow only warns and requires explicit unverified confirmation.
+- Ideal dependency management would use a lock file for `ai_rules_1c`, Vanessa Automation, and archive hashes. The current workflow uses the latest available versions and logs SHA256 for downloaded archives.
+- Parallel independent development lines should use separate `itldev/*` branches/worktrees. One development branch may remain long-lived and contain several sequential tasks.
 
 ## Project Config Shape
 
@@ -61,6 +69,7 @@ Use this as `.agent-1c/project.json`:
   "sourceInfoBaseName": "",
   "repositoryPath": "",
   "devBranchInfoBaseRoot": ".agent-1c/infobases/dev-branches",
+  "devBranchWorktreeRoot": "",
   "serverBaseCopyScript": "",
   "aiRules": {
     "repo": "https://github.com/comol/ai_rules_1c.git",
@@ -102,6 +111,8 @@ REPOSITORY_USER=
 REPOSITORY_PASSWORD=
 # Optional override. By default development branch infobase copies are stored under .agent-1c\infobases\dev-branches and ignored by Git.
 DEV_BRANCH_INFOBASE_ROOT=
+# Optional override. By default development branch Git worktrees are created next to the project as <project-folder>-worktrees\<branch>.
+DEV_BRANCH_WORKTREE_ROOT=
 WEB_PUBLISH_BY_DEFAULT=false
 # Optional override. By default webinst.exe is resolved next to PLATFORM_PATH.
 WEBINST_PATH=
@@ -144,7 +155,7 @@ Interactive question style:
 - Never ask for a `KEY=value` block.
 - Never require variable names in grouped answers.
 - Never show one large setup question that lists all missing project variables; grouping is allowed only for the source infobase and configuration repository values.
-- Do not make the developer type variable names such as `PLATFORM_PATH`, `DEV_BRANCH_INFOBASE_ROOT`, `SOURCE_INFOBASE_PATH`, `SOURCE_SERVER_NAME`, or `REPOSITORY_PATH`.
+- Do not make the developer type variable names such as `PLATFORM_PATH`, `DEV_BRANCH_INFOBASE_ROOT`, `DEV_BRANCH_WORKTREE_ROOT`, `SOURCE_INFOBASE_PATH`, `SOURCE_SERVER_NAME`, or `REPOSITORY_PATH`.
 - Use human labels in questions, for example: "Выберите версию платформы 1С", "Введите адрес хранилища конфигурации".
 - For `file/server` choices, ask a normal choice question first; then ask only the grouped values relevant to that choice.
 - In password lines of the grouped questionnaire, exact values `нет` and `-` mean an empty password. Compare these markers case-insensitively after trimming whitespace. Do not store the marker text as a password.
@@ -162,7 +173,8 @@ For project initialization:
 - For a server infobase without storage, ask exactly 4 values: 1C server name, source infobase name, infobase user, infobase password or `нет`/`-`.
 - For a server infobase, build the connection string as `Srvr="<server>";Ref="<base>";`.
 - Validate the collected questionnaire value count before running 1C. If only one value is received from an attempted multi-line answer or the count is otherwise wrong, repeat the collection as a grouped prompt or as sequential single-value questions. After parsing, summarize the values without passwords and ask for confirmation.
-- Directory for development branch infobase copies: do not ask by default. Use `.agent-1c/infobases/dev-branches` inside the project and ignore `.agent-1c/infobases/` in Git. Ask only if the developer explicitly wants a custom location.
+- Directory for development branch worktrees: do not ask by default. Use a sibling `<project-folder>-worktrees/<branch>` folder. Ask only if the developer explicitly wants a custom location.
+- Directory for development branch infobase copies: do not ask by default. Use `.agent-1c/infobases/dev-branches` inside the active branch worktree and ignore `.agent-1c/infobases/` in Git. Ask only if the developer explicitly wants a custom location.
 - Apache web-client testing: ask only whether new development branch infobases should be published to Apache by default. Store the answer locally in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`, never in committed project JSON.
 - If Apache publishing is enabled, run `detect-apache` and save detected local values to `.dev.env`. Do not ask for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf` in the ordinary initialization flow. If Apache is not detected, ask whether to install it automatically. On "yes", run `install-apache`, then rerun `detect-apache`/`check-tools`; on "no", offer only to disable publication or stop initialization until Apache is configured manually.
 - Ensure Vanessa Automation is installed for executable branch tests. If no EPF is found, ask whether to install it automatically. On "yes", run `install-vanessa-automation`; on "no", stop initialization with the manual command.
@@ -172,6 +184,7 @@ For creating a development branch:
 
 - Development branch name.
 - Git branch if not `itldev/<safe-dev-branch-name>`.
+- Development branch worktree path if not derived from `devBranchWorktreeRoot`.
 - Development branch infobase path if not derived from `devBranchInfoBaseRoot`.
 - Whether to publish to Apache only when the project was not configured during initialization or the developer wants a one-off override.
 - If publishing is requested and Apache settings are missing, run `detect-apache`; if Apache is missing, ask whether to run `install-apache`; do not ask for Apache paths in the ordinary workflow.
@@ -191,10 +204,10 @@ Before destructive or stateful actions:
 4. Use default `devBranchInfoBaseRoot` `.agent-1c/infobases/dev-branches` when no override is configured.
 5. Verify the source file infobase has `1Cv8.1CD` when `infoBaseKind` is `file`; stop before launching 1C Designer if the file is missing.
 6. Verify source server name and infobase name are set when `infoBaseKind` is `server`, unless legacy `sourceInfoBasePath` is explicitly configured.
-7. Verify the Git worktree is clean before switching branches.
+7. Verify the Git worktree is clean before creating worktrees, legacy branch switching, refresh, result export, or close.
 8. Verify `src/cf` resolves inside the project root before dumping config files.
 9. Create `logsPath`, `artifactsPath`, and `.agent-1c/dev-branches`.
-10. Ensure `.dev.env`, `*.cf`, `*.dt`, and logs are ignored by Git.
+10. Ensure `.dev.env`, `.agent-1c/dev-branches/`, `*.cf`, `*.dt`, and logs are ignored by Git.
 11. Run 1C Designer operations strictly sequentially. The helper must wait for the previous `1cv8.exe` process to exit before starting the next Designer command against the same infobase.
 12. Pass repository connection arguments on every 1C Designer launch against the source infobase only when `sourceUsesRepository=true`. Do not pass repository connection arguments in manual source mode or for development branch infobases.
 13. When launching native Windows executables such as `1cv8.exe` with `Start-Process`, pass `-ArgumentList` as one joined and correctly quoted native command-line string, never as a PowerShell array. Prefer `Join-NativeCommandLineArguments` from `agent-1c.ps1` or the `&` call operator for simple calls.
@@ -205,7 +218,8 @@ Before destructive or stateful actions:
 - If the repository has no commits yet, treat the current HEAD as an unborn branch. Set/keep HEAD on `master` without running `git checkout -b master` over an existing unborn branch.
 - Do not ask for, create, or configure a Git remote during initialization.
 - Do not pull automatically during simple branch switching.
-- Require a clean worktree before branch switching, development branch refresh, development branch result export, or development branch close.
+- Create new development branches in sibling Git worktrees by default. Use `-UseCurrentWorktree` only for the legacy single-folder checkout mode.
+- Require a clean worktree before worktree creation, legacy branch switching, development branch refresh, development branch result export, or development branch close.
 - `src/cf` is tracked project content. During source dumps, stage and commit only `src/cf`; do not include unrelated staged files in dump commits.
 - Force-add `src/cf` during source dump commits so broad ignore rules such as `src/` cannot hide the standard configuration dump.
 
@@ -278,20 +292,22 @@ Goal: create the baseline project state.
 
 ## NEW_DEV_BRANCH / NEW_EXTENSION_DEV_BRANCH
 
-Goal: create a configuration or extension development branch and isolated development branch infobase.
+Goal: create a configuration or extension development branch as an isolated worktree plus isolated development branch infobase.
 
-1. Check the Git worktree is clean.
-2. Checkout `master` and pull with `--ff-only` when a remote/upstream exists.
-3. Create `itldev/<safe-dev-branch-name>` unless the user supplied a branch.
-4. Copy the source infobase.
+1. Check the current Git worktree is clean.
+2. Checkout/sync `master` in the main project worktree and pull with `--ff-only` when a remote/upstream exists.
+3. Create `itldev/<safe-dev-branch-name>` in a sibling worktree under `<project-folder>-worktrees/<safe-dev-branch-name>` unless the user supplied a branch or worktree path.
+4. Copy `.dev.env` into the new worktree.
+5. Copy the source infobase into the new worktree.
    - File base: recursive directory copy under `devBranchInfoBaseRoot` unless a specific path is supplied.
    - Server base: run the configured `serverBaseCopyScript`; do not invent server copy commands.
-5. If `sourceUsesRepository=true`, unbind the development branch copy from 1C configuration repository storage without repository parameters. If `false`, skip unbind.
-6. Register the development branch infobase in `%APPDATA%\1C\1CEStart\ibases.v8i` under folder `/ITL/<project-root-name>`.
-7. Optionally publish the development branch copy to Apache through `webinst`.
-8. Save development branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json`, including launcher registration metadata and `devBranchKind`.
-9. Activate the development branch context in `.dev.env` for ai_rules_1c infobase-bound commands. For extension branches with no extension name yet, clear `INFOBASE_PATH` and tell the developer to run `set-dev-branch-extension` before `/update1cbase`.
-10. Report branch, development branch infobase path, launcher folder/name, and publication URL if any.
+6. If `sourceUsesRepository=true`, unbind the development branch copy from 1C configuration repository storage without repository parameters. If `false`, skip unbind.
+7. Register the development branch infobase in `%APPDATA%\1C\1CEStart\ibases.v8i` under folder `/ITL/<project-root-name>`.
+8. Optionally publish the development branch copy to Apache through `webinst`.
+9. Save development branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json` inside the worktree, including `createdWithWorktree`, `worktreePath`, `mainWorktreePath`, launcher registration metadata, and `devBranchKind`.
+10. Activate the development branch context in the worktree `.dev.env` for ai_rules_1c infobase-bound commands. For extension branches with no extension name yet, clear `INFOBASE_PATH` and tell the developer to run `set-dev-branch-extension` before `/update1cbase`.
+11. Report branch, worktree path, development branch infobase path, launcher folder/name, and publication URL if any.
+12. Print the Russian instruction that the current folder stayed on `master`, the new worktree path, and that the developer should open a separate Codex/Kilo/IDE window there. If `-OfferOpenAgent` is passed, try a best-effort open, for example via `code -n <worktree-path>`.
 
 For extension branches, do not ask for `extensionName` and do not create the extension during branch creation. The extension is created later in the copied branch infobase during development.
 
@@ -315,45 +331,47 @@ Goal: make ai_rules_1c infobase-bound commands use the current ITL development b
 3. For extension branches, require `extensionName` in state and write `EXPORT_PATH=src/cfe/<safeExtensionName>` plus `EXTENSION_NAME=<extensionName>`.
 4. Do not modify source/repository settings or credentials.
 5. Add diagnostic keys `ITL_ACTIVE_DEV_BRANCH`, `ITL_ACTIVE_DEV_BRANCH_KIND`, and `ITL_ACTIVE_CONTEXT_UPDATED_AT`.
-6. When switching to `master` or running standalone `sync-master`, clear `INFOBASE_PATH`, `INFOBASE_PUBLISH_URL`, `EXPORT_PATH`, `EXTENSION_NAME`, and active ITL diagnostics so `/update1cbase` cannot accidentally target the source base.
+6. When switching to `master`, closing a worktree branch, or running standalone `sync-master`, clear `INFOBASE_PATH`, `INFOBASE_PUBLISH_URL`, `EXPORT_PATH`, `EXTENSION_NAME`, and active ITL diagnostics so `/update1cbase` cannot accidentally target the source base.
 
 ## UPDATE_DEV_BRANCH_BASE
 
 Goal: update the current development branch infobase from current branch files.
 
 1. Find development branch state from `DevBranchName` or current branch. In normal use, do not require a name when already on an `itldev/<name>` branch.
-2. Activate the development branch context in `.dev.env`.
-3. For configuration branches, build a UTF-8 list file in `logs/1c` from Git changes under `src/cf`.
-4. For extension branches, require `extensionName` in state and build the list file from `src/cfe/<safeExtensionName>`.
-5. If no changed files are found, skip `/LoadConfigFromFiles` and report that the development branch infobase already matches current branch files.
-6. For configuration branches, run `/LoadConfigFromFiles <src/cf> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
-7. For extension branches, run `/LoadConfigFromFiles <src/cfe/<name>> -Extension <extensionName> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
-8. Do not pass `-updateConfigDumpInfo`.
-9. Update separate configuration/extension base update fields in branch state and report the 1C log path.
-10. If previous verification no longer matches the current commit/base state, mark verification as stale.
+2. For worktree-created branches, require the command to run from the branch worktree, not the main `master` folder.
+3. Activate the development branch context in `.dev.env`.
+4. For configuration branches, build a UTF-8 list file in `logs/1c` from Git changes under `src/cf`.
+5. For extension branches, require `extensionName` in state and build the list file from `src/cfe/<safeExtensionName>`.
+6. If no changed files are found, skip `/LoadConfigFromFiles` and report that the development branch infobase already matches current branch files.
+7. For configuration branches, run `/LoadConfigFromFiles <src/cf> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
+8. For extension branches, run `/LoadConfigFromFiles <src/cfe/<name>> -Extension <extensionName> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
+9. Do not pass `-updateConfigDumpInfo`.
+10. Update separate configuration/extension base update fields in branch state and report the 1C log path.
+11. If previous verification no longer matches the current commit/base state, mark verification as stale.
 
 ## STATUS
 
 Goal: show the current ITL state without changing Git or 1C.
 
 1. Show current Git branch, commit, and clean/dirty worktree state.
-2. If the current branch is `itldev/<name>`, show development branch name, kind, extension name when relevant, infobase path, publication URL, last base update, last refresh, verification status, latest report/log, and latest CF/CFE result paths.
-3. If the current branch is `master`, show that no development branch is active.
+2. If the current branch is `itldev/<name>`, show development branch name, kind, worktree path, main worktree path, extension name when relevant, infobase path, publication URL, last base update, last refresh, verification status, latest report/log, and latest CF/CFE result paths.
+3. If the current branch is `master`, show that no development branch is active and summarize active development worktrees when state files are discoverable.
 
 ## RUN_DEV_BRANCH_TESTS
 
 Goal: run executable Vanessa Automation checks against the current development branch infobase without loading configuration files again.
 
 1. Find development branch state from `DevBranchName` or current branch. In normal use, do not require a name when already on an `itldev/<name>` branch.
-2. Activate the development branch context in `.dev.env`.
-3. Require Vanessa Automation EPF. If missing, stop and tell the developer to run `install-vanessa-automation`.
-4. Use `VANESSA_FEATURES_PATH` or `tests/features` as the feature directory. Stop clearly if no `.feature` files exist.
-5. Create a run directory under `VANESSA_REPORTS_PATH` or `build/test-results/vanessa`.
-6. Generate `VAParams.json` in the run directory.
-7. Launch `1cv8.exe ENTERPRISE` against the branch infobase with `/Execute <vanessa.epf>` and `StartFeaturePlayer;VAParams=<VAParams.json>`.
-8. Do not call `/LoadConfigFromFiles`, `/update1cbase`, or `/deploy-and-test`. The branch base must already have been updated by `UPDATE_DEV_BRANCH_BASE`.
-9. Save test report paths, latest 1C log path, `lastVerificationStatus`, `lastVerifiedCommit`, `lastVerifiedAt`, `lastVerifiedReportPath`, and `lastVerificationLogPath` in development branch state.
-10. Treat the run as passed only when 1C exits successfully and Vanessa status/JUnit report contains no failures. If the status cannot be recognized, save `unknown` and stop as not passed.
+2. For worktree-created branches, require the command to run from the branch worktree.
+3. Activate the development branch context in `.dev.env`.
+4. Require Vanessa Automation EPF. If missing, stop and tell the developer to run `install-vanessa-automation`.
+5. Use `VANESSA_FEATURES_PATH` or `tests/features` as the feature directory. Stop clearly if no `.feature` files exist.
+6. Create a run directory under `VANESSA_REPORTS_PATH` or `build/test-results/vanessa`.
+7. Generate `VAParams.json` in the run directory.
+8. Launch `1cv8.exe ENTERPRISE` against the branch infobase with `/Execute <vanessa.epf>` and `StartFeaturePlayer;VAParams=<VAParams.json>`.
+9. Do not call `/LoadConfigFromFiles`, `/update1cbase`, or `/deploy-and-test`. The branch base must already have been updated by `UPDATE_DEV_BRANCH_BASE`.
+10. Save test report paths, latest 1C log path, `lastVerificationStatus`, `lastVerifiedCommit`, `lastVerifiedAt`, `lastVerifiedReportPath`, and `lastVerificationLogPath` in development branch state.
+11. Treat the run as passed only when 1C exits successfully and Vanessa status/JUnit report contains no failures. If the status cannot be recognized, save `unknown` and stop as not passed.
 
 ## VERIFY_DEV_BRANCH
 
@@ -368,56 +386,62 @@ Goal: perform the standard ITL verification cycle without a full configuration l
 Goal: update a development branch with the latest master dump without closing it.
 
 1. Find development branch state from `DevBranchName` or current branch. In normal use, do not require a name when already on an `itldev/<name>` branch.
-2. Require a clean Git worktree.
-3. Run `SYNC_MASTER`.
-4. Checkout the development branch.
-5. Merge `master` into the development branch.
-6. If conflicts occur, stop and resolve them in config files before continuing.
-7. For configuration branches, update changed merged `src/cf` files in the branch infobase.
-8. For extension branches, update only the base configuration from `src/cf`; do not update extension files during refresh.
-9. Update development branch state with refresh timestamp, config-base update metadata, and latest 1C log path.
+2. For worktree-created branches, require the command to run from the branch worktree.
+3. Require a clean Git worktree.
+4. Run `SYNC_MASTER`; when called from a dev worktree, it syncs `master` in the saved main worktree.
+5. Ensure the current worktree is on the development branch.
+6. Merge `master` into the development branch.
+7. If conflicts occur, stop and resolve them in config files before continuing.
+8. For configuration branches, update changed merged `src/cf` files in the branch infobase.
+9. For extension branches, update only the base configuration from `src/cf`; do not update extension files during refresh.
+10. Update development branch state with refresh timestamp, config-base update metadata, and latest 1C log path.
 
 ## EXPORT_DEV_BRANCH_RESULT
 
 Goal: create a CF or CFE result from the current development branch without closing it.
 
 1. Find development branch state from `DevBranchName` or current branch. In normal use, do not require a name when already on an `itldev/<name>` branch.
-2. Require a clean Git worktree.
-3. Checkout the development branch if needed.
-4. For configuration branches, update `src/cf` and export `.cf` into `artifactsPath`.
-5. For extension branches, update `src/cfe/<safeExtensionName>` with `-Extension <extensionName>` and export `.cfe` into `artifactsPath`.
-6. Do not refresh `master` or merge fresh source changes unless the user explicitly requested `REFRESH_DEV_BRANCH` first.
-7. If verification is missing, failed, stale, or unknown, warn the developer and require explicit confirmation or `-AllowUnverifiedResult` before exporting.
-8. Update development branch state with update metadata, result path, timestamp, latest 1C log path, and unverified override metadata when used.
+2. For worktree-created branches, require the command to run from the branch worktree.
+3. Require a clean Git worktree.
+4. Ensure the current worktree is on the development branch.
+5. For configuration branches, update `src/cf` and export `.cf` into `artifactsPath`.
+6. For extension branches, update `src/cfe/<safeExtensionName>` with `-Extension <extensionName>` and export `.cfe` into `artifactsPath`.
+7. Do not refresh `master` or merge fresh source changes unless the user explicitly requested `REFRESH_DEV_BRANCH` first.
+8. If verification is missing, failed, stale, or unknown, warn the developer and require explicit confirmation or `-AllowUnverifiedResult` before exporting.
+9. Create `<artifact>.manifest.json` next to the exported CF/CFE with schema version, artifact SHA256, operation, branch metadata, master/development commits, verification status/report/log, latest 1C log path, publication URL, manual import note, and unverified override flag.
+10. Update development branch state with update metadata, result path, result manifest path, timestamp, latest 1C log path, and unverified override metadata when used.
 
 ## SYNC_MASTER
 
 Goal: refresh `master` from storage or from the current source infobase state.
 
-1. Check the Git worktree is clean.
-2. Checkout `master`.
-3. Pull with `--ff-only` when a remote/upstream exists.
-4. If `sourceUsesRepository=true`, update source infobase from storage. If `false`, skip repository update and assume the developer already updated the source infobase manually when needed.
-5. Dump configuration files into `src/cf` using the same full/incremental rules as `INIT_PROJECT`.
+1. If called from a worktree-created development branch, delegate synchronization to the saved main worktree.
+2. Check the target master Git worktree is clean.
+3. Checkout `master` in the main/legacy worktree.
+4. Pull with `--ff-only` when a remote/upstream exists.
+5. If `sourceUsesRepository=true`, update source infobase from storage. If `false`, skip repository update and assume the developer already updated the source infobase manually when needed.
+6. Dump configuration files into `src/cf` using the same full/incremental rules as `INIT_PROJECT`.
    - Pass repository connection arguments only when `sourceUsesRepository=true`.
-6. Commit changes with a message that reflects repository mode or source-infobase mode.
+7. Commit changes with a message that reflects repository mode or source-infobase mode.
 
 ## CLOSE_DEV_BRANCH
 
 Goal: prepare tested current work for manual import into the source base and close the development branch.
 
 1. Confirm the developer has finished testing.
-2. Check the Git worktree is clean.
-3. Run `SYNC_MASTER`.
-4. Checkout the development branch.
-5. Merge `master` into the development branch.
-6. If conflicts occur, stop and resolve them in config files before continuing.
-7. Update merged `src/cf` files in the branch infobase. For extension branches, also update extension files from `src/cfe/<safeExtensionName>` before exporting the result.
-8. Check whether verification is still fresh after sync/merge/update. If it is missing, failed, stale, or unknown, warn the developer and require explicit confirmation or `-AllowUnverifiedClose`.
-9. Export final CF or CFE result from the development branch infobase into `artifactsPath`.
-10. Set `closedAt` in development branch state.
-11. Report branch, master commit, development branch commit, result path, latest 1C log path, publication URL, and unverified override when used.
-12. Checkout `master` before completing.
+2. For worktree-created branches, require the command to run from the branch worktree.
+3. Check the Git worktree is clean.
+4. Run `SYNC_MASTER`; when called from a dev worktree, it syncs `master` in the saved main worktree.
+5. Ensure the current worktree is on the development branch.
+6. Merge `master` into the development branch.
+7. If conflicts occur, stop and resolve them in config files before continuing.
+8. Update merged `src/cf` files in the branch infobase. For extension branches, also update extension files from `src/cfe/<safeExtensionName>` before exporting the result.
+9. Check whether verification is still fresh after sync/merge/update. If it is missing, failed, stale, or unknown, warn the developer and require explicit confirmation or `-AllowUnverifiedClose`.
+10. Export final CF or CFE result from the development branch infobase into `artifactsPath`.
+11. Create `<artifact>.manifest.json` next to the exported CF/CFE with schema version, artifact SHA256, operation, branch metadata, master/development commits, verification status/report/log, latest 1C log path, publication URL, manual import note, and unverified override flag.
+12. Set `closedAt` in development branch state.
+13. Report branch, master commit, development branch commit, result path, result manifest path, latest 1C log path, publication URL, worktree path, and unverified override when used.
+14. For worktree-created branches, clear active dev context but do not delete the worktree, copied base, or local state. For legacy branches, checkout `master` before completing.
 
 Do not load development branch changes directly into the source infobase.
 
@@ -425,31 +449,32 @@ Do not load development branch changes directly into the source infobase.
 
 Goal: show active development branches and the current development branch.
 
-1. Read `.agent-1c/dev-branches/*.json`.
+1. Read `.agent-1c/dev-branches/*.json` from the current worktree and active paths returned by `git worktree list --porcelain`.
 2. Show only development branch states without `closedAt`.
 3. Show current Git branch and current development branch; if current branch is `master`, report current development branch as `none`.
 4. Mark the development branch whose saved branch matches the current Git branch.
-5. For each active development branch, show name, branch, development branch infobase path, launcher folder/name, publication URL if any, created timestamp, last base update timestamp, and last refresh timestamp.
+5. For each active development branch, show name, branch, worktree path, main worktree path, development branch infobase path, launcher folder/name, publication URL if any, created timestamp, last base update timestamp, and last refresh timestamp.
 
 ## SWITCH_MASTER
 
-Goal: switch Git to the fixed `master` branch.
+Goal: switch Git to the fixed `master` branch in legacy mode or show the main worktree path in worktree mode.
 
 1. Require a clean Git worktree.
-2. Checkout `master`.
-3. Clear active development branch context in `.dev.env` (`INFOBASE_PATH`, `INFOBASE_PUBLISH_URL`, `EXPORT_PATH`, `EXTENSION_NAME`, and diagnostics).
-4. Report current commit.
-5. Do not pull and do not load files into 1C automatically.
+2. If the current branch state was created with a separate worktree, clear active dev context and report the saved `mainWorktreePath`; do not checkout `master` over the dev worktree.
+3. For legacy branches, checkout `master`.
+4. Clear active development branch context in `.dev.env` (`INFOBASE_PATH`, `INFOBASE_PUBLISH_URL`, `EXPORT_PATH`, `EXTENSION_NAME`, and diagnostics).
+5. Report current commit or main worktree path.
+6. Do not pull and do not load files into 1C automatically.
 
 ## SWITCH_DEV_BRANCH
 
-Goal: switch Git to a saved development branch.
+Goal: switch Git to a saved development branch in legacy mode or show/open its worktree path in worktree mode.
 
 1. Find development branch state from `DevBranchName` or current branch.
-2. Require a clean Git worktree.
-3. Checkout the saved development branch.
-4. Activate the saved development branch context in `.dev.env`. If it is an extension branch without an extension name yet, clear infobase-bound values and tell the developer to run `set-dev-branch-extension`.
-5. Report current commit, development branch infobase path, and publication URL if any.
+2. If the state was created with a separate worktree and the current folder is not that worktree, report `worktreePath`, tell the developer to open a separate Codex/Kilo/IDE window there, and optionally try best-effort open when requested.
+3. For legacy branches, require a clean Git worktree and checkout the saved development branch.
+4. Activate the saved development branch context in `.dev.env` only when running inside the branch worktree or legacy checkout. If it is an extension branch without an extension name yet, clear infobase-bound values and tell the developer to run `set-dev-branch-extension`.
+5. Report current commit, development branch infobase path, worktree path, and publication URL if any.
 6. Do not load files into 1C automatically.
 
 ## Failure Rules
@@ -460,7 +485,7 @@ Stop immediately when:
 - Required software is missing during initialization.
 - Source infobase cannot be opened.
 - Repository credentials are missing for source synchronization when `sourceUsesRepository=true`.
-- Git worktree is dirty before branch switching.
+- Git worktree is dirty before worktree creation, legacy branch switching, refresh, result, or close.
 - Development branch infobase target already exists.
 - Development branch copy cannot be unbound from storage when `sourceUsesRepository=true`.
 - 1C Designer returns a non-zero exit code.

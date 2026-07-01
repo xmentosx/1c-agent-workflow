@@ -15,6 +15,7 @@
   "sourceInfoBaseName": "",
   "repositoryPath": "",
   "devBranchInfoBaseRoot": ".agent-1c/infobases/dev-branches",
+  "devBranchWorktreeRoot": "",
   "serverBaseCopyScript": "",
   "aiRules": {
     "repo": "https://github.com/comol/ai_rules_1c.git",

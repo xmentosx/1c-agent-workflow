@@ -17,4 +17,4 @@ For any other value, run:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-dev-branch -DevBranchName "<dev-branch-name>"
 ```
 
-Require a clean Git worktree. Do not update the 1C infobase during switching.
+For worktree-created branches, the helper does not checkout over the current folder. It prints the branch worktree path; tell the developer to open a separate Codex/Kilo/IDE window there. For legacy single-folder branches, require a clean Git worktree. Do not update the 1C infobase during switching.

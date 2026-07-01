@@ -8,6 +8,7 @@ param(
     [string]$DevBranchName,
     [string]$DevBranch,
     [string]$DevBranchInfoBasePath,
+    [string]$DevBranchWorktreePath,
     [string]$ExtensionName,
     [string]$VanessaFeaturePath,
     [string]$VanessaFilterTags,
@@ -20,11 +21,16 @@ param(
     [switch]$Force,
     [switch]$SkipAiRules,
     [switch]$AllowUnverifiedResult,
-    [switch]$AllowUnverifiedClose
+    [switch]$AllowUnverifiedClose,
+    [switch]$UseCurrentWorktree,
+    [switch]$OfferOpenAgent
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$script:ConsoleOutputEncoding = New-Object System.Text.UTF8Encoding $false
+[Console]::OutputEncoding = $script:ConsoleOutputEncoding
+$OutputEncoding = $script:ConsoleOutputEncoding
 
 if (-not $ConfigPath) {
     $ConfigPath = Join-Path $ProjectRoot ".agent-1c\project.json"
@@ -249,6 +255,36 @@ function Resolve-ProjectPath {
     return [System.IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path))
 }
 
+function Set-ProjectContext {
+    param([string]$Root)
+
+    $resolvedRoot = [System.IO.Path]::GetFullPath($Root)
+    $script:ProjectRoot = $resolvedRoot
+    $script:ConfigPath = [System.IO.Path]::GetFullPath((Join-Path $resolvedRoot ".agent-1c\project.json"))
+    Import-DotEnv -Path (Join-Path $resolvedRoot ".dev.env") -Overwrite
+    Read-ProjectConfig
+}
+
+function Invoke-InProjectContext {
+    param(
+        [string]$Root,
+        [scriptblock]$ScriptBlock
+    )
+
+    $previousRoot = $script:ProjectRoot
+    $previousConfigPath = $script:ConfigPath
+    $previousConfig = $script:Config
+    try {
+        Set-ProjectContext -Root $Root
+        & $ScriptBlock
+    } finally {
+        $script:ProjectRoot = $previousRoot
+        $script:ConfigPath = $previousConfigPath
+        $script:Config = $previousConfig
+        Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+    }
+}
+
 function Test-DirectoryExists {
     param([string]$Path)
     if (-not $Path) {
@@ -303,11 +339,36 @@ function Invoke-Git {
     }
 }
 
+function Invoke-GitAt {
+    param(
+        [string]$Root,
+        [string[]]$Arguments
+    )
+
+    & git -C $Root @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Git failed: git -C `"$Root`" $($Arguments -join ' ')"
+    }
+}
+
 function Get-GitOutput {
     param([string[]]$Arguments)
     $output = & git -C $script:ProjectRoot @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "Git failed: git -C `"$script:ProjectRoot`" $($Arguments -join ' ')"
+    }
+    return $output
+}
+
+function Get-GitOutputAt {
+    param(
+        [string]$Root,
+        [string[]]$Arguments
+    )
+
+    $output = & git -C $Root @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Git failed: git -C `"$Root`" $($Arguments -join ' ')"
     }
     return $output
 }
@@ -389,6 +450,87 @@ function Assert-CleanGit {
     if (Test-GitHasChanges) {
         throw "Git worktree is not clean. Commit, stash, or discard changes before this action."
     }
+}
+
+function Get-FullPathNormalized {
+    param([string]$Path)
+
+    if (-not $Path) {
+        return ""
+    }
+    return [System.IO.Path]::GetFullPath($Path).TrimEnd("\", "/")
+}
+
+function Get-GitWorktrees {
+    $output = & git -C $script:ProjectRoot worktree list --porcelain
+    if ($LASTEXITCODE -ne 0) {
+        return @()
+    }
+
+    $items = @()
+    $current = $null
+    foreach ($line in @($output)) {
+        if (-not $line) {
+            if ($null -ne $current) {
+                $items += [pscustomobject]$current
+                $current = $null
+            }
+            continue
+        }
+
+        if ($line -like "worktree *") {
+            if ($null -ne $current) {
+                $items += [pscustomobject]$current
+            }
+            $current = [ordered]@{
+                path = $line.Substring("worktree ".Length)
+                head = ""
+                branch = ""
+                bare = $false
+                detached = $false
+            }
+            continue
+        }
+
+        if ($null -eq $current) {
+            continue
+        }
+
+        if ($line -like "HEAD *") {
+            $current.head = $line.Substring("HEAD ".Length)
+        } elseif ($line -like "branch *") {
+            $branch = $line.Substring("branch ".Length)
+            $current.branch = ($branch -replace "^refs/heads/", "")
+        } elseif ($line -eq "bare") {
+            $current.bare = $true
+        } elseif ($line -eq "detached") {
+            $current.detached = $true
+        }
+    }
+
+    if ($null -ne $current) {
+        $items += [pscustomobject]$current
+    }
+    return @($items)
+}
+
+function Find-GitWorktreeByBranch {
+    param([string]$Branch)
+
+    foreach ($worktree in Get-GitWorktrees) {
+        if ($worktree.branch -eq $Branch) {
+            return $worktree
+        }
+    }
+    return $null
+}
+
+function Get-MainWorktreePath {
+    $worktrees = @(Get-GitWorktrees)
+    if ($worktrees.Count -gt 0) {
+        return [System.IO.Path]::GetFullPath($worktrees[0].path)
+    }
+    return $script:ProjectRoot
 }
 
 function Ensure-GitRepository {
@@ -532,6 +674,7 @@ function Ensure-GitIgnore {
         "*.dt",
         "*.log",
         "logs/",
+        ".agent-1c/dev-branches/",
         ".agent-1c/infobases/",
         ".agent-1c/tools/vanessa-automation/",
         "build/test-results/"
@@ -1023,6 +1166,7 @@ function New-DefaultProjectConfig {
         sourceInfoBaseName = ""
         repositoryPath = ""
         devBranchInfoBaseRoot = ".agent-1c/infobases/dev-branches"
+        devBranchWorktreeRoot = ""
         serverBaseCopyScript = ""
         aiRules = [ordered]@{
             repo = "https://github.com/comol/ai_rules_1c.git"
@@ -2009,6 +2153,37 @@ function Get-RepositoryPath {
 
 function Get-DevBranchInfoBaseRoot {
     return Get-Setting -EnvName "DEV_BRANCH_INFOBASE_ROOT" -ConfigName "devBranchInfoBaseRoot" -Default ".agent-1c/infobases/dev-branches"
+}
+
+function Get-DefaultDevBranchWorktreeRoot {
+    $mainWorktreePath = Get-MainWorktreePath
+    $parent = Split-Path -Parent $mainWorktreePath
+    $leaf = Split-Path -Leaf $mainWorktreePath
+    return [System.IO.Path]::GetFullPath((Join-Path $parent ($leaf + "-worktrees")))
+}
+
+function Get-DevBranchWorktreeRoot {
+    $value = Get-Setting -EnvName "DEV_BRANCH_WORKTREE_ROOT" -ConfigName "devBranchWorktreeRoot" -Default ""
+    if ($value) {
+        if ([System.IO.Path]::IsPathRooted([string]$value)) {
+            return [System.IO.Path]::GetFullPath([string]$value)
+        }
+        return [System.IO.Path]::GetFullPath((Join-Path $script:ProjectRoot ([string]$value)))
+    }
+    return Get-DefaultDevBranchWorktreeRoot
+}
+
+function Resolve-DevBranchWorktreePath {
+    param([string]$SafeDevBranchName)
+
+    if ($DevBranchWorktreePath) {
+        if ([System.IO.Path]::IsPathRooted($DevBranchWorktreePath)) {
+            return [System.IO.Path]::GetFullPath($DevBranchWorktreePath)
+        }
+        return [System.IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $DevBranchWorktreePath))
+    }
+
+    return [System.IO.Path]::GetFullPath((Join-Path (Get-DevBranchWorktreeRoot) $SafeDevBranchName))
 }
 
 function Get-AgentTargets {
@@ -3023,6 +3198,7 @@ function Confirm-UnverifiedProceed {
 
 function Run-DevBranchTests {
     $state = Read-DevBranchState -Name $DevBranchName
+    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "run-dev-branch-tests"
     Sync-DevBranchContextToDotEnv -State $state
 
     $vanessa = Get-VanessaAutomationState
@@ -3523,6 +3699,84 @@ function Export-DevBranchResultFile {
     return $resultPath
 }
 
+function Get-GitCommitOrEmpty {
+    param([string]$Revision)
+
+    if (-not $Revision) {
+        return ""
+    }
+
+    $output = & git -C $script:ProjectRoot rev-parse --verify $Revision 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $output) {
+        return ""
+    }
+
+    return ([string]$output).Trim()
+}
+
+function New-ResultManifest {
+    param(
+        [object]$State,
+        [string]$ResultPath,
+        [ValidateSet("cf", "cfe")]
+        [string]$ResultKind,
+        [string]$Operation,
+        [string]$MasterCommit = "",
+        [string]$DevBranchCommit = "",
+        [bool]$UnverifiedOverride = $false
+    )
+
+    $artifactPath = [System.IO.Path]::GetFullPath($ResultPath)
+    if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
+        throw "Result artifact was not found for manifest creation: $artifactPath"
+    }
+
+    $artifact = Get-Item -LiteralPath $artifactPath
+    $artifactHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifactPath).Hash.ToLowerInvariant()
+    $verification = Get-VerificationState -State $State
+    $manifestPath = "$artifactPath.manifest.json"
+
+    $manifest = [ordered]@{
+        schemaVersion = 1
+        operation = $Operation
+        createdAt = (Get-Date).ToString("o")
+        artifact = [ordered]@{
+            path = $artifactPath
+            name = $artifact.Name
+            kind = $ResultKind
+            sha256 = $artifactHash
+        }
+        branch = [ordered]@{
+            name = (Get-StateValue -State $State -Name "devBranchName" -Default "")
+            safeName = (Get-StateValue -State $State -Name "safeDevBranchName" -Default "")
+            gitBranch = (Get-StateValue -State $State -Name "devBranch" -Default "")
+            kind = (Get-DevBranchKind -State $State)
+            publicationUrl = (Get-StateValue -State $State -Name "publicationUrl" -Default "")
+        }
+        commits = [ordered]@{
+            master = $MasterCommit
+            development = $DevBranchCommit
+        }
+        verification = [ordered]@{
+            status = $verification.effectiveStatus
+            storedStatus = $verification.status
+            freshPassed = [bool]$verification.isFreshPassed
+            verifiedAt = $verification.verifiedAt
+            verifiedCommit = $verification.verifiedCommit
+            currentCommit = $verification.currentCommit
+            reportPath = $verification.reportPath
+            logPath = $verification.logPath
+            reason = $verification.reason
+        }
+        latest1cLogPath = [string]$script:LastLogPath
+        unverifiedOverride = [bool]$UnverifiedOverride
+        manualImportNote = "Import this CF/CFE into the source infobase manually after backup and normal acceptance checks. The ITL helper does not load development branch changes into the source infobase."
+    }
+
+    Write-Utf8Text -Path $manifestPath -Value (($manifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    return $manifestPath
+}
+
 function Install-AiRules1c {
     if ($SkipAiRules) {
         Write-Host "Skipping ai_rules_1c installation."
@@ -3579,17 +3833,43 @@ function Update-UserRules {
 
 $marker
 
-Use `.agents/skills/1c-workflow/SKILL.md` for project initialization, development branch creation, status, development branch refresh, development branch base update, Vanessa Automation verification, branch switching, development branch close, and CF/CFE result export.
+Use `.agents/skills/1c-workflow/SKILL.md` for detailed project initialization, development branch creation, development branch refresh, development branch base update, Vanessa Automation test runs, master sync, development branch listing, branch switching, development branch close, and CF/CFE result export.
+
+For routine lifecycle operations in an already installed project, prefer the short Kilo `/itl-*` commands or `.agents/skills/1c-workflow-fast/SKILL.md`. The fast path runs `.agents/skills/1c-workflow/scripts/agent-1c.ps1` directly and should read detailed workflow references only after helper failure or when the developer asks for explanation.
+
+Use `DEV-BRANCH-DEVELOPMENT.ru.md` for the development process inside a development branch: quick-fix for small local fixes, OpenSpec for business feature work or risky behavior changes.
+
+When asking the developer for missing setup values, ask one value at a time and accept the raw value only. Do not ask for `KEY=value` blocks, one large free-form block with all missing variables, or variable names.
+
+For optional passwords, ask whether the password is set before asking for the value. If the password is not set, store an empty value and do not treat placeholder text as the password.
+
+Before asking for the 1C platform path, search existing standard `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` folders and offer installed versions as choices. Missing standard folders are normal; skip them without error. Do not offer the common `C:\Program Files\1cv8` root as a version.
+
+Do not edit installer-managed `AGENTS.md` directly. Store secrets only in local `.dev.env`.
+
+Write `.dev.env` and `.agent-1c/*.json` files as UTF-8 so Cyrillic usernames and paths are preserved.
+
+Treat `.agent-1c/dev-branches/*.json` as local runtime state. It is ignored by Git because it contains local paths, worktree paths, 1C launcher metadata, verification status, result paths, and unverified override history.
+
+Create new development branches in sibling Git worktrees by default, under `<project-folder>-worktrees/<branch>`, and leave the main project folder on `master`. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
+
+Use `.agent-1c/infobases/dev-branches` inside the active branch worktree as the default development branch infobase copy root and keep `.agent-1c/infobases/` ignored by Git.
+
+Development branch changes must be loaded only into the development branch infobase copy, never directly into the source infobase connected to 1C configuration repository storage.
 
 Before running ai_rules_1c IB-bound commands such as `/update1cbase`, `/loadfrom1cbase`, or `/getconfigfiles` inside an `itldev/*` branch, ensure the current development branch context is active. The ITL helper does this automatically during branch lifecycle commands.
 
 Do not use `/deploy-and-test` as the normal verification command in an ITL development branch because it reloads all files. The normal executable verification cycle is `/itl-verify`. Use `/itl-update-base` only when you need to update the branch infobase without tests.
 
-Use Vanessa Automation scenarios from `tests/features` for OpenSpec and quick-fix verification. For large OpenSpec changes, test each meaningful implementation slice separately. If Vanessa finds an error, analyze the report/log, fix it, update the branch base again, and rerun the relevant scenario. Stop and ask the developer only after 3 failed fix attempts for the same group of errors.
+Use Vanessa Automation scenarios from `tests/features` for OpenSpec and quick-fix verification. For behavior changes, create or update a small Vanessa Automation check set: at least 2 checks, usually 2-3, and no more than 4 unless explicitly justified. Include the main successful scenario and at least one meaningful boundary or negative scenario. Choose the check type by change kind: unit-like for local logic, integration for object/register/document/exchange interaction, and UI only for forms, commands, or visible user behavior. For large OpenSpec changes, test each meaningful implementation slice separately. If Vanessa finds an error, analyze the report/log, fix it, update the branch base again, and rerun the relevant scenario. Stop and ask the developer only after 3 failed fix attempts for the same group of errors.
 
-When Git is on `master`, do not run `/update1cbase` unless the developer explicitly chooses a test infobase. The workflow clears active development branch infobase values when switching to `master`.
+For `/itl-result` and `/itl-close`, create `<artifact>.manifest.json` next to the exported CF/CFE. The manifest records artifact SHA256, operation, branch metadata, master/development commits, verification status/report/log, latest 1C log path, publication URL, manual import note, and whether an unverified override was used.
 
-Do not edit installer-managed `AGENTS.md` directly. Store secrets only in local `.dev.env`.
+Record current industrial compromises without enforcing them: ideal result/close gating would require fresh passed Vanessa, review, and test report, but the current workflow only warns and requires explicit unverified confirmation; ideal dependency management would use a lock file for `ai_rules_1c`, Vanessa Automation, and SHA256 hashes, but the current workflow uses latest versions and logs archive SHA256 where downloads happen; parallel independent development lines should use separate `itldev/*` branches/worktrees, while one development branch may remain long-lived and contain several sequential tasks.
+
+When Git is on `master`, do not run `/update1cbase` unless the developer explicitly chooses a test infobase. For worktree-created branches, `/itl-switch` shows the target worktree path instead of checking it out over the current folder. The ITL workflow clears active development branch infobase values when switching to `master` or closing a worktree branch.
+
+When launching native Windows executables such as `1cv8.exe` from PowerShell, do not pass a PowerShell array to `Start-Process -ArgumentList`. Join and quote arguments into one native command-line string first, or use the `&` call operator for simple cases. Paths with spaces must remain one native argument; otherwise 1C Designer may exit with code 1 or hang behind `-WindowStyle Hidden`.
 "@
 
     if (Test-Path -LiteralPath $path) {
@@ -3606,10 +3886,11 @@ Do not edit installer-managed `AGENTS.md` directly. Store secrets only in local 
 function Save-DevBranchState {
     param(
         [string]$SafeDevBranchName,
-        [hashtable]$State
+        [hashtable]$State,
+        [string]$ProjectRootOverride = $script:ProjectRoot
     )
 
-    $devBranchesDir = Join-Path $script:ProjectRoot ".agent-1c\dev-branches"
+    $devBranchesDir = Join-Path $ProjectRootOverride ".agent-1c\dev-branches"
     New-Item -ItemType Directory -Force -Path $devBranchesDir | Out-Null
     $path = Join-Path $devBranchesDir ($SafeDevBranchName + ".json")
     Write-Utf8Text -Path $path -Value (($State | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
@@ -3624,6 +3905,9 @@ function Update-DevBranchState {
 
     $stateHash = @{}
     foreach ($prop in $State.PSObject.Properties) {
+        if (@("statePath", "stateProjectRoot") -contains $prop.Name) {
+            continue
+        }
         $stateHash[$prop.Name] = $prop.Value
     }
     foreach ($key in $Updates.Keys) {
@@ -3635,7 +3919,57 @@ function Update-DevBranchState {
         $safeName = ConvertTo-SafeName $stateHash["devBranchName"]
         $stateHash["safeDevBranchName"] = $safeName
     }
-    Save-DevBranchState -SafeDevBranchName $safeName -State $stateHash | Out-Null
+    $stateProjectRoot = Get-StateValue -State $State -Name "stateProjectRoot" -Default $script:ProjectRoot
+    Save-DevBranchState -SafeDevBranchName $safeName -State $stateHash -ProjectRootOverride $stateProjectRoot | Out-Null
+}
+
+function Get-DevBranchStateProjectRootFromPath {
+    param([string]$Path)
+
+    $devBranchesDir = Split-Path -Parent $Path
+    $agentDir = Split-Path -Parent $devBranchesDir
+    return [System.IO.Path]::GetFullPath((Split-Path -Parent $agentDir))
+}
+
+function Read-DevBranchStateFile {
+    param([string]$Path)
+
+    $state = Read-Utf8Text -Path $Path | ConvertFrom-Json
+    $stateProjectRoot = Get-DevBranchStateProjectRootFromPath -Path $Path
+    $state | Add-Member -NotePropertyName statePath -NotePropertyValue $Path -Force
+    $state | Add-Member -NotePropertyName stateProjectRoot -NotePropertyValue $stateProjectRoot -Force
+    return $state
+}
+
+function Get-DevBranchStateFiles {
+    $files = @()
+    $roots = @($script:ProjectRoot)
+    foreach ($worktree in Get-GitWorktrees) {
+        if ($worktree.path) {
+            $roots += [System.IO.Path]::GetFullPath($worktree.path)
+        }
+    }
+
+    foreach ($root in @($roots | Sort-Object -Unique)) {
+        $devBranchesDir = Join-Path $root ".agent-1c\dev-branches"
+        if (Test-Path -LiteralPath $devBranchesDir -PathType Container -ErrorAction SilentlyContinue) {
+            $files += @(Get-ChildItem -LiteralPath $devBranchesDir -Filter "*.json" -File -ErrorAction SilentlyContinue)
+        }
+    }
+
+    return @($files | Sort-Object FullName -Unique)
+}
+
+function Find-DevBranchStateFile {
+    param([string]$SafeDevBranchName)
+
+    $fileName = $SafeDevBranchName + ".json"
+    foreach ($file in Get-DevBranchStateFiles) {
+        if ($file.Name -eq $fileName) {
+            return $file.FullName
+        }
+    }
+    return ""
 }
 
 function Read-DevBranchState {
@@ -3655,9 +3989,86 @@ function Read-DevBranchState {
     $safe = ConvertTo-SafeName $Name
     $path = Join-Path $script:ProjectRoot ".agent-1c\dev-branches\$safe.json"
     if (-not (Test-Path -LiteralPath $path)) {
-        throw "Development branch state not found: $path"
+        $path = Find-DevBranchStateFile -SafeDevBranchName $safe
     }
-    return Read-Utf8Text -Path $path | ConvertFrom-Json
+    if (-not $path -or -not (Test-Path -LiteralPath $path)) {
+        throw "Development branch state not found for '$Name'."
+    }
+    return Read-DevBranchStateFile -Path $path
+}
+
+function Test-DevBranchStateUsesWorktree {
+    param([object]$State)
+
+    return (ConvertTo-BoolSetting -Value (Get-StateValue -State $State -Name "createdWithWorktree" -Default $false) -Default $false)
+}
+
+function Assert-CurrentProjectRootMatchesDevBranchState {
+    param(
+        [object]$State,
+        [string]$Operation
+    )
+
+    if (-not (Test-DevBranchStateUsesWorktree -State $State)) {
+        return
+    }
+
+    $worktreePath = Get-StateValue -State $State -Name "worktreePath" -Default ""
+    if (-not $worktreePath) {
+        return
+    }
+
+    if ((Get-FullPathNormalized $script:ProjectRoot) -ne (Get-FullPathNormalized $worktreePath)) {
+        throw "$Operation must be run from the development branch worktree: $worktreePath. Open a separate agent window in that folder."
+    }
+}
+
+function Copy-DotEnvToWorktree {
+    param([string]$WorktreePath)
+
+    $sourceDotEnv = Join-Path $script:ProjectRoot ".dev.env"
+    if (Test-Path -LiteralPath $sourceDotEnv -PathType Leaf -ErrorAction SilentlyContinue) {
+        Copy-Item -LiteralPath $sourceDotEnv -Destination (Join-Path $WorktreePath ".dev.env") -Force
+    }
+}
+
+function Open-AgentWorktreeBestEffort {
+    param([string]$WorktreePath)
+
+    if (-not $OfferOpenAgent) {
+        return
+    }
+
+    $codeCommand = Get-Command code -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($codeCommand) {
+        & $codeCommand.Source -n $WorktreePath
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Открыто новое окно VS Code/Kilo для рабочей папки: $WorktreePath"
+            return
+        }
+        Write-Host "Не удалось автоматически открыть VS Code/Kilo через команду code."
+    } else {
+        Write-Host "Команда code не найдена. Откройте рабочую папку вручную."
+    }
+}
+
+function Write-DevBranchWorktreeOpenMessage {
+    param(
+        [string]$MainProjectPath,
+        [string]$WorktreePath
+    )
+
+    Write-Host ""
+    Write-Host "Ветка разработки создана."
+    Write-Host ""
+    Write-Host "Текущая папка осталась на master:"
+    Write-Host $MainProjectPath
+    Write-Host ""
+    Write-Host "Рабочая папка новой ветки:"
+    Write-Host $WorktreePath
+    Write-Host ""
+    Write-Host "Чтобы продолжить работу агентом с этой линией разработки, откройте отдельное окно Codex/Kilo/IDE в этой папке."
+    Write-Host "Могу попробовать открыть новое окно агента для этой папки автоматически."
 }
 
 function Clear-DevBranchContext {
@@ -3724,6 +4135,7 @@ function Sync-DevBranchContextToDotEnv {
 
 function Activate-DevBranchContext {
     $state = Read-DevBranchState -Name $DevBranchName
+    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "activate-dev-branch-context"
     Sync-DevBranchContextToDotEnv -State $state
 }
 
@@ -4009,7 +4421,29 @@ function Initialize-Project {
 }
 
 function Sync-Master {
+    param([switch]$NoDelegate)
+
     Write-Section "Sync master"
+    if (-not $NoDelegate) {
+        $currentBranch = ""
+        try {
+            $currentBranch = Get-CurrentBranch
+        } catch {
+            $currentBranch = ""
+        }
+        if ($currentBranch -like "itldev/*") {
+            $state = Read-DevBranchState -Name ""
+            $mainWorktreePath = Get-StateValue -State $state -Name "mainWorktreePath" -Default ""
+            if ($mainWorktreePath -and ((Get-FullPathNormalized $mainWorktreePath) -ne (Get-FullPathNormalized $script:ProjectRoot))) {
+                Write-Host "Syncing master in main worktree: $mainWorktreePath"
+                Invoke-InProjectContext -Root $mainWorktreePath -ScriptBlock {
+                    Sync-Master -NoDelegate
+                }
+                return
+            }
+        }
+    }
+
     Assert-CleanGit
     Checkout-Master
     Clear-DevBranchContext
@@ -4020,32 +4454,23 @@ function Sync-Master {
     Commit-IfChanged -Message $dumpMessage -PathSpec @($dumpResult.exportPath) -ForceAdd | Out-Null
 }
 
-function New-DevBranchCore {
+function Initialize-DevBranchRuntime {
     param(
         [ValidateSet("configuration", "extension")]
-        [string]$DevBranchKind = "configuration"
+        [string]$DevBranchKind = "configuration",
+        [string]$SafeDevBranchName,
+        [string]$GitBranch,
+        [string]$MainProjectRoot,
+        [string]$WorktreePath,
+        [bool]$CreatedWithWorktree = $false
     )
-
-    Require-Value "DevBranchName" $DevBranchName | Out-Null
-    $safe = ConvertTo-SafeName $DevBranchName
-    if (-not $DevBranch) {
-        $DevBranch = "itldev/$safe"
-    }
-
-    Assert-CleanGit
-    Checkout-Master
-
-    if (Test-GitBranchExists -Branch $DevBranch) {
-        throw "Development branch already exists: $DevBranch"
-    }
-    Invoke-Git @("checkout", "-b", $DevBranch)
 
     $kind = Get-InfoBaseKind
     $sourceUsesRepository = Get-SourceUsesRepository
     $source = Get-SourceInfoBasePath
     if (-not $DevBranchInfoBasePath) {
         $rootPath = Resolve-ProjectPath (Get-DevBranchInfoBaseRoot)
-        $DevBranchInfoBasePath = Join-Path $rootPath $safe
+        $DevBranchInfoBasePath = Join-Path $rootPath $SafeDevBranchName
     }
 
     if ($kind -eq "file") {
@@ -4089,14 +4514,17 @@ function New-DevBranchCore {
     $publishDefault = Get-WebPublishByDefault
     $publicationUrl = ""
     if ($PublishToApache -or $publishDefault) {
-        $publicationUrl = Publish-DevBranchToApache -DevBranchPath $DevBranchInfoBasePath -SafeDevBranchName $safe
+        $publicationUrl = Publish-DevBranchToApache -DevBranchPath $DevBranchInfoBasePath -SafeDevBranchName $SafeDevBranchName
     }
 
-    $statePath = Save-DevBranchState -SafeDevBranchName $safe -State @{
+    $statePath = Save-DevBranchState -SafeDevBranchName $SafeDevBranchName -State @{
         devBranchName = $DevBranchName
-        safeDevBranchName = $safe
+        safeDevBranchName = $SafeDevBranchName
         devBranchKind = $DevBranchKind
-        devBranch = $DevBranch
+        devBranch = $GitBranch
+        createdWithWorktree = $CreatedWithWorktree
+        worktreePath = $WorktreePath
+        mainWorktreePath = $MainProjectRoot
         createdFromCommit = Get-CurrentCommit
         lastConfigBaseUpdatedCommit = Get-CurrentCommit
         infoBaseKind = $kind
@@ -4113,7 +4541,11 @@ function New-DevBranchCore {
         lastLogPath = $script:LastLogPath
     }
 
-    Write-Host "Development branch: $DevBranch"
+    Write-Host "Development branch: $GitBranch"
+    if ($CreatedWithWorktree) {
+        Write-Host "Development branch worktree: $WorktreePath"
+        Write-Host "Main project worktree: $MainProjectRoot"
+    }
     Write-Host "Development branch infobase: $DevBranchInfoBasePath"
     Write-Host "Development branch state: $statePath"
     Write-Host "1C launcher infobase: $($launcherRegistration.name)"
@@ -4122,7 +4554,67 @@ function New-DevBranchCore {
         Write-Host "Publication URL: $publicationUrl"
     }
     $state = Read-Utf8Text -Path $statePath | ConvertFrom-Json
+    $state | Add-Member -NotePropertyName statePath -NotePropertyValue $statePath -Force
+    $state | Add-Member -NotePropertyName stateProjectRoot -NotePropertyValue $script:ProjectRoot -Force
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
+}
+
+function New-DevBranchCore {
+    param(
+        [ValidateSet("configuration", "extension")]
+        [string]$DevBranchKind = "configuration"
+    )
+
+    Require-Value "DevBranchName" $DevBranchName | Out-Null
+    $safe = ConvertTo-SafeName $DevBranchName
+    if (-not $DevBranch) {
+        $DevBranch = "itldev/$safe"
+    }
+
+    Assert-CleanGit
+    Checkout-Master
+
+    if (Test-GitBranchExists -Branch $DevBranch) {
+        throw "Development branch already exists: $DevBranch"
+    }
+
+    $mainProjectRoot = Get-MainWorktreePath
+    if ($UseCurrentWorktree) {
+        Invoke-Git @("checkout", "-b", $DevBranch)
+        Initialize-DevBranchRuntime `
+            -DevBranchKind $DevBranchKind `
+            -SafeDevBranchName $safe `
+            -GitBranch $DevBranch `
+            -MainProjectRoot $script:ProjectRoot `
+            -WorktreePath $script:ProjectRoot `
+            -CreatedWithWorktree $false
+        return
+    }
+
+    $worktreePath = Resolve-DevBranchWorktreePath -SafeDevBranchName $safe
+    if (Test-Path -LiteralPath $worktreePath -ErrorAction SilentlyContinue) {
+        throw "Development branch worktree path already exists: $worktreePath"
+    }
+
+    $worktreeParent = Split-Path -Parent $worktreePath
+    if ($worktreeParent) {
+        New-Item -ItemType Directory -Force -Path $worktreeParent | Out-Null
+    }
+    Invoke-Git @("worktree", "add", "-b", $DevBranch, $worktreePath, (Get-MasterBranch))
+    Copy-DotEnvToWorktree -WorktreePath $worktreePath
+
+    Invoke-InProjectContext -Root $worktreePath -ScriptBlock {
+        Initialize-DevBranchRuntime `
+            -DevBranchKind $DevBranchKind `
+            -SafeDevBranchName $safe `
+            -GitBranch $DevBranch `
+            -MainProjectRoot $mainProjectRoot `
+            -WorktreePath $worktreePath `
+            -CreatedWithWorktree $true
+    }
+
+    Write-DevBranchWorktreeOpenMessage -MainProjectPath $mainProjectRoot -WorktreePath $worktreePath
+    Open-AgentWorktreeBestEffort -WorktreePath $worktreePath
 }
 
 function New-DevBranch {
@@ -4135,6 +4627,7 @@ function New-ExtensionDevBranch {
 
 function Set-DevBranchExtension {
     $state = Read-DevBranchState -Name $DevBranchName
+    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "set-dev-branch-extension"
     Assert-DevBranchKind -State $state -Expected "extension"
     Require-Value "ExtensionName" $ExtensionName | Out-Null
 
@@ -4176,6 +4669,7 @@ function Write-BaseUpdateResult {
 
 function Update-DevBranchBase {
     $state = Read-DevBranchState -Name $DevBranchName
+    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "update-dev-branch-base"
     Sync-DevBranchContextToDotEnv -State $state
 
     if ((Get-DevBranchKind -State $state) -eq "extension") {
@@ -4197,10 +4691,13 @@ function Update-DevBranchBase {
 
 function Refresh-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
+    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "refresh-dev-branch"
     Assert-CleanGit
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     Sync-Master
-    Invoke-Git @("checkout", $state.devBranch)
+    if ((Get-CurrentBranch) -ne $state.devBranch) {
+        Invoke-Git @("checkout", $state.devBranch)
+    }
     Invoke-Git @("merge", (Get-MasterBranch))
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
@@ -4217,6 +4714,7 @@ function Refresh-DevBranch {
 
 function Dump-DevBranchExtension {
     $state = Read-DevBranchState -Name $DevBranchName
+    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "dump-dev-branch-extension"
     $dumpResult = Dump-ExtensionToFiles -State $state
     $updates = @{
         lastExtensionDumpAt = (Get-Date).ToString("o")
@@ -4254,6 +4752,20 @@ function Show-WorkflowStatus {
 
     if ($currentBranch -notlike "itldev/*") {
         Write-Host "Current development branch: none"
+        $worktreeStates = @()
+        foreach ($file in Get-DevBranchStateFiles) {
+            try {
+                $state = Read-DevBranchStateFile -Path $file.FullName
+                if (-not (Get-StateValue -State $state -Name "closedAt")) {
+                    $worktreeStates += $state
+                }
+            } catch {
+            }
+        }
+        if ($worktreeStates.Count -gt 0) {
+            Write-Host "Active development worktrees: $($worktreeStates.Count)"
+            Write-Host "Run list-dev-branches to see their paths."
+        }
         return
     }
 
@@ -4262,6 +4774,14 @@ function Show-WorkflowStatus {
     $kind = Get-DevBranchKind -State $state
 
     Write-Host "Development branch: $($state.devBranch)"
+    $worktreePath = Get-StateValue -State $state -Name "worktreePath" -Default ""
+    if ($worktreePath) {
+        Write-Host "Worktree: $worktreePath"
+    }
+    $mainWorktreePath = Get-StateValue -State $state -Name "mainWorktreePath" -Default ""
+    if ($mainWorktreePath) {
+        Write-Host "Main worktree: $mainWorktreePath"
+    }
     $safeDevBranchName = Get-StateValue -State $state -Name "safeDevBranchName" -Default "<unknown>"
     Write-Host "Development branch name: $(Get-StateValue -State $state -Name 'devBranchName' -Default $safeDevBranchName)"
     Write-Host "Type: $kind"
@@ -4308,6 +4828,7 @@ function Verify-DevBranch {
 
 function Export-DevBranchResult {
     $state = Read-DevBranchState -Name $DevBranchName
+    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "export-dev-branch-result"
     Assert-CleanGit
     Sync-DevBranchContextToDotEnv -State $state
     $currentBranch = Get-CurrentBranch
@@ -4323,6 +4844,7 @@ function Export-DevBranchResult {
         $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
     }
     $devBranchCommit = Get-CurrentCommit
+    $masterCommit = Get-GitCommitOrEmpty (Get-MasterBranch)
     $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind $kind
     Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch base was updated before result export." -CurrentCommit $loadResult.currentCommit
     Update-DevBranchState -State $state -Updates $updates
@@ -4330,9 +4852,19 @@ function Export-DevBranchResult {
     $unverifiedOverride = Confirm-UnverifiedProceed -State $state -Operation "export-dev-branch-result" -Allow:$AllowUnverifiedResult
 
     $resultPath = Export-DevBranchResultFile -State $state -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -ContentKind $kind
+    $resultKind = $(if ($kind -eq "extension") { "cfe" } else { "cf" })
+    $manifestPath = New-ResultManifest `
+        -State $state `
+        -ResultPath $resultPath `
+        -ResultKind $resultKind `
+        -Operation "export-dev-branch-result" `
+        -MasterCommit $masterCommit `
+        -DevBranchCommit $devBranchCommit `
+        -UnverifiedOverride ([bool]$unverifiedOverride)
     $updates = @{}
     $updates["lastResultPath"] = $resultPath
-    $updates["lastResultKind"] = $(if ($kind -eq "extension") { "cfe" } else { "cf" })
+    $updates["lastResultKind"] = $resultKind
+    $updates["lastResultManifestPath"] = $manifestPath
     $updates["lastResultAt"] = (Get-Date).ToString("o")
     $updates["lastLogPath"] = $script:LastLogPath
     if ($unverifiedOverride) {
@@ -4344,16 +4876,20 @@ function Export-DevBranchResult {
     Write-Host "Branch: $($state.devBranch)"
     Write-Host "Development branch commit: $devBranchCommit"
     Write-Host "Result saved: $resultPath"
+    Write-Host "Result manifest: $manifestPath"
     Write-Host "Last 1C log: $script:LastLogPath"
 }
 
 function Close-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
+    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "close-dev-branch"
     Assert-CleanGit
     Sync-DevBranchContextToDotEnv -State $state
 
     Sync-Master
-    Invoke-Git @("checkout", $state.devBranch)
+    if ((Get-CurrentBranch) -ne $state.devBranch) {
+        Invoke-Git @("checkout", $state.devBranch)
+    }
     Invoke-Git @("merge", (Get-MasterBranch))
     Sync-DevBranchContextToDotEnv -State $state
 
@@ -4380,10 +4916,20 @@ function Close-DevBranch {
     $masterBranch = Get-MasterBranch
     $masterCommit = (Get-GitOutput @("rev-parse", $masterBranch)).Trim()
     $devBranchCommit = Get-CurrentCommit
+    $resultKind = $(if ($kind -eq "extension") { "cfe" } else { "cf" })
+    $manifestPath = New-ResultManifest `
+        -State $state `
+        -ResultPath $resultPath `
+        -ResultKind $resultKind `
+        -Operation "close-dev-branch" `
+        -MasterCommit $masterCommit `
+        -DevBranchCommit $devBranchCommit `
+        -UnverifiedOverride ([bool]$unverifiedOverride)
 
     $updates["closedAt"] = (Get-Date).ToString("o")
     $updates["finalResultPath"] = $resultPath
-    $updates["finalResultKind"] = $(if ($kind -eq "extension") { "cfe" } else { "cf" })
+    $updates["finalResultKind"] = $resultKind
+    $updates["finalResultManifestPath"] = $manifestPath
     $updates["lastLogPath"] = $script:LastLogPath
     if ($unverifiedOverride) {
         $updates["lastUnverifiedOverrideAt"] = (Get-Date).ToString("o")
@@ -4396,16 +4942,26 @@ function Close-DevBranch {
     Write-Host "Master commit: $masterCommit"
     Write-Host "Development branch commit: $devBranchCommit"
     Write-Host "Result saved: $resultPath"
+    Write-Host "Result manifest: $manifestPath"
     Write-Host "Last 1C log: $script:LastLogPath"
     if ($state.publicationUrl) {
         Write-Host "Publication URL: $($state.publicationUrl)"
     }
 
-    Invoke-Git @("checkout", $masterBranch)
-    Clear-DevBranchContext
-    $currentCommit = Get-CurrentCommit
-    Write-Host "Switched to master branch: $masterBranch"
-    Write-Host "Current commit: $currentCommit"
+    if (Test-DevBranchStateUsesWorktree -State $state) {
+        Clear-DevBranchContext
+        $mainWorktreePath = Get-StateValue -State $state -Name "mainWorktreePath" -Default ""
+        Write-Host "Development branch worktree remains on closed branch: $($state.devBranch)"
+        if ($mainWorktreePath) {
+            Write-Host "Main project worktree stays on master: $mainWorktreePath"
+        }
+    } else {
+        Invoke-Git @("checkout", $masterBranch)
+        Clear-DevBranchContext
+        $currentCommit = Get-CurrentCommit
+        Write-Host "Switched to master branch: $masterBranch"
+        Write-Host "Current commit: $currentCommit"
+    }
 }
 
 function List-DevBranches {
@@ -4424,17 +4980,10 @@ function List-DevBranches {
     Write-Host "Current branch: $(if ($currentBranch) { $currentBranch } else { '<none>' })"
     Write-Host "Current development branch: $currentDevBranch"
 
-    $devBranchesDir = Join-Path $script:ProjectRoot ".agent-1c\dev-branches"
-    if (-not (Test-Path -LiteralPath $devBranchesDir)) {
-        Write-Host "No active development branches."
-        return
-    }
-
     $states = @()
-    foreach ($file in Get-ChildItem -LiteralPath $devBranchesDir -Filter "*.json" -File) {
+    foreach ($file in Get-DevBranchStateFiles) {
         try {
-            $state = Read-Utf8Text -Path $file.FullName | ConvertFrom-Json
-            $state | Add-Member -NotePropertyName statePath -NotePropertyValue $file.FullName -Force
+            $state = Read-DevBranchStateFile -Path $file.FullName
             if (-not (Get-StateValue -State $state -Name "closedAt")) {
                 $states += $state
             }
@@ -4462,6 +5011,17 @@ function List-DevBranches {
         Write-Host "$marker $name"
         Write-Host "  Branch: $branch"
         Write-Host "  Type: $kind"
+        $worktreePath = Get-StateValue -State $state -Name "worktreePath" -Default ""
+        if (-not $worktreePath) {
+            $worktreePath = Get-StateValue -State $state -Name "stateProjectRoot" -Default ""
+        }
+        if ($worktreePath) {
+            Write-Host "  Worktree: $worktreePath"
+        }
+        $mainWorktreePath = Get-StateValue -State $state -Name "mainWorktreePath" -Default ""
+        if ($mainWorktreePath) {
+            Write-Host "  Main worktree: $mainWorktreePath"
+        }
         if ($extensionName) {
             Write-Host "  Extension: $extensionName"
         }
@@ -4489,6 +5049,25 @@ function List-DevBranches {
 
 function Switch-Master {
     Assert-CleanGit
+    $currentBranch = ""
+    try {
+        $currentBranch = Get-CurrentBranch
+    } catch {
+        $currentBranch = ""
+    }
+    if ($currentBranch -like "itldev/*") {
+        $state = Read-DevBranchState -Name ""
+        if (Test-DevBranchStateUsesWorktree -State $state) {
+            Clear-DevBranchContext
+            $mainWorktreePath = Get-StateValue -State $state -Name "mainWorktreePath" -Default (Get-MainWorktreePath)
+            Write-Host "Текущая ветка разработки находится в отдельной рабочей папке."
+            Write-Host "Чтобы работать с master, откройте основную папку проекта:"
+            Write-Host $mainWorktreePath
+            Open-AgentWorktreeBestEffort -WorktreePath $mainWorktreePath
+            return
+        }
+    }
+
     $masterBranch = Get-MasterBranch
     Ensure-GitRepository
     & git -C $script:ProjectRoot rev-parse --verify $masterBranch *> $null
@@ -4504,6 +5083,24 @@ function Switch-Master {
 
 function Switch-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
+    if (Test-DevBranchStateUsesWorktree -State $state) {
+        $worktreePath = Get-StateValue -State $state -Name "worktreePath" -Default ""
+        if (-not $worktreePath) {
+            $worktree = Find-GitWorktreeByBranch -Branch $state.devBranch
+            if ($worktree) {
+                $worktreePath = $worktree.path
+            }
+        }
+
+        if ($worktreePath -and ((Get-FullPathNormalized $worktreePath) -ne (Get-FullPathNormalized $script:ProjectRoot))) {
+            Write-Host "Ветка разработки находится в отдельной рабочей папке:"
+            Write-Host $worktreePath
+            Write-Host "Чтобы продолжить работу агентом с этой линией разработки, откройте отдельное окно Codex/Kilo/IDE в этой папке."
+            Open-AgentWorktreeBestEffort -WorktreePath $worktreePath
+            return
+        }
+    }
+
     Assert-CleanGit
     Invoke-Git @("checkout", $state.devBranch)
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
@@ -4620,8 +5217,10 @@ Actions:
   verify-dev-branch   Update the current development branch base, then run Vanessa tests.
   init-project        Dump source infobase config to master and install rules.
   sync-master         Refresh master from storage or from the current source infobase state.
-  new-dev-branch             Create a configuration development branch and infobase copy.
-  new-extension-dev-branch   Create an extension development branch and infobase copy.
+  new-dev-branch             Create a configuration development branch, sibling worktree, and infobase copy.
+                             Use -UseCurrentWorktree for the legacy checkout-based mode.
+                             Use -OfferOpenAgent to try opening the worktree in VS Code/Kilo.
+  new-extension-dev-branch   Create an extension development branch, sibling worktree, and infobase copy.
   set-dev-branch-extension   Set the extension name for the current extension branch.
   dump-dev-branch-extension  Dump the current branch extension files to src/cfe/<extension>.
   activate-dev-branch-context
@@ -4630,11 +5229,11 @@ Actions:
   refresh-dev-branch         Refresh master, merge it into the development branch, update the branch base.
   export-dev-branch-result   Export CF or CFE from the current development branch.
                              Use -AllowUnverifiedResult for explicit unverified override.
-  close-dev-branch           Refresh master, merge into the development branch, export final result, switch to master.
+  close-dev-branch           Refresh master, merge into the development branch, export final result, mark closed.
                              Use -AllowUnverifiedClose for explicit unverified override.
-  switch-master       Checkout the fixed master branch.
-  switch-dev-branch      Checkout a development branch from saved state.
-  list-dev-branches      Show active development branches and the current branch.
+  switch-master       Checkout master in legacy mode, or show the main worktree path.
+  switch-dev-branch      Checkout a legacy branch or show the development branch worktree path.
+  list-dev-branches      Show active development branches, worktrees, and the current branch.
 
 Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode wizard
@@ -4645,6 +5244,8 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-vanessa-automation
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action status
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts"
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts" -OfferOpenAgent
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts" -UseCurrentWorktree
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-extension-dev-branch -DevBranchName "bonus-extension"
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action set-dev-branch-extension -ExtensionName "BonusExtension"
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action dump-dev-branch-extension
