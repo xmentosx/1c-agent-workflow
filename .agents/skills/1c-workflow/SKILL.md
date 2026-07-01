@@ -91,6 +91,8 @@ Read and write `.dev.env`, `.agent-1c/project.json`, `.agent-1c/tools.json`, and
 
 Treat `.agent-1c/dev-branches/*.json` as local runtime state. It is ignored by Git because it contains local paths, worktree paths, 1C launcher metadata, verification status, result paths, and unverified override history.
 
+Treat `.kilo/kilo.json` as local Kilo Code runtime state. It must be ignored by Git; `.kilo/commands/*.md` wrappers are the shared project files.
+
 Do not edit installer-managed `AGENTS.md` directly. Put project-specific workflow notes in `USER-RULES.md` or `.agent-1c/`.
 
 Before creating worktrees, legacy branch switching, copying bases, dumping configuration files, or running 1C Designer, check the working tree and stop on unexpected uncommitted changes.

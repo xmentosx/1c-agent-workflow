@@ -36,10 +36,11 @@ Create and maintain:
 - `.agents/skills/1c-workflow/`: shared detailed Agent Skill used by Codex and Kilo Code.
 - `.agents/skills/1c-workflow-fast/`: compact Agent Skill for routine helper-first lifecycle actions.
 - `.kilo/commands/`: optional Kilo Code slash command wrappers.
+- `.kilo/kilo.json`: local Kilo Code runtime state; ignored by Git.
 
 Never store passwords in committed files.
 
-All workflow state files and `.dev.env` must be UTF-8. Preserve Cyrillic usernames, infobase paths, and repository paths exactly as the developer entered them. `.agent-1c/dev-branches/*.json` is local state because it contains machine-specific paths, worktree paths, launcher metadata, verification status, result paths, and unverified override history.
+All workflow state files and `.dev.env` must be UTF-8. Preserve Cyrillic usernames, infobase paths, and repository paths exactly as the developer entered them. `.agent-1c/dev-branches/*.json` is local state because it contains machine-specific paths, worktree paths, launcher metadata, verification status, result paths, and unverified override history. `.kilo/kilo.json` is also local runtime state; do not commit it.
 
 Current policy notes:
 

@@ -165,7 +165,16 @@ Describe "1C agent workflow static checks" {
         $requiredPath = ".agent-1c/runs/"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
+        $HelperText | Should -Match ([regex]::Escape($requiredPath))
         $LauncherText | Should -Match ([regex]::Escape(".agent-1c\runs"))
+    }
+
+    It "ignores local Kilo runtime state without blocking branch creation" {
+        $requiredPath = ".kilo/kilo.json"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
+        $HelperText | Should -Match ([regex]::Escape($requiredPath))
+        $HelperText | Should -Match "Test-IgnorableLocalGitStatusLine"
     }
 
     It "closes the monitored window on failure unless debug keep-open is explicit" {
@@ -325,6 +334,9 @@ WEB_PUBLISH_BY_DEFAULT=false
             & git -C $tempRoot add .gitignore README.md
             & git -C $tempRoot commit -m init | Out-Null
             & git -C $tempRoot branch -M master
+
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".kilo") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value "{}" -Encoding ASCII
 
             $env:APPDATA = Join-Path $tempRoot "appdata"
             & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action new-dev-branch -DevBranchName "Fixture Branch" *> $null

@@ -24,6 +24,7 @@ This package is designed for both Codex and Kilo Code:
 - Fast routine workflow skill: `.agents/skills/1c-workflow-fast`.
 - Common project guidance: `AGENTS.md` and `USER-RULES.md`.
 - Kilo slash command wrappers: `.kilo/commands/itl*.md`, using one short `/itl-*` command surface.
+- Local Kilo runtime state: `.kilo/kilo.json`, ignored by Git.
 - Codex usage: choose the skill via `/skills`, invoke `$1c-workflow` for detailed workflows or `$1c-workflow-fast` for routine helper-first commands, or use natural language that matches the skill description.
 
 Do not rely on Codex-only custom prompts for this workflow. They are local to one user and are not the team distribution mechanism.

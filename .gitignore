@@ -11,3 +11,4 @@ temp/
 .agent-1c/dev-branches/
 .agent-1c/runs/
 .agent-1c/tools/vanessa-automation/
+.kilo/kilo.json

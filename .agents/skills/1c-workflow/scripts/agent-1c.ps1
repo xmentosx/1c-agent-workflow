@@ -498,12 +498,50 @@ function Test-GitHasUpstream {
     return ($LASTEXITCODE -eq 0)
 }
 
+function Test-IgnorableLocalGitStatusLine {
+    param([string]$Line)
+
+    if (-not $Line -or -not $Line.StartsWith("?? ")) {
+        return $false
+    }
+
+    $path = $Line.Substring(3).Trim()
+    $normalizedPath = $path -replace "\\", "/"
+    if ($normalizedPath -eq ".kilo/kilo.json") {
+        return $true
+    }
+
+    if ($normalizedPath -eq ".kilo/") {
+        $kiloDir = Join-Path $script:ProjectRoot ".kilo"
+        if (-not (Test-Path -LiteralPath $kiloDir -PathType Container -ErrorAction SilentlyContinue)) {
+            return $false
+        }
+
+        $files = @(Get-ChildItem -LiteralPath $kiloDir -Recurse -File -Force -ErrorAction SilentlyContinue)
+        if ($files.Count -ne 1) {
+            return $false
+        }
+
+        $rootPath = [System.IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd("\", "/") + "\"
+        $filePath = [System.IO.Path]::GetFullPath($files[0].FullName)
+        if (-not $filePath.StartsWith($rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $false
+        }
+
+        $relativePath = $filePath.Substring($rootPath.Length) -replace "\\", "/"
+        return ($relativePath -eq ".kilo/kilo.json")
+    }
+
+    return $false
+}
+
 function Test-GitHasChanges {
     $status = & git -C $script:ProjectRoot status --porcelain
     if ($LASTEXITCODE -ne 0) {
         throw "Cannot read Git status"
     }
-    return [bool]($status | Select-Object -First 1)
+    $effectiveStatus = @($status | Where-Object { -not (Test-IgnorableLocalGitStatusLine -Line ([string]$_)) })
+    return [bool]($effectiveStatus | Select-Object -First 1)
 }
 
 function Assert-CleanGit {
@@ -735,9 +773,11 @@ function Ensure-GitIgnore {
         "*.log",
         "logs/",
         ".agent-1c/dev-branches/",
+        ".agent-1c/runs/",
         ".agent-1c/infobases/",
         ".agent-1c/tools/vanessa-automation/",
-        "build/test-results/"
+        "build/test-results/",
+        ".kilo/kilo.json"
     )
 
     if (Test-Path -LiteralPath $gitignorePath) {
