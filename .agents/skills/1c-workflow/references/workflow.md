@@ -8,20 +8,18 @@ When the user asks for help or the requested action is unclear, show this menu:
 
 ```text
 Available 1C workflow actions:
-1. Initialize project: check tools, create a local Git project, dump master from the source infobase, and install project rules.
-2. New configuration branch: create an itldev/<name> branch for configuration changes.
-3. New extension branch: create an itldev/<name> branch for extension development; set the extension name later.
-4. Set/dump extension: remember the extension name, then dump extension files from the branch infobase into `src/cfe/<extension>`.
-5. Update development branch base: update configuration files or extension files in the branch infobase.
-6. Run development branch tests: run Vanessa Automation scenarios against the already updated branch infobase.
-7. Refresh development branch: sync master from storage or the current source infobase state, merge master into the branch, and update the branch base configuration.
-8. Export development branch result: export CF for configuration branches or CFE for extension branches.
-9. Sync master: refresh master from storage or from the current source infobase state.
-10. Close development branch: refresh master, merge master into the branch, export final CF/CFE result, mark the branch closed, then switch to master.
-11. List/switch branches: show active development branches, switch to master, or switch to a saved development branch.
+1. New configuration branch: create an itldev/<name> branch for configuration changes.
+2. New extension branch: create an itldev/<name> branch for extension development; set the extension name later.
+3. Status: show current Git branch, active development branch, infobase, publication URL, verification status, and latest result.
+4. Update base: update configuration files or extension files in the branch infobase.
+5. Verify: update the branch base, then run Vanessa Automation scenarios.
+6. Refresh: sync master from storage or the current source infobase state, merge master into the branch, and update the branch base configuration.
+7. Result: export CF for configuration branches or CFE for extension branches.
+8. Close: refresh master, merge master into the branch, export final CF/CFE result, mark the branch closed, then switch to master.
+9. Switch: switch to master or a saved development branch.
 ```
 
-For Kilo Code, project slash wrappers can expose detailed commands as `/itl`, `/itl-init-project`, `/itl-new-dev-branch`, `/itl-new-extension-dev-branch`, `/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`, `/itl-activate-dev-branch-context`, `/itl-update-dev-branch-base`, `/itl-run-dev-branch-tests`, `/itl-install-vanessa-automation`, `/itl-refresh-dev-branch`, `/itl-export-dev-branch-result`, `/itl-sync-master`, `/itl-close-dev-branch`, `/itl-list-dev-branches`, `/itl-switch-master`, and `/itl-switch-dev-branch`. Fast experimental wrappers use the `/itlx-*` prefix and call the PowerShell helper directly.
+For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request.
 
 For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
@@ -332,6 +330,15 @@ Goal: update the current development branch infobase from current branch files.
 7. For extension branches, run `/LoadConfigFromFiles <src/cfe/<name>> -Extension <extensionName> -listFile <listFile> -Format Hierarchical /UpdateDBCfg -WarningsAsErrors`.
 8. Do not pass `-updateConfigDumpInfo`.
 9. Update separate configuration/extension base update fields in branch state and report the 1C log path.
+10. If previous verification no longer matches the current commit/base state, mark verification as stale.
+
+## STATUS
+
+Goal: show the current ITL state without changing Git or 1C.
+
+1. Show current Git branch, commit, and clean/dirty worktree state.
+2. If the current branch is `itldev/<name>`, show development branch name, kind, extension name when relevant, infobase path, publication URL, last base update, last refresh, verification status, latest report/log, and latest CF/CFE result paths.
+3. If the current branch is `master`, show that no development branch is active.
 
 ## RUN_DEV_BRANCH_TESTS
 
@@ -345,7 +352,16 @@ Goal: run executable Vanessa Automation checks against the current development b
 6. Generate `VAParams.json` in the run directory.
 7. Launch `1cv8.exe ENTERPRISE` against the branch infobase with `/Execute <vanessa.epf>` and `StartFeaturePlayer;VAParams=<VAParams.json>`.
 8. Do not call `/LoadConfigFromFiles`, `/update1cbase`, or `/deploy-and-test`. The branch base must already have been updated by `UPDATE_DEV_BRANCH_BASE`.
-9. Save test report paths and latest 1C log path in development branch state.
+9. Save test report paths, latest 1C log path, `lastVerificationStatus`, `lastVerifiedCommit`, `lastVerifiedAt`, `lastVerifiedReportPath`, and `lastVerificationLogPath` in development branch state.
+10. Treat the run as passed only when 1C exits successfully and Vanessa status/JUnit report contains no failures. If the status cannot be recognized, save `unknown` and stop as not passed.
+
+## VERIFY_DEV_BRANCH
+
+Goal: perform the standard ITL verification cycle without a full configuration load.
+
+1. Run `UPDATE_DEV_BRANCH_BASE`.
+2. Run `RUN_DEV_BRANCH_TESTS`.
+3. If Vanessa fails, report the report/log paths and let the agent follow the auto-fix loop from the development process.
 
 ## REFRESH_DEV_BRANCH
 
@@ -371,7 +387,8 @@ Goal: create a CF or CFE result from the current development branch without clos
 4. For configuration branches, update `src/cf` and export `.cf` into `artifactsPath`.
 5. For extension branches, update `src/cfe/<safeExtensionName>` with `-Extension <extensionName>` and export `.cfe` into `artifactsPath`.
 6. Do not refresh `master` or merge fresh source changes unless the user explicitly requested `REFRESH_DEV_BRANCH` first.
-7. Update development branch state with update metadata, result path, timestamp, and latest 1C log path.
+7. If verification is missing, failed, stale, or unknown, warn the developer and require explicit confirmation or `-AllowUnverifiedResult` before exporting.
+8. Update development branch state with update metadata, result path, timestamp, latest 1C log path, and unverified override metadata when used.
 
 ## SYNC_MASTER
 
@@ -396,10 +413,11 @@ Goal: prepare tested current work for manual import into the source base and clo
 5. Merge `master` into the development branch.
 6. If conflicts occur, stop and resolve them in config files before continuing.
 7. Update merged `src/cf` files in the branch infobase. For extension branches, also update extension files from `src/cfe/<safeExtensionName>` before exporting the result.
-8. Export final CF or CFE result from the development branch infobase into `artifactsPath`.
-9. Set `closedAt` in development branch state.
-10. Report branch, master commit, development branch commit, result path, latest 1C log path, and publication URL.
-11. Checkout `master` before completing.
+8. Check whether verification is still fresh after sync/merge/update. If it is missing, failed, stale, or unknown, warn the developer and require explicit confirmation or `-AllowUnverifiedClose`.
+9. Export final CF or CFE result from the development branch infobase into `artifactsPath`.
+10. Set `closedAt` in development branch state.
+11. Report branch, master commit, development branch commit, result path, latest 1C log path, publication URL, and unverified override when used.
+12. Checkout `master` before completing.
 
 Do not load development branch changes directly into the source infobase.
 
@@ -448,8 +466,10 @@ Stop immediately when:
 - 1C Designer returns a non-zero exit code.
 - CF/CFE result export fails.
 - Apache publication is requested but `webinst.exe` or Apache/httpd is missing and the developer declined automatic install or manual setup.
+- `/itl-result` or `/itl-close` found missing, failed, stale, or unknown verification and the developer did not explicitly confirm unverified continuation.
 
 ## Troubleshooting
 
 - "Ошибка блокировки информационной базы для конфигурирования" during initialization means another Designer process still holds the infobase lock. This can be a manually opened Configurator or a previous `1cv8.exe` process that has not exited yet. Close the manual Configurator; the workflow helper must wait between its own consecutive Designer launches.
 - `1cv8.exe` exits with code 1 or appears to hang with `-WindowStyle Hidden` after a PowerShell launch can mean `Start-Process -ArgumentList` received a PowerShell array. Native Windows executables parse one command-line string; without native quoting, a path such as `C:\My Path\base` is split at the space and 1C Designer receives the wrong arguments. Use `Join-NativeCommandLineArguments` or the `&` call operator.
+- If `/itl-result` or `/itl-close` stops because verification is missing, failed, stale, or unknown, run `/itl-verify` or explicitly confirm the unverified override when the risk is acceptable.

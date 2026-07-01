@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow-fast
-description: Run routine 1C Agent Workflow lifecycle commands through the PowerShell helper with minimal context loading. Use for fast master sync, configuration or extension development branch creation, extension setup/dump, branch base update, Vanessa Automation install/test run, refresh, CF/CFE result export, close, branch switching, and listing when the project is already installed.
+description: Run routine 1C Agent Workflow lifecycle commands through the PowerShell helper with minimal context loading. Use for status, configuration or extension development branch creation, branch base update, verification, refresh, CF/CFE result export, close, and branch switching when the project is already installed.
 ---
 
 # 1C Workflow Fast
@@ -13,20 +13,14 @@ Do not open the full workflow references before normal lifecycle execution. Open
 
 ## Intent Map
 
-- initialize project quickly: `init-project`
+- show ITL status: `status`
 - create new configuration development branch: `new-dev-branch`
 - create new extension development branch: `new-extension-dev-branch`
-- set extension name for current extension branch: `set-dev-branch-extension`
-- dump current extension branch files: `dump-dev-branch-extension`
-- activate current development branch context for ai_rules_1c commands: `activate-dev-branch-context`
 - update current development branch infobase from branch files: `update-dev-branch-base`
-- install Vanessa Automation for executable branch tests: `install-vanessa-automation`
-- run Vanessa Automation tests against the current development branch infobase: `run-dev-branch-tests`
+- verify current branch through update plus Vanessa tests: `verify-dev-branch`
 - refresh current development branch from master/source: `refresh-dev-branch`
 - export CF or CFE result from current development branch: `export-dev-branch-result`
-- sync master from source infobase: `sync-master`
 - close current development branch: `close-dev-branch`
-- list development branches: `list-dev-branches`
 - switch to master: `switch-master`
 - switch to development branch: `switch-dev-branch`
 
@@ -46,9 +40,9 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-dev-branch -DevBranchName "<dev-branch-name>"
 ```
 
-For `set-dev-branch-extension`, pass `-ExtensionName "<extension-name>"`. For `activate-dev-branch-context`, `update-dev-branch-base`, `dump-dev-branch-extension`, `refresh-dev-branch`, `export-dev-branch-result`, and `close-dev-branch`, do not ask for a branch name. The helper infers it from the current `itldev/<name>` Git branch.
+For `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`, and `close-dev-branch`, do not ask for a branch name. The helper infers it from the current `itldev/<name>` Git branch.
 
-For branch verification, do not call `/deploy-and-test` in the normal fast path. Run `update-dev-branch-base` first when files changed, then `run-dev-branch-tests`. The test action only runs Vanessa Automation and must not load configuration files.
+For branch verification, do not call `/deploy-and-test` in the normal fast path. Run `verify-dev-branch`; it updates the branch base partially and then runs Vanessa Automation.
 
 ## Failure Handling
 
@@ -60,4 +54,4 @@ If the helper exits with an error:
 4. Ask for only the missing value when the helper clearly identifies one.
 5. Use the full `1c-workflow` skill only for detailed recovery, unusual topology, or init questionnaire work.
 
-For first-time project bootstrap, run `init-project -InitMode wizard`; use `-InitMode json -InitAnswersPath <file>` for non-interactive automation. This fast skill is optimized for regular branch operations after installation.
+For first-time project bootstrap, follow `AGENT-INSTALL.md`. This fast skill is optimized for regular branch operations after installation.

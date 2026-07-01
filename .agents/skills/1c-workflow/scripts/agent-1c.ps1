@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "install-vanessa-automation", "run-dev-branch-tests", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
+    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "install-vanessa-automation", "run-dev-branch-tests", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -18,7 +18,9 @@ param(
     [string]$AgentTarget = "",
     [switch]$PublishToApache,
     [switch]$Force,
-    [switch]$SkipAiRules
+    [switch]$SkipAiRules,
+    [switch]$AllowUnverifiedResult,
+    [switch]$AllowUnverifiedClose
 )
 
 Set-StrictMode -Version Latest
@@ -2777,6 +2779,248 @@ function New-VanessaParamsFile {
     return $path
 }
 
+function Get-VanessaJunitSummary {
+    param([string]$RunDirectory)
+
+    $summary = [ordered]@{
+        found = $false
+        tests = 0
+        failures = 0
+        errors = 0
+    }
+
+    if (-not (Test-Path -LiteralPath $RunDirectory -PathType Container -ErrorAction SilentlyContinue)) {
+        return [pscustomobject]$summary
+    }
+
+    $xmlFiles = @(Get-ChildItem -LiteralPath $RunDirectory -Recurse -File -Filter "*.xml" -ErrorAction SilentlyContinue)
+    foreach ($file in $xmlFiles) {
+        try {
+            $xml = New-Object System.Xml.XmlDocument
+            $xml.Load($file.FullName)
+            $nodes = @($xml.SelectNodes('//*[local-name()="testsuite" or local-name()="testsuites"]'))
+            foreach ($node in $nodes) {
+                if ($node.Attributes["tests"]) {
+                    $summary.tests += [int]$node.Attributes["tests"].Value
+                    $summary.found = $true
+                }
+                if ($node.Attributes["failures"]) {
+                    $summary.failures += [int]$node.Attributes["failures"].Value
+                    $summary.found = $true
+                }
+                if ($node.Attributes["errors"]) {
+                    $summary.errors += [int]$node.Attributes["errors"].Value
+                    $summary.found = $true
+                }
+            }
+        } catch {
+            Write-Host "[WARN] Could not parse Vanessa JUnit report: $($file.FullName)"
+        }
+    }
+
+    return [pscustomobject]$summary
+}
+
+function Get-VanessaVerificationStatus {
+    param(
+        [string]$RunDirectory,
+        [string]$StatusPath
+    )
+
+    $junit = Get-VanessaJunitSummary -RunDirectory $RunDirectory
+    if ($junit.found) {
+        if (($junit.failures + $junit.errors) -gt 0) {
+            return [pscustomobject]@{
+                status = "failed"
+                reason = "Vanessa JUnit report contains failures/errors: failures=$($junit.failures), errors=$($junit.errors)."
+            }
+        }
+        if ($junit.tests -gt 0) {
+            return [pscustomobject]@{
+                status = "passed"
+                reason = "Vanessa JUnit report contains $($junit.tests) tests without failures/errors."
+            }
+        }
+    }
+
+    if (Test-Path -LiteralPath $StatusPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        $statusText = Read-Utf8Text -Path $StatusPath
+        $failurePattern = '(?i)("failures?"\s*:\s*[1-9]|"failed"\s*:\s*true|"errors?"\s*:\s*[1-9]|\bfailed\b|\bfailure\b|\bexception\b|провален|ошиб[а-я]*\s*:\s*(true|[1-9]))'
+        if ($statusText -match $failurePattern) {
+            return [pscustomobject]@{
+                status = "failed"
+                reason = "Vanessa status file contains failure/error markers."
+            }
+        }
+        if (-not [string]::IsNullOrWhiteSpace($statusText)) {
+            return [pscustomobject]@{
+                status = "passed"
+                reason = "Vanessa status file was created and contains no failure/error markers."
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        status = "unknown"
+        reason = "Vanessa finished, but no reliable status or JUnit result was found."
+    }
+}
+
+function Get-GitObjectIdForHeadPath {
+    param([string]$RepoPath)
+
+    $normalized = ($RepoPath -replace "\\", "/").Trim("/")
+    if (-not $normalized) {
+        return ""
+    }
+
+    & git -C $script:ProjectRoot rev-parse --verify --quiet "HEAD:$normalized" *> $null
+    if ($LASTEXITCODE -ne 0) {
+        return "<missing>"
+    }
+
+    $output = Get-GitOutput @("rev-parse", "HEAD:$normalized")
+    if ($output) {
+        return ([string]$output).Trim()
+    }
+    return "<missing>"
+}
+
+function Get-GitStatusForFingerprintPaths {
+    param([string[]]$PathSpec)
+
+    $arguments = @("status", "--porcelain", "--") + @($PathSpec)
+    $output = & git -C $script:ProjectRoot @arguments
+    if ($LASTEXITCODE -ne 0) {
+        return "<cannot-read-status>"
+    }
+    return (@($output) -join "`n")
+}
+
+function Get-VerificationFingerprint {
+    $paths = @(
+        (Get-ExportPath),
+        (Get-ExtensionsPath),
+        (Get-VanessaFeaturesPath)
+    )
+
+    $parts = @()
+    foreach ($path in $paths) {
+        $normalized = ($path -replace "\\", "/").Trim("/")
+        if ($normalized) {
+            $parts += "$normalized=$(Get-GitObjectIdForHeadPath -RepoPath $normalized)"
+        }
+    }
+
+    $relevantStatus = Get-GitStatusForFingerprintPaths -PathSpec $paths
+    if ($relevantStatus) {
+        $parts += "worktree=$relevantStatus"
+    } else {
+        $parts += "worktree=<clean>"
+    }
+
+    return ($parts -join "|")
+}
+
+function Get-VerificationState {
+    param([object]$State)
+
+    $status = [string](Get-StateValue -State $State -Name "lastVerificationStatus" -Default "missing")
+    $commit = [string](Get-StateValue -State $State -Name "lastVerifiedCommit" -Default "")
+    $fingerprint = [string](Get-StateValue -State $State -Name "lastVerifiedFingerprint" -Default "")
+    $currentCommit = ""
+    $currentFingerprint = ""
+    $isFresh = $false
+    try {
+        $currentCommit = Get-CurrentCommit
+        $currentFingerprint = Get-VerificationFingerprint
+        if ($fingerprint) {
+            $isFresh = ($status -eq "passed" -and $fingerprint -eq $currentFingerprint)
+        } else {
+            $isFresh = ($status -eq "passed" -and $commit -and $commit -eq $currentCommit)
+        }
+    } catch {
+        $currentCommit = ""
+        $currentFingerprint = ""
+        $isFresh = $false
+    }
+
+    $effectiveStatus = $status
+    if ($status -eq "passed" -and -not $isFresh) {
+        $effectiveStatus = "stale"
+    }
+
+    return [pscustomobject]@{
+        status = $status
+        effectiveStatus = $effectiveStatus
+        isFreshPassed = $isFresh
+        verifiedCommit = $commit
+        currentCommit = $currentCommit
+        verifiedFingerprint = $fingerprint
+        currentFingerprint = $currentFingerprint
+        verifiedAt = [string](Get-StateValue -State $State -Name "lastVerifiedAt" -Default "")
+        reportPath = [string](Get-StateValue -State $State -Name "lastVerifiedReportPath" -Default "")
+        logPath = [string](Get-StateValue -State $State -Name "lastVerificationLogPath" -Default "")
+        reason = [string](Get-StateValue -State $State -Name "lastVerificationReason" -Default "")
+    }
+}
+
+function Add-VerificationStaleIfNeeded {
+    param(
+        [object]$State,
+        [hashtable]$Updates,
+        [string]$Reason,
+        [string]$CurrentCommit = (Get-CurrentCommit),
+        [switch]$Force
+    )
+
+    $verification = Get-VerificationState -State $State
+    $currentFingerprint = Get-VerificationFingerprint
+    if ($verification.status -eq "passed" -and ($Force -or $verification.verifiedFingerprint -ne $currentFingerprint)) {
+        $Updates["lastVerificationStatus"] = "stale"
+        $Updates["lastVerificationStaleAt"] = (Get-Date).ToString("o")
+        $Updates["lastVerificationStaleReason"] = $Reason
+    }
+}
+
+function Confirm-UnverifiedProceed {
+    param(
+        [object]$State,
+        [string]$Operation,
+        [switch]$Allow
+    )
+
+    $verification = Get-VerificationState -State $State
+    if ($verification.isFreshPassed) {
+        return $false
+    }
+
+    Write-Host "[WARN] Current development branch has no fresh successful Vanessa verification."
+    Write-Host "Verification status: $($verification.effectiveStatus)"
+    if ($verification.reason) {
+        Write-Host "Verification reason: $($verification.reason)"
+    }
+    if ($verification.verifiedAt) {
+        Write-Host "Last verified at: $($verification.verifiedAt)"
+    }
+    if ($verification.verifiedCommit) {
+        Write-Host "Last verified commit: $($verification.verifiedCommit)"
+    }
+    if ($verification.currentCommit) {
+        Write-Host "Current commit: $($verification.currentCommit)"
+    }
+    if ($verification.reportPath) {
+        Write-Host "Last verification report: $($verification.reportPath)"
+    }
+
+    if ($Allow) {
+        Write-Host "Explicit unverified override accepted for $Operation."
+        return $true
+    }
+
+    throw "$Operation stopped because fresh passed Vanessa verification is missing. Run verify-dev-branch or rerun with explicit unverified override."
+}
+
 function Run-DevBranchTests {
     $state = Read-DevBranchState -Name $DevBranchName
     Sync-DevBranchContextToDotEnv -State $state
@@ -2807,11 +3051,35 @@ function Run-DevBranchTests {
 
     $command = "StartFeaturePlayer;VAParams=$paramsPath"
     $enterpriseArgs = @("/Execute", $vanessa.epfPath, "/C$command")
-    $logPath = Invoke-Enterprise `
-        -InfoBasePath $state.devBranchInfoBasePath `
-        -InfoBaseKind $state.infoBaseKind `
-        -EnterpriseArgs $enterpriseArgs
+    $logPath = ""
+    $currentCommit = Get-CurrentCommit
+    $currentFingerprint = Get-VerificationFingerprint
+    try {
+        $logPath = Invoke-Enterprise `
+            -InfoBasePath $state.devBranchInfoBasePath `
+            -InfoBaseKind $state.infoBaseKind `
+            -EnterpriseArgs $enterpriseArgs
+    } catch {
+        $logPath = $script:LastLogPath
+        Update-DevBranchState -State $state -Updates @{
+            lastVanessaTestAt = (Get-Date).ToString("o")
+            lastVanessaFeaturePath = $featuresPath
+            lastVanessaReportPath = $runDirectory
+            lastVanessaParamsPath = $paramsPath
+            lastVanessaStatusPath = $statusPath
+            lastVanessaLogPath = $logPath
+            lastVerificationStatus = "failed"
+            lastVerifiedCommit = $currentCommit
+            lastVerifiedFingerprint = $currentFingerprint
+            lastVerifiedAt = (Get-Date).ToString("o")
+            lastVerifiedReportPath = $runDirectory
+            lastVerificationLogPath = $logPath
+            lastVerificationReason = $_.Exception.Message
+        }
+        throw
+    }
 
+    $verification = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
     Update-DevBranchState -State $state -Updates @{
         lastVanessaTestAt = (Get-Date).ToString("o")
         lastVanessaFeaturePath = $featuresPath
@@ -2819,12 +3087,24 @@ function Run-DevBranchTests {
         lastVanessaParamsPath = $paramsPath
         lastVanessaStatusPath = $statusPath
         lastVanessaLogPath = $logPath
+        lastVerificationStatus = $verification.status
+        lastVerifiedCommit = $currentCommit
+        lastVerifiedFingerprint = $currentFingerprint
+        lastVerifiedAt = (Get-Date).ToString("o")
+        lastVerifiedReportPath = $runDirectory
+        lastVerificationLogPath = $logPath
+        lastVerificationReason = $verification.reason
     }
 
     Write-Host "Vanessa tests finished."
+    Write-Host "Verification status: $($verification.status)"
+    Write-Host "Verification reason: $($verification.reason)"
     Write-Host "Report directory: $runDirectory"
     Write-Host "Status file: $statusPath"
     Write-Host "1C log: $logPath"
+    if ($verification.status -ne "passed") {
+        throw "Vanessa verification did not pass: $($verification.status). $($verification.reason)"
+    }
 }
 
 function New-RepositoryConnectionArgs {
@@ -3299,11 +3579,11 @@ function Update-UserRules {
 
 $marker
 
-Use `.agents/skills/1c-workflow/SKILL.md` for project initialization, development branch creation, development branch refresh, development branch base update, Vanessa Automation test runs, master sync, branch switching, development branch close, and CF/CFE result export.
+Use `.agents/skills/1c-workflow/SKILL.md` for project initialization, development branch creation, status, development branch refresh, development branch base update, Vanessa Automation verification, branch switching, development branch close, and CF/CFE result export.
 
-Before running ai_rules_1c IB-bound commands such as `/update1cbase`, `/loadfrom1cbase`, or `/getconfigfiles` inside an `itldev/*` branch, activate the current development branch context with `activate-dev-branch-context` or the `/itl-activate-dev-branch-context` command. This writes the current branch infobase path to `.dev.env` keys used by ai_rules_1c.
+Before running ai_rules_1c IB-bound commands such as `/update1cbase`, `/loadfrom1cbase`, or `/getconfigfiles` inside an `itldev/*` branch, ensure the current development branch context is active. The ITL helper does this automatically during branch lifecycle commands.
 
-Do not use `/deploy-and-test` as the normal verification command in an ITL development branch because it reloads all files. The normal executable verification cycle is `update-dev-branch-base`, then `run-dev-branch-tests`.
+Do not use `/deploy-and-test` as the normal verification command in an ITL development branch because it reloads all files. The normal executable verification cycle is `/itl-verify`. Use `/itl-update-base` only when you need to update the branch infobase without tests.
 
 Use Vanessa Automation scenarios from `tests/features` for OpenSpec and quick-fix verification. For large OpenSpec changes, test each meaningful implementation slice separately. If Vanessa finds an error, analyze the report/log, fix it, update the branch base again, and rerun the relevant scenario. Stop and ask the developer only after 3 failed fix attempts for the same group of errors.
 
@@ -3865,11 +4145,13 @@ function Set-DevBranchExtension {
 
     $safeExtensionName = ConvertTo-SafeName $ExtensionName
     $extensionExportPath = Get-ExtensionExportPath -SafeExtensionName $safeExtensionName
-    Update-DevBranchState -State $state -Updates @{
+    $updates = @{
         extensionName = $ExtensionName
         safeExtensionName = $safeExtensionName
         extensionExportPath = $extensionExportPath
     }
+    Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Extension settings changed." -Force
+    Update-DevBranchState -State $state -Updates $updates
     $updatedState = Read-DevBranchState -Name $DevBranchName
     Sync-DevBranchContextToDotEnv -State $updatedState
 
@@ -3900,11 +4182,15 @@ function Update-DevBranchBase {
         $extensionName = Require-DevBranchExtensionName -State $state
         $extensionExportPath = Assert-ExtensionFilesReady -State $state
         $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath $extensionExportPath -ContentKind "extension" -ExtensionName $extensionName
-        Update-DevBranchState -State $state -Updates (New-LoadStateUpdates -LoadResult $loadResult -ContentKind "extension")
+        $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "extension"
+        Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch extension base was updated." -CurrentCommit $loadResult.currentCommit
+        Update-DevBranchState -State $state -Updates $updates
         Write-BaseUpdateResult -State $state -LoadResult $loadResult -Label "Development branch extension"
     } else {
         $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
-        Update-DevBranchState -State $state -Updates (New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration")
+        $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
+        Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch configuration base was updated." -CurrentCommit $loadResult.currentCommit
+        Update-DevBranchState -State $state -Updates $updates
         Write-BaseUpdateResult -State $state -LoadResult $loadResult -Label "Development branch infobase"
     }
 }
@@ -3920,6 +4206,7 @@ function Refresh-DevBranch {
     $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
     $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
     $updates["lastRefreshAt"] = (Get-Date).ToString("o")
+    Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch was refreshed from master." -CurrentCommit $loadResult.currentCommit
     Update-DevBranchState -State $state -Updates $updates
     Write-Host "Development branch refreshed from master: $($state.devBranch)"
     Write-BaseUpdateResult -State $state -LoadResult $loadResult -Label "Development branch configuration"
@@ -3931,15 +4218,92 @@ function Refresh-DevBranch {
 function Dump-DevBranchExtension {
     $state = Read-DevBranchState -Name $DevBranchName
     $dumpResult = Dump-ExtensionToFiles -State $state
-    Update-DevBranchState -State $state -Updates @{
+    $updates = @{
         lastExtensionDumpAt = (Get-Date).ToString("o")
         lastExtensionDumpPath = $dumpResult.exportPath
         lastLogPath = $dumpResult.logPath
     }
+    Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Extension files were dumped from the branch infobase." -Force
+    Update-DevBranchState -State $state -Updates $updates
     $updatedState = Read-DevBranchState -Name $DevBranchName
     Sync-DevBranchContextToDotEnv -State $updatedState
     Write-Host "Extension dumped: $($dumpResult.exportPath)"
     Write-Host "Last 1C log: $($dumpResult.logPath)"
+}
+
+function Show-WorkflowStatus {
+    Write-Section "ITL status"
+
+    if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git"))) {
+        Write-Host "Git repository: missing"
+        return
+    }
+
+    $currentBranch = Get-CurrentBranch
+    $currentCommit = ""
+    try {
+        $currentCommit = Get-CurrentCommit
+    } catch {
+        $currentCommit = "<none>"
+    }
+    $dirty = Test-GitHasChanges
+
+    Write-Host "Git branch: $(if ($currentBranch) { $currentBranch } else { '<none>' })"
+    Write-Host "Git commit: $currentCommit"
+    Write-Host "Git worktree: $(if ($dirty) { 'dirty' } else { 'clean' })"
+
+    if ($currentBranch -notlike "itldev/*") {
+        Write-Host "Current development branch: none"
+        return
+    }
+
+    $state = Read-DevBranchState -Name ""
+    $verification = Get-VerificationState -State $state
+    $kind = Get-DevBranchKind -State $state
+
+    Write-Host "Development branch: $($state.devBranch)"
+    $safeDevBranchName = Get-StateValue -State $state -Name "safeDevBranchName" -Default "<unknown>"
+    Write-Host "Development branch name: $(Get-StateValue -State $state -Name 'devBranchName' -Default $safeDevBranchName)"
+    Write-Host "Type: $kind"
+    if ($kind -eq "extension") {
+        Write-Host "Extension: $(Get-StateValue -State $state -Name 'extensionName' -Default '<not set>')"
+        Write-Host "Extension files: $(Get-StateValue -State $state -Name 'extensionExportPath' -Default '<not set>')"
+    }
+    Write-Host "Infobase: $($state.devBranchInfoBasePath)"
+    $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
+    if ($publicationUrl) {
+        Write-Host "Publication URL: $publicationUrl"
+    }
+    Write-Host "Last config base update: $(Get-StateValue -State $state -Name 'lastConfigBaseUpdateAt' -Default '<never>')"
+    if ($kind -eq "extension") {
+        Write-Host "Last extension base update: $(Get-StateValue -State $state -Name 'lastExtensionBaseUpdateAt' -Default '<never>')"
+    }
+    Write-Host "Last refresh: $(Get-StateValue -State $state -Name 'lastRefreshAt' -Default '<never>')"
+    Write-Host "Verification status: $($verification.effectiveStatus)"
+    Write-Host "Verification fresh passed: $($verification.isFreshPassed)"
+    if ($verification.verifiedAt) {
+        Write-Host "Last verified at: $($verification.verifiedAt)"
+    }
+    if ($verification.verifiedCommit) {
+        Write-Host "Last verified commit: $($verification.verifiedCommit)"
+    }
+    if ($verification.reportPath) {
+        Write-Host "Last verification report: $($verification.reportPath)"
+    }
+    if ($verification.reason) {
+        Write-Host "Last verification reason: $($verification.reason)"
+    }
+    Write-Host "Last result: $(Get-StateValue -State $state -Name 'lastResultPath' -Default '<none>')"
+    Write-Host "Final result: $(Get-StateValue -State $state -Name 'finalResultPath' -Default '<none>')"
+    $override = Get-StateValue -State $state -Name "lastUnverifiedOverrideAt" -Default ""
+    if ($override) {
+        Write-Host "Last unverified override: $override ($(Get-StateValue -State $state -Name 'lastUnverifiedOverrideOperation' -Default 'unknown'))"
+    }
+}
+
+function Verify-DevBranch {
+    Update-DevBranchBase
+    Run-DevBranchTests
 }
 
 function Export-DevBranchResult {
@@ -3958,13 +4322,24 @@ function Export-DevBranchResult {
     } else {
         $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
     }
-    $resultPath = Export-DevBranchResultFile -State $state -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -ContentKind $kind
     $devBranchCommit = Get-CurrentCommit
     $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind $kind
+    Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch base was updated before result export." -CurrentCommit $loadResult.currentCommit
+    Update-DevBranchState -State $state -Updates $updates
+    $state = Read-DevBranchState -Name $DevBranchName
+    $unverifiedOverride = Confirm-UnverifiedProceed -State $state -Operation "export-dev-branch-result" -Allow:$AllowUnverifiedResult
+
+    $resultPath = Export-DevBranchResultFile -State $state -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -ContentKind $kind
+    $updates = @{}
     $updates["lastResultPath"] = $resultPath
     $updates["lastResultKind"] = $(if ($kind -eq "extension") { "cfe" } else { "cf" })
     $updates["lastResultAt"] = (Get-Date).ToString("o")
     $updates["lastLogPath"] = $script:LastLogPath
+    if ($unverifiedOverride) {
+        $updates["lastUnverifiedOverrideAt"] = (Get-Date).ToString("o")
+        $updates["lastUnverifiedOverrideOperation"] = "export-dev-branch-result"
+        $updates["lastUnverifiedResultPath"] = $resultPath
+    }
     Update-DevBranchState -State $state -Updates $updates
     Write-Host "Branch: $($state.devBranch)"
     Write-Host "Development branch commit: $devBranchCommit"
@@ -3985,6 +4360,7 @@ function Close-DevBranch {
     $kind = Get-DevBranchKind -State $state
     $configLoadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
     $updates = New-LoadStateUpdates -LoadResult $configLoadResult -ContentKind "configuration"
+    Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch was refreshed and updated before close." -CurrentCommit $configLoadResult.currentCommit
     if ($kind -eq "extension") {
         $extensionName = Require-DevBranchExtensionName -State $state
         $extensionExportPath = Assert-ExtensionFilesReady -State $state
@@ -3993,7 +4369,12 @@ function Close-DevBranch {
         foreach ($key in $extensionUpdates.Keys) {
             $updates[$key] = $extensionUpdates[$key]
         }
+        Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch extension was updated before close." -CurrentCommit $extensionLoadResult.currentCommit
     }
+    Update-DevBranchState -State $state -Updates $updates
+    $state = Read-DevBranchState -Name $DevBranchName
+    $unverifiedOverride = Confirm-UnverifiedProceed -State $state -Operation "close-dev-branch" -Allow:$AllowUnverifiedClose
+
     $resultPath = Export-DevBranchResultFile -State $state -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -ContentKind $kind
 
     $masterBranch = Get-MasterBranch
@@ -4004,6 +4385,11 @@ function Close-DevBranch {
     $updates["finalResultPath"] = $resultPath
     $updates["finalResultKind"] = $(if ($kind -eq "extension") { "cfe" } else { "cf" })
     $updates["lastLogPath"] = $script:LastLogPath
+    if ($unverifiedOverride) {
+        $updates["lastUnverifiedOverrideAt"] = (Get-Date).ToString("o")
+        $updates["lastUnverifiedOverrideOperation"] = "close-dev-branch"
+        $updates["lastUnverifiedResultPath"] = $resultPath
+    }
     Update-DevBranchState -State $state -Updates $updates
 
     Write-Host "Branch: $($state.devBranch)"
@@ -4228,8 +4614,10 @@ Actions:
   install-apache      Install Apache Lounge httpd from official archive after confirmation.
   install-vanessa-automation
                       Install Vanessa Automation single EPF from official GitHub release.
+  status              Show current ITL branch, infobase, and verification status.
   run-dev-branch-tests
                       Run Vanessa Automation tests against the current development branch base.
+  verify-dev-branch   Update the current development branch base, then run Vanessa tests.
   init-project        Dump source infobase config to master and install rules.
   sync-master         Refresh master from storage or from the current source infobase state.
   new-dev-branch             Create a configuration development branch and infobase copy.
@@ -4241,7 +4629,9 @@ Actions:
   update-dev-branch-base     Update the current development branch infobase from branch files.
   refresh-dev-branch         Refresh master, merge it into the development branch, update the branch base.
   export-dev-branch-result   Export CF or CFE from the current development branch.
+                             Use -AllowUnverifiedResult for explicit unverified override.
   close-dev-branch           Refresh master, merge into the development branch, export final result, switch to master.
+                             Use -AllowUnverifiedClose for explicit unverified override.
   switch-master       Checkout the fixed master branch.
   switch-dev-branch      Checkout a development branch from saved state.
   list-dev-branches      Show active development branches and the current branch.
@@ -4253,12 +4643,14 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action detect-apache
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-vanessa-automation
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action status
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts"
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-extension-dev-branch -DevBranchName "bonus-extension"
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action set-dev-branch-extension -ExtensionName "BonusExtension"
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action dump-dev-branch-extension
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action activate-dev-branch-context
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-dev-branch-base
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action verify-dev-branch
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action run-dev-branch-tests
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-dev-branch
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-dev-branch-result
@@ -4279,7 +4671,9 @@ try {
         "detect-apache" { Detect-Apache }
         "install-apache" { Install-Apache }
         "install-vanessa-automation" { Install-VanessaAutomation }
+        "status" { Show-WorkflowStatus }
         "run-dev-branch-tests" { Run-DevBranchTests }
+        "verify-dev-branch" { Verify-DevBranch }
         "init-project" { Initialize-Project }
         "sync-master" { Sync-Master }
         "new-dev-branch" { New-DevBranch }

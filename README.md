@@ -30,11 +30,17 @@ DEVELOPER-GUIDE.ru.md
 DEV-BRANCH-DEVELOPMENT.ru.md
 ```
 
+Низкоуровневые helper-actions для диагностики описаны отдельно и не являются основным интерфейсом разработчика:
+
+```text
+.agents/skills/1c-workflow/references/advanced-actions.md
+```
+
 ## Состав пакета
 
 - `.agents/skills/1c-workflow` - общий Agent Skill для Codex и Kilo Code.
 - `.agents/skills/1c-workflow-fast` - быстрый Skill для регулярных операций через PowerShell-helper без чтения полного workflow.
-- `.kilo/commands` - slash-команды Kilo Code с префиксом `/itl` и быстрым экспериментальным префиксом `/itlx`.
+- `.kilo/commands` - короткие slash-команды Kilo Code с префиксом `/itl`.
 - `AGENT-INSTALL.md` - bootstrap-инструкция для агента.
 - `templates/project.json` - шаблон настроек проекта без секретов.
 - `templates/dev.env.example` - пример локальных настроек и секретов.
@@ -69,57 +75,28 @@ Vanessa Automation устанавливается локально в `.agent-1c
 ## Команды Kilo Code
 
 ```text
-/itl                              Показать меню действий.
-/itl-init-project                 Инициализировать проект через script wizard.
-/itl-new-dev-branch <name>        Создать ветку разработки конфигурации.
-/itl-new-extension-dev-branch <name> Создать ветку разработки расширения.
-/itl-set-dev-branch-extension <name> Задать имя расширения для текущей ветки.
-/itl-dump-dev-branch-extension    Выгрузить расширение текущей ветки в src/cfe.
-/itl-activate-dev-branch-context  Записать базу текущей ветки в .dev.env для ai_rules_1c.
-/itl-update-dev-branch-base       Обновить базу текущей ветки разработки из файлов ветки.
-/itl-run-dev-branch-tests         Запустить тесты Vanessa Automation по текущей ветке.
-/itl-install-vanessa-automation   Установить Vanessa Automation локально в проект.
-/itl-refresh-dev-branch           Обновить текущую ветку свежим master.
-/itl-export-dev-branch-result     Выгрузить CF/CFE по текущей ветке без закрытия ветки.
-/itl-sync-master                  Обновить только master.
-/itl-close-dev-branch             Закрыть текущую ветку, выгрузить финальный CF/CFE и перейти на master.
-/itl-list-dev-branches            Показать активные ветки разработки и текущую ветку.
-/itl-switch-master                Переключиться на master.
-/itl-switch-dev-branch <name>     Переключиться на ветку разработки.
+/itl                              Показать короткое меню.
+/itl-new-config-branch <name>     Создать ветку разработки конфигурации.
+/itl-new-extension-branch <name>  Создать ветку разработки расширения.
+/itl-status                       Показать текущую ветку, базу и статус проверки.
+/itl-update-base                  Обновить базу текущей ветки из файлов Git-ветки.
+/itl-verify                       Обновить базу ветки и запустить Vanessa Automation.
+/itl-refresh                      Обновить ветку свежим master.
+/itl-result                       Выгрузить CF/CFE без закрытия ветки.
+/itl-close                        Закрыть ветку, выгрузить финальный CF/CFE и перейти на master.
+/itl-switch <master|branch name>  Переключиться на master или ветку разработки.
 ```
 
-Для регулярных операций можно использовать быстрый контур `/itlx-*`. Он сразу запускает PowerShell-helper и читает подробные правила только при ошибке или по запросу:
-
-```text
-/itlx                             Показать быстрое меню.
-/itlx-init-project                Быстро запустить script wizard init-project.
-/itlx-new-dev-branch <name>       Создать ветку разработки конфигурации.
-/itlx-new-extension-dev-branch <name> Создать ветку разработки расширения.
-/itlx-set-dev-branch-extension <name> Задать имя расширения для текущей ветки.
-/itlx-dump-dev-branch-extension   Выгрузить расширение текущей ветки в src/cfe.
-/itlx-activate-dev-branch-context Записать базу текущей ветки в .dev.env для ai_rules_1c.
-/itlx-update-dev-branch-base      Обновить базу текущей ветки разработки из файлов ветки.
-/itlx-run-dev-branch-tests        Запустить тесты Vanessa Automation по текущей ветке.
-/itlx-install-vanessa-automation  Установить Vanessa Automation локально в проект.
-/itlx-refresh-dev-branch          Обновить текущую ветку свежим master.
-/itlx-export-dev-branch-result    Выгрузить CF/CFE по текущей ветке без закрытия ветки.
-/itlx-sync-master                 Обновить только master.
-/itlx-close-dev-branch            Закрыть текущую ветку, выгрузить финальный CF/CFE и перейти на master.
-/itlx-list-dev-branches           Показать активные ветки разработки и текущую ветку.
-/itlx-switch-master               Переключиться на master.
-/itlx-switch-dev-branch <name>    Переключиться на ветку разработки.
-```
-
-В Codex можно писать те же действия обычным текстом, вызывать `$1c-workflow` для подробного режима или `$1c-workflow-fast` для быстрых регулярных операций.
+Эти команды сами являются быстрым контуром: wrapper сразу запускает PowerShell-helper и читает подробные правила только при ошибке или по запросу. В Codex можно писать те же действия обычным текстом, вызывать `$1c-workflow` для подробного режима или `$1c-workflow-fast` для регулярных операций.
 
 ## Важные правила
 
 - Не коммитьте `.dev.env`, пароли, `*.cf`, `*.dt`, логи и локальные базы.
 - Не загружайте изменения ветки разработки напрямую в исходную базу.
 - Все изменения загружаются только в базу текущей ветки разработки.
-- Перед командами `ai_rules_1c`, которые работают с базой (`/update1cbase`, `/loadfrom1cbase`, `/getconfigfiles`), в ветке `itldev/*` должен быть активирован контекст ветки: `/itl-activate-dev-branch-context` или `/itlx-activate-dev-branch-context`. Команды жизненного цикла делают это автоматически.
-- Для обычной проверки в ITL-ветке не используйте `/deploy-and-test`: он повторно загружает все файлы. Используйте `/itl-update-dev-branch-base`, затем `/itl-run-dev-branch-tests`.
-- При переходе на `master` и при отдельном `/itl-sync-master` контекст базы ветки очищается, чтобы случайный `/update1cbase` не попал в исходную базу.
+- Перед командами `ai_rules_1c`, которые работают с базой (`/update1cbase`, `/loadfrom1cbase`, `/getconfigfiles`), в ветке `itldev/*` должен быть активирован контекст ветки. Команды жизненного цикла делают это автоматически.
+- Для обычной проверки в ITL-ветке не используйте `/deploy-and-test`: он повторно загружает все файлы. Используйте `/itl-verify`; если нужно только обновить базу, используйте `/itl-update-base`.
+- `/itl-result` и `/itl-close` предупреждают, если нет свежей успешной проверки Vanessa. Продолжить без нее можно только после явного подтверждения.
 - Перед переключением веток Git-дерево должно быть чистым.
 - После закрытия ветки разработки агент должен переключить проект обратно на `master`.
 - Установка софта выполняется только после явного подтверждения разработчика.

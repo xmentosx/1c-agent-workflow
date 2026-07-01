@@ -23,7 +23,7 @@ This package is designed for both Codex and Kilo Code:
 - Common workflow skill: `.agents/skills/1c-workflow`.
 - Fast routine workflow skill: `.agents/skills/1c-workflow-fast`.
 - Common project guidance: `AGENTS.md` and `USER-RULES.md`.
-- Kilo slash command wrappers: `.kilo/commands/itl*.md`, including detailed `/itl-*` and fast `/itlx-*` commands.
+- Kilo slash command wrappers: `.kilo/commands/itl*.md`, using one short `/itl-*` command surface.
 - Codex usage: choose the skill via `/skills`, invoke `$1c-workflow` for detailed workflows or `$1c-workflow-fast` for routine helper-first commands, or use natural language that matches the skill description.
 
 Do not rely on Codex-only custom prompts for this workflow. They are local to one user and are not the team distribution mechanism.
@@ -235,7 +235,7 @@ The wizard collects setup values, writes `.dev.env` and `.agent-1c/project.json`
 4. Source infobase update from 1C configuration repository storage when `SOURCE_USES_REPOSITORY=true`; otherwise this step is skipped and the current source infobase state is used.
 5. Dump of configuration files into fixed `src/cf`.
    - If `SOURCE_USES_REPOSITORY=true`, the dump command must also pass `/ConfigurationRepositoryF`, `/ConfigurationRepositoryN`, and `/ConfigurationRepositoryP`.
-   - If `SOURCE_USES_REPOSITORY=false`, repository values must not be requested or passed; the developer manually updates the source infobase before `/itl-sync-master` or `/itl-refresh-dev-branch` when needed.
+   - If `SOURCE_USES_REPOSITORY=false`, repository values must not be requested or passed; the developer manually updates the source infobase before `/itl-refresh` when needed.
    - First dump is full when `src/cf` is empty.
    - Later dumps are incremental with `-update -force` when `src/cf/ConfigDumpInfo.xml` exists.
    - If `src/cf` is not empty and `ConfigDumpInfo.xml` is missing, initialization stops with a clear error.
@@ -253,48 +253,19 @@ If PowerShell is unavailable, follow `.agents/skills/1c-workflow/references/work
 
 Developers should not need to remember exact names.
 
-For Kilo Code, detailed commands:
+For Kilo Code, show only the short command surface:
 
 ```text
 /itl
-/itl-init-project
-/itl-new-dev-branch <branch name>
-/itl-new-extension-dev-branch <branch name>
-/itl-set-dev-branch-extension <extension name>
-/itl-dump-dev-branch-extension
-/itl-activate-dev-branch-context
-/itl-update-dev-branch-base
-/itl-run-dev-branch-tests
-/itl-install-vanessa-automation
-/itl-refresh-dev-branch
-/itl-export-dev-branch-result
-/itl-sync-master
-/itl-close-dev-branch
-/itl-list-dev-branches
-/itl-switch-master
-/itl-switch-dev-branch <branch name>
-```
-
-Fast experimental commands run the PowerShell helper directly and should not read the full workflow references unless the helper fails or the user asks for details:
-
-```text
-/itlx
-/itlx-init-project
-/itlx-new-dev-branch <branch name>
-/itlx-new-extension-dev-branch <branch name>
-/itlx-set-dev-branch-extension <extension name>
-/itlx-dump-dev-branch-extension
-/itlx-activate-dev-branch-context
-/itlx-update-dev-branch-base
-/itlx-run-dev-branch-tests
-/itlx-install-vanessa-automation
-/itlx-refresh-dev-branch
-/itlx-export-dev-branch-result
-/itlx-sync-master
-/itlx-close-dev-branch
-/itlx-list-dev-branches
-/itlx-switch-master
-/itlx-switch-dev-branch <branch name>
+/itl-new-config-branch <branch name>
+/itl-new-extension-branch <branch name>
+/itl-status
+/itl-update-base
+/itl-verify
+/itl-refresh
+/itl-result
+/itl-close
+/itl-switch <master|branch name>
 ```
 
 Typing `/` shows available project commands.

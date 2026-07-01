@@ -3,8 +3,18 @@ description: Show available ITL 1C workflow actions
 agent: code
 ---
 
-Use the `1c-workflow` skill.
+Show this short ITL menu:
 
-Show the 1C workflow menu from `.agents/skills/1c-workflow/references/workflow.md`, including new configuration branch, new extension branch, set extension name, dump extension files, activate development branch context, update development branch base, run Vanessa tests, refresh development branch, export development branch result, list development branches, switch master, and switch development branch actions.
+```text
+/itl-new-config-branch <name>     Create a configuration development branch.
+/itl-new-extension-branch <name>  Create an extension development branch.
+/itl-status                       Show branch, infobase, and verification status.
+/itl-update-base                  Update the current branch infobase from branch files.
+/itl-verify                       Update the branch base, then run Vanessa tests.
+/itl-refresh                      Merge fresh master into the current branch.
+/itl-result                       Export CF/CFE without closing the branch.
+/itl-close                        Export final CF/CFE and switch to master.
+/itl-switch <master|branch name>  Switch branch.
+```
 
-Do not execute a lifecycle action unless the user clearly chooses one.
+Do not execute a lifecycle action unless the user clearly chooses one. Detailed helper actions exist for diagnostics, but do not show them in the beginner menu.

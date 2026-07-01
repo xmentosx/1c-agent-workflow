@@ -9,7 +9,7 @@ description: Initialize and operate 1C configuration or extension development pr
 
 Use this skill to run the standard lifecycle for agent-assisted 1C configuration development. The workflow is cross-agent: the same `.agents/skills/1c-workflow` directory works in Codex and Kilo Code, while Kilo-specific slash command wrappers can live in `.kilo/commands`.
 
-For routine lifecycle commands in an already installed project, prefer the separate fast skill `.agents/skills/1c-workflow-fast` or Kilo `/itlx-*` commands. The fast path calls the PowerShell helper directly and reads detailed workflow references only after helper failure or when the user asks for explanation.
+For routine lifecycle commands in an already installed project, prefer the short Kilo `/itl-*` commands or the separate fast skill `.agents/skills/1c-workflow-fast`. The fast path calls the PowerShell helper directly and reads detailed workflow references only after helper failure or when the user asks for explanation.
 
 ## Intent Routing
 
@@ -21,6 +21,8 @@ Map user intent to one workflow:
 - `INSTALL_APACHE`: user agreed to automatically install Apache/httpd for 1C web publication.
 - `INSTALL_VANESSA_AUTOMATION`: user asks to install Vanessa Automation for branch tests.
 - `RUN_DEV_BRANCH_TESTS`: user asks to run tests, Vanessa tests, executable checks, or OpenSpec verification for the current development branch.
+- `VERIFY_DEV_BRANCH`: user asks to verify/check the current development branch through the standard ITL cycle.
+- `STATUS`: user asks for ITL status, current branch, active branch, current base, or verification state.
 - `NEW_DEV_BRANCH`: user asks to create/start/begin a configuration development branch, task branch, customization branch, or parallel work branch.
 - `NEW_EXTENSION_DEV_BRANCH`: user asks to create/start/begin an extension development branch.
 - `SET_DEV_BRANCH_EXTENSION`: user asks to set or remember the extension name for the current extension development branch.
@@ -75,9 +77,9 @@ For `UPDATE_DEV_BRANCH_BASE`, `REFRESH_DEV_BRANCH`, `EXPORT_DEV_BRANCH_RESULT`, 
 
 For configuration branches, update the development branch infobase with a generated `-listFile` of changed files under `src/cf`. For extension branches, update the extension from `src/cfe/<safeExtensionName>` with `-Extension <extensionName>`. Do not full-load the entire dump unless the user explicitly asks for a manual recovery path.
 
-For branch verification, use Vanessa Automation through `run-dev-branch-tests`. Do not use `/deploy-and-test` as the normal ITL verification command because it deploys by loading all files. The standard cycle is: update the branch base once with `update-dev-branch-base`, then run Vanessa tests against that already updated branch infobase.
+For branch verification, use `verify-dev-branch`. It updates the branch base once with `update-dev-branch-base`, then runs Vanessa tests against that already updated branch infobase. Do not use `/deploy-and-test` as the normal ITL verification command because it deploys by loading all files.
 
-For extension branches, the extension name is not collected during branch creation. Collect it at the beginning of extension development with `set-dev-branch-extension`, save it in branch state, then use it for dump/update/result commands.
+For extension branches, the extension name is not collected during branch creation. Collect it only when extension work needs it, save it in branch state with `set-dev-branch-extension`, then use it for dump/update/result commands.
 
 Before running ai_rules_1c infobase-bound commands such as `/update1cbase`, `/deploy-and-test`, `/loadfrom1cbase`, or `/getconfigfiles` inside an `itldev/*` branch, activate the ITL development branch context. The helper does this automatically during lifecycle commands and exposes `activate-dev-branch-context` for manual activation. When on `master`, do not run `/update1cbase` unless the developer explicitly chooses a test infobase; `switch-master` and standalone `sync-master` clear the active development branch context.
 
