@@ -40,6 +40,10 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ru
 
 The monitored launcher opens the wizard in an external PowerShell window and writes `.agent-1c/runs/<run>/status.json` plus `console.log`, so the agent can detect completion without waiting for the developer to close the window manually.
 
+Agents must run this command in the foreground and wait for it to exit. Do not wrap it in a background PowerShell process, do not keep the launched PowerShell session open after the script exits, and do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly as the default agent path.
+
+Use `run-agent-1c-window.ps1 -KeepWindowOnFailure -- -Action init-project -InitMode wizard` only for manual debugging when the developer explicitly wants the external window to stay open after a failure.
+
 For non-interactive automation, write a JSON answers file and run:
 
 ```powershell
@@ -237,6 +241,8 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ru
 ```
 
 The wizard opens in an external PowerShell window, writes `.agent-1c/runs/<run>/status.json` plus `console.log`, collects setup values, writes `.dev.env` and `.agent-1c/project.json`, and then performs:
+
+The agent must wait for the monitored launcher process to finish. A background launch that returns immediately makes the agent miss completion, and a persistent PowerShell session leaves a stale prompt open after the helper has already written its status.
 
 1. Required software check with install suggestions.
 2. Git initialization when `.git` is absent.

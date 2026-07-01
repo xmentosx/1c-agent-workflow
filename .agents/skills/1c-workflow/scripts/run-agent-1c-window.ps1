@@ -8,6 +8,7 @@ $ProjectRoot = (Get-Location).Path
 $HelperPath = ""
 $PollIntervalMilliseconds = 1000
 $StatusStartTimeoutSeconds = 30
+$KeepWindowOnFailure = $false
 $AgentArgs = @()
 
 function Read-RequiredLauncherValue {
@@ -60,6 +61,10 @@ $rawArgs = @($args)
             $value = Read-RequiredLauncherValue -Values $rawArgs -Index $i -Name $arg
             $StatusStartTimeoutSeconds = [int]$value.value
             $i = $value.index
+            continue
+        }
+        "-keepwindowonfailure" {
+            $KeepWindowOnFailure = $true
             continue
         }
         default {
@@ -160,9 +165,11 @@ if (-not $powershell) {
 $monitoredArgs = @(
     "-ProjectRoot", $projectRootFull,
     "-RunStatusPath", $statusPath,
-    "-RunLogPath", $logPath,
-    "-PauseOnFailure"
+    "-RunLogPath", $logPath
 ) + @($AgentArgs)
+if ($KeepWindowOnFailure) {
+    $monitoredArgs += "-PauseOnFailure"
+}
 
 $helperInvocation = "& " + (ConvertTo-PowerShellLiteral $helperFull) + " " + ((@($monitoredArgs) | ForEach-Object { ConvertTo-PowerShellArgumentToken $_ }) -join " ")
 $commandText = @"

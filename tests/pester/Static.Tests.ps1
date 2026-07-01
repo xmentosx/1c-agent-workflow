@@ -94,6 +94,31 @@ Describe "1C agent workflow static checks" {
         $text | Should -Match "direct bootstrap-only wrapper"
     }
 
+    It "documents monitored init as a foreground command, not a background direct wizard" {
+        $docPaths = @(
+            "AGENT-INSTALL.md",
+            ".agents\skills\1c-workflow\SKILL.md",
+            ".agents\skills\1c-workflow\references\workflow.md",
+            ".kilo\commands\itl-init-project.md"
+        ) | ForEach-Object { Join-Path $RepoRoot $_ }
+
+        foreach ($path in $docPaths) {
+            $text = Get-Content -Encoding UTF8 -Raw $path
+            $text | Should -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard"))
+            $text | Should -Match "foreground"
+            $text | Should -Match "background PowerShell"
+            $text | Should -Match "KeepWindowOnFailure"
+            $text | Should -Not -Match "(?m)^\s*powershell[^\r\n]*agent-1c\.ps1[^\r\n]*-Action\s+init-project\s+-InitMode\s+wizard"
+        }
+
+        $strictInitDocs = @(
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")),
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl-init-project.md"))
+        ) -join [Environment]::NewLine
+        $strictInitDocs | Should -Not -Match "Start-Process"
+        $strictInitDocs | Should -Not -Match "-NoExit"
+    }
+
     It "does not advertise init-project in beginner command menus" {
         $menuPaths = @(
             ".kilo\commands\itl.md",
@@ -143,8 +168,25 @@ Describe "1C agent workflow static checks" {
         $LauncherText | Should -Match ([regex]::Escape(".agent-1c\runs"))
     }
 
+    It "closes the monitored window on failure unless debug keep-open is explicit" {
+        $LauncherText | Should -Match '\$KeepWindowOnFailure\s*=\s*\$false'
+        $LauncherText | Should -Match '"-keepwindowonfailure"'
+        $LauncherText | Should -Match 'if \(\$KeepWindowOnFailure\)'
+        $LauncherText | Should -Match '"-PauseOnFailure"'
+
+        $defaultArgsMatch = [regex]::Match($LauncherText, '(?s)\$monitoredArgs\s*=\s*@\((?<args>.*?)\)\s*\+\s*@\(\$AgentArgs\)')
+        $defaultArgsMatch.Success | Should -Be $true
+        $defaultArgsMatch.Groups["args"].Value | Should -Not -Match "PauseOnFailure"
+    }
+
     It "warns clearly when source repository sync is disabled" {
         $HelperText | Should -Match "WARNING: no repository update was performed; master dump uses current source infobase state"
+    }
+
+    It "warns when the interactive init wizard is run without monitoring" {
+        $HelperText | Should -Match "direct init-project wizard is not monitored"
+        $HelperText | Should -Match "scripts/run-agent-1c-window.ps1"
+        $HelperText | Should -Match "Use the direct wizard only for manual debugging"
     }
 
     It "writes run status on successful helper completion" {

@@ -4456,6 +4456,9 @@ function Initialize-Project {
     Write-Section "Initialize project"
     New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
     Write-Host "Project root: $script:ProjectRoot"
+    if ($InitMode -eq "wizard" -and [string]::IsNullOrWhiteSpace($RunStatusPath)) {
+        Write-Host "WARNING: direct init-project wizard is not monitored. Agent-run initialization must use scripts/run-agent-1c-window.ps1 so the agent waits for completion and reads status.json. Use the direct wizard only for manual debugging."
+    }
     if ($InitMode -eq "wizard" -or $InitMode -eq "json") {
         Prepare-InitProjectSettings
     } else {

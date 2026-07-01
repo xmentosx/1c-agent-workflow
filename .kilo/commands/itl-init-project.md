@@ -13,6 +13,10 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ru
 
 Do not collect the initialization questionnaire in chat or Kilo Questions before this first helper attempt. The monitored wizard opens a PowerShell window, confirms the current project directory, collects setup values, writes `.dev.env` and `.agent-1c/project.json`, runs the initialization lifecycle, and reports completion back through `.agent-1c/runs/<run>/status.json`.
 
+Run the monitored command in the foreground and wait for it to finish. Do not wrap initialization in a background PowerShell launch, do not keep the launched PowerShell session open after the helper exits, and do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly as the default agent path.
+
+Use `-KeepWindowOnFailure` only for manual debugging when the developer explicitly wants the external PowerShell window to stay open after a failure.
+
 If the wizard fails because terminal input is unavailable, do not collect the questionnaire in chat and do not continue the lifecycle manually. Use the monitored wizard command above, or use JSON mode only when the developer explicitly requested non-interactive initialization or an answers file already exists.
 
 Use non-interactive JSON mode only when an answers file already exists or the developer explicitly asks for it:
