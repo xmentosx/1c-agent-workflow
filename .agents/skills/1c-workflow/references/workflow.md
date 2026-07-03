@@ -10,18 +10,17 @@ When the user asks for help or the requested action is unclear, show this menu:
 Available 1C workflow actions:
 1. New configuration branch: create an itldev/<name> branch worktree for configuration changes.
 2. New extension branch: create an itldev/<name> branch worktree for extension development; set the extension name later.
-3. Set extension name: remember the extension name for the current extension branch.
-4. Dump extension files: export extension files from the current branch infobase.
-5. Status: show current Git branch, active development branch, infobase, publication URL, verification status, and latest result.
-6. Update base: update configuration files or extension files in the branch infobase.
-7. Verify: update the branch base, then run Vanessa Automation scenarios.
-8. Refresh: sync master from storage or the current source infobase state, merge master into the branch, and update the branch base configuration.
-9. Result: export CF for configuration branches or CFE for extension branches.
-10. Close: refresh master, merge master into the branch, export final CF/CFE result, and mark the branch closed.
-11. Switch: show/open a saved development branch worktree or switch a legacy branch.
+3. MCP: setup, start, update, or inspect ITL MCP servers for the current project/worktree scope.
+4. Status: show current Git branch, active development branch, infobase, publication URL, verification status, MCP status, and latest result.
+5. Update base: update configuration files or extension files in the branch infobase.
+6. Verify: update the branch base, then run Vanessa Automation scenarios.
+7. Refresh: sync master from storage or the current source infobase state, merge master into the branch, and update the branch base configuration.
+8. Result: export CF for configuration branches or CFE for extension branches.
+9. Close: refresh master, merge master into the branch, export final CF/CFE result, and mark the branch closed.
+10. Switch: show/open a saved development branch worktree or switch a legacy branch.
 ```
 
-For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request. The direct `/itl-init-project` wrapper exists for explicit bootstrap use, but it is not part of the beginner menu after initialization.
+For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-mcp`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request. The direct `/itl-init-project` wrapper exists for explicit bootstrap use, but it is not part of the beginner menu after initialization. Extension helper wrappers (`/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`) and the advanced `/itl-vanessa-mcp` wrapper remain available when directly needed, but are intentionally not shown in the beginner menu.
 
 For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
@@ -31,16 +30,18 @@ Create and maintain:
 
 - `.agent-1c/project.json`: non-secret project settings.
 - `.agent-1c/tools.json`: configurable software checks and install suggestions.
-- `.agent-1c/dev-branches/<safe-dev-branch-name>.json`: local development branch runtime state; ignored by Git.
+- `.agent-1c/dev-branches/<safe-dev-branch-name>.json`: local development branch runtime state, including branch-local Vanessa verify test port and Vanessa MCP port/PID/URL when used; ignored by Git.
+- `.agent-1c/mcp/state.json`: local project/worktree MCP runtime mirror; ignored by Git.
 - `.dev.env`: local secrets and machine-specific values; never commit it.
 - `.agents/skills/1c-workflow/`: shared detailed Agent Skill used by Codex and Kilo Code.
 - `.agents/skills/1c-workflow-fast/`: compact Agent Skill for routine helper-first lifecycle actions.
 - `.kilo/commands/`: optional Kilo Code slash command wrappers.
-- `.kilo/kilo.json`: local Kilo Code runtime state; ignored by Git.
+- `.codex/config.toml`: project/worktree Codex MCP layer written by `mcp-write-client-config`; ignored by Git.
+- `.kilo/kilo.json` or `.kilo/kilo.jsonc`: local Kilo Code runtime state; ignored by Git.
 
 Never store passwords in committed files.
 
-All workflow state files and `.dev.env` must be UTF-8. Preserve Cyrillic usernames, infobase paths, and repository paths exactly as the developer entered them. `.agent-1c/dev-branches/*.json` is local state because it contains machine-specific paths, worktree paths, launcher metadata, verification status, result paths, and unverified override history. `.kilo/kilo.json` is also local runtime state; do not commit it.
+All workflow state files and `.dev.env` must be UTF-8. Preserve Cyrillic usernames, infobase paths, and repository paths exactly as the developer entered them. `.agent-1c/dev-branches/*.json` is local state because it contains machine-specific paths, worktree paths, launcher metadata, verification status, result paths, and unverified override history. `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*` are also local runtime state; do not commit them.
 
 Current policy notes:
 
@@ -129,6 +130,26 @@ VANESSA_AUTOMATION_EPF=
 VANESSA_AUTOMATION_VERSION=
 VANESSA_FEATURES_PATH=tests/features
 VANESSA_REPORTS_PATH=build/test-results/vanessa
+VANESSA_TEST_PORT_RANGE=48051..48150
+VANESSA_TEST_PORT=
+VANESSA_TEST_FOREIGN_WAIT_MODE=warn
+VANESSA_TEST_FOREIGN_QUIET_SECONDS=60
+VANESSA_TEST_FOREIGN_WAIT_TIMEOUT_SECONDS=600
+VANESSA_TEST_TIMEOUT_SECONDS=1800
+VANESSA_TEST_CLIENT_STARTUP_TIMEOUT_SECONDS=300
+VANESSA_TEST_WINDOW_SEARCH_TIMEOUT_SECONDS=60
+VANESSA_EVENT_LOG_LEVELS=Error
+VANESSA_EVENT_LOG_CLOCK_SKEW_SECONDS=5
+VANESSA_EVENT_LOG_READER=auto
+VANESSA_MCP_INSTALL_ROOT=.agent-1c/tools/vanessa-mcp
+VANESSA_MCP_PORT_RANGE=9874..9973
+VANESSA_MCP_PORT=
+VANESSA_MCP_URL=
+ITL_MCP_DISTRIBUTION_PATH=
+PATH_METADATA=
+PATH_CODE=
+PATH_BASES=
+USE_GPU=
 ```
 
 ## Tools Manifest
@@ -247,6 +268,33 @@ Goal: install the standard executable test tool for ITL development branches.
 6. Save `VANESSA_AUTOMATION_EPF`, `VANESSA_AUTOMATION_VERSION`, `VANESSA_FEATURES_PATH=tests/features`, and `VANESSA_REPORTS_PATH=build/test-results/vanessa` to `.dev.env`.
 7. Ensure `tests/features` and `build/test-results/vanessa` directories exist. The downloaded tool and reports are local and ignored by Git.
 
+## MCP_SETUP / MCP_UPDATE / MCP_STATUS / MCP_START / MCP_STOP
+
+Goal: make the private ITL 1C MCP distribution usable without requiring developers to understand ports, keys, model selection, Docker naming, or client config files.
+
+1. `/itl-mcp` runs `mcp-setup` by default. The helper rotates license keys from the private distribution `config.env` into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\config.env`, ensures the local embedding model, starts MCP servers for the current scope, and writes Codex/Kilo client config.
+2. The distribution may provide `itl-mcp.manifest.json`. If it is absent, the helper uses the built-in manifest for `docs`, `templates`, `syntax`, `codechecker`, `ssl`, `code`, `graph`, and branch `vanessa`.
+3. Global servers use deterministic names such as `itl-1c-docs`, `itl-1c-templates`, `itl-1c-syntax`, and `itl-1c-codechecker`. Project servers use `itl-<projectSlug>-code` and `itl-<projectSlug>-graph`. Branch servers use `itl-<projectSlug>-<branchSlug>-vanessa`.
+4. Host ports are allocated under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\ports.json` with a lock file. Vendor ports `8000`, `8002`, `8003`, `8004`, `8006`, `8007`, and `8008` remain container-internal only. Host ranges are `18000..18099` for global, `18100..18499` for project, `18500..18999` for branch, and `19000..19049` for local model fallback.
+5. `mcp-ensure-model` detects NVIDIA VRAM with `nvidia-smi`, RAM with CIM, and LM Studio availability with `lms`. It selects Qwen3 Embedding 4B quantization for NVIDIA GPUs, otherwise `intfloat/multilingual-e5-base` or `intfloat/multilingual-e5-small` on machines below 16 GB RAM. Containers receive `OPENAI_API_BASE=http://host.docker.internal:<modelPort>/v1`, `OPENAI_API_KEY=lm-studio`, and the selected embedding model.
+6. If the selected embedding model changes, affected indexes are marked stale. Do not set `RESET_DATABASE=true` automatically because full reindexing can take hours or longer.
+7. Codex global entries are written to `~/.codex/config.toml`; project and branch entries are written to ignored `.codex/config.toml` in the current worktree. Kilo entries for the current global/project/branch set are written under top-level `"mcp"` in ignored `.kilo/kilo.json`.
+8. `mcp-status`, `/itl-status`, and `list-dev-branches` show active MCP names, URLs, embedding model, and stale indexes.
+
+## INSTALL_VANESSA_MCP / START_VANESSA_MCP / STOP_VANESSA_MCP / VANESSA_MCP_STATUS
+
+Goal: use the official Vanessa Automation MCP server for scenario authoring/debugging in one isolated development branch.
+
+1. These actions must run from the active `itldev/*` worktree. Do not run a shared Vanessa MCP from `master` for several branches.
+2. `install-vanessa-mcp` ensures Vanessa Automation EPF is available, downloads `client_mcp.cfe` from the latest `1c-neurofish/onec-client-mcp-devkit` release and `VAExtension.*.cfe` from the latest `Pr-Mex/vanessa-automation` release, logs SHA256, stores them under `.agent-1c/tools/vanessa-mcp`, and loads them into the current branch infobase with Designer `/LoadCfg <cfe> -Extension <name> /UpdateDBCfg`.
+3. `start-vanessa-mcp` auto-installs missing MCP dependencies, allocates a branch-local port from `VANESSA_MCP_PORT_RANGE` or `9874..9973`, saves `VANESSA_MCP_PORT` and `VANESSA_MCP_URL` to the current worktree `.dev.env`, then starts 1C `ENTERPRISE /TESTMANAGER /Execute <vanessa.epf> /C "runMcp;mcpPort=<port>"` in the background.
+4. Port allocation reuses the saved branch port when possible, skips ports reserved by other development branch states, skips ports occupied by unrelated processes, and stops with a clear error if the range is exhausted.
+5. Save `vanessaMcpPort`, `vanessaMcpUrl`, `vanessaMcpPid`, `vanessaMcpStartedAt`, `vanessaMcpLogPath`, downloaded CFE paths, versions, SHA256 hashes, and install logs in `.agent-1c/dev-branches/<branch>.json`.
+6. `vanessa-mcp-status`, `status`, and `list-dev-branches` show MCP PID/port/URL/log when configured. `stop-vanessa-mcp` stops only the saved PID for the current branch.
+7. Print MCP client snippets with a branch-specific server name such as `VanessaAutomation-<safeBranchName>`. Direct Vanessa MCP actions do not edit global Codex, Kilo, VS Code, Cline, Roo, or Continue configs automatically; the managed `mcp-write-client-config` action writes Codex/Kilo config for the current scope.
+8. MCP is for authoring, form inspection, step search, recording, and debugging. The final `VERIFY_DEV_BRANCH` gate remains the packet `StartFeaturePlayer` run because it produces repeatable reports and verification state.
+9. Do not use MCP as the final verification runner. UI scenarios must be verified by `RUN_DEV_BRANCH_TESTS` in the real `TESTMANAGER -> TESTCLIENT` topology.
+
 ## INSTALL_APACHE
 
 Goal: install a local Apache/httpd for 1C web publication when the developer enabled Apache publishing and confirmed automatic installation.
@@ -289,8 +337,9 @@ Goal: create the baseline project state.
 13. Install `ai_rules_1c` per project from `https://github.com/comol/ai_rules_1c`, using the current agent target (`codex`, `kilocode`, or fallback `codex`). Invoke its installer with named parameters: `-Command init -ProjectRoot <project> -Source <rulesDir> -Tools <tools> -AssumeYes`.
 14. Install this workflow skill into `.agents/skills/1c-workflow` and the fast routine skill into `.agents/skills/1c-workflow-fast`.
 15. If the current agent is Kilo Code, install slash wrappers into `.kilo/commands`.
-16. Add project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
-17. Commit rules and workflow files when there are changes.
+16. Add a short `AGENTS.md` bridge that points agents to `USER-RULES.md` and the workflow skills.
+17. Add detailed project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
+18. Commit rules and workflow files when there are changes.
 
 ## NEW_DEV_BRANCH / NEW_EXTENSION_DEV_BRANCH
 
@@ -357,7 +406,10 @@ Goal: show the current ITL state without changing Git or 1C.
 
 1. Show current Git branch, commit, and clean/dirty worktree state.
 2. If the current branch is `itldev/<name>`, show development branch name, kind, worktree path, main worktree path, extension name when relevant, infobase path, publication URL, last base update, last refresh, verification status, latest report/log, and latest CF/CFE result paths.
-3. If the current branch is `master`, show that no development branch is active and summarize active development worktrees when state files are discoverable.
+3. Show Vanessa verify test port/status when configured.
+4. Show Vanessa MCP status when the current branch has branch-local MCP state.
+5. Show active ITL MCP names, embedding model, and stale indexes for the current scope.
+6. If the current branch is `master`, show that no development branch is active and summarize active development worktrees when state files are discoverable.
 
 ## RUN_DEV_BRANCH_TESTS
 
@@ -369,19 +421,27 @@ Goal: run executable Vanessa Automation checks against the current development b
 4. Require Vanessa Automation EPF. If missing, stop and tell the developer to run `install-vanessa-automation`.
 5. Use `VANESSA_FEATURES_PATH` or `tests/features` as the feature directory. Stop clearly if no `.feature` files exist.
 6. Create a run directory under `VANESSA_REPORTS_PATH` or `build/test-results/vanessa`.
-7. Generate `VAParams.json` in the run directory.
-8. Launch `1cv8.exe ENTERPRISE` against the branch infobase with `/Execute <vanessa.epf>` and `StartFeaturePlayer;VAParams=<VAParams.json>`.
-9. Do not call `/LoadConfigFromFiles`, `/update1cbase`, or `/deploy-and-test`. The branch base must already have been updated by `UPDATE_DEV_BRANCH_BASE`.
-10. Save test report paths, latest 1C log path, `lastVerificationStatus`, `lastVerifiedCommit`, `lastVerifiedAt`, `lastVerifiedReportPath`, and `lastVerificationLogPath` in development branch state.
-11. Treat the run as passed only when 1C exits successfully and Vanessa status/JUnit report contains no failures. If the status cannot be recognized, save `unknown` and stop as not passed.
+7. Allocate a branch-local Vanessa test port from `VANESSA_TEST_PORT_RANGE` or `48051..48150`, store it as `vanessaTestPort` in branch state, and write `VANESSA_TEST_PORT` to the current worktree `.dev.env`.
+8. Before launch, inspect active `1cv8.exe` / `1cv8c.exe` processes. If a foreign worktree has an active Vanessa `TESTMANAGER`, `TESTCLIENT`, `StartFeaturePlayer`, or `VAParams` process, default `VANESSA_TEST_FOREIGN_WAIT_MODE=warn` prints diagnostics and continues because verify uses branch-local ports, branch-local infobases, and branch-local report directories. Do not wait for a parallel branch by default, and never stop a foreign branch process. If `VANESSA_TEST_FOREIGN_WAIT_MODE=wait`, wait for the configured quiet period/timeout as a conservative local mode.
+8a. Ensure the branch event-log baseline exists before launch. New branches create `.agent-1c/event-log-baselines/<branch>.json` during branch initialization; old branches may create a backfill baseline before the first test run.
+9. Generate `VAParams.json` in the run directory with the required `ВыполнениеСценариев`, `КлиентТестирования`, JUnit, and status export fields. The test client entry must point to the current branch infobase, use the same local user/password, use thin client on `localhost`, and use the branch-local test port.
+10. Launch `1cv8.exe ENTERPRISE` against the branch infobase with `/TESTMANAGER -TPort <vanessaTestPort> /Execute <vanessa.epf>` and `/CStartFeaturePlayer;VAParams=<absolute-json-path>`.
+11. Do not put embedded quotes around the `VAParams=` path; Vanessa treats `VAParams="C:\..."` as `file://"C:\..."` and cannot find the params file.
+12. Do not call `/LoadConfigFromFiles`, `/update1cbase`, or `/deploy-and-test`. The branch base must already have been updated by `UPDATE_DEV_BRANCH_BASE`.
+13. Save test port, test PID, report paths, latest 1C log path, `lastVerificationStatus`, `lastVerifiedCommit`, `lastVerifiedAt`, `lastVerifiedReportPath`, and `lastVerificationLogPath` in development branch state.
+14. Treat the run as passed only when 1C exits successfully and JUnit contains executed tests with no failures/errors. A status file without JUnit is `unknown`, not passed.
+15. On non-zero exit, missing JUnit/status/log, or `unknown`, print active 1C process diagnostics first. Stop only this branch's own hung `TESTCLIENT`, matched by current branch infobase/worktree and test port.
+16. Also check the branch-local file infobase event log from `devBranchInfoBasePath\1Cv8Log` after Vanessa exits. Directly read 8.3.22+ sequential `.lgf/.lgp`; if that reader cannot parse a valid sequential log, use the bundled external data processor fallback that calls `ВыгрузитьЖурналРегистрации`, honors requested event levels, and writes diagnostic JSON with `errorMessage`/`errorDetails` on failure. Do not use COM objects or `ibcmd.exe`.
+17. Verification passes only when 1C exits successfully, JUnit has executed tests with no failures/errors, and no fresh non-baseline `Error` signatures appeared during the test window. Apply `VANESSA_TEST_TIMEOUT_SECONDS` or default 1800 seconds; on timeout, stop only this branch's own `TESTMANAGER`/`TESTCLIENT`.
 
 ## VERIFY_DEV_BRANCH
 
 Goal: perform the standard ITL verification cycle without a full configuration load.
 
 1. Run `UPDATE_DEV_BRANCH_BASE`.
-2. Run `RUN_DEV_BRANCH_TESTS`.
-3. If Vanessa fails, report the report/log paths and let the agent follow the auto-fix loop from the development process.
+2. Run `RUN_DEV_BRANCH_TESTS` through the packet `StartFeaturePlayer` command in `TESTMANAGER -> TESTCLIENT` mode, not MCP and not headless EPF.
+3. Treat fresh non-baseline event-log errors as verification failures even when JUnit passed.
+4. If Vanessa fails, report the report/log/event-log paths and let the agent follow the auto-fix loop from the development process.
 
 ## REFRESH_DEV_BRANCH
 
@@ -432,18 +492,19 @@ Goal: prepare tested current work for manual import into the source base and clo
 
 1. Confirm the developer has finished testing.
 2. For worktree-created branches, require the command to run from the branch worktree.
-3. Check the Git worktree is clean.
-4. Run `SYNC_MASTER`; when called from a dev worktree, it syncs `master` in the saved main worktree.
-5. Ensure the current worktree is on the development branch.
-6. Merge `master` into the development branch.
-7. If conflicts occur, stop and resolve them in config files before continuing.
-8. Update merged `src/cf` files in the branch infobase. For extension branches, also update extension files from `src/cfe/<safeExtensionName>` before exporting the result.
-9. Check whether verification is still fresh after sync/merge/update. If it is missing, failed, stale, or unknown, warn the developer and require explicit confirmation or `-AllowUnverifiedClose`.
-10. Export final CF or CFE result from the development branch infobase into `artifactsPath`.
-11. Create `<artifact>.manifest.json` next to the exported CF/CFE with schema version, artifact SHA256, operation, branch metadata, master/development commits, verification status/report/log, latest 1C log path, publication URL, manual import note, and unverified override flag.
-12. Set `closedAt` in development branch state.
-13. Report branch, master commit, development branch commit, result path, result manifest path, latest 1C log path, publication URL, worktree path, and unverified override when used.
-14. For worktree-created branches, clear active dev context but do not delete the worktree, copied base, or local state. For legacy branches, checkout `master` before completing.
+3. Stop branch-local Vanessa MCP if it is running.
+4. Check the Git worktree is clean.
+5. Run `SYNC_MASTER`; when called from a dev worktree, it syncs `master` in the saved main worktree.
+6. Ensure the current worktree is on the development branch.
+7. Merge `master` into the development branch.
+8. If conflicts occur, stop and resolve them in config files before continuing.
+9. Update merged `src/cf` files in the branch infobase. For extension branches, also update extension files from `src/cfe/<safeExtensionName>` before exporting the result.
+10. Check whether verification is still fresh after sync/merge/update. If it is missing, failed, stale, or unknown, warn the developer and require explicit confirmation or `-AllowUnverifiedClose`.
+11. Export final CF or CFE result from the development branch infobase into `artifactsPath`.
+12. Create `<artifact>.manifest.json` next to the exported CF/CFE with schema version, artifact SHA256, operation, branch metadata, master/development commits, verification status/report/log, latest 1C log path, publication URL, manual import note, and unverified override flag.
+13. Set `closedAt` in development branch state.
+14. Report branch, master commit, development branch commit, result path, result manifest path, latest 1C log path, publication URL, worktree path, and unverified override when used.
+15. For worktree-created branches, clear active dev context but do not delete the worktree, copied base, or local state. For legacy branches, checkout `master` before completing.
 
 Do not load development branch changes directly into the source infobase.
 
@@ -455,7 +516,7 @@ Goal: show active development branches and the current development branch.
 2. Show only development branch states without `closedAt`.
 3. Show current Git branch and current development branch; if current branch is `master`, report current development branch as `none`.
 4. Mark the development branch whose saved branch matches the current Git branch.
-5. For each active development branch, show name, branch, worktree path, main worktree path, development branch infobase path, launcher folder/name, publication URL if any, created timestamp, last base update timestamp, and last refresh timestamp.
+5. For each active development branch, show name, branch, worktree path, main worktree path, development branch infobase path, launcher folder/name, publication URL if any, Vanessa verify test port/status, Vanessa MCP status when configured, ITL MCP current-scope status, created timestamp, last base update timestamp, and last refresh timestamp.
 
 ## SWITCH_MASTER
 

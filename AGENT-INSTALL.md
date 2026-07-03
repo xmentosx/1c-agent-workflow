@@ -22,9 +22,9 @@ This package is designed for both Codex and Kilo Code:
 
 - Common workflow skill: `.agents/skills/1c-workflow`.
 - Fast routine workflow skill: `.agents/skills/1c-workflow-fast`.
-- Common project guidance: `AGENTS.md` and `USER-RULES.md`.
+- Common project guidance: a short `AGENTS.md` bridge plus detailed `USER-RULES.md` notes.
 - Kilo slash command wrappers: `.kilo/commands/itl*.md`, using one short `/itl-*` command surface.
-- Local Kilo runtime state: `.kilo/kilo.json`, ignored by Git.
+- Local MCP/client runtime state: `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json`, and `.kilo/kilo.jsonc`, ignored by Git.
 - Codex usage: choose the skill via `/skills`, invoke `$1c-workflow` for detailed workflows or `$1c-workflow-fast` for routine helper-first commands, or use natural language that matches the skill description.
 
 Do not rely on Codex-only custom prompts for this workflow. They are local to one user and are not the team distribution mechanism.
@@ -82,7 +82,9 @@ Required for initial project setup:
 - Development branch infobase copies must be registered automatically in the user's 1C launcher list `%APPDATA%\1C\1CEStart\ibases.v8i` under `/ITL/<project-root-name>`. Write that file as UTF-8 with BOM and create a timestamped backup before changing it.
 - 1C platform version/path. Before asking for a manual path, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`. Either folder may be absent; treat missing folders as normal and skip them without error. If versions are found, ask the developer to choose one of them and store the selected `...\bin\1cv8.exe` path. Do not offer the common root `C:\Program Files\1cv8` as a platform version. Ask for a custom full path only when no installed version is found or the developer chooses manual input.
 - Apache web-client testing. Ask only whether new development branch infobases should be published to Apache by default. Store `WEB_PUBLISH_BY_DEFAULT=true|false` in local `.dev.env`, not in committed `project.json`. If the answer is no, do not ask Apache paths. If the answer is yes, run `detect-apache`, save the detected local values to `.dev.env`, and do not ask the developer for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf`. If Apache is not detected, ask for explicit permission to install it automatically; after permission, run `install-apache`, then rerun `detect-apache`/`check-tools`.
-- Vanessa Automation. It is required for executable development branch tests. If `VANESSA_AUTOMATION_EPF` is missing or invalid, ask for explicit permission to install it automatically; after permission, run `install-vanessa-automation`. Store downloaded files under `.agent-1c/tools/vanessa-automation` and local paths in `.dev.env`.
+- Vanessa Automation. It is required for executable development branch tests. If `VANESSA_AUTOMATION_EPF` is missing or invalid, ask for explicit permission to install it automatically; after permission, run `install-vanessa-automation`. Store downloaded files under `.agent-1c/tools/vanessa-automation` and local paths in `.dev.env`. Standard `/itl-verify` uses `StartFeaturePlayer` through `TESTMANAGER -> TESTCLIENT` with branch-local `VANESSA_TEST_PORT`, not MCP. It also checks the local branch infobase event log against `.agent-1c/event-log-baselines/<branch>.json`; fresh non-baseline `Error` records fail verification. Foreign branch Vanessa processes are warnings by default; set `VANESSA_TEST_FOREIGN_WAIT_MODE=wait` only for conservative serialized local runs.
+- ITL MCP. Do not ask developers to choose ports, models, or keys during initialization. MCP setup is lazy through `/itl-mcp` after rules are installed. The helper reads the private distribution, rotates license keys into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c`, allocates ports from the local registry, writes ignored Codex/Kilo config for the current scope, and keeps project/branch MCP out of neighboring worktrees.
+- Vanessa MCP. Do not configure a shared MCP server during project initialization. When a developer needs AI-assisted scenario authoring/debugging, run `install-vanessa-mcp` and `start-vanessa-mcp` from the target `itldev/*` worktree so the MCP port, PID, URL, and infobase are branch-local.
 - Source infobase kind: `file` or `server`; ask this before the grouped questionnaire.
 - Ask whether the source infobase is connected to a 1C configuration repository. Store `SOURCE_USES_REPOSITORY=true|false`.
 - For `file` with storage, ask the source infobase and repository questionnaire as 6 separate questions:
@@ -151,16 +153,18 @@ Encoding rules:
 
 7. Append `templates/gitignore.append` lines to `.gitignore` if absent.
 
-8. Append `templates/USER-RULES.append.md` to `USER-RULES.md` if absent.
+8. Append `templates/AGENTS.append.md` to `AGENTS.md` if absent. Keep this file as a short discovery bridge to `USER-RULES.md` and the workflow skills.
 
-9. Copy developer-facing docs into the target project when present:
+9. Append `templates/USER-RULES.append.md` to `USER-RULES.md` if absent.
+
+10. Copy developer-facing docs into the target project when present:
 
 ```text
 <project>/DEVELOPER-GUIDE.ru.md
 <project>/DEV-BRANCH-DEVELOPMENT.ru.md
 ```
 
-10. Do not edit installer-managed `AGENTS.md` directly. If `ai_rules_1c` later creates or updates `AGENTS.md`, treat it as managed.
+11. Do not add detailed workflow text to `AGENTS.md`. If `ai_rules_1c` later creates or updates `AGENTS.md`, preserve its content and keep only the short ITL bridge block there.
 
 ## Check Required Software
 
@@ -205,7 +209,11 @@ If Vanessa Automation is missing and the developer agrees to automatic installat
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-vanessa-automation
 ```
 
-`install-vanessa-automation` downloads `vanessa-automation-single.*.zip` from the official `Pr-Mex/vanessa-automation` GitHub release, logs SHA256, unpacks the EPF under `.agent-1c/tools/vanessa-automation`, creates `tests/features` and `build/test-results/vanessa`, and saves `VANESSA_*` paths to `.dev.env`.
+`install-vanessa-automation` downloads `vanessa-automation-single.*.zip` from the official `Pr-Mex/vanessa-automation` GitHub release, logs SHA256, unpacks the EPF under `.agent-1c/tools/vanessa-automation`, creates `tests/features` and `build/test-results/vanessa`, and saves `VANESSA_*` paths to `.dev.env`. The helper also uses `VANESSA_TEST_PORT_RANGE=48051..48150` by default for final verify and stores the assigned port in branch state.
+
+`install-vanessa-mcp` is a development-branch action, not an init action. It downloads `client_mcp.cfe` and `VAExtension.*.cfe`, installs them into the current branch infobase, and `start-vanessa-mcp` starts Vanessa `runMcp` on a branch-local port. MCP is for authoring/debugging; the final verify gate remains packet `StartFeaturePlayer` in `TESTMANAGER -> TESTCLIENT` mode.
+
+`mcp-setup` is the team MCP action exposed as `/itl-mcp`. It rotates private distribution keys locally, ensures the embedding provider, starts global/project/current-branch MCP servers, and writes Codex/Kilo MCP config. Use `mcp-status` for read-only inspection, `mcp-update` for key/image refresh, and `mcp-write-client-config` to rewrite only the managed client config blocks.
 
 The current workflow intentionally uses the latest available `ai_rules_1c` and Vanessa Automation by default. A stricter industrial setup should add a lock file with exact `ai_rules_1c` commit/tag, Vanessa version, and expected SHA256, but this package does not enforce that yet.
 
@@ -277,8 +285,7 @@ For Kilo Code, show only the short command surface:
 /itl
 /itl-new-config-branch <branch name>
 /itl-new-extension-branch <branch name>
-/itl-set-dev-branch-extension <extension name>
-/itl-dump-dev-branch-extension
+/itl-mcp
 /itl-status
 /itl-update-base
 /itl-verify
@@ -289,6 +296,8 @@ For Kilo Code, show only the short command surface:
 ```
 
 New branch commands create a sibling Git worktree by default and leave the current project folder on `master`. After creation, report the printed worktree path and tell the developer to open a separate Codex/Kilo/IDE window there. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
+
+Advanced/helper wrappers such as `/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`, `/itl-init-project`, and `/itl-vanessa-mcp` remain available when directly needed, but they are intentionally not shown in the beginner `/itl` menu.
 
 Typing `/` shows available project commands.
 

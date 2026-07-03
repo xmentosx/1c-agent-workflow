@@ -42,6 +42,39 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It 'keeps the detailed skill as a compact router and marks root docs human-facing' {
+        $skillText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.agents\skills\1c-workflow\SKILL.md')
+        ([regex]::Matches($skillText, '\S+')).Count | Should -BeLessOrEqual 750
+        $skillText | Should -Match 'detailed ITL workflow router'
+        $skillText | Should -Match ([regex]::Escape('references/workflow.md'))
+        $skillText | Should -Match 'human-facing'
+
+        $humanDocPaths = @('DEVELOPER-GUIDE.ru.md', 'DEV-BRANCH-DEVELOPMENT.ru.md')
+        foreach ($relativePath in $humanDocPaths) {
+            $docText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot $relativePath)
+            $docText | Should -Match 'human-facing'
+            if ($relativePath -eq 'DEVELOPER-GUIDE.ru.md') {
+                $docText | Should -Match ([regex]::Escape('.agents/skills/1c-workflow/references/workflow.md'))
+            } else {
+                $docText | Should -Match ([regex]::Escape('.agents/skills/1c-workflow/references/dev-branch-development.md'))
+            }
+        }
+    }
+
+    It 'keeps Pester CI output under ignored build test-results path' {
+        $ciText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.github\workflows\ci.yml')
+        $ciText | Should -Match ([regex]::Escape('build\test-results\pester\testResults.xml'))
+        $ciText | Should -Match '-OutputFile'
+
+        $gitignoreText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.gitignore')
+        $templateIgnoreText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot 'templates\gitignore.append')
+        $gitignoreText | Should -Match '(?m)^testResults\.xml$'
+        $templateIgnoreText | Should -Match '(?m)^testResults\.xml$'
+        $templateIgnoreText | Should -Match 'build/test-results/'
+        $quotedTestResults = ([char]34) + 'testResults.xml' + ([char]34)
+        $HelperText | Should -Match ([regex]::Escape($quotedTestResults))
+    }
+
     It "has Kilo wrapper files for every documented /itl command" {
         $docPaths = @(
             "README.md",
@@ -70,12 +103,14 @@ Describe "1C agent workflow static checks" {
     It "uses only helper actions that are declared in the Action ValidateSet" {
         $match = [regex]::Match($HelperText, '(?s)\[ValidateSet\((.*?)\)\]\s*\[string\]\$Action')
         $match.Success | Should -Be $true
-        $allowedActions = @([regex]::Matches($match.Groups[1].Value, '"([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+        $quote = [string]([char]34)
+        $actionPattern = [regex]::Escape($quote) + "(.+?)" + [regex]::Escape($quote)
+        $allowedActions = @([regex]::Matches($match.Groups[1].Value, $actionPattern) | ForEach-Object { $_.Groups[1].Value })
 
         $wrapperFiles = Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".kilo\commands") -File -Filter "itl*.md"
         foreach ($file in $wrapperFiles) {
             $text = Get-Content -Encoding UTF8 -Raw $file.FullName
-            $actionMatch = [regex]::Match($text, "-Action\s+([a-z0-9-]+)")
+            $actionMatch = [regex]::Match($text, "-Action\s+(\S+)")
             if ($actionMatch.Success) {
                 ($allowedActions -contains $actionMatch.Groups[1].Value) | Should -Be $true
             }
@@ -119,22 +154,65 @@ Describe "1C agent workflow static checks" {
         $strictInitDocs | Should -Not -Match "-NoExit"
     }
 
-    It "does not advertise init-project in beginner command menus" {
-        $menuPaths = @(
-            ".kilo\commands\itl.md",
-            "README.md",
-            "DEVELOPER-GUIDE.ru.md"
-        ) | ForEach-Object { Join-Path $RepoRoot $_ }
+    It "keeps advanced wrappers out of beginner command menus" {
+        $advancedCommands = @(
+            "/itl-init-project",
+            "/itl-set-dev-branch-extension",
+            "/itl-dump-dev-branch-extension",
+            "/itl-vanessa-mcp"
+        )
 
-        foreach ($path in $menuPaths) {
-            $text = Get-Content -Encoding UTF8 -Raw $path
-            $text | Should -Not -Match "/itl-init-project"
+        $kiloMenuText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl.md")
+        foreach ($command in $advancedCommands) {
+            $kiloMenuText | Should -Not -Match ([regex]::Escape($command))
+        }
+
+        $readmeText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")
+        $readmeMenuMatch = [regex]::Match($readmeText, '(?s)```text\s*(?<commands>/itl\s+.*?/itl-switch[^\r\n]*.*?)```')
+        $readmeMenuMatch.Success | Should -Be $true
+        foreach ($command in $advancedCommands) {
+            $readmeMenuMatch.Groups["commands"].Value | Should -Not -Match ([regex]::Escape($command))
+        }
+
+        $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
+        $installMenuMatch = [regex]::Match($installText, '(?s)show only the short command surface:\s*```text(?<commands>.*?)```')
+        $installMenuMatch.Success | Should -Be $true
+        foreach ($command in $advancedCommands) {
+            $installMenuMatch.Groups["commands"].Value | Should -Not -Match ([regex]::Escape($command))
         }
 
         $workflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
         $shortSurfaceMatch = [regex]::Match($workflowText, "short command surface: (?<commands>.+?)\. These wrappers")
         $shortSurfaceMatch.Success | Should -Be $true
-        $shortSurfaceMatch.Groups["commands"].Value | Should -Not -Match "/itl-init-project"
+        foreach ($command in $advancedCommands) {
+            $shortSurfaceMatch.Groups["commands"].Value | Should -Not -Match ([regex]::Escape($command))
+        }
+    }
+
+    It "documents the helper action catalog in advanced actions" {
+        $match = [regex]::Match($HelperText, '(?s)\[ValidateSet\((.*?)\)\]\s*\[string\]\$Action')
+        $match.Success | Should -Be $true
+        $quote = [string]([char]34)
+        $actionPattern = [regex]::Escape($quote) + "(.+?)" + [regex]::Escape($quote)
+        $allowedActions = @([regex]::Matches($match.Groups[1].Value, $actionPattern) | ForEach-Object { $_.Groups[1].Value })
+
+        $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
+        $advancedListMatch = [regex]::Match($advancedText, '(?s)Common internal actions:\s*```text(?<actions>.*?)```')
+        $advancedListMatch.Success | Should -Be $true
+        $advancedActions = @($advancedListMatch.Groups["actions"].Value -split "\r?\n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+
+        foreach ($action in ($allowedActions | Where-Object { $_ -ne "help" })) {
+            ($advancedActions -contains $action) | Should -Be $true
+        }
+
+        foreach ($action in $advancedActions) {
+            ($allowedActions -contains $action) | Should -Be $true
+        }
+
+        $advancedText | Should -Match ([regex]::Escape("/itl-set-dev-branch-extension"))
+        $advancedText | Should -Match ([regex]::Escape("/itl-dump-dev-branch-extension"))
+        $advancedText | Should -Match ([regex]::Escape("/itl-vanessa-mcp"))
+        $advancedText | Should -Match "beginner"
     }
 
     It "forbids manual init questionnaire fallback when terminal input is unavailable" {
@@ -159,6 +237,11 @@ Describe "1C agent workflow static checks" {
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
         $HelperText | Should -Match ([regex]::Escape($requiredPath))
+
+        $baselinePath = ".agent-1c/event-log-baselines/"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($baselinePath))
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($baselinePath))
+        $HelperText | Should -Match ([regex]::Escape($baselinePath))
     }
 
     It "ignores monitored run status and log artifacts" {
@@ -169,12 +252,794 @@ Describe "1C agent workflow static checks" {
         $LauncherText | Should -Match ([regex]::Escape(".agent-1c\runs"))
     }
 
-    It "ignores local Kilo runtime state without blocking branch creation" {
-        $requiredPath = ".kilo/kilo.json"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
-        $HelperText | Should -Match ([regex]::Escape($requiredPath))
+    It "ignores local agent client and MCP runtime state without blocking branch creation" {
+        $requiredPaths = @(
+            ".agent-1c/mcp/",
+            ".codex/config.toml",
+            ".kilo/kilo.json",
+            ".kilo/kilo.jsonc"
+        )
+        foreach ($requiredPath in $requiredPaths) {
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
+            $HelperText | Should -Match ([regex]::Escape($requiredPath))
+        }
         $HelperText | Should -Match "Test-IgnorableLocalGitStatusLine"
+    }
+
+    It "wires team ITL MCP actions, scopes, ports, and client config" {
+        $actions = @("mcp-setup", "mcp-update", "mcp-status", "mcp-start", "mcp-stop", "mcp-rotate-keys", "mcp-ensure-model", "mcp-write-client-config")
+        foreach ($action in $actions) {
+            $HelperText | Should -Match ([regex]::Escape("`"$action`""))
+        }
+
+        $HelperText | Should -Match "itl-1c-docs"
+        $HelperText | Should -Match "itl-1c-templates"
+        $HelperText | Should -Match "itl-1c-syntax"
+        $HelperText | Should -Match "itl-1c-codechecker"
+        $HelperText | Should -Match "itl-{projectSlug}-code"
+        $HelperText | Should -Match "itl-{projectSlug}-graph"
+        $HelperText | Should -Match "itl-{projectSlug}-{branchSlug}-vanessa"
+        foreach ($portMarker in @("18000", "18100", "18500", "19000")) {
+            $HelperText | Should -Match $portMarker
+        }
+        foreach ($internalPort in @("8000", "8002", "8003", "8004", "8006", "8007", "8008")) {
+            $HelperText | Should -Match $internalPort
+        }
+        $HelperText | Should -Match "host.docker.internal"
+        $HelperText | Should -Match "Qwen3-Embedding-4B-GGUF"
+        $HelperText | Should -Match "intfloat/multilingual-e5-small"
+        $HelperText | Should -Match "lms server start --port"
+        $HelperText | Should -Match "mcp_servers"
+        $HelperText | Should -Match "managedBy"
+        $HelperText | Should -Not -Match "-p 8000:8000"
+        $HelperText | Should -Not -Match "-p 8006:8006"
+
+        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-mcp.md") -PathType Leaf) | Should -Be $true
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl.md")) | Should -Match "/itl-mcp"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")) | Should -Match "/itl-mcp"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")) | Should -Match "/itl-mcp"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "ITL_MCP_DISTRIBUTION_PATH"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "PATH_METADATA"
+    }
+
+    It "does not store concrete MCP license key values in tracked text files" {
+        $tracked = @(& git -C $RepoRoot ls-files)
+        $textExtensions = @(".ps1", ".md", ".json", ".jsonc", ".yml", ".yaml", ".example", ".gitignore", ".toml")
+        foreach ($relativePath in $tracked) {
+            if ($relativePath -match '[<>:"|?*\x00-\x1F]') {
+                continue
+            }
+            $extension = [System.IO.Path]::GetExtension($relativePath)
+            if ($textExtensions -notcontains $extension -and $relativePath -notlike "templates/*" -and $relativePath -notlike ".gitignore") {
+                continue
+            }
+            $path = Join-Path $RepoRoot $relativePath
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                continue
+            }
+            $text = Get-Content -Encoding UTF8 -Raw $path
+            $text | Should -Not -Match '(?m)^\s*LICENSE_KEY_[A-Z0-9_]+\s*=\s*[^#\s]+'
+        }
+    }
+
+    It "wires branch-local Vanessa MCP actions and local artifacts" {
+        $actions = @("install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status")
+        foreach ($action in $actions) {
+            $HelperText | Should -Match ([regex]::Escape("`"$action`""))
+        }
+
+        $HelperText | Should -Match "Resolve-VanessaMcpPort"
+        $HelperText | Should -Match "VANESSA_MCP_PORT_RANGE"
+        $HelperText | Should -Match "client_mcp.cfe"
+        $HelperText | Should -Match "VAExtension"
+        $HelperText | Should -Match "runMcp;mcpPort="
+        $HelperText | Should -Match "StartFeaturePlayer"
+
+        $mcpToolPath = ".agent-1c/tools/vanessa-mcp/"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($mcpToolPath))
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($mcpToolPath))
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_MCP_URL"
+        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-vanessa-mcp.md") -PathType Leaf) | Should -Be $true
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl.md")) | Should -Not -Match "/itl-vanessa-mcp"
+    }
+
+    It "installs a Codex AGENTS bridge to USER-RULES and workflow skills" {
+        $templatePath = Join-Path $RepoRoot "templates\AGENTS.append.md"
+        (Test-Path -LiteralPath $templatePath -PathType Leaf) | Should -Be $true
+
+        $templateText = Get-Content -Encoding UTF8 -Raw $templatePath
+        $templateText | Should -Match "## 1C Agent Workflow Bridge"
+        $templateText | Should -Match "USER-RULES.md"
+        $templateText | Should -Match "1c-workflow-fast"
+        $templateText | Should -Match "1c-workflow/SKILL.md"
+
+        $HelperText | Should -Match "function Update-AgentGuidanceBridge"
+        $HelperText | Should -Match "## 1C Agent Workflow Bridge"
+        $HelperText | Should -Match "Update-AgentGuidanceBridge"
+        $HelperText | Should -Match "Update-UserRules"
+
+        $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
+        $installText | Should -Match "templates/AGENTS.append.md"
+        $installText | Should -Match "short discovery bridge"
+        $installText | Should -Match "USER-RULES.md"
+    }
+
+    It "smoke-copies bootstrap package files into a temp project" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-package-smoke-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agents\skills"), (Join-Path $tempRoot ".kilo"), (Join-Path $tempRoot "templates") | Out-Null
+
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow") -Destination (Join-Path $tempRoot ".agents\skills\1c-workflow") -Recurse
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast") -Destination (Join-Path $tempRoot ".agents\skills\1c-workflow-fast") -Recurse
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".kilo\commands") -Destination (Join-Path $tempRoot ".kilo\commands") -Recurse
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $tempRoot "templates\project.json")
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\tools.json") -Destination (Join-Path $tempRoot "templates\tools.json")
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dev.env.example") -Destination (Join-Path $tempRoot "templates\dev.env.example")
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Destination (Join-Path $tempRoot "templates\gitignore.append")
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\USER-RULES.append.md") -Destination (Join-Path $tempRoot "USER-RULES.md")
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\AGENTS.append.md") -Destination (Join-Path $tempRoot "AGENTS.md")
+
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow-fast\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo\commands\itl-vanessa-mcp.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\event-log-exporter\EventLogExporter.xml") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "AGENTS.md") -PathType Leaf) | Should -Be $true
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "AGENTS.md")) | Should -Match "USER-RULES.md"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "USER-RULES.md")) | Should -Match "1C Project Lifecycle"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "allocates Vanessa MCP ports per development branch state" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-mcp-port-test-" + [guid]::NewGuid().ToString("N"))
+        $oldRange = [Environment]::GetEnvironmentVariable("VANESSA_MCP_PORT_RANGE", "Process")
+        $listener = $null
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches") | Out-Null
+            & git -C $tempRoot init *> $null
+
+            $basePort = 0
+            for ($candidate = 41000; $candidate -lt 55000; $candidate += 10) {
+                $probe1 = $null
+                $probe2 = $null
+                try {
+                    $address = [System.Net.IPAddress]::Parse("127.0.0.1")
+                    $probe1 = New-Object System.Net.Sockets.TcpListener($address, $candidate)
+                    $probe2 = New-Object System.Net.Sockets.TcpListener($address, ($candidate + 1))
+                    $probe1.Start()
+                    $probe2.Start()
+                    $basePort = $candidate
+                    break
+                } catch {
+                } finally {
+                    if ($null -ne $probe1) { $probe1.Stop() }
+                    if ($null -ne $probe2) { $probe2.Stop() }
+                }
+            }
+            $basePort | Should -BeGreaterThan 0
+
+            [Environment]::SetEnvironmentVariable("VANESSA_MCP_PORT_RANGE", "$basePort..$($basePort + 1)", "Process")
+
+            $otherState = @{
+                devBranchName = "Other Branch"
+                safeDevBranchName = "other-branch"
+                devBranch = "itldev/other-branch"
+                vanessaMcpPort = $basePort
+            } | ConvertTo-Json
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dev-branches\other-branch.json") -Value $otherState -Encoding UTF8
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    devBranch = "itldev/current-branch"
+                }
+                Resolve-VanessaMcpPort -State $state
+            } | Should -Be ($basePort + 1)
+
+            Remove-Item -LiteralPath (Join-Path $tempRoot ".agent-1c\dev-branches\other-branch.json") -Force
+            $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Parse("127.0.0.1"), $basePort)
+            $listener.Start()
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    devBranch = "itldev/current-branch"
+                }
+                Resolve-VanessaMcpPort -State $state
+            } | Should -Be ($basePort + 1)
+
+            $listener.Stop()
+            $listener = $null
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    devBranch = "itldev/current-branch"
+                    vanessaMcpPort = $basePort
+                }
+                Resolve-VanessaMcpPort -State $state
+            } | Should -Be $basePort
+        } finally {
+            if ($null -ne $listener) {
+                $listener.Stop()
+            }
+            [Environment]::SetEnvironmentVariable("VANESSA_MCP_PORT_RANGE", $oldRange, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "selects ITL MCP embedding models from mocked hardware" {
+        $results = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            [pscustomobject]@{
+                Gpu6 = (Select-ItlMcpEmbeddingModel -GpuMemoryMb 6144 -RamGb 32).modelId
+                Gpu4 = (Select-ItlMcpEmbeddingModel -GpuMemoryMb 4096 -RamGb 32).modelId
+                Gpu3 = (Select-ItlMcpEmbeddingModel -GpuMemoryMb 3072 -RamGb 32).modelId
+                CpuLarge = (Select-ItlMcpEmbeddingModel -GpuMemoryMb 0 -RamGb 32).modelId
+                CpuSmall = (Select-ItlMcpEmbeddingModel -GpuMemoryMb 0 -RamGb 8).modelId
+            }
+        }
+
+        $results.Gpu6 | Should -Be "Qwen3-Embedding-4B-GGUF:Q8_0"
+        $results.Gpu4 | Should -Be "Qwen3-Embedding-4B-GGUF:Q6_K"
+        $results.Gpu3 | Should -Be "Qwen3-Embedding-4B-GGUF:Q4_K_M"
+        $results.CpuLarge | Should -Be "intfloat/multilingual-e5-base"
+        $results.CpuSmall | Should -Be "intfloat/multilingual-e5-small"
+    }
+
+    It "merges managed Codex TOML and Kilo MCP JSON without deleting unrelated entries" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-mcp-config-test-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".codex"), (Join-Path $tempRoot ".kilo") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".codex\config.toml") -Value @"
+[mcp_servers.unrelated]
+url = "http://localhost:9999/mcp"
+"@ -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value @"
+{
+  "mcp": {
+    "unrelated": {
+      "type": "remote",
+      "url": "http://localhost:9999/mcp"
+    },
+    "itl-old": {
+      "type": "remote",
+      "url": "http://localhost:1/mcp",
+      "managedBy": "itl-mcp"
+    }
+  }
+}
+"@ -Encoding UTF8
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $endpoints = @(
+                    [pscustomobject]@{ name = "itl-1c-docs"; url = "http://127.0.0.1:18000/mcp"; scope = "global" },
+                    [pscustomobject]@{ name = "itl-demo-code"; url = "http://127.0.0.1:18100/mcp"; scope = "project" }
+                )
+                Write-ItlMcpCodexConfig -Path (Join-Path $tempRoot ".codex\config.toml") -BlockId "project" -Endpoints $endpoints
+                Write-ItlMcpCodexConfig -Path (Join-Path $tempRoot ".codex\config.toml") -BlockId "project" -Endpoints $endpoints
+                Write-ItlMcpKiloConfig -Endpoints $endpoints
+            }
+
+            $codexText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".codex\config.toml")
+            $codexText | Should -Match "mcp_servers.unrelated"
+            $codexText | Should -Match ([regex]::Escape('[mcp_servers."itl-demo-code"]'))
+            @([regex]::Matches($codexText, [regex]::Escape("# >>> itl-mcp project"))).Count | Should -Be 1
+
+            $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
+            $kilo.mcp.unrelated.url | Should -Be "http://localhost:9999/mcp"
+            $kilo.mcp.'itl-old' | Should -BeNullOrEmpty
+            $kilo.mcp.'itl-demo-code'.url | Should -Be "http://127.0.0.1:18100/mcp"
+            $kilo.mcp.'itl-demo-code'.managedBy | Should -Be "itl-mcp"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "wires Vanessa verify through TestManager and TestClient" {
+        $HelperText | Should -Match "Resolve-VanessaTestPort"
+        $HelperText | Should -Match "VANESSA_TEST_PORT_RANGE"
+        $HelperText | Should -Match "VANESSA_TEST_TIMEOUT_SECONDS"
+        $HelperText | Should -Match "Initialize-DevBranchEventLogBaseline"
+        $HelperText | Should -Match "Read-OneCEventLogDirect"
+        $HelperText | Should -Match "Test-DevBranchEventLogAfterVanessa"
+        $HelperText | Should -Match ([regex]::Escape("/TESTMANAGER"))
+        $HelperText | Should -Match ([regex]::Escape("-TPort"))
+        $HelperText | Should -Match "New-VanessaStartFeaturePlayerCommand"
+        $HelperText | Should -Match "StartFeaturePlayer;VAParams="
+        $HelperText | Should -Match "Get-OneCProcessInfo"
+        $HelperText | Should -Match "Stop-OwnHungVanessaTestClients"
+        $HelperText | Should -Match "Invoke-ForeignVanessaTestProcessPolicy"
+        $HelperText | Should -Match "Write-ForeignVanessaTestProcessWarning"
+        $HelperText | Should -Match "Test-VanessaTestPortUsedByForeignProcess"
+        $HelperText | Should -Match "VANESSA_TEST_FOREIGN_WAIT_MODE"
+        $HelperText | Should -Match "ConvertFrom-Utf8Base64"
+
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_TEST_PORT_RANGE=48051\.\.48150"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_TEST_FOREIGN_WAIT_MODE=warn"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_TEST_TIMEOUT_SECONDS=1800"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_EVENT_LOG_READER=auto"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")) | Should -Match "TESTMANAGER -> TESTCLIENT"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")) | Should -Match "VANESSA_TEST_FOREIGN_WAIT_MODE=warn"
+    }
+
+    It "reads direct 8.3.22 sequential event log and compares against branch baseline" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-test-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            $logDir = Join-Path $tempRoot "ib\1Cv8Log"
+            $runDir = Join-Path $tempRoot "build\test-results\vanessa\run"
+            New-Item -ItemType Directory -Force -Path $logDir, $runDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{1}"
+            $records = @(
+                '{20260703100000,E,"_$PerformError$_","Catalog.Items","Item 1","Legacy error"}',
+                '{20260703120500,E,"_$PerformError$_","Catalog.Items","Item 1","Legacy error"}',
+                '{20260703121000,E,"_$PerformError$_","Catalog.Items","Item 1","New error 12345678"}',
+                '{20260703121100,W,"_$PerformError$_","Catalog.Items","Item 1","Warning only"}'
+            ) -join [Environment]::NewLine
+            Set-Content -LiteralPath (Join-Path $logDir "20260703.lgp") -Encoding UTF8 -Value $records
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    devBranch = "itldev/current-branch"
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "ib")
+                    stateProjectRoot = $tempRoot
+                }
+
+                $baselineEvents = @(Read-OneCEventLogDirect -State $state -EndTime ([datetime]"2026-07-03T10:30:00"))
+                $baselineEvents.Count | Should -Be 1
+                $baselinePath = Get-DevBranchEventLogBaselinePath -State $state
+                $baseline = [ordered]@{
+                    schemaVersion = 1
+                    signatures = @($baselineEvents[0].signature)
+                }
+                Write-Utf8Text -Path $baselinePath -Value (($baseline | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+                $state | Add-Member -NotePropertyName eventLogBaselinePath -NotePropertyValue $baselinePath -Force
+
+                $fresh = @(Read-OneCEventLogDirect -State $state -StartTime ([datetime]"2026-07-03T12:00:00") -EndTime ([datetime]"2026-07-03T12:30:00"))
+                $fresh.Count | Should -Be 2
+
+                $result = Test-DevBranchEventLogAfterVanessa `
+                    -State $state `
+                    -RunStartedAt ([datetime]"2026-07-03T12:00:00") `
+                    -RunFinishedAt ([datetime]"2026-07-03T12:30:00") `
+                    -RunDirectory $runDir
+
+                $result.status | Should -Be "failed"
+                $result.newErrorCount | Should -Be 1
+                $result.legacyErrorCount | Should -Be 1
+                (Test-Path -LiteralPath $result.reportPath -PathType Leaf) | Should -Be $true
+                (Get-Content -Encoding UTF8 -Raw $result.reportPath) | Should -Match "New error"
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "keeps event log fallback exporter source in the repo without D Downloads dependency" {
+        $sourceRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\tools\event-log-exporter\EventLogExporter.xml"
+        $sourceDir = Split-Path -Parent $sourceRoot
+        $modulePath = @(Get-ChildItem -LiteralPath $sourceDir -Recurse -File -Filter "Module.bsl" | Select-Object -First 1).FullName
+        $exportMethod = -join ([char[]](1042, 1099, 1075, 1088, 1091, 1079, 1080, 1090, 1100, 1046, 1091, 1088, 1085, 1072, 1083, 1056, 1077, 1075, 1080, 1089, 1090, 1088, 1072, 1094, 1080, 1080))
+        $errorLevel = -join ([char[]](1059, 1088, 1086, 1074, 1077, 1085, 1100, 1046, 1091, 1088, 1085, 1072, 1083, 1072, 1056, 1077, 1075, 1080, 1089, 1090, 1088, 1072, 1094, 1080, 1080, 46, 1054, 1096, 1080, 1073, 1082, 1072))
+
+        (Test-Path -LiteralPath $sourceRoot -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath $modulePath -PathType Leaf) | Should -Be $true
+        $moduleText = Get-Content -Encoding UTF8 -Raw $modulePath
+        $moduleText | Should -Match ([regex]::Escape($exportMethod))
+        $moduleText | Should -Match ([regex]::Escape($errorLevel))
+        $moduleText | Should -Match "levels"
+        $moduleText | Should -Match "status"
+        $moduleText | Should -Match "failure"
+        $moduleText | Should -Match "errorMessage"
+        $moduleText | Should -Match "errorDetails"
+        $moduleText | Should -Not -Match "D:\\Downloads"
+        $HelperText | Should -Match "LoadExternalDataProcessorOrReportFromFiles"
+        $HelperText | Should -Match "Event log fallback exporter failed"
+        $HelperText | Should -Match "errorMessage"
+        $HelperText | Should -Match "errorDetails"
+        $HelperText | Should -Not -Match "COMConnector"
+        $HelperText | Should -Not -Match "ibcmd"
+    }
+
+    It "keeps required package files tracked or staged for Git packaging" {
+        $requiredFiles = @(
+            ".kilo/commands/itl-vanessa-mcp.md",
+            "templates/AGENTS.append.md",
+            ".agents/skills/1c-workflow/tools/event-log-exporter/EventLogExporter.xml"
+        )
+
+        foreach ($relativePath in $requiredFiles) {
+            (Test-Path -LiteralPath (Join-Path $RepoRoot $relativePath) -PathType Leaf) | Should -Be $true
+            @(& git -C $RepoRoot ls-files --cached -- $relativePath).Count | Should -BeGreaterThan 0
+        }
+
+        $modulePath = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\tools\event-log-exporter") -Recurse -File -Filter "Module.bsl" | Select-Object -First 1).FullName
+        $modulePath | Should -Not -BeNullOrEmpty
+        $moduleRelativePath = $modulePath.Substring($RepoRoot.Length + 1).Replace("\", "/")
+        @(& git -C $RepoRoot ls-files --cached -- $moduleRelativePath).Count | Should -BeGreaterThan 0
+    }
+
+    It "times out native processes used by Vanessa watchdog" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-native-timeout-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $powershellPath = (Get-Command powershell.exe).Source
+                $result = Invoke-NativeProcessAndWaitResult `
+                    -FilePath $powershellPath `
+                    -Arguments @("-NoProfile", "-Command", "Start-Sleep -Seconds 5") `
+                    -TimeoutSeconds 1
+                $result.timedOut | Should -Be $true
+                $result.exitCode | Should -Be -1
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "creates Vanessa TestClient params and keeps VAParams path unquoted" {
+        function Decode-TestUtf8([string]$Value) {
+            return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Value))
+        }
+
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-params-test-" + [guid]::NewGuid().ToString("N"))
+        $oldUser = [Environment]::GetEnvironmentVariable("IB_USER", "Process")
+        $oldPassword = [Environment]::GetEnvironmentVariable("IB_PASSWORD", "Process")
+
+        try {
+            $featuresPath = Join-Path $tempRoot "tests\features"
+            $runDirectory = Join-Path $tempRoot "build\test-results\vanessa\run"
+            $ibPath = Join-Path $tempRoot "ib"
+            New-Item -ItemType Directory -Force -Path $featuresPath, $runDirectory, $ibPath | Out-Null
+            [Environment]::SetEnvironmentVariable("IB_USER", "Admin", "Process")
+            [Environment]::SetEnvironmentVariable("IB_PASSWORD", "", "Process")
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    devBranch = "itldev/current-branch"
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = $ibPath
+                }
+                $statusPath = Join-Path $runDirectory "status.json"
+                $paramsPath = New-VanessaParamsFile `
+                    -FeaturePath $featuresPath `
+                    -RunDirectory $runDirectory `
+                    -StatusPath $statusPath `
+                    -State $state `
+                    -TestPort 48051 `
+                    -VanessaVersion "1.2.043.28"
+                $command = New-VanessaStartFeaturePlayerCommand -ParamsPath $paramsPath
+                $params = Get-Content -Encoding UTF8 -Raw $paramsPath | ConvertFrom-Json
+
+                $scenarioKey = Decode-TestUtf8 "0JLRi9C/0L7Qu9C90LXQvdC40LXQodGG0LXQvdCw0YDQuNC10LI="
+                $clientKey = Decode-TestUtf8 "0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP"
+                $clientsKey = Decode-TestUtf8 "0JTQsNC90L3Ri9C10JrQu9C40LXQvdGC0L7QstCi0LXRgdGC0LjRgNC+0LLQsNC90LjRjw=="
+                $portKey = Decode-TestUtf8 "0J/QvtGA0YLQl9Cw0L/Rg9GB0LrQsNCi0LXRgdGC0JrQu9C40LXQvdGC0LA="
+                $pathKey = Decode-TestUtf8 "0J/Rg9GC0YzQmtCY0L3RhNC+0LHQsNC30LU="
+                $statusKey = Decode-TestUtf8 "0J/Rg9GC0YzQmtCk0LDQudC70YPQlNC70Y/QktGL0LPRgNGD0LfQutC40KHRgtCw0YLRg9GB0LDQktGL0L/QvtC70L3QtdC90LjRj9Ch0YbQtdC90LDRgNC40LXQsg=="
+                $windowTimeoutKey = Decode-TestUtf8 "0JrQvtC70LjRh9C10YHRgtCy0L7QodC10LrRg9C90LTQn9C+0LjRgdC60LDQntC60L3QsA=="
+
+                $params.Version | Should -Be "1.2.043.28"
+                $params.junitpath | Should -Be $runDirectory
+                $params.PSObject.Properties[$statusKey].Value | Should -Be $statusPath
+                $params.PSObject.Properties[$scenarioKey].Value.PSObject.Properties[$windowTimeoutKey].Value | Should -Be 60
+
+                $clientSettings = $params.PSObject.Properties[$clientKey].Value
+                $clientRecord = @($clientSettings.PSObject.Properties[$clientsKey].Value)[0]
+                [int]$clientRecord.PSObject.Properties[$portKey].Value | Should -Be 48051
+                $clientRecord.PSObject.Properties[$pathKey].Value | Should -Match ([regex]::Escape($ibPath))
+
+                $command | Should -Be "StartFeaturePlayer;VAParams=$paramsPath"
+                $command | Should -Not -Match 'VAParams="'
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("IB_USER", $oldUser, "Process")
+            [Environment]::SetEnvironmentVariable("IB_PASSWORD", $oldPassword, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "allocates Vanessa verify test ports per development branch state" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-test-port-test-" + [guid]::NewGuid().ToString("N"))
+        $oldRange = [Environment]::GetEnvironmentVariable("VANESSA_TEST_PORT_RANGE", "Process")
+        $listener = $null
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches") | Out-Null
+            & git -C $tempRoot init *> $null
+
+            $basePort = 0
+            for ($candidate = 42000; $candidate -lt 55000; $candidate += 10) {
+                $probe1 = $null
+                $probe2 = $null
+                try {
+                    $address = [System.Net.IPAddress]::Parse("127.0.0.1")
+                    $probe1 = New-Object System.Net.Sockets.TcpListener($address, $candidate)
+                    $probe2 = New-Object System.Net.Sockets.TcpListener($address, ($candidate + 1))
+                    $probe1.Start()
+                    $probe2.Start()
+                    $basePort = $candidate
+                    break
+                } catch {
+                } finally {
+                    if ($null -ne $probe1) { $probe1.Stop() }
+                    if ($null -ne $probe2) { $probe2.Stop() }
+                }
+            }
+            $basePort | Should -BeGreaterThan 0
+
+            [Environment]::SetEnvironmentVariable("VANESSA_TEST_PORT_RANGE", "$basePort..$($basePort + 1)", "Process")
+            $otherState = @{
+                devBranchName = "Other Branch"
+                safeDevBranchName = "other-branch"
+                devBranch = "itldev/other-branch"
+                vanessaTestPort = $basePort
+            } | ConvertTo-Json
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dev-branches\other-branch.json") -Value $otherState -Encoding UTF8
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    devBranch = "itldev/current-branch"
+                }
+                Resolve-VanessaTestPort -State $state
+            } | Should -Be ($basePort + 1)
+
+            Remove-Item -LiteralPath (Join-Path $tempRoot ".agent-1c\dev-branches\other-branch.json") -Force
+            $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Parse("127.0.0.1"), $basePort)
+            $listener.Start()
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    devBranch = "itldev/current-branch"
+                }
+                Resolve-VanessaTestPort -State $state
+            } | Should -Be ($basePort + 1)
+
+            $listener.Stop()
+            $listener = $null
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+
+                function Get-OneCProcessInfo {
+                    return @([pscustomobject]@{
+                        processId = 2201
+                        name = "1cv8c.exe"
+                        commandLine = "1cv8c.exe /TESTMANAGER -TPort $basePort /F `"D:\worktrees\other\.agent-1c\infobases\other`""
+                        workingSetMb = 20
+                    })
+                }
+
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    devBranch = "itldev/current-branch"
+                    devBranchInfoBasePath = Join-Path $tempRoot "ib"
+                    worktreePath = $tempRoot
+                }
+                Resolve-VanessaTestPort -State $state
+            } | Should -Be ($basePort + 1)
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    devBranch = "itldev/current-branch"
+                    vanessaTestPort = $basePort
+                }
+                Resolve-VanessaTestPort -State $state
+            } | Should -Be $basePort
+        } finally {
+            if ($null -ne $listener) {
+                $listener.Stop()
+            }
+            [Environment]::SetEnvironmentVariable("VANESSA_TEST_PORT_RANGE", $oldRange, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "warns about foreign Vanessa test processes by default without waiting" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-foreign-warn-" + [guid]::NewGuid().ToString("N"))
+        $oldWaitMode = [Environment]::GetEnvironmentVariable("VANESSA_TEST_FOREIGN_WAIT_MODE", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            [Environment]::SetEnvironmentVariable("VANESSA_TEST_FOREIGN_WAIT_MODE", $null, "Process")
+
+            $output = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:waitCalled = $false
+
+                function Wait-ForeignVanessaTestQuiet {
+                    param([object]$State, [int]$TestPort)
+                    $script:waitCalled = $true
+                }
+
+                function Get-ForeignVanessaTestProcesses {
+                    param([object]$State, [int]$TestPort)
+                    return @([pscustomobject]@{
+                        processId = 2001
+                        name = "1cv8c.exe"
+                        commandLine = "1cv8c.exe /TESTMANAGER -TPort 48052 /F `"D:\worktrees\other\.agent-1c\infobases\other`" /CStartFeaturePlayer;VAParams=D:\worktrees\other\params.json"
+                        workingSetMb = 20
+                    })
+                }
+
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    devBranch = "itldev/current-branch"
+                    devBranchInfoBasePath = Join-Path $tempRoot "ib"
+                    worktreePath = $tempRoot
+                }
+
+                Invoke-ForeignVanessaTestProcessPolicy -State $state -TestPort 48051
+                "WAIT_CALLED=$script:waitCalled"
+            } *>&1
+
+            $joined = $output -join [Environment]::NewLine
+            $joined | Should -Match "Foreign Vanessa 1C test process"
+            $joined | Should -Match "Continuing because verify uses branch-local ports"
+            $joined | Should -Match "WAIT_CALLED=False"
+        } finally {
+            [Environment]::SetEnvironmentVariable("VANESSA_TEST_FOREIGN_WAIT_MODE", $oldWaitMode, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "uses foreign Vanessa wait policy only in conservative wait mode" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-foreign-wait-" + [guid]::NewGuid().ToString("N"))
+        $oldWaitMode = [Environment]::GetEnvironmentVariable("VANESSA_TEST_FOREIGN_WAIT_MODE", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            [Environment]::SetEnvironmentVariable("VANESSA_TEST_FOREIGN_WAIT_MODE", "wait", "Process")
+
+            $output = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:waitCalled = $false
+
+                function Wait-ForeignVanessaTestQuiet {
+                    param([object]$State, [int]$TestPort)
+                    $script:waitCalled = $true
+                    "WAIT_POLICY_USED=$TestPort"
+                }
+
+                function Write-ForeignVanessaTestProcessWarning {
+                    param([object]$State, [int]$TestPort)
+                    "WARN_POLICY_USED=$TestPort"
+                }
+
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    devBranch = "itldev/current-branch"
+                    devBranchInfoBasePath = Join-Path $tempRoot "ib"
+                    worktreePath = $tempRoot
+                }
+
+                Invoke-ForeignVanessaTestProcessPolicy -State $state -TestPort 48051
+                "WAIT_CALLED=$script:waitCalled"
+            } *>&1
+
+            $joined = $output -join [Environment]::NewLine
+            $joined | Should -Match "WAIT_POLICY_USED=48051"
+            $joined | Should -Match "WAIT_CALLED=True"
+            $joined | Should -Not -Match "WARN_POLICY_USED"
+        } finally {
+            [Environment]::SetEnvironmentVariable("VANESSA_TEST_FOREIGN_WAIT_MODE", $oldWaitMode, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "matches own Vanessa TESTCLIENT without matching another worktree" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-process-match-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $ibPath = Join-Path $tempRoot ".agent-1c\infobases\dev-branches\current-branch"
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    devBranch = "itldev/current-branch"
+                    devBranchInfoBasePath = $ibPath
+                    worktreePath = $tempRoot
+                }
+                $own = [pscustomobject]@{
+                    processId = 1001
+                    name = "1cv8c.exe"
+                    commandLine = "1cv8c.exe /TESTCLIENT -TPort 48051 /F `"$ibPath`""
+                    workingSetMb = 10
+                }
+                $foreign = [pscustomobject]@{
+                    processId = 1002
+                    name = "1cv8c.exe"
+                    commandLine = "1cv8c.exe /TESTCLIENT -TPort 48052 /F `"D:\worktrees\branch1\.agent-1c\infobases\dev-branches\branch1`""
+                    workingSetMb = 10
+                }
+
+                (Test-OneCVanessaTestProcess -ProcessInfo $own) | Should -Be $true
+                (Test-OneCProcessBelongsToState -ProcessInfo $own -State $state -TestPort 48051 -RequireTestPort) | Should -Be $true
+                (Test-OneCProcessBelongsToState -ProcessInfo $foreign -State $state -TestPort 48051 -RequireTestPort) | Should -Be $false
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "refuses to start Vanessa MCP outside an itldev worktree" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-mcp-master-test-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`n" -Encoding ASCII
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add .gitignore
+            & git -C $tempRoot commit -m init *> $null
+            & git -C $tempRoot branch -M master
+
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action start-vanessa-mcp 2>&1
+            $LASTEXITCODE | Should -Be 1
+            ($output -join [Environment]::NewLine) | Should -Match "active itldev/\* development branch worktree"
+            ($output -join [Environment]::NewLine) | Should -Match "Current branch: master"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     It "closes the monitored window on failure unless debug keep-open is explicit" {
@@ -317,16 +1182,19 @@ Describe "1C agent workflow static checks" {
         try {
             New-Item -ItemType Directory -Force -Path $sourceBase | Out-Null
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8.1CD") -Value "stub" -Encoding ASCII
+            New-Item -ItemType Directory -Force -Path (Join-Path $sourceBase "1Cv8Log") | Out-Null
+            Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`n" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
-            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value @"
-INFOBASE_KIND=file
-SOURCE_USES_REPOSITORY=false
-SOURCE_INFOBASE_PATH=$sourceBase
-IB_USER=
-IB_PASSWORD=
-WEB_PUBLISH_BY_DEFAULT=false
-"@ -Encoding UTF8
+            $devEnv = @(
+                "INFOBASE_KIND=file",
+                "SOURCE_USES_REPOSITORY=false",
+                "SOURCE_INFOBASE_PATH=$sourceBase",
+                "IB_USER=",
+                "IB_PASSWORD=",
+                "WEB_PUBLISH_BY_DEFAULT=false"
+            ) -join [Environment]::NewLine
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value $devEnv -Encoding UTF8
 
             & git -C $tempRoot init | Out-Null
             & git -C $tempRoot config user.email "test@example.com"
@@ -387,16 +1255,19 @@ WEB_PUBLISH_BY_DEFAULT=false
         try {
             New-Item -ItemType Directory -Force -Path $sourceBase | Out-Null
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8.1CD") -Value "stub" -Encoding ASCII
+            New-Item -ItemType Directory -Force -Path (Join-Path $sourceBase "1Cv8Log") | Out-Null
+            Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`n" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
-            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value @"
-INFOBASE_KIND=file
-SOURCE_USES_REPOSITORY=false
-SOURCE_INFOBASE_PATH=$sourceBase
-IB_USER=
-IB_PASSWORD=
-WEB_PUBLISH_BY_DEFAULT=false
-"@ -Encoding UTF8
+            $devEnv = @(
+                "INFOBASE_KIND=file",
+                "SOURCE_USES_REPOSITORY=false",
+                "SOURCE_INFOBASE_PATH=$sourceBase",
+                "IB_USER=",
+                "IB_PASSWORD=",
+                "WEB_PUBLISH_BY_DEFAULT=false"
+            ) -join [Environment]::NewLine
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value $devEnv -Encoding UTF8
 
             & git -C $tempRoot init | Out-Null
             & git -C $tempRoot config user.email "test@example.com"
@@ -410,7 +1281,8 @@ WEB_PUBLISH_BY_DEFAULT=false
             $LASTEXITCODE | Should -Be 0
 
             ((& git -C $tempRoot branch --show-current).Trim()) | Should -Be "itldev/legacy-branch"
-            (Test-Path -LiteralPath "$tempRoot-worktrees" -PathType Container -ErrorAction SilentlyContinue) | Should -Be $false
+            $legacyWorktreeRoot = Join-Path (Split-Path -Parent $tempRoot) ((Split-Path -Leaf $tempRoot) + "-worktrees")
+            (Test-Path -LiteralPath $legacyWorktreeRoot -PathType Container -ErrorAction SilentlyContinue) | Should -Be $false
             $statePath = Join-Path $tempRoot ".agent-1c\dev-branches\legacy-branch.json"
             (Test-Path -LiteralPath $statePath -PathType Leaf) | Should -Be $true
             $state = Get-Content -Encoding UTF8 -Raw $statePath | ConvertFrom-Json

@@ -47,6 +47,7 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 - `templates/project.json` - шаблон настроек проекта без секретов.
 - `templates/dev.env.example` - пример локальных настроек и секретов.
 - `templates/tools.json` - проверки необходимого софта.
+- `templates/AGENTS.append.md` и `templates/USER-RULES.append.md` - bridge для загрузки правил агентами и подробные project rules.
 - PowerShell-helper для Git, 1С Designer, копий баз, Apache-публикации, Vanessa Automation и выгрузки `CF`/`CFE`.
 
 ## Первый запуск
@@ -76,12 +77,17 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 
 Vanessa Automation устанавливается локально в `.agent-1c/tools/vanessa-automation`. Тесты хранятся в `tests/features`, отчеты - в `build/test-results/vanessa`; отчеты и скачанная EPF не коммитятся.
 
+ITL MCP подключаются через `/itl-mcp`. Helper сам ротирует ключи из приватного дистрибутива в `%LOCALAPPDATA%\ITL\MCP\vibecoding1c`, выбирает локальную embedding-модель, выделяет host-порты из локального registry и пишет ignored Codex/Kilo config только для текущего scope. Глобальные MCP переиспользуются между проектами, project/branch MCP видны агенту только из текущего проекта или worktree.
+
+Vanessa MCP запускается отдельно для каждой ветки разработки. Используйте продвинутую команду `/itl-vanessa-mcp` из worktree нужной `itldev/*` ветки: helper установит MCP-расширения в копию базы этой ветки, назначит отдельный порт и сохранит PID/URL в `.agent-1c/dev-branches/*.json`. Финальный `/itl-verify` по-прежнему запускает пакетный `StartFeaturePlayer`, но делает это через реальный `TESTMANAGER -> TESTCLIENT` контур с branch-local `VANESSA_TEST_PORT`. Успех подтверждается JUnit-отчетом с выполненными тестами без failures/errors.
+
 ## Команды Kilo Code
 
 ```text
 /itl                              Показать короткое меню.
 /itl-new-config-branch <name>     Создать worktree-ветку разработки конфигурации.
 /itl-new-extension-branch <name>  Создать worktree-ветку разработки расширения.
+/itl-mcp                          Настроить, запустить, обновить или проверить ITL MCP.
 /itl-status                       Показать текущую ветку, базу и статус проверки.
 /itl-update-base                  Обновить базу текущей ветки из файлов Git-ветки.
 /itl-verify                       Обновить базу ветки и запустить Vanessa Automation.
@@ -93,14 +99,18 @@ Vanessa Automation устанавливается локально в `.agent-1c
 
 Эти команды сами являются быстрым контуром: wrapper сразу запускает PowerShell-helper и читает подробные правила только при ошибке или по запросу. В Codex можно писать те же действия обычным текстом, вызывать `$1c-workflow` для подробного режима или `$1c-workflow-fast` для регулярных операций.
 
+Продвинутые/helper-команды `/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`, `/itl-init-project` и `/itl-vanessa-mcp` доступны для прямого вызова, но не входят в короткое меню `/itl`.
+
 ## Важные правила
 
 - Не коммитьте `.dev.env`, пароли, `*.cf`, `*.dt`, логи и локальные базы.
 - Не коммитьте `.agent-1c/dev-branches/*.json`: это локальное runtime-состояние веток.
+- Не коммитьте `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json` и `.kilo/kilo.jsonc`: это локальные MCP/client config state.
 - Не загружайте изменения ветки разработки напрямую в исходную базу.
 - Все изменения загружаются только в базу текущей ветки разработки.
+- Не используйте один Vanessa MCP на несколько веток разработки: запускайте MCP из worktree нужной `itldev/*` ветки, чтобы порт, PID, URL и база были branch-local. MCP нужен для авторинга, исследования форм, записи и точечной отладки; финальный `/itl-verify` не запускается через MCP.
 - Перед командами `ai_rules_1c`, которые работают с базой (`/update1cbase`, `/loadfrom1cbase`, `/getconfigfiles`), в ветке `itldev/*` должен быть активирован контекст ветки. Команды жизненного цикла делают это автоматически.
-- Для обычной проверки в ITL-ветке не используйте `/deploy-and-test`: он повторно загружает все файлы. Используйте `/itl-verify`; если нужно только обновить базу, используйте `/itl-update-base`.
+- Для обычной проверки в ITL-ветке не используйте `/deploy-and-test`: он повторно загружает все файлы. Используйте `/itl-verify`; если нужно только обновить базу, используйте `/itl-update-base`. Чужой Vanessa-run в другой worktree по умолчанию выводится как диагностика и не блокирует запуск, пока нет реального конфликта порта или базы; helper никогда не завершает `TESTMANAGER`/`TESTCLIENT` другой worktree.
 - Для изменения бизнес-поведения агент создает или обновляет 2-4 Vanessa Automation проверки: основной успешный сценарий и минимум один значимый граничный или негативный сценарий; integration/UI используются только по сути изменения.
 - `/itl-result` и `/itl-close` предупреждают, если нет свежей успешной проверки Vanessa. Продолжить без нее можно только после явного подтверждения.
 - Перед созданием worktree, обновлением ветки, выгрузкой результата и legacy-переключением Git-дерево должно быть чистым.

@@ -8,6 +8,7 @@ Show this short ITL menu:
 ```text
 /itl-new-config-branch <name>     Create a configuration development branch worktree.
 /itl-new-extension-branch <name>  Create an extension development branch worktree.
+/itl-mcp                          Setup, start, update, or inspect ITL MCP servers for this scope.
 /itl-status                       Show branch, infobase, and verification status.
 /itl-update-base                  Update the current branch infobase from branch files.
 /itl-verify                       Update the branch base, then run Vanessa tests.

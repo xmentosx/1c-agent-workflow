@@ -12,11 +12,13 @@ For optional passwords, ask whether the password is set before asking for the va
 
 Before asking for the 1C platform path, search existing standard `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` folders and offer installed versions as choices. Missing standard folders are normal; skip them without error. Do not offer the common `C:\Program Files\1cv8` root as a version.
 
-Do not edit installer-managed `AGENTS.md` directly. Store secrets only in local `.dev.env`.
+Keep `AGENTS.md` as a short bridge to `USER-RULES.md` and workflow skills. Store detailed project workflow notes in `USER-RULES.md`. Store secrets only in local `.dev.env`.
 
 Write `.dev.env` and `.agent-1c/*.json` files as UTF-8 so Cyrillic usernames and paths are preserved.
 
 Treat `.agent-1c/dev-branches/*.json` as local runtime state. It is ignored by Git because it contains local paths, worktree paths, 1C launcher metadata, verification status, result paths, and unverified override history.
+
+Use `/itl-mcp` for team ITL MCP setup, update, start/stop, status, key rotation, local embedding model bootstrap, and Codex/Kilo client config. Do not paste MCP license keys into chat or tracked files; the helper stores rotated keys and port/model state under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c` and project/worktree MCP state under ignored `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
 
 Create new development branches in sibling Git worktrees by default, under `<project-folder>-worktrees/<branch>`, and leave the main project folder on `master`. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
 

@@ -28,7 +28,8 @@ jobs:
         shell: pwsh
         run: |
           Import-Module Pester -MinimumVersion 5.0.0 -Force
-          Invoke-Pester -Path .\tests\pester -CI
+          New-Item -ItemType Directory -Force -Path .\build\test-results\pester | Out-Null
+          Invoke-Pester -Path .\tests\pester -CI -OutputFile .\build\test-results\pester\testResults.xml
 
       - name: Helper help
         shell: powershell

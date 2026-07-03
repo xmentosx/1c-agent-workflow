@@ -18,6 +18,18 @@ list-platforms
 detect-apache
 install-apache
 install-vanessa-automation
+install-vanessa-mcp
+start-vanessa-mcp
+stop-vanessa-mcp
+vanessa-mcp-status
+mcp-setup
+mcp-update
+mcp-status
+mcp-start
+mcp-stop
+mcp-rotate-keys
+mcp-ensure-model
+mcp-write-client-config
 sync-master
 new-dev-branch
 new-extension-dev-branch
@@ -35,5 +47,9 @@ switch-dev-branch
 list-dev-branches
 status
 ```
+
+Extension helper actions and Vanessa MCP actions are advanced/helper commands. Keep `/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`, and `/itl-vanessa-mcp` documented for direct use, but do not show them in the beginner `/itl` menu.
+
+Team MCP actions (`mcp-setup`, `mcp-update`, `mcp-status`, `mcp-start`, `mcp-stop`, `mcp-rotate-keys`, `mcp-ensure-model`, `mcp-write-client-config`) are exposed through `/itl-mcp`. They manage the private ITL MCP distribution, local key rotation, embedding model bootstrap, port allocation, Docker containers, and Codex/Kilo client config for the current scope.
 
 For normal developer work, prefer the short `/itl-*` commands documented in the README and developer guide.

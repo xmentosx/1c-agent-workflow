@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow-fast
-description: Run routine 1C Agent Workflow lifecycle commands through the PowerShell helper with minimal context loading. Use for status, configuration or extension development branch creation, branch base update, verification, refresh, CF/CFE result export, close, and branch switching when the project is already installed.
+description: Run routine 1C Agent Workflow lifecycle commands through the PowerShell helper with minimal context loading. Use for status, ITL MCP setup/status, configuration or extension development branch creation, branch base update, verification, refresh, CF/CFE result export, close, and branch switching when the project is already installed.
 ---
 
 # 1C Workflow Fast
@@ -14,6 +14,7 @@ Do not open the full workflow references before normal lifecycle execution. Open
 ## Intent Map
 
 - show ITL status: `status`
+- setup or inspect ITL MCP servers: `mcp-setup` by default, `mcp-status` for status-only, `mcp-update` for key/image update
 - create new configuration development branch worktree: `new-dev-branch`
 - create new extension development branch worktree: `new-extension-dev-branch`
 - update current development branch infobase from branch files: `update-dev-branch-base`
@@ -44,7 +45,7 @@ New branch commands create a sibling Git worktree by default. Report the printed
 
 For `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`, and `close-dev-branch`, do not ask for a branch name. The helper infers it from the current `itldev/<name>` Git branch.
 
-For branch verification, do not call `/deploy-and-test` in the normal fast path. Run `verify-dev-branch`; it updates the branch base partially and then runs Vanessa Automation.
+For branch verification, do not call `/deploy-and-test` in the normal fast path. Run `verify-dev-branch`; it updates the branch base partially and then runs Vanessa Automation through packet `StartFeaturePlayer` in `TESTMANAGER -> TESTCLIENT` mode with a branch-local test port. The helper also checks the local branch infobase event log against the branch baseline created during branch initialization; fresh non-baseline `Error` records fail verification. MCP is not the final verification runner. Foreign branch 1C test processes are warnings by default, not a reason to wait, unless there is a real port/infobase conflict or `VANESSA_TEST_FOREIGN_WAIT_MODE=wait` is set.
 
 ## Failure Handling
 
