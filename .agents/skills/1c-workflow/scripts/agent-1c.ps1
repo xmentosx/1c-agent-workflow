@@ -399,12 +399,62 @@ function ConvertTo-SafeName {
     return $safe
 }
 
+function Invoke-GitCommand {
+    param(
+        [string]$Root,
+        [string[]]$Arguments,
+        [switch]$PassThru
+    )
+
+    $gitArgs = @("-C", $Root) + @($Arguments)
+    $exitCode = 1
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $rawOutput = & git @gitArgs 2>&1
+        if ($LASTEXITCODE -is [int]) {
+            $exitCode = $LASTEXITCODE
+        }
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    $standardOutput = @()
+    $errorOutput = @()
+    $displayOutput = @()
+    foreach ($item in @($rawOutput)) {
+        if ($null -eq $item) {
+            continue
+        }
+
+        $text = [string]$item
+        $displayOutput += $text
+        if (-not ($item -is [System.Management.Automation.ErrorRecord])) {
+            $standardOutput += $text
+        } else {
+            $errorOutput += $text
+        }
+    }
+
+    $outputToLog = if ($exitCode -ne 0 -or (-not $PassThru)) { $displayOutput } else { $errorOutput }
+    foreach ($line in $outputToLog) {
+        if ($line) {
+            Write-Host $line
+        }
+    }
+
+    if ($exitCode -ne 0) {
+        throw "Git failed: git -C `"$Root`" $($Arguments -join ' ')"
+    }
+
+    if ($PassThru) {
+        return $standardOutput
+    }
+}
+
 function Invoke-Git {
     param([string[]]$Arguments)
-    & git -C $script:ProjectRoot @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Git failed: git -C `"$script:ProjectRoot`" $($Arguments -join ' ')"
-    }
+    Invoke-GitCommand -Root $script:ProjectRoot -Arguments $Arguments
 }
 
 function Invoke-GitAt {
@@ -413,19 +463,12 @@ function Invoke-GitAt {
         [string[]]$Arguments
     )
 
-    & git -C $Root @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Git failed: git -C `"$Root`" $($Arguments -join ' ')"
-    }
+    Invoke-GitCommand -Root $Root -Arguments $Arguments
 }
 
 function Get-GitOutput {
     param([string[]]$Arguments)
-    $output = & git -C $script:ProjectRoot @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Git failed: git -C `"$script:ProjectRoot`" $($Arguments -join ' ')"
-    }
-    return $output
+    return (Invoke-GitCommand -Root $script:ProjectRoot -Arguments $Arguments -PassThru)
 }
 
 function Get-GitOutputAt {
@@ -434,11 +477,7 @@ function Get-GitOutputAt {
         [string[]]$Arguments
     )
 
-    $output = & git -C $Root @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Git failed: git -C `"$Root`" $($Arguments -join ' ')"
-    }
-    return $output
+    return (Invoke-GitCommand -Root $Root -Arguments $Arguments -PassThru)
 }
 
 function Get-CurrentBranch {
@@ -5470,6 +5509,11 @@ function ConvertTo-ItlMcpHashtable {
 }
 
 function Get-ItlMcpLocalHome {
+    $override = [Environment]::GetEnvironmentVariable("ITL_MCP_LOCAL_HOME", "Process")
+    if (-not [string]::IsNullOrWhiteSpace($override)) {
+        return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($override))
+    }
+
     $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
     if ([string]::IsNullOrWhiteSpace($localAppData)) {
         $localAppData = Join-Path ([System.IO.Path]::GetTempPath()) "ITL"
@@ -5607,6 +5651,32 @@ function Invoke-ItlMcpPortRegistryLock {
     }
 }
 
+function Get-ItlMcpDefaultDistributionRepo {
+    return "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git"
+}
+
+function Get-ItlMcpDistributionRepo {
+    $fromEnv = [string](Get-EnvValue -Name "ITL_MCP_DISTRIBUTION_REPO" -Default "")
+    if (-not [string]::IsNullOrWhiteSpace($fromEnv)) {
+        return $fromEnv
+    }
+
+    return (Get-ItlMcpDefaultDistributionRepo)
+}
+
+function Test-ItlMcpDistributionPathOverride {
+    if (-not [string]::IsNullOrWhiteSpace($McpDistributionPath)) {
+        return $true
+    }
+
+    $fromEnv = [string](Get-EnvValue -Name "ITL_MCP_DISTRIBUTION_PATH" -Default "")
+    return (-not [string]::IsNullOrWhiteSpace($fromEnv))
+}
+
+function Get-ItlMcpManagedDistributionRoot {
+    return (Join-Path (Get-ItlMcpLocalHome) "distribution")
+}
+
 function Get-ItlMcpDistributionRoot {
     if (-not [string]::IsNullOrWhiteSpace($McpDistributionPath)) {
         return [System.IO.Path]::GetFullPath($McpDistributionPath)
@@ -5617,12 +5687,48 @@ function Get-ItlMcpDistributionRoot {
         return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($fromEnv))
     }
 
-    $defaultPath = "D:\Git\MCP vibecoding1c"
-    if (Test-Path -LiteralPath $defaultPath -PathType Container -ErrorAction SilentlyContinue) {
-        return $defaultPath
+    return (Get-ItlMcpManagedDistributionRoot)
+}
+
+function Ensure-ItlMcpDistribution {
+    $distributionRoot = Get-ItlMcpDistributionRoot
+    if (Test-ItlMcpDistributionPathOverride) {
+        if (-not (Test-Path -LiteralPath $distributionRoot -PathType Container -ErrorAction SilentlyContinue)) {
+            throw "MCP distribution override path was not found: $distributionRoot"
+        }
+        return $distributionRoot
     }
 
-    return (Join-Path (Get-ItlMcpLocalHome) "distribution")
+    $repo = Get-ItlMcpDistributionRepo
+    $parent = Split-Path -Parent $distributionRoot
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+
+    if (-not (Test-Path -LiteralPath $distributionRoot -PathType Container -ErrorAction SilentlyContinue)) {
+        Write-Host "Cloning ITL MCP distribution: $repo"
+        Write-Host "MCP distribution path: $distributionRoot"
+        Invoke-GitAt -Root $parent -Arguments @("clone", $repo, $distributionRoot)
+        return $distributionRoot
+    }
+
+    if (-not (Test-Path -LiteralPath (Join-Path $distributionRoot ".git") -PathType Container -ErrorAction SilentlyContinue)) {
+        throw "Managed MCP distribution path exists but is not a Git checkout: $distributionRoot. Remove it or set ITL_MCP_DISTRIBUTION_PATH."
+    }
+
+    Write-Host "Updating ITL MCP distribution: $distributionRoot"
+    Invoke-GitAt -Root $distributionRoot -Arguments @("fetch", "--prune")
+    $upstream = ""
+    try {
+        $upstream = ((Get-GitOutputAt -Root $distributionRoot -Arguments @("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")) -join "").Trim()
+    } catch {
+        $upstream = ""
+    }
+
+    if ($upstream) {
+        Invoke-GitAt -Root $distributionRoot -Arguments @("merge", "--ff-only", $upstream)
+    } else {
+        Invoke-GitAt -Root $distributionRoot -Arguments @("pull", "--ff-only")
+    }
+    return $distributionRoot
 }
 
 function Read-ItlMcpDotEnvFile {
@@ -6648,7 +6754,13 @@ function Select-ItlMcpManifestServers {
 }
 
 function Rotate-ItlMcpKeys {
+    param([switch]$DistributionReady)
+
     Write-Section "ITL MCP rotate keys"
+
+    if (-not $DistributionReady) {
+        Ensure-ItlMcpDistribution | Out-Null
+    }
 
     $context = Get-ItlMcpConfigContext
     $distributionConfigPath = [string]$context.distributionConfigPath
@@ -6685,9 +6797,14 @@ function Rotate-ItlMcpKeys {
 }
 
 function Start-ItlMcp {
+    param([switch]$DistributionReady)
+
     Write-Section "Start ITL MCP"
 
     Ensure-GitIgnore
+    if (-not $DistributionReady) {
+        Ensure-ItlMcpDistribution | Out-Null
+    }
     Ensure-ItlMcpModel | Out-Null
     $context = Get-ItlMcpScopeContext
     $configContext = Get-ItlMcpConfigContext
@@ -6767,7 +6884,8 @@ function Stop-ItlMcp {
 function Update-ItlMcp {
     Write-Section "Update ITL MCP"
 
-    Rotate-ItlMcpKeys
+    Ensure-ItlMcpDistribution | Out-Null
+    Rotate-ItlMcpKeys -DistributionReady
     $configContext = Get-ItlMcpConfigContext
     if (-not (Test-ItlMcpDockerAvailable)) {
         Write-Host "Docker is not available; image pull skipped."
@@ -6794,12 +6912,13 @@ function Setup-ItlMcp {
     Write-Section "Setup ITL MCP"
 
     Ensure-GitIgnore
+    Ensure-ItlMcpDistribution | Out-Null
     if (Test-Path -LiteralPath (Join-Path (Get-ItlMcpDistributionRoot) "config.env") -PathType Leaf -ErrorAction SilentlyContinue) {
-        Rotate-ItlMcpKeys
+        Rotate-ItlMcpKeys -DistributionReady
     } else {
         Write-Host "Distribution config.env not found; key rotation skipped."
     }
-    Start-ItlMcp
+    Start-ItlMcp -DistributionReady
     Show-ItlMcpStatus
 }
 
@@ -6956,8 +7075,21 @@ function Show-ItlMcpStatus {
 
     $state = Read-ItlMcpState
     $context = Get-ItlMcpScopeContext
+    $distributionRoot = Get-ItlMcpDistributionRoot
     Write-Host "MCP local home: $(Get-ItlMcpLocalHome)"
-    Write-Host "MCP distribution: $(Get-ItlMcpDistributionRoot)"
+    Write-Host "MCP distribution: $distributionRoot"
+    if (Test-ItlMcpDistributionPathOverride) {
+        Write-Host "MCP distribution source: explicit path override"
+    } else {
+        Write-Host "MCP distribution repo: $(Get-ItlMcpDistributionRepo)"
+        if (-not (Test-Path -LiteralPath $distributionRoot -PathType Container -ErrorAction SilentlyContinue)) {
+            Write-Host "MCP distribution checkout: missing; run mcp-setup or mcp-update to clone it."
+        } elseif (-not (Test-Path -LiteralPath (Join-Path $distributionRoot ".git") -PathType Container -ErrorAction SilentlyContinue)) {
+            Write-Host "MCP distribution checkout: invalid; managed path exists but is not a Git checkout."
+        } else {
+            Write-Host "MCP distribution checkout: present"
+        }
+    }
     Write-Host "Project scope: $($context.projectSlug)"
     Write-Host "Branch scope: $($context.branchSlug)"
 
@@ -7533,13 +7665,15 @@ function Install-AiRules1c {
     $rulesDir = Join-Path $env:TEMP "ai_rules_1c"
 
     if (Test-Path -LiteralPath $rulesDir) {
-        & git -C $rulesDir pull --ff-only
-        if ($LASTEXITCODE -ne 0) {
+        try {
+            Invoke-GitAt -Root $rulesDir -Arguments @("pull", "--ff-only")
+        } catch {
             throw "Failed to update ai_rules_1c in $rulesDir"
         }
     } else {
-        & git clone $repo $rulesDir
-        if ($LASTEXITCODE -ne 0) {
+        try {
+            Invoke-GitAt -Root $env:TEMP -Arguments @("clone", $repo, $rulesDir)
+        } catch {
             throw "Failed to clone ai_rules_1c from $repo"
         }
     }

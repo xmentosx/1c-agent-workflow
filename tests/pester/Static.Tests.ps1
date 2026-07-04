@@ -292,6 +292,9 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match "lms server start --port"
         $HelperText | Should -Match "mcp_servers"
         $HelperText | Should -Match "managedBy"
+        $HelperText | Should -Match ([regex]::Escape("http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git"))
+        $HelperText | Should -Match "ITL_MCP_DISTRIBUTION_REPO"
+        $HelperText | Should -Not -Match ([regex]::Escape("D:\Git\MCP vibecoding1c"))
         $HelperText | Should -Not -Match "-p 8000:8000"
         $HelperText | Should -Not -Match "-p 8006:8006"
 
@@ -300,7 +303,132 @@ Describe "1C agent workflow static checks" {
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")) | Should -Match "/itl-mcp"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")) | Should -Match "/itl-mcp"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "ITL_MCP_DISTRIBUTION_PATH"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "ITL_MCP_DISTRIBUTION_REPO"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "PATH_METADATA"
+    }
+
+    It "clones and fast-forwards the managed ITL MCP distribution checkout" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-mcp-distribution-test-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $workRepo = Join-Path $tempRoot "source"
+        $remoteRepo = Join-Path $tempRoot "remote.git"
+        $localHome = Join-Path $tempRoot "local-home"
+        $oldRepo = [Environment]::GetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", "Process")
+        $oldPath = [Environment]::GetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", "Process")
+        $oldHome = [Environment]::GetEnvironmentVariable("ITL_MCP_LOCAL_HOME", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot, $workRepo | Out-Null
+            & git -C $workRepo init *> $null
+            & git -C $workRepo config user.email "test@example.com"
+            & git -C $workRepo config user.name "Test User"
+            & git -C $workRepo branch -M main
+            Set-Content -LiteralPath (Join-Path $workRepo "config.env") -Value "LICENSE_KEY_HELP=fixture-key`n" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $workRepo "itl-mcp.manifest.json") -Value '{"servers":[]}' -Encoding ASCII
+            & git -C $workRepo add config.env itl-mcp.manifest.json
+            & git -C $workRepo commit -m "initial distribution" *> $null
+            & git init --bare $remoteRepo *> $null
+            & git -C $workRepo remote add origin $remoteRepo
+            & git -C $workRepo push -u origin main *> $null
+            & git -C $remoteRepo symbolic-ref HEAD refs/heads/main
+
+            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", $remoteRepo, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", $null, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_MCP_LOCAL_HOME", $localHome, "Process")
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                Ensure-ItlMcpDistribution | Out-Null
+            }
+
+            $managedPath = Join-Path $localHome "distribution"
+            (Test-Path -LiteralPath (Join-Path $managedPath ".git") -PathType Container) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $managedPath "config.env") -PathType Leaf) | Should -Be $true
+
+            Set-Content -LiteralPath (Join-Path $workRepo "version.txt") -Value "2" -Encoding ASCII
+            & git -C $workRepo add version.txt
+            & git -C $workRepo commit -m "update distribution" *> $null
+            & git -C $workRepo push origin main *> $null
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                Ensure-ItlMcpDistribution | Out-Null
+            }
+
+            (Get-Content -Encoding ASCII -Raw (Join-Path $managedPath "version.txt")).Trim() | Should -Be "2"
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", $oldRepo, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", $oldPath, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_MCP_LOCAL_HOME", $oldHome, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "does not clone when an explicit ITL MCP distribution path is configured" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-mcp-distribution-override-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $manualDistribution = Join-Path $tempRoot "manual-distribution"
+        $localHome = Join-Path $tempRoot "local-home"
+        $oldRepo = [Environment]::GetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", "Process")
+        $oldPath = [Environment]::GetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", "Process")
+        $oldHome = [Environment]::GetEnvironmentVariable("ITL_MCP_LOCAL_HOME", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot, $manualDistribution | Out-Null
+            Set-Content -LiteralPath (Join-Path $manualDistribution "config.env") -Value "LICENSE_KEY_HELP=manual-key`n" -Encoding ASCII
+            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", "bad://should-not-be-used", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", $manualDistribution, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_MCP_LOCAL_HOME", $localHome, "Process")
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                $resolved = Ensure-ItlMcpDistribution
+                $resolved | Should -Be ([System.IO.Path]::GetFullPath($manualDistribution))
+            }
+
+            (Test-Path -LiteralPath (Join-Path $localHome "distribution") -ErrorAction SilentlyContinue) | Should -Be $false
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", $oldRepo, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", $oldPath, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_MCP_LOCAL_HOME", $oldHome, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "fails clearly when the managed ITL MCP distribution path is not a Git checkout" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-mcp-distribution-invalid-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $localHome = Join-Path $tempRoot "local-home"
+        $managedPath = Join-Path $localHome "distribution"
+        $oldRepo = [Environment]::GetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", "Process")
+        $oldPath = [Environment]::GetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", "Process")
+        $oldHome = [Environment]::GetEnvironmentVariable("ITL_MCP_LOCAL_HOME", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot, $managedPath | Out-Null
+            Set-Content -LiteralPath (Join-Path $managedPath "config.env") -Value "LICENSE_KEY_HELP=stale`n" -Encoding ASCII
+            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", "bad://should-not-be-used", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", $null, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_MCP_LOCAL_HOME", $localHome, "Process")
+
+            {
+                & {
+                    . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                    Ensure-ItlMcpDistribution | Out-Null
+                }
+            } | Should -Throw "*not a Git checkout*"
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", $oldRepo, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", $oldPath, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_MCP_LOCAL_HOME", $oldHome, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     It "does not store concrete MCP license key values in tracked text files" {
@@ -1137,6 +1265,108 @@ url = "http://localhost:9999/mcp"
             [int]$status.exitCode | Should -Be 1
             $status.runLogPath | Should -Be ([System.IO.Path]::GetFullPath($logPath))
             $status.errorMessage | Should -Not -BeNullOrEmpty
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "commits LF files when Git emits CRLF warnings under monitored logging" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-git-crlf-warning-" + [guid]::NewGuid().ToString("N"))
+        $probePath = Join-Path $tempRoot "probe.ps1"
+        $launcherPath = Join-Path $tempRoot "launcher.ps1"
+        $logPath = Join-Path $tempRoot "console.log"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot config core.autocrlf true
+            & git -C $tempRoot config core.safecrlf warn
+            Set-Content -LiteralPath (Join-Path $tempRoot "lf.txt") -NoNewline -Value "line1`nline2`n" -Encoding ASCII
+
+            Set-Content -LiteralPath $probePath -Encoding UTF8 -Value @'
+param(
+    [string]$HelperPath,
+    [string]$ProjectRoot
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+. $HelperPath -ProjectRoot $ProjectRoot -Action help *> $null
+Commit-IfChanged -Message "test: commit lf file" -PathSpec @("lf.txt") -RequireChanges | Out-Null
+
+if (-not (Test-GitCommitExists "HEAD")) {
+    throw "HEAD commit was not created."
+}
+
+$staged = & git -C $ProjectRoot diff --cached --name-only
+if ($LASTEXITCODE -ne 0) {
+    throw "Cannot read staged Git changes."
+}
+if ($staged) {
+    throw "Staged changes remain: $($staged -join ', ')"
+}
+'@
+
+            Set-Content -LiteralPath $launcherPath -Encoding UTF8 -Value @"
+`$ErrorActionPreference = "Stop"
+& '$probePath' '$HelperPath' '$tempRoot' *>&1 | Tee-Object -FilePath '$logPath'
+if (`$LASTEXITCODE -is [int]) { exit `$LASTEXITCODE }
+if (`$?) { exit 0 } else { exit 1 }
+"@
+
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $launcherPath *> $null
+            $LASTEXITCODE | Should -Be 0
+
+            ((& git -C $tempRoot rev-list --count HEAD).Trim()) | Should -Be "1"
+            ((& git -C $tempRoot diff --cached --name-only) -join [Environment]::NewLine) | Should -Be ""
+            $logText = Get-Content -Encoding UTF8 -Raw $logPath
+            $logText | Should -Match "LF will be replaced by CRLF"
+            $logText | Should -Not -Match "NativeCommandError"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "still fails when Git returns a non-zero exit code" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-git-real-failure-" + [guid]::NewGuid().ToString("N"))
+        $probePath = Join-Path $tempRoot "probe.ps1"
+        $launcherPath = Join-Path $tempRoot "launcher.ps1"
+        $logPath = Join-Path $tempRoot "console.log"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $probePath -Encoding UTF8 -Value @'
+param(
+    [string]$HelperPath,
+    [string]$ProjectRoot
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+. $HelperPath -ProjectRoot $ProjectRoot -Action help *> $null
+Invoke-Git @("not-a-git-command")
+Write-Host "SHOULD_NOT_REACH_AFTER_GIT_FAILURE"
+'@
+
+            Set-Content -LiteralPath $launcherPath -Encoding UTF8 -Value @"
+`$ErrorActionPreference = "Stop"
+& '$probePath' '$HelperPath' '$tempRoot' *>&1 | Tee-Object -FilePath '$logPath'
+if (`$LASTEXITCODE -is [int]) { exit `$LASTEXITCODE }
+if (`$?) { exit 0 } else { exit 1 }
+"@
+
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $launcherPath *> $null
+            $LASTEXITCODE | Should -Be 1
+
+            $logText = Get-Content -Encoding UTF8 -Raw $logPath
+            $logText | Should -Match "not-a-git-command"
+            $logText | Should -Not -Match "SHOULD_NOT_REACH_AFTER_GIT_FAILURE"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

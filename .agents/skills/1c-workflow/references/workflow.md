@@ -145,6 +145,7 @@ VANESSA_MCP_INSTALL_ROOT=.agent-1c/tools/vanessa-mcp
 VANESSA_MCP_PORT_RANGE=9874..9973
 VANESSA_MCP_PORT=
 VANESSA_MCP_URL=
+ITL_MCP_DISTRIBUTION_REPO=http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git
 ITL_MCP_DISTRIBUTION_PATH=
 PATH_METADATA=
 PATH_CODE=
@@ -272,14 +273,15 @@ Goal: install the standard executable test tool for ITL development branches.
 
 Goal: make the private ITL 1C MCP distribution usable without requiring developers to understand ports, keys, model selection, Docker naming, or client config files.
 
-1. `/itl-mcp` runs `mcp-setup` by default. The helper rotates license keys from the private distribution `config.env` into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\config.env`, ensures the local embedding model, starts MCP servers for the current scope, and writes Codex/Kilo client config.
-2. The distribution may provide `itl-mcp.manifest.json`. If it is absent, the helper uses the built-in manifest for `docs`, `templates`, `syntax`, `codechecker`, `ssl`, `code`, `graph`, and branch `vanessa`.
-3. Global servers use deterministic names such as `itl-1c-docs`, `itl-1c-templates`, `itl-1c-syntax`, and `itl-1c-codechecker`. Project servers use `itl-<projectSlug>-code` and `itl-<projectSlug>-graph`. Branch servers use `itl-<projectSlug>-<branchSlug>-vanessa`.
-4. Host ports are allocated under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\ports.json` with a lock file. Vendor ports `8000`, `8002`, `8003`, `8004`, `8006`, `8007`, and `8008` remain container-internal only. Host ranges are `18000..18099` for global, `18100..18499` for project, `18500..18999` for branch, and `19000..19049` for local model fallback.
-5. `mcp-ensure-model` detects NVIDIA VRAM with `nvidia-smi`, RAM with CIM, and LM Studio availability with `lms`. It selects Qwen3 Embedding 4B quantization for NVIDIA GPUs, otherwise `intfloat/multilingual-e5-base` or `intfloat/multilingual-e5-small` on machines below 16 GB RAM. Containers receive `OPENAI_API_BASE=http://host.docker.internal:<modelPort>/v1`, `OPENAI_API_KEY=lm-studio`, and the selected embedding model.
-6. If the selected embedding model changes, affected indexes are marked stale. Do not set `RESET_DATABASE=true` automatically because full reindexing can take hours or longer.
-7. Codex global entries are written to `~/.codex/config.toml`; project and branch entries are written to ignored `.codex/config.toml` in the current worktree. Kilo entries for the current global/project/branch set are written under top-level `"mcp"` in ignored `.kilo/kilo.json`.
-8. `mcp-status`, `/itl-status`, and `list-dev-branches` show active MCP names, URLs, embedding model, and stale indexes.
+1. `/itl-mcp` runs `mcp-setup` by default. The helper clones or fast-forwards the private GitLab distribution from `ITL_MCP_DISTRIBUTION_REPO` (default `http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git`) into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\distribution`, unless `-McpDistributionPath` or `ITL_MCP_DISTRIBUTION_PATH` points to a manually prepared checkout.
+2. The helper rotates license keys from the private distribution `config.env` into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\config.env`, ensures the local embedding model, starts MCP servers for the current scope, and writes Codex/Kilo client config.
+3. The distribution may provide `itl-mcp.manifest.json`. If it is absent, the helper uses the built-in manifest for `docs`, `templates`, `syntax`, `codechecker`, `ssl`, `code`, `graph`, and branch `vanessa`.
+4. Global servers use deterministic names such as `itl-1c-docs`, `itl-1c-templates`, `itl-1c-syntax`, and `itl-1c-codechecker`. Project servers use `itl-<projectSlug>-code` and `itl-<projectSlug>-graph`. Branch servers use `itl-<projectSlug>-<branchSlug>-vanessa`.
+5. Host ports are allocated under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\ports.json` with a lock file. Vendor ports `8000`, `8002`, `8003`, `8004`, `8006`, `8007`, and `8008` remain container-internal only. Host ranges are `18000..18099` for global, `18100..18499` for project, `18500..18999` for branch, and `19000..19049` for local model fallback.
+6. `mcp-ensure-model` detects NVIDIA VRAM with `nvidia-smi`, RAM with CIM, and LM Studio availability with `lms`. It selects Qwen3 Embedding 4B quantization for NVIDIA GPUs, otherwise `intfloat/multilingual-e5-base` or `intfloat/multilingual-e5-small` on machines below 16 GB RAM. Containers receive `OPENAI_API_BASE=http://host.docker.internal:<modelPort>/v1`, `OPENAI_API_KEY=lm-studio`, and the selected embedding model.
+7. If the selected embedding model changes, affected indexes are marked stale. Do not set `RESET_DATABASE=true` automatically because full reindexing can take hours or longer.
+8. Codex global entries are written to `~/.codex/config.toml`; project and branch entries are written to ignored `.codex/config.toml` in the current worktree. Kilo entries for the current global/project/branch set are written under top-level `"mcp"` in ignored `.kilo/kilo.json`.
+9. `mcp-status`, `/itl-status`, and `list-dev-branches` show active MCP names, URLs, embedding model, distribution path/repo, and stale indexes. `mcp-status` is read-only and does not clone or pull the distribution.
 
 ## INSTALL_VANESSA_MCP / START_VANESSA_MCP / STOP_VANESSA_MCP / VANESSA_MCP_STATUS
 
