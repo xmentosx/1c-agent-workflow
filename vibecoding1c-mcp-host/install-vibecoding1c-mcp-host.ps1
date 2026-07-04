@@ -543,6 +543,42 @@ function Invoke-PythonMetadataGenerator {
     return [int]$result.exitCode
 }
 
+function Write-MetadataDiagnosticsSummary {
+    param([string]$DiagnosticsRoot)
+    $diagnosticsPath = Join-Path $DiagnosticsRoot "report-diagnostics.json"
+    $statsPath = Join-Path $DiagnosticsRoot "report-stats.json"
+    if (Test-Path -LiteralPath $statsPath -PathType Leaf) {
+        try {
+            $stats = Read-JsonFile -Path $statsPath
+            Write-Host "norkins/metadata stats: objects=$((Get-ObjectValue -Object $stats -Name 'mainConfigurationObjects' -Default 0)) warnings=$((Get-ObjectValue -Object $stats -Name 'warnings' -Default 0)) errors=$((Get-ObjectValue -Object $stats -Name 'errors' -Default 0))"
+        } catch {
+            Write-Host "WARNING: failed to read norkins/metadata stats: $statsPath"
+        }
+    }
+    if (-not (Test-Path -LiteralPath $diagnosticsPath -PathType Leaf)) {
+        return
+    }
+    Write-Host "norkins/metadata diagnostics: $diagnosticsPath"
+    try {
+        $diagnostics = Read-JsonFile -Path $diagnosticsPath
+        foreach ($event in @(As-Array (Get-ObjectValue -Object $diagnostics -Name "errors" -Default @())) | Select-Object -First 10) {
+            $code = Get-ObjectValue -Object $event -Name "code" -Default "<unknown>"
+            $message = Get-ObjectValue -Object $event -Name "message" -Default ""
+            $path = Get-ObjectValue -Object $event -Name "path" -Default ""
+            Write-Host "  ERROR ${code}: $message $path"
+        }
+        foreach ($event in @(As-Array (Get-ObjectValue -Object $diagnostics -Name "warnings" -Default @())) | Select-Object -First 10) {
+            $code = Get-ObjectValue -Object $event -Name "code" -Default "<unknown>"
+            $message = Get-ObjectValue -Object $event -Name "message" -Default ""
+            $count = Get-ObjectValue -Object $event -Name "count" -Default ""
+            $countText = $(if ($count) { " count=$count" } else { "" })
+            Write-Host "  WARNING ${code}${countText}: $message"
+        }
+    } catch {
+        Write-Host "WARNING: failed to read norkins/metadata diagnostics: $diagnosticsPath"
+    }
+}
+
 function Get-ConfigurationState {
     param(
         [object]$Config,
@@ -654,9 +690,16 @@ function Refresh-Configuration {
         $pythonPath = Ensure-PythonRuntime -Config $Config
         $pythonLogPath = New-TimestampedFilePath -Directory $state.logsRoot -Prefix "norkins-metadata-" -Extension ".log"
         $exitCode = Invoke-PythonMetadataGenerator -PythonPath $pythonPath -ScriptPath $scriptPath -ConfigPath $generatorConfigPath -LogPath $pythonLogPath
-        if ($exitCode -ne 0) {
+        if ($exitCode -eq 1) {
+            Write-Host "norkins/metadata completed for configId $($state.configId) with warnings."
+            Write-MetadataDiagnosticsSummary -DiagnosticsRoot $state.diagnosticsRoot
+        } elseif ($exitCode -ne 0) {
+            Write-MetadataDiagnosticsSummary -DiagnosticsRoot $state.diagnosticsRoot
             throw "norkins/metadata failed for configId $($state.configId) with exit code $exitCode. Python: $pythonPath. Generator config: $generatorConfigPath. Python log: $pythonLogPath. Source root: $($state.sourceRoot). mainConfigPath: $($state.mainConfigPath). Resolved main config root: $mainConfigRoot."
         }
+    }
+    if (-not $DryRun -and -not (Test-Path -LiteralPath $state.reportPath -PathType Leaf)) {
+        throw "norkins/metadata did not create Report.txt for configId $($state.configId): $($state.reportPath). Diagnostics root: $($state.diagnosticsRoot)."
     }
     $state.reportHash = Get-FileSha256OrEmpty -Path $state.reportPath
     $state.indexedAt = (Get-Date).ToString("o")

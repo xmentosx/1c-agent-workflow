@@ -406,6 +406,10 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match "function Invoke-Git"
         $McpHostText | Should -Match '& git -C \$Root @Arguments 2>&1'
         $McpHostText | Should -Match 'Invoke-Git -Root \$parent -Arguments @\("clone", \$Repo, \$Path\)'
+        $McpHostText | Should -Match "Write-MetadataDiagnosticsSummary"
+        $McpHostText | Should -Match 'exitCode -eq 1'
+        $McpHostText | Should -Match "with warnings"
+        $McpHostText | Should -Match "did not create Report.txt"
         $McpHostText | Should -Match "norkins-metadata-"
         $McpHostText | Should -Match "mainConfigPath was not found"
         $McpHostText | Should -Match "Generator config:"

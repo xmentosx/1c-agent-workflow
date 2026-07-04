@@ -379,6 +379,8 @@ docker pull comol/template-search-mcp:latest
 
 Проверьте пути, которые пишет ошибка: `Generator config`, `Python log`, `Source root`, `mainConfigPath` и `Resolved main config root`. Чаще всего причина в том, что XML-выгрузка лежит прямо в `sourcePath`, а в `host.config.json` оставлено `"mainConfigPath": "src/cf"`. В этом случае задайте `"mainConfigPath": "."`.
 
+Exit code `1` у `norkins/metadata` означает diagnostics warnings, а не критический сбой. Host setup продолжает работу, если `Report.txt` создан, и печатает путь к `report-diagnostics.json`.
+
 Если exit code равен `9009` или в выводе есть только `Python`, проверьте, что используется реальный Python 3, а не Windows Store App Execution Alias:
 
 ```powershell
