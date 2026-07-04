@@ -410,8 +410,9 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match "ConfigurationRepositoryUpdateCfg"
         $McpHostText | Should -Match "DumpConfigToFiles"
         $McpHostText | Should -Match "ConfigDumpInfo.xml"
-        $McpHostText | Should -Match "docker image inspect"
-        $McpHostText | Should -Match "docker pull"
+        $McpHostText | Should -Match "Invoke-DockerCommand"
+        $McpHostText | Should -Match '"image", "inspect"'
+        $McpHostText | Should -Match '"pull", \$Image'
         $McpHostText | Should -Match "read-only file system"
         $McpHostText | Should -Not -Match '(?m)^\s*LICENSE_KEY_[A-Z0-9_]+\s*=\s*[^#\s]+'
     }

@@ -295,22 +295,39 @@ function Write-HostState {
     Write-JsonFile -Path (Get-HostStatePath -Config $Config) -Value $hash
 }
 
+function Invoke-DockerCommand {
+    param(
+        [string[]]$Arguments,
+        [switch]$Quiet
+    )
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        if ($Quiet) {
+            & docker @Arguments *> $null
+        } else {
+            & docker @Arguments
+        }
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
 function Ensure-HostPrerequisites {
     foreach ($command in @("git", "docker", "python")) {
         if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
             throw "Required command was not found: $command"
         }
     }
-    & docker info *> $null
-    if ($LASTEXITCODE -ne 0) {
+    if ((Invoke-DockerCommand -Arguments @("info") -Quiet) -ne 0) {
         throw "Docker is installed but not available to the current user/session."
     }
 }
 
 function Test-DockerImageAvailable {
     param([string]$Image)
-    & docker image inspect $Image *> $null
-    return ($LASTEXITCODE -eq 0)
+    return ((Invoke-DockerCommand -Arguments @("image", "inspect", $Image) -Quiet) -eq 0)
 }
 
 function Ensure-DockerImageAvailable {
@@ -324,8 +341,7 @@ function Ensure-DockerImageAvailable {
 
     Write-Host "Docker image is not available locally: $Image"
     Write-Host "Pulling Docker image: $Image"
-    & docker pull $Image
-    if ($LASTEXITCODE -ne 0) {
+    if ((Invoke-DockerCommand -Arguments @("pull", $Image)) -ne 0) {
         throw "Docker image '$Image' is not available locally and docker pull failed. Check Docker daemon health and registry access. If Docker reports 'read-only file system', restart Docker Desktop or run 'wsl --shutdown' before retrying, then pull or load the image manually if needed."
     }
 }
