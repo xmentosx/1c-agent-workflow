@@ -1350,6 +1350,13 @@ function New-DefaultDependencyLockManifest {
         schemaVersion = 1
         mode = "fresh"
         dependencies = [ordered]@{
+            workflowPackage = [ordered]@{
+                repo = "https://github.com/xmentosx/1c-agent-workflow.git"
+                ref = "master"
+                commit = ""
+                source = ""
+                updatedAt = ""
+            }
             aiRules1c = [ordered]@{
                 repo = "https://github.com/comol/ai_rules_1c.git"
                 ref = ""

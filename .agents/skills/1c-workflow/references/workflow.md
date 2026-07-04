@@ -20,7 +20,7 @@ Available 1C workflow actions:
 10. Switch: show/open a saved development branch worktree or switch a legacy branch.
 ```
 
-For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-vibecoding1c-mcp`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request. The direct `/itl-init-project` wrapper exists for explicit bootstrap use, but it is not part of the beginner menu after initialization. Extension helper wrappers (`/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`), the advanced `/itl-vanessa-mcp` wrapper, and the maintenance `/itl-update-rules` wrapper remain available when directly needed, but are intentionally not shown in the beginner menu.
+For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-vibecoding1c-mcp`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request. The direct `/itl-init-project` wrapper exists for explicit bootstrap use, but it is not part of the beginner menu after initialization. Extension helper wrappers (`/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`), the advanced `/itl-vanessa-mcp` wrapper, and the maintenance `/itl-update-rules` and `/itl-update-workflow` wrappers remain available when directly needed, but are intentionally not shown in the beginner menu.
 
 For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
@@ -30,7 +30,7 @@ Create and maintain:
 
 - `.agent-1c/project.json`: non-secret project settings.
 - `.agent-1c/tools.json`: configurable software checks and install suggestions.
-- `.agent-1c/dependency-lock.json`: committed dependency lock manifest for `ai_rules_1c`, Vanessa Automation, and downloadable archive URLs/SHA256. Default mode is `fresh`; `locked` mode uses only pinned values.
+- `.agent-1c/dependency-lock.json`: committed dependency lock manifest for the ITL workflow package, `ai_rules_1c`, Vanessa Automation, and downloadable archive URLs/SHA256. Default mode is `fresh`; `locked` mode uses only pinned values.
 - `.agent-1c/dev-branches/<safe-dev-branch-name>.json`: local development branch runtime state, including branch-local Vanessa verify test port and Vanessa MCP port/PID/URL when used; ignored by Git.
 - `.agent-1c/mcp/state.json`: local project/worktree MCP runtime mirror; ignored by Git.
 - `.agent-1c/mcp/vibecoding1c-selection.json`: local per-developer remote/local MCP selection; ignored by Git.
@@ -359,6 +359,22 @@ Goal: create the baseline project state.
 17. Keep the ITL overlay in `USER-RULES.md`. Do not append to upstream-managed `AGENTS.md` when the `ai_rules_1c` installer already made it point to `USER-RULES.md`; add the short bridge only as a fallback for projects without such a root `AGENTS.md`.
 18. Add detailed project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
 19. Commit rules and workflow files when there are changes.
+
+## UPDATE_WORKFLOW
+
+Goal: refresh the installed ITL workflow package in an already initialized project without rerunning `init-project`.
+
+Helper action: `update-workflow`. Kilo wrapper: `/itl-update-workflow`.
+
+1. Run only from the `master` worktree. If invoked from `itldev/*`, stop and print the saved main worktree path when available.
+2. Require a clean tracked Git worktree, while still ignoring local runtime state such as `.dev.env`, `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
+3. Resolve the package source from `ITL_WORKFLOW_SOURCE_PATH`, or clone/update `ITL_WORKFLOW_REPO` and `ITL_WORKFLOW_REF`. Defaults are `https://github.com/xmentosx/1c-agent-workflow.git` and `master`.
+4. Copy only managed workflow files: `.agents/skills/1c-workflow*`, `.kilo/commands/itl*.md`, `templates/`, `README.md`, `AGENT-INSTALL.md`, `DEVELOPER-GUIDE.ru.md`, and `DEV-BRANCH-DEVELOPMENT.ru.md`.
+5. Never overwrite local project/runtime state: `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, existing `.agent-1c/project.json`, or existing `.agent-1c/tools.json`.
+6. Record `workflowPackage.repo/ref/commit/source/updatedAt` in `.agent-1c/dependency-lock.json` and reapply the managed ITL `USER-RULES.md` block.
+7. Run `UPDATE_AI_RULES` unless `-SkipAiRules` is passed.
+8. Do not start or stop MCP servers and do not update active development branches automatically. Print the follow-up commands for `vibecoding1c-mcp-update`, `vibecoding1c-mcp-setup`, branch merge or `/itl-refresh`, and branch-local Vanessa MCP reinstall when used.
+9. Do not create a commit automatically; leave tracked changes for review.
 
 ## UPDATE_AI_RULES
 

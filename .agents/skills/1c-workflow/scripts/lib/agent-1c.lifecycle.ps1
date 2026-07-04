@@ -766,21 +766,401 @@ function Update-AiRules1c {
     Update-UserRules
 }
 
+function Get-WorkflowPackageDefaultRepo {
+    return "https://github.com/xmentosx/1c-agent-workflow.git"
+}
+
+function Get-WorkflowPackageDefaultRef {
+    return "master"
+}
+
+function Get-WorkflowPackageRepo {
+    $repo = [string](Get-EnvValue -Name "ITL_WORKFLOW_REPO" -Default "")
+    if ([string]::IsNullOrWhiteSpace($repo)) {
+        return (Get-WorkflowPackageDefaultRepo)
+    }
+    return $repo
+}
+
+function Get-WorkflowPackageRef {
+    $ref = [string](Get-EnvValue -Name "ITL_WORKFLOW_REF" -Default "")
+    if ([string]::IsNullOrWhiteSpace($ref)) {
+        return (Get-WorkflowPackageDefaultRef)
+    }
+    return $ref
+}
+
+function Get-WorkflowPackageTempRoot {
+    return (Join-Path (Join-Path $env:TEMP "1c-agent-workflow") "workflow-package")
+}
+
+function Test-GitRefExistsAt {
+    param(
+        [string]$Root,
+        [string]$Ref
+    )
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & git -C $Root show-ref --verify --quiet $Ref
+        return ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
+function Assert-WorkflowPackageSourceRoot {
+    param([string]$SourceRoot)
+
+    foreach ($relativePath in @(
+        "AGENT-INSTALL.md",
+        ".agents\skills\1c-workflow\scripts\agent-1c.ps1",
+        ".agents\skills\1c-workflow-fast\SKILL.md",
+        "templates\USER-RULES.append.md"
+    )) {
+        $path = Join-Path $SourceRoot $relativePath
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
+            throw "Workflow package source is missing required file '$relativePath': $SourceRoot"
+        }
+    }
+}
+
+function Resolve-WorkflowPackageSource {
+    $overridePath = [string](Get-EnvValue -Name "ITL_WORKFLOW_SOURCE_PATH" -Default "")
+    $repo = Get-WorkflowPackageRepo
+    $ref = Get-WorkflowPackageRef
+    $sourceKind = "git"
+    $root = ""
+
+    if (-not [string]::IsNullOrWhiteSpace($overridePath)) {
+        $root = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($overridePath))
+        if (-not (Test-Path -LiteralPath $root -PathType Container -ErrorAction SilentlyContinue)) {
+            throw "ITL_WORKFLOW_SOURCE_PATH was not found: $root"
+        }
+        $sourceKind = "path"
+    } else {
+        $root = Get-WorkflowPackageTempRoot
+        $parent = Split-Path -Parent $root
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+
+        if (-not (Test-Path -LiteralPath $root -PathType Container -ErrorAction SilentlyContinue)) {
+            Write-Host "Cloning ITL workflow package: $repo"
+            Invoke-GitAt -Root $parent -Arguments @("clone", $repo, $root)
+        } elseif (-not (Test-Path -LiteralPath (Join-Path $root ".git") -PathType Container -ErrorAction SilentlyContinue)) {
+            throw "Managed ITL workflow package checkout exists but is not a Git repository: $root. Remove it or set ITL_WORKFLOW_SOURCE_PATH."
+        }
+
+        Write-Host "Updating ITL workflow package checkout: $root"
+        Invoke-GitAt -Root $root -Arguments @("fetch", "--all", "--tags", "--prune")
+        $remoteRef = "refs/remotes/origin/$ref"
+        if (Test-GitRefExistsAt -Root $root -Ref $remoteRef) {
+            Invoke-GitAt -Root $root -Arguments @("checkout", "-B", $ref, "origin/$ref")
+        } else {
+            Invoke-GitAt -Root $root -Arguments @("checkout", "--detach", $ref)
+        }
+    }
+
+    Assert-WorkflowPackageSourceRoot -SourceRoot $root
+    $commit = ""
+    if (Test-Path -LiteralPath (Join-Path $root ".git") -PathType Container -ErrorAction SilentlyContinue) {
+        $commit = (Get-GitOutputAt -Root $root -Arguments @("rev-parse", "HEAD")).Trim()
+    }
+
+    return [pscustomobject]@{
+        root = $root
+        repo = $repo
+        ref = $ref
+        commit = $commit
+        source = $sourceKind
+    }
+}
+
+function Assert-WorkflowManagedTargetPath {
+    param([string]$Path)
+
+    $root = Get-FullPathNormalized $script:ProjectRoot
+    $target = Get-FullPathNormalized $Path
+    if ($target -eq $root) {
+        return
+    }
+    if (-not $target.StartsWith(($root + "\"), [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to update a managed workflow path outside project root: $target"
+    }
+}
+
+function Assert-WorkflowSourceOutsideProject {
+    param([string]$SourceRoot)
+
+    $projectRoot = Get-FullPathNormalized $script:ProjectRoot
+    $sourceRoot = Get-FullPathNormalized $SourceRoot
+    if ($sourceRoot -eq $projectRoot -or $sourceRoot.StartsWith(($projectRoot + "\"), [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "ITL workflow source must be outside the target project root for update-workflow: $SourceRoot"
+    }
+}
+
+function Assert-WorkflowTrackedGitClean {
+    $status = & git -C $script:ProjectRoot status --porcelain
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cannot read Git status"
+    }
+    $trackedStatus = @($status | Where-Object {
+        $line = [string]$_
+        $line -and -not $line.StartsWith("?? ")
+    })
+    if ($trackedStatus.Count -gt 0) {
+        throw "Git tracked worktree is not clean. Commit, stash, or discard tracked changes before update-workflow."
+    }
+}
+
+function Copy-WorkflowManagedDirectory {
+    param(
+        [string]$SourceRoot,
+        [string]$RelativePath
+    )
+
+    $sourcePath = Join-Path $SourceRoot $RelativePath
+    $targetPath = Join-Path $script:ProjectRoot $RelativePath
+    if (-not (Test-Path -LiteralPath $sourcePath -PathType Container -ErrorAction SilentlyContinue)) {
+        throw "Workflow package managed directory is missing: $RelativePath"
+    }
+
+    Assert-WorkflowManagedTargetPath -Path $targetPath
+    $parent = Split-Path -Parent $targetPath
+    if ($parent) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+    if (Test-Path -LiteralPath $targetPath -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $targetPath -Recurse -Force
+    }
+    Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Recurse -Force
+    Write-Host "Updated workflow directory: $RelativePath"
+}
+
+function Copy-WorkflowManagedFile {
+    param(
+        [string]$SourceRoot,
+        [string]$RelativePath
+    )
+
+    $sourcePath = Join-Path $SourceRoot $RelativePath
+    $targetPath = Join-Path $script:ProjectRoot $RelativePath
+    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "Workflow package managed file is missing: $RelativePath"
+    }
+
+    Assert-WorkflowManagedTargetPath -Path $targetPath
+    $parent = Split-Path -Parent $targetPath
+    if ($parent) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+    Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force
+    Write-Host "Updated workflow file: $RelativePath"
+}
+
+function Sync-WorkflowKiloItlWrappers {
+    param([string]$SourceRoot)
+
+    $sourceDir = Join-Path $SourceRoot ".kilo\commands"
+    $targetDir = Join-Path $script:ProjectRoot ".kilo\commands"
+    if (-not (Test-Path -LiteralPath $sourceDir -PathType Container -ErrorAction SilentlyContinue)) {
+        throw "Workflow package Kilo commands directory is missing: .kilo\commands"
+    }
+
+    Assert-WorkflowManagedTargetPath -Path $targetDir
+    New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+
+    foreach ($existing in @(Get-ChildItem -LiteralPath $targetDir -File -Filter "itl*.md" -ErrorAction SilentlyContinue)) {
+        Remove-Item -LiteralPath $existing.FullName -Force
+    }
+    foreach ($sourceFile in @(Get-ChildItem -LiteralPath $sourceDir -File -Filter "itl*.md" -ErrorAction Stop)) {
+        Copy-Item -LiteralPath $sourceFile.FullName -Destination (Join-Path $targetDir $sourceFile.Name) -Force
+    }
+    Write-Host "Updated workflow Kilo wrappers: .kilo\commands\itl*.md"
+}
+
+function Update-WorkflowPackageLockEntry {
+    param([object]$Source)
+
+    Ensure-DependencyLockManifest
+    $manifest = ConvertTo-Agent1cHashtable -Object (Read-DependencyLockManifest)
+    $dependencies = ConvertTo-Agent1cHashtable -Object $manifest["dependencies"]
+    $entry = ConvertTo-Agent1cHashtable -Object $dependencies["workflowPackage"]
+    $entry["repo"] = [string]$Source.repo
+    $entry["ref"] = [string]$Source.ref
+    $entry["commit"] = [string]$Source.commit
+    $entry["source"] = [string]$Source.source
+    $entry["updatedAt"] = (Get-Date).ToString("o")
+    $dependencies["workflowPackage"] = $entry
+    $manifest["dependencies"] = $dependencies
+    Write-DependencyLockManifest -Manifest $manifest
+}
+
+function Get-WorkflowActiveDevBranchStates {
+    $states = @()
+    foreach ($file in Get-DevBranchStateFiles) {
+        try {
+            $state = Read-DevBranchStateFile -Path $file.FullName
+            if (-not (Get-StateValue -State $state -Name "closedAt")) {
+                $states += $state
+            }
+        } catch {
+        }
+    }
+    return @($states)
+}
+
+function Write-WorkflowUpdateFollowUp {
+    $states = @(Get-WorkflowActiveDevBranchStates)
+    Write-Host ""
+    Write-Host "Next steps:"
+    Write-Host "  Review and commit the updated workflow/rules files in master."
+    Write-Host "  Refresh vibecoding1c MCP when needed:"
+    Write-Host "    powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-update"
+    Write-Host "    powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup"
+    if ($states.Count -gt 0) {
+        Write-Host "  Active development branches must merge the updated master intentionally:"
+        foreach ($state in ($states | Sort-Object @{ Expression = { Get-StateValue -State $_ -Name "devBranchName" -Default "" } })) {
+            $name = Get-StateValue -State $state -Name "devBranchName" -Default (Get-StateValue -State $state -Name "safeDevBranchName" -Default "<unknown>")
+            $worktreePath = Get-StateValue -State $state -Name "worktreePath" -Default (Get-StateValue -State $state -Name "stateProjectRoot" -Default "")
+            Write-Host "    $name -> $worktreePath"
+        }
+        Write-Host "  In each branch worktree, use refresh-dev-branch or merge master, then rerun vibecoding1c MCP setup/status for that scope."
+        Write-Host "  If Vanessa MCP is used in a branch, run stop-vanessa-mcp, install-vanessa-mcp, then start-vanessa-mcp in that branch worktree."
+    } else {
+        Write-Host "  No active development branches were found."
+    }
+}
+
+function Write-WorkflowPackageStatusLines {
+    $entry = Get-DependencyLockEntry -Name "workflowPackage"
+    if ($null -eq $entry) {
+        Write-Host "Workflow package: <not recorded>"
+        return
+    }
+
+    $repo = [string](Get-ConfigValueFromObject -Object $entry -Path "repo" -Default "")
+    $ref = [string](Get-ConfigValueFromObject -Object $entry -Path "ref" -Default "")
+    $commit = [string](Get-ConfigValueFromObject -Object $entry -Path "commit" -Default "")
+    $updatedAt = [string](Get-ConfigValueFromObject -Object $entry -Path "updatedAt" -Default "")
+    $source = [string](Get-ConfigValueFromObject -Object $entry -Path "source" -Default "")
+    Write-Host "Workflow package: $(if ($commit) { $commit } else { '<not recorded>' })"
+    if ($repo) {
+        Write-Host "Workflow package repo: $repo"
+    }
+    if ($ref) {
+        Write-Host "Workflow package ref: $ref"
+    }
+    if ($source) {
+        Write-Host "Workflow package source: $source"
+    }
+    if ($updatedAt) {
+        Write-Host "Workflow package updated: $updatedAt"
+    }
+}
+
+function Assert-WorkflowPackageUpdateContext {
+    if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git") -ErrorAction SilentlyContinue)) {
+        throw "update-workflow requires an initialized Git repository."
+    }
+
+    $currentBranch = Get-CurrentBranch
+    if ($currentBranch -like "itldev/*") {
+        $mainWorktreePath = ""
+        try {
+            $state = Read-DevBranchState -Name ""
+            $mainWorktreePath = Get-StateValue -State $state -Name "mainWorktreePath" -Default ""
+        } catch {
+        }
+        $hint = $(if ($mainWorktreePath) { " Main worktree: $mainWorktreePath" } else { "" })
+        throw "update-workflow must be run from the master worktree, not from development branch '$currentBranch'.$hint"
+    }
+
+    $masterBranch = Get-MasterBranch
+    if ($currentBranch -ne $masterBranch) {
+        throw "update-workflow must be run from '$masterBranch'. Current branch: $(if ($currentBranch) { $currentBranch } else { '<none>' })."
+    }
+
+    Assert-WorkflowTrackedGitClean
+}
+
+function Update-WorkflowPackage {
+    Write-Section "Update ITL workflow package"
+    Assert-WorkflowPackageUpdateContext
+
+    $source = Resolve-WorkflowPackageSource
+    Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
+
+    Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow"
+    Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow-fast"
+    Sync-WorkflowKiloItlWrappers -SourceRoot $source.root
+    Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "templates"
+    foreach ($relativePath in @("README.md", "AGENT-INSTALL.md", "DEVELOPER-GUIDE.ru.md", "DEV-BRANCH-DEVELOPMENT.ru.md")) {
+        Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
+    }
+
+    Update-WorkflowPackageLockEntry -Source $source
+    Ensure-GitIgnore
+    Update-AgentGuidanceBridge
+    Update-UserRules
+
+    if ($SkipAiRules) {
+        Write-Host "Skipping ai_rules_1c update because -SkipAiRules was specified."
+    } else {
+        Update-AiRules1c
+    }
+
+    Write-Host "ITL workflow package updated from $($source.source): $($source.root)"
+    if ($source.commit) {
+        Write-Host "Workflow package commit: $($source.commit)"
+    }
+    Write-Host "No commit was created automatically."
+    Write-WorkflowUpdateFollowUp
+}
+
 function Update-UserRules {
     $path = Join-Path $script:ProjectRoot "USER-RULES.md"
     $templatePath = Join-Path $script:ProjectRoot "templates\USER-RULES.append.md"
     if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
         throw "USER-RULES overlay template was not found: $templatePath"
     }
+    $startMarker = "<!-- ITL-WORKFLOW-USER-RULES:START -->"
+    $endMarker = "<!-- ITL-WORKFLOW-USER-RULES:END -->"
     $marker = "## 1C Project Lifecycle"
-    $block = (Read-Utf8Text -Path $templatePath).Trim()
+    $templateBlock = (Read-Utf8Text -Path $templatePath).Trim()
+    $block = ($startMarker + [Environment]::NewLine + $templateBlock + [Environment]::NewLine + $endMarker)
 
     if (Test-Path -LiteralPath $path) {
         $current = Read-Utf8Text -Path $path
-        if ($current.Contains($marker)) {
+        $managedPattern = "(?s)" + [regex]::Escape($startMarker) + ".*?" + [regex]::Escape($endMarker)
+        if ([regex]::IsMatch($current, $managedPattern)) {
+            $updated = [regex]::Replace($current, $managedPattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $block }, 1)
+            Write-Utf8Text -Path $path -Value ($updated.TrimEnd() + [Environment]::NewLine)
             return
         }
-        Add-Utf8Text -Path $path -Value ($block + [Environment]::NewLine)
+
+        $markerIndex = $current.IndexOf($marker, [System.StringComparison]::Ordinal)
+        if ($markerIndex -ge 0) {
+            $before = $current.Substring(0, $markerIndex).TrimEnd()
+            $afterStart = $markerIndex + $marker.Length
+            $nextHeadingMatch = [regex]::Match($current.Substring($afterStart), "(?m)^##\s+")
+            $after = ""
+            if ($nextHeadingMatch.Success) {
+                $after = $current.Substring($afterStart + $nextHeadingMatch.Index).TrimStart()
+            }
+            $parts = @()
+            if ($before) {
+                $parts += $before
+            }
+            $parts += $block
+            if ($after) {
+                $parts += $after
+            }
+            Write-Utf8Text -Path $path -Value (($parts -join ([Environment]::NewLine + [Environment]::NewLine)) + [Environment]::NewLine)
+            return
+        }
+
+        Add-Utf8Text -Path $path -Value ([Environment]::NewLine + $block + [Environment]::NewLine)
     } else {
         Write-Utf8Text -Path $path -Value $block.TrimStart()
     }
@@ -1704,6 +2084,7 @@ function Show-WorkflowStatus {
     Write-Host "Git branch: $(if ($currentBranch) { $currentBranch } else { '<none>' })"
     Write-Host "Git commit: $currentCommit"
     Write-Host "Git worktree: $(if ($dirty) { 'dirty' } else { 'clean' })"
+    Write-WorkflowPackageStatusLines
 
     if ($currentBranch -notlike "itldev/*") {
         Write-Vibecoding1cMcpStatusLines
@@ -2198,6 +2579,7 @@ Actions:
   vibecoding1c-mcp-ensure-model   Select and bootstrap the local embedding model through LM Studio CLI when available.
   vibecoding1c-mcp-write-client-config
                       Write Codex and Kilo vibecoding1c MCP config for the current worktree scope.
+  update-workflow    Update managed ITL workflow package files in an existing project.
   update-ai-rules    Update ai_rules_1c managed rules, then reapply the ITL USER-RULES overlay.
   status              Show current ITL branch, infobase, and verification status.
   run-dev-branch-tests
@@ -2238,6 +2620,7 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-select -McpServerId code -McpProvider remote -McpConfigId trade
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-select -McpServerId graph -McpProvider local -McpLocalScope branch
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-start
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-workflow
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-ai-rules
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action status
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts"

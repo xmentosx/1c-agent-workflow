@@ -149,7 +149,7 @@ Encoding rules:
 
 4. Create `.agent-1c/project.json` from `templates/project.json` when missing. Use the default `devBranchInfoBaseRoot` unless the developer explicitly requested a custom location.
 
-5. Create `.agent-1c/dependency-lock.json` from `templates/dependency-lock.json` when missing. Keep it committed when the team wants reproducible bootstrap pins; fresh mode updates it with resolved dependency revisions and hashes.
+5. Create `.agent-1c/dependency-lock.json` from `templates/dependency-lock.json` when missing. Keep it committed when the team wants reproducible bootstrap pins; fresh mode updates it with resolved workflow package revision, dependency revisions, URLs, and hashes.
 
 6. Create `.agent-1c/tools.json` from `templates/tools.json` when missing. Keep it committed so the team can adjust required software checks and install suggestions.
 
@@ -159,7 +159,7 @@ Encoding rules:
 
 8. Append `templates/AGENTS.append.md` to `AGENTS.md` only as a fallback when `AGENTS.md` does not already reference `USER-RULES.md`. Current `ai_rules_1c` creates and manages the normal root `AGENTS.md`; do not modify it just to add ITL notes.
 
-9. Append `templates/USER-RULES.append.md` to `USER-RULES.md` if absent.
+9. Apply the managed ITL block from `templates/USER-RULES.append.md` to `USER-RULES.md`. New helpers wrap this block with markers so future `update-workflow` runs can replace it safely.
 
 10. Copy developer-facing docs into the target project when present:
 
@@ -221,7 +221,27 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 
 Dedicated vibecoding1c MCP hosts are prepared without the agent through `vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1`. The host publishes only `registry.json` endpoint/freshness metadata to GitLab; secrets stay in the host-local distribution `config.env` or local environment.
 
-The current workflow intentionally uses the latest available `ai_rules_1c` and Vanessa Automation by default. It records the resolved `ai_rules_1c` commit, Vanessa URL/version/SHA256, and downloaded archive hashes in `.agent-1c/dependency-lock.json`. For reproducible bootstrap, choose `DEPENDENCY_MODE=locked`; the helper will use only pinned values and stop when a required pin or hash is missing or mismatched.
+The current workflow intentionally uses the latest available ITL workflow package, `ai_rules_1c`, and Vanessa Automation by default. It records the resolved workflow package commit, resolved `ai_rules_1c` commit, Vanessa URL/version/SHA256, and downloaded archive hashes in `.agent-1c/dependency-lock.json`. For reproducible bootstrap, choose `DEPENDENCY_MODE=locked`; the helper will use only pinned values and stop when a required pin or hash is missing or mismatched.
+
+## Update Existing ITL Workflow
+
+For projects that already have this workflow installed, do not rerun `init-project`. First update the installed helper/workflow files from this bootstrap package if the project predates `update-workflow`, then use the normal maintenance command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-workflow
+```
+
+In Kilo Code, use `/itl-update-workflow`. The command runs only from the `master` worktree, updates managed files (`.agents/skills/1c-workflow*`, `.kilo/commands/itl*.md`, `templates/`, and workflow docs), preserves local runtime/project state, records `workflowPackage` in `.agent-1c/dependency-lock.json`, and runs `update-ai-rules` unless `-SkipAiRules` is passed.
+
+Optional source overrides:
+
+```powershell
+$env:ITL_WORKFLOW_SOURCE_PATH = "D:\Git\1c-agent-workflow"
+$env:ITL_WORKFLOW_REPO = "https://github.com/xmentosx/1c-agent-workflow.git"
+$env:ITL_WORKFLOW_REF = "master"
+```
+
+After the update, review and commit tracked changes in `master`. Active `itldev/*` worktrees do not update automatically; merge the updated `master` into each branch or run `/itl-refresh` from that branch worktree. Refresh vibecoding1c MCP through `/itl-vibecoding1c-mcp`. If branch-local Vanessa MCP is used, run `/itl-vanessa-mcp` with stop, install, then start in that branch worktree.
 
 ## Install ai_rules_1c
 
@@ -255,7 +275,7 @@ To refresh `ai_rules_1c` after initialization, run:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-ai-rules
 ```
 
-In Kilo Code, use `/itl-update-rules`. The helper runs the upstream updater, removes default upstream MCP client entries from ignored Codex/Kilo config, records the resolved commit in `.agent-1c/dependency-lock.json`, reapplies `templates/USER-RULES.append.md`, and avoids modifying upstream-managed `AGENTS.md` when it already points to `USER-RULES.md`.
+In Kilo Code, use `/itl-update-rules`. The helper runs the upstream updater, removes default upstream MCP client entries from ignored Codex/Kilo config, records the resolved commit in `.agent-1c/dependency-lock.json`, reapplies the managed `USER-RULES.md` ITL block from `templates/USER-RULES.append.md`, and avoids modifying upstream-managed `AGENTS.md` when it already points to `USER-RULES.md`.
 
 ## Run Initial Lifecycle
 
@@ -311,7 +331,7 @@ For Kilo Code, show only the short command surface:
 
 New branch commands create a sibling Git worktree by default and leave the current project folder on `master`. After creation, report the printed worktree path and tell the developer to open a separate Codex/Kilo/IDE window there. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
 
-Advanced/helper wrappers such as `/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`, `/itl-init-project`, and `/itl-vanessa-mcp` remain available when directly needed, but they are intentionally not shown in the beginner `/itl` menu.
+Advanced/helper wrappers such as `/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`, `/itl-init-project`, `/itl-update-workflow`, and `/itl-vanessa-mcp` remain available when directly needed, but they are intentionally not shown in the beginner `/itl` menu.
 
 Typing `/` shows available project commands.
 

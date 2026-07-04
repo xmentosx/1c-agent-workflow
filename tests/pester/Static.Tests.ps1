@@ -338,6 +338,10 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match "VIBECODING1C_MCP_REGISTRY_REPO"
         $HelperText | Should -Match "vibecoding1c-selection.json"
         $HelperText | Should -Match "remote-shared"
+        $HelperText | Should -Match "Get-Vibecoding1cMcpStatusSummary"
+        $HelperText | Should -Match "vibecoding1c MCP skipped servers"
+        $HelperText | Should -Match "vibecoding1c MCP stale servers"
+        $HelperText | Should -Match "vibecoding1c MCP missing-configId servers"
         $HelperText | Should -Not -Match ([regex]::Escape("D:\Git\MCP vibecoding1c"))
         $HelperText | Should -Not -Match "-p 8000:8000"
         $HelperText | Should -Not -Match "-p 8006:8006"
@@ -572,6 +576,81 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "shows vibecoding1c MCP active, skipped, stale, and missing-configId status groups" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-status-groups-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $localHome = Join-Path $tempRoot "local-home"
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path `
+                $projectRoot,
+                (Join-Path $projectRoot ".agent-1c\mcp"),
+                $localHome | Out-Null
+
+            $selection = [ordered]@{
+                schemaVersion = 1
+                family = "vibecoding1c"
+                defaultProvider = "remote"
+                remoteConfigId = ""
+                localScopeDefault = "project"
+                servers = @(
+                    [ordered]@{ id = "docs"; provider = "local"; localScope = "project"; configId = "" },
+                    [ordered]@{ id = "templates"; provider = "remote"; localScope = "project"; configId = "" }
+                )
+                updatedAt = "2026-07-04T00:00:00Z"
+            }
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\mcp\vibecoding1c-selection.json") -Encoding UTF8 -Value (($selection | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            $state = [ordered]@{
+                schemaVersion = 1
+                model = [ordered]@{ modelId = "fixture-model"; ready = $true }
+                staleIndexes = @("docs")
+                servers = @(
+                    [ordered]@{
+                        id = "docs"
+                        scope = "global"
+                        name = "itl-1c-docs"
+                        url = "http://127.0.0.1:18003/mcp"
+                        status = "running"
+                        family = "vibecoding1c"
+                        provider = "local"
+                        configId = ""
+                        sourceFingerprint = "old-fingerprint"
+                    },
+                    [ordered]@{
+                        id = "templates"
+                        scope = "global"
+                        name = "itl-1c-templates"
+                        url = ""
+                        status = "missing-settings"
+                        family = "vibecoding1c"
+                        provider = "remote"
+                        configId = ""
+                    }
+                )
+                updatedAt = "2026-07-04T00:00:00Z"
+            }
+            Set-Content -LiteralPath (Join-Path $localHome "state.json") -Encoding UTF8 -Value (($state | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $localHome, "Process")
+
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $projectRoot -Action vibecoding1c-mcp-status 2>&1
+            $LASTEXITCODE | Should -Be 0
+            $statusText = ($output -join [Environment]::NewLine)
+
+            $statusText | Should -Match "vibecoding1c MCP active servers: .*itl-1c-docs/local/stale"
+            $statusText | Should -Match "vibecoding1c MCP skipped servers: .*templates/global/remote/missing-settings"
+            $statusText | Should -Match "vibecoding1c MCP stale servers: .*itl-1c-docs/stale"
+            $statusText | Should -Match "vibecoding1c MCP missing-configId servers: .*code/project"
+            $statusText | Should -Match "vibecoding1c MCP stale indexes: docs"
+        } finally {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "does not store concrete MCP license key values in tracked text files" {
         $tracked = @(& git -C $RepoRoot ls-files)
         $textExtensions = @(".ps1", ".md", ".json", ".jsonc", ".yml", ".yaml", ".example", ".gitignore", ".toml")
@@ -678,6 +757,48 @@ Describe "1C agent workflow static checks" {
             $text | Should -Match "update-ai-rules"
             $text | Should -Match "USER-RULES.md"
             $text | Should -Match "MCP"
+        }
+    }
+
+    It "wires ITL workflow package update through the helper, docs, and Kilo wrapper" {
+        $HelperText | Should -Match ([regex]::Escape('"update-workflow"'))
+        $HelperText | Should -Match "function Update-WorkflowPackage"
+        $HelperText | Should -Match "ITL_WORKFLOW_SOURCE_PATH"
+        $HelperText | Should -Match "workflowPackage"
+        $HelperText | Should -Match "Update-WorkflowPackageLockEntry"
+        $HelperText | Should -Match "Update-AgentGuidanceBridge"
+        $HelperText | Should -Match "Update-UserRules"
+        $HelperText | Should -Match "Assert-WorkflowPackageUpdateContext"
+        $HelperText | Should -Match "Assert-WorkflowTrackedGitClean"
+        $HelperText | Should -Match "updatedAt"
+
+        $lockTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dependency-lock.json") | ConvertFrom-Json
+        $lockTemplate.dependencies.workflowPackage.repo | Should -Be "https://github.com/xmentosx/1c-agent-workflow.git"
+        $lockTemplate.dependencies.workflowPackage.ref | Should -Be "master"
+        $lockTemplate.dependencies.workflowPackage.PSObject.Properties.Name | Should -Contain "updatedAt"
+
+        $wrapperPath = Join-Path $RepoRoot ".kilo\commands\itl-update-workflow.md"
+        (Test-Path -LiteralPath $wrapperPath -PathType Leaf) | Should -Be $true
+        $wrapperText = Get-Content -Encoding UTF8 -Raw $wrapperPath
+        $wrapperText | Should -Match "-Action\s+update-workflow"
+        $wrapperText | Should -Match "ITL_WORKFLOW_SOURCE_PATH"
+        $wrapperText | Should -Match "SkipAiRules"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl.md")) | Should -Not -Match "/itl-update-workflow"
+
+        $docPaths = @(
+            "README.md",
+            "AGENT-INSTALL.md",
+            "DEVELOPER-GUIDE.ru.md",
+            "DEV-BRANCH-DEVELOPMENT.ru.md",
+            ".agents\skills\1c-workflow\SKILL.md",
+            ".agents\skills\1c-workflow-fast\SKILL.md",
+            ".agents\skills\1c-workflow\references\workflow.md",
+            ".agents\skills\1c-workflow\references\advanced-actions.md",
+            "templates\USER-RULES.append.md"
+        )
+        foreach ($relativePath in $docPaths) {
+            $text = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot $relativePath)
+            $text | Should -Match "update-workflow"
         }
     }
 
@@ -792,10 +913,132 @@ enabled = true
             $agentsText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "AGENTS.md")
             $agentsText | Should -Match "USER-RULES.md"
             $agentsText | Should -Not -Match "## 1C Agent Workflow Bridge"
-            (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "USER-RULES.md")) | Should -Match "## 1C Project Lifecycle"
+            $userRulesText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "USER-RULES.md")
+            $userRulesText | Should -Match "## 1C Project Lifecycle"
+            $userRulesText | Should -Match "ITL-WORKFLOW-USER-RULES:START"
+            $userRulesText | Should -Match "ITL-WORKFLOW-USER-RULES:END"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "updates workflow package files in a temp project while preserving local runtime state" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-update-workflow-test-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $stdoutPath = Join-Path $tempRoot "stdout.log"
+        $stderrPath = Join-Path $tempRoot "stderr.log"
+        $previousSourcePath = $env:ITL_WORKFLOW_SOURCE_PATH
+        $previousRepo = $env:ITL_WORKFLOW_REPO
+        $previousRef = $env:ITL_WORKFLOW_REF
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot | Out-Null
+            New-Item -ItemType Directory -Force -Path `
+                (Join-Path $projectRoot ".agents\skills\1c-workflow"),
+                (Join-Path $projectRoot ".agents\skills\1c-workflow-fast"),
+                (Join-Path $projectRoot ".kilo\commands"),
+                (Join-Path $projectRoot "templates"),
+                (Join-Path $projectRoot ".agent-1c\mcp"),
+                (Join-Path $projectRoot ".agent-1c\dev-branches"),
+                (Join-Path $projectRoot ".codex"),
+                (Join-Path $projectRoot ".kilo") | Out-Null
+
+            Set-Content -LiteralPath (Join-Path $projectRoot ".gitignore") -Encoding UTF8 -Value @"
+.dev.env
+.agent-1c/mcp/
+.agent-1c/dev-branches/
+.codex/config.toml
+.kilo/kilo.json
+.kilo/kilo.jsonc
+"@
+            Set-Content -LiteralPath (Join-Path $projectRoot "README.md") -Encoding UTF8 -Value "old readme"
+            Set-Content -LiteralPath (Join-Path $projectRoot "AGENT-INSTALL.md") -Encoding UTF8 -Value "old install"
+            Set-Content -LiteralPath (Join-Path $projectRoot "DEVELOPER-GUIDE.ru.md") -Encoding UTF8 -Value "old developer guide"
+            Set-Content -LiteralPath (Join-Path $projectRoot "DEV-BRANCH-DEVELOPMENT.ru.md") -Encoding UTF8 -Value "old branch guide"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\stale.txt") -Encoding UTF8 -Value "stale"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow-fast\stale.txt") -Encoding UTF8 -Value "stale"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-old.md") -Encoding UTF8 -Value "stale command"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".kilo\commands\custom.md") -Encoding UTF8 -Value "custom command"
+            Set-Content -LiteralPath (Join-Path $projectRoot "templates\stale.txt") -Encoding UTF8 -Value "stale template"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"custom":"keep-project"}'
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\tools.json") -Encoding UTF8 -Value '{"custom":"keep-tools"}'
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{}}'
+            Set-Content -LiteralPath (Join-Path $projectRoot ".dev.env") -Encoding UTF8 -Value "SECRET=keep"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\mcp\state.json") -Encoding UTF8 -Value '{"state":"keep"}'
+            Set-Content -LiteralPath (Join-Path $projectRoot ".codex\config.toml") -Encoding UTF8 -Value '[mcp_servers.custom]'
+            Set-Content -LiteralPath (Join-Path $projectRoot ".kilo\kilo.json") -Encoding UTF8 -Value '{"custom":"keep"}'
+            Set-Content -LiteralPath (Join-Path $projectRoot "USER-RULES.md") -Encoding UTF8 -Value @"
+before
+
+## 1C Project Lifecycle
+
+old managed block
+
+## Local Rules
+
+local after
+"@
+
+            & git -C $projectRoot init *> $null
+            & git -C $projectRoot config user.email "test@example.com"
+            & git -C $projectRoot config user.name "Test User"
+            & git -C $projectRoot add .
+            & git -C $projectRoot commit -m init *> $null
+            & git -C $projectRoot branch -M master
+            Set-Content -LiteralPath (Join-Path $projectRoot "scratch.local") -Encoding UTF8 -Value "keep untracked"
+            $commitCountBefore = ((& git -C $projectRoot rev-list --count HEAD).Trim())
+
+            $env:ITL_WORKFLOW_SOURCE_PATH = $RepoRoot
+            $env:ITL_WORKFLOW_REPO = ""
+            $env:ITL_WORKFLOW_REF = ""
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $projectRoot -Action update-workflow -SkipAiRules > $stdoutPath 2> $stderrPath
+            $LASTEXITCODE | Should -Be 0
+
+            $stdout = Get-Content -Encoding UTF8 -Raw $stdoutPath
+            $stdout | Should -Match "ITL workflow package updated"
+            $stdout | Should -Match "No commit was created automatically"
+            $stdout | Should -Match "No active development branches were found"
+
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\stale.txt") -PathType Leaf) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-update-workflow.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-old.md") -PathType Leaf) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\custom.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot "templates\dependency-lock.json") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot "templates\stale.txt") -PathType Leaf) | Should -Be $false
+
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".dev.env")) | Should -Match "SECRET=keep"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\project.json")) | Should -Match "keep-project"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\tools.json")) | Should -Match "keep-tools"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\mcp\state.json")) | Should -Match "keep"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".codex\config.toml")) | Should -Match "custom"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".kilo\kilo.json")) | Should -Match "keep"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "scratch.local")) | Should -Match "keep untracked"
+
+            $lock = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\dependency-lock.json") | ConvertFrom-Json
+            $lock.dependencies.workflowPackage.source | Should -Be "path"
+            $lock.dependencies.workflowPackage.commit | Should -Be ((& git -C $RepoRoot rev-parse HEAD).Trim())
+            $lock.dependencies.workflowPackage.ref | Should -Be "master"
+            $lock.dependencies.workflowPackage.updatedAt | Should -Not -BeNullOrEmpty
+
+            $userRulesText = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "USER-RULES.md")
+            $userRulesText | Should -Match "ITL-WORKFLOW-USER-RULES:START"
+            $userRulesText | Should -Match "ITL-WORKFLOW-USER-RULES:END"
+            $userRulesText | Should -Match "update-workflow"
+            $userRulesText | Should -Not -Match "old managed block"
+            $userRulesText | Should -Match "local after"
+
+            ((& git -C $projectRoot rev-list --count HEAD).Trim()) | Should -Be $commitCountBefore
+            ((& git -C $projectRoot branch --show-current).Trim()) | Should -Be "master"
+            (& git -C $projectRoot status --short) | Should -Not -BeNullOrEmpty
+        } finally {
+            $env:ITL_WORKFLOW_SOURCE_PATH = $previousSourcePath
+            $env:ITL_WORKFLOW_REPO = $previousRepo
+            $env:ITL_WORKFLOW_REF = $previousRef
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force
             }
         }
     }

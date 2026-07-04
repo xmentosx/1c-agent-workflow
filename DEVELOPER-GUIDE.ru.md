@@ -71,7 +71,7 @@
 - `src/cfe` - выгрузки расширений в файлы, хранятся в Git.
 - `.agent-1c/project.json` - настройки проекта без секретов.
 - `.agent-1c/tools.json` - проверяемые инструменты и подсказки по установке, хранится в Git.
-- `.agent-1c/dependency-lock.json` - lock manifest для `ai_rules_1c`, Vanessa Automation и скачиваемых архивов; хранится в Git.
+- `.agent-1c/dependency-lock.json` - lock manifest для ITL workflow-пакета, `ai_rules_1c`, Vanessa Automation и скачиваемых архивов; хранится в Git.
 - `.dev.env` - локальные настройки и секреты, не коммитится.
 - `.agent-1c/dev-branches/*.json` - локальное состояние веток разработки, не коммитится.
 - `<папка-проекта>-worktrees/<ветка>` - отдельные Git worktree для параллельных линий разработки, создаются рядом с основной папкой проекта.
@@ -288,4 +288,5 @@ vibecoding1c MCP для поиска по документации, шаблон
 - Перед созданием worktree, обновлением ветки, обновлением `master`, выгрузкой результата и legacy-переключением Git-дерево должно быть чистым.
 - Если 1С или Git вернули ошибку, агент должен остановиться и показать путь к логу.
 - По умолчанию `DEPENDENCY_MODE=fresh`: workflow берет свежие зависимости и обновляет `.agent-1c/dependency-lock.json`. Для воспроизводимого bootstrap используйте `DEPENDENCY_MODE=locked` с заполненными pin/hash значениями.
+- Чтобы обновить сам установленный ITL workflow-пакет в уже развернутом проекте, запускайте `/itl-update-workflow` или helper-действие `update-workflow` из `master` worktree. Команда обновляет только управляемые workflow-файлы, не трогает локальное состояние (`.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, существующие `.agent-1c/project.json` и `.agent-1c/tools.json`), по умолчанию запускает `update-ai-rules` и оставляет изменения для review/commit. Уже созданные `itldev/*` ветки обновляйте отдельно через merge свежего `master` или `/itl-refresh`; runtime MCP обновляйте через `/itl-vibecoding1c-mcp`, а branch-local Vanessa MCP - через stop/install/start в нужной worktree.
 - Чтобы получить свежую версию upstream-правил `ai_rules_1c`, используйте `/itl-update-rules` или helper-действие `update-ai-rules`. Helper убирает дефолтные upstream MCP-записи из локальных Codex/Kilo конфигов, ITL-надстройка повторно применяется в `USER-RULES.md`, а root `AGENTS.md` остается управляемым upstream-инсталлером, если он уже ссылается на `USER-RULES.md`.

@@ -15,6 +15,7 @@ Do not open the full workflow references before normal lifecycle execution. Open
 
 - show ITL status: `status`
 - setup or inspect vibecoding1c MCP servers: `vibecoding1c-mcp-setup` by default, `vibecoding1c-mcp-status` for status-only, `vibecoding1c-mcp-select` to choose remote/local or configId, `vibecoding1c-mcp-refresh-registry` to update remote endpoint discovery
+- update the installed ITL workflow package from `master`: `update-workflow`
 - create new configuration development branch worktree: `new-dev-branch`
 - create new extension development branch worktree: `new-extension-dev-branch`
 - update current development branch infobase from branch files: `update-dev-branch-base`

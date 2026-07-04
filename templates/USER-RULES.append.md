@@ -42,7 +42,9 @@ Use Vanessa Automation scenarios from `tests/features` for OpenSpec and quick-fi
 
 For `/itl-result` and `/itl-close`, create `<artifact>.manifest.json` next to the exported CF/CFE. The manifest records artifact SHA256, operation, branch metadata, master/development commits, verification status/report/log, latest 1C log path, publication URL, manual import note, and whether an unverified override was used.
 
-Use `DEPENDENCY_MODE=fresh` by default during initialization: resolve current dependencies and record the `ai_rules_1c` commit plus Vanessa/Apache URL and SHA256 values in `.agent-1c/dependency-lock.json`. Use `DEPENDENCY_MODE=locked` only when the developer explicitly chooses reproducible pins; stop if the lock manifest is incomplete or a hash does not match.
+Use `DEPENDENCY_MODE=fresh` by default during initialization: resolve current dependencies and record the ITL workflow package commit, `ai_rules_1c` commit, and Vanessa/Apache URL and SHA256 values in `.agent-1c/dependency-lock.json`. Use `DEPENDENCY_MODE=locked` only when the developer explicitly chooses reproducible pins; stop if the lock manifest is incomplete or a hash does not match.
+
+Use `/itl-update-workflow` or helper action `update-workflow` to refresh the installed ITL workflow package in an already initialized project. Run it only from the `master` worktree. It updates managed workflow files, preserves local runtime state, records `workflowPackage` in `.agent-1c/dependency-lock.json`, runs `update-ai-rules` unless `-SkipAiRules` is explicit, and leaves tracked changes for review/commit. Do not run it from `itldev/*`; merge the updated `master` into active branches or run `/itl-refresh` from each branch worktree.
 
 Use `/itl-update-rules` or helper action `update-ai-rules` to refresh upstream `ai_rules_1c` after initialization. The helper runs the upstream updater, removes default upstream MCP client entries, records the resolved commit in `.agent-1c/dependency-lock.json`, reapplies this ITL overlay, and avoids modifying upstream-managed `AGENTS.md` when it already points to `USER-RULES.md`.
 

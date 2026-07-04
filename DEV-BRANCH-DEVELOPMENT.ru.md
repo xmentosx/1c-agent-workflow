@@ -41,6 +41,8 @@
 
 `/itl-vibecoding1c-mcp` в worktree текущей `itldev/*` ветки подключает выбранные vibecoding1c MCP endpoints. По умолчанию используются remote LAN endpoints из registry; config-specific remote vibecoding1c MCP требует явного `configId`. Если для `code` или `graph` выбран local branch scope, helper поднимает отдельный локальный vibecoding1c MCP для текущей ветки. vibecoding1c MCP соседних веток в client config не добавляются; Vanessa MCP управляется отдельно через `/itl-vanessa-mcp`.
 
+`/itl-update-workflow` не запускается из `itldev/*` worktree. Обновляйте ITL workflow-пакет в `master`, коммитьте изменения, затем подтягивайте их в текущую ветку через merge свежего `master` или `/itl-refresh`. После этого при необходимости обновите MCP текущей ветки через `/itl-vibecoding1c-mcp`; для branch-local Vanessa MCP используйте stop, install, затем start через `/itl-vanessa-mcp`.
+
 Команды `/itl-set-dev-branch-extension` и `/itl-dump-dev-branch-extension` являются helper-командами для extension-веток. Они доступны напрямую, но могут не показываться в коротком beginner-меню `/itl`.
 
 Если текущая ветка предназначена для разработки расширения, в начале работы задайте имя расширения:

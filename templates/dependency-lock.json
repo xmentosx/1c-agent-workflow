@@ -2,6 +2,13 @@
   "schemaVersion": 1,
   "mode": "fresh",
   "dependencies": {
+    "workflowPackage": {
+      "repo": "https://github.com/xmentosx/1c-agent-workflow.git",
+      "ref": "master",
+      "commit": "",
+      "source": "",
+      "updatedAt": ""
+    },
     "aiRules1c": {
       "repo": "https://github.com/comol/ai_rules_1c.git",
       "ref": "",
