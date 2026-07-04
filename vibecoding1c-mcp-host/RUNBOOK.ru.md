@@ -356,6 +356,19 @@ Developer-side helper пишет только ignored runtime/client config:
 
 Проверьте, что Docker service запущен, пользователь имеет права на Docker, и `docker info` работает без elevation issues.
 
+`Docker image '<image>' is not available locally and docker pull failed`
+
+Скрипт перед `docker run` проверяет образ через `docker image inspect`. Если образ отсутствует, он делает `docker pull <image>`. Ошибка из скриншота `read-only file system` означает проблему Docker Desktop/WSL daemon: Docker не может записать metadata DB и не сможет скачать новый image.
+
+Минимальная проверка:
+
+```powershell
+docker info
+docker pull comol/template-search-mcp:latest
+```
+
+Если `docker pull` падает с `read-only file system`, перезапустите Docker Desktop или выполните `wsl --shutdown`, затем снова проверьте `docker info` и `docker pull`. Если доступа к registry нет, загрузите образ вручную через `docker load` или временно уберите ненужный server, например `templates`, из `enabledServers.global`.
+
 `Distribution manifest was not found`
 
 Проверьте `distributionRepo` и наличие `vibecoding1c-mcp.manifest.json` в корне приватного distribution repo.

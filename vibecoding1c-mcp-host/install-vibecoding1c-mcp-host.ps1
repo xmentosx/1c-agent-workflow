@@ -307,6 +307,29 @@ function Ensure-HostPrerequisites {
     }
 }
 
+function Test-DockerImageAvailable {
+    param([string]$Image)
+    & docker image inspect $Image *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Ensure-DockerImageAvailable {
+    param([string]$Image)
+    if ([string]::IsNullOrWhiteSpace($Image)) {
+        throw "Docker image is not configured for a vibecoding1c MCP server."
+    }
+    if (Test-DockerImageAvailable -Image $Image) {
+        return
+    }
+
+    Write-Host "Docker image is not available locally: $Image"
+    Write-Host "Pulling Docker image: $Image"
+    & docker pull $Image
+    if ($LASTEXITCODE -ne 0) {
+        throw "Docker image '$Image' is not available locally and docker pull failed. Check Docker daemon health and registry access. If Docker reports 'read-only file system', restart Docker Desktop or run 'wsl --shutdown' before retrying, then pull or load the image manually if needed."
+    }
+}
+
 function Ensure-Distribution {
     param([object]$Config)
     $repo = [string](Get-ObjectValue -Object $Config -Name "distributionRepo" -Default "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git")
@@ -714,6 +737,7 @@ function Start-DockerServer {
     $args += $Runtime.image
     Write-Host "Starting container: $containerName -> $($Runtime.url)"
     if (-not $DryRun) {
+        Ensure-DockerImageAvailable -Image ([string]$Runtime.image)
         & docker @args | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "docker run failed: $containerName" }
     }

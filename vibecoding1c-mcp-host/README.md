@@ -21,6 +21,10 @@ refreshes configured Git XML dump repositories or reads configured local `source
 `norkins/metadata`; starts global and config-specific vibecoding1c MCP containers; writes
 `registry.json` to the registry repository; commits and pushes it.
 
+Before creating a new container the installer checks that the configured Docker image exists locally.
+If the image is missing, it runs `docker pull <image>` and stops with an explicit Docker daemon/registry
+diagnostic if the pull fails.
+
 Use `dump-config` manually when a local `sourcePath` should be refreshed from a 1C infobase connected to configuration repository storage:
 
 ```powershell
@@ -52,3 +56,14 @@ The registry repo stores `registry.json` with:
 - `servers[]`: server id/scope/provider/configId/name/url/health and freshness inputs
 
 The registry must not contain license keys, API tokens, infobase passwords, or local host paths that are not needed by clients.
+
+## Troubleshooting
+
+If setup fails with `Unable to find image ...` and Docker also reports `read-only file system`, the host script cannot fix it inside the container command. Restart Docker Desktop or run `wsl --shutdown`, then verify:
+
+```powershell
+docker info
+docker pull comol/template-search-mcp:latest
+```
+
+After Docker can pull or the image is loaded locally, rerun `-Action setup`. If the server is not needed, remove `templates` from `enabledServers.global`.
