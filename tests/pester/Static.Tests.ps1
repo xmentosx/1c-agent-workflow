@@ -522,6 +522,55 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "falls back graph chat OpenAI settings to host embedding settings" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-graph-openai-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+
+        try {
+            $stateRoot = Join-Path $tempRoot "state"
+            New-Item -ItemType Directory -Force -Path (Join-Path $stateRoot "distribution") | Out-Null
+            Set-Content -LiteralPath (Join-Path $stateRoot "distribution\config.env") -Encoding UTF8 -Value "CHAT_API_KEY=`nCHAT_API_BASE=`nCHAT_MODEL=`n"
+
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "test-host"
+                baseUrl = "http://localhost"
+                stateRoot = $stateRoot
+                embedding = [ordered]@{
+                    apiBase = "http://host.docker.internal:19000/v1"
+                    apiKey = "lm-studio"
+                    model = "fixture-embedding-model"
+                }
+                enabledServers = [ordered]@{ global = @(); project = @("graph") }
+                configurations = @()
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                $server = [pscustomobject]@{
+                    id = "graph"
+                    env = @(
+                        [ordered]@{ name = "OPENAI_API_KEY"; from = "CHAT_API_KEY"; required = $false },
+                        [ordered]@{ name = "OPENAI_API_BASE"; from = "CHAT_API_BASE"; required = $false },
+                        [ordered]@{ name = "OPENAI_MODEL"; from = "CHAT_MODEL"; required = $false }
+                    )
+                }
+
+                $envValues = Resolve-ServerEnv -Config $hostConfig -Server $server
+
+                $envValues["OPENAI_API_KEY"] | Should -Be "lm-studio"
+                $envValues["OPENAI_API_BASE"] | Should -Be "http://host.docker.internal:19000/v1"
+                $envValues["OPENAI_MODEL"] | Should -Be "fixture-embedding-model"
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "normalizes unscoped local code and graph manifest entries to project scope" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-local-scope-test-" + [guid]::NewGuid().ToString("N"))
         $projectRoot = Join-Path $tempRoot "project"
@@ -539,6 +588,55 @@ Describe "1C agent workflow static checks" {
                 Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $legacyGraph | Should -Be $true
             }
         } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "falls back local graph chat OpenAI settings to embedding settings" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-local-graph-openai-test-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $localHome = Join-Path $tempRoot "local-home"
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot, $localHome | Out-Null
+            $state = [ordered]@{
+                schemaVersion = 1
+                model = [ordered]@{
+                    apiBase = "http://127.0.0.1:19000/v1"
+                    apiKey = "lm-studio"
+                    model = "fixture-embedding-model"
+                    ready = $true
+                }
+                servers = @()
+                updatedAt = "2026-07-05T00:00:00Z"
+            }
+            Set-Content -LiteralPath (Join-Path $localHome "state.json") -Encoding UTF8 -Value (($state | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $localHome, "Process")
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                $server = [pscustomobject]@{
+                    id = "graph"
+                    env = @(
+                        [ordered]@{ name = "OPENAI_API_KEY"; from = "CHAT_API_KEY"; required = $false },
+                        [ordered]@{ name = "OPENAI_API_BASE"; from = "CHAT_API_BASE"; required = $false },
+                        [ordered]@{ name = "OPENAI_MODEL"; from = "CHAT_MODEL"; required = $false }
+                    )
+                }
+                $runtime = [pscustomobject]@{ projectSlug = "fixture"; branchSlug = "master" }
+                $configContext = [pscustomobject]@{ values = [ordered]@{} }
+
+                $envResult = Resolve-Vibecoding1cMcpEnvironment -Server $server -Runtime $runtime -ConfigContext $configContext
+
+                $envResult.values["OPENAI_API_KEY"] | Should -Be "lm-studio"
+                $envResult.values["OPENAI_API_BASE"] | Should -Be "http://127.0.0.1:19000/v1"
+                $envResult.values["OPENAI_MODEL"] | Should -Be "fixture-embedding-model"
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }

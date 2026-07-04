@@ -816,6 +816,37 @@ function Resolve-HostConfigValue {
     return [string]$Default
 }
 
+function Set-GraphOpenAiFallbackEnv {
+    param(
+        [object]$Config,
+        [object]$Server,
+        [System.Collections.IDictionary]$Values
+    )
+    $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
+    if ($id -ne "graph") {
+        return
+    }
+    $embedding = Get-ObjectValue -Object $Config -Name "embedding" -Default $null
+    $fallbacks = @(
+        [pscustomobject]@{ name = "OPENAI_API_KEY"; embeddingName = "apiKey"; default = "lm-studio" },
+        [pscustomobject]@{ name = "OPENAI_API_BASE"; embeddingName = "apiBase"; default = "" },
+        [pscustomobject]@{ name = "OPENAI_MODEL"; embeddingName = "model"; default = "" }
+    )
+    foreach ($fallback in $fallbacks) {
+        $current = ""
+        if ($Values.Contains($fallback.name)) {
+            $current = [string]$Values[$fallback.name]
+        }
+        if (-not [string]::IsNullOrWhiteSpace($current)) {
+            continue
+        }
+        $value = [string](Get-ObjectValue -Object $embedding -Name $fallback.embeddingName -Default $fallback.default)
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            $Values[$fallback.name] = $value
+        }
+    }
+}
+
 function Get-HostDefaultEnvEntries {
     param([object]$Server)
     $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
@@ -889,6 +920,7 @@ function Resolve-ServerEnv {
             $values[$name] = $value
         }
     }
+    Set-GraphOpenAiFallbackEnv -Config $Config -Server $Server -Values $values
     return $values
 }
 

@@ -1585,6 +1585,27 @@ function Resolve-Vibecoding1cMcpEnvironment {
         }
     }
 
+    $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
+    if ($id -eq "graph") {
+        foreach ($fallback in @(
+            [pscustomobject]@{ name = "OPENAI_API_KEY"; embeddingName = "key" },
+            [pscustomobject]@{ name = "OPENAI_API_BASE"; embeddingName = "base" },
+            [pscustomobject]@{ name = "OPENAI_MODEL"; embeddingName = "model" }
+        )) {
+            $current = ""
+            if ($env.Contains($fallback.name)) {
+                $current = [string]$env[$fallback.name]
+            }
+            if (-not [string]::IsNullOrWhiteSpace($current)) {
+                continue
+            }
+            $value = [string](Get-Vibecoding1cMcpObjectValue -Object $embedding -Name $fallback.embeddingName -Default "")
+            if (-not [string]::IsNullOrWhiteSpace($value)) {
+                $env[$fallback.name] = $value
+            }
+        }
+    }
+
     return [pscustomobject]@{
         values = $env
         missing = $missing
