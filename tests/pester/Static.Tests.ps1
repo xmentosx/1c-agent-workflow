@@ -413,6 +413,8 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match "Invoke-DockerCommand"
         $McpHostText | Should -Match '"image", "inspect"'
         $McpHostText | Should -Match '"pull", \$Image'
+        $McpHostText | Should -Match 'Write-Host \(\[string\]\$line\)'
+        $McpHostText | Should -Match 'return \[int\]\$exitCode'
         $McpHostText | Should -Match "read-only file system"
         $McpHostText | Should -Not -Match '(?m)^\s*LICENSE_KEY_[A-Z0-9_]+\s*=\s*[^#\s]+'
     }

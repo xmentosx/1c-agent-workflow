@@ -305,10 +305,17 @@ function Invoke-DockerCommand {
         $ErrorActionPreference = "Continue"
         if ($Quiet) {
             & docker @Arguments *> $null
+            return [int]$LASTEXITCODE
         } else {
-            & docker @Arguments
+            $output = & docker @Arguments 2>&1
+            $exitCode = $LASTEXITCODE
+            foreach ($line in @($output)) {
+                if ($null -ne $line) {
+                    Write-Host ([string]$line)
+                }
+            }
+            return [int]$exitCode
         }
-        return $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
     }
