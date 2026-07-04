@@ -451,10 +451,29 @@ function Get-Vibecoding1cMcpSelectionEntry {
     return $null
 }
 
+function Test-Vibecoding1cMcpConfigSpecificServerId {
+    param([string]$Id)
+    return ($Id -eq "code" -or $Id -eq "graph")
+}
+
+function Get-Vibecoding1cMcpServerScope {
+    param([object]$Server)
+
+    $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
+    $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "scope" -Default "")
+    if ((Test-Vibecoding1cMcpConfigSpecificServerId -Id $id) -and ((-not $scope) -or $scope -eq "global")) {
+        return "project"
+    }
+    if ($scope) {
+        return $scope
+    }
+    return "global"
+}
+
 function Test-Vibecoding1cMcpServerNeedsRemoteConfig {
     param([object]$Server)
 
-    $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "scope" -Default "global")
+    $scope = Get-Vibecoding1cMcpServerScope -Server $Server
     $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
     return ($scope -eq "project" -or $id -eq "code" -or $id -eq "graph")
 }
@@ -668,7 +687,7 @@ function New-Vibecoding1cMcpRemoteRuntime {
     )
 
     $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
-    $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "scope" -Default "global")
+    $scope = Get-Vibecoding1cMcpServerScope -Server $Server
     $configId = ""
     if (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $Server) {
         $configId = Get-Vibecoding1cMcpSelectedConfigId -Server $Server -Selection $Selection -AllowPrompt:$AllowPrompt
@@ -1481,7 +1500,7 @@ function New-Vibecoding1cMcpServerRuntime {
     )
 
     $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
-    $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "scope" -Default "global")
+    $scope = Get-Vibecoding1cMcpServerScope -Server $Server
     $nameTemplate = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "mcpNameTemplate" -Default "itl-$id")
     $containerTemplate = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "containerNameTemplate" -Default $nameTemplate)
     $mcpName = Expand-Vibecoding1cMcpTemplate -Template $nameTemplate -Context $Context -ServerId $id
@@ -1812,7 +1831,7 @@ function Select-Vibecoding1cMcpManifestServers {
     $servers = @()
     foreach ($server in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $manifest -Name "servers" -Default @())) {
         $id = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "id" -Default "")
-        $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "scope" -Default "global")
+        $scope = Get-Vibecoding1cMcpServerScope -Server $server
         if ($McpServerId -and $id -ne $McpServerId) {
             continue
         }
@@ -2187,7 +2206,7 @@ function Get-Vibecoding1cMcpStatusSummary {
             continue
         }
         $provider = Get-Vibecoding1cMcpSelectedProvider -Server $server -Selection $selection
-        $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "scope" -Default "global")
+        $scope = Get-Vibecoding1cMcpServerScope -Server $server
         $configId = ""
         if ($provider -eq "remote") {
             if (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $server) {

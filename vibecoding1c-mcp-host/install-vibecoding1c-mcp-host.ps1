@@ -442,13 +442,40 @@ function Read-DistributionManifest {
     return (Read-JsonFile -Path $path)
 }
 
+function Test-ConfigSpecificServerId {
+    param([string]$Id)
+    return ($Id -eq "code" -or $Id -eq "graph")
+}
+
+function Get-ServerScope {
+    param([object]$Server)
+    $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
+    $scope = [string](Get-ObjectValue -Object $Server -Name "scope" -Default "")
+    if ((Test-ConfigSpecificServerId -Id $id) -and ((-not $scope) -or $scope -eq "global")) {
+        return "project"
+    }
+    if ($scope) {
+        return $scope
+    }
+    return "global"
+}
+
 function Get-EnabledServerIds {
     param(
         [object]$Config,
         [string]$Scope
     )
-    $enabled = Get-ObjectValue -Object (Get-ObjectValue -Object $Config -Name "enabledServers" -Default $null) -Name $Scope -Default @()
-    return @(As-Array $enabled | ForEach-Object { [string]$_ })
+    $enabledServers = Get-ObjectValue -Object $Config -Name "enabledServers" -Default $null
+    $enabled = @(As-Array (Get-ObjectValue -Object $enabledServers -Name $Scope -Default @()) | ForEach-Object { [string]$_ })
+    if ($Scope -eq "global") {
+        return @($enabled | Where-Object { -not (Test-ConfigSpecificServerId -Id $_) })
+    }
+    if ($Scope -eq "project") {
+        $globalEnabled = @(As-Array (Get-ObjectValue -Object $enabledServers -Name "global" -Default @()) | ForEach-Object { [string]$_ })
+        $configSpecificEnabled = @($globalEnabled | Where-Object { Test-ConfigSpecificServerId -Id $_ })
+        return @($enabled + $configSpecificEnabled | Where-Object { $_ } | Select-Object -Unique)
+    }
+    return $enabled
 }
 
 function Get-ConfigWorkRoot {
@@ -965,7 +992,7 @@ function New-ServerRuntime {
         [object]$ConfigState = $null,
         [int]$ConfigIndex = 0
     )
-    $scope = [string](Get-ObjectValue -Object $Server -Name "scope" -Default "global")
+    $scope = Get-ServerScope -Server $Server
     $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
     $configId = $(if ($ConfigState) { $ConfigState.configId } else { "" })
     $hostId = [string](Get-ObjectValue -Object $Config -Name "hostId" -Default "vibecoding1c-mcp-host")
@@ -1013,7 +1040,7 @@ function Start-HostServers {
     $globalIndex = 0
     foreach ($server in As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @())) {
         $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
-        $scope = [string](Get-ObjectValue -Object $server -Name "scope" -Default "global")
+        $scope = Get-ServerScope -Server $server
         if ($scope -ne "global" -or $globalIds -notcontains $id) { continue }
         $runtime = New-ServerRuntime -Config $Config -Server $server -Index $globalIndex
         Start-DockerServer -Config $Config -Server $server -Runtime $runtime
@@ -1032,7 +1059,7 @@ function Start-HostServers {
         $projectIndex = 0
         foreach ($server in As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @())) {
             $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
-            $scope = [string](Get-ObjectValue -Object $server -Name "scope" -Default "global")
+            $scope = Get-ServerScope -Server $server
             if ($scope -ne "project" -or $projectIds -notcontains $id) { continue }
             $runtime = New-ServerRuntime -Config $Config -Server $server -Index $projectIndex -ConfigState $configState -ConfigIndex $configIndex
             if ([bool](Get-ObjectValue -Object $server -Name "compose" -Default $false)) {

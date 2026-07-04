@@ -441,6 +441,66 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Not -Match '(?m)^\s*LICENSE_KEY_[A-Z0-9_]+\s*=\s*[^#\s]+'
     }
 
+    It "keeps config-specific MCP host servers project-scoped for legacy manifests and configs" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-scope-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "test-host"
+                baseUrl = "http://localhost"
+                stateRoot = (Join-Path $tempRoot "state")
+                enabledServers = [ordered]@{
+                    global = @("docs", "graph")
+                    project = @("code")
+                }
+                configurations = @()
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                $legacyGraph = [pscustomobject]@{ id = "graph" }
+                $globalGraph = [pscustomobject]@{ id = "graph"; scope = "global" }
+
+                Get-ServerScope -Server $legacyGraph | Should -Be "project"
+                Get-ServerScope -Server $globalGraph | Should -Be "project"
+                Get-EnabledServerIds -Config $hostConfig -Scope "global" | Should -Not -Contain "graph"
+                Get-EnabledServerIds -Config $hostConfig -Scope "project" | Should -Contain "graph"
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "normalizes unscoped local code and graph manifest entries to project scope" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-local-scope-test-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot | Out-Null
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                $legacyGraph = [pscustomobject]@{ id = "graph" }
+                $branchGraph = [pscustomobject]@{ id = "graph"; scope = "branch" }
+
+                Get-Vibecoding1cMcpServerScope -Server $legacyGraph | Should -Be "project"
+                Get-Vibecoding1cMcpServerScope -Server $branchGraph | Should -Be "branch"
+                Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $legacyGraph | Should -Be $true
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "clones and fast-forwards the managed vibecoding1c MCP distribution checkout" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-distribution-test-" + [guid]::NewGuid().ToString("N"))
         $projectRoot = Join-Path $tempRoot "project"
