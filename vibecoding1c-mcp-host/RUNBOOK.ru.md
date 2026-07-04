@@ -373,6 +373,16 @@ docker pull comol/template-search-mcp:latest
 
 Проверьте `distributionRepo` и наличие `vibecoding1c-mcp.manifest.json` в корне приватного distribution repo.
 
+`norkins/metadata failed for configId <id>`
+
+Проверьте пути, которые пишет ошибка: `Generator config`, `Python log`, `Source root`, `mainConfigPath` и `Resolved main config root`. Чаще всего причина в том, что XML-выгрузка лежит прямо в `sourcePath`, а в `host.config.json` оставлено `"mainConfigPath": "src/cf"`. В этом случае задайте `"mainConfigPath": "."`.
+
+Для ручной диагностики запустите тот же generator напрямую:
+
+```powershell
+python -B <stateRoot>\tools\norkins-metadata\generate_config_report.py --config <stateRoot>\configs\<configId>\generate-config-report.json
+```
+
 `git push` не прошел при публикации registry
 
 Проверьте права на `registryRepo`, Git credentials и `git config user.name/user.email`.

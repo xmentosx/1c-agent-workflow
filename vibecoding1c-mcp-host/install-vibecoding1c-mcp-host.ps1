@@ -433,11 +433,46 @@ function Get-ConfigSubPath {
     return (Join-PathIfRelative -Root $Root -Path $path)
 }
 
+function New-TimestampedFilePath {
+    param(
+        [string]$Directory,
+        [string]$Prefix,
+        [string]$Extension
+    )
+    New-Item -ItemType Directory -Force -Path $Directory | Out-Null
+    $timestamp = (Get-Date).ToString("yyyyMMdd-HHmmss")
+    return (Join-Path $Directory "$Prefix$timestamp$Extension")
+}
+
 function Ensure-MetadataTool {
     param([object]$Config)
     $toolRoot = Join-Path (Join-Path (Get-StateRoot -Config $Config) "tools") "norkins-metadata"
     Ensure-GitCheckout -Repo "https://github.com/norkins/metadata.git" -Path $toolRoot
     return $toolRoot
+}
+
+function Invoke-PythonMetadataGenerator {
+    param(
+        [string]$ScriptPath,
+        [string]$ConfigPath,
+        [string]$LogPath
+    )
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & python -B $ScriptPath --config $ConfigPath 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    $lines = @($output | ForEach-Object { [string]$_ })
+    Write-Text -Path $LogPath -Value (($lines -join [Environment]::NewLine) + [Environment]::NewLine)
+    foreach ($line in $lines) {
+        if ($line) {
+            Write-Host $line
+        }
+    }
+    return [int]$exitCode
 }
 
 function Get-ConfigurationState {
@@ -520,6 +555,10 @@ function Refresh-Configuration {
     $state = Get-ConfigurationState -Config $Config -Configuration $Configuration
     $toolRoot = Ensure-MetadataTool -Config $Config
     New-Item -ItemType Directory -Force -Path $state.metadataRoot, $state.diagnosticsRoot, $state.logsRoot | Out-Null
+    $mainConfigRoot = Get-ConfigSubPath -Root $state.sourceRoot -RelativePath $state.mainConfigPath
+    if (-not (Test-Path -LiteralPath $mainConfigRoot -PathType Container)) {
+        throw "Configuration '$($state.configId)' mainConfigPath was not found: $mainConfigRoot. Check sourceRepo/sourcePath and mainConfigPath. For local dumps stored directly under sourcePath, set mainConfigPath to '.'."
+    }
     $generatorConfigPath = Join-Path (Get-ConfigWorkRoot -Config $Config -ConfigId $state.configId) "generate-config-report.json"
     $generatorConfig = [ordered]@{
         project = $state.configId
@@ -544,9 +583,10 @@ function Refresh-Configuration {
     }
     Write-Host "Generating Report.txt for $($state.configId)"
     if (-not $DryRun) {
-        & python -B $scriptPath --config $generatorConfigPath
-        if ($LASTEXITCODE -ne 0) {
-            throw "norkins/metadata failed for configId $($state.configId)."
+        $pythonLogPath = New-TimestampedFilePath -Directory $state.logsRoot -Prefix "norkins-metadata-" -Extension ".log"
+        $exitCode = Invoke-PythonMetadataGenerator -ScriptPath $scriptPath -ConfigPath $generatorConfigPath -LogPath $pythonLogPath
+        if ($exitCode -ne 0) {
+            throw "norkins/metadata failed for configId $($state.configId) with exit code $exitCode. Generator config: $generatorConfigPath. Python log: $pythonLogPath. Source root: $($state.sourceRoot). mainConfigPath: $($state.mainConfigPath). Resolved main config root: $mainConfigRoot."
         }
     }
     $state.reportHash = Get-FileSha256OrEmpty -Path $state.reportPath

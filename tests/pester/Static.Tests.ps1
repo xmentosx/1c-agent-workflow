@@ -397,6 +397,11 @@ Describe "1C agent workflow static checks" {
         $hostConfig.sslSearchServer.bspVersion | Should -Match "3\."
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape("vibecoding1c-mcp-host/host.config.json"))
         $McpHostText | Should -Match "norkins/metadata"
+        $McpHostText | Should -Match "Invoke-PythonMetadataGenerator"
+        $McpHostText | Should -Match "norkins-metadata-"
+        $McpHostText | Should -Match "mainConfigPath was not found"
+        $McpHostText | Should -Match "Generator config:"
+        $McpHostText | Should -Match "Python log:"
         $McpHostText | Should -Match "registry.json"
         $McpHostText | Should -Match "family"
         $McpHostText | Should -Match "sourceFingerprint"
