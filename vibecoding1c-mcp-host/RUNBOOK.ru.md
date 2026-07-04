@@ -59,7 +59,7 @@ git config --global user.email "mcp-host@itland.local"
 Склонируйте workflow repo на выделенную машину:
 
 ```powershell
-git clone http://gitlabserv01.itland.local/root/1c-agent-workflow.git D:\ITL\1c-agent-workflow
+git clone https://github.com/xmentosx/1c-agent-workflow.git D:\ITL\1c-agent-workflow
 cd D:\ITL\1c-agent-workflow\vibecoding1c-mcp-host
 ```
 
