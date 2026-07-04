@@ -124,8 +124,20 @@ function Invoke-Git {
         [string]$Root,
         [string[]]$Arguments
     )
-    & git -C $Root @Arguments
-    if ($LASTEXITCODE -ne 0) {
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & git -C $Root @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    foreach ($line in @($output)) {
+        if ($null -ne $line) {
+            Write-Host ([string]$line)
+        }
+    }
+    if ($exitCode -ne 0) {
         throw "git failed in $Root with arguments: $($Arguments -join ' ')"
     }
 }
@@ -153,8 +165,7 @@ function Ensure-GitCheckout {
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
         Write-Host "Cloning $Repo -> $Path"
         if ($DryRun) { return }
-        & git -C $parent clone $Repo $Path
-        if ($LASTEXITCODE -ne 0) { throw "git clone failed: $Repo" }
+        Invoke-Git -Root $parent -Arguments @("clone", $Repo, $Path)
     }
     if (-not (Test-Path -LiteralPath (Join-Path $Path ".git") -PathType Container)) {
         throw "Path exists but is not a Git checkout: $Path"
