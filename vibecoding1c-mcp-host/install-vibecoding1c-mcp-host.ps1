@@ -14,6 +14,7 @@ $ProgressPreference = "SilentlyContinue"
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [Console]::OutputEncoding = $script:Utf8NoBom
 $OutputEncoding = $script:Utf8NoBom
+$script:PythonExecutable = ""
 
 function Read-Text {
     param([string]$Path)
@@ -321,12 +322,74 @@ function Invoke-DockerCommand {
     }
 }
 
+function Invoke-ProcessCapture {
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments
+    )
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & $FilePath @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    return [pscustomobject]@{
+        exitCode = [int]$exitCode
+        lines = @($output | ForEach-Object { [string]$_ })
+    }
+}
+
+function Resolve-PythonExecutable {
+    param([object]$Config)
+    $candidate = [string](Get-ObjectValue -Object $Config -Name "pythonPath" -Default "")
+    if (-not $candidate) {
+        $candidate = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_PYTHON_PATH", "Process")
+    }
+    if (-not $candidate) {
+        $candidate = "python"
+    }
+    $expanded = [Environment]::ExpandEnvironmentVariables($candidate.Trim())
+    $looksLikePath = [System.IO.Path]::IsPathRooted($expanded) -or $expanded.Contains("\") -or $expanded.Contains("/")
+    if ($looksLikePath) {
+        $fullPath = Get-FullPath $expanded
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+            throw "Python executable was not found: $fullPath. Set host.config.json pythonPath to a real python.exe."
+        }
+        return $fullPath
+    }
+    $command = Get-Command $expanded -CommandType Application -ErrorAction SilentlyContinue
+    if ($null -eq $command) {
+        throw "Python executable was not found in PATH: $expanded. Install Python 3 or set host.config.json pythonPath."
+    }
+    return $command.Source
+}
+
+function Ensure-PythonRuntime {
+    param([object]$Config)
+    if ($script:PythonExecutable) {
+        return $script:PythonExecutable
+    }
+    $pythonPath = Resolve-PythonExecutable -Config $Config
+    $versionResult = Invoke-ProcessCapture -FilePath $pythonPath -Arguments @("--version")
+    $versionText = (($versionResult.lines | Where-Object { $_ }) -join " ").Trim()
+    if ($versionResult.exitCode -ne 0 -or $versionText -notmatch '^Python\s+3\.') {
+        throw "Python 3 runtime check failed for '$pythonPath' with exit code $($versionResult.exitCode). Output: $versionText. Install Python 3, disable the Windows Store python app execution alias, or set host.config.json pythonPath to a real python.exe."
+    }
+    $script:PythonExecutable = $pythonPath
+    Write-Host "Python runtime: $versionText ($pythonPath)"
+    return $script:PythonExecutable
+}
+
 function Ensure-HostPrerequisites {
-    foreach ($command in @("git", "docker", "python")) {
+    param([object]$Config)
+    foreach ($command in @("git", "docker")) {
         if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
             throw "Required command was not found: $command"
         }
     }
+    Ensure-PythonRuntime -Config $Config | Out-Null
     if ((Invoke-DockerCommand -Arguments @("info") -Quiet) -ne 0) {
         throw "Docker is installed but not available to the current user/session."
     }
@@ -453,26 +516,20 @@ function Ensure-MetadataTool {
 
 function Invoke-PythonMetadataGenerator {
     param(
+        [string]$PythonPath,
         [string]$ScriptPath,
         [string]$ConfigPath,
         [string]$LogPath
     )
-    $previousErrorActionPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = "Continue"
-        $output = & python -B $ScriptPath --config $ConfigPath 2>&1
-        $exitCode = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-    }
-    $lines = @($output | ForEach-Object { [string]$_ })
+    $result = Invoke-ProcessCapture -FilePath $PythonPath -Arguments @("-B", $ScriptPath, "--config", $ConfigPath)
+    $lines = @($result.lines)
     Write-Text -Path $LogPath -Value (($lines -join [Environment]::NewLine) + [Environment]::NewLine)
     foreach ($line in $lines) {
         if ($line) {
             Write-Host $line
         }
     }
-    return [int]$exitCode
+    return [int]$result.exitCode
 }
 
 function Get-ConfigurationState {
@@ -583,10 +640,11 @@ function Refresh-Configuration {
     }
     Write-Host "Generating Report.txt for $($state.configId)"
     if (-not $DryRun) {
+        $pythonPath = Ensure-PythonRuntime -Config $Config
         $pythonLogPath = New-TimestampedFilePath -Directory $state.logsRoot -Prefix "norkins-metadata-" -Extension ".log"
-        $exitCode = Invoke-PythonMetadataGenerator -ScriptPath $scriptPath -ConfigPath $generatorConfigPath -LogPath $pythonLogPath
+        $exitCode = Invoke-PythonMetadataGenerator -PythonPath $pythonPath -ScriptPath $scriptPath -ConfigPath $generatorConfigPath -LogPath $pythonLogPath
         if ($exitCode -ne 0) {
-            throw "norkins/metadata failed for configId $($state.configId) with exit code $exitCode. Generator config: $generatorConfigPath. Python log: $pythonLogPath. Source root: $($state.sourceRoot). mainConfigPath: $($state.mainConfigPath). Resolved main config root: $mainConfigRoot."
+            throw "norkins/metadata failed for configId $($state.configId) with exit code $exitCode. Python: $pythonPath. Generator config: $generatorConfigPath. Python log: $pythonLogPath. Source root: $($state.sourceRoot). mainConfigPath: $($state.mainConfigPath). Resolved main config root: $mainConfigRoot."
         }
     }
     $state.reportHash = Get-FileSha256OrEmpty -Path $state.reportPath
@@ -890,7 +948,7 @@ function New-ServerRuntime {
 
 function Start-HostServers {
     param([object]$Config)
-    Ensure-HostPrerequisites
+    Ensure-HostPrerequisites -Config $Config
     Ensure-Distribution -Config $Config
     $manifest = Read-DistributionManifest -Config $Config
     $globalIds = Get-EnabledServerIds -Config $Config -Scope "global"

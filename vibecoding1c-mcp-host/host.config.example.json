@@ -5,6 +5,7 @@
   "distributionRepo": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git",
   "registryRepo": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git",
   "stateRoot": "D:/ITL/MCP/vibecoding1c",
+  "pythonPath": "python",
   "secrets": {
     "ONEC_AI_TOKEN": "<local-1c-assistant-token>"
   },

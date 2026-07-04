@@ -81,6 +81,7 @@ notepad .\host.config.json
   "distributionRepo": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git",
   "registryRepo": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git",
   "stateRoot": "D:/ITL/MCP/vibecoding1c",
+  "pythonPath": "C:/Python312/python.exe",
   "secrets": {
     "ONEC_AI_TOKEN": "<local-1c-assistant-token>"
   },
@@ -101,6 +102,7 @@ notepad .\host.config.json
 - `distributionRepo`: приватный repo с `vibecoding1c` MCP distribution.
 - `registryRepo`: repo, куда будет записан `registry.json`.
 - `stateRoot`: постоянный локальный каталог для checkout, runtime state и generated files.
+- `pythonPath`: путь к реальному Python 3 executable для `norkins/metadata`; можно оставить `python`, если PATH точно указывает на рабочий Python.
 - `secrets.ONEC_AI_TOKEN`: локальный ключ 1C Напарника для `1CCodeChecker`; рабочий `host.config.json` не коммитится.
 - `helpSearchServer.platformVersion`: версия платформы 1C для `HelpSearchServer`.
 - `helpSearchServer.platformBinPath`: локальный каталог `bin` платформы 1C для `HelpSearchServer`.
@@ -376,6 +378,19 @@ docker pull comol/template-search-mcp:latest
 `norkins/metadata failed for configId <id>`
 
 Проверьте пути, которые пишет ошибка: `Generator config`, `Python log`, `Source root`, `mainConfigPath` и `Resolved main config root`. Чаще всего причина в том, что XML-выгрузка лежит прямо в `sourcePath`, а в `host.config.json` оставлено `"mainConfigPath": "src/cf"`. В этом случае задайте `"mainConfigPath": "."`.
+
+Если exit code равен `9009` или в выводе есть только `Python`, проверьте, что используется реальный Python 3, а не Windows Store App Execution Alias:
+
+```powershell
+python --version
+where python
+```
+
+Установите Python 3 или задайте полный путь в `host.config.json`:
+
+```json
+"pythonPath": "C:/Python312/python.exe"
+```
 
 Для ручной диагностики запустите тот же generator напрямую:
 

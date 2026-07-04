@@ -9,6 +9,7 @@ For the administrator runbook in Russian, see [`RUNBOOK.ru.md`](RUNBOOK.ru.md).
 
 1. Copy `host.config.example.json` to `host.config.json`.
 2. Edit `hostId`, `baseUrl`, `stateRoot`, GitLab URLs, server settings, and `configurations`.
+   Set `pythonPath` to a real Python 3 executable if `python` in PATH is not reliable.
 3. Keep the working `host.config.json` local; it is ignored because it can contain `ONEC_AI_TOKEN`, local paths, and passwords.
 4. Run:
 

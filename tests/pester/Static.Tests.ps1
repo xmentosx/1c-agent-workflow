@@ -387,6 +387,7 @@ Describe "1C agent workflow static checks" {
 
         $hostConfig = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\host.config.example.json") | ConvertFrom-Json
         $hostConfig.registryRepo | Should -Be "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git"
+        $hostConfig.pythonPath | Should -Be "python"
         $hostConfig.configurations[0].configId | Should -Be "trade"
         $hostConfig.configurations[0].sourceRepo | Should -Match "trade-config-dump"
         $hostConfig.configurations[1].sourcePath | Should -Match "trade-local"
@@ -398,6 +399,10 @@ Describe "1C agent workflow static checks" {
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape("vibecoding1c-mcp-host/host.config.json"))
         $McpHostText | Should -Match "norkins/metadata"
         $McpHostText | Should -Match "Invoke-PythonMetadataGenerator"
+        $McpHostText | Should -Match "Ensure-PythonRuntime"
+        $McpHostText | Should -Match "Resolve-PythonExecutable"
+        $McpHostText | Should -Match "pythonPath"
+        $McpHostText | Should -Match "Python 3 runtime check failed"
         $McpHostText | Should -Match "norkins-metadata-"
         $McpHostText | Should -Match "mainConfigPath was not found"
         $McpHostText | Should -Match "Generator config:"
