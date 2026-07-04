@@ -5,10 +5,20 @@
   "distributionRepo": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git",
   "registryRepo": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git",
   "stateRoot": "D:/ITL/MCP/vibecoding1c",
+  "secrets": {
+    "ONEC_AI_TOKEN": "<local-1c-assistant-token>"
+  },
   "embedding": {
     "apiBase": "http://host.docker.internal:19000/v1",
     "apiKey": "lm-studio",
     "model": "intfloat/multilingual-e5-base"
+  },
+  "helpSearchServer": {
+    "platformVersion": "8.3.24.1548",
+    "platformBinPath": "C:/Program Files/1cv8/8.3.24.1548/bin"
+  },
+  "sslSearchServer": {
+    "bspVersion": "3.1.10"
   },
   "portRanges": {
     "globalStart": 18000,
@@ -21,12 +31,33 @@
   "configurations": [
     {
       "configId": "trade",
-      "title": "Trade configuration",
+      "title": "Trade configuration from Git",
       "sourceRepo": "http://gitlabserv01.itland.local/team/trade-config-dump.git",
       "sourceBranch": "master",
       "mainConfigPath": "src/cf",
       "extensionPath": "",
       "reportFileName": "Report.txt"
+    },
+    {
+      "configId": "trade-local",
+      "title": "Trade configuration from local dump",
+      "sourcePath": "D:/ITL/MCP/vibecoding1c/sources/trade-local",
+      "sourceLabel": "trade local dump",
+      "mainConfigPath": "src/cf",
+      "extensionPath": "",
+      "reportFileName": "Report.txt",
+      "dump": {
+        "platformPath": "C:/Program Files/1cv8/8.3.24.1548/bin/1cv8.exe",
+        "infoBaseKind": "file",
+        "sourceInfoBasePath": "D:/1C/Bases/trade-source",
+        "sourceServerName": "",
+        "sourceInfoBaseName": "",
+        "ibUser": "",
+        "ibPassword": "",
+        "repositoryPath": "tcp://1c-repository/trade",
+        "repositoryUser": "repository-user",
+        "repositoryPassword": ""
+      }
     }
   ]
 }

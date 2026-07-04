@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "publish")]
+    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "publish", "dump-config")]
     [string]$Action = "status",
 
     [string]$ConfigPath = ".\host.config.json",
@@ -104,6 +104,18 @@ function Convert-ToHash {
 function Get-FullPath {
     param([string]$Path)
     return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path))
+}
+
+function Join-PathIfRelative {
+    param(
+        [string]$Root,
+        [string]$Path
+    )
+    $expanded = [Environment]::ExpandEnvironmentVariables($Path)
+    if ([System.IO.Path]::IsPathRooted($expanded)) {
+        return [System.IO.Path]::GetFullPath($expanded)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $Root $expanded))
 }
 
 function Invoke-Git {
@@ -213,6 +225,22 @@ function Get-FileSha256OrEmpty {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Get-DirectoryFingerprint {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        return "<missing>"
+    }
+    $root = [System.IO.Path]::GetFullPath($Path).TrimEnd("\", "/")
+    $lines = @()
+    $files = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force | Sort-Object FullName)
+    foreach ($file in $files) {
+        $relative = $file.FullName.Substring($root.Length).TrimStart("\", "/") -replace "\\", "/"
+        $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        $lines += "$relative=$hash"
+    }
+    return (Get-Sha256Text -Value ($lines -join "`n"))
+}
+
 function Read-HostConfig {
     $resolved = Get-FullPath $ConfigPath
     if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
@@ -319,6 +347,46 @@ function Get-SourceRoot {
     return (Join-Path (Join-Path (Get-StateRoot -Config $Config) "sources") $ConfigId)
 }
 
+function Resolve-ConfigSourcePath {
+    param(
+        [object]$Config,
+        [object]$Configuration,
+        [string]$ConfigId
+    )
+    $sourcePath = [string](Get-ObjectValue -Object $Configuration -Name "sourcePath" -Default "")
+    if (-not $sourcePath) {
+        return Get-SourceRoot -Config $Config -ConfigId $ConfigId
+    }
+    return Get-FullPath $sourcePath
+}
+
+function Assert-ConfigurationSourceSettings {
+    param(
+        [object]$Configuration,
+        [string]$ConfigId
+    )
+    $sourceRepo = [string](Get-ObjectValue -Object $Configuration -Name "sourceRepo" -Default "")
+    $sourcePath = [string](Get-ObjectValue -Object $Configuration -Name "sourcePath" -Default "")
+    if ($sourceRepo -and $sourcePath) {
+        throw "Configuration '$configId' must use either sourceRepo or sourcePath, not both."
+    }
+    if (-not $sourceRepo -and -not $sourcePath) {
+        throw "Configuration '$configId' must set sourceRepo for Git dumps or sourcePath for local XML dumps."
+    }
+}
+
+function Get-ConfigSubPath {
+    param(
+        [string]$Root,
+        [string]$RelativePath
+    )
+    $path = if ($RelativePath) { $RelativePath } else { "." }
+    if ($path -eq ".") {
+        return ([System.IO.Path]::GetFullPath($Root))
+    }
+    return (Join-PathIfRelative -Root $Root -Path $path)
+}
+
 function Ensure-MetadataTool {
     param([object]$Config)
     $toolRoot = Join-Path (Join-Path (Get-StateRoot -Config $Config) "tools") "norkins-metadata"
@@ -335,31 +403,43 @@ function Get-ConfigurationState {
     if (-not $configId) {
         throw "Configuration entry has no configId."
     }
-    $sourceRoot = Get-SourceRoot -Config $Config -ConfigId $configId
+    Assert-ConfigurationSourceSettings -Configuration $Configuration -ConfigId $configId
+    $sourceRoot = Resolve-ConfigSourcePath -Config $Config -Configuration $Configuration -ConfigId $configId
     $sourceRepo = [string](Get-ObjectValue -Object $Configuration -Name "sourceRepo" -Default "")
+    $sourcePath = [string](Get-ObjectValue -Object $Configuration -Name "sourcePath" -Default "")
+    $sourceLabel = [string](Get-ObjectValue -Object $Configuration -Name "sourceLabel" -Default "")
     $sourceBranch = [string](Get-ObjectValue -Object $Configuration -Name "sourceBranch" -Default "")
     if ($sourceRepo) {
         Ensure-GitCheckout -Repo $sourceRepo -Path $sourceRoot -Branch $sourceBranch
     } elseif (-not (Test-Path -LiteralPath $sourceRoot -PathType Container)) {
-        throw "Configuration '$configId' has neither sourceRepo nor prepared source root: $sourceRoot"
+        throw "Configuration '$configId' sourcePath was not found: $sourceRoot"
     }
 
     $sourceCommit = ""
     $sourceStatus = ""
-    try {
-        $sourceCommit = ((Get-GitOutput -Root $sourceRoot -Arguments @("rev-parse", "HEAD")) -join "").Trim()
-        $sourceStatus = ((& git -C $sourceRoot status --porcelain) -join "`n")
-    } catch {
-        $sourceCommit = ""
-        $sourceStatus = "<not-git>"
-    }
     $mainPath = [string](Get-ObjectValue -Object $Configuration -Name "mainConfigPath" -Default "src/cf")
     $treeHash = ""
-    try {
-        $normalized = ($mainPath -replace "\\", "/").Trim("/")
-        $treeHash = ((Get-GitOutput -Root $sourceRoot -Arguments @("rev-parse", "HEAD:$normalized")) -join "").Trim()
-    } catch {
-        $treeHash = "<missing>"
+    $source = $sourceRepo
+    if ($sourceRepo) {
+        try {
+            $sourceCommit = ((Get-GitOutput -Root $sourceRoot -Arguments @("rev-parse", "HEAD")) -join "").Trim()
+            $sourceStatus = ((& git -C $sourceRoot status --porcelain) -join "`n")
+        } catch {
+            $sourceCommit = ""
+            $sourceStatus = "<not-git>"
+        }
+        try {
+            $normalized = ($mainPath -replace "\\", "/").Trim("/")
+            $treeRef = if ($normalized) { "HEAD:$normalized" } else { "HEAD^{tree}" }
+            $treeHash = ((Get-GitOutput -Root $sourceRoot -Arguments @("rev-parse", $treeRef)) -join "").Trim()
+        } catch {
+            $treeHash = "<missing>"
+        }
+    } else {
+        $source = $(if ($sourceLabel) { $sourceLabel } else { "local:$configId" })
+        $sourceCommit = ""
+        $sourceStatus = "local-source"
+        $treeHash = Get-DirectoryFingerprint -Path (Get-ConfigSubPath -Root $sourceRoot -RelativePath $mainPath)
     }
 
     $workRoot = Get-ConfigWorkRoot -Config $Config -ConfigId $configId
@@ -371,7 +451,7 @@ function Get-ConfigurationState {
     return [pscustomobject]@{
         configId = $configId
         title = [string](Get-ObjectValue -Object $Configuration -Name "title" -Default $configId)
-        source = $sourceRepo
+        source = $source
         sourceRoot = $sourceRoot
         sourceCommit = $sourceCommit
         sourceFingerprint = "commit=$sourceCommit|$mainPath=$treeHash|worktree=$(if ($sourceStatus) { $sourceStatus } else { '<clean>' })"
@@ -442,24 +522,90 @@ function Get-HostPort {
     return ([int](Get-ObjectValue -Object $ranges -Name "projectStart" -Default 18100) + ($ConfigIndex * 100) + $Index)
 }
 
+function Get-HostSecretValues {
+    param([object]$Config)
+    $distributionRoot = Get-DistributionRoot -Config $Config
+    $values = Read-DotEnv -Path (Join-Path $distributionRoot "config.env")
+    $configSecrets = Convert-ToHash -Object (Get-ObjectValue -Object $Config -Name "secrets" -Default $null)
+    foreach ($key in @($configSecrets.Keys)) {
+        $value = [string]$configSecrets[$key]
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            $values[$key] = $value
+        }
+    }
+    return $values
+}
+
+function Get-HostLocalValues {
+    param(
+        [object]$Config,
+        [object]$ConfigState = $null
+    )
+    $help = Get-ObjectValue -Object $Config -Name "helpSearchServer" -Default $null
+    $ssl = Get-ObjectValue -Object $Config -Name "sslSearchServer" -Default $null
+    $platformBinPath = [string](Get-ObjectValue -Object $help -Name "platformBinPath" -Default "")
+    $platformVersion = [string](Get-ObjectValue -Object $help -Name "platformVersion" -Default "")
+    $bspVersion = [string](Get-ObjectValue -Object $ssl -Name "bspVersion" -Default "")
+    return [ordered]@{
+        PATH_METADATA = $(if ($ConfigState) { $ConfigState.metadataRoot } else { "" })
+        PATH_CODE = $(if ($ConfigState) { Get-ConfigSubPath -Root $ConfigState.sourceRoot -RelativePath $ConfigState.mainConfigPath } else { "" })
+        PATH_BASES = (Join-Path (Get-StateRoot -Config $Config) "bases")
+        PATH_1C_BIN = $(if ($platformBinPath) { Get-FullPath $platformBinPath } else { "" })
+        PLATFORM_VERSION = $platformVersion
+        HELP_PLATFORM_VERSION = $platformVersion
+        SSL_VERSION = $bspVersion
+        BSP_VERSION = $bspVersion
+        RESET_DATABASE = "false"
+        PROJECT_NAME = $(if ($ConfigState) { $ConfigState.configId } else { [string](Get-ObjectValue -Object $Config -Name "hostId" -Default "vibecoding1c-mcp-host") })
+    }
+}
+
+function Get-HostDefaultEnvEntries {
+    param([object]$Server)
+    $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
+    switch ($id) {
+        "codechecker" {
+            return @([ordered]@{ name = "ONEC_AI_TOKEN"; from = "ONEC_AI_TOKEN"; required = $false })
+        }
+        "docs" {
+            return @(
+                [ordered]@{ name = "PLATFORM_VERSION"; from = "PLATFORM_VERSION"; required = $false },
+                [ordered]@{ name = "HELP_PLATFORM_VERSION"; from = "HELP_PLATFORM_VERSION"; required = $false }
+            )
+        }
+        "ssl" {
+            return @(
+                [ordered]@{ name = "SSL_VERSION"; from = "SSL_VERSION"; required = $false },
+                [ordered]@{ name = "BSP_VERSION"; from = "BSP_VERSION"; required = $false }
+            )
+        }
+        default {
+            return @()
+        }
+    }
+}
+
+function Get-HostDefaultVolumeEntries {
+    param([object]$Server)
+    $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
+    if ($id -eq "docs") {
+        return @([ordered]@{ from = "PATH_1C_BIN"; to = "/app/1c_bin"; required = $false })
+    }
+    return @()
+}
+
 function Resolve-ServerEnv {
     param(
         [object]$Config,
         [object]$Server,
         [object]$ConfigState = $null
     )
-    $distributionRoot = Get-DistributionRoot -Config $Config
-    $secretValues = Read-DotEnv -Path (Join-Path $distributionRoot "config.env")
+    $secretValues = Get-HostSecretValues -Config $Config
     $embedding = Get-ObjectValue -Object $Config -Name "embedding" -Default $null
     $values = [ordered]@{}
-    $localValues = [ordered]@{
-        PATH_METADATA = $(if ($ConfigState) { $ConfigState.metadataRoot } else { "" })
-        PATH_CODE = $(if ($ConfigState) { Join-Path $ConfigState.sourceRoot $ConfigState.mainConfigPath } else { "" })
-        PATH_BASES = (Join-Path (Get-StateRoot -Config $Config) "bases")
-        RESET_DATABASE = "false"
-        PROJECT_NAME = $(if ($ConfigState) { $ConfigState.configId } else { [string](Get-ObjectValue -Object $Config -Name "hostId" -Default "vibecoding1c-mcp-host") })
-    }
-    foreach ($entry in As-Array (Get-ObjectValue -Object $Server -Name "env" -Default @())) {
+    $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState
+    $envEntries = @(As-Array (Get-ObjectValue -Object $Server -Name "env" -Default @())) + @(Get-HostDefaultEnvEntries -Server $Server)
+    foreach ($entry in $envEntries) {
         $name = [string](Get-ObjectValue -Object $entry -Name "name" -Default "")
         if (-not $name) { continue }
         $value = ""
@@ -483,6 +629,12 @@ function Resolve-ServerEnv {
                 $value = [string](Get-ObjectValue -Object $entry -Name "default" -Default "")
             }
         }
+        if ([bool](Get-ObjectValue -Object $entry -Name "required" -Default $false) -and [string]::IsNullOrWhiteSpace($value)) {
+            $serverId = [string](Get-ObjectValue -Object $Server -Name "id" -Default "<unknown>")
+            $from = [string](Get-ObjectValue -Object $entry -Name "from" -Default "")
+            $source = $(if ($from) { $from } else { $name })
+            throw "Required environment value '$source' for vibecoding1c MCP server '$serverId' was not found."
+        }
         if (-not [string]::IsNullOrWhiteSpace($value)) {
             $values[$name] = $value
         }
@@ -497,23 +649,36 @@ function Resolve-ServerVolumes {
         [object]$ConfigState = $null
     )
     $volumes = @()
-    foreach ($entry in As-Array (Get-ObjectValue -Object $Server -Name "volumes" -Default @())) {
+    $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState
+    $volumeEntries = @(As-Array (Get-ObjectValue -Object $Server -Name "volumes" -Default @())) + @(Get-HostDefaultVolumeEntries -Server $Server)
+    foreach ($entry in $volumeEntries) {
         $from = [string](Get-ObjectValue -Object $entry -Name "from" -Default "")
         $to = [string](Get-ObjectValue -Object $entry -Name "to" -Default "")
         if (-not $from -or -not $to) { continue }
         $hostPath = ""
-        switch ($from) {
-            "PATH_METADATA" { if ($ConfigState) { $hostPath = $ConfigState.metadataRoot } }
-            "PATH_CODE" { if ($ConfigState) { $hostPath = Join-Path $ConfigState.sourceRoot $ConfigState.mainConfigPath } }
-            "PATH_BASES" { $hostPath = Join-Path (Get-StateRoot -Config $Config) "bases" }
-            default { $hostPath = "" }
+        if ($localValues.Contains($from)) {
+            $hostPath = [string]$localValues[$from]
         }
         $subdir = [string](Get-ObjectValue -Object $entry -Name "subdir" -Default "")
         if ($hostPath -and $subdir) {
             $hostPath = Join-Path $hostPath $subdir
         }
+        if ([bool](Get-ObjectValue -Object $entry -Name "required" -Default $false) -and [string]::IsNullOrWhiteSpace($hostPath)) {
+            $serverId = [string](Get-ObjectValue -Object $Server -Name "id" -Default "<unknown>")
+            throw "Required volume source '$from' for vibecoding1c MCP server '$serverId' was not found."
+        }
         if ($hostPath) {
-            New-Item -ItemType Directory -Force -Path $hostPath | Out-Null
+            if (-not (Test-Path -LiteralPath $hostPath -PathType Container)) {
+                if ([bool](Get-ObjectValue -Object $entry -Name "required" -Default $false)) {
+                    $serverId = [string](Get-ObjectValue -Object $Server -Name "id" -Default "<unknown>")
+                    throw "Required volume path for '$from' on vibecoding1c MCP server '$serverId' was not found: $hostPath"
+                }
+                if ($from -eq "PATH_BASES" -or $from -eq "PATH_METADATA") {
+                    New-Item -ItemType Directory -Force -Path $hostPath | Out-Null
+                } else {
+                    continue
+                }
+            }
             $volumes += [pscustomobject]@{ host = $hostPath; container = $to }
         }
     }
@@ -820,5 +985,22 @@ switch ($Action) {
     }
     "publish" {
         Publish-Registry -Config $config
+    }
+    "dump-config" {
+        $dumpScript = Join-Path $PSScriptRoot "export-1c-config-dump.ps1"
+        if (-not (Test-Path -LiteralPath $dumpScript -PathType Leaf)) {
+            throw "Config dump helper was not found: $dumpScript"
+        }
+        $args = @("-ExecutionPolicy", "Bypass", "-File", $dumpScript, "-ConfigPath", $ConfigPath)
+        if ($ConfigId) {
+            $args += @("-ConfigId", $ConfigId)
+        }
+        if ($DryRun) {
+            $args += "-DryRun"
+        }
+        & powershell @args
+        if ($LASTEXITCODE -ne 0) {
+            throw "Config dump helper failed with exit code $LASTEXITCODE."
+        }
     }
 }

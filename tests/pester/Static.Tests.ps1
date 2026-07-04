@@ -5,6 +5,7 @@ Describe "1C agent workflow static checks" {
         $HelperModulePaths = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib") -File -Filter "agent-1c.*.ps1" | Sort-Object Name | ForEach-Object { $_.FullName })
         $LauncherPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"
         $McpHostPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\install-vibecoding1c-mcp-host.ps1"
+        $McpHostDumpPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1"
         $helperParts = @()
         $helperParts += Get-Content -Encoding UTF8 -Raw $HelperPath
         foreach ($modulePath in $HelperModulePaths) {
@@ -12,7 +13,10 @@ Describe "1C agent workflow static checks" {
         }
         $HelperText = $helperParts -join [Environment]::NewLine
         $LauncherText = Get-Content -Encoding UTF8 -Raw $LauncherPath
-        $McpHostText = Get-Content -Encoding UTF8 -Raw $McpHostPath
+        $McpHostText = @(
+            (Get-Content -Encoding UTF8 -Raw $McpHostPath),
+            (Get-Content -Encoding UTF8 -Raw $McpHostDumpPath)
+        ) -join [Environment]::NewLine
     }
 
     It "parses the PowerShell helper" {
@@ -46,6 +50,14 @@ Describe "1C agent workflow static checks" {
         $tokens = $null
         $errors = $null
         [System.Management.Automation.Language.Parser]::ParseFile($McpHostPath, [ref]$tokens, [ref]$errors) | Out-Null
+
+        @($errors).Count | Should -Be 0
+    }
+
+    It "parses the standalone MCP host config dump helper" {
+        $tokens = $null
+        $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($McpHostDumpPath, [ref]$tokens, [ref]$errors) | Out-Null
 
         @($errors).Count | Should -Be 0
     }
@@ -369,16 +381,35 @@ Describe "1C agent workflow static checks" {
 
     It "wires standalone MCP host tooling and registry schema" {
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\install-vibecoding1c-mcp-host.ps1") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\host.config.example.json") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\README.md") -PathType Leaf) | Should -Be $true
 
         $hostConfig = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\host.config.example.json") | ConvertFrom-Json
         $hostConfig.registryRepo | Should -Be "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git"
         $hostConfig.configurations[0].configId | Should -Be "trade"
+        $hostConfig.configurations[0].sourceRepo | Should -Match "trade-config-dump"
+        $hostConfig.configurations[1].sourcePath | Should -Match "trade-local"
+        $hostConfig.configurations[1].dump.repositoryPath | Should -Match "tcp://"
+        $hostConfig.secrets.ONEC_AI_TOKEN | Should -Match "^<"
+        $hostConfig.helpSearchServer.platformVersion | Should -Match "8\.3\."
+        $hostConfig.helpSearchServer.platformBinPath | Should -Match "1cv8"
+        $hostConfig.sslSearchServer.bspVersion | Should -Match "3\."
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape("vibecoding1c-mcp-host/host.config.json"))
         $McpHostText | Should -Match "norkins/metadata"
         $McpHostText | Should -Match "registry.json"
         $McpHostText | Should -Match "family"
         $McpHostText | Should -Match "sourceFingerprint"
+        $McpHostText | Should -Match "dump-config"
+        $McpHostText | Should -Match "sourcePath"
+        $McpHostText | Should -Match "ONEC_AI_TOKEN"
+        $McpHostText | Should -Match "PATH_1C_BIN"
+        $McpHostText | Should -Match "PLATFORM_VERSION"
+        $McpHostText | Should -Match "SSL_VERSION"
+        $McpHostText | Should -Match "BSP_VERSION"
+        $McpHostText | Should -Match "ConfigurationRepositoryUpdateCfg"
+        $McpHostText | Should -Match "DumpConfigToFiles"
+        $McpHostText | Should -Match "ConfigDumpInfo.xml"
         $McpHostText | Should -Not -Match '(?m)^\s*LICENSE_KEY_[A-Z0-9_]+\s*=\s*[^#\s]+'
     }
 
@@ -668,6 +699,8 @@ Describe "1C agent workflow static checks" {
             }
             $text = Get-Content -Encoding UTF8 -Raw $path
             $text | Should -Not -Match '(?m)^\s*LICENSE_KEY_[A-Z0-9_]+\s*=\s*[^#\s]+'
+            $text | Should -Not -Match '(?m)^\s*ONEC_AI_TOKEN\s*=\s*(?!<)[^#\s]+'
+            $text | Should -Not -Match '"ONEC_AI_TOKEN"\s*:\s*"(?!<)[^"]+"'
         }
     }
 

@@ -9,7 +9,7 @@
 После `setup` на выделенной машине будут:
 
 - склонирован или обновлен приватный GitLab-дистрибутив `MCP-vibecoding1c`;
-- склонированы или обновлены XML-выгрузки конфигураций из `sourceRepo`;
+- склонированы или обновлены XML-выгрузки конфигураций из `sourceRepo` или прочитаны локальные XML-выгрузки из `sourcePath`;
 - сгенерирован `Report.txt` через `norkins/metadata` для каждой конфигурации;
 - запущены общие `vibecoding1c` MCP servers;
 - запущены config-specific `code` и `graph` MCP servers для указанных конфигураций;
@@ -42,7 +42,9 @@ MCP-vibecoding1c-registry
 - Git;
 - Docker и доступ к `docker info` от пользователя, который запускает скрипт;
 - Python;
-- доступ в GitLab для чтения `distributionRepo` и `sourceRepo`;
+- доступ в GitLab для чтения `distributionRepo` и `sourceRepo`, если конфигурация берется из Git;
+- установленная платформа 1C на машине, если используется ручной `dump-config`;
+- доступ к исходной ИБ и 1C-хранилищу, если используется ручной `dump-config`;
 - доступ в GitLab для commit/push в `registryRepo`;
 - DNS или статическое имя, доступное разработчикам по LAN;
 - открытые входящие TCP-порты из `portRanges`.
@@ -78,7 +80,17 @@ notepad .\host.config.json
   "baseUrl": "http://vibecoding1c-mcp-host-01.itland.local",
   "distributionRepo": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git",
   "registryRepo": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git",
-  "stateRoot": "D:/ITL/MCP/vibecoding1c"
+  "stateRoot": "D:/ITL/MCP/vibecoding1c",
+  "secrets": {
+    "ONEC_AI_TOKEN": "<local-1c-assistant-token>"
+  },
+  "helpSearchServer": {
+    "platformVersion": "8.3.24.1548",
+    "platformBinPath": "C:/Program Files/1cv8/8.3.24.1548/bin"
+  },
+  "sslSearchServer": {
+    "bspVersion": "3.1.10"
+  }
 }
 ```
 
@@ -89,6 +101,10 @@ notepad .\host.config.json
 - `distributionRepo`: приватный repo с `vibecoding1c` MCP distribution.
 - `registryRepo`: repo, куда будет записан `registry.json`.
 - `stateRoot`: постоянный локальный каталог для checkout, runtime state и generated files.
+- `secrets.ONEC_AI_TOKEN`: локальный ключ 1C Напарника для `1CCodeChecker`; рабочий `host.config.json` не коммитится.
+- `helpSearchServer.platformVersion`: версия платформы 1C для `HelpSearchServer`.
+- `helpSearchServer.platformBinPath`: локальный каталог `bin` платформы 1C для `HelpSearchServer`.
+- `sslSearchServer.bspVersion`: версия БСП для `SSLSearchServer`.
 - `embedding`: endpoint и модель embedding-сервиса, которые увидят Docker containers.
 - `portRanges.globalStart`: первый порт для global MCP servers.
 - `portRanges.projectStart`: первый порт для config-specific MCP servers.
@@ -96,7 +112,7 @@ notepad .\host.config.json
 - `enabledServers.project`: project/config servers, обычно `code`, `graph`.
 - `configurations`: список конфигураций 1C, для которых нужно поднять `code`/`graph`.
 
-Пример одной конфигурации:
+Пример конфигурации из Git:
 
 ```json
 {
@@ -110,15 +126,51 @@ notepad .\host.config.json
 }
 ```
 
+Пример конфигурации из локальной XML-выгрузки:
+
+```json
+{
+  "configId": "trade-local",
+  "title": "Trade configuration from local dump",
+  "sourcePath": "D:/ITL/MCP/vibecoding1c/sources/trade-local",
+  "sourceLabel": "trade local dump",
+  "mainConfigPath": "src/cf",
+  "extensionPath": "",
+  "reportFileName": "Report.txt"
+}
+```
+
+Для `sourcePath` путь указывает на корень XML-выгрузки. Если файлы конфигурации лежат прямо в этой папке, задайте `"mainConfigPath": "."`; если в подпапке, например `src/cf`, укажите эту подпапку.
+
+Для ручного обновления `sourcePath` из 1C-хранилища добавьте к конфигурации блок `dump`:
+
+```json
+"dump": {
+  "platformPath": "C:/Program Files/1cv8/8.3.24.1548/bin/1cv8.exe",
+  "infoBaseKind": "file",
+  "sourceInfoBasePath": "D:/1C/Bases/trade-source",
+  "sourceServerName": "",
+  "sourceInfoBaseName": "",
+  "ibUser": "",
+  "ibPassword": "",
+  "repositoryPath": "tcp://1c-repository/trade",
+  "repositoryUser": "repository-user",
+  "repositoryPassword": ""
+}
+```
+
+Для server infobase задайте `"infoBaseKind": "server"`, `sourceServerName` и `sourceInfoBaseName`; `sourceInfoBasePath` можно оставить пустым.
+
 `configId` потом выбирает разработчик при подключении remote `code`/`graph` MCP. Даже если конфигурация одна, выбор должен быть явным.
 
 ## Секреты
 
-Не добавляйте секреты в `host.config.json` и не публикуйте их в registry repo.
+Рабочий `vibecoding1c-mcp-host/host.config.json` добавлен в `.gitignore`, потому что может содержать локальные пути, пароли ИБ/хранилища и `ONEC_AI_TOKEN`. Не коммитьте этот файл и не публикуйте его содержимое в registry repo.
 
 Лицензионные ключи и другие секреты держите только на выделенной машине:
 
 - в `config.env` внутри checkout приватного `MCP-vibecoding1c` distribution;
+- в локальном `vibecoding1c-mcp-host/host.config.json`;
 - или в локальном окружении пользователя/службы, которая запускает Docker.
 
 `registry.json` должен содержать только URL endpoints, scope/config metadata, health и freshness hashes.
@@ -142,13 +194,15 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 1. Проверяет `git`, `docker`, `python`.
 2. Обновляет `distributionRepo`.
 3. Читает `vibecoding1c-mcp.manifest.json` из distribution checkout.
-4. Обновляет XML dump repositories из `configurations`.
+4. Обновляет XML dump repositories из `sourceRepo` или читает готовые локальные XML dump folders из `sourcePath`.
 5. Генерирует `Report.txt` и fingerprints.
 6. Запускает Docker containers.
 7. Записывает host state под `stateRoot`.
 8. Клонирует или обновляет `registryRepo`.
 9. Записывает `registry.json`.
 10. Делает commit `publish vibecoding1c MCP registry` и `git push`, если registry изменился.
+
+`setup` не запускает выгрузку из 1C. Если `sourcePath` должен обновляться из базы, сначала выполните ручной `dump-config`.
 
 ## Проверка
 
@@ -210,6 +264,14 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action stop -ConfigPath .\host.config.json
 ```
 
+Обновить локальную XML-выгрузку из ИБ, подключенной к 1C-хранилищу:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action dump-config -ConfigPath .\host.config.json -ConfigId trade-local
+```
+
+`dump-config` сначала выполняет `/ConfigurationRepositoryUpdateCfg -force /UpdateDBCfg`, затем `/DumpConfigToFiles`. Если в папке уже есть `ConfigDumpInfo.xml`, используется incremental режим `-update -force`; если папка не пустая и `ConfigDumpInfo.xml` отсутствует, команда останавливается.
+
 Пересобрать `Report.txt` и fingerprints по всем конфигурациям:
 
 ```powershell
@@ -264,7 +326,7 @@ Developer-side helper пишет только ignored runtime/client config:
 
 - `schemaVersion`, `publishedAt`;
 - `host.hostId`, `host.baseUrl`;
-- `configurations[]`: `configId`, title/source, source commit, source fingerprint, report hash, indexed time;
+- `configurations[]`: `configId`, title/source, source commit, source fingerprint, report hash, indexed time. Для локального `sourcePath` поле `source` содержит `sourceLabel` или `local:<configId>`, но не абсолютный локальный путь;
 - `servers[]`: server id, scope, family, provider, configId, name, URL, health, image и freshness inputs.
 
 Не публикуйте туда:
