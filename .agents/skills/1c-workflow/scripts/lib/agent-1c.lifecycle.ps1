@@ -610,6 +610,8 @@ function Invoke-AiRules1cInstaller {
         Pop-Location
     }
 
+    Remove-AiRules1cManagedMcpConfig
+
     $commit = (Get-GitOutputAt -Root $rulesDir -Arguments @("rev-parse", "HEAD")).Trim()
     Update-DependencyLockEntry -Name "aiRules1c" -Values @{
         repo = [string]$checkout.repo
@@ -618,6 +620,130 @@ function Invoke-AiRules1cInstaller {
     }
 
     Write-Host "ai_rules_1c $effectiveCommand completed at commit $commit."
+}
+
+function Get-AiRules1cManagedMcpServerIds {
+    return @(
+        "1c-code-metadata-mcp",
+        "1c-syntax-checker-mcp",
+        "1C-docs-mcp",
+        "1c-templates-mcp",
+        "1c-graph-metadata-mcp",
+        "1c-code-check-mcp",
+        "1c-ssl-mcp",
+        "1c-data-mcp"
+    )
+}
+
+function Test-AiRules1cMcpEntryCanBeRemoved {
+    param([string]$ManagedBy)
+
+    return [string]::IsNullOrWhiteSpace($ManagedBy) -or $ManagedBy -eq "1c-rules" -or $ManagedBy -eq "ai_rules_1c"
+}
+
+function Get-AiRules1cTomlMcpManagedBy {
+    param([string]$SectionText)
+
+    $match = [regex]::Match($SectionText, "(?im)^\s*managedBy\s*=\s*[""']?(?<value>[^""'#\r\n]+)")
+    if ($match.Success) {
+        return $match.Groups["value"].Value.Trim()
+    }
+    return ""
+}
+
+function Remove-AiRules1cCodexMcpEntries {
+    param([string[]]$ServerIds)
+
+    $path = Join-Path $script:ProjectRoot ".codex\config.toml"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return @()
+    }
+
+    $text = Read-Utf8Text -Path $path
+    $removed = @()
+    foreach ($serverId in $ServerIds) {
+        $escaped = [regex]::Escape($serverId)
+        $patterns = @(
+            "(?ms)^\[mcp_servers\.`"$escaped`"\]\r?\n.*?(?=^\[|^# >>> vibecoding1c-mcp|\z)",
+            "(?ms)^\[mcp_servers\.$escaped\]\r?\n.*?(?=^\[|^# >>> vibecoding1c-mcp|\z)"
+        )
+        foreach ($pattern in $patterns) {
+            $matches = @([regex]::Matches($text, $pattern) | Sort-Object Index -Descending)
+            foreach ($match in $matches) {
+                $managedBy = Get-AiRules1cTomlMcpManagedBy -SectionText $match.Value
+                if (-not (Test-AiRules1cMcpEntryCanBeRemoved -ManagedBy $managedBy)) {
+                    continue
+                }
+
+                $text = $text.Remove($match.Index, $match.Length)
+                if ($removed -notcontains $serverId) {
+                    $removed += $serverId
+                }
+            }
+        }
+    }
+
+    if ($removed.Count -gt 0) {
+        Write-Utf8Text -Path $path -Value ($text.TrimEnd() + [Environment]::NewLine)
+    }
+
+    return $removed
+}
+
+function Remove-AiRules1cKiloMcpEntries {
+    param([string[]]$ServerIds)
+
+    $path = Join-Path $script:ProjectRoot ".kilo\kilo.json"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return @()
+    }
+
+    try {
+        $config = ConvertTo-Vibecoding1cMcpHashtable -Object ((Read-Utf8Text -Path $path) | ConvertFrom-Json)
+    } catch {
+        Write-Warning "Could not parse Kilo MCP config for ai_rules_1c cleanup: $path. $($_.Exception.Message)"
+        return @()
+    }
+
+    if (-not $config.Contains("mcp")) {
+        return @()
+    }
+
+    $mcp = ConvertTo-Vibecoding1cMcpHashtable -Object $config["mcp"]
+    $removed = @()
+    foreach ($serverId in $ServerIds) {
+        if (-not $mcp.Contains($serverId)) {
+            continue
+        }
+
+        $entry = ConvertTo-Vibecoding1cMcpHashtable -Object $mcp[$serverId]
+        $managedBy = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "managedBy" -Default "")
+        if (-not (Test-AiRules1cMcpEntryCanBeRemoved -ManagedBy $managedBy)) {
+            continue
+        }
+
+        $mcp.Remove($serverId)
+        $removed += $serverId
+    }
+
+    if ($removed.Count -gt 0) {
+        $config["mcp"] = $mcp
+        Write-Utf8Text -Path $path -Value (($config | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+    }
+
+    return $removed
+}
+
+function Remove-AiRules1cManagedMcpConfig {
+    $serverIds = Get-AiRules1cManagedMcpServerIds
+    $removed = @()
+    $removed += @(Remove-AiRules1cCodexMcpEntries -ServerIds $serverIds)
+    $removed += @(Remove-AiRules1cKiloMcpEntries -ServerIds $serverIds)
+    $removed = @($removed | Select-Object -Unique)
+
+    if ($removed.Count -gt 0) {
+        Write-Host "Removed ai_rules_1c default MCP client entries; ITL vibecoding1c MCP owns client config: $($removed -join ', ')."
+    }
 }
 
 function Install-AiRules1c {

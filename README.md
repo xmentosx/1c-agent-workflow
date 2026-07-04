@@ -78,7 +78,7 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 
 Зависимости при инициализации по умолчанию берутся свежими (`DEPENDENCY_MODE=fresh`) и записываются в `.agent-1c/dependency-lock.json`: commit `ai_rules_1c`, URL/версия/SHA256 Vanessa Automation и SHA256 скачиваемых архивов. Если нужен воспроизводимый bootstrap, выберите `DEPENDENCY_MODE=locked`: helper будет использовать только значения из lock manifest и остановится, если pin или hash отсутствует или не совпадает.
 
-Свежие upstream-правила `ai_rules_1c` после установки обновляются командой `/itl-update-rules` или helper-действием `update-ai-rules`. Обновление запускает upstream installer, повторно применяет ITL overlay в `USER-RULES.md` и записывает новый commit `ai_rules_1c` в `.agent-1c/dependency-lock.json`.
+Свежие upstream-правила `ai_rules_1c` после установки обновляются командой `/itl-update-rules` или helper-действием `update-ai-rules`. Обновление запускает upstream installer, убирает дефолтные upstream MCP-записи из локальных Codex/Kilo конфигов, повторно применяет ITL overlay в `USER-RULES.md` и записывает новый commit `ai_rules_1c` в `.agent-1c/dependency-lock.json`.
 
 Проверка перед `/itl-result` и `/itl-close` по умолчанию работает в режиме `VERIFICATION_POLICY=warn`: без fresh passed `/itl-verify` нужен явный unverified override, который попадет в manifest. Для более строгого промышленного режима задайте `VERIFICATION_POLICY=block`: выгрузка результата и закрытие ветки будут запрещены до свежей успешной Vanessa-проверки.
 

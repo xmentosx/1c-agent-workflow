@@ -353,11 +353,12 @@ Goal: create the baseline project state.
    - Unsafe state: if `src/cf` is not empty and `ConfigDumpInfo.xml` is missing, stop and ask the user to clean the folder or restore `ConfigDumpInfo.xml`.
 12. Verify `src/cf/ConfigDumpInfo.xml` exists after the dump. During initial project creation, commit only `src/cf` to `master`, then verify `HEAD:src/cf/ConfigDumpInfo.xml` exists. Stop if Git sees no dump files to commit or the file is missing from `HEAD`.
 13. Install `ai_rules_1c` using the current agent target (`codex`, `kilocode`, or fallback `codex`). In fresh mode, use the configured repo and record the resolved commit in `.agent-1c/dependency-lock.json`; in locked mode, use `dependencies.aiRules1c.ref` or `commit` and stop if neither is set. Invoke its installer with named parameters: `-Command init -ProjectRoot <project> -Source <rulesDir> -Tools <tools> -AssumeYes`.
-14. Install this workflow skill into `.agents/skills/1c-workflow` and the fast routine skill into `.agents/skills/1c-workflow-fast`.
-15. If the current agent is Kilo Code, install slash wrappers into `.kilo/commands`.
-16. Keep the ITL overlay in `USER-RULES.md`. Do not append to upstream-managed `AGENTS.md` when the `ai_rules_1c` installer already made it point to `USER-RULES.md`; add the short bridge only as a fallback for projects without such a root `AGENTS.md`.
-17. Add detailed project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
-18. Commit rules and workflow files when there are changes.
+14. Remove default upstream `ai_rules_1c` MCP client entries from ignored Codex/Kilo config. ITL vibecoding1c MCP owns client config; preserve External MCP and entries marked for other managers.
+15. Install this workflow skill into `.agents/skills/1c-workflow` and the fast routine skill into `.agents/skills/1c-workflow-fast`.
+16. If the current agent is Kilo Code, install slash wrappers into `.kilo/commands`.
+17. Keep the ITL overlay in `USER-RULES.md`. Do not append to upstream-managed `AGENTS.md` when the `ai_rules_1c` installer already made it point to `USER-RULES.md`; add the short bridge only as a fallback for projects without such a root `AGENTS.md`.
+18. Add detailed project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
+19. Commit rules and workflow files when there are changes.
 
 ## UPDATE_AI_RULES
 
@@ -369,9 +370,10 @@ Helper action: `update-ai-rules`. Kilo wrapper: `/itl-update-rules`.
 2. In `dependencyMode=fresh`, checkout the remote origin HEAD. In `dependencyMode=locked`, checkout `dependencies.aiRules1c.commit` or `ref` and stop when neither is set.
 3. If `.ai-rules.json` exists, run the upstream installer with `-Command update -ProjectRoot <project> -Source <rulesDir> -AssumeYes`; if it is missing, run `init` with the configured agent tools.
 4. Let the upstream installer preserve files marked `userModified`. Use `-Force` only after explicit developer intent to overwrite local edits with the shipped upstream version.
-5. Reapply the ITL overlay in `USER-RULES.md` from `templates/USER-RULES.append.md`.
-6. Do not normally append to `AGENTS.md`; upstream `AGENTS.md` already loads `USER-RULES.md`. Add the short ITL bridge only when no `USER-RULES.md` reference exists.
-7. Record the resolved `ai_rules_1c` commit in `.agent-1c/dependency-lock.json`.
+5. Remove default upstream `ai_rules_1c` MCP client entries from `.codex/config.toml` and `.kilo/kilo.json`; keep `vibecoding1c-mcp` managed entries and External MCP entries.
+6. Reapply the ITL overlay in `USER-RULES.md` from `templates/USER-RULES.append.md`.
+7. Do not normally append to `AGENTS.md`; upstream `AGENTS.md` already loads `USER-RULES.md`. Add the short ITL bridge only when no `USER-RULES.md` reference exists.
+8. Record the resolved `ai_rules_1c` commit in `.agent-1c/dependency-lock.json`.
 
 ## NEW_DEV_BRANCH / NEW_EXTENSION_DEV_BRANCH
 

@@ -14,11 +14,17 @@ Before asking for the 1C platform path, search existing standard `C:\Program Fil
 
 Keep detailed ITL overlay rules in `USER-RULES.md`. Do not append to upstream-managed `AGENTS.md` when it already points to `USER-RULES.md`. Store secrets only in local `.dev.env`.
 
+Treat upstream `ai_rules_1c` as a standards and role library loaded on demand. ITL owns project lifecycle, development branch context, MCP client config, final verification, and result export.
+
+Do not load the whole upstream `content/rules`, `content/skills`, `content/agents`, or `content/commands` tree by default. Load only the specific upstream rule, skill, command, or agent file that matches the current gap. Use upstream subagent pipelines only for full-cycle or risky work, not for routine ITL lifecycle operations. Before a parameter-rich MCP call, read only the relevant upstream MCP doc or the live tool schema.
+
 Write `.dev.env` and `.agent-1c/*.json` files as UTF-8 so Cyrillic usernames and paths are preserved.
 
 Treat `.agent-1c/dev-branches/*.json` and `.agent-1c/event-log-baselines/*.json` as local runtime state. They are ignored by Git because they contain local paths, worktree paths, 1C launcher metadata, verification status, result paths, event-log baseline signatures, and unverified override history.
 
 Use `/itl-vibecoding1c-mcp` for vibecoding1c MCP setup, remote/local selection, registry refresh, update, start/stop, status, key rotation, local embedding model bootstrap, and Codex/Kilo client config. Remote LAN vibecoding1c MCP is the default; config-specific remote vibecoding1c MCP needs an explicit `configId`. Do not paste MCP license keys into chat or tracked files; the helper stores rotated keys and port/model state under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c` and project/worktree MCP state under ignored `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
+
+Do not use upstream `/installmcp`, `/updatemcp`, or `/checkmcp` as the normal MCP path in ITL projects. Use `/itl-vibecoding1c-mcp` and `vibecoding1c-mcp-status`; the helper removes default upstream `ai_rules_1c` MCP client entries after rules install/update to avoid duplicate stale endpoints. Upstream MCP docs still apply as role guidance for exact tool names and arguments when the corresponding `itl-*` endpoint is actually exposed in the current session.
 
 Treat Vanessa MCP and External MCP as separate families. Vanessa MCP is always local branch tooling through `/itl-vanessa-mcp`; External MCP entries are not started, stopped, published, or removed by the vibecoding1c MCP helper.
 
@@ -38,7 +44,7 @@ For `/itl-result` and `/itl-close`, create `<artifact>.manifest.json` next to th
 
 Use `DEPENDENCY_MODE=fresh` by default during initialization: resolve current dependencies and record the `ai_rules_1c` commit plus Vanessa/Apache URL and SHA256 values in `.agent-1c/dependency-lock.json`. Use `DEPENDENCY_MODE=locked` only when the developer explicitly chooses reproducible pins; stop if the lock manifest is incomplete or a hash does not match.
 
-Use `/itl-update-rules` or helper action `update-ai-rules` to refresh upstream `ai_rules_1c` after initialization. The helper runs the upstream updater, records the resolved commit in `.agent-1c/dependency-lock.json`, reapplies this ITL overlay, and avoids modifying upstream-managed `AGENTS.md` when it already points to `USER-RULES.md`.
+Use `/itl-update-rules` or helper action `update-ai-rules` to refresh upstream `ai_rules_1c` after initialization. The helper runs the upstream updater, removes default upstream MCP client entries, records the resolved commit in `.agent-1c/dependency-lock.json`, reapplies this ITL overlay, and avoids modifying upstream-managed `AGENTS.md` when it already points to `USER-RULES.md`.
 
 For `/itl-result` and `/itl-close`, follow `VERIFICATION_POLICY`: default `warn` requires explicit unverified confirmation when `/itl-verify` is not fresh passed; `block` forbids export/close until verification passes. Parallel independent development lines should use separate `itldev/*` branches/worktrees, while one development branch may remain long-lived and contain several sequential tasks.
 

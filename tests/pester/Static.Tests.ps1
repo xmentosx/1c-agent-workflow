@@ -630,6 +630,10 @@ Describe "1C agent workflow static checks" {
         $userRulesTemplateText | Should -Match "update-ai-rules"
         $userRulesTemplateText | Should -Match "TESTMANAGER -> TESTCLIENT"
         $userRulesTemplateText | Should -Match ([regex]::Escape(".agent-1c/event-log-baselines/*.json"))
+        $userRulesTemplateText | Should -Match "standards and role library"
+        $userRulesTemplateText | Should -Match "content/skills"
+        $userRulesTemplateText | Should -Match ([regex]::Escape("/installmcp"))
+        $userRulesTemplateText | Should -Match ([regex]::Escape("/itl-vibecoding1c-mcp"))
 
         $HelperText | Should -Match "function Update-AgentGuidanceBridge"
         $HelperText | Should -Match "function Update-UserRules"
@@ -653,12 +657,18 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cInstaller -Command "update"'))
         $HelperText | Should -Match ([regex]::Escape('"-Force"'))
         $HelperText | Should -Match "Update ai_rules_1c managed rules"
+        $HelperText | Should -Match "function Remove-AiRules1cManagedMcpConfig"
+        $HelperText | Should -Match "function Get-AiRules1cManagedMcpServerIds"
+        $HelperText | Should -Match "1c-code-metadata-mcp"
+        $HelperText | Should -Match "1C-docs-mcp"
+        $HelperText | Should -Match "1c-data-mcp"
 
         $wrapperPath = Join-Path $RepoRoot ".kilo\commands\itl-update-rules.md"
         (Test-Path -LiteralPath $wrapperPath -PathType Leaf) | Should -Be $true
         $wrapperText = Get-Content -Encoding UTF8 -Raw $wrapperPath
         $wrapperText | Should -Match "-Action\s+update-ai-rules"
         $wrapperText | Should -Match "USER-RULES.md"
+        $wrapperText | Should -Match "MCP"
 
         $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
         $workflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
@@ -667,6 +677,100 @@ Describe "1C agent workflow static checks" {
         foreach ($text in @($advancedText, $workflowText, $readmeText, $developerGuideText)) {
             $text | Should -Match "update-ai-rules"
             $text | Should -Match "USER-RULES.md"
+            $text | Should -Match "MCP"
+        }
+    }
+
+    It "removes default upstream ai_rules_1c MCP entries without deleting ITL or External MCP config" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-rules-mcp-cleanup-test-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".codex"), (Join-Path $tempRoot ".kilo") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".codex\config.toml") -Value @"
+[mcp_servers."1c-code-metadata-mcp"]
+url = "http://localhost:8000/mcp"
+enabled = true
+
+[mcp_servers."1c-ssl-mcp"]
+url = "http://localhost:8007/mcp"
+enabled = true
+managedBy = "external-mcp"
+
+# >>> vibecoding1c-mcp project
+[mcp_servers."itl-demo-code"]
+url = "http://127.0.0.1:18100/mcp"
+enabled = true
+managedBy = "vibecoding1c-mcp"
+family = "vibecoding1c"
+# <<< vibecoding1c-mcp project
+
+[mcp_servers."custom-tool"]
+url = "http://localhost:9999/mcp"
+enabled = true
+"@ -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value @"
+{
+  "mcp": {
+    "1c-code-metadata-mcp": {
+      "type": "remote",
+      "url": "http://localhost:8000/mcp",
+      "enabled": true
+    },
+    "1C-docs-mcp": {
+      "type": "remote",
+      "url": "http://localhost:8003/mcp",
+      "enabled": true,
+      "managedBy": "ai_rules_1c"
+    },
+    "1c-ssl-mcp": {
+      "type": "remote",
+      "url": "http://localhost:8007/mcp",
+      "enabled": true,
+      "managedBy": "external-mcp",
+      "family": "external"
+    },
+    "itl-demo-code": {
+      "type": "remote",
+      "url": "http://127.0.0.1:18100/mcp",
+      "enabled": true,
+      "managedBy": "vibecoding1c-mcp",
+      "family": "vibecoding1c"
+    },
+    "custom-tool": {
+      "type": "remote",
+      "url": "http://localhost:9999/mcp",
+      "enabled": true,
+      "managedBy": "external-mcp",
+      "family": "external"
+    }
+  }
+}
+"@ -Encoding UTF8
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Remove-AiRules1cManagedMcpConfig
+            }
+
+            $codexText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".codex\config.toml")
+            $codexText | Should -Not -Match "1c-code-metadata-mcp"
+            $codexText | Should -Match "1c-ssl-mcp"
+            $codexText | Should -Match "external-mcp"
+            $codexText | Should -Match ([regex]::Escape("# >>> vibecoding1c-mcp project"))
+            $codexText | Should -Match ([regex]::Escape("# <<< vibecoding1c-mcp project"))
+            $codexText | Should -Match ([regex]::Escape('[mcp_servers."itl-demo-code"]'))
+            $codexText | Should -Match ([regex]::Escape('[mcp_servers."custom-tool"]'))
+
+            $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
+            $kilo.mcp.PSObject.Properties["1c-code-metadata-mcp"] | Should -BeNullOrEmpty
+            $kilo.mcp.PSObject.Properties["1C-docs-mcp"] | Should -BeNullOrEmpty
+            $kilo.mcp.'1c-ssl-mcp'.managedBy | Should -Be "external-mcp"
+            $kilo.mcp.'itl-demo-code'.managedBy | Should -Be "vibecoding1c-mcp"
+            $kilo.mcp.'custom-tool'.managedBy | Should -Be "external-mcp"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 

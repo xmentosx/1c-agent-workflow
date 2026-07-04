@@ -288,4 +288,4 @@ vibecoding1c MCP для поиска по документации, шаблон
 - Перед созданием worktree, обновлением ветки, обновлением `master`, выгрузкой результата и legacy-переключением Git-дерево должно быть чистым.
 - Если 1С или Git вернули ошибку, агент должен остановиться и показать путь к логу.
 - По умолчанию `DEPENDENCY_MODE=fresh`: workflow берет свежие зависимости и обновляет `.agent-1c/dependency-lock.json`. Для воспроизводимого bootstrap используйте `DEPENDENCY_MODE=locked` с заполненными pin/hash значениями.
-- Чтобы получить свежую версию upstream-правил `ai_rules_1c`, используйте `/itl-update-rules` или helper-действие `update-ai-rules`. ITL-надстройка повторно применяется в `USER-RULES.md`, а root `AGENTS.md` остается управляемым upstream-инсталлером, если он уже ссылается на `USER-RULES.md`.
+- Чтобы получить свежую версию upstream-правил `ai_rules_1c`, используйте `/itl-update-rules` или helper-действие `update-ai-rules`. Helper убирает дефолтные upstream MCP-записи из локальных Codex/Kilo конфигов, ITL-надстройка повторно применяется в `USER-RULES.md`, а root `AGENTS.md` остается управляемым upstream-инсталлером, если он уже ссылается на `USER-RULES.md`.
