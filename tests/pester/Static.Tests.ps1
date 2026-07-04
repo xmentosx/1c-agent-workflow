@@ -410,6 +410,11 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match "ConfigurationRepositoryUpdateCfg"
         $McpHostText | Should -Match "DumpConfigToFiles"
         $McpHostText | Should -Match "ConfigDumpInfo.xml"
+        $McpHostDumpText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1")
+        $nativeEmptyStringFunction = [regex]::Match($McpHostDumpText, '(?s)function ConvertTo-NativeEmptyStringArgument \{.*?\n\}')
+        $nativeEmptyStringFunction.Success | Should -Be $true
+        $nativeEmptyStringFunction.Value | Should -Match 'return ""'
+        $nativeEmptyStringFunction.Value | Should -Not -Match 'return ''""'''
         $McpHostText | Should -Match "Invoke-DockerCommand"
         $McpHostText | Should -Match '"image", "inspect"'
         $McpHostText | Should -Match '"pull", \$Image'

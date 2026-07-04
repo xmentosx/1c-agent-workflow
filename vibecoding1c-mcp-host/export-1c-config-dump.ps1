@@ -131,10 +131,10 @@ function ConvertFrom-OptionalPasswordAnswer {
 function ConvertTo-NativeEmptyStringArgument {
     param([AllowNull()][string]$Value)
     if ($null -eq $Value) {
-        return '""'
+        return ""
     }
     if ($Value.Length -eq 0) {
-        return '""'
+        return ""
     }
     return $Value
 }
