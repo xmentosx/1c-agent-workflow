@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "hostId": "vibecoding1c-mcp-host-01",
+  "baseUrl": "http://vibecoding1c-mcp-host-01.itland.local",
+  "distributionRepo": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git",
+  "registryRepo": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git",
+  "stateRoot": "D:/ITL/MCP/vibecoding1c",
+  "embedding": {
+    "apiBase": "http://host.docker.internal:19000/v1",
+    "apiKey": "lm-studio",
+    "model": "intfloat/multilingual-e5-base"
+  },
+  "portRanges": {
+    "globalStart": 18000,
+    "projectStart": 18100
+  },
+  "enabledServers": {
+    "global": [ "docs", "templates", "syntax", "codechecker", "ssl" ],
+    "project": [ "code", "graph" ]
+  },
+  "configurations": [
+    {
+      "configId": "trade",
+      "title": "Trade configuration",
+      "sourceRepo": "http://gitlabserv01.itland.local/team/trade-config-dump.git",
+      "sourceBranch": "master",
+      "mainConfigPath": "src/cf",
+      "extensionPath": "",
+      "reportFileName": "Report.txt"
+    }
+  ]
+}

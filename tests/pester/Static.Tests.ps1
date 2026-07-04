@@ -3,8 +3,10 @@ Describe "1C agent workflow static checks" {
         $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
         $HelperPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
         $LauncherPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"
+        $McpHostPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\install-vibecoding1c-mcp-host.ps1"
         $HelperText = Get-Content -Encoding UTF8 -Raw $HelperPath
         $LauncherText = Get-Content -Encoding UTF8 -Raw $LauncherPath
+        $McpHostText = Get-Content -Encoding UTF8 -Raw $McpHostPath
     }
 
     It "parses the PowerShell helper" {
@@ -19,6 +21,14 @@ Describe "1C agent workflow static checks" {
         $tokens = $null
         $errors = $null
         [System.Management.Automation.Language.Parser]::ParseFile($LauncherPath, [ref]$tokens, [ref]$errors) | Out-Null
+
+        @($errors).Count | Should -Be 0
+    }
+
+    It "parses the standalone MCP host installer" {
+        $tokens = $null
+        $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($McpHostPath, [ref]$tokens, [ref]$errors) | Out-Null
 
         @($errors).Count | Should -Be 0
     }
@@ -87,7 +97,7 @@ Describe "1C agent workflow static checks" {
 
         $documentedCommands = foreach ($path in $docPaths) {
             $text = Get-Content -Encoding UTF8 -Raw $path
-            [regex]::Matches($text, "(?<![\w-])/(itl(?:-[a-z-]+)?)") | ForEach-Object { "/" + $_.Groups[1].Value }
+            [regex]::Matches($text, "(?<![\w-])/(itl(?:-[a-z0-9-]+)?)") | ForEach-Object { "/" + $_.Groups[1].Value }
         }
 
         $documentedCommands = @($documentedCommands | Sort-Object -Unique)
@@ -267,10 +277,16 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match "Test-IgnorableLocalGitStatusLine"
     }
 
-    It "wires team ITL MCP actions, scopes, ports, and client config" {
-        $actions = @("mcp-setup", "mcp-update", "mcp-status", "mcp-start", "mcp-stop", "mcp-rotate-keys", "mcp-ensure-model", "mcp-write-client-config")
+    It "wires vibecoding1c MCP actions, scopes, ports, registry, selection, and client config" {
+        $actions = @("vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config")
         foreach ($action in $actions) {
             $HelperText | Should -Match ([regex]::Escape("`"$action`""))
+        }
+        foreach ($oldAction in @("mcp-setup", "mcp-update", "mcp-status", "mcp-start", "mcp-stop", "mcp-select", "mcp-refresh-registry", "mcp-rotate-keys", "mcp-ensure-model", "mcp-write-client-config")) {
+            $HelperText | Should -Not -Match "(?<!vibecoding1c-)(?<!vanessa-)$([regex]::Escape($oldAction))(?![A-Za-z0-9-])"
+        }
+        foreach ($parameter in @('$McpProvider', '$McpConfigId', '$McpLocalScope')) {
+            $HelperText | Should -Match ([regex]::Escape($parameter))
         }
 
         $HelperText | Should -Match "itl-1c-docs"
@@ -279,7 +295,8 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match "itl-1c-codechecker"
         $HelperText | Should -Match "itl-{projectSlug}-code"
         $HelperText | Should -Match "itl-{projectSlug}-graph"
-        $HelperText | Should -Match "itl-{projectSlug}-{branchSlug}-vanessa"
+        $HelperText | Should -Not -Match "itl-{projectSlug}-{branchSlug}-vanessa"
+        $HelperText | Should -Not -Match "localVanessa"
         foreach ($portMarker in @("18000", "18100", "18500", "19000")) {
             $HelperText | Should -Match $portMarker
         }
@@ -292,30 +309,63 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match "lms server start --port"
         $HelperText | Should -Match "mcp_servers"
         $HelperText | Should -Match "managedBy"
+        $HelperText | Should -Match "family = `"vibecoding1c`""
+        $HelperText | Should -Match "managedBy = `"vibecoding1c-mcp`""
         $HelperText | Should -Match ([regex]::Escape("http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git"))
-        $HelperText | Should -Match "ITL_MCP_DISTRIBUTION_REPO"
+        $HelperText | Should -Match ([regex]::Escape("http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git"))
+        $HelperText | Should -Match "VIBECODING1C_MCP_DISTRIBUTION_REPO"
+        $HelperText | Should -Match "VIBECODING1C_MCP_REGISTRY_REPO"
+        $HelperText | Should -Match "vibecoding1c-selection.json"
+        $HelperText | Should -Match "remote-shared"
         $HelperText | Should -Not -Match ([regex]::Escape("D:\Git\MCP vibecoding1c"))
         $HelperText | Should -Not -Match "-p 8000:8000"
         $HelperText | Should -Not -Match "-p 8006:8006"
+        $HelperText | Should -Not -Match "ITL_MCP"
+        $HelperText | Should -Not -Match "ITL MCP"
+        $HelperText | Should -Not -Match "/itl-mcp"
+        $HelperText | Should -Not -Match "itl-mcp"
+        $HelperText | Should -Not -Match "(?<![A-Za-z0-9])mcpSetupDuringInit"
 
-        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-mcp.md") -PathType Leaf) | Should -Be $true
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl.md")) | Should -Match "/itl-mcp"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")) | Should -Match "/itl-mcp"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")) | Should -Match "/itl-mcp"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "ITL_MCP_DISTRIBUTION_PATH"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "ITL_MCP_DISTRIBUTION_REPO"
+        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-vibecoding1c-mcp.md") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-mcp.md") -PathType Leaf) | Should -Be $false
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl.md")) | Should -Match "/itl-vibecoding1c-mcp"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")) | Should -Match "/itl-vibecoding1c-mcp"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")) | Should -Match "/itl-vibecoding1c-mcp"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VIBECODING1C_MCP_DISTRIBUTION_PATH"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VIBECODING1C_MCP_DISTRIBUTION_REPO"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VIBECODING1C_MCP_REGISTRY_PATH"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VIBECODING1C_MCP_REGISTRY_REPO"
+        $projectTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\project.json")
+        $projectTemplate | Should -Match "vibecoding1cMcp"
+        $projectTemplate | Should -Match "providerDefault"
+        $projectTemplate | Should -Not -Match '"mcp"\s*:'
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "PATH_METADATA"
     }
 
-    It "clones and fast-forwards the managed ITL MCP distribution checkout" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-mcp-distribution-test-" + [guid]::NewGuid().ToString("N"))
+    It "wires standalone MCP host tooling and registry schema" {
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\install-vibecoding1c-mcp-host.ps1") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\host.config.example.json") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\README.md") -PathType Leaf) | Should -Be $true
+
+        $hostConfig = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\host.config.example.json") | ConvertFrom-Json
+        $hostConfig.registryRepo | Should -Be "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git"
+        $hostConfig.configurations[0].configId | Should -Be "trade"
+        $McpHostText | Should -Match "norkins/metadata"
+        $McpHostText | Should -Match "registry.json"
+        $McpHostText | Should -Match "family"
+        $McpHostText | Should -Match "sourceFingerprint"
+        $McpHostText | Should -Not -Match '(?m)^\s*LICENSE_KEY_[A-Z0-9_]+\s*=\s*[^#\s]+'
+    }
+
+    It "clones and fast-forwards the managed vibecoding1c MCP distribution checkout" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-distribution-test-" + [guid]::NewGuid().ToString("N"))
         $projectRoot = Join-Path $tempRoot "project"
         $workRepo = Join-Path $tempRoot "source"
         $remoteRepo = Join-Path $tempRoot "remote.git"
         $localHome = Join-Path $tempRoot "local-home"
-        $oldRepo = [Environment]::GetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", "Process")
-        $oldPath = [Environment]::GetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", "Process")
-        $oldHome = [Environment]::GetEnvironmentVariable("ITL_MCP_LOCAL_HOME", "Process")
+        $oldRepo = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_REPO", "Process")
+        $oldPath = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_PATH", "Process")
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
 
         try {
             New-Item -ItemType Directory -Force -Path $projectRoot, $workRepo | Out-Null
@@ -324,21 +374,21 @@ Describe "1C agent workflow static checks" {
             & git -C $workRepo config user.name "Test User"
             & git -C $workRepo branch -M main
             Set-Content -LiteralPath (Join-Path $workRepo "config.env") -Value "LICENSE_KEY_HELP=fixture-key`n" -Encoding ASCII
-            Set-Content -LiteralPath (Join-Path $workRepo "itl-mcp.manifest.json") -Value '{"servers":[]}' -Encoding ASCII
-            & git -C $workRepo add config.env itl-mcp.manifest.json
+            Set-Content -LiteralPath (Join-Path $workRepo "vibecoding1c-mcp.manifest.json") -Value '{"servers":[]}' -Encoding ASCII
+            & git -C $workRepo add config.env vibecoding1c-mcp.manifest.json
             & git -C $workRepo commit -m "initial distribution" *> $null
             & git init --bare $remoteRepo *> $null
             & git -C $workRepo remote add origin $remoteRepo
             & git -C $workRepo push -u origin main *> $null
             & git -C $remoteRepo symbolic-ref HEAD refs/heads/main
 
-            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", $remoteRepo, "Process")
-            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", $null, "Process")
-            [Environment]::SetEnvironmentVariable("ITL_MCP_LOCAL_HOME", $localHome, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_REPO", $remoteRepo, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_PATH", $null, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $localHome, "Process")
 
             & {
                 . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
-                Ensure-ItlMcpDistribution | Out-Null
+                Ensure-Vibecoding1cMcpDistribution | Out-Null
             }
 
             $managedPath = Join-Path $localHome "distribution"
@@ -352,79 +402,149 @@ Describe "1C agent workflow static checks" {
 
             & {
                 . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
-                Ensure-ItlMcpDistribution | Out-Null
+                Ensure-Vibecoding1cMcpDistribution | Out-Null
             }
 
             (Get-Content -Encoding ASCII -Raw (Join-Path $managedPath "version.txt")).Trim() | Should -Be "2"
         } finally {
-            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", $oldRepo, "Process")
-            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", $oldPath, "Process")
-            [Environment]::SetEnvironmentVariable("ITL_MCP_LOCAL_HOME", $oldHome, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_REPO", $oldRepo, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_PATH", $oldPath, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
 
-    It "does not clone when an explicit ITL MCP distribution path is configured" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-mcp-distribution-override-" + [guid]::NewGuid().ToString("N"))
+    It "does not clone when an explicit vibecoding1c MCP distribution path is configured" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-distribution-override-" + [guid]::NewGuid().ToString("N"))
         $projectRoot = Join-Path $tempRoot "project"
         $manualDistribution = Join-Path $tempRoot "manual-distribution"
         $localHome = Join-Path $tempRoot "local-home"
-        $oldRepo = [Environment]::GetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", "Process")
-        $oldPath = [Environment]::GetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", "Process")
-        $oldHome = [Environment]::GetEnvironmentVariable("ITL_MCP_LOCAL_HOME", "Process")
+        $oldRepo = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_REPO", "Process")
+        $oldPath = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_PATH", "Process")
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
 
         try {
             New-Item -ItemType Directory -Force -Path $projectRoot, $manualDistribution | Out-Null
             Set-Content -LiteralPath (Join-Path $manualDistribution "config.env") -Value "LICENSE_KEY_HELP=manual-key`n" -Encoding ASCII
-            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", "bad://should-not-be-used", "Process")
-            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", $manualDistribution, "Process")
-            [Environment]::SetEnvironmentVariable("ITL_MCP_LOCAL_HOME", $localHome, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_REPO", "bad://should-not-be-used", "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_PATH", $manualDistribution, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $localHome, "Process")
 
             & {
                 . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
-                $resolved = Ensure-ItlMcpDistribution
+                $resolved = Ensure-Vibecoding1cMcpDistribution
                 $resolved | Should -Be ([System.IO.Path]::GetFullPath($manualDistribution))
             }
 
             (Test-Path -LiteralPath (Join-Path $localHome "distribution") -ErrorAction SilentlyContinue) | Should -Be $false
         } finally {
-            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", $oldRepo, "Process")
-            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", $oldPath, "Process")
-            [Environment]::SetEnvironmentVariable("ITL_MCP_LOCAL_HOME", $oldHome, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_REPO", $oldRepo, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_PATH", $oldPath, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
 
-    It "fails clearly when the managed ITL MCP distribution path is not a Git checkout" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-mcp-distribution-invalid-" + [guid]::NewGuid().ToString("N"))
+    It "fails clearly when the managed vibecoding1c MCP distribution path is not a Git checkout" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-distribution-invalid-" + [guid]::NewGuid().ToString("N"))
         $projectRoot = Join-Path $tempRoot "project"
         $localHome = Join-Path $tempRoot "local-home"
         $managedPath = Join-Path $localHome "distribution"
-        $oldRepo = [Environment]::GetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", "Process")
-        $oldPath = [Environment]::GetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", "Process")
-        $oldHome = [Environment]::GetEnvironmentVariable("ITL_MCP_LOCAL_HOME", "Process")
+        $oldRepo = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_REPO", "Process")
+        $oldPath = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_PATH", "Process")
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
 
         try {
             New-Item -ItemType Directory -Force -Path $projectRoot, $managedPath | Out-Null
             Set-Content -LiteralPath (Join-Path $managedPath "config.env") -Value "LICENSE_KEY_HELP=stale`n" -Encoding ASCII
-            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", "bad://should-not-be-used", "Process")
-            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", $null, "Process")
-            [Environment]::SetEnvironmentVariable("ITL_MCP_LOCAL_HOME", $localHome, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_REPO", "bad://should-not-be-used", "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_PATH", $null, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $localHome, "Process")
 
             {
                 & {
                     . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
-                    Ensure-ItlMcpDistribution | Out-Null
+                    Ensure-Vibecoding1cMcpDistribution | Out-Null
                 }
             } | Should -Throw "*not a Git checkout*"
         } finally {
-            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_REPO", $oldRepo, "Process")
-            [Environment]::SetEnvironmentVariable("ITL_MCP_DISTRIBUTION_PATH", $oldPath, "Process")
-            [Environment]::SetEnvironmentVariable("ITL_MCP_LOCAL_HOME", $oldHome, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_REPO", $oldRepo, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_PATH", $oldPath, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "requires explicit remote config selection and resolves registry endpoints" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-registry-select-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $registryRoot = Join-Path $tempRoot "registry"
+        $localHome = Join-Path $tempRoot "local-home"
+        $oldRegistryPath = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", "Process")
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot, $registryRoot | Out-Null
+            $registry = [ordered]@{
+                schemaVersion = 1
+                publishedAt = "2026-07-04T00:00:00Z"
+                host = [ordered]@{ hostId = "host-a"; baseUrl = "http://vibecoding1c-mcp-host" }
+                configurations = @(
+                    [ordered]@{
+                        configId = "trade"
+                        title = "Trade"
+                        sourceFingerprint = "remote-fingerprint"
+                        reportHash = "abc"
+                        indexedAt = "2026-07-04T00:00:00Z"
+                    }
+                )
+                servers = @(
+                    [ordered]@{
+                        id = "code"
+                        scope = "project"
+                        family = "vibecoding1c"
+                        provider = "remote"
+                        configId = "trade"
+                        name = "itl-trade-code"
+                        url = "http://vibecoding1c-mcp-host:18100/mcp"
+                        health = "running"
+                        sourceFingerprint = "remote-fingerprint"
+                        reportHash = "abc"
+                        indexedAt = "2026-07-04T00:00:00Z"
+                    }
+                )
+            }
+            Set-Content -LiteralPath (Join-Path $registryRoot "registry.json") -Value (($registry | ConvertTo-Json -Depth 10) + [Environment]::NewLine) -Encoding UTF8
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $registryRoot, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $localHome, "Process")
+
+            {
+                & {
+                    . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                    $server = (Read-Vibecoding1cMcpManifest).servers | Where-Object { $_.id -eq "code" } | Select-Object -First 1
+                    New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection (Read-Vibecoding1cMcpSelection) | Out-Null
+                }
+            } | Should -Throw "*requires explicit configuration selection*"
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help -McpServerId code -McpProvider remote -McpConfigId trade *> $null
+                Set-Vibecoding1cMcpSelection *> $null
+                $selection = Read-Vibecoding1cMcpSelection
+                $server = (Read-Vibecoding1cMcpManifest).servers | Where-Object { $_.id -eq "code" } | Select-Object -First 1
+                $runtime = New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection
+                $runtime.url | Should -Be "http://vibecoding1c-mcp-host:18100/mcp"
+                $runtime.configId | Should -Be "trade"
+                (Get-Vibecoding1cMcpEndpointFreshness -Endpoint $runtime) | Should -Be "remote-shared"
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -525,7 +645,7 @@ Describe "1C agent workflow static checks" {
     }
 
     It "allocates Vanessa MCP ports per development branch state" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-mcp-port-test-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-port-test-" + [guid]::NewGuid().ToString("N"))
         $oldRange = [Environment]::GetEnvironmentVariable("VANESSA_MCP_PORT_RANGE", "Process")
         $listener = $null
 
@@ -611,15 +731,15 @@ Describe "1C agent workflow static checks" {
         }
     }
 
-    It "selects ITL MCP embedding models from mocked hardware" {
+    It "selects vibecoding1c MCP embedding models from mocked hardware" {
         $results = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             [pscustomobject]@{
-                Gpu6 = (Select-ItlMcpEmbeddingModel -GpuMemoryMb 6144 -RamGb 32).modelId
-                Gpu4 = (Select-ItlMcpEmbeddingModel -GpuMemoryMb 4096 -RamGb 32).modelId
-                Gpu3 = (Select-ItlMcpEmbeddingModel -GpuMemoryMb 3072 -RamGb 32).modelId
-                CpuLarge = (Select-ItlMcpEmbeddingModel -GpuMemoryMb 0 -RamGb 32).modelId
-                CpuSmall = (Select-ItlMcpEmbeddingModel -GpuMemoryMb 0 -RamGb 8).modelId
+                Gpu6 = (Select-Vibecoding1cMcpEmbeddingModel -GpuMemoryMb 6144 -RamGb 32).modelId
+                Gpu4 = (Select-Vibecoding1cMcpEmbeddingModel -GpuMemoryMb 4096 -RamGb 32).modelId
+                Gpu3 = (Select-Vibecoding1cMcpEmbeddingModel -GpuMemoryMb 3072 -RamGb 32).modelId
+                CpuLarge = (Select-Vibecoding1cMcpEmbeddingModel -GpuMemoryMb 0 -RamGb 32).modelId
+                CpuSmall = (Select-Vibecoding1cMcpEmbeddingModel -GpuMemoryMb 0 -RamGb 8).modelId
             }
         }
 
@@ -631,7 +751,7 @@ Describe "1C agent workflow static checks" {
     }
 
     It "merges managed Codex TOML and Kilo MCP JSON without deleting unrelated entries" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-mcp-config-test-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-config-test-" + [guid]::NewGuid().ToString("N"))
 
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".codex"), (Join-Path $tempRoot ".kilo") | Out-Null
@@ -646,10 +766,17 @@ url = "http://localhost:9999/mcp"
       "type": "remote",
       "url": "http://localhost:9999/mcp"
     },
+    "external-tool": {
+      "type": "remote",
+      "url": "http://localhost:9998/mcp",
+      "managedBy": "external-mcp",
+      "family": "external"
+    },
     "itl-old": {
       "type": "remote",
       "url": "http://localhost:1/mcp",
-      "managedBy": "itl-mcp"
+      "managedBy": "vibecoding1c-mcp",
+      "family": "vibecoding1c"
     }
   }
 }
@@ -661,21 +788,24 @@ url = "http://localhost:9999/mcp"
                     [pscustomobject]@{ name = "itl-1c-docs"; url = "http://127.0.0.1:18000/mcp"; scope = "global" },
                     [pscustomobject]@{ name = "itl-demo-code"; url = "http://127.0.0.1:18100/mcp"; scope = "project" }
                 )
-                Write-ItlMcpCodexConfig -Path (Join-Path $tempRoot ".codex\config.toml") -BlockId "project" -Endpoints $endpoints
-                Write-ItlMcpCodexConfig -Path (Join-Path $tempRoot ".codex\config.toml") -BlockId "project" -Endpoints $endpoints
-                Write-ItlMcpKiloConfig -Endpoints $endpoints
+                Write-Vibecoding1cMcpCodexConfig -Path (Join-Path $tempRoot ".codex\config.toml") -BlockId "project" -Endpoints $endpoints
+                Write-Vibecoding1cMcpCodexConfig -Path (Join-Path $tempRoot ".codex\config.toml") -BlockId "project" -Endpoints $endpoints
+                Write-Vibecoding1cMcpKiloConfig -Endpoints $endpoints
             }
 
             $codexText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".codex\config.toml")
             $codexText | Should -Match "mcp_servers.unrelated"
             $codexText | Should -Match ([regex]::Escape('[mcp_servers."itl-demo-code"]'))
-            @([regex]::Matches($codexText, [regex]::Escape("# >>> itl-mcp project"))).Count | Should -Be 1
+            @([regex]::Matches($codexText, [regex]::Escape("# >>> vibecoding1c-mcp project"))).Count | Should -Be 1
 
             $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
             $kilo.mcp.unrelated.url | Should -Be "http://localhost:9999/mcp"
+            $kilo.mcp.'external-tool'.url | Should -Be "http://localhost:9998/mcp"
+            $kilo.mcp.'external-tool'.family | Should -Be "external"
             $kilo.mcp.'itl-old' | Should -BeNullOrEmpty
             $kilo.mcp.'itl-demo-code'.url | Should -Be "http://127.0.0.1:18100/mcp"
-            $kilo.mcp.'itl-demo-code'.managedBy | Should -Be "itl-mcp"
+            $kilo.mcp.'itl-demo-code'.managedBy | Should -Be "vibecoding1c-mcp"
+            $kilo.mcp.'itl-demo-code'.family | Should -Be "vibecoding1c"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -1147,7 +1277,7 @@ url = "http://localhost:9999/mcp"
     }
 
     It "refuses to start Vanessa MCP outside an itldev worktree" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-mcp-master-test-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-master-test-" + [guid]::NewGuid().ToString("N"))
 
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null

@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow-fast
-description: Run routine 1C Agent Workflow lifecycle commands through the PowerShell helper with minimal context loading. Use for status, ITL MCP setup/status, configuration or extension development branch creation, branch base update, verification, refresh, CF/CFE result export, close, and branch switching when the project is already installed.
+description: Run routine 1C Agent Workflow lifecycle commands through the PowerShell helper with minimal context loading. Use for status, vibecoding1c MCP setup/status, configuration or extension development branch creation, branch base update, verification, refresh, CF/CFE result export, close, and branch switching when the project is already installed.
 ---
 
 # 1C Workflow Fast
@@ -14,7 +14,7 @@ Do not open the full workflow references before normal lifecycle execution. Open
 ## Intent Map
 
 - show ITL status: `status`
-- setup or inspect ITL MCP servers: `mcp-setup` by default, `mcp-status` for status-only, `mcp-update` for key/image update
+- setup or inspect vibecoding1c MCP servers: `vibecoding1c-mcp-setup` by default, `vibecoding1c-mcp-status` for status-only, `vibecoding1c-mcp-select` to choose remote/local or configId, `vibecoding1c-mcp-refresh-registry` to update remote endpoint discovery
 - create new configuration development branch worktree: `new-dev-branch`
 - create new extension development branch worktree: `new-extension-dev-branch`
 - update current development branch infobase from branch files: `update-dev-branch-base`

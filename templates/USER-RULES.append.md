@@ -18,7 +18,9 @@ Write `.dev.env` and `.agent-1c/*.json` files as UTF-8 so Cyrillic usernames and
 
 Treat `.agent-1c/dev-branches/*.json` as local runtime state. It is ignored by Git because it contains local paths, worktree paths, 1C launcher metadata, verification status, result paths, and unverified override history.
 
-Use `/itl-mcp` for team ITL MCP setup, update, start/stop, status, key rotation, local embedding model bootstrap, and Codex/Kilo client config. Do not paste MCP license keys into chat or tracked files; the helper stores rotated keys and port/model state under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c` and project/worktree MCP state under ignored `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
+Use `/itl-vibecoding1c-mcp` for vibecoding1c MCP setup, remote/local selection, registry refresh, update, start/stop, status, key rotation, local embedding model bootstrap, and Codex/Kilo client config. Remote LAN vibecoding1c MCP is the default; config-specific remote vibecoding1c MCP needs an explicit `configId`. Do not paste MCP license keys into chat or tracked files; the helper stores rotated keys and port/model state under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c` and project/worktree MCP state under ignored `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
+
+Treat Vanessa MCP and External MCP as separate families. Vanessa MCP is always local branch tooling through `/itl-vanessa-mcp`; External MCP entries are not started, stopped, published, or removed by the vibecoding1c MCP helper.
 
 Create new development branches in sibling Git worktrees by default, under `<project-folder>-worktrees/<branch>`, and leave the main project folder on `master`. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
 

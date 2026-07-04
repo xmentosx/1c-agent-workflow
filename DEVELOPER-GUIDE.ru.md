@@ -33,7 +33,8 @@
 - тип исходной базы: файловая или серверная;
 - параметры исходной базы и, если она подключена к хранилищу, параметры хранилища;
 - нужно ли публиковать базы веток разработки на Apache для веб-клиента;
-- установить ли Vanessa Automation для исполняемых тестов веток разработки.
+- установить ли Vanessa Automation для исполняемых тестов веток разработки;
+- настроить vibecoding1c MCP сразу или сделать это позже через `/itl-vibecoding1c-mcp`.
 
 Агент отдельно спросит, подключена ли исходная база к хранилищу конфигурации. Если не подключена, вопросы про адрес, пользователя и пароль хранилища не задаются.
 
@@ -78,7 +79,7 @@
 - `tests/features` - Vanessa Automation сценарии, хранятся в Git.
 - `build/test-results/vanessa` - отчеты Vanessa Automation, не коммитятся.
 - `.agent-1c/tools/vanessa-mcp` - скачанные `client_mcp.cfe` и `VAExtension.*.cfe`, не коммитятся.
-- `.agent-1c/mcp/` - локальное состояние MCP текущего проекта/worktree, не коммитится.
+- `.agent-1c/mcp/` - локальное состояние MCP текущего проекта/worktree и выбор remote/local, не коммитится.
 - `.codex/config.toml`, `.kilo/kilo.json`, `.kilo/kilo.jsonc` - локальные MCP client config, не коммитятся.
 - `VANESSA_TEST_PORT` в `.dev.env` - branch-local порт `TESTMANAGER -> TESTCLIENT` для `/itl-verify`, управляется helper.
 - `VANESSA_MCP_PORT` и `VANESSA_MCP_URL` в `.dev.env` - активная MCP-точка текущей ветки, управляется helper.
@@ -172,7 +173,7 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 
 Для написания и отладки Vanessa-сценариев можно использовать branch-local Vanessa MCP через `/itl-vanessa-mcp` из worktree нужной `itldev/*` ветки. MCP помогает исследовать формы, подбирать шаги и отлаживать сценарий, но финальная проверка ветки остается через `/itl-verify`: helper запускает пакетный `StartFeaturePlayer` в реальном `TESTMANAGER -> TESTCLIENT` контуре, назначает отдельный test port текущей ветки и проверяет JUnit-отчет.
 
-Командные ITL MCP для поиска по документации, шаблонам, синтаксису, коду и графу подключаются через `/itl-mcp`. Helper сам клонирует или обновляет приватный GitLab-дистрибутив `http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git` в `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\distribution`, ротирует ключи в локальный `%LOCALAPPDATA%\ITL\MCP\vibecoding1c`, выбирает embedding-модель, выделяет порты и пишет Codex/Kilo config для текущего scope. Для ручного checkout задайте `ITL_MCP_DISTRIBUTION_PATH`; для другого репозитория - `ITL_MCP_DISTRIBUTION_REPO`. В worktree ветки агент увидит глобальные MCP, MCP текущего проекта и branch-local MCP этой ветки, но не MCP соседних веток.
+vibecoding1c MCP для поиска по документации, шаблонам, синтаксису, коду и графу подключается через `/itl-vibecoding1c-mcp`. По умолчанию helper берет remote LAN endpoints из GitLab registry `http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git`; для серверов по конкретной конфигурации нужно явно выбрать `configId`, даже если сейчас опубликована одна конфигурация. По каждому серверу можно переключиться на local. Для local `code`/`graph` выбирается scope `project` или `branch`. Vanessa MCP относится к отдельному семейству, запускается только через `/itl-vanessa-mcp` и всегда branch-local. `/itl-status` показывает freshness vibecoding1c MCP: `fresh`, `stale`, `remote-shared`, `unknown` или `indexing`, поэтому агент видит, когда индекс не отражает текущие изменения ветки.
 
 Для изменения бизнес-поведения агент создает или обновляет небольшой набор Vanessa Automation проверок: минимум 2, обычно 2-3 и не больше 4 без отдельного обоснования. Набор должен включать основной успешный сценарий и минимум один значимый граничный или негативный сценарий. Тип проверки выбирается по сути изменения: unit-like для локальной логики, integration для взаимодействия объектов/регистров/документов/обменов, UI только для форм, команд и видимого пользовательского поведения.
 
@@ -264,7 +265,7 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 /itl                              Показать меню действий.
 /itl-new-config-branch <name>     Создать worktree-ветку разработки конфигурации.
 /itl-new-extension-branch <name>  Создать worktree-ветку разработки расширения.
-/itl-mcp                          Настроить, запустить, обновить или проверить ITL MCP.
+/itl-vibecoding1c-mcp            Настроить, запустить, обновить или проверить vibecoding1c MCP.
 /itl-status                       Показать текущую ветку, базу и статус проверки.
 /itl-update-base                  Обновить базу текущей ветки из файлов Git-ветки.
 /itl-verify                       Обновить базу ветки и запустить Vanessa Automation.

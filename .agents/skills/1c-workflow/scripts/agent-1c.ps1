@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "install-vanessa-automation", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status", "mcp-setup", "mcp-update", "mcp-status", "mcp-start", "mcp-stop", "mcp-rotate-keys", "mcp-ensure-model", "mcp-write-client-config", "run-dev-branch-tests", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
+    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "install-vanessa-automation", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "run-dev-branch-tests", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -18,6 +18,11 @@ param(
     [ValidateSet("", "global", "project", "branch", "current", "all")]
     [string]$McpScope = "",
     [string]$McpServerId = "",
+    [ValidateSet("", "remote", "local")]
+    [string]$McpProvider = "",
+    [string]$McpConfigId = "",
+    [ValidateSet("", "project", "branch")]
+    [string]$McpLocalScope = "",
     [ValidateSet("configured", "wizard", "json")]
     [string]$InitMode = "configured",
     [string]$InitAnswersPath,
@@ -57,6 +62,7 @@ $script:ConfigPath = [System.IO.Path]::GetFullPath($ConfigPath)
 $script:Config = $null
 $script:ToolsManifest = $null
 $script:ToolsManifestLoaded = $false
+$script:InitVibecoding1cMcpSetupRequested = $false
 
 function Write-Section {
     param([string]$Text)
@@ -770,7 +776,7 @@ function Get-GitStatusForPathSpec {
     param([string[]]$PathSpec = @("."))
 
     $arguments = @("status", "--short", "--") + @($PathSpec)
-    $output = & git -C $script:ProjectRoot @arguments
+    $output = & git -C $script:ProjectRoot @arguments 2>$null
     if ($LASTEXITCODE -ne 0) {
         return "<cannot read git status>"
     }
@@ -1338,6 +1344,12 @@ function New-DefaultProjectConfig {
         aiRules = [ordered]@{
             repo = "https://github.com/comol/ai_rules_1c.git"
             tools = ""
+        }
+        vibecoding1cMcp = [ordered]@{
+            registryRepo = "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git"
+            providerDefault = "remote"
+            remoteConfigId = ""
+            localScopeDefault = "project"
         }
         web = [ordered]@{
             publishByDefault = $false
@@ -2138,6 +2150,7 @@ function Read-InitAnswersFromWizard {
     }
 
     $answers.webPublishByDefault = Read-InitYesNo -Prompt "Publish development branch infobases to Apache for web-client testing?" -Default $false
+    $answers.vibecoding1cMcpSetupDuringInit = Read-InitYesNo -Prompt "Configure vibecoding1c MCP now? Answer no to do it later through /itl-vibecoding1c-mcp." -Default $false
 
     Write-Section "Init summary"
     Write-Host "Project root: $script:ProjectRoot"
@@ -2156,6 +2169,7 @@ function Read-InitAnswersFromWizard {
         Write-Host "Repository user: $($answers.repositoryUser)"
     }
     Write-Host "Apache publication by default: $($answers.webPublishByDefault)"
+    Write-Host "Configure vibecoding1c MCP now: $($answers.vibecoding1cMcpSetupDuringInit)"
     Write-Host "Passwords: hidden"
     if (-not (Read-InitYesNo -Prompt "Continue with these values?" -Default $true)) {
         throw "Init canceled by developer."
@@ -2169,6 +2183,7 @@ function Normalize-InitAnswers {
 
     $sourceUsesRepository = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("sourceUsesRepository", "SOURCE_USES_REPOSITORY") -Default $true) -Default $true
     $webPublishByDefault = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("webPublishByDefault", "WEB_PUBLISH_BY_DEFAULT") -Default $false) -Default $false
+    $vibecoding1cMcpSetupDuringInit = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("vibecoding1cMcpSetupDuringInit", "VIBECODING1C_MCP_SETUP_DURING_INIT") -Default $false) -Default $false
 
     return [pscustomobject]@{
         platformPath = [string](Get-AnswerValue -Answers $Answers -Names @("platformPath", "PLATFORM_PATH"))
@@ -2183,6 +2198,7 @@ function Normalize-InitAnswers {
         repositoryUser = [string](Get-AnswerValue -Answers $Answers -Names @("repositoryUser", "REPOSITORY_USER") -Default "")
         repositoryPassword = ConvertFrom-OptionalPasswordAnswer ([string](Get-AnswerValue -Answers $Answers -Names @("repositoryPassword", "REPOSITORY_PASSWORD") -Default ""))
         webPublishByDefault = $webPublishByDefault
+        vibecoding1cMcpSetupDuringInit = $vibecoding1cMcpSetupDuringInit
         installApacheIfMissing = (ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("installApacheIfMissing", "INSTALL_APACHE_IF_MISSING") -Default $false) -Default $false)
         installVanessaIfMissing = (ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("installVanessaIfMissing", "INSTALL_VANESSA_IF_MISSING") -Default $false) -Default $false)
     }
@@ -2226,10 +2242,12 @@ function Save-InitAnswers {
         REPOSITORY_USER = $(if ($Answers.sourceUsesRepository) { $Answers.repositoryUser } else { "" })
         REPOSITORY_PASSWORD = $(if ($Answers.sourceUsesRepository) { $Answers.repositoryPassword } else { "" })
         WEB_PUBLISH_BY_DEFAULT = $(if ($Answers.webPublishByDefault) { "true" } else { "false" })
+        VIBECODING1C_MCP_SETUP_DURING_INIT = $(if ($Answers.vibecoding1cMcpSetupDuringInit) { "true" } else { "false" })
     }
 
     Set-DotEnvValues -Values $values
     Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+    $script:InitVibecoding1cMcpSetupRequested = [bool]$Answers.vibecoding1cMcpSetupDuringInit
 }
 
 function Ensure-ApacheForInit {
@@ -5446,7 +5464,7 @@ function Show-VanessaMcpStatus {
     Write-VanessaMcpClientSnippets -State $state
 }
 
-function Get-ItlMcpObjectValue {
+function Get-Vibecoding1cMcpObjectValue {
     param(
         [AllowNull()][object]$Object,
         [string]$Name,
@@ -5460,6 +5478,9 @@ function Get-ItlMcpObjectValue {
     if ($Object -is [System.Collections.IDictionary]) {
         if ($Object.Contains($Name)) {
             $value = $Object[$Name]
+            if ($null -ne $value -and ($value -is [array] -or ($value -is [System.Collections.IEnumerable] -and $value -isnot [string]) -or $value -is [System.Collections.IDictionary])) {
+                return $value
+            }
             if ($null -ne $value -and -not [string]::IsNullOrWhiteSpace([string]$value)) {
                 return $value
             }
@@ -5468,14 +5489,19 @@ function Get-ItlMcpObjectValue {
     }
 
     $prop = $Object.PSObject.Properties[$Name]
-    if ($null -ne $prop -and $null -ne $prop.Value -and -not [string]::IsNullOrWhiteSpace([string]$prop.Value)) {
-        return $prop.Value
+    if ($null -ne $prop -and $null -ne $prop.Value) {
+        if ($prop.Value -is [array] -or ($prop.Value -is [System.Collections.IEnumerable] -and $prop.Value -isnot [string]) -or $prop.Value -is [System.Collections.IDictionary]) {
+            return $prop.Value
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$prop.Value)) {
+            return $prop.Value
+        }
     }
 
     return $Default
 }
 
-function ConvertTo-ItlMcpArray {
+function ConvertTo-Vibecoding1cMcpArray {
     param([AllowNull()][object]$Value)
 
     if ($null -eq $Value) {
@@ -5487,7 +5513,7 @@ function ConvertTo-ItlMcpArray {
     return @($Value)
 }
 
-function ConvertTo-ItlMcpHashtable {
+function ConvertTo-Vibecoding1cMcpHashtable {
     param([AllowNull()][object]$Object)
 
     $hash = [ordered]@{}
@@ -5508,8 +5534,8 @@ function ConvertTo-ItlMcpHashtable {
     return $hash
 }
 
-function Get-ItlMcpLocalHome {
-    $override = [Environment]::GetEnvironmentVariable("ITL_MCP_LOCAL_HOME", "Process")
+function Get-Vibecoding1cMcpLocalHome {
+    $override = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
     if (-not [string]::IsNullOrWhiteSpace($override)) {
         return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($override))
     }
@@ -5524,12 +5550,12 @@ function Get-ItlMcpLocalHome {
     return (Join-Path (Join-Path $localAppData "MCP") "vibecoding1c")
 }
 
-function Get-ItlMcpLocalPath {
+function Get-Vibecoding1cMcpLocalPath {
     param([string]$Leaf)
-    return (Join-Path (Get-ItlMcpLocalHome) $Leaf)
+    return (Join-Path (Get-Vibecoding1cMcpLocalHome) $Leaf)
 }
 
-function Read-ItlMcpJsonFile {
+function Read-Vibecoding1cMcpJsonFile {
     param(
         [string]$Path,
         [object]$Default
@@ -5541,7 +5567,7 @@ function Read-ItlMcpJsonFile {
     return $Default
 }
 
-function Write-ItlMcpJsonFile {
+function Write-Vibecoding1cMcpJsonFile {
     param(
         [string]$Path,
         [object]$Value
@@ -5550,8 +5576,8 @@ function Write-ItlMcpJsonFile {
     Write-Utf8Text -Path $Path -Value (($Value | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
 }
 
-function Read-ItlMcpState {
-    $path = Get-ItlMcpLocalPath -Leaf "state.json"
+function Read-Vibecoding1cMcpState {
+    $path = Get-Vibecoding1cMcpLocalPath -Leaf "state.json"
     $default = [pscustomobject]@{
         schemaVersion = 1
         version = ""
@@ -5561,32 +5587,32 @@ function Read-ItlMcpState {
         keyHash = ""
         updatedAt = ""
     }
-    return (Read-ItlMcpJsonFile -Path $path -Default $default)
+    return (Read-Vibecoding1cMcpJsonFile -Path $path -Default $default)
 }
 
-function Write-ItlMcpState {
+function Write-Vibecoding1cMcpState {
     param([object]$State)
 
-    $stateHash = ConvertTo-ItlMcpHashtable -Object $State
+    $stateHash = ConvertTo-Vibecoding1cMcpHashtable -Object $State
     $stateHash["schemaVersion"] = 1
     $stateHash["updatedAt"] = (Get-Date).ToString("o")
-    New-Item -ItemType Directory -Force -Path (Get-ItlMcpLocalHome) | Out-Null
-    Write-ItlMcpJsonFile -Path (Get-ItlMcpLocalPath -Leaf "state.json") -Value $stateHash
-    Write-ItlMcpProjectState -State $stateHash
+    New-Item -ItemType Directory -Force -Path (Get-Vibecoding1cMcpLocalHome) | Out-Null
+    Write-Vibecoding1cMcpJsonFile -Path (Get-Vibecoding1cMcpLocalPath -Leaf "state.json") -Value $stateHash
+    Write-Vibecoding1cMcpProjectState -State $stateHash
 }
 
-function Write-ItlMcpProjectState {
+function Write-Vibecoding1cMcpProjectState {
     param([object]$State)
 
     $projectStatePath = Join-Path $script:ProjectRoot ".agent-1c\mcp\state.json"
-    $context = Get-ItlMcpScopeContext
+    $context = Get-Vibecoding1cMcpScopeContext
     $servers = @()
-    foreach ($server in ConvertTo-ItlMcpArray (Get-ItlMcpObjectValue -Object $State -Name "servers" -Default @())) {
-        $scope = [string](Get-ItlMcpObjectValue -Object $server -Name "scope" -Default "")
+    foreach ($server in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $State -Name "servers" -Default @())) {
+        $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "scope" -Default "")
         if ($scope -eq "global") {
             continue
         }
-        if (([string](Get-ItlMcpObjectValue -Object $server -Name "projectSlug" -Default "")) -ne $context.projectSlug) {
+        if (([string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "projectSlug" -Default "")) -ne $context.projectSlug) {
             continue
         }
         $servers += $server
@@ -5597,38 +5623,38 @@ function Write-ItlMcpProjectState {
         projectSlug = $context.projectSlug
         branchSlug = $context.branchSlug
         updatedAt = (Get-Date).ToString("o")
-        model = (Get-ItlMcpObjectValue -Object $State -Name "model" -Default $null)
+        model = (Get-Vibecoding1cMcpObjectValue -Object $State -Name "model" -Default $null)
         servers = $servers
-        staleIndexes = (Get-ItlMcpObjectValue -Object $State -Name "staleIndexes" -Default @())
+        staleIndexes = (Get-Vibecoding1cMcpObjectValue -Object $State -Name "staleIndexes" -Default @())
     }
 
-    Write-ItlMcpJsonFile -Path $projectStatePath -Value $payload
+    Write-Vibecoding1cMcpJsonFile -Path $projectStatePath -Value $payload
 }
 
-function Read-ItlMcpPortRegistry {
-    $path = Get-ItlMcpLocalPath -Leaf "ports.json"
+function Read-Vibecoding1cMcpPortRegistry {
+    $path = Get-Vibecoding1cMcpLocalPath -Leaf "ports.json"
     $default = [pscustomobject]@{
         schemaVersion = 1
         allocations = @()
         updatedAt = ""
     }
-    return (Read-ItlMcpJsonFile -Path $path -Default $default)
+    return (Read-Vibecoding1cMcpJsonFile -Path $path -Default $default)
 }
 
-function Write-ItlMcpPortRegistry {
+function Write-Vibecoding1cMcpPortRegistry {
     param([object]$Registry)
 
-    $hash = ConvertTo-ItlMcpHashtable -Object $Registry
+    $hash = ConvertTo-Vibecoding1cMcpHashtable -Object $Registry
     $hash["schemaVersion"] = 1
     $hash["updatedAt"] = (Get-Date).ToString("o")
-    New-Item -ItemType Directory -Force -Path (Get-ItlMcpLocalHome) | Out-Null
-    Write-ItlMcpJsonFile -Path (Get-ItlMcpLocalPath -Leaf "ports.json") -Value $hash
+    New-Item -ItemType Directory -Force -Path (Get-Vibecoding1cMcpLocalHome) | Out-Null
+    Write-Vibecoding1cMcpJsonFile -Path (Get-Vibecoding1cMcpLocalPath -Leaf "ports.json") -Value $hash
 }
 
-function Invoke-ItlMcpPortRegistryLock {
+function Invoke-Vibecoding1cMcpPortRegistryLock {
     param([scriptblock]$ScriptBlock)
 
-    $home = Get-ItlMcpLocalHome
+    $home = Get-Vibecoding1cMcpLocalHome
     New-Item -ItemType Directory -Force -Path $home | Out-Null
     $lockPath = Join-Path $home "ports.lock"
     $stream = $null
@@ -5641,7 +5667,7 @@ function Invoke-ItlMcpPortRegistryLock {
         }
     }
     if ($null -eq $stream) {
-        throw "Cannot acquire ITL MCP port registry lock: $lockPath"
+        throw "Cannot acquire vibecoding1c MCP port registry lock: $lockPath"
     }
 
     try {
@@ -5651,70 +5677,70 @@ function Invoke-ItlMcpPortRegistryLock {
     }
 }
 
-function Get-ItlMcpDefaultDistributionRepo {
+function Get-Vibecoding1cMcpDefaultDistributionRepo {
     return "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git"
 }
 
-function Get-ItlMcpDistributionRepo {
-    $fromEnv = [string](Get-EnvValue -Name "ITL_MCP_DISTRIBUTION_REPO" -Default "")
+function Get-Vibecoding1cMcpDistributionRepo {
+    $fromEnv = [string](Get-EnvValue -Name "VIBECODING1C_MCP_DISTRIBUTION_REPO" -Default "")
     if (-not [string]::IsNullOrWhiteSpace($fromEnv)) {
         return $fromEnv
     }
 
-    return (Get-ItlMcpDefaultDistributionRepo)
+    return (Get-Vibecoding1cMcpDefaultDistributionRepo)
 }
 
-function Test-ItlMcpDistributionPathOverride {
+function Test-Vibecoding1cMcpDistributionPathOverride {
     if (-not [string]::IsNullOrWhiteSpace($McpDistributionPath)) {
         return $true
     }
 
-    $fromEnv = [string](Get-EnvValue -Name "ITL_MCP_DISTRIBUTION_PATH" -Default "")
+    $fromEnv = [string](Get-EnvValue -Name "VIBECODING1C_MCP_DISTRIBUTION_PATH" -Default "")
     return (-not [string]::IsNullOrWhiteSpace($fromEnv))
 }
 
-function Get-ItlMcpManagedDistributionRoot {
-    return (Join-Path (Get-ItlMcpLocalHome) "distribution")
+function Get-Vibecoding1cMcpManagedDistributionRoot {
+    return (Join-Path (Get-Vibecoding1cMcpLocalHome) "distribution")
 }
 
-function Get-ItlMcpDistributionRoot {
+function Get-Vibecoding1cMcpDistributionRoot {
     if (-not [string]::IsNullOrWhiteSpace($McpDistributionPath)) {
         return [System.IO.Path]::GetFullPath($McpDistributionPath)
     }
 
-    $fromEnv = [string](Get-EnvValue -Name "ITL_MCP_DISTRIBUTION_PATH" -Default "")
+    $fromEnv = [string](Get-EnvValue -Name "VIBECODING1C_MCP_DISTRIBUTION_PATH" -Default "")
     if (-not [string]::IsNullOrWhiteSpace($fromEnv)) {
         return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($fromEnv))
     }
 
-    return (Get-ItlMcpManagedDistributionRoot)
+    return (Get-Vibecoding1cMcpManagedDistributionRoot)
 }
 
-function Ensure-ItlMcpDistribution {
-    $distributionRoot = Get-ItlMcpDistributionRoot
-    if (Test-ItlMcpDistributionPathOverride) {
+function Ensure-Vibecoding1cMcpDistribution {
+    $distributionRoot = Get-Vibecoding1cMcpDistributionRoot
+    if (Test-Vibecoding1cMcpDistributionPathOverride) {
         if (-not (Test-Path -LiteralPath $distributionRoot -PathType Container -ErrorAction SilentlyContinue)) {
-            throw "MCP distribution override path was not found: $distributionRoot"
+            throw "vibecoding1c MCP distribution override path was not found: $distributionRoot"
         }
         return $distributionRoot
     }
 
-    $repo = Get-ItlMcpDistributionRepo
+    $repo = Get-Vibecoding1cMcpDistributionRepo
     $parent = Split-Path -Parent $distributionRoot
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
 
     if (-not (Test-Path -LiteralPath $distributionRoot -PathType Container -ErrorAction SilentlyContinue)) {
-        Write-Host "Cloning ITL MCP distribution: $repo"
-        Write-Host "MCP distribution path: $distributionRoot"
+        Write-Host "Cloning vibecoding1c MCP distribution: $repo"
+        Write-Host "vibecoding1c MCP distribution path: $distributionRoot"
         Invoke-GitAt -Root $parent -Arguments @("clone", $repo, $distributionRoot)
         return $distributionRoot
     }
 
     if (-not (Test-Path -LiteralPath (Join-Path $distributionRoot ".git") -PathType Container -ErrorAction SilentlyContinue)) {
-        throw "Managed MCP distribution path exists but is not a Git checkout: $distributionRoot. Remove it or set ITL_MCP_DISTRIBUTION_PATH."
+        throw "Managed vibecoding1c MCP distribution path exists but is not a Git checkout: $distributionRoot. Remove it or set VIBECODING1C_MCP_DISTRIBUTION_PATH."
     }
 
-    Write-Host "Updating ITL MCP distribution: $distributionRoot"
+    Write-Host "Updating vibecoding1c MCP distribution: $distributionRoot"
     Invoke-GitAt -Root $distributionRoot -Arguments @("fetch", "--prune")
     $upstream = ""
     try {
@@ -5731,7 +5757,532 @@ function Ensure-ItlMcpDistribution {
     return $distributionRoot
 }
 
-function Read-ItlMcpDotEnvFile {
+function Get-Vibecoding1cMcpDefaultRegistryRepo {
+    return "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git"
+}
+
+function Get-Vibecoding1cMcpRegistryRepo {
+    $fromEnv = [string](Get-EnvValue -Name "VIBECODING1C_MCP_REGISTRY_REPO" -Default "")
+    if (-not [string]::IsNullOrWhiteSpace($fromEnv)) {
+        return $fromEnv
+    }
+
+    $fromConfig = [string](Get-ConfigValue -Path "vibecoding1cMcp.registryRepo" -Default "")
+    if (-not [string]::IsNullOrWhiteSpace($fromConfig)) {
+        return $fromConfig
+    }
+
+    return (Get-Vibecoding1cMcpDefaultRegistryRepo)
+}
+
+function Test-Vibecoding1cMcpRegistryPathOverride {
+    $fromEnv = [string](Get-EnvValue -Name "VIBECODING1C_MCP_REGISTRY_PATH" -Default "")
+    return (-not [string]::IsNullOrWhiteSpace($fromEnv))
+}
+
+function Get-Vibecoding1cMcpManagedRegistryRoot {
+    return (Join-Path (Get-Vibecoding1cMcpLocalHome) "registry")
+}
+
+function Get-Vibecoding1cMcpRegistryRoot {
+    $fromEnv = [string](Get-EnvValue -Name "VIBECODING1C_MCP_REGISTRY_PATH" -Default "")
+    if (-not [string]::IsNullOrWhiteSpace($fromEnv)) {
+        return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($fromEnv))
+    }
+
+    return (Get-Vibecoding1cMcpManagedRegistryRoot)
+}
+
+function Ensure-Vibecoding1cMcpRegistry {
+    $registryRoot = Get-Vibecoding1cMcpRegistryRoot
+    if (Test-Vibecoding1cMcpRegistryPathOverride) {
+        if (-not (Test-Path -LiteralPath $registryRoot -PathType Container -ErrorAction SilentlyContinue)) {
+            throw "vibecoding1c MCP registry override path was not found: $registryRoot"
+        }
+        return $registryRoot
+    }
+
+    $repo = Get-Vibecoding1cMcpRegistryRepo
+    $parent = Split-Path -Parent $registryRoot
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+
+    if (-not (Test-Path -LiteralPath $registryRoot -PathType Container -ErrorAction SilentlyContinue)) {
+        Write-Host "Cloning vibecoding1c MCP registry: $repo"
+        Write-Host "vibecoding1c MCP registry path: $registryRoot"
+        Invoke-GitAt -Root $parent -Arguments @("clone", $repo, $registryRoot)
+        return $registryRoot
+    }
+
+    if (-not (Test-Path -LiteralPath (Join-Path $registryRoot ".git") -PathType Container -ErrorAction SilentlyContinue)) {
+        throw "Managed vibecoding1c MCP registry path exists but is not a Git checkout: $registryRoot. Remove it or set VIBECODING1C_MCP_REGISTRY_PATH."
+    }
+
+    Write-Host "Updating vibecoding1c MCP registry: $registryRoot"
+    Invoke-GitAt -Root $registryRoot -Arguments @("fetch", "--prune")
+    $upstream = ""
+    try {
+        $upstream = ((Get-GitOutputAt -Root $registryRoot -Arguments @("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")) -join "").Trim()
+    } catch {
+        $upstream = ""
+    }
+
+    if ($upstream) {
+        Invoke-GitAt -Root $registryRoot -Arguments @("merge", "--ff-only", $upstream)
+    } else {
+        Invoke-GitAt -Root $registryRoot -Arguments @("pull", "--ff-only")
+    }
+    return $registryRoot
+}
+
+function Read-Vibecoding1cMcpRegistry {
+    $registryPath = Join-Path (Get-Vibecoding1cMcpRegistryRoot) "registry.json"
+    $default = [pscustomobject]@{
+        schemaVersion = 1
+        publishedAt = ""
+        host = $null
+        configurations = @()
+        servers = @()
+    }
+    return (Read-Vibecoding1cMcpJsonFile -Path $registryPath -Default $default)
+}
+
+function Get-Vibecoding1cMcpSelectionPath {
+    return (Join-Path $script:ProjectRoot ".agent-1c\mcp\vibecoding1c-selection.json")
+}
+
+function Get-Vibecoding1cMcpDefaultProvider {
+    $value = [string](Get-EnvValue -Name "VIBECODING1C_MCP_PROVIDER" -Default (Get-ConfigValue -Path "vibecoding1cMcp.providerDefault" -Default "remote"))
+    $normalized = $value.Trim().ToLowerInvariant()
+    if ($normalized -eq "local") {
+        return "local"
+    }
+    return "remote"
+}
+
+function Get-Vibecoding1cMcpDefaultLocalScope {
+    $value = [string](Get-EnvValue -Name "VIBECODING1C_MCP_LOCAL_SCOPE" -Default (Get-ConfigValue -Path "vibecoding1cMcp.localScopeDefault" -Default "project"))
+    $normalized = $value.Trim().ToLowerInvariant()
+    if ($normalized -eq "branch") {
+        return "branch"
+    }
+    return "project"
+}
+
+function Read-Vibecoding1cMcpSelection {
+    $path = Get-Vibecoding1cMcpSelectionPath
+    $defaultConfigId = [string](Get-EnvValue -Name "VIBECODING1C_MCP_CONFIG_ID" -Default (Get-ConfigValue -Path "vibecoding1cMcp.remoteConfigId" -Default ""))
+    $default = [pscustomobject]@{
+        schemaVersion = 1
+        family = "vibecoding1c"
+        defaultProvider = (Get-Vibecoding1cMcpDefaultProvider)
+        remoteConfigId = $defaultConfigId
+        localScopeDefault = (Get-Vibecoding1cMcpDefaultLocalScope)
+        servers = @()
+        updatedAt = ""
+    }
+    $selection = Read-Vibecoding1cMcpJsonFile -Path $path -Default $default
+    $hash = ConvertTo-Vibecoding1cMcpHashtable -Object $selection
+    if (-not $hash.Contains("schemaVersion")) { $hash["schemaVersion"] = 1 }
+    $hash["family"] = "vibecoding1c"
+    if (-not $hash.Contains("defaultProvider") -or -not $hash["defaultProvider"]) { $hash["defaultProvider"] = Get-Vibecoding1cMcpDefaultProvider }
+    if (-not $hash.Contains("remoteConfigId")) { $hash["remoteConfigId"] = $defaultConfigId }
+    if (-not $hash.Contains("localScopeDefault") -or -not $hash["localScopeDefault"]) { $hash["localScopeDefault"] = Get-Vibecoding1cMcpDefaultLocalScope }
+    if (-not $hash.Contains("servers")) { $hash["servers"] = @() }
+    return [pscustomobject]$hash
+}
+
+function Write-Vibecoding1cMcpSelection {
+    param([object]$Selection)
+
+    $hash = ConvertTo-Vibecoding1cMcpHashtable -Object $Selection
+    $hash["schemaVersion"] = 1
+    $hash["family"] = "vibecoding1c"
+    $hash["updatedAt"] = (Get-Date).ToString("o")
+    $path = Get-Vibecoding1cMcpSelectionPath
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+    Write-Vibecoding1cMcpJsonFile -Path $path -Value $hash
+}
+
+function Get-Vibecoding1cMcpSelectionEntry {
+    param(
+        [object]$Selection,
+        [string]$ServerId
+    )
+
+    foreach ($entry in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $Selection -Name "servers" -Default @())) {
+        if ([string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "id" -Default "") -eq $ServerId) {
+            return $entry
+        }
+    }
+    return $null
+}
+
+function Test-Vibecoding1cMcpServerNeedsRemoteConfig {
+    param([object]$Server)
+
+    $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "scope" -Default "global")
+    $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
+    return ($scope -eq "project" -or $id -eq "code" -or $id -eq "graph")
+}
+
+function Get-Vibecoding1cMcpSelectedProvider {
+    param(
+        [object]$Server,
+        [object]$Selection
+    )
+
+    $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
+    if ($McpProvider -and ((-not $McpServerId) -or $McpServerId -eq $id)) {
+        return $McpProvider
+    }
+
+    $entry = Get-Vibecoding1cMcpSelectionEntry -Selection $Selection -ServerId $id
+    if ($entry) {
+        $provider = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "provider" -Default "")
+        if ($provider -eq "local" -or $provider -eq "remote") {
+            return $provider
+        }
+    }
+
+    $defaultProvider = [string](Get-Vibecoding1cMcpObjectValue -Object $Selection -Name "defaultProvider" -Default (Get-Vibecoding1cMcpDefaultProvider))
+    if ($defaultProvider -eq "local") {
+        return "local"
+    }
+    return "remote"
+}
+
+function Get-Vibecoding1cMcpSelectedLocalScope {
+    param(
+        [object]$Server,
+        [object]$Selection
+    )
+
+    $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
+    if ($McpLocalScope -and ((-not $McpServerId) -or $McpServerId -eq $id)) {
+        return $McpLocalScope
+    }
+
+    $entry = Get-Vibecoding1cMcpSelectionEntry -Selection $Selection -ServerId $id
+    if ($entry) {
+        $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "localScope" -Default "")
+        if ($scope -eq "branch" -or $scope -eq "project") {
+            return $scope
+        }
+    }
+
+    return [string](Get-Vibecoding1cMcpObjectValue -Object $Selection -Name "localScopeDefault" -Default (Get-Vibecoding1cMcpDefaultLocalScope))
+}
+
+function Get-Vibecoding1cMcpSelectedConfigId {
+    param(
+        [object]$Server,
+        [object]$Selection,
+        [switch]$AllowPrompt
+    )
+
+    $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
+    if ($McpConfigId -and ((-not $McpServerId) -or $McpServerId -eq $id)) {
+        return $McpConfigId
+    }
+
+    $entry = Get-Vibecoding1cMcpSelectionEntry -Selection $Selection -ServerId $id
+    if ($entry) {
+        $configId = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "configId" -Default "")
+        if ($configId) {
+            return $configId
+        }
+    }
+
+    $selectionConfigId = [string](Get-Vibecoding1cMcpObjectValue -Object $Selection -Name "remoteConfigId" -Default "")
+    if ($selectionConfigId) {
+        return $selectionConfigId
+    }
+
+    if (-not $AllowPrompt) {
+        return ""
+    }
+
+    return (Read-Vibecoding1cMcpRemoteConfigChoice -Selection $Selection)
+}
+
+function Read-Vibecoding1cMcpRemoteConfigChoice {
+    param([object]$Selection)
+
+    Ensure-Vibecoding1cMcpRegistry | Out-Null
+    $registry = Read-Vibecoding1cMcpRegistry
+    $configs = @(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $registry -Name "configurations" -Default @()))
+    if ($configs.Count -eq 0) {
+        throw "Remote vibecoding1c MCP registry has no configurations. Publish host registry first or choose local vibecoding1c MCP."
+    }
+    if (-not (Test-InteractiveInputAvailable)) {
+        throw "Remote vibecoding1c MCP configuration must be selected explicitly. Run vibecoding1c-mcp-select -McpProvider remote -McpConfigId <configId>."
+    }
+
+    Write-Host "Available remote vibecoding1c MCP configurations:"
+    for ($i = 0; $i -lt $configs.Count; $i++) {
+        $config = $configs[$i]
+        $configId = [string](Get-Vibecoding1cMcpObjectValue -Object $config -Name "configId" -Default "")
+        $title = [string](Get-Vibecoding1cMcpObjectValue -Object $config -Name "title" -Default $configId)
+        $source = [string](Get-Vibecoding1cMcpObjectValue -Object $config -Name "source" -Default "")
+        Write-Host ("  {0}. {1} {2}" -f ($i + 1), $configId, $(if ($title -and $title -ne $configId) { "($title)" } else { "" }))
+        if ($source) {
+            Write-Host "     $source"
+        }
+    }
+
+    while ($true) {
+        $answer = (Read-Host "Choose remote vibecoding1c MCP configuration by number or configId").Trim()
+        if (-not $answer) {
+            continue
+        }
+        $index = 0
+        if ([int]::TryParse($answer, [ref]$index) -and $index -ge 1 -and $index -le $configs.Count) {
+            return [string](Get-Vibecoding1cMcpObjectValue -Object $configs[$index - 1] -Name "configId" -Default "")
+        }
+        foreach ($config in $configs) {
+            $configId = [string](Get-Vibecoding1cMcpObjectValue -Object $config -Name "configId" -Default "")
+            if ($configId -eq $answer) {
+                return $configId
+            }
+        }
+        Write-Host "Unknown vibecoding1c MCP configuration: $answer"
+    }
+}
+
+function ConvertTo-Vibecoding1cMcpLocalScopedServer {
+    param(
+        [object]$Server,
+        [string]$LocalScope,
+        [object]$Context
+    )
+
+    $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
+    $hash = ConvertTo-Vibecoding1cMcpHashtable -Object $Server
+    if ($LocalScope -eq "branch") {
+        if (-not $Context.isDevelopmentBranch) {
+            Write-Host "Local branch vibecoding1c MCP for '$id' was requested outside itldev/*; using project scope."
+            return [pscustomobject]$hash
+        }
+        $hash["scope"] = "branch"
+        $hash["mcpNameTemplate"] = "itl-{projectSlug}-{branchSlug}-$id"
+        $hash["containerNameTemplate"] = "itl-{projectSlug}-{branchSlug}-$id"
+        if ($hash.Contains("composeProjectTemplate")) {
+            $hash["composeProjectTemplate"] = "itl-{projectSlug}-{branchSlug}-$id"
+        }
+    }
+    return [pscustomobject]$hash
+}
+
+function Get-Vibecoding1cMcpCurrentSourceFingerprint {
+    try {
+        if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git") -ErrorAction SilentlyContinue)) {
+            return ""
+        }
+        $paths = @((Get-ExportPath))
+        $parts = @()
+        $parts += "commit=$(Get-CurrentCommit)"
+        foreach ($path in $paths) {
+            $normalized = ($path -replace "\\", "/").Trim("/")
+            if ($normalized) {
+                $parts += "$normalized=$(Get-GitObjectIdForHeadPath -RepoPath $normalized)"
+            }
+        }
+        $status = Get-GitStatusForFingerprintPaths -PathSpec $paths
+        if ($status) {
+            $parts += "worktree=$status"
+        } else {
+            $parts += "worktree=<clean>"
+        }
+        return ($parts -join "|")
+    } catch {
+        return ""
+    }
+}
+
+function Get-Vibecoding1cMcpEndpointFreshness {
+    param([object]$Endpoint)
+
+    $status = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "status" -Default "")
+    $health = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "health" -Default "")
+    if ($status -eq "indexing" -or $health -eq "indexing") {
+        return "indexing"
+    }
+
+    $sourceFingerprint = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "sourceFingerprint" -Default "")
+    if (-not $sourceFingerprint) {
+        return "unknown"
+    }
+
+    $currentFingerprint = Get-Vibecoding1cMcpCurrentSourceFingerprint
+    if ($currentFingerprint -and $sourceFingerprint -eq $currentFingerprint) {
+        return "fresh"
+    }
+
+    $provider = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "provider" -Default "local")
+    if ($provider -eq "remote") {
+        return "remote-shared"
+    }
+
+    return "stale"
+}
+
+function New-Vibecoding1cMcpRemoteRuntime {
+    param(
+        [object]$Server,
+        [object]$Selection,
+        [switch]$AllowPrompt
+    )
+
+    $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
+    $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "scope" -Default "global")
+    $configId = ""
+    if (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $Server) {
+        $configId = Get-Vibecoding1cMcpSelectedConfigId -Server $Server -Selection $Selection -AllowPrompt:$AllowPrompt
+        if (-not $configId) {
+            throw "Remote vibecoding1c MCP server '$id' requires explicit configuration selection. Run vibecoding1c-mcp-select -McpServerId $id -McpProvider remote -McpConfigId <configId>."
+        }
+    }
+
+    $registry = Read-Vibecoding1cMcpRegistry
+    foreach ($endpoint in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $registry -Name "servers" -Default @())) {
+        if ([string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "family" -Default "") -ne "vibecoding1c") {
+            continue
+        }
+        if ([string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "id" -Default "") -ne $id) {
+            continue
+        }
+        if ([string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "scope" -Default "global") -ne $scope) {
+            continue
+        }
+        if ($configId -and ([string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "configId" -Default "")) -ne $configId) {
+            continue
+        }
+
+        return [pscustomobject]@{
+            id = $id
+            scope = $scope
+            name = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "name" -Default "itl-$id")
+            containerName = ""
+            internalPort = 0
+            hostPort = 0
+            url = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "url" -Default "")
+            projectSlug = (Get-Vibecoding1cMcpScopeContext).projectSlug
+            branchSlug = (Get-Vibecoding1cMcpScopeContext).branchSlug
+            gitBranch = (Get-Vibecoding1cMcpScopeContext).gitBranch
+            projectRoot = $script:ProjectRoot
+            image = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "image" -Default "")
+            family = "vibecoding1c"
+            provider = "remote"
+            configId = $configId
+            health = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "health" -Default "")
+            sourceCommit = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "sourceCommit" -Default "")
+            sourceFingerprint = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "sourceFingerprint" -Default "")
+            reportHash = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "reportHash" -Default "")
+            indexedAt = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "indexedAt" -Default "")
+        }
+    }
+
+    $configSuffix = $(if ($configId) { " for configId '$configId'" } else { "" })
+    Write-Host "Skipping remote vibecoding1c MCP server '$id': endpoint was not found in registry$configSuffix."
+    return $null
+}
+
+function Set-Vibecoding1cMcpSelection {
+    Write-Section "Select vibecoding1c MCP"
+    Ensure-GitIgnore
+    $selection = Read-Vibecoding1cMcpSelection
+    $selectionHash = ConvertTo-Vibecoding1cMcpHashtable -Object $selection
+    $context = Get-Vibecoding1cMcpScopeContext
+    $servers = @()
+
+    $manifest = Read-Vibecoding1cMcpManifest
+    $targetServerIds = @()
+    foreach ($server in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $manifest -Name "servers" -Default @())) {
+        $id = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "id" -Default "")
+        if ($McpServerId -and $id -ne $McpServerId) {
+            continue
+        }
+        if ($id) {
+            $targetServerIds += $id
+        }
+    }
+
+    if ($McpProvider) {
+        $selectionHash["defaultProvider"] = $McpProvider
+    }
+    if ($McpLocalScope) {
+        $selectionHash["localScopeDefault"] = $McpLocalScope
+    }
+    if ($McpConfigId) {
+        $selectionHash["remoteConfigId"] = $McpConfigId
+    }
+
+    foreach ($entry in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $selection -Name "servers" -Default @())) {
+        $entryId = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "id" -Default "")
+        if ($targetServerIds -contains $entryId) {
+            continue
+        }
+        $servers += $entry
+    }
+
+    foreach ($server in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $manifest -Name "servers" -Default @())) {
+        $id = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "id" -Default "")
+        if ($targetServerIds -notcontains $id) {
+            continue
+        }
+
+        $provider = $(if ($McpProvider) { $McpProvider } else { [string](Get-Vibecoding1cMcpObjectValue -Object $selectionHash -Name "defaultProvider" -Default "remote") })
+        if (-not $McpProvider -and (Test-InteractiveInputAvailable)) {
+            $answer = (Read-Host "Provider for vibecoding1c MCP server '$id' [remote/local], default $provider").Trim().ToLowerInvariant()
+            if ($answer -eq "remote" -or $answer -eq "local") {
+                $provider = $answer
+            }
+        }
+        $localScope = $(if ($McpLocalScope) { $McpLocalScope } else { [string](Get-Vibecoding1cMcpObjectValue -Object $selectionHash -Name "localScopeDefault" -Default "project") })
+        if ($provider -eq "local" -and -not $McpLocalScope -and (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $server) -and (Test-InteractiveInputAvailable)) {
+            $scopeAnswer = (Read-Host "Local scope for vibecoding1c MCP server '$id' [project/branch], default $localScope").Trim().ToLowerInvariant()
+            if ($scopeAnswer -eq "project" -or $scopeAnswer -eq "branch") {
+                $localScope = $scopeAnswer
+            }
+        }
+        $configId = $(if ($McpConfigId) { $McpConfigId } else { [string](Get-Vibecoding1cMcpObjectValue -Object $selectionHash -Name "remoteConfigId" -Default "") })
+        if ($provider -eq "remote" -and (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $server) -and -not $configId) {
+            $configId = Read-Vibecoding1cMcpRemoteConfigChoice -Selection $selection
+            $selectionHash["remoteConfigId"] = $configId
+        }
+
+        $servers += [ordered]@{
+            id = $id
+            family = "vibecoding1c"
+            provider = $provider
+            configId = $configId
+            localScope = $localScope
+            selectedAt = (Get-Date).ToString("o")
+        }
+    }
+
+    $selectionHash["servers"] = $servers
+    Write-Vibecoding1cMcpSelection -Selection $selectionHash
+    Write-Host "vibecoding1c MCP selection: $(Get-Vibecoding1cMcpSelectionPath)"
+    Write-Host "Default provider: $($selectionHash["defaultProvider"])"
+    Write-Host "Remote configId: $(if ($selectionHash["remoteConfigId"]) { $selectionHash["remoteConfigId"] } else { '<not selected>' })"
+    Write-Host "Local scope default: $($selectionHash["localScopeDefault"])"
+    if ($context.isDevelopmentBranch) {
+        Write-Host "Current branch scope: $($context.branchSlug)"
+    }
+}
+
+function Refresh-Vibecoding1cMcpRegistry {
+    Write-Section "Refresh vibecoding1c MCP registry"
+    Ensure-Vibecoding1cMcpRegistry | Out-Null
+    $registry = Read-Vibecoding1cMcpRegistry
+    Write-Host "vibecoding1c MCP registry: $(Get-Vibecoding1cMcpRegistryRoot)"
+    Write-Host "Published at: $(Get-Vibecoding1cMcpObjectValue -Object $registry -Name 'publishedAt' -Default '<unknown>')"
+    Write-Host "Configurations: $(@(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $registry -Name 'configurations' -Default @())).Count)"
+    Write-Host "Servers: $(@(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $registry -Name 'servers' -Default @())).Count)"
+}
+
+function Read-Vibecoding1cMcpDotEnvFile {
     param([string]$Path)
 
     $values = [ordered]@{}
@@ -5759,7 +6310,7 @@ function Read-ItlMcpDotEnvFile {
     return $values
 }
 
-function Write-ItlMcpDotEnvFile {
+function Write-Vibecoding1cMcpDotEnvFile {
     param(
         [string]$Path,
         [System.Collections.IDictionary]$Values
@@ -5793,16 +6344,16 @@ function Write-ItlMcpDotEnvFile {
     Write-Utf8Text -Path $Path -Value ((@($updated) -join [Environment]::NewLine) + [Environment]::NewLine)
 }
 
-function Get-ItlMcpConfigContext {
-    $distributionRoot = Get-ItlMcpDistributionRoot
+function Get-Vibecoding1cMcpConfigContext {
+    $distributionRoot = Get-Vibecoding1cMcpDistributionRoot
     $distributionConfigPath = Join-Path $distributionRoot "config.env"
-    $localConfigPath = Get-ItlMcpLocalPath -Leaf "config.env"
+    $localConfigPath = Get-Vibecoding1cMcpLocalPath -Leaf "config.env"
     $values = [ordered]@{}
 
     foreach ($source in @(
-        (Read-ItlMcpDotEnvFile -Path $distributionConfigPath),
-        (Read-ItlMcpDotEnvFile -Path $localConfigPath),
-        (Read-ItlMcpDotEnvFile -Path (Join-Path $script:ProjectRoot ".dev.env"))
+        (Read-Vibecoding1cMcpDotEnvFile -Path $distributionConfigPath),
+        (Read-Vibecoding1cMcpDotEnvFile -Path $localConfigPath),
+        (Read-Vibecoding1cMcpDotEnvFile -Path (Join-Path $script:ProjectRoot ".dev.env"))
     )) {
         foreach ($key in $source.Keys) {
             $values[$key] = $source[$key]
@@ -5817,7 +6368,7 @@ function Get-ItlMcpConfigContext {
     }
 }
 
-function Get-ItlMcpConfigValue {
+function Get-Vibecoding1cMcpConfigValue {
     param(
         [object]$Context,
         [string]$Name,
@@ -5829,7 +6380,7 @@ function Get-ItlMcpConfigValue {
         return $processValue
     }
 
-    $values = Get-ItlMcpObjectValue -Object $Context -Name "values" -Default $null
+    $values = Get-Vibecoding1cMcpObjectValue -Object $Context -Name "values" -Default $null
     if ($null -ne $values -and $values.Contains($Name)) {
         $value = $values[$Name]
         if (-not [string]::IsNullOrWhiteSpace([string]$value)) {
@@ -5840,7 +6391,7 @@ function Get-ItlMcpConfigValue {
     return $Default
 }
 
-function Get-ItlMcpDefaultManifest {
+function Get-Vibecoding1cMcpDefaultManifest {
     return [pscustomobject]@{
         schemaVersion = 1
         package = "vibecoding1c"
@@ -5993,34 +6544,21 @@ function Get-ItlMcpDefaultManifest {
                     [ordered]@{ name = "PROJECT_NAME"; value = "{projectSlug}" }
                 )
                 volumes = @()
-            },
-            [ordered]@{
-                id = "vanessa"
-                title = "Branch Vanessa Automation MCP"
-                scope = "branch"
-                mcpNameTemplate = "itl-{projectSlug}-{branchSlug}-vanessa"
-                containerNameTemplate = "itl-{projectSlug}-{branchSlug}-vanessa"
-                localVanessa = $true
-                internalPort = 0
-                healthPath = "/mcp"
-                embedding = $false
-                env = @()
-                volumes = @()
             }
         )
     }
 }
 
-function Read-ItlMcpManifest {
-    $distributionRoot = Get-ItlMcpDistributionRoot
-    $manifestPath = Join-Path $distributionRoot "itl-mcp.manifest.json"
+function Read-Vibecoding1cMcpManifest {
+    $distributionRoot = Get-Vibecoding1cMcpDistributionRoot
+    $manifestPath = Join-Path $distributionRoot "vibecoding1c-mcp.manifest.json"
     if (Test-Path -LiteralPath $manifestPath -PathType Leaf -ErrorAction SilentlyContinue) {
         return (Read-Utf8Text -Path $manifestPath | ConvertFrom-Json)
     }
-    return (Get-ItlMcpDefaultManifest)
+    return (Get-Vibecoding1cMcpDefaultManifest)
 }
 
-function Get-ItlMcpScopeContext {
+function Get-Vibecoding1cMcpScopeContext {
     $projectSlug = ConvertTo-SafeName (Split-Path -Leaf $script:ProjectRoot)
     $gitBranch = ""
     try {
@@ -6049,7 +6587,7 @@ function Get-ItlMcpScopeContext {
     }
 }
 
-function Expand-ItlMcpTemplate {
+function Expand-Vibecoding1cMcpTemplate {
     param(
         [string]$Template,
         [object]$Context,
@@ -6057,27 +6595,27 @@ function Expand-ItlMcpTemplate {
     )
 
     $value = $Template
-    $value = $value.Replace("{projectSlug}", [string](Get-ItlMcpObjectValue -Object $Context -Name "projectSlug" -Default "project"))
-    $value = $value.Replace("{branchSlug}", [string](Get-ItlMcpObjectValue -Object $Context -Name "branchSlug" -Default "branch"))
+    $value = $value.Replace("{projectSlug}", [string](Get-Vibecoding1cMcpObjectValue -Object $Context -Name "projectSlug" -Default "project"))
+    $value = $value.Replace("{branchSlug}", [string](Get-Vibecoding1cMcpObjectValue -Object $Context -Name "branchSlug" -Default "branch"))
     $value = $value.Replace("{serverId}", $ServerId)
     return $value
 }
 
-function Get-ItlMcpImageName {
+function Get-Vibecoding1cMcpImageName {
     param(
         [object]$Server,
         [object]$ConfigContext
     )
 
-    $image = [string](Get-ItlMcpObjectValue -Object $Server -Name "image" -Default "")
-    $imageTag = [string](Get-ItlMcpConfigValue -Context $ConfigContext -Name "IMAGE_TAG" -Default "latest")
+    $image = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "image" -Default "")
+    $imageTag = [string](Get-Vibecoding1cMcpConfigValue -Context $ConfigContext -Name "IMAGE_TAG" -Default "latest")
     if ($imageTag -eq "light" -and $image -match ':latest$') {
         return $image
     }
     return $image.Replace("{imageTag}", $imageTag)
 }
 
-function Get-ItlMcpPortRange {
+function Get-Vibecoding1cMcpPortRange {
     param([string]$Scope)
 
     switch ($Scope) {
@@ -6085,11 +6623,11 @@ function Get-ItlMcpPortRange {
         "project" { return [pscustomobject]@{ start = 18100; end = 18499 } }
         "branch" { return [pscustomobject]@{ start = 18500; end = 18999 } }
         "model" { return [pscustomobject]@{ start = 19000; end = 19049 } }
-        default { throw "Unknown ITL MCP port scope: $Scope" }
+        default { throw "Unknown vibecoding1c MCP port scope: $Scope" }
     }
 }
 
-function Test-ItlMcpDockerAvailable {
+function Test-Vibecoding1cMcpDockerAvailable {
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         return $false
     }
@@ -6097,7 +6635,7 @@ function Test-ItlMcpDockerAvailable {
     return ($LASTEXITCODE -eq 0)
 }
 
-function Get-ItlMcpDockerContainerStatus {
+function Get-Vibecoding1cMcpDockerContainerStatus {
     param([string]$ContainerName)
 
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
@@ -6115,19 +6653,19 @@ function Get-ItlMcpDockerContainerStatus {
     return ""
 }
 
-function Test-ItlMcpDockerContainerExists {
+function Test-Vibecoding1cMcpDockerContainerExists {
     param([string]$ContainerName)
-    return -not [string]::IsNullOrWhiteSpace((Get-ItlMcpDockerContainerStatus -ContainerName $ContainerName))
+    return -not [string]::IsNullOrWhiteSpace((Get-Vibecoding1cMcpDockerContainerStatus -ContainerName $ContainerName))
 }
 
-function Remove-ItlMcpStalePortAllocations {
+function Remove-Vibecoding1cMcpStalePortAllocations {
     param([object]$Registry)
 
     $kept = @()
-    foreach ($allocation in ConvertTo-ItlMcpArray (Get-ItlMcpObjectValue -Object $Registry -Name "allocations" -Default @())) {
-        $port = ConvertTo-IntOrDefault -Value (Get-ItlMcpObjectValue -Object $allocation -Name "port" -Default 0)
-        $containerName = [string](Get-ItlMcpObjectValue -Object $allocation -Name "containerName" -Default "")
-        if ($containerName -and (Test-ItlMcpDockerContainerExists -ContainerName $containerName)) {
+    foreach ($allocation in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $Registry -Name "allocations" -Default @())) {
+        $port = ConvertTo-IntOrDefault -Value (Get-Vibecoding1cMcpObjectValue -Object $allocation -Name "port" -Default 0)
+        $containerName = [string](Get-Vibecoding1cMcpObjectValue -Object $allocation -Name "containerName" -Default "")
+        if ($containerName -and (Test-Vibecoding1cMcpDockerContainerExists -ContainerName $containerName)) {
             $kept += $allocation
             continue
         }
@@ -6137,12 +6675,12 @@ function Remove-ItlMcpStalePortAllocations {
         }
     }
 
-    $hash = ConvertTo-ItlMcpHashtable -Object $Registry
+    $hash = ConvertTo-Vibecoding1cMcpHashtable -Object $Registry
     $hash["allocations"] = $kept
     return [pscustomobject]$hash
 }
 
-function Resolve-ItlMcpPort {
+function Resolve-Vibecoding1cMcpPort {
     param(
         [string]$Scope,
         [string]$Key,
@@ -6150,14 +6688,14 @@ function Resolve-ItlMcpPort {
         [string]$ContainerName
     )
 
-    $result = Invoke-ItlMcpPortRegistryLock -ScriptBlock {
-        $registry = Remove-ItlMcpStalePortAllocations -Registry (Read-ItlMcpPortRegistry)
-        $allocations = @(ConvertTo-ItlMcpArray (Get-ItlMcpObjectValue -Object $registry -Name "allocations" -Default @()))
+    $result = Invoke-Vibecoding1cMcpPortRegistryLock -ScriptBlock {
+        $registry = Remove-Vibecoding1cMcpStalePortAllocations -Registry (Read-Vibecoding1cMcpPortRegistry)
+        $allocations = @(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $registry -Name "allocations" -Default @()))
         foreach ($allocation in $allocations) {
-            if ([string](Get-ItlMcpObjectValue -Object $allocation -Name "key" -Default "") -eq $Key) {
-                $savedPort = ConvertTo-IntOrDefault -Value (Get-ItlMcpObjectValue -Object $allocation -Name "port" -Default 0)
+            if ([string](Get-Vibecoding1cMcpObjectValue -Object $allocation -Name "key" -Default "") -eq $Key) {
+                $savedPort = ConvertTo-IntOrDefault -Value (Get-Vibecoding1cMcpObjectValue -Object $allocation -Name "port" -Default 0)
                 if ($savedPort -gt 0) {
-                    Write-ItlMcpPortRegistry -Registry $registry
+                    Write-Vibecoding1cMcpPortRegistry -Registry $registry
                     return [pscustomobject]@{ port = $savedPort }
                 }
             }
@@ -6165,13 +6703,13 @@ function Resolve-ItlMcpPort {
 
         $used = @{}
         foreach ($allocation in $allocations) {
-            $usedPort = ConvertTo-IntOrDefault -Value (Get-ItlMcpObjectValue -Object $allocation -Name "port" -Default 0)
+            $usedPort = ConvertTo-IntOrDefault -Value (Get-Vibecoding1cMcpObjectValue -Object $allocation -Name "port" -Default 0)
             if ($usedPort -gt 0) {
                 $used[$usedPort] = $true
             }
         }
 
-        $range = Get-ItlMcpPortRange -Scope $Scope
+        $range = Get-Vibecoding1cMcpPortRange -Scope $Scope
         for ($port = $range.start; $port -le $range.end; $port++) {
             if ($used.ContainsKey($port)) {
                 continue
@@ -6189,26 +6727,26 @@ function Resolve-ItlMcpPort {
                 projectRoot = $script:ProjectRoot
                 updatedAt = (Get-Date).ToString("o")
             }
-            $hash = ConvertTo-ItlMcpHashtable -Object $registry
+            $hash = ConvertTo-Vibecoding1cMcpHashtable -Object $registry
             $hash["allocations"] = @($allocations + $newAllocation)
-            Write-ItlMcpPortRegistry -Registry $hash
+            Write-Vibecoding1cMcpPortRegistry -Registry $hash
             return [pscustomobject]@{ port = $port }
         }
 
-        throw "No free ITL MCP host port found in range $($range.start)..$($range.end) for $Scope server '$ServerId'."
+        throw "No free vibecoding1c MCP host port found in range $($range.start)..$($range.end) for $Scope server '$ServerId'."
     }
 
     return [int]$result.port
 }
 
-function Resolve-ItlMcpModelPort {
-    if ((Test-ItlMcpEmbeddingEndpoint -Port 1234) -or (Test-TcpPortAvailable -Port 1234)) {
+function Resolve-Vibecoding1cMcpModelPort {
+    if ((Test-Vibecoding1cMcpEmbeddingEndpoint -Port 1234) -or (Test-TcpPortAvailable -Port 1234)) {
         return 1234
     }
-    return (Resolve-ItlMcpPort -Scope "model" -Key "model:lm-studio" -ServerId "lm-studio" -ContainerName "")
+    return (Resolve-Vibecoding1cMcpPort -Scope "model" -Key "model:lm-studio" -ServerId "lm-studio" -ContainerName "")
 }
 
-function Get-ItlMcpHardwareProfile {
+function Get-Vibecoding1cMcpHardwareProfile {
     $gpuMemoryMb = 0
     if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
         try {
@@ -6238,14 +6776,14 @@ function Get-ItlMcpHardwareProfile {
     }
 }
 
-function Select-ItlMcpEmbeddingModel {
+function Select-Vibecoding1cMcpEmbeddingModel {
     param(
         [int]$GpuMemoryMb = -1,
         [int]$RamGb = -1
     )
 
     if ($GpuMemoryMb -lt 0 -or $RamGb -lt 0) {
-        $profile = Get-ItlMcpHardwareProfile
+        $profile = Get-Vibecoding1cMcpHardwareProfile
         if ($GpuMemoryMb -lt 0) {
             $GpuMemoryMb = [int]$profile.gpuMemoryMb
         }
@@ -6269,7 +6807,7 @@ function Select-ItlMcpEmbeddingModel {
     return [pscustomobject]@{ provider = "lm-studio"; mode = "cpu"; model = "intfloat/multilingual-e5-base"; quantization = ""; modelId = "intfloat/multilingual-e5-base"; gpuMemoryMb = $GpuMemoryMb; ramGb = $RamGb }
 }
 
-function Test-ItlMcpEmbeddingEndpoint {
+function Test-Vibecoding1cMcpEmbeddingEndpoint {
     param([int]$Port)
 
     try {
@@ -6281,16 +6819,16 @@ function Test-ItlMcpEmbeddingEndpoint {
     }
 }
 
-function Ensure-ItlMcpModel {
-    Write-Section "ITL MCP embedding model"
+function Ensure-Vibecoding1cMcpModel {
+    Write-Section "vibecoding1c MCP embedding model"
 
-    $state = Read-ItlMcpState
-    $stateHash = ConvertTo-ItlMcpHashtable -Object $state
-    $previousModel = Get-ItlMcpObjectValue -Object (Get-ItlMcpObjectValue -Object $state -Name "model" -Default $null) -Name "modelId" -Default ""
-    $selection = Select-ItlMcpEmbeddingModel
-    $port = Resolve-ItlMcpModelPort
+    $state = Read-Vibecoding1cMcpState
+    $stateHash = ConvertTo-Vibecoding1cMcpHashtable -Object $state
+    $previousModel = Get-Vibecoding1cMcpObjectValue -Object (Get-Vibecoding1cMcpObjectValue -Object $state -Name "model" -Default $null) -Name "modelId" -Default ""
+    $selection = Select-Vibecoding1cMcpEmbeddingModel
+    $port = Resolve-Vibecoding1cMcpModelPort
     $apiBase = "http://host.docker.internal:$port/v1"
-    $ready = Test-ItlMcpEmbeddingEndpoint -Port $port
+    $ready = Test-Vibecoding1cMcpEmbeddingEndpoint -Port $port
     $lms = Get-Command lms -ErrorAction SilentlyContinue
     $notes = @()
 
@@ -6319,9 +6857,9 @@ function Ensure-ItlMcpModel {
         } catch {
             $notes += "lms server start failed on port ${port}: $($_.Exception.Message)"
         }
-        $ready = Test-ItlMcpEmbeddingEndpoint -Port $port
+        $ready = Test-Vibecoding1cMcpEmbeddingEndpoint -Port $port
     } elseif (-not $ready) {
-        $notes += "LM Studio CLI 'lms' was not found. Install LM Studio, open it once, then rerun mcp-ensure-model."
+        $notes += "LM Studio CLI 'lms' was not found. Install LM Studio, open it once, then rerun vibecoding1c-mcp-ensure-model."
     }
 
     if ($previousModel -and $previousModel -ne $selection.modelId) {
@@ -6347,7 +6885,7 @@ function Ensure-ItlMcpModel {
         notes = $notes
     }
 
-    Write-ItlMcpState -State $stateHash
+    Write-Vibecoding1cMcpState -State $stateHash
 
     Write-Host "Selected embedding model: $($selection.modelId)"
     Write-Host "Embedding API base for containers: $apiBase"
@@ -6359,21 +6897,21 @@ function Ensure-ItlMcpModel {
     return [pscustomobject]$stateHash["model"]
 }
 
-function Get-ItlMcpEmbeddingEnv {
-    $state = Read-ItlMcpState
-    $model = Get-ItlMcpObjectValue -Object $state -Name "model" -Default $null
+function Get-Vibecoding1cMcpEmbeddingEnv {
+    $state = Read-Vibecoding1cMcpState
+    $model = Get-Vibecoding1cMcpObjectValue -Object $state -Name "model" -Default $null
     if ($null -eq $model) {
-        $model = Ensure-ItlMcpModel
+        $model = Ensure-Vibecoding1cMcpModel
     }
 
     return [pscustomobject]@{
-        base = [string](Get-ItlMcpObjectValue -Object $model -Name "apiBase" -Default "")
-        key = [string](Get-ItlMcpObjectValue -Object $model -Name "apiKey" -Default "lm-studio")
-        model = [string](Get-ItlMcpObjectValue -Object $model -Name "model" -Default "")
+        base = [string](Get-Vibecoding1cMcpObjectValue -Object $model -Name "apiBase" -Default "")
+        key = [string](Get-Vibecoding1cMcpObjectValue -Object $model -Name "apiKey" -Default "lm-studio")
+        model = [string](Get-Vibecoding1cMcpObjectValue -Object $model -Name "model" -Default "")
     }
 }
 
-function Resolve-ItlMcpConfiguredPath {
+function Resolve-Vibecoding1cMcpConfiguredPath {
     param(
         [object]$ConfigContext,
         [string]$Name,
@@ -6381,7 +6919,7 @@ function Resolve-ItlMcpConfiguredPath {
         [string]$Subdir = ""
     )
 
-    $value = [string](Get-ItlMcpConfigValue -Context $ConfigContext -Name $Name -Default "")
+    $value = [string](Get-Vibecoding1cMcpConfigValue -Context $ConfigContext -Name $Name -Default "")
     if (-not $value -and $Fallback -eq "exportPath") {
         $value = Resolve-ProjectPath (Get-ExportPath)
     }
@@ -6401,24 +6939,24 @@ function Resolve-ItlMcpConfiguredPath {
     return [System.IO.Path]::GetFullPath($value)
 }
 
-function New-ItlMcpServerRuntime {
+function New-Vibecoding1cMcpServerRuntime {
     param(
         [object]$Server,
         [object]$Context,
         [object]$ConfigContext
     )
 
-    $id = [string](Get-ItlMcpObjectValue -Object $Server -Name "id" -Default "")
-    $scope = [string](Get-ItlMcpObjectValue -Object $Server -Name "scope" -Default "global")
-    $nameTemplate = [string](Get-ItlMcpObjectValue -Object $Server -Name "mcpNameTemplate" -Default "itl-$id")
-    $containerTemplate = [string](Get-ItlMcpObjectValue -Object $Server -Name "containerNameTemplate" -Default $nameTemplate)
-    $mcpName = Expand-ItlMcpTemplate -Template $nameTemplate -Context $Context -ServerId $id
-    $containerName = Expand-ItlMcpTemplate -Template $containerTemplate -Context $Context -ServerId $id
+    $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
+    $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "scope" -Default "global")
+    $nameTemplate = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "mcpNameTemplate" -Default "itl-$id")
+    $containerTemplate = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "containerNameTemplate" -Default $nameTemplate)
+    $mcpName = Expand-Vibecoding1cMcpTemplate -Template $nameTemplate -Context $Context -ServerId $id
+    $containerName = Expand-Vibecoding1cMcpTemplate -Template $containerTemplate -Context $Context -ServerId $id
     $portKey = "${scope}:$mcpName"
-    $internalPort = ConvertTo-IntOrDefault -Value (Get-ItlMcpObjectValue -Object $Server -Name "internalPort" -Default 0)
+    $internalPort = ConvertTo-IntOrDefault -Value (Get-Vibecoding1cMcpObjectValue -Object $Server -Name "internalPort" -Default 0)
     $hostPort = 0
     if ($internalPort -gt 0) {
-        $hostPort = Resolve-ItlMcpPort -Scope $scope -Key $portKey -ServerId $id -ContainerName $containerName
+        $hostPort = Resolve-Vibecoding1cMcpPort -Scope $scope -Key $portKey -ServerId $id -ContainerName $containerName
     }
 
     $url = ""
@@ -6438,45 +6976,53 @@ function New-ItlMcpServerRuntime {
         branchSlug = $Context.branchSlug
         gitBranch = $Context.gitBranch
         projectRoot = $Context.projectRoot
-        image = (Get-ItlMcpImageName -Server $Server -ConfigContext $ConfigContext)
+        family = "vibecoding1c"
+        provider = "local"
+        configId = ""
+        health = ""
+        sourceCommit = $(try { Get-CurrentCommit } catch { "" })
+        sourceFingerprint = $(Get-Vibecoding1cMcpCurrentSourceFingerprint)
+        reportHash = ""
+        indexedAt = ""
+        image = (Get-Vibecoding1cMcpImageName -Server $Server -ConfigContext $ConfigContext)
     }
 }
 
-function Resolve-ItlMcpEnvironment {
+function Resolve-Vibecoding1cMcpEnvironment {
     param(
         [object]$Server,
         [object]$Runtime,
         [object]$ConfigContext
     )
 
-    $embedding = Get-ItlMcpEmbeddingEnv
+    $embedding = Get-Vibecoding1cMcpEmbeddingEnv
     $env = [ordered]@{}
     $missing = @()
-    foreach ($entry in ConvertTo-ItlMcpArray (Get-ItlMcpObjectValue -Object $Server -Name "env" -Default @())) {
-        $name = [string](Get-ItlMcpObjectValue -Object $entry -Name "name" -Default "")
+    foreach ($entry in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $Server -Name "env" -Default @())) {
+        $name = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "name" -Default "")
         if (-not $name) {
             continue
         }
 
         $value = ""
-        $embeddingKind = [string](Get-ItlMcpObjectValue -Object $entry -Name "embedding" -Default "")
+        $embeddingKind = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "embedding" -Default "")
         if ($embeddingKind) {
-            $value = [string](Get-ItlMcpObjectValue -Object $embedding -Name $embeddingKind -Default "")
-        } elseif (Get-ItlMcpObjectValue -Object $entry -Name "value" -Default $null) {
-            $value = [string](Get-ItlMcpObjectValue -Object $entry -Name "value" -Default "")
-            $value = $value.Replace("{projectSlug}", [string](Get-ItlMcpObjectValue -Object $Runtime -Name "projectSlug" -Default ""))
-            $value = $value.Replace("{branchSlug}", [string](Get-ItlMcpObjectValue -Object $Runtime -Name "branchSlug" -Default ""))
+            $value = [string](Get-Vibecoding1cMcpObjectValue -Object $embedding -Name $embeddingKind -Default "")
+        } elseif (Get-Vibecoding1cMcpObjectValue -Object $entry -Name "value" -Default $null) {
+            $value = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "value" -Default "")
+            $value = $value.Replace("{projectSlug}", [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "projectSlug" -Default ""))
+            $value = $value.Replace("{branchSlug}", [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "branchSlug" -Default ""))
         } else {
-            $from = [string](Get-ItlMcpObjectValue -Object $entry -Name "from" -Default "")
-            $fallback = [string](Get-ItlMcpObjectValue -Object $entry -Name "fallback" -Default "")
+            $from = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "from" -Default "")
+            $fallback = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "fallback" -Default "")
             if ($from -like "PATH_*") {
-                $value = Resolve-ItlMcpConfiguredPath -ConfigContext $ConfigContext -Name $from -Fallback $fallback
+                $value = Resolve-Vibecoding1cMcpConfiguredPath -ConfigContext $ConfigContext -Name $from -Fallback $fallback
             } else {
-                $value = [string](Get-ItlMcpConfigValue -Context $ConfigContext -Name $from -Default (Get-ItlMcpObjectValue -Object $entry -Name "default" -Default ""))
+                $value = [string](Get-Vibecoding1cMcpConfigValue -Context $ConfigContext -Name $from -Default (Get-Vibecoding1cMcpObjectValue -Object $entry -Name "default" -Default ""))
             }
         }
 
-        $required = ConvertTo-BoolSetting -Value (Get-ItlMcpObjectValue -Object $entry -Name "required" -Default $false) -Default $false
+        $required = ConvertTo-BoolSetting -Value (Get-Vibecoding1cMcpObjectValue -Object $entry -Name "required" -Default $false) -Default $false
         if ($required -and [string]::IsNullOrWhiteSpace($value)) {
             $missing += $name
             continue
@@ -6492,7 +7038,7 @@ function Resolve-ItlMcpEnvironment {
     }
 }
 
-function Resolve-ItlMcpVolumes {
+function Resolve-Vibecoding1cMcpVolumes {
     param(
         [object]$Server,
         [object]$ConfigContext
@@ -6500,14 +7046,14 @@ function Resolve-ItlMcpVolumes {
 
     $volumes = @()
     $missing = @()
-    foreach ($entry in ConvertTo-ItlMcpArray (Get-ItlMcpObjectValue -Object $Server -Name "volumes" -Default @())) {
-        $from = [string](Get-ItlMcpObjectValue -Object $entry -Name "from" -Default "")
-        $to = [string](Get-ItlMcpObjectValue -Object $entry -Name "to" -Default "")
+    foreach ($entry in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $Server -Name "volumes" -Default @())) {
+        $from = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "from" -Default "")
+        $to = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "to" -Default "")
         if (-not $from -or -not $to) {
             continue
         }
-        $hostPath = Resolve-ItlMcpConfiguredPath -ConfigContext $ConfigContext -Name $from -Fallback ([string](Get-ItlMcpObjectValue -Object $entry -Name "fallback" -Default "")) -Subdir ([string](Get-ItlMcpObjectValue -Object $entry -Name "subdir" -Default ""))
-        $required = ConvertTo-BoolSetting -Value (Get-ItlMcpObjectValue -Object $entry -Name "required" -Default $false) -Default $false
+        $hostPath = Resolve-Vibecoding1cMcpConfiguredPath -ConfigContext $ConfigContext -Name $from -Fallback ([string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "fallback" -Default "")) -Subdir ([string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "subdir" -Default ""))
+        $required = ConvertTo-BoolSetting -Value (Get-Vibecoding1cMcpObjectValue -Object $entry -Name "required" -Default $false) -Default $false
         if (-not $hostPath) {
             if ($required) {
                 $missing += $from
@@ -6528,7 +7074,7 @@ function Resolve-ItlMcpVolumes {
     }
 }
 
-function Set-ItlMcpEndpointState {
+function Set-Vibecoding1cMcpEndpointState {
     param(
         [object]$Runtime,
         [string]$Status,
@@ -6536,11 +7082,11 @@ function Set-ItlMcpEndpointState {
         [string]$ComposeProject = ""
     )
 
-    $state = Read-ItlMcpState
-    $stateHash = ConvertTo-ItlMcpHashtable -Object $state
+    $state = Read-Vibecoding1cMcpState
+    $stateHash = ConvertTo-Vibecoding1cMcpHashtable -Object $state
     $servers = @()
-    foreach ($server in ConvertTo-ItlMcpArray (Get-ItlMcpObjectValue -Object $state -Name "servers" -Default @())) {
-        if ([string](Get-ItlMcpObjectValue -Object $server -Name "name" -Default "") -ne $Runtime.name) {
+    foreach ($server in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $state -Name "servers" -Default @())) {
+        if ([string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "name" -Default "") -ne $Runtime.name) {
             $servers += $server
         }
     }
@@ -6554,6 +7100,15 @@ function Set-ItlMcpEndpointState {
         hostPort = $Runtime.hostPort
         url = $Runtime.url
         status = $Status
+        family = "vibecoding1c"
+        provider = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "provider" -Default "local")
+        configId = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "configId" -Default "")
+        health = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "health" -Default "")
+        sourceCommit = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "sourceCommit" -Default "")
+        sourceFingerprint = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "sourceFingerprint" -Default "")
+        reportHash = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "reportHash" -Default "")
+        indexedAt = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "indexedAt" -Default "")
+        freshness = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "freshness" -Default "")
         image = $Runtime.image
         projectSlug = $Runtime.projectSlug
         branchSlug = $Runtime.branchSlug
@@ -6565,44 +7120,44 @@ function Set-ItlMcpEndpointState {
     }
 
     $stateHash["servers"] = $servers
-    Write-ItlMcpState -State $stateHash
+    Write-Vibecoding1cMcpState -State $stateHash
 }
 
-function Start-ItlMcpDockerRunServer {
+function Start-Vibecoding1cMcpDockerRunServer {
     param(
         [object]$Server,
         [object]$Runtime,
         [object]$ConfigContext
     )
 
-    $envResult = Resolve-ItlMcpEnvironment -Server $Server -Runtime $Runtime -ConfigContext $ConfigContext
-    $volumeResult = Resolve-ItlMcpVolumes -Server $Server -ConfigContext $ConfigContext
+    $envResult = Resolve-Vibecoding1cMcpEnvironment -Server $Server -Runtime $Runtime -ConfigContext $ConfigContext
+    $volumeResult = Resolve-Vibecoding1cMcpVolumes -Server $Server -ConfigContext $ConfigContext
     $missing = @($envResult.missing + $volumeResult.missing)
     if ($missing.Count -gt 0) {
         Write-Host "Skipping $($Runtime.name): missing required settings $($missing -join ', ')."
-        Set-ItlMcpEndpointState -Runtime $Runtime -Status "missing-settings"
+        Set-Vibecoding1cMcpEndpointState -Runtime $Runtime -Status "missing-settings"
         return
     }
 
-    if (-not (Test-ItlMcpDockerAvailable)) {
+    if (-not (Test-Vibecoding1cMcpDockerAvailable)) {
         Write-Host "Skipping $($Runtime.name): Docker is not available."
-        Set-ItlMcpEndpointState -Runtime $Runtime -Status "docker-unavailable"
+        Set-Vibecoding1cMcpEndpointState -Runtime $Runtime -Status "docker-unavailable"
         return
     }
 
-    $existing = Get-ItlMcpDockerContainerStatus -ContainerName $Runtime.containerName
+    $existing = Get-Vibecoding1cMcpDockerContainerStatus -ContainerName $Runtime.containerName
     if ($existing) {
         & docker start $Runtime.containerName | Out-Null
         if ($LASTEXITCODE -ne 0) {
             throw "Docker failed to start existing container $($Runtime.containerName)."
         }
         Write-Host "Started existing MCP container: $($Runtime.containerName) -> $($Runtime.url)"
-        Set-ItlMcpEndpointState -Runtime $Runtime -Status "running"
+        Set-Vibecoding1cMcpEndpointState -Runtime $Runtime -Status "running"
         return
     }
 
     $args = @("run", "-d", "--name", $Runtime.containerName, "-p", "$($Runtime.hostPort):$($Runtime.internalPort)")
-    $useGpu = ConvertTo-BoolSetting -Value (Get-ItlMcpConfigValue -Context $ConfigContext -Name "USE_GPU" -Default $false) -Default $false
+    $useGpu = ConvertTo-BoolSetting -Value (Get-Vibecoding1cMcpConfigValue -Context $ConfigContext -Name "USE_GPU" -Default $false) -Default $false
     if ($useGpu) {
         $args += @("--gpus", "all")
     }
@@ -6620,18 +7175,18 @@ function Start-ItlMcpDockerRunServer {
     }
 
     Write-Host "Started MCP container: $($Runtime.containerName) -> $($Runtime.url)"
-    Set-ItlMcpEndpointState -Runtime $Runtime -Status "running"
+    Set-Vibecoding1cMcpEndpointState -Runtime $Runtime -Status "running"
 }
 
-function New-ItlMcpScopedCompose {
+function New-Vibecoding1cMcpScopedCompose {
     param(
         [object]$Server,
         [object]$Runtime,
         [object]$ConfigContext
     )
 
-    $distributionRoot = [string](Get-ItlMcpObjectValue -Object $ConfigContext -Name "distributionRoot" -Default (Get-ItlMcpDistributionRoot))
-    $composePath = [string](Get-ItlMcpObjectValue -Object $Server -Name "composePath" -Default "")
+    $distributionRoot = [string](Get-Vibecoding1cMcpObjectValue -Object $ConfigContext -Name "distributionRoot" -Default (Get-Vibecoding1cMcpDistributionRoot))
+    $composePath = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "composePath" -Default "")
     $sourceCompose = Join-Path $distributionRoot $composePath
     if (-not (Test-Path -LiteralPath $sourceCompose -PathType Leaf -ErrorAction SilentlyContinue)) {
         throw "Compose file was not found for $($Runtime.name): $sourceCompose"
@@ -6647,7 +7202,7 @@ function New-ItlMcpScopedCompose {
     $composeText = $composeText -replace '"8006:8006"', "`"$($Runtime.hostPort):$($Runtime.internalPort)`""
     Write-Utf8Text -Path $targetCompose -Value $composeText
 
-    $envResult = Resolve-ItlMcpEnvironment -Server $Server -Runtime $Runtime -ConfigContext $ConfigContext
+    $envResult = Resolve-Vibecoding1cMcpEnvironment -Server $Server -Runtime $Runtime -ConfigContext $ConfigContext
     if ($envResult.missing.Count -gt 0) {
         return [pscustomobject]@{
             ready = $false
@@ -6659,9 +7214,9 @@ function New-ItlMcpScopedCompose {
     }
 
     $envPath = Join-Path $runtimeDir ".env"
-    Write-ItlMcpDotEnvFile -Path $envPath -Values $envResult.values
-    $composeProjectTemplate = [string](Get-ItlMcpObjectValue -Object $Server -Name "composeProjectTemplate" -Default $Runtime.name)
-    $composeProject = Expand-ItlMcpTemplate -Template $composeProjectTemplate -Context (Get-ItlMcpScopeContext) -ServerId $Runtime.id
+    Write-Vibecoding1cMcpDotEnvFile -Path $envPath -Values $envResult.values
+    $composeProjectTemplate = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "composeProjectTemplate" -Default $Runtime.name)
+    $composeProject = Expand-Vibecoding1cMcpTemplate -Template $composeProjectTemplate -Context (Get-Vibecoding1cMcpScopeContext) -ServerId $Runtime.id
     return [pscustomobject]@{
         ready = $true
         missing = @()
@@ -6671,23 +7226,23 @@ function New-ItlMcpScopedCompose {
     }
 }
 
-function Start-ItlMcpComposeServer {
+function Start-Vibecoding1cMcpComposeServer {
     param(
         [object]$Server,
         [object]$Runtime,
         [object]$ConfigContext
     )
 
-    $compose = New-ItlMcpScopedCompose -Server $Server -Runtime $Runtime -ConfigContext $ConfigContext
+    $compose = New-Vibecoding1cMcpScopedCompose -Server $Server -Runtime $Runtime -ConfigContext $ConfigContext
     if (-not $compose.ready) {
         Write-Host "Skipping $($Runtime.name): missing required settings $($compose.missing -join ', ')."
-        Set-ItlMcpEndpointState -Runtime $Runtime -Status "missing-settings" -RuntimePath $compose.runtimeDir -ComposeProject $compose.composeProject
+        Set-Vibecoding1cMcpEndpointState -Runtime $Runtime -Status "missing-settings" -RuntimePath $compose.runtimeDir -ComposeProject $compose.composeProject
         return
     }
 
-    if (-not (Test-ItlMcpDockerAvailable)) {
+    if (-not (Test-Vibecoding1cMcpDockerAvailable)) {
         Write-Host "Skipping $($Runtime.name): Docker is not available."
-        Set-ItlMcpEndpointState -Runtime $Runtime -Status "docker-unavailable" -RuntimePath $compose.runtimeDir -ComposeProject $compose.composeProject
+        Set-Vibecoding1cMcpEndpointState -Runtime $Runtime -Status "docker-unavailable" -RuntimePath $compose.runtimeDir -ComposeProject $compose.composeProject
         return
     }
 
@@ -6697,29 +7252,11 @@ function Start-ItlMcpComposeServer {
     }
 
     Write-Host "Started MCP compose project: $($compose.composeProject) -> $($Runtime.url)"
-    Set-ItlMcpEndpointState -Runtime $Runtime -Status "running" -RuntimePath $compose.runtimeDir -ComposeProject $compose.composeProject
+    Set-Vibecoding1cMcpEndpointState -Runtime $Runtime -Status "running" -RuntimePath $compose.runtimeDir -ComposeProject $compose.composeProject
 }
 
-function Start-ItlMcpVanessaServer {
-    param([object]$Runtime)
-
-    $context = Get-ItlMcpScopeContext
-    if (-not $context.isDevelopmentBranch) {
-        Write-Host "Skipping branch Vanessa MCP: current worktree is not itldev/*."
-        return
-    }
-
-    Start-VanessaMcp
-    $state = Read-DevBranchState -Name ""
-    $port = ConvertTo-IntOrDefault -Value (Get-StateValue -State $state -Name "vanessaMcpPort" -Default 0)
-    $url = Get-StateValue -State $state -Name "vanessaMcpUrl" -Default $(if ($port -gt 0) { Get-VanessaMcpUrl -Port $port } else { "" })
-    $runtime.hostPort = $port
-    $runtime.url = $url
-    Set-ItlMcpEndpointState -Runtime $Runtime -Status "running"
-}
-
-function Get-ItlMcpTargetScopes {
-    $context = Get-ItlMcpScopeContext
+function Get-Vibecoding1cMcpTargetScopes {
+    $context = Get-Vibecoding1cMcpScopeContext
     switch ($McpScope) {
         "global" { return @("global") }
         "project" { return @("project") }
@@ -6735,13 +7272,13 @@ function Get-ItlMcpTargetScopes {
     }
 }
 
-function Select-ItlMcpManifestServers {
-    $manifest = Read-ItlMcpManifest
-    $targetScopes = Get-ItlMcpTargetScopes
+function Select-Vibecoding1cMcpManifestServers {
+    $manifest = Read-Vibecoding1cMcpManifest
+    $targetScopes = Get-Vibecoding1cMcpTargetScopes
     $servers = @()
-    foreach ($server in ConvertTo-ItlMcpArray (Get-ItlMcpObjectValue -Object $manifest -Name "servers" -Default @())) {
-        $id = [string](Get-ItlMcpObjectValue -Object $server -Name "id" -Default "")
-        $scope = [string](Get-ItlMcpObjectValue -Object $server -Name "scope" -Default "global")
+    foreach ($server in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $manifest -Name "servers" -Default @())) {
+        $id = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "id" -Default "")
+        $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "scope" -Default "global")
         if ($McpServerId -and $id -ne $McpServerId) {
             continue
         }
@@ -6753,22 +7290,22 @@ function Select-ItlMcpManifestServers {
     return $servers
 }
 
-function Rotate-ItlMcpKeys {
+function Rotate-Vibecoding1cMcpKeys {
     param([switch]$DistributionReady)
 
-    Write-Section "ITL MCP rotate keys"
+    Write-Section "vibecoding1c MCP rotate keys"
 
     if (-not $DistributionReady) {
-        Ensure-ItlMcpDistribution | Out-Null
+        Ensure-Vibecoding1cMcpDistribution | Out-Null
     }
 
-    $context = Get-ItlMcpConfigContext
+    $context = Get-Vibecoding1cMcpConfigContext
     $distributionConfigPath = [string]$context.distributionConfigPath
     if (-not (Test-Path -LiteralPath $distributionConfigPath -PathType Leaf -ErrorAction SilentlyContinue)) {
         throw "MCP distribution config.env was not found: $distributionConfigPath"
     }
 
-    $sourceValues = Read-ItlMcpDotEnvFile -Path $distributionConfigPath
+    $sourceValues = Read-Vibecoding1cMcpDotEnvFile -Path $distributionConfigPath
     $rotated = [ordered]@{}
     foreach ($key in @($sourceValues.Keys | Sort-Object)) {
         if ($key -like "LICENSE_KEY_*" -or $key -eq "ONEC_AI_TOKEN") {
@@ -6781,95 +7318,126 @@ function Rotate-ItlMcpKeys {
         return
     }
 
-    Write-ItlMcpDotEnvFile -Path $context.localConfigPath -Values $rotated
+    Write-Vibecoding1cMcpDotEnvFile -Path $context.localConfigPath -Values $rotated
     $hashInput = (($rotated.Keys | Sort-Object | ForEach-Object { "$_=$($rotated[$_])" }) -join "`n")
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($hashInput)
     $sha = [System.Security.Cryptography.SHA256]::Create()
     $keyHash = ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
-    $state = Read-ItlMcpState
-    $stateHash = ConvertTo-ItlMcpHashtable -Object $state
+    $state = Read-Vibecoding1cMcpState
+    $stateHash = ConvertTo-Vibecoding1cMcpHashtable -Object $state
     $stateHash["keyHash"] = $keyHash
     $stateHash["keyUpdatedAt"] = (Get-Date).ToString("o")
-    Write-ItlMcpState -State $stateHash
+    Write-Vibecoding1cMcpState -State $stateHash
 
     Write-Host "Rotated MCP license keys into local config: $($context.localConfigPath)"
     Write-Host "Key hash: $keyHash"
 }
 
-function Start-ItlMcp {
+function Start-Vibecoding1cMcp {
     param([switch]$DistributionReady)
 
-    Write-Section "Start ITL MCP"
+    Write-Section "Start vibecoding1c MCP"
 
     Ensure-GitIgnore
-    if (-not $DistributionReady) {
-        Ensure-ItlMcpDistribution | Out-Null
-    }
-    Ensure-ItlMcpModel | Out-Null
-    $context = Get-ItlMcpScopeContext
-    $configContext = Get-ItlMcpConfigContext
-    foreach ($server in Select-ItlMcpManifestServers) {
-        $runtime = New-ItlMcpServerRuntime -Server $server -Context $context -ConfigContext $configContext
-        if (ConvertTo-BoolSetting -Value (Get-ItlMcpObjectValue -Object $server -Name "localVanessa" -Default $false) -Default $false) {
-            Start-ItlMcpVanessaServer -Runtime $runtime
-        } elseif (ConvertTo-BoolSetting -Value (Get-ItlMcpObjectValue -Object $server -Name "compose" -Default $false) -Default $false) {
-            Start-ItlMcpComposeServer -Server $server -Runtime $runtime -ConfigContext $configContext
+    $selection = Read-Vibecoding1cMcpSelection
+    $context = Get-Vibecoding1cMcpScopeContext
+    $selectedServers = @(Select-Vibecoding1cMcpManifestServers)
+    $needsRegistry = $false
+    $needsDistribution = $false
+    $needsModel = $false
+    foreach ($server in $selectedServers) {
+        $provider = Get-Vibecoding1cMcpSelectedProvider -Server $server -Selection $selection
+        if ($provider -eq "remote") {
+            $needsRegistry = $true
         } else {
-            Start-ItlMcpDockerRunServer -Server $server -Runtime $runtime -ConfigContext $configContext
+            $needsDistribution = $true
+            if (ConvertTo-BoolSetting -Value (Get-Vibecoding1cMcpObjectValue -Object $server -Name "embedding" -Default $false) -Default $false) {
+                $needsModel = $true
+            }
         }
     }
 
-    Write-ItlMcpClientConfig
+    if ($needsRegistry) {
+        Ensure-Vibecoding1cMcpRegistry | Out-Null
+    }
+    if ($needsDistribution -and -not $DistributionReady) {
+        Ensure-Vibecoding1cMcpDistribution | Out-Null
+    }
+    if ($needsModel) {
+        Ensure-Vibecoding1cMcpModel | Out-Null
+    }
+
+    $configContext = Get-Vibecoding1cMcpConfigContext
+    foreach ($server in $selectedServers) {
+        $provider = Get-Vibecoding1cMcpSelectedProvider -Server $server -Selection $selection
+        if ($provider -eq "remote") {
+            $runtime = New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection -AllowPrompt
+            if ($null -eq $runtime) {
+                continue
+            }
+            $runtime | Add-Member -NotePropertyName freshness -NotePropertyValue (Get-Vibecoding1cMcpEndpointFreshness -Endpoint $runtime) -Force
+            Set-Vibecoding1cMcpEndpointState -Runtime $runtime -Status "running"
+            Write-Host "Connected remote vibecoding1c MCP endpoint: $($runtime.name) -> $($runtime.url)"
+            continue
+        }
+
+        $localScope = Get-Vibecoding1cMcpSelectedLocalScope -Server $server -Selection $selection
+        $effectiveServer = ConvertTo-Vibecoding1cMcpLocalScopedServer -Server $server -LocalScope $localScope -Context $context
+        $runtime = New-Vibecoding1cMcpServerRuntime -Server $effectiveServer -Context $context -ConfigContext $configContext
+        if (ConvertTo-BoolSetting -Value (Get-Vibecoding1cMcpObjectValue -Object $effectiveServer -Name "compose" -Default $false) -Default $false) {
+            Start-Vibecoding1cMcpComposeServer -Server $effectiveServer -Runtime $runtime -ConfigContext $configContext
+        } else {
+            Start-Vibecoding1cMcpDockerRunServer -Server $effectiveServer -Runtime $runtime -ConfigContext $configContext
+        }
+    }
+
+    Write-Vibecoding1cMcpClientConfig
 }
 
-function Stop-ItlMcp {
-    Write-Section "Stop ITL MCP"
+function Stop-Vibecoding1cMcp {
+    Write-Section "Stop vibecoding1c MCP"
 
-    $state = Read-ItlMcpState
-    $stateHash = ConvertTo-ItlMcpHashtable -Object $state
-    $context = Get-ItlMcpScopeContext
-    $targetScopes = Get-ItlMcpTargetScopes
+    $state = Read-Vibecoding1cMcpState
+    $stateHash = ConvertTo-Vibecoding1cMcpHashtable -Object $state
+    $context = Get-Vibecoding1cMcpScopeContext
+    $targetScopes = Get-Vibecoding1cMcpTargetScopes
     $servers = @()
-    foreach ($server in ConvertTo-ItlMcpArray (Get-ItlMcpObjectValue -Object $state -Name "servers" -Default @())) {
-        $scope = [string](Get-ItlMcpObjectValue -Object $server -Name "scope" -Default "")
-        $name = [string](Get-ItlMcpObjectValue -Object $server -Name "name" -Default "")
+    foreach ($server in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $state -Name "servers" -Default @())) {
+        $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "scope" -Default "")
+        $name = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "name" -Default "")
         if ($targetScopes -notcontains $scope) {
             $servers += $server
             continue
         }
-        if ($scope -ne "global" -and ([string](Get-ItlMcpObjectValue -Object $server -Name "projectSlug" -Default "")) -ne $context.projectSlug) {
+        if ($scope -ne "global" -and ([string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "projectSlug" -Default "")) -ne $context.projectSlug) {
             $servers += $server
             continue
         }
-        if ($McpServerId -and ([string](Get-ItlMcpObjectValue -Object $server -Name "id" -Default "")) -ne $McpServerId) {
+        if ($McpServerId -and ([string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "id" -Default "")) -ne $McpServerId) {
             $servers += $server
             continue
         }
 
-        if ([string](Get-ItlMcpObjectValue -Object $server -Name "id" -Default "") -eq "vanessa" -and $context.isDevelopmentBranch) {
-            try {
-                $devState = Read-DevBranchState -Name ""
-                Stop-VanessaMcpForState -State $devState | Out-Null
-            } catch {
-                Write-Host "Vanessa MCP stop skipped: $($_.Exception.Message)"
-            }
+        $provider = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "provider" -Default "local")
+        if ($provider -eq "remote") {
+            Write-Host "Disconnected remote vibecoding1c MCP endpoint from local config: $name"
         } else {
-            $composeProject = [string](Get-ItlMcpObjectValue -Object $server -Name "composeProject" -Default "")
-            $runtimePath = [string](Get-ItlMcpObjectValue -Object $server -Name "runtimePath" -Default "")
-            if ($composeProject -and $runtimePath -and (Test-ItlMcpDockerAvailable)) {
+            $composeProject = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "composeProject" -Default "")
+            $runtimePath = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "runtimePath" -Default "")
+            if ($composeProject -and $runtimePath -and (Test-Vibecoding1cMcpDockerAvailable)) {
                 $composePath = Join-Path $runtimePath "docker-compose.yml"
                 if (Test-Path -LiteralPath $composePath -PathType Leaf -ErrorAction SilentlyContinue) {
                     & docker compose -p $composeProject -f $composePath --env-file (Join-Path $runtimePath ".env") down | Out-Null
                 }
             } else {
-                $containerName = [string](Get-ItlMcpObjectValue -Object $server -Name "containerName" -Default "")
-                if ($containerName -and (Test-ItlMcpDockerAvailable) -and (Test-ItlMcpDockerContainerExists -ContainerName $containerName)) {
+                $containerName = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "containerName" -Default "")
+                if ($containerName -and (Test-Vibecoding1cMcpDockerAvailable) -and (Test-Vibecoding1cMcpDockerContainerExists -ContainerName $containerName)) {
                     & docker stop $containerName | Out-Null
                 }
             }
         }
 
-        $serverHash = ConvertTo-ItlMcpHashtable -Object $server
+        $serverHash = ConvertTo-Vibecoding1cMcpHashtable -Object $server
         $serverHash["status"] = "stopped"
         $serverHash["updatedAt"] = (Get-Date).ToString("o")
         $servers += $serverHash
@@ -6877,24 +7445,32 @@ function Stop-ItlMcp {
     }
 
     $stateHash["servers"] = $servers
-    Write-ItlMcpState -State $stateHash
-    Write-ItlMcpClientConfig
+    Write-Vibecoding1cMcpState -State $stateHash
+    Write-Vibecoding1cMcpClientConfig
 }
 
-function Update-ItlMcp {
-    Write-Section "Update ITL MCP"
+function Update-Vibecoding1cMcp {
+    Write-Section "Update vibecoding1c MCP"
 
-    Ensure-ItlMcpDistribution | Out-Null
-    Rotate-ItlMcpKeys -DistributionReady
-    $configContext = Get-ItlMcpConfigContext
-    if (-not (Test-ItlMcpDockerAvailable)) {
+    try {
+        Refresh-Vibecoding1cMcpRegistry
+    } catch {
+        Write-Host "WARNING: vibecoding1c MCP registry update failed: $($_.Exception.Message)"
+    }
+
+    Ensure-Vibecoding1cMcpDistribution | Out-Null
+    if (Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpDistributionRoot) "config.env") -PathType Leaf -ErrorAction SilentlyContinue) {
+        Rotate-Vibecoding1cMcpKeys -DistributionReady
+    }
+    $configContext = Get-Vibecoding1cMcpConfigContext
+    if (-not (Test-Vibecoding1cMcpDockerAvailable)) {
         Write-Host "Docker is not available; image pull skipped."
         return
     }
 
     $pulled = @{}
-    foreach ($server in ConvertTo-ItlMcpArray (Get-ItlMcpObjectValue -Object (Read-ItlMcpManifest) -Name "servers" -Default @())) {
-        $image = Get-ItlMcpImageName -Server $server -ConfigContext $configContext
+    foreach ($server in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object (Read-Vibecoding1cMcpManifest) -Name "servers" -Default @())) {
+        $image = Get-Vibecoding1cMcpImageName -Server $server -ConfigContext $configContext
         if (-not $image -or $pulled.ContainsKey($image)) {
             continue
         }
@@ -6908,42 +7484,62 @@ function Update-ItlMcp {
     }
 }
 
-function Setup-ItlMcp {
-    Write-Section "Setup ITL MCP"
+function Setup-Vibecoding1cMcp {
+    Write-Section "Setup vibecoding1c MCP"
 
     Ensure-GitIgnore
-    Ensure-ItlMcpDistribution | Out-Null
-    if (Test-Path -LiteralPath (Join-Path (Get-ItlMcpDistributionRoot) "config.env") -PathType Leaf -ErrorAction SilentlyContinue) {
-        Rotate-ItlMcpKeys -DistributionReady
-    } else {
-        Write-Host "Distribution config.env not found; key rotation skipped."
+    $selection = Read-Vibecoding1cMcpSelection
+    $needsLocalDistribution = $false
+    foreach ($server in Select-Vibecoding1cMcpManifestServers) {
+        if ((Get-Vibecoding1cMcpSelectedProvider -Server $server -Selection $selection) -eq "local") {
+            $needsLocalDistribution = $true
+            break
+        }
     }
-    Start-ItlMcp -DistributionReady
-    Show-ItlMcpStatus
+
+    if ($needsLocalDistribution) {
+        Ensure-Vibecoding1cMcpDistribution | Out-Null
+        if (Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpDistributionRoot) "config.env") -PathType Leaf -ErrorAction SilentlyContinue) {
+            Rotate-Vibecoding1cMcpKeys -DistributionReady
+        } else {
+            Write-Host "Distribution config.env not found; key rotation skipped."
+        }
+    } else {
+        Refresh-Vibecoding1cMcpRegistry
+    }
+    Start-Vibecoding1cMcp -DistributionReady:$needsLocalDistribution
+    Show-Vibecoding1cMcpStatus
 }
 
-function Get-ItlMcpCurrentEndpoints {
+function Get-Vibecoding1cMcpCurrentEndpoints {
     param([switch]$IncludeGlobal)
 
-    $state = Read-ItlMcpState
-    $context = Get-ItlMcpScopeContext
+    $state = Read-Vibecoding1cMcpState
+    $context = Get-Vibecoding1cMcpScopeContext
     $endpoints = @()
-    foreach ($server in ConvertTo-ItlMcpArray (Get-ItlMcpObjectValue -Object $state -Name "servers" -Default @())) {
-        $url = [string](Get-ItlMcpObjectValue -Object $server -Name "url" -Default "")
+    foreach ($server in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $state -Name "servers" -Default @())) {
+        if ([string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "family" -Default "") -ne "vibecoding1c") {
+            continue
+        }
+        $url = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "url" -Default "")
         if (-not $url) {
             continue
         }
-        $scope = [string](Get-ItlMcpObjectValue -Object $server -Name "scope" -Default "")
+        $status = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "status" -Default "running")
+        if ($status -eq "stopped" -or $status -eq "remote-disconnected") {
+            continue
+        }
+        $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "scope" -Default "")
         if ($scope -eq "global") {
             if ($IncludeGlobal) {
                 $endpoints += $server
             }
             continue
         }
-        if ([string](Get-ItlMcpObjectValue -Object $server -Name "projectSlug" -Default "") -ne $context.projectSlug) {
+        if ([string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "projectSlug" -Default "") -ne $context.projectSlug) {
             continue
         }
-        if ($scope -eq "branch" -and [string](Get-ItlMcpObjectValue -Object $server -Name "branchSlug" -Default "") -ne $context.branchSlug) {
+        if ($scope -eq "branch" -and [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "branchSlug" -Default "") -ne $context.branchSlug) {
             continue
         }
         $endpoints += $server
@@ -6951,20 +7547,20 @@ function Get-ItlMcpCurrentEndpoints {
     return $endpoints
 }
 
-function ConvertTo-ItlMcpTomlString {
+function ConvertTo-Vibecoding1cMcpTomlString {
     param([string]$Value)
     return '"' + ($Value.Replace("\", "\\").Replace('"', '\"')) + '"'
 }
 
-function Set-ItlMcpManagedTextBlock {
+function Set-Vibecoding1cMcpManagedTextBlock {
     param(
         [string]$Path,
         [string]$BlockId,
         [string]$Body
     )
 
-    $start = "# >>> itl-mcp $BlockId"
-    $end = "# <<< itl-mcp $BlockId"
+    $start = "# >>> vibecoding1c-mcp $BlockId"
+    $end = "# <<< vibecoding1c-mcp $BlockId"
     $text = ""
     if (Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction SilentlyContinue) {
         $text = Read-Utf8Text -Path $Path
@@ -6978,7 +7574,7 @@ function Set-ItlMcpManagedTextBlock {
     Write-Utf8Text -Path $Path -Value ($text + $block)
 }
 
-function Write-ItlMcpCodexConfig {
+function Write-Vibecoding1cMcpCodexConfig {
     param(
         [string]$Path,
         [string]$BlockId,
@@ -6986,49 +7582,50 @@ function Write-ItlMcpCodexConfig {
     )
 
     $lines = New-Object System.Collections.ArrayList
-    foreach ($endpoint in @($Endpoints | Sort-Object @{ Expression = { Get-ItlMcpObjectValue -Object $_ -Name "name" -Default "" } })) {
-        $name = [string](Get-ItlMcpObjectValue -Object $endpoint -Name "name" -Default "")
-        $url = [string](Get-ItlMcpObjectValue -Object $endpoint -Name "url" -Default "")
+    foreach ($endpoint in @($Endpoints | Sort-Object @{ Expression = { Get-Vibecoding1cMcpObjectValue -Object $_ -Name "name" -Default "" } })) {
+        $name = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "name" -Default "")
+        $url = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "url" -Default "")
         if (-not $name -or -not $url) {
             continue
         }
-        [void]$lines.Add("[mcp_servers.$(ConvertTo-ItlMcpTomlString $name)]")
-        [void]$lines.Add("url = $(ConvertTo-ItlMcpTomlString $url)")
+        [void]$lines.Add("[mcp_servers.$(ConvertTo-Vibecoding1cMcpTomlString $name)]")
+        [void]$lines.Add("url = $(ConvertTo-Vibecoding1cMcpTomlString $url)")
         [void]$lines.Add("enabled = true")
         [void]$lines.Add("startup_timeout_sec = 20")
         [void]$lines.Add("tool_timeout_sec = 120")
         [void]$lines.Add("")
     }
 
-    Set-ItlMcpManagedTextBlock -Path $Path -BlockId $BlockId -Body ((@($lines) -join [Environment]::NewLine).TrimEnd())
+    Set-Vibecoding1cMcpManagedTextBlock -Path $Path -BlockId $BlockId -Body ((@($lines) -join [Environment]::NewLine).TrimEnd())
 }
 
-function Write-ItlMcpKiloConfig {
+function Write-Vibecoding1cMcpKiloConfig {
     param([object[]]$Endpoints)
 
     $path = Join-Path $script:ProjectRoot ".kilo\kilo.json"
     $config = [ordered]@{}
     if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) {
         $current = Read-Utf8Text -Path $path | ConvertFrom-Json
-        $config = ConvertTo-ItlMcpHashtable -Object $current
+        $config = ConvertTo-Vibecoding1cMcpHashtable -Object $current
     }
 
     $mcp = [ordered]@{}
     if ($config.Contains("mcp")) {
-        $mcp = ConvertTo-ItlMcpHashtable -Object $config["mcp"]
+        $mcp = ConvertTo-Vibecoding1cMcpHashtable -Object $config["mcp"]
     }
 
     foreach ($key in @($mcp.Keys)) {
         $entry = $mcp[$key]
-        $managedBy = [string](Get-ItlMcpObjectValue -Object $entry -Name "managedBy" -Default "")
-        if ($managedBy -eq "itl-mcp") {
+        $managedBy = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "managedBy" -Default "")
+        $family = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "family" -Default "")
+        if ($managedBy -eq "vibecoding1c-mcp" -and $family -eq "vibecoding1c") {
             $mcp.Remove($key)
         }
     }
 
-    foreach ($endpoint in @($Endpoints | Sort-Object @{ Expression = { Get-ItlMcpObjectValue -Object $_ -Name "name" -Default "" } })) {
-        $name = [string](Get-ItlMcpObjectValue -Object $endpoint -Name "name" -Default "")
-        $url = [string](Get-ItlMcpObjectValue -Object $endpoint -Name "url" -Default "")
+    foreach ($endpoint in @($Endpoints | Sort-Object @{ Expression = { Get-Vibecoding1cMcpObjectValue -Object $_ -Name "name" -Default "" } })) {
+        $name = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "name" -Default "")
+        $url = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "url" -Default "")
         if (-not $name -or -not $url) {
             continue
         }
@@ -7037,21 +7634,25 @@ function Write-ItlMcpKiloConfig {
             url = $url
             enabled = $true
             timeout = 15000
-            managedBy = "itl-mcp"
-            scope = [string](Get-ItlMcpObjectValue -Object $endpoint -Name "scope" -Default "")
+            managedBy = "vibecoding1c-mcp"
+            family = "vibecoding1c"
+            scope = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "scope" -Default "")
+            provider = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "provider" -Default "local")
+            configId = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "configId" -Default "")
+            freshness = (Get-Vibecoding1cMcpEndpointFreshness -Endpoint $endpoint)
         }
     }
 
     $config["mcp"] = $mcp
-    Write-ItlMcpJsonFile -Path $path -Value $config
+    Write-Vibecoding1cMcpJsonFile -Path $path -Value $config
 }
 
-function Write-ItlMcpClientConfig {
-    Write-Section "Write ITL MCP client config"
+function Write-Vibecoding1cMcpClientConfig {
+    Write-Section "Write vibecoding1c MCP client config"
 
     Ensure-GitIgnore
-    $globalEndpoints = @(Get-ItlMcpCurrentEndpoints -IncludeGlobal | Where-Object { [string](Get-ItlMcpObjectValue -Object $_ -Name "scope" -Default "") -eq "global" })
-    $localEndpoints = @(Get-ItlMcpCurrentEndpoints | Where-Object { [string](Get-ItlMcpObjectValue -Object $_ -Name "scope" -Default "") -ne "global" })
+    $globalEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints -IncludeGlobal | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -eq "global" })
+    $localEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -ne "global" })
     $allCurrentEndpoints = @($globalEndpoints + $localEndpoints)
 
     $home = [Environment]::GetFolderPath("UserProfile")
@@ -7061,48 +7662,58 @@ function Write-ItlMcpClientConfig {
     $codexHomeConfig = Join-Path $home ".codex\config.toml"
     $codexProjectConfig = Join-Path $script:ProjectRoot ".codex\config.toml"
 
-    Write-ItlMcpCodexConfig -Path $codexHomeConfig -BlockId "global" -Endpoints $globalEndpoints
-    Write-ItlMcpCodexConfig -Path $codexProjectConfig -BlockId "project" -Endpoints $localEndpoints
-    Write-ItlMcpKiloConfig -Endpoints $allCurrentEndpoints
+    Write-Vibecoding1cMcpCodexConfig -Path $codexHomeConfig -BlockId "global" -Endpoints $globalEndpoints
+    Write-Vibecoding1cMcpCodexConfig -Path $codexProjectConfig -BlockId "project" -Endpoints $localEndpoints
+    Write-Vibecoding1cMcpKiloConfig -Endpoints $allCurrentEndpoints
 
     Write-Host "Codex global MCP config: $codexHomeConfig"
     Write-Host "Codex project MCP config: $codexProjectConfig"
     Write-Host "Kilo project MCP config: $(Join-Path $script:ProjectRoot '.kilo\kilo.json')"
 }
 
-function Show-ItlMcpStatus {
-    Write-Section "ITL MCP status"
+function Show-Vibecoding1cMcpStatus {
+    Write-Section "vibecoding1c MCP status"
 
-    $state = Read-ItlMcpState
-    $context = Get-ItlMcpScopeContext
-    $distributionRoot = Get-ItlMcpDistributionRoot
-    Write-Host "MCP local home: $(Get-ItlMcpLocalHome)"
+    $state = Read-Vibecoding1cMcpState
+    $context = Get-Vibecoding1cMcpScopeContext
+    $distributionRoot = Get-Vibecoding1cMcpDistributionRoot
+    Write-Host "MCP local home: $(Get-Vibecoding1cMcpLocalHome)"
     Write-Host "MCP distribution: $distributionRoot"
-    if (Test-ItlMcpDistributionPathOverride) {
+    if (Test-Vibecoding1cMcpDistributionPathOverride) {
         Write-Host "MCP distribution source: explicit path override"
     } else {
-        Write-Host "MCP distribution repo: $(Get-ItlMcpDistributionRepo)"
+        Write-Host "MCP distribution repo: $(Get-Vibecoding1cMcpDistributionRepo)"
         if (-not (Test-Path -LiteralPath $distributionRoot -PathType Container -ErrorAction SilentlyContinue)) {
-            Write-Host "MCP distribution checkout: missing; run mcp-setup or mcp-update to clone it."
+            Write-Host "vibecoding1c MCP distribution checkout: missing; run vibecoding1c-mcp-setup or vibecoding1c-mcp-update to clone it."
         } elseif (-not (Test-Path -LiteralPath (Join-Path $distributionRoot ".git") -PathType Container -ErrorAction SilentlyContinue)) {
-            Write-Host "MCP distribution checkout: invalid; managed path exists but is not a Git checkout."
+            Write-Host "vibecoding1c MCP distribution checkout: invalid; managed path exists but is not a Git checkout."
         } else {
-            Write-Host "MCP distribution checkout: present"
+            Write-Host "vibecoding1c MCP distribution checkout: present"
         }
     }
+    Write-Host "vibecoding1c MCP registry: $(Get-Vibecoding1cMcpRegistryRoot)"
+    if (Test-Vibecoding1cMcpRegistryPathOverride) {
+        Write-Host "vibecoding1c MCP registry source: explicit path override"
+    } else {
+        Write-Host "vibecoding1c MCP registry repo: $(Get-Vibecoding1cMcpRegistryRepo)"
+    }
+    $selection = Read-Vibecoding1cMcpSelection
+    Write-Host "vibecoding1c MCP selection: $(Get-Vibecoding1cMcpSelectionPath)"
+    Write-Host "vibecoding1c MCP default provider: $(Get-Vibecoding1cMcpObjectValue -Object $selection -Name 'defaultProvider' -Default 'remote')"
+    Write-Host "vibecoding1c MCP remote configId: $(Get-Vibecoding1cMcpObjectValue -Object $selection -Name 'remoteConfigId' -Default '<not selected>')"
     Write-Host "Project scope: $($context.projectSlug)"
     Write-Host "Branch scope: $($context.branchSlug)"
 
-    $model = Get-ItlMcpObjectValue -Object $state -Name "model" -Default $null
+    $model = Get-Vibecoding1cMcpObjectValue -Object $state -Name "model" -Default $null
     if ($model) {
-        Write-Host "Embedding model: $(Get-ItlMcpObjectValue -Object $model -Name 'modelId' -Default '<unknown>')"
-        Write-Host "Embedding API: $(Get-ItlMcpObjectValue -Object $model -Name 'apiBase' -Default '<not set>')"
-        Write-Host "Embedding ready: $(Get-ItlMcpObjectValue -Object $model -Name 'ready' -Default $false)"
+        Write-Host "Embedding model: $(Get-Vibecoding1cMcpObjectValue -Object $model -Name 'modelId' -Default '<unknown>')"
+        Write-Host "Embedding API: $(Get-Vibecoding1cMcpObjectValue -Object $model -Name 'apiBase' -Default '<not set>')"
+        Write-Host "Embedding ready: $(Get-Vibecoding1cMcpObjectValue -Object $model -Name 'ready' -Default $false)"
     } else {
         Write-Host "Embedding model: not configured"
     }
 
-    $stale = @(ConvertTo-ItlMcpArray (Get-ItlMcpObjectValue -Object $state -Name "staleIndexes" -Default @()))
+    $stale = @(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $state -Name "staleIndexes" -Default @()))
     if ($stale.Count -gt 0) {
         Write-Host "Stale indexes: $($stale -join ', ')"
         Write-Host "Reindex only after explicit RESET_DATABASE=true."
@@ -7110,47 +7721,58 @@ function Show-ItlMcpStatus {
         Write-Host "Stale indexes: none"
     }
 
-    $endpoints = @(Get-ItlMcpCurrentEndpoints -IncludeGlobal)
+    $endpoints = @(Get-Vibecoding1cMcpCurrentEndpoints -IncludeGlobal)
     if ($endpoints.Count -eq 0) {
         Write-Host "Active MCP names: none"
-        Write-Host "Start with: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action mcp-start"
+        Write-Host "Start with: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-start"
         return
     }
 
     Write-Host "Active MCP names:"
-    foreach ($endpoint in ($endpoints | Sort-Object @{ Expression = { Get-ItlMcpObjectValue -Object $_ -Name "scope" -Default "" } }, @{ Expression = { Get-ItlMcpObjectValue -Object $_ -Name "name" -Default "" } })) {
-        $name = [string](Get-ItlMcpObjectValue -Object $endpoint -Name "name" -Default "")
-        $url = [string](Get-ItlMcpObjectValue -Object $endpoint -Name "url" -Default "")
-        $port = ConvertTo-IntOrDefault -Value (Get-ItlMcpObjectValue -Object $endpoint -Name "hostPort" -Default 0)
+    foreach ($endpoint in ($endpoints | Sort-Object @{ Expression = { Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "" } }, @{ Expression = { Get-Vibecoding1cMcpObjectValue -Object $_ -Name "name" -Default "" } })) {
+        $name = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "name" -Default "")
+        $url = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "url" -Default "")
+        $port = ConvertTo-IntOrDefault -Value (Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "hostPort" -Default 0)
         $live = $(if ($port -gt 0) { Test-TcpPortOpen -Port $port -TimeoutMilliseconds 200 } else { $false })
-        $scope = [string](Get-ItlMcpObjectValue -Object $endpoint -Name "scope" -Default "")
-        Write-Host "  $name [$scope] $url live=$live"
+        $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "scope" -Default "")
+        $provider = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "provider" -Default "local")
+        $configId = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "configId" -Default "")
+        $health = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "health" -Default "")
+        $indexedAt = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "indexedAt" -Default "")
+        $freshness = Get-Vibecoding1cMcpEndpointFreshness -Endpoint $endpoint
+        Write-Host "  $name [$scope/$provider] $url live=$live health=$(if ($health) { $health } else { '<unknown>' }) freshness=$freshness configId=$(if ($configId) { $configId } else { '<none>' }) indexedAt=$(if ($indexedAt) { $indexedAt } else { '<unknown>' })"
     }
-    Write-Host "Restart: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action mcp-start"
+    Write-Host "Restart: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-start"
 }
 
-function Write-ItlMcpStatusLines {
+function Write-Vibecoding1cMcpStatusLines {
     param([string]$Indent = "")
 
-    $state = Read-ItlMcpState
-    $model = Get-ItlMcpObjectValue -Object $state -Name "model" -Default $null
+    $state = Read-Vibecoding1cMcpState
+    $model = Get-Vibecoding1cMcpObjectValue -Object $state -Name "model" -Default $null
     if ($model) {
-        Write-Host "${Indent}ITL MCP embeddings: $(Get-ItlMcpObjectValue -Object $model -Name 'modelId' -Default '<unknown>') ready=$(Get-ItlMcpObjectValue -Object $model -Name 'ready' -Default $false)"
+        Write-Host "${Indent}vibecoding1c MCP embeddings: $(Get-Vibecoding1cMcpObjectValue -Object $model -Name 'modelId' -Default '<unknown>') ready=$(Get-Vibecoding1cMcpObjectValue -Object $model -Name 'ready' -Default $false)"
     } else {
-        Write-Host "${Indent}ITL MCP embeddings: not configured"
+        Write-Host "${Indent}vibecoding1c MCP embeddings: not configured"
     }
 
-    $endpoints = @(Get-ItlMcpCurrentEndpoints -IncludeGlobal)
+    $endpoints = @(Get-Vibecoding1cMcpCurrentEndpoints -IncludeGlobal)
     if ($endpoints.Count -eq 0) {
-        Write-Host "${Indent}ITL MCP active servers: none"
+        Write-Host "${Indent}vibecoding1c MCP active servers: none"
         return
     }
 
-    $names = @($endpoints | ForEach-Object { [string](Get-ItlMcpObjectValue -Object $_ -Name "name" -Default "") } | Where-Object { $_ })
-    Write-Host "${Indent}ITL MCP active servers: $($names -join ', ')"
-    $stale = @(ConvertTo-ItlMcpArray (Get-ItlMcpObjectValue -Object $state -Name "staleIndexes" -Default @()))
+    $names = @($endpoints | ForEach-Object {
+        $name = [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "name" -Default "")
+        if (-not $name) { return }
+        $provider = [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "provider" -Default "local")
+        $freshness = Get-Vibecoding1cMcpEndpointFreshness -Endpoint $_
+        "$name/$provider/$freshness"
+    } | Where-Object { $_ })
+    Write-Host "${Indent}vibecoding1c MCP active servers: $($names -join ', ')"
+    $stale = @(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $state -Name "staleIndexes" -Default @()))
     if ($stale.Count -gt 0) {
-        Write-Host "${Indent}ITL MCP stale indexes: $($stale -join ', ')"
+        Write-Host "${Indent}vibecoding1c MCP stale indexes: $($stale -join ', ')"
     }
 }
 
@@ -8329,6 +8951,11 @@ function Initialize-Project {
     Update-AgentGuidanceBridge
     Update-UserRules
     Commit-IfChanged "chore: install 1C agent workflow"
+    if ($script:InitVibecoding1cMcpSetupRequested -or (ConvertTo-YesNoBool -Value (Get-EnvValue -Name "VIBECODING1C_MCP_SETUP_DURING_INIT" -Default $false) -Default $false)) {
+        Setup-Vibecoding1cMcp
+    } else {
+        Write-Host "vibecoding1c MCP setup was deferred. Run /itl-vibecoding1c-mcp or -Action vibecoding1c-mcp-setup when needed."
+    }
 }
 
 function Sync-Master {
@@ -8663,7 +9290,7 @@ function Show-WorkflowStatus {
     Write-Host "Git worktree: $(if ($dirty) { 'dirty' } else { 'clean' })"
 
     if ($currentBranch -notlike "itldev/*") {
-        Write-ItlMcpStatusLines
+        Write-Vibecoding1cMcpStatusLines
         Write-Host "Current development branch: none"
         $worktreeStates = @()
         foreach ($file in Get-DevBranchStateFiles) {
@@ -8715,7 +9342,7 @@ function Show-WorkflowStatus {
     }
         Write-VanessaTestStatusLines -State $state
         Write-VanessaMcpStatusLines -State $state
-        Write-ItlMcpStatusLines
+        Write-Vibecoding1cMcpStatusLines
         Write-Host "Last config base update: $(Get-StateValue -State $state -Name 'lastConfigBaseUpdateAt' -Default '<never>')"
     if ($kind -eq "extension") {
         Write-Host "Last extension base update: $(Get-StateValue -State $state -Name 'lastExtensionBaseUpdateAt' -Default '<never>')"
@@ -8964,7 +9591,7 @@ function List-DevBranches {
         }
         Write-VanessaTestStatusLines -State $state -Indent "  "
         Write-VanessaMcpStatusLines -State $state -Indent "  "
-        Write-ItlMcpStatusLines -Indent "  "
+        Write-Vibecoding1cMcpStatusLines -Indent "  "
         Write-Host "  Created: $createdAt"
         Write-Host "  Last config base update: $lastConfigBaseUpdateAt"
         if ($kind -eq "extension") {
@@ -9143,15 +9770,18 @@ Actions:
   start-vanessa-mcp  Start branch-local Vanessa MCP on an auto-assigned port.
   stop-vanessa-mcp   Stop Vanessa MCP for the current development branch.
   vanessa-mcp-status Show Vanessa MCP PID, port, URL, log, and client snippets.
-  mcp-setup          Rotate local keys, ensure embedding model, start current-scope MCP, write client config.
-  mcp-update         Rotate keys and pull configured MCP Docker images.
-  mcp-status         Show active MCP names, URLs, embedding model, and stale indexes.
-  mcp-start          Start global, project, and current branch MCP servers.
-  mcp-stop           Stop MCP servers for the selected/current scope.
-  mcp-rotate-keys    Copy license keys from the private distribution config.env to local storage.
-  mcp-ensure-model   Select and bootstrap the local embedding model through LM Studio CLI when available.
-  mcp-write-client-config
-                      Write Codex and Kilo MCP config for the current worktree scope.
+  vibecoding1c-mcp-setup          Rotate local keys, ensure embedding model, start current-scope vibecoding1c MCP, write client config.
+  vibecoding1c-mcp-update         Rotate keys and pull configured vibecoding1c MCP Docker images.
+  vibecoding1c-mcp-status         Show active vibecoding1c MCP names, URLs, provider, health, and freshness.
+  vibecoding1c-mcp-start          Start global, project, and current branch vibecoding1c MCP servers.
+  vibecoding1c-mcp-stop           Stop vibecoding1c MCP servers for the selected/current scope.
+  vibecoding1c-mcp-select         Select remote/local provider, remote configId, or local project/branch scope.
+  vibecoding1c-mcp-refresh-registry
+                      Clone or update the remote vibecoding1c MCP endpoint registry.
+  vibecoding1c-mcp-rotate-keys    Copy license keys from the private distribution config.env to local storage.
+  vibecoding1c-mcp-ensure-model   Select and bootstrap the local embedding model through LM Studio CLI when available.
+  vibecoding1c-mcp-write-client-config
+                      Write Codex and Kilo vibecoding1c MCP config for the current worktree scope.
   status              Show current ITL branch, infobase, and verification status.
   run-dev-branch-tests
                       Run Vanessa Automation tests against the current development branch base.
@@ -9186,9 +9816,11 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-vanessa-mcp
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action start-vanessa-mcp
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vanessa-mcp-status
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action mcp-setup
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action mcp-status
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action mcp-start
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-status
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-select -McpServerId code -McpProvider remote -McpConfigId trade
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-select -McpServerId graph -McpProvider local -McpLocalScope branch
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-start
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action status
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts"
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts" -OfferOpenAgent
@@ -9224,14 +9856,16 @@ try {
         "start-vanessa-mcp" { Start-VanessaMcp }
         "stop-vanessa-mcp" { Stop-VanessaMcp }
         "vanessa-mcp-status" { Show-VanessaMcpStatus }
-        "mcp-setup" { Setup-ItlMcp }
-        "mcp-update" { Update-ItlMcp }
-        "mcp-status" { Show-ItlMcpStatus }
-        "mcp-start" { Start-ItlMcp }
-        "mcp-stop" { Stop-ItlMcp }
-        "mcp-rotate-keys" { Rotate-ItlMcpKeys }
-        "mcp-ensure-model" { Ensure-ItlMcpModel | Out-Null }
-        "mcp-write-client-config" { Write-ItlMcpClientConfig }
+        "vibecoding1c-mcp-setup" { Setup-Vibecoding1cMcp }
+        "vibecoding1c-mcp-update" { Update-Vibecoding1cMcp }
+        "vibecoding1c-mcp-status" { Show-Vibecoding1cMcpStatus }
+        "vibecoding1c-mcp-start" { Start-Vibecoding1cMcp }
+        "vibecoding1c-mcp-stop" { Stop-Vibecoding1cMcp }
+        "vibecoding1c-mcp-select" { Set-Vibecoding1cMcpSelection }
+        "vibecoding1c-mcp-refresh-registry" { Refresh-Vibecoding1cMcpRegistry }
+        "vibecoding1c-mcp-rotate-keys" { Rotate-Vibecoding1cMcpKeys }
+        "vibecoding1c-mcp-ensure-model" { Ensure-Vibecoding1cMcpModel | Out-Null }
+        "vibecoding1c-mcp-write-client-config" { Write-Vibecoding1cMcpClientConfig }
         "status" { Show-WorkflowStatus }
         "run-dev-branch-tests" { Run-DevBranchTests }
         "verify-dev-branch" { Verify-DevBranch }

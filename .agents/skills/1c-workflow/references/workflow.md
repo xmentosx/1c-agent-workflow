@@ -10,7 +10,7 @@ When the user asks for help or the requested action is unclear, show this menu:
 Available 1C workflow actions:
 1. New configuration branch: create an itldev/<name> branch worktree for configuration changes.
 2. New extension branch: create an itldev/<name> branch worktree for extension development; set the extension name later.
-3. MCP: setup, start, update, or inspect ITL MCP servers for the current project/worktree scope.
+3. MCP: setup, start, update, or inspect vibecoding1c MCP servers for the current project/worktree scope.
 4. Status: show current Git branch, active development branch, infobase, publication URL, verification status, MCP status, and latest result.
 5. Update base: update configuration files or extension files in the branch infobase.
 6. Verify: update the branch base, then run Vanessa Automation scenarios.
@@ -20,7 +20,7 @@ Available 1C workflow actions:
 10. Switch: show/open a saved development branch worktree or switch a legacy branch.
 ```
 
-For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-mcp`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request. The direct `/itl-init-project` wrapper exists for explicit bootstrap use, but it is not part of the beginner menu after initialization. Extension helper wrappers (`/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`) and the advanced `/itl-vanessa-mcp` wrapper remain available when directly needed, but are intentionally not shown in the beginner menu.
+For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-vibecoding1c-mcp`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request. The direct `/itl-init-project` wrapper exists for explicit bootstrap use, but it is not part of the beginner menu after initialization. Extension helper wrappers (`/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`) and the advanced `/itl-vanessa-mcp` wrapper remain available when directly needed, but are intentionally not shown in the beginner menu.
 
 For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
@@ -32,11 +32,12 @@ Create and maintain:
 - `.agent-1c/tools.json`: configurable software checks and install suggestions.
 - `.agent-1c/dev-branches/<safe-dev-branch-name>.json`: local development branch runtime state, including branch-local Vanessa verify test port and Vanessa MCP port/PID/URL when used; ignored by Git.
 - `.agent-1c/mcp/state.json`: local project/worktree MCP runtime mirror; ignored by Git.
+- `.agent-1c/mcp/vibecoding1c-selection.json`: local per-developer remote/local MCP selection; ignored by Git.
 - `.dev.env`: local secrets and machine-specific values; never commit it.
 - `.agents/skills/1c-workflow/`: shared detailed Agent Skill used by Codex and Kilo Code.
 - `.agents/skills/1c-workflow-fast/`: compact Agent Skill for routine helper-first lifecycle actions.
 - `.kilo/commands/`: optional Kilo Code slash command wrappers.
-- `.codex/config.toml`: project/worktree Codex MCP layer written by `mcp-write-client-config`; ignored by Git.
+- `.codex/config.toml`: project/worktree Codex MCP layer written by `vibecoding1c-mcp-write-client-config`; ignored by Git.
 - `.kilo/kilo.json` or `.kilo/kilo.jsonc`: local Kilo Code runtime state; ignored by Git.
 
 Never store passwords in committed files.
@@ -145,8 +146,10 @@ VANESSA_MCP_INSTALL_ROOT=.agent-1c/tools/vanessa-mcp
 VANESSA_MCP_PORT_RANGE=9874..9973
 VANESSA_MCP_PORT=
 VANESSA_MCP_URL=
-ITL_MCP_DISTRIBUTION_REPO=http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git
-ITL_MCP_DISTRIBUTION_PATH=
+VIBECODING1C_MCP_DISTRIBUTION_REPO=http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git
+VIBECODING1C_MCP_DISTRIBUTION_PATH=
+VIBECODING1C_MCP_REGISTRY_REPO=http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git
+VIBECODING1C_MCP_REGISTRY_PATH=
 PATH_METADATA=
 PATH_CODE=
 PATH_BASES=
@@ -269,19 +272,21 @@ Goal: install the standard executable test tool for ITL development branches.
 6. Save `VANESSA_AUTOMATION_EPF`, `VANESSA_AUTOMATION_VERSION`, `VANESSA_FEATURES_PATH=tests/features`, and `VANESSA_REPORTS_PATH=build/test-results/vanessa` to `.dev.env`.
 7. Ensure `tests/features` and `build/test-results/vanessa` directories exist. The downloaded tool and reports are local and ignored by Git.
 
-## MCP_SETUP / MCP_UPDATE / MCP_STATUS / MCP_START / MCP_STOP
+## VIBECODING1C_MCP_SETUP / VIBECODING1C_MCP_SELECT / VIBECODING1C_MCP_REFRESH_REGISTRY / VIBECODING1C_MCP_UPDATE / VIBECODING1C_MCP_STATUS / VIBECODING1C_MCP_START / VIBECODING1C_MCP_STOP
 
-Goal: make the private ITL 1C MCP distribution usable without requiring developers to understand ports, keys, model selection, Docker naming, or client config files.
+Goal: make vibecoding1c MCP usable on weak developer machines by preferring remote LAN endpoints while preserving local overrides.
 
-1. `/itl-mcp` runs `mcp-setup` by default. The helper clones or fast-forwards the private GitLab distribution from `ITL_MCP_DISTRIBUTION_REPO` (default `http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git`) into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\distribution`, unless `-McpDistributionPath` or `ITL_MCP_DISTRIBUTION_PATH` points to a manually prepared checkout.
-2. The helper rotates license keys from the private distribution `config.env` into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\config.env`, ensures the local embedding model, starts MCP servers for the current scope, and writes Codex/Kilo client config.
-3. The distribution may provide `itl-mcp.manifest.json`. If it is absent, the helper uses the built-in manifest for `docs`, `templates`, `syntax`, `codechecker`, `ssl`, `code`, `graph`, and branch `vanessa`.
-4. Global servers use deterministic names such as `itl-1c-docs`, `itl-1c-templates`, `itl-1c-syntax`, and `itl-1c-codechecker`. Project servers use `itl-<projectSlug>-code` and `itl-<projectSlug>-graph`. Branch servers use `itl-<projectSlug>-<branchSlug>-vanessa`.
-5. Host ports are allocated under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\ports.json` with a lock file. Vendor ports `8000`, `8002`, `8003`, `8004`, `8006`, `8007`, and `8008` remain container-internal only. Host ranges are `18000..18099` for global, `18100..18499` for project, `18500..18999` for branch, and `19000..19049` for local model fallback.
-6. `mcp-ensure-model` detects NVIDIA VRAM with `nvidia-smi`, RAM with CIM, and LM Studio availability with `lms`. It selects Qwen3 Embedding 4B quantization for NVIDIA GPUs, otherwise `intfloat/multilingual-e5-base` or `intfloat/multilingual-e5-small` on machines below 16 GB RAM. Containers receive `OPENAI_API_BASE=http://host.docker.internal:<modelPort>/v1`, `OPENAI_API_KEY=lm-studio`, and the selected embedding model.
-7. If the selected embedding model changes, affected indexes are marked stale. Do not set `RESET_DATABASE=true` automatically because full reindexing can take hours or longer.
-8. Codex global entries are written to `~/.codex/config.toml`; project and branch entries are written to ignored `.codex/config.toml` in the current worktree. Kilo entries for the current global/project/branch set are written under top-level `"mcp"` in ignored `.kilo/kilo.json`.
-9. `mcp-status`, `/itl-status`, and `list-dev-branches` show active MCP names, URLs, embedding model, distribution path/repo, and stale indexes. `mcp-status` is read-only and does not clone or pull the distribution.
+1. `/itl-vibecoding1c-mcp` runs `vibecoding1c-mcp-setup` by default. Remote is the default provider. The helper clones or fast-forwards the endpoint registry from `VIBECODING1C_MCP_REGISTRY_REPO` into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\registry`, unless `VIBECODING1C_MCP_REGISTRY_PATH` points to a prepared checkout.
+2. Config-specific remote vibecoding1c MCP always requires explicit `configId`; ask even when the registry currently has one configuration. Store the per-developer choice in ignored `.agent-1c/mcp/vibecoding1c-selection.json`.
+3. Use `vibecoding1c-mcp-select` for per-server `remote|local`, remote `configId`, and local `project|branch` scope. Vanessa MCP is managed separately by the Vanessa MCP actions and is always branch-local.
+4. Local MCP clones or fast-forwards the private GitLab distribution from `VIBECODING1C_MCP_DISTRIBUTION_REPO`, rotates license keys locally, ensures the local embedding model when needed, starts Docker/compose containers, and writes Codex/Kilo client config.
+5. The distribution may provide `vibecoding1c-mcp.manifest.json`. If it is absent, the helper uses the built-in vibecoding1c manifest for `docs`, `templates`, `syntax`, `codechecker`, `ssl`, `code`, and `graph`.
+6. Global servers use deterministic names such as `itl-1c-docs`, `itl-1c-templates`, `itl-1c-syntax`, and `itl-1c-codechecker`. Project/branch local `code` and `graph` names include project and optionally branch slug. Remote names come from the registry.
+7. Local host ports are allocated under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\ports.json` with a lock file. Vendor ports `8000`, `8002`, `8003`, `8004`, `8006`, `8007`, and `8008` remain container-internal only. Host ranges are `18000..18099` for global, `18100..18499` for project, `18500..18999` for branch, and `19000..19049` for local model fallback.
+8. Do not ask users to paste license keys into chat. Keys come from the private distribution `config.env` or local config; the project repo only stores ignored runtime state.
+9. `vibecoding1c-mcp-write-client-config` removes only config entries marked `managedBy = vibecoding1c-mcp` and `family = vibecoding1c`; do not delete unrelated or External MCP config.
+10. `vibecoding1c-mcp-stop` stops selected local containers. For remote endpoints it only disconnects local client config; host stop is done by `vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1`.
+11. `vibecoding1c-mcp-status`, `/itl-status`, and `list-dev-branches` show active vibecoding1c MCP names, URLs, provider, configId, health, indexed time, and freshness (`fresh`, `stale`, `remote-shared`, `unknown`, `indexing`).
 
 ## INSTALL_VANESSA_MCP / START_VANESSA_MCP / STOP_VANESSA_MCP / VANESSA_MCP_STATUS
 
@@ -293,9 +298,13 @@ Goal: use the official Vanessa Automation MCP server for scenario authoring/debu
 4. Port allocation reuses the saved branch port when possible, skips ports reserved by other development branch states, skips ports occupied by unrelated processes, and stops with a clear error if the range is exhausted.
 5. Save `vanessaMcpPort`, `vanessaMcpUrl`, `vanessaMcpPid`, `vanessaMcpStartedAt`, `vanessaMcpLogPath`, downloaded CFE paths, versions, SHA256 hashes, and install logs in `.agent-1c/dev-branches/<branch>.json`.
 6. `vanessa-mcp-status`, `status`, and `list-dev-branches` show MCP PID/port/URL/log when configured. `stop-vanessa-mcp` stops only the saved PID for the current branch.
-7. Print MCP client snippets with a branch-specific server name such as `VanessaAutomation-<safeBranchName>`. Direct Vanessa MCP actions do not edit global Codex, Kilo, VS Code, Cline, Roo, or Continue configs automatically; the managed `mcp-write-client-config` action writes Codex/Kilo config for the current scope.
+7. Print MCP client snippets with a branch-specific server name such as `VanessaAutomation-<safeBranchName>`. Direct Vanessa MCP actions do not edit global Codex, Kilo, VS Code, Cline, Roo, or Continue configs automatically; the managed `vibecoding1c-mcp-write-client-config` action writes Codex/Kilo config for the current scope.
 8. MCP is for authoring, form inspection, step search, recording, and debugging. The final `VERIFY_DEV_BRANCH` gate remains the packet `StartFeaturePlayer` run because it produces repeatable reports and verification state.
 9. Do not use MCP as the final verification runner. UI scenarios must be verified by `RUN_DEV_BRANCH_TESTS` in the real `TESTMANAGER -> TESTCLIENT` topology.
+
+## EXTERNAL_MCP
+
+External MCP servers are future or user-provided MCP servers outside Vanessa MCP and vibecoding1c MCP. The workflow does not start, stop, publish, or rewrite them; preserve any client config entry not marked as `managedBy = vibecoding1c-mcp` with `family = vibecoding1c`.
 
 ## INSTALL_APACHE
 
@@ -410,7 +419,7 @@ Goal: show the current ITL state without changing Git or 1C.
 2. If the current branch is `itldev/<name>`, show development branch name, kind, worktree path, main worktree path, extension name when relevant, infobase path, publication URL, last base update, last refresh, verification status, latest report/log, and latest CF/CFE result paths.
 3. Show Vanessa verify test port/status when configured.
 4. Show Vanessa MCP status when the current branch has branch-local MCP state.
-5. Show active ITL MCP names, embedding model, and stale indexes for the current scope.
+5. Show active vibecoding1c MCP names, embedding model, and stale indexes for the current scope.
 6. If the current branch is `master`, show that no development branch is active and summarize active development worktrees when state files are discoverable.
 
 ## RUN_DEV_BRANCH_TESTS
@@ -518,7 +527,7 @@ Goal: show active development branches and the current development branch.
 2. Show only development branch states without `closedAt`.
 3. Show current Git branch and current development branch; if current branch is `master`, report current development branch as `none`.
 4. Mark the development branch whose saved branch matches the current Git branch.
-5. For each active development branch, show name, branch, worktree path, main worktree path, development branch infobase path, launcher folder/name, publication URL if any, Vanessa verify test port/status, Vanessa MCP status when configured, ITL MCP current-scope status, created timestamp, last base update timestamp, and last refresh timestamp.
+5. For each active development branch, show name, branch, worktree path, main worktree path, development branch infobase path, launcher folder/name, publication URL if any, Vanessa verify test port/status, Vanessa MCP status when configured, vibecoding1c MCP current-scope status, created timestamp, last base update timestamp, and last refresh timestamp.
 
 ## SWITCH_MASTER
 

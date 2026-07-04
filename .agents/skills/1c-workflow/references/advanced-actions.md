@@ -22,14 +22,16 @@ install-vanessa-mcp
 start-vanessa-mcp
 stop-vanessa-mcp
 vanessa-mcp-status
-mcp-setup
-mcp-update
-mcp-status
-mcp-start
-mcp-stop
-mcp-rotate-keys
-mcp-ensure-model
-mcp-write-client-config
+vibecoding1c-mcp-setup
+vibecoding1c-mcp-update
+vibecoding1c-mcp-status
+vibecoding1c-mcp-start
+vibecoding1c-mcp-stop
+vibecoding1c-mcp-select
+vibecoding1c-mcp-refresh-registry
+vibecoding1c-mcp-rotate-keys
+vibecoding1c-mcp-ensure-model
+vibecoding1c-mcp-write-client-config
 sync-master
 new-dev-branch
 new-extension-dev-branch
@@ -50,6 +52,6 @@ status
 
 Extension helper actions and Vanessa MCP actions are advanced/helper commands. Keep `/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`, and `/itl-vanessa-mcp` documented for direct use, but do not show them in the beginner `/itl` menu.
 
-Team MCP actions (`mcp-setup`, `mcp-update`, `mcp-status`, `mcp-start`, `mcp-stop`, `mcp-rotate-keys`, `mcp-ensure-model`, `mcp-write-client-config`) are exposed through `/itl-mcp`. They manage the private ITL MCP distribution, local key rotation, embedding model bootstrap, port allocation, Docker containers, and Codex/Kilo client config for the current scope.
+vibecoding1c MCP actions (`vibecoding1c-mcp-setup`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`, `vibecoding1c-mcp-update`, `vibecoding1c-mcp-status`, `vibecoding1c-mcp-start`, `vibecoding1c-mcp-stop`, `vibecoding1c-mcp-rotate-keys`, `vibecoding1c-mcp-ensure-model`, `vibecoding1c-mcp-write-client-config`) are exposed through `/itl-vibecoding1c-mcp`. They manage remote LAN registry discovery, per-server remote/local selection, private vibecoding1c MCP distribution, local key rotation, embedding model bootstrap, port allocation, Docker containers, and Codex/Kilo client config for the current scope. Remote is the default provider; config-specific remote vibecoding1c MCP always needs an explicit `configId`. Local `code`/`graph` can be selected for project or branch scope. Vanessa MCP is managed separately through `/itl-vanessa-mcp` and is always branch-local.
 
 For normal developer work, prefer the short `/itl-*` commands documented in the README and developer guide.

@@ -21,6 +21,12 @@
     "repo": "https://github.com/comol/ai_rules_1c.git",
     "tools": ""
   },
+  "vibecoding1cMcp": {
+    "registryRepo": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git",
+    "providerDefault": "remote",
+    "remoteConfigId": "",
+    "localScopeDefault": "project"
+  },
   "web": {
     "publishByDefault": false,
     "webInstPath": "",
