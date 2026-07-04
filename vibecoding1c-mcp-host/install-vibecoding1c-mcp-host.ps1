@@ -785,6 +785,37 @@ function Get-HostLocalValues {
     }
 }
 
+function Resolve-HostConfigValue {
+    param(
+        [string]$From,
+        [System.Collections.IDictionary]$SecretValues,
+        [System.Collections.IDictionary]$LocalValues,
+        [object]$Default = ""
+    )
+    if (-not $From) {
+        return [string]$Default
+    }
+    if ($From -like "PATH_*" -and $LocalValues.Contains($From)) {
+        $localValue = [string]$LocalValues[$From]
+        if (-not [string]::IsNullOrWhiteSpace($localValue)) {
+            return $localValue
+        }
+    }
+    if ($SecretValues.Contains($From)) {
+        $secretValue = [string]$SecretValues[$From]
+        if (-not [string]::IsNullOrWhiteSpace($secretValue)) {
+            return $secretValue
+        }
+    }
+    if ($LocalValues.Contains($From)) {
+        $localValue = [string]$LocalValues[$From]
+        if (-not [string]::IsNullOrWhiteSpace($localValue)) {
+            return $localValue
+        }
+    }
+    return [string]$Default
+}
+
 function Get-HostDefaultEnvEntries {
     param([object]$Server)
     $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
@@ -846,13 +877,7 @@ function Resolve-ServerEnv {
             if ($ConfigState) { $value = $value.Replace("{projectSlug}", $ConfigState.configId) }
         } else {
             $from = [string](Get-ObjectValue -Object $entry -Name "from" -Default "")
-            if ($from -and $secretValues.Contains($from)) {
-                $value = $secretValues[$from]
-            } elseif ($from -and $localValues.Contains($from)) {
-                $value = $localValues[$from]
-            } else {
-                $value = [string](Get-ObjectValue -Object $entry -Name "default" -Default "")
-            }
+            $value = Resolve-HostConfigValue -From $from -SecretValues $secretValues -LocalValues $localValues -Default (Get-ObjectValue -Object $entry -Name "default" -Default "")
         }
         if ([bool](Get-ObjectValue -Object $entry -Name "required" -Default $false) -and [string]::IsNullOrWhiteSpace($value)) {
             $serverId = [string](Get-ObjectValue -Object $Server -Name "id" -Default "<unknown>")

@@ -478,6 +478,50 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "does not let blank distribution PATH settings shadow host-generated config paths" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-path-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+
+        try {
+            $stateRoot = Join-Path $tempRoot "state"
+            New-Item -ItemType Directory -Force -Path (Join-Path $stateRoot "distribution") | Out-Null
+            Set-Content -LiteralPath (Join-Path $stateRoot "distribution\config.env") -Encoding UTF8 -Value "PATH_METADATA=`nPATH_CODE=`n"
+
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "test-host"
+                baseUrl = "http://localhost"
+                stateRoot = $stateRoot
+                enabledServers = [ordered]@{ global = @(); project = @("graph") }
+                configurations = @()
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                $configState = [pscustomobject]@{
+                    configId = "pm5corp"
+                    metadataRoot = (Join-Path $tempRoot "metadata")
+                    sourceRoot = (Join-Path $tempRoot "source")
+                    mainConfigPath = "src/cf"
+                }
+                $server = [pscustomobject]@{
+                    id = "graph"
+                    env = @([ordered]@{ name = "METADATA_HOST_PATH"; from = "PATH_METADATA"; required = $true })
+                }
+
+                $envValues = Resolve-ServerEnv -Config $hostConfig -Server $server -ConfigState $configState
+
+                $envValues["METADATA_HOST_PATH"] | Should -Be $configState.metadataRoot
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "normalizes unscoped local code and graph manifest entries to project scope" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-local-scope-test-" + [guid]::NewGuid().ToString("N"))
         $projectRoot = Join-Path $tempRoot "project"
