@@ -3,6 +3,8 @@
 This folder is for the dedicated LAN machine that runs shared vibecoding1c MCP servers.
 It does not require Codex, Kilo, the workflow agent, or a target 1C project.
 
+For the administrator runbook in Russian, see [`RUNBOOK.ru.md`](RUNBOOK.ru.md).
+
 ## Setup
 
 1. Copy `host.config.example.json` to `host.config.json`.
