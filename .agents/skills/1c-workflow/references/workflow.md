@@ -20,7 +20,7 @@ Available 1C workflow actions:
 10. Switch: show/open a saved development branch worktree or switch a legacy branch.
 ```
 
-For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-vibecoding1c-mcp`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request. The direct `/itl-init-project` wrapper exists for explicit bootstrap use, but it is not part of the beginner menu after initialization. Extension helper wrappers (`/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`) and the advanced `/itl-vanessa-mcp` wrapper remain available when directly needed, but are intentionally not shown in the beginner menu.
+For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-vibecoding1c-mcp`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request. The direct `/itl-init-project` wrapper exists for explicit bootstrap use, but it is not part of the beginner menu after initialization. Extension helper wrappers (`/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`), the advanced `/itl-vanessa-mcp` wrapper, and the maintenance `/itl-update-rules` wrapper remain available when directly needed, but are intentionally not shown in the beginner menu.
 
 For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
@@ -30,6 +30,7 @@ Create and maintain:
 
 - `.agent-1c/project.json`: non-secret project settings.
 - `.agent-1c/tools.json`: configurable software checks and install suggestions.
+- `.agent-1c/dependency-lock.json`: committed dependency lock manifest for `ai_rules_1c`, Vanessa Automation, and downloadable archive URLs/SHA256. Default mode is `fresh`; `locked` mode uses only pinned values.
 - `.agent-1c/dev-branches/<safe-dev-branch-name>.json`: local development branch runtime state, including branch-local Vanessa verify test port and Vanessa MCP port/PID/URL when used; ignored by Git.
 - `.agent-1c/mcp/state.json`: local project/worktree MCP runtime mirror; ignored by Git.
 - `.agent-1c/mcp/vibecoding1c-selection.json`: local per-developer remote/local MCP selection; ignored by Git.
@@ -46,8 +47,8 @@ All workflow state files and `.dev.env` must be UTF-8. Preserve Cyrillic usernam
 
 Current policy notes:
 
-- Ideal industrial gating would forbid result export and branch close without fresh passed Vanessa verification, code review, and a test report. The current workflow only warns and requires explicit unverified confirmation.
-- Ideal dependency management would use a lock file for `ai_rules_1c`, Vanessa Automation, and archive hashes. The current workflow uses the latest available versions and logs SHA256 for downloaded archives.
+- `verificationPolicy=warn` is the default and requires explicit unverified confirmation before result export or branch close when verification is not fresh passed. `verificationPolicy=block` forbids result export and branch close until `/itl-verify` is fresh passed.
+- `dependencyMode=fresh` is the default and records resolved dependency revisions/hashes into `.agent-1c/dependency-lock.json`. `dependencyMode=locked` uses only pinned lock values and fails on missing pins or hash mismatch.
 - Parallel independent development lines should use separate `itldev/*` branches/worktrees. One development branch may remain long-lived and contain several sequential tasks.
 
 ## Project Config Shape
@@ -71,6 +72,8 @@ Use this as `.agent-1c/project.json`:
   "sourceServerName": "",
   "sourceInfoBaseName": "",
   "repositoryPath": "",
+  "dependencyMode": "fresh",
+  "verificationPolicy": "warn",
   "devBranchInfoBaseRoot": ".agent-1c/infobases/dev-branches",
   "devBranchWorktreeRoot": "",
   "serverBaseCopyScript": "",
@@ -112,6 +115,8 @@ REPOSITORY_PATH=\\server\repo
 REPOSITORY_USER=
 # Empty value means the repository password is not set.
 REPOSITORY_PASSWORD=
+DEPENDENCY_MODE=fresh
+VERIFICATION_POLICY=warn
 # Optional override. By default development branch infobase copies are stored under .agent-1c\infobases\dev-branches and ignored by Git.
 DEV_BRANCH_INFOBASE_ROOT=
 # Optional override. By default development branch Git worktrees are created next to the project as <project-folder>-worktrees\<branch>.
@@ -203,6 +208,7 @@ For project initialization:
 - Directory for development branch infobase copies: do not ask by default. Use `.agent-1c/infobases/dev-branches` inside the active branch worktree and ignore `.agent-1c/infobases/` in Git. Ask only if the developer explicitly wants a custom location.
 - Apache web-client testing: ask only whether new development branch infobases should be published to Apache by default. Store the answer locally in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`, never in committed project JSON.
 - If Apache publishing is enabled, run `detect-apache` and save detected local values to `.dev.env`. Do not ask for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf` in the ordinary initialization flow. If Apache is not detected, ask whether to install it automatically. On "yes", run `install-apache`, then rerun `detect-apache`/`check-tools`; on "no", offer only to disable publication or stop initialization until Apache is configured manually.
+- Dependency mode: ask whether initialization should use fresh dependencies or locked dependencies. Default to fresh and store `DEPENDENCY_MODE=fresh`. If locked is chosen, use `.agent-1c/dependency-lock.json` and stop when a required pin or hash is absent.
 - Ensure Vanessa Automation is installed for executable branch tests. If no EPF is found, ask whether to install it automatically. On "yes", run `install-vanessa-automation`; on "no", stop initialization with the manual command.
 - Do not ask whether the project is for Codex or Kilo Code. Configure the current agent surface; when it cannot be detected, use Codex as the fallback.
 
@@ -266,8 +272,8 @@ Goal: install the standard executable test tool for ITL development branches.
 
 1. Never run this action without explicit developer confirmation or a direct install command.
 2. If `VANESSA_AUTOMATION_EPF` already points to an existing EPF, save it back to `.dev.env` and finish.
-3. Download the `vanessa-automation-single.*.zip` asset from the latest `Pr-Mex/vanessa-automation` GitHub release.
-4. Log the actual SHA256 of the downloaded archive.
+3. In `dependencyMode=fresh`, download the `vanessa-automation-single.*.zip` asset from the latest `Pr-Mex/vanessa-automation` GitHub release and update `.agent-1c/dependency-lock.json` with version, URL, source, and SHA256.
+4. In `dependencyMode=locked`, use `dependencies.vanessaAutomation.url` and verify `sha256` when provided. Stop on missing URL or SHA256 mismatch.
 5. Unpack it under `.agent-1c/tools/vanessa-automation`.
 6. Save `VANESSA_AUTOMATION_EPF`, `VANESSA_AUTOMATION_VERSION`, `VANESSA_FEATURES_PATH=tests/features`, and `VANESSA_REPORTS_PATH=build/test-results/vanessa` to `.dev.env`.
 7. Ensure `tests/features` and `build/test-results/vanessa` directories exist. The downloaded tool and reports are local and ignored by Git.
@@ -312,8 +318,8 @@ Goal: install a local Apache/httpd for 1C web publication when the developer ena
 
 1. Never run this action without explicit developer confirmation.
 2. First run `detect-apache`; if Apache is already detected, save detected values to `.dev.env` and continue.
-3. Download the official Apache Lounge zip. Prefer the URL reported by `winget show ApacheLounge.httpd`; if `winget install ApacheLounge.httpd` fails because of a stale hash, this is not a blocker.
-4. Log the actual SHA256 of the downloaded archive. Do not hide hash mismatch warnings, but do not use stale winget metadata as the only blocker for an official Apache Lounge archive.
+3. In `dependencyMode=fresh`, download the official Apache Lounge zip. Prefer the URL reported by `winget show ApacheLounge.httpd`; if `winget install ApacheLounge.httpd` fails because of a stale hash, this is not a blocker. Update `.agent-1c/dependency-lock.json` with URL, source, and actual SHA256.
+4. In `dependencyMode=locked`, use `dependencies.apache.url` and verify `sha256` when provided. Stop on missing URL or SHA256 mismatch. Do not use stale winget metadata as the only blocker in fresh mode.
 5. Unpack Apache to `C:\Apache24`. If that directory exists and does not look like an Apache installation, stop without overwriting it.
 6. Ensure Microsoft Visual C++ Redistributable 2015-2022 x64 is installed.
 7. Configure `conf\httpd.conf`: set `SRVROOT`, choose port 80 when free, otherwise the first free port from 8080..8090, and set `ServerName localhost:<port>`.
@@ -330,10 +336,11 @@ Goal: create the baseline project state.
 3. The wizard collects missing parameters. Do not ask for `devBranchInfoBaseRoot` during normal initialization; use `.agent-1c/infobases/dev-branches`.
    - For the platform path, first offer discovered installed 1C versions; do not make the developer type `C:\Program Files\1cv8\...\bin\1cv8.exe` when it can be selected.
    - Ask whether development branch infobases should be published to Apache for web-client testing. If no, write `WEB_PUBLISH_BY_DEFAULT=false` and do not ask Apache paths. If yes, write `WEB_PUBLISH_BY_DEFAULT=true`, run `detect-apache`, and save detected local Apache settings to `.dev.env`. If Apache is not detected, ask whether to run `install-apache`; after success, rerun `detect-apache`/`check-tools`.
+   - Ask whether to use fresh dependency versions or locked versions. Default to fresh. Write `DEPENDENCY_MODE=fresh|locked`; locked mode requires a populated `.agent-1c/dependency-lock.json`.
    - Check Vanessa Automation. If missing, ask whether to install it automatically and run `install-vanessa-automation` after confirmation.
 4. If the wizard fails because terminal input is unavailable, do not collect the questionnaire in chat and do not continue the lifecycle manually. Use the monitored wizard command, or use JSON mode only when the developer explicitly requested non-interactive initialization or an answers file already exists.
 5. For non-interactive automation, pass `-InitMode json -InitAnswersPath <answers.json>` with the same values the wizard would collect. If required fields are missing, stop before launching 1C.
-6. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, and `.dev.env` if missing. Write them as UTF-8.
+6. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, `.agent-1c/dependency-lock.json`, and `.dev.env` if missing. Write them as UTF-8.
 7. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.
 8. Initialize local Git if needed.
 9. Checkout or create `master`.
@@ -345,12 +352,26 @@ Goal: create the baseline project state.
    - Next dumps: if `src/cf/ConfigDumpInfo.xml` exists, run incremental dump with `-update -force`.
    - Unsafe state: if `src/cf` is not empty and `ConfigDumpInfo.xml` is missing, stop and ask the user to clean the folder or restore `ConfigDumpInfo.xml`.
 12. Verify `src/cf/ConfigDumpInfo.xml` exists after the dump. During initial project creation, commit only `src/cf` to `master`, then verify `HEAD:src/cf/ConfigDumpInfo.xml` exists. Stop if Git sees no dump files to commit or the file is missing from `HEAD`.
-13. Install `ai_rules_1c` per project from `https://github.com/comol/ai_rules_1c`, using the current agent target (`codex`, `kilocode`, or fallback `codex`). Invoke its installer with named parameters: `-Command init -ProjectRoot <project> -Source <rulesDir> -Tools <tools> -AssumeYes`.
+13. Install `ai_rules_1c` using the current agent target (`codex`, `kilocode`, or fallback `codex`). In fresh mode, use the configured repo and record the resolved commit in `.agent-1c/dependency-lock.json`; in locked mode, use `dependencies.aiRules1c.ref` or `commit` and stop if neither is set. Invoke its installer with named parameters: `-Command init -ProjectRoot <project> -Source <rulesDir> -Tools <tools> -AssumeYes`.
 14. Install this workflow skill into `.agents/skills/1c-workflow` and the fast routine skill into `.agents/skills/1c-workflow-fast`.
 15. If the current agent is Kilo Code, install slash wrappers into `.kilo/commands`.
-16. Add a short `AGENTS.md` bridge that points agents to `USER-RULES.md` and the workflow skills.
+16. Keep the ITL overlay in `USER-RULES.md`. Do not append to upstream-managed `AGENTS.md` when the `ai_rules_1c` installer already made it point to `USER-RULES.md`; add the short bridge only as a fallback for projects without such a root `AGENTS.md`.
 17. Add detailed project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
 18. Commit rules and workflow files when there are changes.
+
+## UPDATE_AI_RULES
+
+Goal: refresh upstream `ai_rules_1c` while preserving the ITL overlay above it.
+
+Helper action: `update-ai-rules`. Kilo wrapper: `/itl-update-rules`.
+
+1. Clone or update the configured `ai_rules_1c` repo under `%TEMP%\ai_rules_1c`.
+2. In `dependencyMode=fresh`, checkout the remote origin HEAD. In `dependencyMode=locked`, checkout `dependencies.aiRules1c.commit` or `ref` and stop when neither is set.
+3. If `.ai-rules.json` exists, run the upstream installer with `-Command update -ProjectRoot <project> -Source <rulesDir> -AssumeYes`; if it is missing, run `init` with the configured agent tools.
+4. Let the upstream installer preserve files marked `userModified`. Use `-Force` only after explicit developer intent to overwrite local edits with the shipped upstream version.
+5. Reapply the ITL overlay in `USER-RULES.md` from `templates/USER-RULES.append.md`.
+6. Do not normally append to `AGENTS.md`; upstream `AGENTS.md` already loads `USER-RULES.md`. Add the short ITL bridge only when no `USER-RULES.md` reference exists.
+7. Record the resolved `ai_rules_1c` commit in `.agent-1c/dependency-lock.json`.
 
 ## NEW_DEV_BRANCH / NEW_EXTENSION_DEV_BRANCH
 
@@ -480,7 +501,7 @@ Goal: create a CF or CFE result from the current development branch without clos
 5. For configuration branches, update `src/cf` and export `.cf` into `artifactsPath`.
 6. For extension branches, update `src/cfe/<safeExtensionName>` with `-Extension <extensionName>` and export `.cfe` into `artifactsPath`.
 7. Do not refresh `master` or merge fresh source changes unless the user explicitly requested `REFRESH_DEV_BRANCH` first.
-8. If verification is missing, failed, stale, or unknown, warn the developer and require explicit confirmation or `-AllowUnverifiedResult` before exporting.
+8. If verification is missing, failed, stale, or unknown, apply `verificationPolicy`: `warn` requires explicit confirmation or `-AllowUnverifiedResult` before exporting; `block` stops without an override path.
 9. Create `<artifact>.manifest.json` next to the exported CF/CFE with schema version, artifact SHA256, operation, branch metadata, master/development commits, verification status/report/log, latest 1C log path, publication URL, manual import note, and unverified override flag.
 10. Update development branch state with update metadata, result path, result manifest path, timestamp, latest 1C log path, and unverified override metadata when used.
 
@@ -510,7 +531,7 @@ Goal: prepare tested current work for manual import into the source base and clo
 7. Merge `master` into the development branch.
 8. If conflicts occur, stop and resolve them in config files before continuing.
 9. Update merged `src/cf` files in the branch infobase. For extension branches, also update extension files from `src/cfe/<safeExtensionName>` before exporting the result.
-10. Check whether verification is still fresh after sync/merge/update. If it is missing, failed, stale, or unknown, warn the developer and require explicit confirmation or `-AllowUnverifiedClose`.
+10. Check whether verification is still fresh after sync/merge/update. If it is missing, failed, stale, or unknown, apply `verificationPolicy`: `warn` requires explicit confirmation or `-AllowUnverifiedClose`; `block` stops without an override path.
 11. Export final CF or CFE result from the development branch infobase into `artifactsPath`.
 12. Create `<artifact>.manifest.json` next to the exported CF/CFE with schema version, artifact SHA256, operation, branch metadata, master/development commits, verification status/report/log, latest 1C log path, publication URL, manual import note, and unverified override flag.
 13. Set `closedAt` in development branch state.
@@ -565,10 +586,10 @@ Stop immediately when:
 - 1C Designer returns a non-zero exit code.
 - CF/CFE result export fails.
 - Apache publication is requested but `webinst.exe` or Apache/httpd is missing and the developer declined automatic install or manual setup.
-- `/itl-result` or `/itl-close` found missing, failed, stale, or unknown verification and the developer did not explicitly confirm unverified continuation.
+- `/itl-result` or `/itl-close` found missing, failed, stale, or unknown verification and either `verificationPolicy=block` or the developer did not explicitly confirm unverified continuation.
 
 ## Troubleshooting
 
 - "Ошибка блокировки информационной базы для конфигурирования" during initialization means another Designer process still holds the infobase lock. This can be a manually opened Configurator or a previous `1cv8.exe` process that has not exited yet. Close the manual Configurator; the workflow helper must wait between its own consecutive Designer launches.
 - `1cv8.exe` exits with code 1 or appears to hang with `-WindowStyle Hidden` after a PowerShell launch can mean `Start-Process -ArgumentList` received a PowerShell array. Native Windows executables parse one command-line string; without native quoting, a path such as `C:\My Path\base` is split at the space and 1C Designer receives the wrong arguments. Use `Join-NativeCommandLineArguments` or the `&` call operator.
-- If `/itl-result` or `/itl-close` stops because verification is missing, failed, stale, or unknown, run `/itl-verify` or explicitly confirm the unverified override when the risk is acceptable.
+- If `/itl-result` or `/itl-close` stops because verification is missing, failed, stale, or unknown, run `/itl-verify`. With `verificationPolicy=warn`, an explicit unverified override is allowed when the risk is acceptable; with `verificationPolicy=block`, it is not.

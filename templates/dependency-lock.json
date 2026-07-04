@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "mode": "fresh",
+  "dependencies": {
+    "aiRules1c": {
+      "repo": "https://github.com/comol/ai_rules_1c.git",
+      "ref": "",
+      "commit": ""
+    },
+    "vanessaAutomation": {
+      "version": "",
+      "url": "",
+      "sha256": "",
+      "source": ""
+    },
+    "apache": {
+      "url": "",
+      "sha256": "",
+      "source": ""
+    }
+  }
+}

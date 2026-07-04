@@ -11,7 +11,7 @@ Run the monitored helper wizard from the current project directory:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard
 ```
 
-Do not collect the initialization questionnaire in chat or Kilo Questions before this first helper attempt. The monitored wizard opens a PowerShell window, confirms the current project directory, collects setup values, writes `.dev.env` and `.agent-1c/project.json`, runs the initialization lifecycle, and reports completion back through `.agent-1c/runs/<run>/status.json`.
+Do not collect the initialization questionnaire in chat or Kilo Questions before this first helper attempt. The monitored wizard opens a PowerShell window, confirms the current project directory, collects setup values including dependency mode (`fresh` by default, `locked` only for a populated lock manifest), writes `.dev.env`, `.agent-1c/project.json`, and `.agent-1c/dependency-lock.json`, runs the initialization lifecycle, and reports completion back through `.agent-1c/runs/<run>/status.json`.
 
 Run the monitored command in the foreground and wait for it to finish. Do not wrap initialization in a background PowerShell launch, do not keep the launched PowerShell session open after the helper exits, and do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly as the default agent path.
 

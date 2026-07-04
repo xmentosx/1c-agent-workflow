@@ -47,6 +47,8 @@ For `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export
 
 For branch verification, do not call `/deploy-and-test` in the normal fast path. Run `verify-dev-branch`; it updates the branch base partially and then runs Vanessa Automation through packet `StartFeaturePlayer` in `TESTMANAGER -> TESTCLIENT` mode with a branch-local test port. The helper also checks the local branch infobase event log against the branch baseline created during branch initialization; fresh non-baseline `Error` records fail verification. MCP is not the final verification runner. Foreign branch 1C test processes are warnings by default, not a reason to wait, unless there is a real port/infobase conflict or `VANESSA_TEST_FOREIGN_WAIT_MODE=wait` is set.
 
+For result or close, let the helper enforce `verificationPolicy`: default `warn` allows only explicit unverified override; `block` stops until `verify-dev-branch` is fresh passed.
+
 ## Failure Handling
 
 If the helper exits with an error:

@@ -2,9 +2,15 @@ Describe "1C agent workflow static checks" {
     BeforeAll {
         $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
         $HelperPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+        $HelperModulePaths = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib") -File -Filter "agent-1c.*.ps1" | Sort-Object Name | ForEach-Object { $_.FullName })
         $LauncherPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"
         $McpHostPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\install-vibecoding1c-mcp-host.ps1"
-        $HelperText = Get-Content -Encoding UTF8 -Raw $HelperPath
+        $helperParts = @()
+        $helperParts += Get-Content -Encoding UTF8 -Raw $HelperPath
+        foreach ($modulePath in $HelperModulePaths) {
+            $helperParts += Get-Content -Encoding UTF8 -Raw $modulePath
+        }
+        $HelperText = $helperParts -join [Environment]::NewLine
         $LauncherText = Get-Content -Encoding UTF8 -Raw $LauncherPath
         $McpHostText = Get-Content -Encoding UTF8 -Raw $McpHostPath
     }
@@ -15,6 +21,17 @@ Describe "1C agent workflow static checks" {
         [System.Management.Automation.Language.Parser]::ParseFile($HelperPath, [ref]$tokens, [ref]$errors) | Out-Null
 
         @($errors).Count | Should -Be 0
+    }
+
+    It "parses helper modules" {
+        $HelperModulePaths.Count | Should -BeGreaterThan 0
+        foreach ($modulePath in $HelperModulePaths) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($modulePath, [ref]$tokens, [ref]$errors) | Out-Null
+
+            @($errors).Count | Should -Be 0
+        }
     }
 
     It "parses the monitored window launcher" {
@@ -73,16 +90,19 @@ Describe "1C agent workflow static checks" {
 
     It 'keeps Pester CI output under ignored build test-results path' {
         $ciText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.github\workflows\ci.yml')
+        $testScriptText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot 'scripts\test.ps1')
         $ciText | Should -Match ([regex]::Escape('build\test-results\pester\testResults.xml'))
+        $ciText | Should -Match ([regex]::Escape('.\scripts\test.ps1'))
+        $ciText | Should -Match '-CI'
         $ciText | Should -Match '-OutputFile'
+        $testScriptText | Should -Match 'New-PesterConfiguration'
+        $testScriptText | Should -Match 'TestResult\.OutputPath'
 
         $gitignoreText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.gitignore')
         $templateIgnoreText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot 'templates\gitignore.append')
         $gitignoreText | Should -Match '(?m)^testResults\.xml$'
         $templateIgnoreText | Should -Match '(?m)^testResults\.xml$'
         $templateIgnoreText | Should -Match 'build/test-results/'
-        $quotedTestResults = ([char]34) + 'testResults.xml' + ([char]34)
-        $HelperText | Should -Match ([regex]::Escape($quotedTestResults))
     }
 
     It "has Kilo wrapper files for every documented /itl command" {
@@ -169,7 +189,8 @@ Describe "1C agent workflow static checks" {
             "/itl-init-project",
             "/itl-set-dev-branch-extension",
             "/itl-dump-dev-branch-extension",
-            "/itl-vanessa-mcp"
+            "/itl-vanessa-mcp",
+            "/itl-update-rules"
         )
 
         $kiloMenuText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl.md")
@@ -379,7 +400,7 @@ Describe "1C agent workflow static checks" {
             & git -C $workRepo commit -m "initial distribution" *> $null
             & git init --bare $remoteRepo *> $null
             & git -C $workRepo remote add origin $remoteRepo
-            & git -C $workRepo push -u origin main *> $null
+            & git -C $workRepo push --quiet -u origin main *> $null
             & git -C $remoteRepo symbolic-ref HEAD refs/heads/main
 
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_DISTRIBUTION_REPO", $remoteRepo, "Process")
@@ -398,7 +419,7 @@ Describe "1C agent workflow static checks" {
             Set-Content -LiteralPath (Join-Path $workRepo "version.txt") -Value "2" -Encoding ASCII
             & git -C $workRepo add version.txt
             & git -C $workRepo commit -m "update distribution" *> $null
-            & git -C $workRepo push origin main *> $null
+            & git -C $workRepo push --quiet origin main *> $null
 
             & {
                 . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
@@ -592,7 +613,7 @@ Describe "1C agent workflow static checks" {
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl.md")) | Should -Not -Match "/itl-vanessa-mcp"
     }
 
-    It "installs a Codex AGENTS bridge to USER-RULES and workflow skills" {
+    It "keeps the ITL overlay in USER-RULES and AGENTS as a fallback bridge" {
         $templatePath = Join-Path $RepoRoot "templates\AGENTS.append.md"
         (Test-Path -LiteralPath $templatePath -PathType Leaf) | Should -Be $true
 
@@ -602,15 +623,77 @@ Describe "1C agent workflow static checks" {
         $templateText | Should -Match "1c-workflow-fast"
         $templateText | Should -Match "1c-workflow/SKILL.md"
 
+        $userRulesTemplatePath = Join-Path $RepoRoot "templates\USER-RULES.append.md"
+        (Test-Path -LiteralPath $userRulesTemplatePath -PathType Leaf) | Should -Be $true
+        $userRulesTemplateText = Get-Content -Encoding UTF8 -Raw $userRulesTemplatePath
+        $userRulesTemplateText | Should -Match "## 1C Project Lifecycle"
+        $userRulesTemplateText | Should -Match "update-ai-rules"
+        $userRulesTemplateText | Should -Match "TESTMANAGER -> TESTCLIENT"
+        $userRulesTemplateText | Should -Match ([regex]::Escape(".agent-1c/event-log-baselines/*.json"))
+
         $HelperText | Should -Match "function Update-AgentGuidanceBridge"
+        $HelperText | Should -Match "function Update-UserRules"
         $HelperText | Should -Match "## 1C Agent Workflow Bridge"
         $HelperText | Should -Match "Update-AgentGuidanceBridge"
         $HelperText | Should -Match "Update-UserRules"
+        $HelperText | Should -Match ([regex]::Escape("templates\USER-RULES.append.md"))
+        $HelperText | Should -Match "AGENTS\.md already references USER-RULES\.md"
 
         $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
-        $installText | Should -Match "templates/AGENTS.append.md"
-        $installText | Should -Match "short discovery bridge"
+        $installText | Should -Match "templates/USER-RULES.append.md"
+        $installText | Should -Match "fallback"
+        $installText | Should -Match "upstream-managed"
+        $installText | Should -Match "AGENTS\.md"
         $installText | Should -Match "USER-RULES.md"
+    }
+
+    It "wires ai_rules_1c update through the helper and Kilo wrapper" {
+        $HelperText | Should -Match ([regex]::Escape('"update-ai-rules"'))
+        $HelperText | Should -Match "function Update-AiRules1c"
+        $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cInstaller -Command "update"'))
+        $HelperText | Should -Match ([regex]::Escape('"-Force"'))
+        $HelperText | Should -Match "Update ai_rules_1c managed rules"
+
+        $wrapperPath = Join-Path $RepoRoot ".kilo\commands\itl-update-rules.md"
+        (Test-Path -LiteralPath $wrapperPath -PathType Leaf) | Should -Be $true
+        $wrapperText = Get-Content -Encoding UTF8 -Raw $wrapperPath
+        $wrapperText | Should -Match "-Action\s+update-ai-rules"
+        $wrapperText | Should -Match "USER-RULES.md"
+
+        $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
+        $workflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
+        $readmeText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")
+        $developerGuideText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "DEVELOPER-GUIDE.ru.md")
+        foreach ($text in @($advancedText, $workflowText, $readmeText, $developerGuideText)) {
+            $text | Should -Match "update-ai-rules"
+            $text | Should -Match "USER-RULES.md"
+        }
+    }
+
+    It "does not append the AGENTS bridge when upstream AGENTS already loads USER-RULES" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-rules-bridge-test-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "templates") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\USER-RULES.append.md") -Destination (Join-Path $tempRoot "templates\USER-RULES.append.md")
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\AGENTS.append.md") -Destination (Join-Path $tempRoot "templates\AGENTS.append.md")
+            Set-Content -LiteralPath (Join-Path $tempRoot "AGENTS.md") -Encoding UTF8 -Value "# Agent Instructions`n`nRead USER-RULES.md for project-specific instructions."
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Update-AgentGuidanceBridge *> $null
+                Update-UserRules *> $null
+            }
+
+            $agentsText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "AGENTS.md")
+            $agentsText | Should -Match "USER-RULES.md"
+            $agentsText | Should -Not -Match "## 1C Agent Workflow Bridge"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "USER-RULES.md")) | Should -Match "## 1C Project Lifecycle"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     It "smoke-copies bootstrap package files into a temp project" {
@@ -802,7 +885,7 @@ url = "http://localhost:9999/mcp"
             $kilo.mcp.unrelated.url | Should -Be "http://localhost:9999/mcp"
             $kilo.mcp.'external-tool'.url | Should -Be "http://localhost:9998/mcp"
             $kilo.mcp.'external-tool'.family | Should -Be "external"
-            $kilo.mcp.'itl-old' | Should -BeNullOrEmpty
+            $kilo.mcp.PSObject.Properties["itl-old"] | Should -BeNullOrEmpty
             $kilo.mcp.'itl-demo-code'.url | Should -Be "http://127.0.0.1:18100/mcp"
             $kilo.mcp.'itl-demo-code'.managedBy | Should -Be "vibecoding1c-mcp"
             $kilo.mcp.'itl-demo-code'.family | Should -Be "vibecoding1c"
@@ -925,22 +1008,30 @@ url = "http://localhost:9999/mcp"
         $HelperText | Should -Not -Match "ibcmd"
     }
 
-    It "keeps required package files tracked or staged for Git packaging" {
+    It "keeps required package files visible for Git packaging" {
         $requiredFiles = @(
+            ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+            ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
+            ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
+            ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+            ".kilo/commands/itl-update-rules.md",
             ".kilo/commands/itl-vanessa-mcp.md",
+            "scripts/test.ps1",
             "templates/AGENTS.append.md",
+            "templates/USER-RULES.append.md",
+            "templates/dependency-lock.json",
             ".agents/skills/1c-workflow/tools/event-log-exporter/EventLogExporter.xml"
         )
 
         foreach ($relativePath in $requiredFiles) {
             (Test-Path -LiteralPath (Join-Path $RepoRoot $relativePath) -PathType Leaf) | Should -Be $true
-            @(& git -C $RepoRoot ls-files --cached -- $relativePath).Count | Should -BeGreaterThan 0
+            @(& git -C $RepoRoot ls-files --cached --others --exclude-standard -- $relativePath).Count | Should -BeGreaterThan 0
         }
 
         $modulePath = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\tools\event-log-exporter") -Recurse -File -Filter "Module.bsl" | Select-Object -First 1).FullName
         $modulePath | Should -Not -BeNullOrEmpty
         $moduleRelativePath = $modulePath.Substring($RepoRoot.Length + 1).Replace("\", "/")
-        @(& git -C $RepoRoot ls-files --cached -- $moduleRelativePath).Count | Should -BeGreaterThan 0
+        @(& git -C $RepoRoot ls-files --cached --others --exclude-standard -- $moduleRelativePath).Count | Should -BeGreaterThan 0
     }
 
     It "times out native processes used by Vanessa watchdog" {
@@ -1278,6 +1369,8 @@ url = "http://localhost:9999/mcp"
 
     It "refuses to start Vanessa MCP outside an itldev worktree" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-master-test-" + [guid]::NewGuid().ToString("N"))
+        $stdoutPath = Join-Path $tempRoot "stdout.log"
+        $stderrPath = Join-Path $tempRoot "stderr.log"
 
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
@@ -1289,10 +1382,20 @@ url = "http://localhost:9999/mcp"
             & git -C $tempRoot commit -m init *> $null
             & git -C $tempRoot branch -M master
 
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action start-vanessa-mcp 2>&1
-            $LASTEXITCODE | Should -Be 1
-            ($output -join [Environment]::NewLine) | Should -Match "active itldev/\* development branch worktree"
-            ($output -join [Environment]::NewLine) | Should -Match "Current branch: master"
+            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", $HelperPath,
+                "-ProjectRoot", $tempRoot,
+                "-Action", "start-vanessa-mcp"
+            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+            $process.ExitCode | Should -Be 1
+            $output = @(
+                if (Test-Path -LiteralPath $stdoutPath) { Get-Content -Encoding UTF8 -Raw $stdoutPath }
+                if (Test-Path -LiteralPath $stderrPath) { Get-Content -Encoding UTF8 -Raw $stderrPath }
+            ) -join [Environment]::NewLine
+            $output | Should -Match "active itldev/\* development branch worktree"
+            $output | Should -Match "Current branch: master"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -1381,11 +1484,21 @@ url = "http://localhost:9999/mcp"
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-status-failure-" + [guid]::NewGuid().ToString("N"))
         $statusPath = Join-Path $tempRoot "status.json"
         $logPath = Join-Path $tempRoot "console.log"
+        $stdoutPath = Join-Path $tempRoot "stdout.log"
+        $stderrPath = Join-Path $tempRoot "stderr.log"
 
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action validate -RunStatusPath $statusPath -RunLogPath $logPath *> $null
-            $LASTEXITCODE | Should -Be 1
+            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", $HelperPath,
+                "-ProjectRoot", $tempRoot,
+                "-Action", "validate",
+                "-RunStatusPath", $statusPath,
+                "-RunLogPath", $logPath
+            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+            $process.ExitCode | Should -Be 1
 
             (Test-Path -LiteralPath $statusPath -PathType Leaf) | Should -Be $true
             $status = Get-Content -Encoding UTF8 -Raw $statusPath | ConvertFrom-Json
@@ -1468,6 +1581,8 @@ if (`$?) { exit 0 } else { exit 1 }
         $probePath = Join-Path $tempRoot "probe.ps1"
         $launcherPath = Join-Path $tempRoot "launcher.ps1"
         $logPath = Join-Path $tempRoot "console.log"
+        $stdoutPath = Join-Path $tempRoot "stdout.log"
+        $stderrPath = Join-Path $tempRoot "stderr.log"
 
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
@@ -1491,8 +1606,12 @@ if (`$LASTEXITCODE -is [int]) { exit `$LASTEXITCODE }
 if (`$?) { exit 0 } else { exit 1 }
 "@
 
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $launcherPath *> $null
-            $LASTEXITCODE | Should -Be 1
+            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", $launcherPath
+            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+            $process.ExitCode | Should -Be 1
 
             $logText = Get-Content -Encoding UTF8 -Raw $logPath
             $logText | Should -Match "not-a-git-command"
@@ -1510,6 +1629,28 @@ if (`$?) { exit 0 } else { exit 1 }
         $HelperText | Should -Match "lastResultManifestPath"
         $HelperText | Should -Match "finalResultManifestPath"
         $HelperText | Should -Match "Get-FileHash -Algorithm SHA256"
+    }
+
+    It "wires dependency lock mode and verification policy" {
+        $projectTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\project.json")
+        $devEnvTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")
+        $lockTemplatePath = Join-Path $RepoRoot "templates\dependency-lock.json"
+        $lockTemplate = Get-Content -Encoding UTF8 -Raw $lockTemplatePath | ConvertFrom-Json
+
+        $projectTemplate | Should -Match '"dependencyMode"\s*:\s*"fresh"'
+        $projectTemplate | Should -Match '"verificationPolicy"\s*:\s*"warn"'
+        $devEnvTemplate | Should -Match "DEPENDENCY_MODE=fresh"
+        $devEnvTemplate | Should -Match "VERIFICATION_POLICY=warn"
+        $lockTemplate.mode | Should -Be "fresh"
+        $lockTemplate.dependencies.aiRules1c.repo | Should -Match "ai_rules_1c"
+        $lockTemplate.dependencies.vanessaAutomation.PSObject.Properties.Name | Should -Contain "sha256"
+        $lockTemplate.dependencies.apache.PSObject.Properties.Name | Should -Contain "sha256"
+
+        $HelperText | Should -Match "function Get-DependencyMode"
+        $HelperText | Should -Match "function Update-DependencyLockEntry"
+        $HelperText | Should -Match "function Get-VerificationPolicy"
+        $HelperText | Should -Match "verificationPolicy=block"
+        $HelperText | Should -Match "Dependency mode is locked"
     }
 
     It "declares worktree branch parameters, state fields, and Russian open guidance" {

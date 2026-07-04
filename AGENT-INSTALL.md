@@ -22,7 +22,7 @@ This package is designed for both Codex and Kilo Code:
 
 - Common workflow skill: `.agents/skills/1c-workflow`.
 - Fast routine workflow skill: `.agents/skills/1c-workflow-fast`.
-- Common project guidance: a short `AGENTS.md` bridge plus detailed `USER-RULES.md` notes.
+- Common project guidance: upstream `AGENTS.md` from `ai_rules_1c` plus detailed ITL overlay notes in `USER-RULES.md`.
 - Kilo slash command wrappers: `.kilo/commands/itl*.md`, using one short `/itl-*` command surface.
 - Local MCP/client runtime state: `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json`, and `.kilo/kilo.jsonc`, ignored by Git.
 - Codex usage: choose the skill via `/skills`, invoke `$1c-workflow` for detailed workflows or `$1c-workflow-fast` for routine helper-first commands, or use natural language that matches the skill description.
@@ -82,6 +82,7 @@ Required for initial project setup:
 - Development branch infobase copies must be registered automatically in the user's 1C launcher list `%APPDATA%\1C\1CEStart\ibases.v8i` under `/ITL/<project-root-name>`. Write that file as UTF-8 with BOM and create a timestamped backup before changing it.
 - 1C platform version/path. Before asking for a manual path, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`. Either folder may be absent; treat missing folders as normal and skip them without error. If versions are found, ask the developer to choose one of them and store the selected `...\bin\1cv8.exe` path. Do not offer the common root `C:\Program Files\1cv8` as a platform version. Ask for a custom full path only when no installed version is found or the developer chooses manual input.
 - Apache web-client testing. Ask only whether new development branch infobases should be published to Apache by default. Store `WEB_PUBLISH_BY_DEFAULT=true|false` in local `.dev.env`, not in committed `project.json`. If the answer is no, do not ask Apache paths. If the answer is yes, run `detect-apache`, save the detected local values to `.dev.env`, and do not ask the developer for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf`. If Apache is not detected, ask for explicit permission to install it automatically; after permission, run `install-apache`, then rerun `detect-apache`/`check-tools`.
+- Dependency mode. Ask one choice during initialization: use fresh dependency versions or locked versions from `.agent-1c/dependency-lock.json`. The default is fresh. Store `DEPENDENCY_MODE=fresh|locked` in `.dev.env` and mirror the choice in the dependency lock manifest. In fresh mode, the helper resolves the latest available dependencies and records the `ai_rules_1c` commit plus Vanessa/Apache URLs and SHA256 hashes. In locked mode, the helper must use only pinned lock values and must stop if a required pin or hash is missing or mismatched.
 - Vanessa Automation. It is required for executable development branch tests. If `VANESSA_AUTOMATION_EPF` is missing or invalid, ask for explicit permission to install it automatically; after permission, run `install-vanessa-automation`. Store downloaded files under `.agent-1c/tools/vanessa-automation` and local paths in `.dev.env`. Standard `/itl-verify` uses `StartFeaturePlayer` through `TESTMANAGER -> TESTCLIENT` with branch-local `VANESSA_TEST_PORT`, not MCP. It also checks the local branch infobase event log against `.agent-1c/event-log-baselines/<branch>.json`; fresh non-baseline `Error` records fail verification. Foreign branch Vanessa processes are warnings by default; set `VANESSA_TEST_FOREIGN_WAIT_MODE=wait` only for conservative serialized local runs.
 - vibecoding1c MCP. Do not ask developers to choose ports, models, or keys during initialization. Ask only whether vibecoding1c MCP should be configured now or later through `/itl-vibecoding1c-mcp`. Remote LAN vibecoding1c MCP is the default and is discovered from `VIBECODING1C_MCP_REGISTRY_REPO` (default `http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git`); config-specific remote vibecoding1c MCP always requires an explicit `configId` selection, even when the registry has one configuration. Developers can override each server to local. Local vibecoding1c MCP still clones or fast-forwards the private GitLab distribution from `VIBECODING1C_MCP_DISTRIBUTION_REPO` (default `http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git`) into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\distribution`, rotates license keys into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c`, allocates ports from the local registry, writes ignored Codex/Kilo config for the current scope, and keeps project/branch vibecoding1c MCP out of neighboring worktrees. Use `VIBECODING1C_MCP_REGISTRY_PATH` and `VIBECODING1C_MCP_DISTRIBUTION_PATH` only as explicit manual checkout overrides.
 - Vanessa MCP. Do not configure a shared MCP server during project initialization. When a developer needs AI-assisted scenario authoring/debugging, run `install-vanessa-mcp` and `start-vanessa-mcp` from the target `itldev/*` worktree so the MCP port, PID, URL, and infobase are branch-local.
@@ -148,13 +149,15 @@ Encoding rules:
 
 4. Create `.agent-1c/project.json` from `templates/project.json` when missing. Use the default `devBranchInfoBaseRoot` unless the developer explicitly requested a custom location.
 
-5. Create `.agent-1c/tools.json` from `templates/tools.json` when missing. Keep it committed so the team can adjust required software checks and install suggestions.
+5. Create `.agent-1c/dependency-lock.json` from `templates/dependency-lock.json` when missing. Keep it committed when the team wants reproducible bootstrap pins; fresh mode updates it with resolved dependency revisions and hashes.
 
-6. Create `.dev.env` from `templates/dev.env.example` when missing. Fill local paths, secrets, and local Apache preference. Write it as UTF-8 and ensure `.dev.env` is ignored by Git.
+6. Create `.agent-1c/tools.json` from `templates/tools.json` when missing. Keep it committed so the team can adjust required software checks and install suggestions.
 
-7. Append `templates/gitignore.append` lines to `.gitignore` if absent.
+7. Create `.dev.env` from `templates/dev.env.example` when missing. Fill local paths, secrets, local Apache preference, and the chosen `DEPENDENCY_MODE`. Write it as UTF-8 and ensure `.dev.env` is ignored by Git.
 
-8. Append `templates/AGENTS.append.md` to `AGENTS.md` if absent. Keep this file as a short discovery bridge to `USER-RULES.md` and the workflow skills.
+8. Append `templates/gitignore.append` lines to `.gitignore` if absent.
+
+8. Append `templates/AGENTS.append.md` to `AGENTS.md` only as a fallback when `AGENTS.md` does not already reference `USER-RULES.md`. Current `ai_rules_1c` creates and manages the normal root `AGENTS.md`; do not modify it just to add ITL notes.
 
 9. Append `templates/USER-RULES.append.md` to `USER-RULES.md` if absent.
 
@@ -165,7 +168,7 @@ Encoding rules:
 <project>/DEV-BRANCH-DEVELOPMENT.ru.md
 ```
 
-11. Do not add detailed workflow text to `AGENTS.md`. If `ai_rules_1c` later creates or updates `AGENTS.md`, preserve its content and keep only the short ITL bridge block there.
+11. Do not add detailed workflow text to `AGENTS.md`. Keep ITL-specific rules in `USER-RULES.md` so upstream-managed `AGENTS.md` can continue to update cleanly.
 
 ## Check Required Software
 
@@ -218,7 +221,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 
 Dedicated vibecoding1c MCP hosts are prepared without the agent through `vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1`. The host publishes only `registry.json` endpoint/freshness metadata to GitLab; secrets stay in the host-local distribution `config.env` or local environment.
 
-The current workflow intentionally uses the latest available `ai_rules_1c` and Vanessa Automation by default. A stricter industrial setup should add a lock file with exact `ai_rules_1c` commit/tag, Vanessa version, and expected SHA256, but this package does not enforce that yet.
+The current workflow intentionally uses the latest available `ai_rules_1c` and Vanessa Automation by default. It records the resolved `ai_rules_1c` commit, Vanessa URL/version/SHA256, and downloaded archive hashes in `.agent-1c/dependency-lock.json`. For reproducible bootstrap, choose `DEPENDENCY_MODE=locked`; the helper will use only pinned values and stop when a required pin or hash is missing or mismatched.
 
 ## Install ai_rules_1c
 
@@ -245,6 +248,14 @@ $tools = "codex" # use "kilocode" when this bootstrap is running from Kilo Code
 ```
 
 If the installer asks which tools to configure, choose the current agent surface. If it cannot be detected, choose Codex.
+
+To refresh `ai_rules_1c` after initialization, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-ai-rules
+```
+
+In Kilo Code, use `/itl-update-rules`. The helper runs the upstream updater, records the resolved commit in `.agent-1c/dependency-lock.json`, reapplies `templates/USER-RULES.append.md`, and avoids modifying upstream-managed `AGENTS.md` when it already points to `USER-RULES.md`.
 
 ## Run Initial Lifecycle
 
@@ -325,6 +336,8 @@ Switch to master.
 Switch to development branch order discounts.
 What 1C workflow actions are available?
 ```
+
+`/itl-result` and `/itl-close` follow `VERIFICATION_POLICY`. The default `warn` policy preserves the current explicit unverified override flow and records the override in the result manifest. When `VERIFICATION_POLICY=block`, these commands must stop until `/itl-verify` is fresh passed; do not bypass that with `-AllowUnverifiedResult` or `-AllowUnverifiedClose`.
 
 ## Completion Report
 
