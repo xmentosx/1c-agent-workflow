@@ -437,7 +437,8 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match "Invoke-HostReindex"
         $McpHostText | Should -Match "Update-HostStateServers"
         $McpHostText | Should -Match "ForceResetDatabase"
-        $McpHostText | Should -Match "Reindexing embedding-dependent MCP servers"
+        $McpHostText | Should -Match "Test-HostServerSupportsDatabaseReset"
+        $McpHostText | Should -Match "Reindexing database-backed MCP servers"
         $McpHostText | Should -Match "Invoke-HostConfigDumpHelper"
         $McpHostText | Should -Match 'Refresh-HostConfigurations -Config \$config -TargetConfigId \$ConfigId'
         $McpHostText | Should -Match "sourcePath"
@@ -704,8 +705,14 @@ Describe "1C agent workflow static checks" {
                 $codeReindexEnv = Resolve-ServerEnv -Config $hostConfig -Server ([pscustomobject]@{ id = "code"; scope = "project"; embedding = $true; env = @() }) -ForceResetDatabase
                 $codeReindexEnv["RESET_DATABASE"] | Should -Be "true"
 
-                $genericReindexEnv = Resolve-ServerEnv -Config $hostConfig -Server ([pscustomobject]@{ id = "docs"; scope = "global"; embedding = $true; env = @() }) -ForceResetDatabase
-                $genericReindexEnv["RESET_DATABASE"] | Should -Be "true"
+                $docsReindexEnv = Resolve-ServerEnv -Config $hostConfig -Server ([pscustomobject]@{
+                    id = "docs"
+                    scope = "global"
+                    embedding = $true
+                    env = @([ordered]@{ name = "RESET_CACHE"; value = "true" })
+                }) -ForceResetDatabase
+                $docsReindexEnv["RESET_CACHE"] | Should -Be "false"
+                $docsReindexEnv.Contains("RESET_DATABASE") | Should -Be $false
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -1209,7 +1216,7 @@ Describe "1C agent workflow static checks" {
                     return [pscustomobject]@{
                         servers = @(
                             [pscustomobject]@{ id = "ssl"; scope = "global"; embedding = $false; internalPort = 8008; image = "fixture-ssl:latest" },
-                            [pscustomobject]@{ id = "docs"; scope = "global"; embedding = $true; internalPort = 8001; image = "fixture-docs:latest" },
+                            [pscustomobject]@{ id = "docs"; scope = "global"; embedding = $true; internalPort = 8001; image = "fixture-docs:latest"; env = @([ordered]@{ name = "RESET_CACHE"; value = "true" }) },
                             [pscustomobject]@{ id = "codechecker"; scope = "project"; embedding = $false; internalPort = 8002; image = "fixture-codechecker:latest" },
                             [pscustomobject]@{ id = "code"; scope = "project"; embedding = $true; internalPort = 8000; image = "fixture-code:latest" },
                             [pscustomobject]@{ id = "graph"; scope = "project"; embedding = $true; internalPort = 8006; image = "fixture-graph:latest"; compose = $true }
@@ -1275,6 +1282,12 @@ Describe "1C agent workflow static checks" {
                         name = "itl-ssl"
                         containerName = "itl-ssl"
                         health = "running"
+                    }, [ordered]@{
+                        id = "docs"
+                        scope = "global"
+                        name = "itl-docs"
+                        containerName = "itl-docs"
+                        health = "running"
                     })
                 }
                 Write-HostState -Config $hostConfig -State $initialState
@@ -1284,10 +1297,10 @@ Describe "1C agent workflow static checks" {
                 $events = @($script:HostReindexTestEvents)
                 $events | Should -Contain "embedding"
                 $events | Should -Contain "refresh:trade"
-                $events | Should -Contain "docker:docs:18001:recreate=True:reset=True"
                 $events | Should -Contain "docker:code:18101:recreate=True:reset=True"
                 $events | Should -Contain "compose:graph:18102:recreate=True:reset=True"
                 ($events -join "|") | Should -Not -Match "docker:ssl"
+                ($events -join "|") | Should -Not -Match "docker:docs"
                 ($events -join "|") | Should -Not -Match "docker:codechecker"
 
                 $state = Read-HostState -Config $hostConfig

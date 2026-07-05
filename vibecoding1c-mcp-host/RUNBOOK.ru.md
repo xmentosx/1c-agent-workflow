@@ -286,7 +286,7 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action refresh-config -ConfigPath .\host.config.json -ConfigId trade
 ```
 
-Пересобрать `Report.txt`, пересоздать все включенные MCP-серверы, использующие embedding-модель, и передать им `RESET_DATABASE=true`:
+Пересобрать `Report.txt`, пересоздать включенные MCP-серверы, которые поддерживают `RESET_DATABASE`, и передать им `RESET_DATABASE=true`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action reindex -ConfigPath .\host.config.json
@@ -299,6 +299,8 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 ```
 
 После `reindex` выполните `publish`, если клиентам нужно увидеть обновленные `indexedAt`/`reportHash` в registry.
+
+`reindex` специально не включает `RESET_CACHE`: при CPU embeddings общий cache модели смонтирован как `/app/model_cache`, и контейнер не должен удалять эту mount point.
 
 Опубликовать текущее состояние в GitLab registry repo:
 

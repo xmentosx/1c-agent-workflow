@@ -1305,9 +1305,9 @@ function Get-HostLocalValues {
     $platformBinPath = [string](Get-ObjectValue -Object $help -Name "platformBinPath" -Default "")
     $platformVersion = [string](Get-ObjectValue -Object $help -Name "platformVersion" -Default "")
     $bspVersion = [string](Get-ObjectValue -Object $ssl -Name "bspVersion" -Default "")
-    $defaultResetDatabase = $(if ($ForceResetDatabase) { "true" } else { "false" })
-    $codeResetDatabase = $(if ($ForceResetDatabase) { "true" } else { ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $code -Name "resetDatabase" -Default $false) -Default $false })
-    $graphResetDatabase = $(if ($ForceResetDatabase) { "true" } else { ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $graph -Name "resetDatabase" -Default $false) -Default $false })
+    $defaultResetDatabase = "false"
+    $codeResetDatabase = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $code -Name "resetDatabase" -Default $false) -Default $false)
+    $graphResetDatabase = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $graph -Name "resetDatabase" -Default $false) -Default $false)
     return [ordered]@{
         PATH_METADATA = $(if ($ConfigState) { $ConfigState.metadataRoot } else { "" })
         PATH_CODE = $(if ($ConfigState) { Get-ConfigSubPath -Root $ConfigState.sourceRoot -RelativePath $ConfigState.mainConfigPath } else { "" })
@@ -1444,6 +1444,22 @@ function Get-HostDefaultVolumeEntries {
     return @()
 }
 
+function Test-HostServerSupportsDatabaseReset {
+    param([object]$Server)
+    $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
+    if ($id -eq "code" -or $id -eq "graph") {
+        return $true
+    }
+    $envEntries = @(As-Array (Get-ObjectValue -Object $Server -Name "env" -Default @())) + @(Get-HostDefaultEnvEntries -Server $Server)
+    foreach ($entry in $envEntries) {
+        $name = [string](Get-ObjectValue -Object $entry -Name "name" -Default "")
+        if ($name -eq "RESET_DATABASE") {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Resolve-ServerEnv {
     param(
         [object]$Config,
@@ -1503,8 +1519,15 @@ function Resolve-ServerEnv {
         $values["EMBEDDING_MODEL"] = [string]$embeddingSettings.model
     }
     Set-GraphOpenAiFallbackEnv -Config $Config -Server $Server -Values $values
-    if ($ForceResetDatabase -and $serverNeedsEmbedding) {
-        $values["RESET_DATABASE"] = "true"
+    if ($ForceResetDatabase) {
+        if ($values.Contains("RESET_CACHE")) {
+            $values["RESET_CACHE"] = "false"
+        }
+        if (Test-HostServerSupportsDatabaseReset -Server $Server) {
+            $values["RESET_DATABASE"] = "true"
+        } elseif ($values.Contains("RESET_DATABASE")) {
+            $values["RESET_DATABASE"] = "false"
+        }
     }
     return $values
 }
@@ -1783,7 +1806,7 @@ function Invoke-HostReindex {
     $serverStates = @()
     $reindexed = 0
 
-    Write-HostPhase "Reindexing embedding-dependent MCP servers"
+    Write-HostPhase "Reindexing database-backed MCP servers"
     Write-Host "Enabled global servers: $(if (@($globalIds).Count -gt 0) { @($globalIds) -join ', ' } else { '<none>' })"
     Write-Host "Enabled project servers: $(if (@($projectIds).Count -gt 0) { @($projectIds) -join ', ' } else { '<none>' })"
     if ($TargetConfigId) {
@@ -1796,7 +1819,7 @@ function Invoke-HostReindex {
             $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
             $scope = Get-ServerScope -Server $server
             if ($scope -ne "global" -or $globalIds -notcontains $id) { continue }
-            if (Test-HostServerNeedsEmbedding -Server $server) {
+            if (Test-HostServerSupportsDatabaseReset -Server $server) {
                 $runtime = New-ServerRuntime -Config $Config -Server $server -Index $globalIndex
                 Write-Host "Reindexing global server '$id': container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
                 Start-DockerServer -Config $Config -Server $server -Runtime $runtime -Recreate -ForceResetDatabase
@@ -1826,7 +1849,7 @@ function Invoke-HostReindex {
             $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
             $scope = Get-ServerScope -Server $server
             if ($scope -ne "project" -or $projectIds -notcontains $id) { continue }
-            if (Test-HostServerNeedsEmbedding -Server $server) {
+            if (Test-HostServerSupportsDatabaseReset -Server $server) {
                 $runtime = New-ServerRuntime -Config $Config -Server $server -Index $projectIndex -ConfigState $configState -ConfigIndex $configIndex
                 Write-Host "Reindexing project server '$id' for configId $($configState.configId): container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
                 if ([bool](Get-ObjectValue -Object $server -Name "compose" -Default $false)) {
@@ -1853,9 +1876,9 @@ function Invoke-HostReindex {
         Update-HostStateServers -Config $Config -ServerStates $serverStates
     }
     if ($reindexed -eq 0) {
-        Write-Host "No enabled embedding-dependent MCP servers were found to reindex."
+        Write-Host "No enabled database-backed MCP servers were found to reindex."
     } else {
-        Write-Host "Reindex command started for embedding-dependent MCP servers: $reindexed"
+        Write-Host "Reindex command started for database-backed MCP servers: $reindexed"
         Write-Host "Run -Action publish after reindex if the remote registry should expose the new indexedAt/reportHash values."
     }
 }
