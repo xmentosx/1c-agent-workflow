@@ -450,7 +450,10 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match '"image", "inspect"'
         $McpHostText | Should -Match '"pull", \$Image'
         $McpHostText | Should -Match 'Write-Host \(\[string\]\$line\)'
-        $McpHostText | Should -Match 'return \[int\]\$exitCode'
+        $McpHostText | Should -Match "Invoke-ProcessWithTimeout"
+        $McpHostText | Should -Match "Invoke-DockerCommandChecked"
+        $McpHostText | Should -Match "Invoke-DockerCommandCapture"
+        $McpHostText | Should -Match "Command timed out after"
         $McpHostText | Should -Match "read-only file system"
         $McpHostText | Should -Not -Match '(?m)^\s*LICENSE_KEY_[A-Z0-9_]+\s*=\s*[^#\s]+'
     }
@@ -797,6 +800,57 @@ Describe "1C agent workflow static checks" {
                 @($registry.hosts | Where-Object { $_.hostId -eq "host-b" }).Count | Should -Be 1
                 @($registry.servers | Where-Object { $_.hostId -eq "host-a" -and $_.embeddingModel -eq "intfloat/multilingual-e5-base" }).Count | Should -Be 1
                 @($registry.configurations | Where-Object { $_.hostId -eq "host-a" -and $_.configurationName -eq "Trade A Name" }).Count | Should -Be 1
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "starts existing standalone Docker containers through timeout wrappers" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-docker-timeout-wrapper-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "test-host"
+                baseUrl = "http://localhost"
+                stateRoot = (Join-Path $tempRoot "state")
+                embedding = [ordered]@{ model = "intfloat/multilingual-e5-base" }
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:HostDockerWrapperCalls = New-Object System.Collections.Generic.List[string]
+                function Invoke-DockerCommandCapture {
+                    param([string[]]$Arguments, [int]$TimeoutSec = 300, [string]$Description = "docker command")
+                    $script:HostDockerWrapperCalls.Add("capture:${TimeoutSec}:${Description}:$($Arguments -join ' ')")
+                    return @("itl-1c-ssl")
+                }
+                function Invoke-DockerCommandChecked {
+                    param([string[]]$Arguments, [int]$TimeoutSec = 300, [string]$Description = "docker command")
+                    $script:HostDockerWrapperCalls.Add("checked:${TimeoutSec}:${Description}:$($Arguments -join ' ')")
+                }
+
+                $hostConfig = Read-JsonFile -Path $configPath
+                $server = [pscustomobject]@{ id = "ssl"; embedding = $false }
+                $runtime = [pscustomobject]@{
+                    containerName = "itl-1c-ssl"
+                    hostPort = 18004
+                    internalPort = 8008
+                    image = "fixture"
+                    url = "http://localhost:18004/mcp"
+                }
+                Start-DockerServer -Config $hostConfig -Server $server -Runtime $runtime
+
+                $calls = @($script:HostDockerWrapperCalls)
+                $calls[0] | Should -Match "^capture:60:docker ps for itl-1c-ssl:"
+                $calls[1] | Should -Be "checked:120:docker start itl-1c-ssl:start itl-1c-ssl"
+                Remove-Variable -Scope Script -Name HostDockerWrapperCalls -ErrorAction SilentlyContinue
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {

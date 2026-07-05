@@ -310,27 +310,56 @@ function Write-HostState {
 function Invoke-DockerCommand {
     param(
         [string[]]$Arguments,
-        [switch]$Quiet
+        [switch]$Quiet,
+        [int]$TimeoutSec = 300
     )
-    $previousErrorActionPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = "Continue"
-        if ($Quiet) {
-            & docker @Arguments *> $null
-            return [int]$LASTEXITCODE
-        } else {
-            $output = & docker @Arguments 2>&1
-            $exitCode = $LASTEXITCODE
-            foreach ($line in @($output)) {
-                if ($null -ne $line) {
-                    Write-Host ([string]$line)
-                }
+    $result = Invoke-ProcessWithTimeout -FilePath "docker" -Arguments $Arguments -TimeoutSec $TimeoutSec -Description "Docker command did not finish"
+    if (-not $Quiet) {
+        foreach ($line in @($result.lines)) {
+            if ($null -ne $line) {
+                Write-Host ([string]$line)
             }
-            return [int]$exitCode
         }
-    } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
     }
+    return [int]$result.exitCode
+}
+
+function Invoke-DockerCommandChecked {
+    param(
+        [string[]]$Arguments,
+        [int]$TimeoutSec = 300,
+        [string]$Description = "docker command"
+    )
+    $result = Invoke-ProcessWithTimeout -FilePath "docker" -Arguments $Arguments -TimeoutSec $TimeoutSec -Description $Description
+    foreach ($line in @($result.lines)) {
+        if ($null -ne $line) {
+            Write-Host ([string]$line)
+        }
+    }
+    if ($result.exitCode -ne 0) {
+        $output = (($result.lines | Where-Object { $_ }) -join [Environment]::NewLine).Trim()
+        if ($output) {
+            throw "$Description failed with exit code $($result.exitCode). Command: docker $($Arguments -join ' '). Output: $output"
+        }
+        throw "$Description failed with exit code $($result.exitCode). Command: docker $($Arguments -join ' ')."
+    }
+}
+
+function Invoke-DockerCommandCapture {
+    param(
+        [string[]]$Arguments,
+        [int]$TimeoutSec = 300,
+        [string]$Description = "docker command"
+    )
+    $result = Invoke-ProcessWithTimeout -FilePath "docker" -Arguments $Arguments -TimeoutSec $TimeoutSec -Description $Description
+    if ($result.exitCode -ne 0) {
+        $output = (($result.lines | Where-Object { $_ }) -join [Environment]::NewLine).Trim()
+        if ($output) {
+            throw "$Description failed with exit code $($result.exitCode). Command: docker $($Arguments -join ' '). Output: $output"
+        }
+        throw "$Description failed with exit code $($result.exitCode). Command: docker $($Arguments -join ' ')."
+    }
+    return @($result.lines)
 }
 
 function Invoke-ProcessCapture {
@@ -349,6 +378,57 @@ function Invoke-ProcessCapture {
     return [pscustomobject]@{
         exitCode = [int]$exitCode
         lines = @($output | ForEach-Object { [string]$_ })
+    }
+}
+
+function Join-HostProcessArguments {
+    param([string[]]$Arguments)
+    $escaped = @()
+    foreach ($argument in @($Arguments)) {
+        $text = [string]$argument
+        if ($text -notmatch '[\s"]') {
+            $escaped += $text
+            continue
+        }
+        $escaped += '"' + ($text.Replace('"', '\"')) + '"'
+    }
+    return ($escaped -join " ")
+}
+
+function Invoke-ProcessWithTimeout {
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments,
+        [int]$TimeoutSec = 300,
+        [string]$Description = ""
+    )
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+    $process = $null
+    try {
+        $process = Start-Process -FilePath $FilePath `
+            -ArgumentList (Join-HostProcessArguments -Arguments $Arguments) `
+            -NoNewWindow `
+            -PassThru `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath
+        if (-not $process.WaitForExit($TimeoutSec * 1000)) {
+            try {
+                $process.Kill()
+            } catch {
+            }
+            $commandText = "$FilePath $($Arguments -join ' ')"
+            $descriptionText = $(if ($Description) { "$Description. " } else { "" })
+            throw "${descriptionText}Command timed out after $TimeoutSec seconds: $commandText"
+        }
+        $stdout = @(Get-Content -LiteralPath $stdoutPath -ErrorAction SilentlyContinue | ForEach-Object { [string]$_ })
+        $stderr = @(Get-Content -LiteralPath $stderrPath -ErrorAction SilentlyContinue | ForEach-Object { [string]$_ })
+        return [pscustomobject]@{
+            exitCode = [int]$process.ExitCode
+            lines = @($stdout + $stderr)
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -401,14 +481,14 @@ function Ensure-HostPrerequisites {
         }
     }
     Ensure-PythonRuntime -Config $Config | Out-Null
-    if ((Invoke-DockerCommand -Arguments @("info") -Quiet) -ne 0) {
+    if ((Invoke-DockerCommand -Arguments @("info") -Quiet -TimeoutSec 60) -ne 0) {
         throw "Docker is installed but not available to the current user/session."
     }
 }
 
 function Test-DockerImageAvailable {
     param([string]$Image)
-    return ((Invoke-DockerCommand -Arguments @("image", "inspect", $Image) -Quiet) -eq 0)
+    return ((Invoke-DockerCommand -Arguments @("image", "inspect", $Image) -Quiet -TimeoutSec 60) -eq 0)
 }
 
 function Ensure-DockerImageAvailable {
@@ -422,7 +502,7 @@ function Ensure-DockerImageAvailable {
 
     Write-Host "Docker image is not available locally: $Image"
     Write-Host "Pulling Docker image: $Image"
-    if ((Invoke-DockerCommand -Arguments @("pull", $Image)) -ne 0) {
+    if ((Invoke-DockerCommand -Arguments @("pull", $Image) -TimeoutSec 900) -ne 0) {
         throw "Docker image '$Image' is not available locally and docker pull failed. Check Docker daemon health and registry access. If Docker reports 'read-only file system', restart Docker Desktop or run 'wsl --shutdown' before retrying, then pull or load the image manually if needed."
     }
 }
@@ -1404,12 +1484,11 @@ function Start-DockerServer {
         [object]$ConfigState = $null
     )
     $containerName = [string]$Runtime.containerName
-    $existing = & docker ps -a --filter "name=^/$containerName$" --format "{{.Names}}"
+    $existing = Invoke-DockerCommandCapture -Arguments @("ps", "-a", "--filter", "name=^/$containerName$", "--format", "{{.Names}}") -TimeoutSec 60 -Description "docker ps for $containerName"
     if ($existing -contains $containerName) {
         Write-Host "Starting existing container: $containerName"
         if (-not $DryRun) {
-            & docker start $containerName | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "docker start failed: $containerName" }
+            Invoke-DockerCommandChecked -Arguments @("start", $containerName) -TimeoutSec 120 -Description "docker start $containerName"
         }
         return
     }
@@ -1426,8 +1505,7 @@ function Start-DockerServer {
     Write-Host "Starting container: $containerName -> $($Runtime.url)"
     if (-not $DryRun) {
         Ensure-DockerImageAvailable -Image ([string]$Runtime.image)
-        & docker @args | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "docker run failed: $containerName" }
+        Invoke-DockerCommandChecked -Arguments $args -TimeoutSec 180 -Description "docker run $containerName"
     }
 }
 
@@ -1455,8 +1533,7 @@ function Start-ComposeServer {
     Write-DotEnv -Path (Join-Path $runtimeDir ".env") -Values (Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState)
     Write-Host "Starting compose project: $($Runtime.composeProject) -> $($Runtime.url)"
     if (-not $DryRun) {
-        & docker compose -p $Runtime.composeProject -f $targetCompose --env-file (Join-Path $runtimeDir ".env") up -d | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "docker compose failed: $($Runtime.composeProject)" }
+        Invoke-DockerCommandChecked -Arguments @("compose", "-p", $Runtime.composeProject, "-f", $targetCompose, "--env-file", (Join-Path $runtimeDir ".env"), "up", "-d") -TimeoutSec 240 -Description "docker compose up $($Runtime.composeProject)"
     }
     $Runtime | Add-Member -NotePropertyName runtimePath -NotePropertyValue $runtimeDir -Force
 }
@@ -1592,12 +1669,12 @@ function Stop-HostServers {
         if ($composeProject -and $runtimePath -and (Test-Path -LiteralPath (Join-Path $runtimePath "docker-compose.yml") -PathType Leaf)) {
             Write-Host "Stopping compose project: $composeProject"
             if (-not $DryRun) {
-                & docker compose -p $composeProject -f (Join-Path $runtimePath "docker-compose.yml") --env-file (Join-Path $runtimePath ".env") down | Out-Null
+                Invoke-DockerCommandChecked -Arguments @("compose", "-p", $composeProject, "-f", (Join-Path $runtimePath "docker-compose.yml"), "--env-file", (Join-Path $runtimePath ".env"), "down") -TimeoutSec 180 -Description "docker compose down $composeProject"
             }
         } elseif ($containerName) {
             Write-Host "Stopping container: $containerName"
             if (-not $DryRun) {
-                & docker stop $containerName *> $null
+                Invoke-DockerCommandChecked -Arguments @("stop", $containerName) -TimeoutSec 120 -Description "docker stop $containerName"
             }
         }
     }
