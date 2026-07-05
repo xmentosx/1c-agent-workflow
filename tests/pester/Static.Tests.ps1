@@ -415,6 +415,13 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match '& git -C \$Root @Arguments 2>&1'
         $McpHostText | Should -Match 'Invoke-Git -Root \$parent -Arguments @\("clone", \$Repo, \$Path\)'
         $McpHostText | Should -Match "Write-MetadataDiagnosticsSummary"
+        $McpHostText | Should -Match "Write-HostPhase"
+        $McpHostText | Should -Match "Refreshing metadata for configId"
+        $McpHostText | Should -Match "Running norkins/metadata report generation"
+        $McpHostText | Should -Match "Report.txt ready for configId"
+        $McpHostText | Should -Match "Container ready:"
+        $McpHostText | Should -Match "Enabled global servers:"
+        $McpHostText | Should -Match "Enabled project servers:"
         $McpHostText | Should -Match 'exitCode -eq 1'
         $McpHostText | Should -Match "with warnings"
         $McpHostText | Should -Match "did not create Report.txt"

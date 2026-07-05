@@ -877,6 +877,12 @@ function New-TimestampedFilePath {
     return (Join-Path $Directory "$Prefix$timestamp$Extension")
 }
 
+function Write-HostPhase {
+    param([string]$Message)
+    Write-Host ""
+    Write-Host "== $Message =="
+}
+
 function Ensure-MetadataTool {
     param([object]$Config)
     $toolRoot = Join-Path (Join-Path (Get-StateRoot -Config $Config) "tools") "norkins-metadata"
@@ -1100,11 +1106,26 @@ function Refresh-Configuration {
     if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
         throw "norkins/metadata generator was not found: $scriptPath"
     }
-    Write-Host "Generating Report.txt for $($state.configId)"
+    Write-HostPhase "Refreshing metadata for configId $($state.configId)"
+    Write-Host "Configuration title: $($state.title)"
+    if ($state.configurationName -or $state.configurationVersion) {
+        Write-Host "Configuration metadata: name=$($state.configurationName) version=$($state.configurationVersion)"
+    }
+    Write-Host "Source root: $($state.sourceRoot)"
+    Write-Host "mainConfigPath: $($state.mainConfigPath)"
+    Write-Host "Resolved main config root: $mainConfigRoot"
+    Write-Host "Report output: $($state.reportPath)"
+    Write-Host "Diagnostics root: $($state.diagnosticsRoot)"
+    Write-Host "Generator config: $generatorConfigPath"
+    Write-Host "Generator script: $scriptPath"
     if (-not $DryRun) {
         $pythonPath = Ensure-PythonRuntime -Config $Config
         $pythonLogPath = New-TimestampedFilePath -Directory $state.logsRoot -Prefix "norkins-metadata-" -Extension ".log"
+        Write-Host "Python runtime: $pythonPath"
+        Write-Host "Python log: $pythonLogPath"
+        Write-Host "Running norkins/metadata report generation..."
         $exitCode = Invoke-PythonMetadataGenerator -PythonPath $pythonPath -ScriptPath $scriptPath -ConfigPath $generatorConfigPath -LogPath $pythonLogPath
+        Write-Host "norkins/metadata exit code: $exitCode"
         if ($exitCode -eq 1) {
             Write-Host "norkins/metadata completed for configId $($state.configId) with warnings."
             Write-MetadataDiagnosticsSummary -DiagnosticsRoot $state.diagnosticsRoot
@@ -1118,6 +1139,9 @@ function Refresh-Configuration {
     }
     $state.reportHash = Get-FileSha256OrEmpty -Path $state.reportPath
     $state.indexedAt = (Get-Date).ToString("o")
+    Write-Host "Report.txt ready for configId $($state.configId): $($state.reportPath)"
+    Write-Host "Report hash: $($state.reportHash)"
+    Write-Host "Indexed at: $($state.indexedAt)"
     return $state
 }
 
@@ -1490,6 +1514,7 @@ function Start-DockerServer {
         if (-not $DryRun) {
             Invoke-DockerCommandChecked -Arguments @("start", $containerName) -TimeoutSec 120 -Description "docker start $containerName"
         }
+        Write-Host "Container ready: $containerName -> $($Runtime.url)"
         return
     }
     $envValues = Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState
@@ -1507,6 +1532,7 @@ function Start-DockerServer {
         Ensure-DockerImageAvailable -Image ([string]$Runtime.image)
         Invoke-DockerCommandChecked -Arguments $args -TimeoutSec 180 -Description "docker run $containerName"
     }
+    Write-Host "Container ready: $containerName -> $($Runtime.url)"
 }
 
 function Start-ComposeServer {
@@ -1536,6 +1562,7 @@ function Start-ComposeServer {
         Invoke-DockerCommandChecked -Arguments @("compose", "-p", $Runtime.composeProject, "-f", $targetCompose, "--env-file", (Join-Path $runtimeDir ".env"), "up", "-d") -TimeoutSec 240 -Description "docker compose up $($Runtime.composeProject)"
     }
     $Runtime | Add-Member -NotePropertyName runtimePath -NotePropertyValue $runtimeDir -Force
+    Write-Host "Compose project ready: $($Runtime.composeProject) -> $($Runtime.url)"
 }
 
 function Expand-Template {
@@ -1613,23 +1640,31 @@ function Start-HostServers {
     $configStates = @()
     $serverStates = @()
 
+    Write-HostPhase "Starting global MCP servers"
+    Write-Host "Enabled global servers: $(if (@($globalIds).Count -gt 0) { @($globalIds) -join ', ' } else { '<none>' })"
     $globalIndex = 0
     foreach ($server in As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @())) {
         $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
         $scope = Get-ServerScope -Server $server
         if ($scope -ne "global" -or $globalIds -notcontains $id) { continue }
         $runtime = New-ServerRuntime -Config $Config -Server $server -Index $globalIndex
+        Write-Host "Global server '$id': container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
         Start-DockerServer -Config $Config -Server $server -Runtime $runtime
         $runtime.health = "running"
         $serverStates += $runtime
         $globalIndex++
     }
+    Write-Host "Global MCP servers started: $globalIndex"
 
+    Write-HostPhase "Refreshing configurations and starting project MCP servers"
+    Write-Host "Enabled project servers: $(if (@($projectIds).Count -gt 0) { @($projectIds) -join ', ' } else { '<none>' })"
     $configIndex = 0
     foreach ($configuration in As-Array (Get-ObjectValue -Object $Config -Name "configurations" -Default @())) {
-        if ($ConfigId -and [string](Get-ObjectValue -Object $configuration -Name "configId" -Default "") -ne $ConfigId) {
+        $configurationId = [string](Get-ObjectValue -Object $configuration -Name "configId" -Default "")
+        if ($ConfigId -and $configurationId -ne $ConfigId) {
             continue
         }
+        Write-Host "Processing configuration '$configurationId'..."
         $configState = Refresh-Configuration -Config $Config -Configuration $configuration
         $configStates += $configState
         $projectIndex = 0
@@ -1638,6 +1673,7 @@ function Start-HostServers {
             $scope = Get-ServerScope -Server $server
             if ($scope -ne "project" -or $projectIds -notcontains $id) { continue }
             $runtime = New-ServerRuntime -Config $Config -Server $server -Index $projectIndex -ConfigState $configState -ConfigIndex $configIndex
+            Write-Host "Project server '$id' for configId $($configState.configId): container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
             if ([bool](Get-ObjectValue -Object $server -Name "compose" -Default $false)) {
                 Start-ComposeServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState
             } else {
@@ -1647,6 +1683,7 @@ function Start-HostServers {
             $serverStates += $runtime
             $projectIndex++
         }
+        Write-Host "Configuration '$($configState.configId)' project MCP servers started: $projectIndex"
         $configIndex++
     }
 
