@@ -388,6 +388,9 @@ Describe "1C agent workflow static checks" {
         $hostConfig = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\host.config.example.json") | ConvertFrom-Json
         $hostConfig.registryRepo | Should -Be "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git"
         $hostConfig.pythonPath | Should -Be "python"
+        $hostConfig.embedding.apiBase | Should -Be "http://host.docker.internal:19000/v1"
+        $hostConfig.embedding.apiKey | Should -Be "lm-studio"
+        $hostConfig.embedding.model | Should -Be "intfloat/multilingual-e5-base"
         $hostConfig.configurations[0].configId | Should -Be "trade"
         $hostConfig.configurations[0].sourceRepo | Should -Match "trade-config-dump"
         $hostConfig.configurations[1].sourcePath | Should -Match "trade-local"
@@ -419,6 +422,10 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match "sourceFingerprint"
         $McpHostText | Should -Match "dump-config"
         $McpHostText | Should -Match "sourcePath"
+        $McpHostText | Should -Match "Ensure-HostEmbeddingModel"
+        $McpHostText | Should -Match "Test-HostEmbeddingModelPresent"
+        $McpHostText | Should -Match "Get-HostEmbeddingModelsUri"
+        $McpHostText | Should -Match "lms server start --port"
         $McpHostText | Should -Match "ONEC_AI_TOKEN"
         $McpHostText | Should -Match "PATH_1C_BIN"
         $McpHostText | Should -Match "PLATFORM_VERSION"
@@ -563,6 +570,292 @@ Describe "1C agent workflow static checks" {
                 $envValues["OPENAI_API_KEY"] | Should -Be "lm-studio"
                 $envValues["OPENAI_API_BASE"] | Should -Be "http://host.docker.internal:19000/v1"
                 $envValues["OPENAI_MODEL"] | Should -Be "fixture-embedding-model"
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "checks standalone embedding readiness by configured model id" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-embedding-ready-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "test-host"
+                baseUrl = "http://localhost"
+                stateRoot = (Join-Path $tempRoot "state")
+                enabledServers = [ordered]@{ global = @(); project = @() }
+                configurations = @()
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $smallResponse = [pscustomobject]@{
+                    data = @([pscustomobject]@{ id = "intfloat/multilingual-e5-small" })
+                }
+                $baseResponse = [pscustomobject]@{
+                    data = @([pscustomobject]@{ id = "intfloat/multilingual-e5-base" })
+                }
+
+                Test-HostEmbeddingModelPresent -Response $smallResponse -Model "intfloat/multilingual-e5-base" | Should -Be $false
+                Test-HostEmbeddingModelPresent -Response $baseResponse -Model "intfloat/multilingual-e5-base" | Should -Be $true
+                Get-HostEmbeddingModelsUri -ApiBase "http://host.docker.internal:19000/v1" | Should -Be "http://127.0.0.1:19000/v1/models"
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "requires and propagates standalone host embedding.model" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-embedding-model-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "test-host"
+                baseUrl = "http://localhost"
+                stateRoot = (Join-Path $tempRoot "state")
+                embedding = [ordered]@{
+                    apiBase = "http://host.docker.internal:19000/v1"
+                    apiKey = "lm-studio"
+                    model = "intfloat/multilingual-e5-base"
+                }
+                enabledServers = [ordered]@{ global = @(); project = @() }
+                configurations = @()
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $missingModelConfig = [pscustomobject]@{
+                    embedding = [pscustomobject]@{
+                        apiBase = "http://host.docker.internal:19000/v1"
+                        apiKey = "lm-studio"
+                    }
+                }
+                { Get-HostEmbeddingSettings -Config $missingModelConfig } | Should -Throw "*embedding.model is required*"
+
+                $hostConfig = Read-JsonFile -Path $configPath
+                $server = [pscustomobject]@{
+                    id = "code"
+                    env = @([ordered]@{ name = "OPENAI_MODEL"; embedding = "model"; required = $true })
+                }
+
+                $envValues = Resolve-ServerEnv -Config $hostConfig -Server $server
+
+                $envValues["OPENAI_MODEL"] | Should -Be "intfloat/multilingual-e5-base"
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "fails clearly before container start when local standalone embedding needs lms and lms is missing" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-missing-lms-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "test-host"
+                baseUrl = "http://localhost"
+                stateRoot = (Join-Path $tempRoot "state")
+                embedding = [ordered]@{
+                    apiBase = "http://host.docker.internal:19000/v1"
+                    apiKey = "lm-studio"
+                    model = "intfloat/multilingual-e5-base"
+                }
+                enabledServers = [ordered]@{ global = @(); project = @() }
+                configurations = @()
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function Test-HostEmbeddingEndpointReady {
+                    param([string]$ApiBase, [string]$Model)
+                    return $false
+                }
+                function Get-HostLmsCommand {
+                    return $null
+                }
+
+                $hostConfig = Read-JsonFile -Path $configPath
+                $manifest = [pscustomobject]@{
+                    servers = @([pscustomobject]@{ id = "code"; scope = "project"; embedding = $true })
+                }
+
+                {
+                    Ensure-HostEmbeddingModel -Config $hostConfig -Manifest $manifest -GlobalServerIds @() -ProjectServerIds @("code")
+                } | Should -Throw "*needs LM Studio CLI 'lms'*"
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "loads missing standalone embedding model through lms before declaring readiness" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-lms-bootstrap-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "test-host"
+                baseUrl = "http://localhost"
+                stateRoot = (Join-Path $tempRoot "state")
+                embedding = [ordered]@{
+                    apiBase = "http://host.docker.internal:19000/v1"
+                    apiKey = "lm-studio"
+                    model = "intfloat/multilingual-e5-base"
+                }
+                enabledServers = [ordered]@{ global = @(); project = @() }
+                configurations = @()
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:HostLmsBootstrapCalls = New-Object System.Collections.Generic.List[string]
+                $script:HostLmsBootstrapProbeCount = 0
+                function Test-HostEmbeddingEndpointReady {
+                    param([string]$ApiBase, [string]$Model)
+                    $script:HostLmsBootstrapProbeCount++
+                    return ($script:HostLmsBootstrapProbeCount -gt 1)
+                }
+                function Get-HostLmsCommand {
+                    return [pscustomobject]@{ Source = "lms" }
+                }
+                function Invoke-HostLmsCommand {
+                    param([string[]]$Arguments)
+                    $script:HostLmsBootstrapCalls.Add(($Arguments -join " "))
+                    return [pscustomobject]@{ exitCode = 0; output = "" }
+                }
+
+                $hostConfig = Read-JsonFile -Path $configPath
+                $manifest = [pscustomobject]@{
+                    servers = @([pscustomobject]@{ id = "code"; scope = "project"; embedding = $true })
+                }
+
+                Ensure-HostEmbeddingModel -Config $hostConfig -Manifest $manifest -GlobalServerIds @() -ProjectServerIds @("code")
+
+                $calls = @($script:HostLmsBootstrapCalls)
+                $calls.Count | Should -Be 3
+                $calls[0] | Should -Be "get intfloat/multilingual-e5-base"
+                $calls[1] | Should -Be "load intfloat/multilingual-e5-base"
+                $calls[2] | Should -Be "server start --port 19000"
+                Remove-Variable -Scope Script -Name HostLmsBootstrapCalls -ErrorAction SilentlyContinue
+                Remove-Variable -Scope Script -Name HostLmsBootstrapProbeCount -ErrorAction SilentlyContinue
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "bootstraps standalone embedding before starting embedding-dependent servers" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-bootstrap-order-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "test-host"
+                baseUrl = "http://localhost"
+                stateRoot = (Join-Path $tempRoot "state")
+                embedding = [ordered]@{
+                    apiBase = "http://host.docker.internal:19000/v1"
+                    apiKey = "lm-studio"
+                    model = "intfloat/multilingual-e5-base"
+                }
+                enabledServers = [ordered]@{ global = @(); project = @("code") }
+                configurations = @([ordered]@{ configId = "trade" })
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:HostBootstrapTestEvents = New-Object System.Collections.Generic.List[string]
+                function Add-HostBootstrapTestEvent {
+                    param([string]$Name)
+                    $script:HostBootstrapTestEvents.Add($Name)
+                }
+                function Ensure-HostPrerequisites {
+                    param([object]$Config)
+                    Add-HostBootstrapTestEvent -Name "prerequisites"
+                }
+                function Ensure-Distribution {
+                    param([object]$Config)
+                    Add-HostBootstrapTestEvent -Name "distribution"
+                }
+                function Read-DistributionManifest {
+                    param([object]$Config)
+                    Add-HostBootstrapTestEvent -Name "manifest"
+                    return [pscustomobject]@{
+                        servers = @([pscustomobject]@{
+                            id = "code"
+                            scope = "project"
+                            embedding = $true
+                            internalPort = 8000
+                            image = "fixture-code-image:latest"
+                        })
+                    }
+                }
+                function Ensure-HostEmbeddingModel {
+                    param(
+                        [object]$Config,
+                        [object]$Manifest,
+                        [string[]]$GlobalServerIds,
+                        [string[]]$ProjectServerIds
+                    )
+                    Add-HostBootstrapTestEvent -Name "embedding"
+                }
+                function Refresh-Configuration {
+                    param([object]$Config, [object]$Configuration)
+                    Add-HostBootstrapTestEvent -Name "refresh"
+                    return [pscustomobject]@{
+                        configId = "trade"
+                        sourceCommit = "fixture"
+                        sourceFingerprint = "fixture"
+                        reportHash = "fixture"
+                        indexedAt = "2026-07-05T00:00:00Z"
+                    }
+                }
+                function Start-DockerServer {
+                    param([object]$Config, [object]$Server, [object]$Runtime, [object]$ConfigState = $null)
+                    Add-HostBootstrapTestEvent -Name "start"
+                }
+                function Write-HostState {
+                    param([object]$Config, [object]$State)
+                    Add-HostBootstrapTestEvent -Name "state"
+                }
+
+                $hostConfig = Read-JsonFile -Path $configPath
+                Start-HostServers -Config $hostConfig
+
+                $events = @($script:HostBootstrapTestEvents)
+                $events | Should -Contain "embedding"
+                $events | Should -Contain "start"
+                [array]::IndexOf($events, "embedding") | Should -BeLessThan ([array]::IndexOf($events, "start"))
+                Remove-Variable -Scope Script -Name HostBootstrapTestEvents -ErrorAction SilentlyContinue
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {

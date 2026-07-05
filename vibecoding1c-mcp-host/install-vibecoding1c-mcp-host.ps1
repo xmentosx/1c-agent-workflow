@@ -478,6 +478,237 @@ function Get-EnabledServerIds {
     return $enabled
 }
 
+function ConvertTo-HostBoolSetting {
+    param(
+        [AllowNull()][object]$Value,
+        [bool]$Default = $false
+    )
+    if ($null -eq $Value) {
+        return $Default
+    }
+    if ($Value -is [bool]) {
+        return [bool]$Value
+    }
+    $text = ([string]$Value).Trim()
+    if ($text -match '^(1|true|yes|on)$') {
+        return $true
+    }
+    if ($text -match '^(0|false|no|off)$') {
+        return $false
+    }
+    return $Default
+}
+
+function Test-HostEnabledServersNeedEmbedding {
+    param(
+        [object]$Manifest,
+        [string[]]$GlobalServerIds,
+        [string[]]$ProjectServerIds
+    )
+    foreach ($server in As-Array (Get-ObjectValue -Object $Manifest -Name "servers" -Default @())) {
+        if (-not (ConvertTo-HostBoolSetting -Value (Get-ObjectValue -Object $server -Name "embedding" -Default $false) -Default $false)) {
+            continue
+        }
+        $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
+        $scope = Get-ServerScope -Server $server
+        if ($scope -eq "global" -and $GlobalServerIds -contains $id) {
+            return $true
+        }
+        if ($scope -eq "project" -and $ProjectServerIds -contains $id) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Get-HostEmbeddingSettings {
+    param([object]$Config)
+    $embedding = Get-ObjectValue -Object $Config -Name "embedding" -Default $null
+    $apiBase = [string](Get-ObjectValue -Object $embedding -Name "apiBase" -Default "")
+    $apiKey = [string](Get-ObjectValue -Object $embedding -Name "apiKey" -Default "")
+    $model = [string](Get-ObjectValue -Object $embedding -Name "model" -Default "")
+    if ([string]::IsNullOrWhiteSpace($apiBase)) {
+        throw "Standalone vibecoding1c MCP host embedding.apiBase is required because an enabled server needs embeddings."
+    }
+    if ([string]::IsNullOrWhiteSpace($apiKey)) {
+        throw "Standalone vibecoding1c MCP host embedding.apiKey is required because an enabled server needs embeddings. For LM Studio use 'lm-studio'."
+    }
+    if ([string]::IsNullOrWhiteSpace($model)) {
+        throw "Standalone vibecoding1c MCP host embedding.model is required because an enabled server needs embeddings. Set it to 'intfloat/multilingual-e5-base' unless you explicitly need another model."
+    }
+    return [pscustomobject]@{
+        apiBase = $apiBase.TrimEnd("/")
+        apiKey = $apiKey
+        model = $model
+    }
+}
+
+function Get-HostEmbeddingProbeBase {
+    param([string]$ApiBase)
+    try {
+        $uri = [System.Uri]$ApiBase
+    } catch {
+        throw "Standalone vibecoding1c MCP host embedding.apiBase is not a valid absolute URL: $ApiBase"
+    }
+    if (-not $uri.IsAbsoluteUri) {
+        throw "Standalone vibecoding1c MCP host embedding.apiBase must be an absolute URL: $ApiBase"
+    }
+    $builder = [System.UriBuilder]::new($uri)
+    $apiHost = $uri.Host.ToLowerInvariant()
+    if ($apiHost -eq "host.docker.internal" -or $apiHost -eq "localhost" -or $apiHost -eq "127.0.0.1") {
+        $builder.Host = "127.0.0.1"
+    }
+    return $builder.Uri.AbsoluteUri.TrimEnd("/")
+}
+
+function Get-HostEmbeddingModelsUri {
+    param([string]$ApiBase)
+    return "$(Get-HostEmbeddingProbeBase -ApiBase $ApiBase)/models"
+}
+
+function Get-HostEmbeddingModelIds {
+    param([AllowNull()][object]$Response)
+    $ids = @()
+    $items = Get-ObjectValue -Object $Response -Name "data" -Default $Response
+    foreach ($item in As-Array $items) {
+        if ($item -is [string]) {
+            if (-not [string]::IsNullOrWhiteSpace($item)) {
+                $ids += $item
+            }
+            continue
+        }
+        $id = [string](Get-ObjectValue -Object $item -Name "id" -Default "")
+        if (-not [string]::IsNullOrWhiteSpace($id)) {
+            $ids += $id
+        }
+    }
+    return @($ids)
+}
+
+function Test-HostEmbeddingModelPresent {
+    param(
+        [AllowNull()][object]$Response,
+        [string]$Model
+    )
+    $matches = @((Get-HostEmbeddingModelIds -Response $Response) | Where-Object { $_ -eq $Model })
+    return ($matches.Count -gt 0)
+}
+
+function Test-HostEmbeddingEndpointReady {
+    param(
+        [string]$ApiBase,
+        [string]$Model
+    )
+    try {
+        $response = Invoke-RestMethod -Uri (Get-HostEmbeddingModelsUri -ApiBase $ApiBase) -TimeoutSec 5
+        return (Test-HostEmbeddingModelPresent -Response $response -Model $Model)
+    } catch {
+        return $false
+    }
+}
+
+function Test-HostEmbeddingApiBaseIsLocal {
+    param([string]$ApiBase)
+    try {
+        $uri = [System.Uri]$ApiBase
+    } catch {
+        return $false
+    }
+    $apiHost = $uri.Host.ToLowerInvariant()
+    return ($apiHost -eq "host.docker.internal" -or $apiHost -eq "localhost" -or $apiHost -eq "127.0.0.1")
+}
+
+function Invoke-HostLmsCommand {
+    param([string[]]$Arguments)
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & lms @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    return [pscustomobject]@{
+        exitCode = [int]$exitCode
+        output = (@($output) | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+    }
+}
+
+function Get-HostLmsCommand {
+    return (Get-Command lms -ErrorAction SilentlyContinue)
+}
+
+function Invoke-HostLmsRequiredCommand {
+    param(
+        [string[]]$Arguments,
+        [string]$Description
+    )
+    $result = Invoke-HostLmsCommand -Arguments $Arguments
+    if ($result.exitCode -ne 0) {
+        $output = ([string]$result.output).Trim()
+        if ($output) {
+            throw "Standalone vibecoding1c MCP host failed to $Description. Command: lms $($Arguments -join ' '). Exit code: $($result.exitCode). Output: $output"
+        }
+        throw "Standalone vibecoding1c MCP host failed to $Description. Command: lms $($Arguments -join ' '). Exit code: $($result.exitCode)."
+    }
+}
+
+function Ensure-HostEmbeddingModel {
+    param(
+        [object]$Config,
+        [object]$Manifest,
+        [string[]]$GlobalServerIds,
+        [string[]]$ProjectServerIds
+    )
+    if (-not (Test-HostEnabledServersNeedEmbedding -Manifest $Manifest -GlobalServerIds $GlobalServerIds -ProjectServerIds $ProjectServerIds)) {
+        return
+    }
+
+    $settings = Get-HostEmbeddingSettings -Config $Config
+    $probeBase = Get-HostEmbeddingProbeBase -ApiBase $settings.apiBase
+    $modelsUri = Get-HostEmbeddingModelsUri -ApiBase $settings.apiBase
+    Write-Host "Standalone embedding model: $($settings.model)"
+    Write-Host "Standalone embedding probe: $modelsUri"
+
+    if (Test-HostEmbeddingEndpointReady -ApiBase $settings.apiBase -Model $settings.model) {
+        Write-Host "Standalone embedding endpoint is ready for model: $($settings.model)"
+        return
+    }
+
+    if (-not (Test-HostEmbeddingApiBaseIsLocal -ApiBase $settings.apiBase)) {
+        throw "Standalone vibecoding1c MCP host embedding endpoint '$($settings.apiBase)' is reachable only when /v1/models includes configured model '$($settings.model)'. Fix host.config.json embedding.model or start the model before starting containers."
+    }
+
+    $lms = Get-HostLmsCommand
+    if ($null -eq $lms) {
+        throw "Standalone vibecoding1c MCP host needs LM Studio CLI 'lms' to load embedding model '$($settings.model)' for '$probeBase', but 'lms' was not found. Install LM Studio CLI, or start an OpenAI-compatible embedding endpoint manually before starting containers."
+    }
+
+    $uri = [System.Uri]$probeBase
+    $port = $uri.Port
+    if ($port -le 0) {
+        $port = if ($uri.Scheme -eq "https") { 443 } else { 80 }
+    }
+
+    Invoke-HostLmsRequiredCommand -Arguments @("get", $settings.model) -Description "download embedding model '$($settings.model)'"
+    Invoke-HostLmsRequiredCommand -Arguments @("load", $settings.model) -Description "load embedding model '$($settings.model)'"
+    $serverStart = Invoke-HostLmsCommand -Arguments @("server", "start", "--port", ([string]$port))
+
+    if (Test-HostEmbeddingEndpointReady -ApiBase $settings.apiBase -Model $settings.model) {
+        Write-Host "Standalone embedding endpoint is ready for model: $($settings.model)"
+        return
+    }
+
+    $serverOutput = ([string]$serverStart.output).Trim()
+    if ($serverStart.exitCode -ne 0 -and $serverOutput) {
+        throw "Standalone vibecoding1c MCP host could not start LM Studio server on port $port. Command: lms server start --port $port. Exit code: $($serverStart.exitCode). Output: $serverOutput"
+    }
+    if ($serverStart.exitCode -ne 0) {
+        throw "Standalone vibecoding1c MCP host could not start LM Studio server on port $port. Command: lms server start --port $port. Exit code: $($serverStart.exitCode)."
+    }
+    throw "Standalone vibecoding1c MCP host loaded '$($settings.model)', but '$modelsUri' still does not list that model. Check LM Studio server state before starting containers."
+}
+
 function Get-ConfigWorkRoot {
     param(
         [object]$Config,
@@ -1091,6 +1322,7 @@ function Start-HostServers {
     $manifest = Read-DistributionManifest -Config $Config
     $globalIds = Get-EnabledServerIds -Config $Config -Scope "global"
     $projectIds = Get-EnabledServerIds -Config $Config -Scope "project"
+    Ensure-HostEmbeddingModel -Config $Config -Manifest $manifest -GlobalServerIds $globalIds -ProjectServerIds $projectIds
     $configStates = @()
     $serverStates = @()
 
