@@ -603,6 +603,49 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "isolates standalone PATH_BASES volumes by config and server" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-bases-volume-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "test-host"
+                baseUrl = "http://localhost"
+                stateRoot = (Join-Path $tempRoot "state")
+                enabledServers = [ordered]@{ global = @(); project = @("code") }
+                configurations = @()
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                $server = [pscustomobject]@{
+                    id = "code"
+                    scope = "project"
+                    volumes = @([ordered]@{ from = "PATH_BASES"; to = "/app/chroma_db"; required = $false; subdir = "mcp_codemetadata" })
+                }
+                $tradeState = [pscustomobject]@{ configId = "trade"; sourceRoot = $tempRoot; mainConfigPath = "."; metadataRoot = $tempRoot }
+                $pmState = [pscustomobject]@{ configId = "pm5corp"; sourceRoot = $tempRoot; mainConfigPath = "."; metadataRoot = $tempRoot }
+
+                $tradeVolumes = @(Resolve-ServerVolumes -Config $hostConfig -Server $server -ConfigState $tradeState)
+                $pmVolumes = @(Resolve-ServerVolumes -Config $hostConfig -Server $server -ConfigState $pmState)
+
+                $tradeVolume = $tradeVolumes | Where-Object { $_.container -eq "/app/chroma_db" } | Select-Object -First 1
+                $pmVolume = $pmVolumes | Where-Object { $_.container -eq "/app/chroma_db" } | Select-Object -First 1
+                $tradeVolume.host | Should -Be (Join-Path (Join-Path (Join-Path $hostConfig.stateRoot "bases") "trade") "code\mcp_codemetadata")
+                $pmVolume.host | Should -Be (Join-Path (Join-Path (Join-Path $hostConfig.stateRoot "bases") "pm5corp") "code\mcp_codemetadata")
+                $tradeVolume.host | Should -Not -Be $pmVolume.host
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "supplies a placeholder graph OpenAI key in standalone CPU embedding mode" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-graph-cpu-key-test-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"

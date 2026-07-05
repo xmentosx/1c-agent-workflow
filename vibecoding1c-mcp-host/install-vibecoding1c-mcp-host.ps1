@@ -107,6 +107,22 @@ function Get-FullPath {
     return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path))
 }
 
+function ConvertTo-HostPathSegment {
+    param(
+        [string]$Value,
+        [string]$Default = "item"
+    )
+    $segment = $Value.Trim()
+    if ([string]::IsNullOrWhiteSpace($segment)) {
+        return $Default
+    }
+    $segment = ($segment -replace '[<>:"/\\|?*]', "_").Trim([char[]]@(".", " "))
+    if ([string]::IsNullOrWhiteSpace($segment)) {
+        return $Default
+    }
+    return $segment
+}
+
 function Join-PathIfRelative {
     param(
         [string]$Root,
@@ -1563,6 +1579,16 @@ function Resolve-ServerVolumes {
             $hostPath = [string]$localValues[$from]
         }
         $subdir = [string](Get-ObjectValue -Object $entry -Name "subdir" -Default "")
+        if ($subdir -and $ConfigState) {
+            $serverId = [string](Get-ObjectValue -Object $Server -Name "id" -Default "server")
+            $configId = [string](Get-ObjectValue -Object $ConfigState -Name "configId" -Default "config")
+            $subdir = $subdir.Replace("{projectSlug}", $configId).Replace("{configId}", $configId).Replace("{serverId}", $serverId)
+        }
+        if ($hostPath -and $from -eq "PATH_BASES" -and $ConfigState) {
+            $serverId = [string](Get-ObjectValue -Object $Server -Name "id" -Default "server")
+            $configId = [string](Get-ObjectValue -Object $ConfigState -Name "configId" -Default "config")
+            $hostPath = Join-Path (Join-Path $hostPath (ConvertTo-HostPathSegment -Value $configId -Default "config")) (ConvertTo-HostPathSegment -Value $serverId -Default "server")
+        }
         if ($hostPath -and $subdir) {
             $hostPath = Join-Path $hostPath $subdir
         }

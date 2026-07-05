@@ -304,6 +304,8 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 
 В CPU embedding mode Graph server получает не секретный placeholder `OPENAI_API_KEY` только для прохождения startup initialization OpenAI client. Если Graph должен реально вызывать LLM для chat-функций, задайте `CHAT_API_KEY`, `CHAT_API_BASE` и `CHAT_MODEL` в `config.env` distribution или в `host.config.json` secrets.
 
+Config-specific vector stores из `PATH_BASES` изолируются как `<stateRoot>/bases/<configId>/<serverId>/...`, чтобы несколько `code` containers не делили один zvec lock.
+
 Опубликовать текущее состояние в GitLab registry repo:
 
 ```powershell
