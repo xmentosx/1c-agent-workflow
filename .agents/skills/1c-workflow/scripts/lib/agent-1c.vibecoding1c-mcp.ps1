@@ -188,9 +188,9 @@ function Write-Vibecoding1cMcpPortRegistry {
 function Invoke-Vibecoding1cMcpPortRegistryLock {
     param([scriptblock]$ScriptBlock)
 
-    $home = Get-Vibecoding1cMcpLocalHome
-    New-Item -ItemType Directory -Force -Path $home | Out-Null
-    $lockPath = Join-Path $home "ports.lock"
+    $localHome = Get-Vibecoding1cMcpLocalHome
+    New-Item -ItemType Directory -Force -Path $localHome | Out-Null
+    $lockPath = Join-Path $localHome "ports.lock"
     $stream = $null
     for ($attempt = 1; $attempt -le 50; $attempt++) {
         try {
@@ -624,16 +624,20 @@ function Get-Vibecoding1cMcpSelectedConfigId {
         }
     }
 
+    if (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $Server) {
+        if (-not $AllowPrompt) {
+            return ""
+        }
+
+        return (Read-Vibecoding1cMcpRemoteConfigChoice -Selection $Selection)
+    }
+
     $selectionConfigId = [string](Get-Vibecoding1cMcpObjectValue -Object $Selection -Name "remoteConfigId" -Default "")
     if ($selectionConfigId) {
         return $selectionConfigId
     }
 
-    if (-not $AllowPrompt) {
-        return ""
-    }
-
-    return (Read-Vibecoding1cMcpRemoteConfigChoice -Selection $Selection)
+    return ""
 }
 
 function Get-Vibecoding1cMcpSelectedHostId {
@@ -653,6 +657,10 @@ function Get-Vibecoding1cMcpSelectedHostId {
         if ($hostId) {
             return $hostId
         }
+    }
+
+    if (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $Server) {
+        return ""
     }
 
     return [string](Get-Vibecoding1cMcpObjectValue -Object $Selection -Name "remoteHostId" -Default "")
@@ -1072,16 +1080,16 @@ function Set-Vibecoding1cMcpSelection {
         }
     }
 
-    if ($McpProvider) {
+    if ($McpProvider -and -not $McpServerId) {
         $selectionHash["defaultProvider"] = $McpProvider
     }
-    if ($McpLocalScope) {
+    if ($McpLocalScope -and -not $McpServerId) {
         $selectionHash["localScopeDefault"] = $McpLocalScope
     }
-    if ($McpConfigId) {
+    if ($McpConfigId -and -not $McpServerId) {
         $selectionHash["remoteConfigId"] = $McpConfigId
     }
-    if ($McpHostId) {
+    if ($McpHostId -and -not $McpServerId) {
         $selectionHash["remoteHostId"] = $McpHostId
     }
 
@@ -1143,21 +1151,25 @@ function Set-Vibecoding1cMcpSelection {
                 $localScope = $scopeAnswer
             }
         }
+        $requiresRemoteConfig = Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $server
         $configId = if ($McpConfigId) {
             $McpConfigId
         } elseif ($existingConfigId) {
             $existingConfigId
+        } elseif ($requiresRemoteConfig) {
+            ""
         } else {
             [string](Get-Vibecoding1cMcpObjectValue -Object $selectionHash -Name "remoteConfigId" -Default "")
         }
-        if ($provider -eq "remote" -and (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $server) -and -not $configId) {
+        if ($provider -eq "remote" -and $requiresRemoteConfig -and -not $configId) {
             $configId = Read-Vibecoding1cMcpRemoteConfigChoice -Selection $selection
-            $selectionHash["remoteConfigId"] = $configId
         }
         $hostId = if ($McpHostId) {
             $McpHostId
         } elseif ($existingHostId) {
             $existingHostId
+        } elseif ($requiresRemoteConfig) {
+            ""
         } else {
             [string](Get-Vibecoding1cMcpObjectValue -Object $selectionHash -Name "remoteHostId" -Default "")
         }
@@ -2792,11 +2804,11 @@ function Write-Vibecoding1cMcpClientConfig {
     $localEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -ne "global" })
     $allCurrentEndpoints = @($globalEndpoints + $localEndpoints)
 
-    $home = [Environment]::GetFolderPath("UserProfile")
-    if ([string]::IsNullOrWhiteSpace($home)) {
-        $home = $HOME
+    $userHome = [Environment]::GetFolderPath("UserProfile")
+    if ([string]::IsNullOrWhiteSpace($userHome)) {
+        $userHome = $HOME
     }
-    $codexHomeConfig = Join-Path $home ".codex\config.toml"
+    $codexHomeConfig = Join-Path $userHome ".codex\config.toml"
     $codexProjectConfig = Join-Path $script:ProjectRoot ".codex\config.toml"
 
     Write-Vibecoding1cMcpCodexConfig -Path $codexHomeConfig -BlockId "global" -Endpoints $globalEndpoints

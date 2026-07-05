@@ -589,7 +589,7 @@ function Invoke-AiRules1cInstaller {
     }
 
     $installArgs = @(
-        "-Command", $effectiveCommand,
+        $effectiveCommand,
         "-ProjectRoot", $script:ProjectRoot,
         "-Source", $rulesDir,
         "-AssumeYes"
@@ -602,7 +602,7 @@ function Invoke-AiRules1cInstaller {
 
     Push-Location $script:ProjectRoot
     try {
-        & $installScript @installArgs
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $installScript @installArgs
         if ($LASTEXITCODE -ne 0) {
             throw "ai_rules_1c installer failed with exit code $LASTEXITCODE"
         }

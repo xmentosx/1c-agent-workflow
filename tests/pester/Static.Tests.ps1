@@ -1723,6 +1723,80 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "keeps config-specific remote choices per server during selection" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-per-server-config-select-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $registryRoot = Join-Path $tempRoot "registry"
+        $localHome = Join-Path $tempRoot "local-home"
+        $oldRegistryPath = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", "Process")
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
+        $oldConfigId = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_CONFIG_ID", "Process")
+        $oldHostId = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_HOST_ID", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot, $registryRoot | Out-Null
+            $registry = [ordered]@{
+                schemaVersion = 1
+                publishedAt = "2026-07-05T00:00:00Z"
+                host = [ordered]@{ hostId = "host-a"; baseUrl = "http://vibecoding1c-mcp-host" }
+                configurations = @(
+                    [ordered]@{ configId = "trade"; title = "Trade"; indexedAt = "2026-07-05T00:00:00Z" },
+                    [ordered]@{ configId = "erp"; title = "ERP"; indexedAt = "2026-07-05T00:00:00Z" }
+                )
+                servers = @(
+                    [ordered]@{ id = "code"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-code"; url = "http://vibecoding1c-mcp-host:18100/mcp"; health = "running"; indexedAt = "2026-07-05T00:00:00Z" },
+                    [ordered]@{ id = "code"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "erp"; name = "itl-erp-code"; url = "http://vibecoding1c-mcp-host:18101/mcp"; health = "running"; indexedAt = "2026-07-05T00:00:00Z" },
+                    [ordered]@{ id = "graph"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-graph"; url = "http://vibecoding1c-mcp-host:18106/mcp"; health = "running"; indexedAt = "2026-07-05T00:00:00Z" },
+                    [ordered]@{ id = "graph"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "erp"; name = "itl-erp-graph"; url = "http://vibecoding1c-mcp-host:18107/mcp"; health = "running"; indexedAt = "2026-07-05T00:00:00Z" }
+                )
+            }
+            Set-Content -LiteralPath (Join-Path $registryRoot "registry.json") -Encoding UTF8 -Value (($registry | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $registryRoot, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $localHome, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_CONFIG_ID", $null, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_HOST_ID", $null, "Process")
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                $script:vibecoding1cConfigChoices = @("trade", "erp")
+                $script:vibecoding1cConfigChoiceIndex = 0
+
+                function Test-InteractiveInputAvailable {
+                    return $false
+                }
+
+                function Read-Vibecoding1cMcpRemoteConfigChoice {
+                    param([object]$Selection)
+
+                    $choice = $script:vibecoding1cConfigChoices[$script:vibecoding1cConfigChoiceIndex]
+                    $script:vibecoding1cConfigChoiceIndex += 1
+                    return $choice
+                }
+
+                Set-Vibecoding1cMcpSelection *> $null
+                $selection = Read-Vibecoding1cMcpSelection
+                $script:vibecoding1cConfigChoiceIndex | Should -Be 2
+                $selection.remoteConfigId | Should -Be ""
+
+                $codeSelection = $selection.servers | Where-Object { $_.id -eq "code" } | Select-Object -First 1
+                $graphSelection = $selection.servers | Where-Object { $_.id -eq "graph" } | Select-Object -First 1
+                $codeSelection.configId | Should -Be "trade"
+                $graphSelection.configId | Should -Be "erp"
+
+                $complete = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry
+                $complete.isComplete | Should -Be $true
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_CONFIG_ID", $oldConfigId, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_HOST_ID", $oldHostId, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "requires McpHostId for duplicate remote registry endpoints and resolves v2 host metadata" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-registry-v2-host-select-" + [guid]::NewGuid().ToString("N"))
         $projectRoot = Join-Path $tempRoot "project"
@@ -1801,7 +1875,11 @@ Describe "1C agent workflow static checks" {
                 . $HelperPath -ProjectRoot $projectRoot -Action help -McpServerId code -McpProvider remote -McpConfigId trade -McpHostId host-b *> $null
                 Set-Vibecoding1cMcpSelection *> $null
                 $selection = Read-Vibecoding1cMcpSelection
-                $selection.remoteHostId | Should -Be "host-b"
+                $selection.remoteConfigId | Should -Be ""
+                $selection.remoteHostId | Should -Be ""
+                $selectionEntry = $selection.servers | Where-Object { $_.id -eq "code" } | Select-Object -First 1
+                $selectionEntry.configId | Should -Be "trade"
+                $selectionEntry.hostId | Should -Be "host-b"
                 $server = (Read-Vibecoding1cMcpManifest).servers | Where-Object { $_.id -eq "code" } | Select-Object -First 1
                 $runtime = New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection
                 $runtime.url | Should -Be "http://host-b:18100/mcp"
@@ -1960,7 +2038,11 @@ Describe "1C agent workflow static checks" {
                 $details | Should -Match "model=intfloat/multilingual-e5-base"
                 $details | Should -Match "indexedAt=2026-07-05T00:05:00Z"
 
-                $selection["remoteHostId"] = "host-b"
+                foreach ($serverSelection in $selection["servers"]) {
+                    if ($serverSelection["id"] -eq "code") {
+                        $serverSelection["hostId"] = "host-b"
+                    }
+                }
                 Set-Content -LiteralPath $selectionPath -Encoding UTF8 -Value (($selection | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
                 $complete = Get-Vibecoding1cMcpSelectionCompleteness -Selection (Read-Vibecoding1cMcpSelection) -RefreshRegistry
                 $complete.isComplete | Should -Be $true
@@ -2134,6 +2216,8 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match ([regex]::Escape('"update-ai-rules"'))
         $HelperText | Should -Match "function Update-AiRules1c"
         $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cInstaller -Command "update"'))
+        $HelperText | Should -Match ([regex]::Escape('powershell -NoProfile -ExecutionPolicy Bypass -File $installScript @installArgs'))
+        $HelperText | Should -Match ([regex]::Escape('$effectiveCommand,'))
         $HelperText | Should -Match ([regex]::Escape('"-Force"'))
         $HelperText | Should -Match "Update ai_rules_1c managed rules"
         $HelperText | Should -Match "function Remove-AiRules1cManagedMcpConfig"
@@ -2158,6 +2242,59 @@ Describe "1C agent workflow static checks" {
             $text | Should -Match "USER-RULES.md"
             $text | Should -Match "MCP"
         }
+    }
+
+    It "runs ai_rules_1c installer outside helper StrictMode" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ai-rules-strictmode-test-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $rulesRoot = Join-Path $tempRoot "ai_rules_1c"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot, $rulesRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Encoding UTF8 -Value '{"schemaVersion":1}'
+            Set-Content -LiteralPath (Join-Path $rulesRoot "install.ps1") -Encoding UTF8 -Value @'
+[CmdletBinding()]
+param(
+    [Parameter(Position = 0)]
+    [string]$Command,
+    [string]$ProjectRoot,
+    [string]$Source,
+    [switch]$AssumeYes,
+    [switch]$Force
+)
+
+$optional = [pscustomobject]@{}
+$null = $optional.userModified
+Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding ASCII -Value "$Command|$Source|$($AssumeYes.IsPresent)"
+'@
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                function Sync-AiRules1cCheckout {
+                    return [pscustomobject]@{
+                        root = $rulesRoot
+                        repo = "fixture"
+                        ref = "fixture"
+                    }
+                }
+                function Get-GitOutputAt {
+                    return "fixture-commit"
+                }
+
+                Invoke-AiRules1cInstaller -Command "update"
+            }
+
+            $result = Get-Content -Encoding ASCII -Raw (Join-Path $projectRoot "installer-ran.txt")
+            $result.Trim() | Should -Be "update|$rulesRoot|True"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "does not assign to local home variables that collide with PowerShell HOME" {
+        $HelperText | Should -Not -Match '(?im)^\s*\$home\s*='
     }
 
     It "wires ITL workflow package update through the helper, docs, and Kilo wrapper" {
