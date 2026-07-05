@@ -10,9 +10,16 @@
     "ONEC_AI_TOKEN": "<local-1c-assistant-token>"
   },
   "embedding": {
-    "apiBase": "http://host.docker.internal:19000/v1",
-    "apiKey": "lm-studio",
     "model": "intfloat/multilingual-e5-base"
+  },
+  "codeMetadataSearchServer": {
+    "resetDatabase": false,
+    "reindexIntervalHours": null
+  },
+  "graphMetadataSearchServer": {
+    "resetDatabase": false,
+    "reindexIntervalHours": null,
+    "autoUpdateOnStartup": true
   },
   "helpSearchServer": {
     "platformVersion": "8.3.24.1548",

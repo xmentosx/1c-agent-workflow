@@ -2572,7 +2572,7 @@ Actions:
   vibecoding1c-mcp-status         Show active vibecoding1c MCP names, URLs, provider, health, and freshness.
   vibecoding1c-mcp-start          Start global, project, and current branch vibecoding1c MCP servers.
   vibecoding1c-mcp-stop           Stop vibecoding1c MCP servers for the selected/current scope.
-  vibecoding1c-mcp-select         Select remote/local provider, remote configId, or local project/branch scope.
+  vibecoding1c-mcp-select         Select remote/local provider, remote configId/hostId, or local project/branch scope.
   vibecoding1c-mcp-refresh-registry
                       Clone or update the remote vibecoding1c MCP endpoint registry.
   vibecoding1c-mcp-rotate-keys    Copy license keys from the private distribution config.env to local storage.
@@ -2617,7 +2617,7 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vanessa-mcp-status
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-status
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-select -McpServerId code -McpProvider remote -McpConfigId trade
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-select -McpServerId code -McpProvider remote -McpConfigId trade -McpHostId vibecoding1c-mcp-host-01
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-select -McpServerId graph -McpProvider local -McpLocalScope branch
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-start
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-workflow

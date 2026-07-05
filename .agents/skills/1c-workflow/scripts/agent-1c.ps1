@@ -21,6 +21,7 @@ param(
     [ValidateSet("", "remote", "local")]
     [string]$McpProvider = "",
     [string]$McpConfigId = "",
+    [string]$McpHostId = "",
     [ValidateSet("", "project", "branch")]
     [string]$McpLocalScope = "",
     [ValidateSet("configured", "wizard", "json")]

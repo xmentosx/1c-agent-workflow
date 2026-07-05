@@ -499,6 +499,17 @@ function ConvertTo-HostBoolSetting {
     return $Default
 }
 
+function ConvertTo-HostEnvBool {
+    param(
+        [AllowNull()][object]$Value,
+        [bool]$Default = $false
+    )
+    if (ConvertTo-HostBoolSetting -Value $Value -Default $Default) {
+        return "true"
+    }
+    return "false"
+}
+
 function Test-HostEnabledServersNeedEmbedding {
     param(
         [object]$Manifest,
@@ -521,22 +532,26 @@ function Test-HostEnabledServersNeedEmbedding {
     return $false
 }
 
+function Test-HostServerNeedsEmbedding {
+    param([object]$Server)
+    return (ConvertTo-HostBoolSetting -Value (Get-ObjectValue -Object $Server -Name "embedding" -Default $false) -Default $false)
+}
+
 function Get-HostEmbeddingSettings {
     param([object]$Config)
     $embedding = Get-ObjectValue -Object $Config -Name "embedding" -Default $null
     $apiBase = [string](Get-ObjectValue -Object $embedding -Name "apiBase" -Default "")
     $apiKey = [string](Get-ObjectValue -Object $embedding -Name "apiKey" -Default "")
-    $model = [string](Get-ObjectValue -Object $embedding -Name "model" -Default "")
-    if ([string]::IsNullOrWhiteSpace($apiBase)) {
-        throw "Standalone vibecoding1c MCP host embedding.apiBase is required because an enabled server needs embeddings."
-    }
-    if ([string]::IsNullOrWhiteSpace($apiKey)) {
-        throw "Standalone vibecoding1c MCP host embedding.apiKey is required because an enabled server needs embeddings. For LM Studio use 'lm-studio'."
-    }
+    $mode = $(if ([string]::IsNullOrWhiteSpace($apiKey)) { "cpu" } else { "openai" })
+    $model = [string](Get-ObjectValue -Object $embedding -Name "model" -Default $(if ($mode -eq "cpu") { "intfloat/multilingual-e5-base" } else { "" }))
     if ([string]::IsNullOrWhiteSpace($model)) {
         throw "Standalone vibecoding1c MCP host embedding.model is required because an enabled server needs embeddings. Set it to 'intfloat/multilingual-e5-base' unless you explicitly need another model."
     }
+    if ($mode -eq "openai" -and [string]::IsNullOrWhiteSpace($apiBase)) {
+        throw "Standalone vibecoding1c MCP host embedding.apiBase is required when embedding.apiKey is set."
+    }
     return [pscustomobject]@{
+        mode = $mode
         apiBase = $apiBase.TrimEnd("/")
         apiKey = $apiKey
         model = $model
@@ -665,9 +680,15 @@ function Ensure-HostEmbeddingModel {
     }
 
     $settings = Get-HostEmbeddingSettings -Config $Config
+    Write-Host "Standalone embedding mode: $($settings.mode)"
+    Write-Host "Standalone embedding model: $($settings.model)"
+    if ($settings.mode -eq "cpu") {
+        Write-Host "Standalone embedding uses built-in CPU model; LM Studio bootstrap is skipped."
+        return
+    }
+
     $probeBase = Get-HostEmbeddingProbeBase -ApiBase $settings.apiBase
     $modelsUri = Get-HostEmbeddingModelsUri -ApiBase $settings.apiBase
-    Write-Host "Standalone embedding model: $($settings.model)"
     Write-Host "Standalone embedding probe: $modelsUri"
 
     if (Test-HostEmbeddingEndpointReady -ApiBase $settings.apiBase -Model $settings.model) {
@@ -837,6 +858,58 @@ function Write-MetadataDiagnosticsSummary {
     }
 }
 
+function Get-XmlDirectChildText {
+    param(
+        [AllowNull()][object]$Node,
+        [string]$LocalName
+    )
+    if ($null -eq $Node) {
+        return ""
+    }
+    foreach ($child in @($Node.ChildNodes)) {
+        if ($child.NodeType -eq [System.Xml.XmlNodeType]::Element -and $child.LocalName -eq $LocalName) {
+            return ([string]$child.InnerText).Trim()
+        }
+    }
+    return ""
+}
+
+function Read-ConfigurationXmlInfo {
+    param(
+        [string]$MainConfigRoot,
+        [string]$FallbackName,
+        [string]$FallbackVersion = ""
+    )
+    $result = [ordered]@{
+        configurationName = $FallbackName
+        configurationVersion = $FallbackVersion
+    }
+    $configurationXmlPath = Join-Path $MainConfigRoot "Configuration.xml"
+    if (-not (Test-Path -LiteralPath $configurationXmlPath -PathType Leaf)) {
+        return [pscustomobject]$result
+    }
+    try {
+        [xml]$xml = Read-Text -Path $configurationXmlPath
+        $propertiesNodes = $xml.SelectNodes("//*[local-name()='Configuration']/*[local-name()='Properties']")
+        if ($propertiesNodes.Count -eq 0) {
+            $propertiesNodes = $xml.SelectNodes("//*[local-name()='Properties']")
+        }
+        if ($propertiesNodes.Count -gt 0) {
+            $name = Get-XmlDirectChildText -Node $propertiesNodes[0] -LocalName "Name"
+            $version = Get-XmlDirectChildText -Node $propertiesNodes[0] -LocalName "Version"
+            if ($name) {
+                $result["configurationName"] = $name
+            }
+            if ($version) {
+                $result["configurationVersion"] = $version
+            }
+        }
+    } catch {
+        Write-Host "WARNING: failed to read configuration metadata from $configurationXmlPath`: $($_.Exception.Message)"
+    }
+    return [pscustomobject]$result
+}
+
 function Get-ConfigurationState {
     param(
         [object]$Config,
@@ -852,6 +925,7 @@ function Get-ConfigurationState {
     $sourcePath = [string](Get-ObjectValue -Object $Configuration -Name "sourcePath" -Default "")
     $sourceLabel = [string](Get-ObjectValue -Object $Configuration -Name "sourceLabel" -Default "")
     $sourceBranch = [string](Get-ObjectValue -Object $Configuration -Name "sourceBranch" -Default "")
+    $title = [string](Get-ObjectValue -Object $Configuration -Name "title" -Default $configId)
     if ($sourceRepo) {
         Ensure-GitCheckout -Repo $sourceRepo -Path $sourceRoot -Branch $sourceBranch
     } elseif (-not (Test-Path -LiteralPath $sourceRoot -PathType Container)) {
@@ -886,6 +960,7 @@ function Get-ConfigurationState {
     }
 
     $workRoot = Get-ConfigWorkRoot -Config $Config -ConfigId $configId
+    $configurationInfo = Read-ConfigurationXmlInfo -MainConfigRoot (Get-ConfigSubPath -Root $sourceRoot -RelativePath $mainPath) -FallbackName $title
     $metadataRoot = Join-Path $workRoot "metadata"
     $diagnosticsRoot = Join-Path $workRoot "diagnostics"
     $logsRoot = Join-Path $workRoot "logs"
@@ -893,7 +968,9 @@ function Get-ConfigurationState {
     $reportPath = Join-Path $metadataRoot $reportFileName
     return [pscustomobject]@{
         configId = $configId
-        title = [string](Get-ObjectValue -Object $Configuration -Name "title" -Default $configId)
+        title = $title
+        configurationName = [string]$configurationInfo.configurationName
+        configurationVersion = [string]$configurationInfo.configurationVersion
         source = $source
         sourceRoot = $sourceRoot
         sourceCommit = $sourceCommit
@@ -964,6 +1041,78 @@ function Refresh-Configuration {
     return $state
 }
 
+function Update-HostStateConfigurations {
+    param(
+        [object]$Config,
+        [object[]]$ConfigStates
+    )
+    $state = Read-HostState -Config $Config
+    $hash = Convert-ToHash -Object $state
+    $updatedById = @{}
+    foreach ($configState in @($ConfigStates)) {
+        $configId = [string](Get-ObjectValue -Object $configState -Name "configId" -Default "")
+        if ($configId) {
+            $updatedById[$configId] = $true
+        }
+    }
+    $configurations = @()
+    foreach ($existing in As-Array (Get-ObjectValue -Object $state -Name "configurations" -Default @())) {
+        $existingId = [string](Get-ObjectValue -Object $existing -Name "configId" -Default "")
+        if ($existingId -and $updatedById.ContainsKey($existingId)) {
+            continue
+        }
+        $configurations += $existing
+    }
+    $configurations += @($ConfigStates)
+    $hash["configurations"] = $configurations
+    Write-HostState -Config $Config -State $hash
+}
+
+function Refresh-HostConfigurations {
+    param(
+        [object]$Config,
+        [string]$TargetConfigId = ""
+    )
+    Ensure-Distribution -Config $Config
+    $states = @()
+    $matched = $false
+    foreach ($configuration in As-Array (Get-ObjectValue -Object $Config -Name "configurations" -Default @())) {
+        $configIdValue = [string](Get-ObjectValue -Object $configuration -Name "configId" -Default "")
+        if ($TargetConfigId -and $configIdValue -ne $TargetConfigId) {
+            continue
+        }
+        $matched = $true
+        $states += Refresh-Configuration -Config $Config -Configuration $configuration
+    }
+    if ($TargetConfigId -and -not $matched) {
+        throw "Configuration '$TargetConfigId' was not found in host config."
+    }
+    Update-HostStateConfigurations -Config $Config -ConfigStates $states
+    return @($states)
+}
+
+function Invoke-HostConfigDumpHelper {
+    param(
+        [string]$ResolvedConfigPath,
+        [string]$TargetConfigId = ""
+    )
+    $dumpScript = Join-Path $PSScriptRoot "export-1c-config-dump.ps1"
+    if (-not (Test-Path -LiteralPath $dumpScript -PathType Leaf)) {
+        throw "Config dump helper was not found: $dumpScript"
+    }
+    $args = @("-ExecutionPolicy", "Bypass", "-File", $dumpScript, "-ConfigPath", $ResolvedConfigPath)
+    if ($TargetConfigId) {
+        $args += @("-ConfigId", $TargetConfigId)
+    }
+    if ($DryRun) {
+        $args += "-DryRun"
+    }
+    & powershell @args
+    if ($LASTEXITCODE -ne 0) {
+        throw "Config dump helper failed with exit code $LASTEXITCODE."
+    }
+}
+
 function Get-HostPort {
     param(
         [object]$Config,
@@ -999,6 +1148,8 @@ function Get-HostLocalValues {
     )
     $help = Get-ObjectValue -Object $Config -Name "helpSearchServer" -Default $null
     $ssl = Get-ObjectValue -Object $Config -Name "sslSearchServer" -Default $null
+    $code = Get-ObjectValue -Object $Config -Name "codeMetadataSearchServer" -Default $null
+    $graph = Get-ObjectValue -Object $Config -Name "graphMetadataSearchServer" -Default $null
     $platformBinPath = [string](Get-ObjectValue -Object $help -Name "platformBinPath" -Default "")
     $platformVersion = [string](Get-ObjectValue -Object $help -Name "platformVersion" -Default "")
     $bspVersion = [string](Get-ObjectValue -Object $ssl -Name "bspVersion" -Default "")
@@ -1006,12 +1157,18 @@ function Get-HostLocalValues {
         PATH_METADATA = $(if ($ConfigState) { $ConfigState.metadataRoot } else { "" })
         PATH_CODE = $(if ($ConfigState) { Get-ConfigSubPath -Root $ConfigState.sourceRoot -RelativePath $ConfigState.mainConfigPath } else { "" })
         PATH_BASES = (Join-Path (Get-StateRoot -Config $Config) "bases")
+        PATH_MODEL_CACHE = (Join-Path (Get-StateRoot -Config $Config) "model-cache")
         PATH_1C_BIN = $(if ($platformBinPath) { Get-FullPath $platformBinPath } else { "" })
         PLATFORM_VERSION = $platformVersion
         HELP_PLATFORM_VERSION = $platformVersion
         SSL_VERSION = $bspVersion
         BSP_VERSION = $bspVersion
         RESET_DATABASE = "false"
+        CODE_RESET_DATABASE = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $code -Name "resetDatabase" -Default $false) -Default $false)
+        CODE_REINDEX_INTERVAL_HOURS = [string](Get-ObjectValue -Object $code -Name "reindexIntervalHours" -Default "")
+        GRAPH_RESET_DATABASE = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $graph -Name "resetDatabase" -Default $false) -Default $false)
+        GRAPH_REINDEX_INTERVAL_HOURS = [string](Get-ObjectValue -Object $graph -Name "reindexIntervalHours" -Default "")
+        GRAPH_AUTO_UPDATE_ON_STARTUP = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $graph -Name "autoUpdateOnStartup" -Default $true) -Default $true)
         PROJECT_NAME = $(if ($ConfigState) { $ConfigState.configId } else { [string](Get-ObjectValue -Object $Config -Name "hostId" -Default "vibecoding1c-mcp-host") })
     }
 }
@@ -1057,9 +1214,16 @@ function Set-GraphOpenAiFallbackEnv {
     if ($id -ne "graph") {
         return
     }
+    if (-not (Test-HostServerNeedsEmbedding -Server $Server)) {
+        return
+    }
+    $settings = Get-HostEmbeddingSettings -Config $Config
+    if ($settings.mode -ne "openai") {
+        return
+    }
     $embedding = Get-ObjectValue -Object $Config -Name "embedding" -Default $null
     $fallbacks = @(
-        [pscustomobject]@{ name = "OPENAI_API_KEY"; embeddingName = "apiKey"; default = "lm-studio" },
+        [pscustomobject]@{ name = "OPENAI_API_KEY"; embeddingName = "apiKey"; default = "" },
         [pscustomobject]@{ name = "OPENAI_API_BASE"; embeddingName = "apiBase"; default = "" },
         [pscustomobject]@{ name = "OPENAI_MODEL"; embeddingName = "model"; default = "" }
     )
@@ -1097,6 +1261,19 @@ function Get-HostDefaultEnvEntries {
                 [ordered]@{ name = "BSP_VERSION"; from = "BSP_VERSION"; required = $false }
             )
         }
+        "code" {
+            return @(
+                [ordered]@{ name = "RESET_DATABASE"; from = "CODE_RESET_DATABASE"; default = "false"; required = $false },
+                [ordered]@{ name = "REINDEX_INTERVAL_HOURS"; from = "CODE_REINDEX_INTERVAL_HOURS"; required = $false }
+            )
+        }
+        "graph" {
+            return @(
+                [ordered]@{ name = "RESET_DATABASE"; from = "GRAPH_RESET_DATABASE"; default = "false"; required = $false },
+                [ordered]@{ name = "REINDEX_INTERVAL_HOURS"; from = "GRAPH_REINDEX_INTERVAL_HOURS"; required = $false },
+                [ordered]@{ name = "AUTO_UPDATE_ON_STARTUP"; from = "GRAPH_AUTO_UPDATE_ON_STARTUP"; default = "true"; required = $false }
+            )
+        }
         default {
             return @()
         }
@@ -1119,7 +1296,11 @@ function Resolve-ServerEnv {
         [object]$ConfigState = $null
     )
     $secretValues = Get-HostSecretValues -Config $Config
-    $embedding = Get-ObjectValue -Object $Config -Name "embedding" -Default $null
+    $serverNeedsEmbedding = Test-HostServerNeedsEmbedding -Server $Server
+    $embeddingSettings = $null
+    if ($serverNeedsEmbedding) {
+        $embeddingSettings = Get-HostEmbeddingSettings -Config $Config
+    }
     $values = [ordered]@{}
     $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState
     $envEntries = @(As-Array (Get-ObjectValue -Object $Server -Name "env" -Default @())) + @(Get-HostDefaultEnvEntries -Server $Server)
@@ -1127,12 +1308,20 @@ function Resolve-ServerEnv {
         $name = [string](Get-ObjectValue -Object $entry -Name "name" -Default "")
         if (-not $name) { continue }
         $value = ""
+        $skipMissingRequired = $false
         $embeddingKind = [string](Get-ObjectValue -Object $entry -Name "embedding" -Default "")
         if ($embeddingKind) {
-            switch ($embeddingKind) {
-                "base" { $value = [string](Get-ObjectValue -Object $embedding -Name "apiBase" -Default "") }
-                "key" { $value = [string](Get-ObjectValue -Object $embedding -Name "apiKey" -Default "lm-studio") }
-                "model" { $value = [string](Get-ObjectValue -Object $embedding -Name "model" -Default "") }
+            if ($null -eq $embeddingSettings) {
+                $embeddingSettings = Get-HostEmbeddingSettings -Config $Config
+            }
+            if ($embeddingSettings.mode -eq "openai") {
+                switch ($embeddingKind) {
+                    "base" { $value = [string]$embeddingSettings.apiBase }
+                    "key" { $value = [string]$embeddingSettings.apiKey }
+                    "model" { $value = [string]$embeddingSettings.model }
+                }
+            } else {
+                $skipMissingRequired = $true
             }
         } elseif (Get-ObjectValue -Object $entry -Name "value" -Default $null) {
             $value = [string](Get-ObjectValue -Object $entry -Name "value" -Default "")
@@ -1142,6 +1331,9 @@ function Resolve-ServerEnv {
             $value = Resolve-HostConfigValue -From $from -SecretValues $secretValues -LocalValues $localValues -Default (Get-ObjectValue -Object $entry -Name "default" -Default "")
         }
         if ([bool](Get-ObjectValue -Object $entry -Name "required" -Default $false) -and [string]::IsNullOrWhiteSpace($value)) {
+            if ($skipMissingRequired) {
+                continue
+            }
             $serverId = [string](Get-ObjectValue -Object $Server -Name "id" -Default "<unknown>")
             $from = [string](Get-ObjectValue -Object $entry -Name "from" -Default "")
             $source = $(if ($from) { $from } else { $name })
@@ -1150,6 +1342,9 @@ function Resolve-ServerEnv {
         if (-not [string]::IsNullOrWhiteSpace($value)) {
             $values[$name] = $value
         }
+    }
+    if ($serverNeedsEmbedding -and $null -ne $embeddingSettings -and $embeddingSettings.mode -eq "cpu") {
+        $values["EMBEDDING_MODEL"] = [string]$embeddingSettings.model
     }
     Set-GraphOpenAiFallbackEnv -Config $Config -Server $Server -Values $values
     return $values
@@ -1164,6 +1359,9 @@ function Resolve-ServerVolumes {
     $volumes = @()
     $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState
     $volumeEntries = @(As-Array (Get-ObjectValue -Object $Server -Name "volumes" -Default @())) + @(Get-HostDefaultVolumeEntries -Server $Server)
+    if ((Test-HostServerNeedsEmbedding -Server $Server) -and (Get-HostEmbeddingSettings -Config $Config).mode -eq "cpu") {
+        $volumeEntries += [ordered]@{ from = "PATH_MODEL_CACHE"; to = "/app/model_cache"; required = $false }
+    }
     foreach ($entry in $volumeEntries) {
         $from = [string](Get-ObjectValue -Object $entry -Name "from" -Default "")
         $to = [string](Get-ObjectValue -Object $entry -Name "to" -Default "")
@@ -1186,7 +1384,7 @@ function Resolve-ServerVolumes {
                     $serverId = [string](Get-ObjectValue -Object $Server -Name "id" -Default "<unknown>")
                     throw "Required volume path for '$from' on vibecoding1c MCP server '$serverId' was not found: $hostPath"
                 }
-                if ($from -eq "PATH_BASES" -or $from -eq "PATH_METADATA") {
+                if ($from -eq "PATH_BASES" -or $from -eq "PATH_METADATA" -or $from -eq "PATH_MODEL_CACHE") {
                     New-Item -ItemType Directory -Force -Path $hostPath | Out-Null
                 } else {
                     continue
@@ -1294,11 +1492,17 @@ function New-ServerRuntime {
     $imageTag = [string](Get-ObjectValue -Object $Config -Name "imageTag" -Default "latest")
     $image = ([string](Get-ObjectValue -Object $Server -Name "image" -Default "")).Replace("{imageTag}", $imageTag)
     $composeProjectTemplate = [string](Get-ObjectValue -Object $Server -Name "composeProjectTemplate" -Default $name)
+    $embeddingSettings = $null
+    if (Test-HostServerNeedsEmbedding -Server $Server) {
+        $embeddingSettings = Get-HostEmbeddingSettings -Config $Config
+    }
+    $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState
     return [pscustomobject]@{
         id = $id
         scope = $scope
         family = "vibecoding1c"
         provider = "remote"
+        hostId = $hostId
         configId = $configId
         name = $name
         containerName = $containerName
@@ -1308,6 +1512,12 @@ function New-ServerRuntime {
         hostPort = $hostPort
         url = "$baseUrl`:$hostPort/mcp"
         health = "unknown"
+        platformVersion = $(if ($id -eq "docs") { [string]$localValues["HELP_PLATFORM_VERSION"] } else { "" })
+        bspVersion = $(if ($id -eq "ssl") { [string]$localValues["BSP_VERSION"] } else { "" })
+        configurationName = $(if ($ConfigState) { [string](Get-ObjectValue -Object $ConfigState -Name "configurationName" -Default "") } else { "" })
+        configurationVersion = $(if ($ConfigState) { [string](Get-ObjectValue -Object $ConfigState -Name "configurationVersion" -Default "") } else { "" })
+        embeddingMode = $(if ($null -ne $embeddingSettings) { [string]$embeddingSettings.mode } else { "" })
+        embeddingModel = $(if ($null -ne $embeddingSettings) { [string]$embeddingSettings.model } else { "" })
         sourceCommit = $(if ($ConfigState) { $ConfigState.sourceCommit } else { "" })
         sourceFingerprint = $(if ($ConfigState) { $ConfigState.sourceFingerprint } else { "" })
         reportHash = $(if ($ConfigState) { $ConfigState.reportHash } else { "" })
@@ -1393,17 +1603,31 @@ function Stop-HostServers {
     }
 }
 
-function Publish-Registry {
+function Get-HostId {
     param([object]$Config)
-    $registryRepo = [string](Get-ObjectValue -Object $Config -Name "registryRepo" -Default "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git")
-    $registryRoot = Get-RegistryRoot -Config $Config
-    Ensure-GitCheckout -Repo $registryRepo -Path $registryRoot
-    $state = Read-HostState -Config $Config
+    $hostId = [string](Get-ObjectValue -Object $Config -Name "hostId" -Default "")
+    if ([string]::IsNullOrWhiteSpace($hostId)) {
+        return "vibecoding1c-mcp-host"
+    }
+    return $hostId
+}
+
+function ConvertTo-RegistryConfigurations {
+    param(
+        [object]$State,
+        [string]$HostId,
+        [string]$PublishedAt
+    )
     $configurations = @()
-    foreach ($configuration in As-Array (Get-ObjectValue -Object $state -Name "configurations" -Default @())) {
+    foreach ($configuration in As-Array (Get-ObjectValue -Object $State -Name "configurations" -Default @())) {
         $configurations += [ordered]@{
+            hostId = $HostId
+            hostPublishedAt = $PublishedAt
+            publishedAt = $PublishedAt
             configId = [string](Get-ObjectValue -Object $configuration -Name "configId" -Default "")
             title = [string](Get-ObjectValue -Object $configuration -Name "title" -Default "")
+            configurationName = [string](Get-ObjectValue -Object $configuration -Name "configurationName" -Default "")
+            configurationVersion = [string](Get-ObjectValue -Object $configuration -Name "configurationVersion" -Default "")
             source = [string](Get-ObjectValue -Object $configuration -Name "source" -Default "")
             sourceCommit = [string](Get-ObjectValue -Object $configuration -Name "sourceCommit" -Default "")
             sourceFingerprint = [string](Get-ObjectValue -Object $configuration -Name "sourceFingerprint" -Default "")
@@ -1411,9 +1635,21 @@ function Publish-Registry {
             indexedAt = [string](Get-ObjectValue -Object $configuration -Name "indexedAt" -Default "")
         }
     }
+    return @($configurations)
+}
+
+function ConvertTo-RegistryServers {
+    param(
+        [object]$State,
+        [string]$HostId,
+        [string]$PublishedAt
+    )
     $servers = @()
-    foreach ($server in As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @())) {
+    foreach ($server in As-Array (Get-ObjectValue -Object $State -Name "servers" -Default @())) {
         $servers += [ordered]@{
+            hostId = $HostId
+            hostPublishedAt = $PublishedAt
+            publishedAt = $PublishedAt
             id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
             scope = [string](Get-ObjectValue -Object $server -Name "scope" -Default "")
             family = "vibecoding1c"
@@ -1422,34 +1658,171 @@ function Publish-Registry {
             name = [string](Get-ObjectValue -Object $server -Name "name" -Default "")
             url = [string](Get-ObjectValue -Object $server -Name "url" -Default "")
             health = [string](Get-ObjectValue -Object $server -Name "health" -Default "unknown")
+            image = [string](Get-ObjectValue -Object $server -Name "image" -Default "")
+            platformVersion = [string](Get-ObjectValue -Object $server -Name "platformVersion" -Default "")
+            bspVersion = [string](Get-ObjectValue -Object $server -Name "bspVersion" -Default "")
+            configurationName = [string](Get-ObjectValue -Object $server -Name "configurationName" -Default "")
+            configurationVersion = [string](Get-ObjectValue -Object $server -Name "configurationVersion" -Default "")
+            embeddingMode = [string](Get-ObjectValue -Object $server -Name "embeddingMode" -Default "")
+            embeddingModel = [string](Get-ObjectValue -Object $server -Name "embeddingModel" -Default "")
             sourceCommit = [string](Get-ObjectValue -Object $server -Name "sourceCommit" -Default "")
             sourceFingerprint = [string](Get-ObjectValue -Object $server -Name "sourceFingerprint" -Default "")
             reportHash = [string](Get-ObjectValue -Object $server -Name "reportHash" -Default "")
             indexedAt = [string](Get-ObjectValue -Object $server -Name "indexedAt" -Default "")
-            image = [string](Get-ObjectValue -Object $server -Name "image" -Default "")
         }
     }
-    $payload = [ordered]@{
-        schemaVersion = 1
-        publishedAt = (Get-Date).ToString("o")
-        host = [ordered]@{
-            hostId = [string](Get-ObjectValue -Object $Config -Name "hostId" -Default "")
-            baseUrl = [string](Get-ObjectValue -Object $Config -Name "baseUrl" -Default "")
+    return @($servers)
+}
+
+function New-CurrentHostRegistryEntry {
+    param(
+        [object]$Config,
+        [object]$State,
+        [string]$PublishedAt
+    )
+    $hostId = Get-HostId -Config $Config
+    return [ordered]@{
+        hostId = $hostId
+        baseUrl = [string](Get-ObjectValue -Object $Config -Name "baseUrl" -Default "")
+        publishedAt = $PublishedAt
+        configurations = (ConvertTo-RegistryConfigurations -State $State -HostId $hostId -PublishedAt $PublishedAt)
+        servers = (ConvertTo-RegistryServers -State $State -HostId $hostId -PublishedAt $PublishedAt)
+    }
+}
+
+function Read-RegistryPayload {
+    param([string]$RegistryPath)
+    if (Test-Path -LiteralPath $RegistryPath -PathType Leaf) {
+        return (Read-JsonFile -Path $RegistryPath)
+    }
+    return [pscustomobject]@{
+        schemaVersion = 2
+        publishedAt = ""
+        hosts = @()
+        configurations = @()
+        servers = @()
+    }
+}
+
+function Get-RegistryHostEntries {
+    param([object]$Payload)
+    $hosts = @(As-Array (Get-ObjectValue -Object $Payload -Name "hosts" -Default @()))
+    if ($hosts.Count -gt 0) {
+        return @($hosts)
+    }
+
+    $hostInfo = Get-ObjectValue -Object $Payload -Name "host" -Default $null
+    $publishedAt = [string](Get-ObjectValue -Object $Payload -Name "publishedAt" -Default "")
+    $hostId = [string](Get-ObjectValue -Object $hostInfo -Name "hostId" -Default "legacy-host")
+    $baseUrl = [string](Get-ObjectValue -Object $hostInfo -Name "baseUrl" -Default "")
+    $configurations = @(As-Array (Get-ObjectValue -Object $Payload -Name "configurations" -Default @()))
+    $servers = @(As-Array (Get-ObjectValue -Object $Payload -Name "servers" -Default @()))
+    if ($configurations.Count -eq 0 -and $servers.Count -eq 0 -and -not $baseUrl) {
+        return @()
+    }
+    return @([pscustomobject]@{
+        hostId = $hostId
+        baseUrl = $baseUrl
+        publishedAt = $publishedAt
+        configurations = $configurations
+        servers = $servers
+    })
+}
+
+function Copy-RegistryChildWithHostMetadata {
+    param(
+        [object]$Child,
+        [object]$HostEntry
+    )
+    $hash = Convert-ToHash -Object $Child
+    $hostId = [string](Get-ObjectValue -Object $HostEntry -Name "hostId" -Default "")
+    $publishedAt = [string](Get-ObjectValue -Object $HostEntry -Name "publishedAt" -Default "")
+    $baseUrl = [string](Get-ObjectValue -Object $HostEntry -Name "baseUrl" -Default "")
+    if (-not $hash.Contains("hostId") -or -not $hash["hostId"]) { $hash["hostId"] = $hostId }
+    if (-not $hash.Contains("hostPublishedAt") -or -not $hash["hostPublishedAt"]) { $hash["hostPublishedAt"] = $publishedAt }
+    if (-not $hash.Contains("publishedAt") -or -not $hash["publishedAt"]) { $hash["publishedAt"] = $publishedAt }
+    if (-not $hash.Contains("hostBaseUrl") -or -not $hash["hostBaseUrl"]) { $hash["hostBaseUrl"] = $baseUrl }
+    return [pscustomobject]$hash
+}
+
+function New-RegistryPayload {
+    param(
+        [object[]]$Hosts,
+        [string]$PublishedAt
+    )
+    $normalizedHosts = @()
+    $configurations = @()
+    $servers = @()
+    foreach ($hostEntry in @($Hosts)) {
+        $hostHash = Convert-ToHash -Object $hostEntry
+        if (-not $hostHash.Contains("configurations")) { $hostHash["configurations"] = @() }
+        if (-not $hostHash.Contains("servers")) { $hostHash["servers"] = @() }
+        $normalizedHosts += [pscustomobject]$hostHash
+        foreach ($configuration in As-Array $hostHash["configurations"]) {
+            $configurations += Copy-RegistryChildWithHostMetadata -Child $configuration -HostEntry $hostHash
         }
+        foreach ($server in As-Array $hostHash["servers"]) {
+            $servers += Copy-RegistryChildWithHostMetadata -Child $server -HostEntry $hostHash
+        }
+    }
+    return [ordered]@{
+        schemaVersion = 2
+        publishedAt = $PublishedAt
+        hosts = $normalizedHosts
         configurations = $configurations
         servers = $servers
     }
+}
+
+function Write-MergedRegistryPayload {
+    param(
+        [object]$Config,
+        [string]$RegistryPath,
+        [string]$PublishedAt
+    )
+    $state = Read-HostState -Config $Config
+    $hostId = Get-HostId -Config $Config
+    $currentPayload = Read-RegistryPayload -RegistryPath $RegistryPath
+    $hosts = @()
+    foreach ($hostEntry in Get-RegistryHostEntries -Payload $currentPayload) {
+        $entryHostId = [string](Get-ObjectValue -Object $hostEntry -Name "hostId" -Default "")
+        if ($entryHostId -and $entryHostId -ne $hostId) {
+            $hosts += $hostEntry
+        }
+    }
+    $hosts += (New-CurrentHostRegistryEntry -Config $Config -State $state -PublishedAt $PublishedAt)
+    Write-JsonFile -Path $RegistryPath -Value (New-RegistryPayload -Hosts $hosts -PublishedAt $PublishedAt)
+}
+
+function Publish-Registry {
+    param([object]$Config)
+    $registryRepo = [string](Get-ObjectValue -Object $Config -Name "registryRepo" -Default "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git")
+    $registryRoot = Get-RegistryRoot -Config $Config
+    Ensure-GitCheckout -Repo $registryRepo -Path $registryRoot
     $registryPath = Join-Path $registryRoot "registry.json"
-    Write-JsonFile -Path $registryPath -Value $payload
-    Write-Host "Registry written: $registryPath"
-    if (-not $DryRun) {
+    $publishedAt = (Get-Date).ToString("o")
+    for ($attempt = 0; $attempt -le 1; $attempt++) {
+        Write-MergedRegistryPayload -Config $Config -RegistryPath $registryPath -PublishedAt $publishedAt
+        Write-Host "Registry written: $registryPath"
+        if ($DryRun) {
+            return
+        }
         Invoke-Git -Root $registryRoot -Arguments @("add", "registry.json")
         $status = ((& git -C $registryRoot status --porcelain) -join "`n")
         if ($status) {
             Invoke-Git -Root $registryRoot -Arguments @("commit", "-m", "publish vibecoding1c MCP registry")
-            Invoke-Git -Root $registryRoot -Arguments @("push")
         } else {
             Write-Host "Registry unchanged."
+        }
+        try {
+            Invoke-Git -Root $registryRoot -Arguments @("push")
+            return
+        } catch {
+            if ($attempt -ge 1) {
+                throw
+            }
+            Write-Host "Registry push failed; rebasing once and retrying publish."
+            Invoke-Git -Root $registryRoot -Arguments @("pull", "--rebase")
         }
     }
 }
@@ -1485,37 +1858,13 @@ switch ($Action) {
         Show-HostStatus -Config $config
     }
     "refresh-config" {
-        Ensure-Distribution -Config $config
-        $states = @()
-        foreach ($configuration in As-Array (Get-ObjectValue -Object $config -Name "configurations" -Default @())) {
-            if ($ConfigId -and [string](Get-ObjectValue -Object $configuration -Name "configId" -Default "") -ne $ConfigId) {
-                continue
-            }
-            $states += Refresh-Configuration -Config $config -Configuration $configuration
-        }
-        $state = Read-HostState -Config $config
-        $hash = Convert-ToHash -Object $state
-        $hash["configurations"] = $states
-        Write-HostState -Config $config -State $hash
+        Refresh-HostConfigurations -Config $config -TargetConfigId $ConfigId | Out-Null
     }
     "publish" {
         Publish-Registry -Config $config
     }
     "dump-config" {
-        $dumpScript = Join-Path $PSScriptRoot "export-1c-config-dump.ps1"
-        if (-not (Test-Path -LiteralPath $dumpScript -PathType Leaf)) {
-            throw "Config dump helper was not found: $dumpScript"
-        }
-        $args = @("-ExecutionPolicy", "Bypass", "-File", $dumpScript, "-ConfigPath", $ConfigPath)
-        if ($ConfigId) {
-            $args += @("-ConfigId", $ConfigId)
-        }
-        if ($DryRun) {
-            $args += "-DryRun"
-        }
-        & powershell @args
-        if ($LASTEXITCODE -ne 0) {
-            throw "Config dump helper failed with exit code $LASTEXITCODE."
-        }
+        Invoke-HostConfigDumpHelper -ResolvedConfigPath $ConfigPath -TargetConfigId $ConfigId
+        Refresh-HostConfigurations -Config $config -TargetConfigId $ConfigId | Out-Null
     }
 }

@@ -318,7 +318,7 @@ Describe "1C agent workflow static checks" {
         foreach ($oldAction in @("mcp-setup", "mcp-update", "mcp-status", "mcp-start", "mcp-stop", "mcp-select", "mcp-refresh-registry", "mcp-rotate-keys", "mcp-ensure-model", "mcp-write-client-config")) {
             $HelperText | Should -Not -Match "(?<!vibecoding1c-)(?<!vanessa-)$([regex]::Escape($oldAction))(?![A-Za-z0-9-])"
         }
-        foreach ($parameter in @('$McpProvider', '$McpConfigId', '$McpLocalScope')) {
+        foreach ($parameter in @('$McpProvider', '$McpConfigId', '$McpHostId', '$McpLocalScope')) {
             $HelperText | Should -Match ([regex]::Escape($parameter))
         }
 
@@ -388,9 +388,14 @@ Describe "1C agent workflow static checks" {
         $hostConfig = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\host.config.example.json") | ConvertFrom-Json
         $hostConfig.registryRepo | Should -Be "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git"
         $hostConfig.pythonPath | Should -Be "python"
-        $hostConfig.embedding.apiBase | Should -Be "http://host.docker.internal:19000/v1"
-        $hostConfig.embedding.apiKey | Should -Be "lm-studio"
+        $hostConfig.embedding.PSObject.Properties["apiBase"] | Should -BeNullOrEmpty
+        $hostConfig.embedding.PSObject.Properties["apiKey"] | Should -BeNullOrEmpty
         $hostConfig.embedding.model | Should -Be "intfloat/multilingual-e5-base"
+        $hostConfig.codeMetadataSearchServer.resetDatabase | Should -Be $false
+        $hostConfig.codeMetadataSearchServer.PSObject.Properties["reindexIntervalHours"] | Should -Not -BeNullOrEmpty
+        $hostConfig.graphMetadataSearchServer.resetDatabase | Should -Be $false
+        $hostConfig.graphMetadataSearchServer.PSObject.Properties["reindexIntervalHours"] | Should -Not -BeNullOrEmpty
+        $hostConfig.graphMetadataSearchServer.autoUpdateOnStartup | Should -Be $true
         $hostConfig.configurations[0].configId | Should -Be "trade"
         $hostConfig.configurations[0].sourceRepo | Should -Match "trade-config-dump"
         $hostConfig.configurations[1].sourcePath | Should -Match "trade-local"
@@ -421,6 +426,8 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match "family"
         $McpHostText | Should -Match "sourceFingerprint"
         $McpHostText | Should -Match "dump-config"
+        $McpHostText | Should -Match "Invoke-HostConfigDumpHelper"
+        $McpHostText | Should -Match 'Refresh-HostConfigurations -Config \$config -TargetConfigId \$ConfigId'
         $McpHostText | Should -Match "sourcePath"
         $McpHostText | Should -Match "Ensure-HostEmbeddingModel"
         $McpHostText | Should -Match "Test-HostEmbeddingModelPresent"
@@ -558,6 +565,7 @@ Describe "1C agent workflow static checks" {
                 $hostConfig = Read-JsonFile -Path $configPath
                 $server = [pscustomobject]@{
                     id = "graph"
+                    embedding = $true
                     env = @(
                         [ordered]@{ name = "OPENAI_API_KEY"; from = "CHAT_API_KEY"; required = $false },
                         [ordered]@{ name = "OPENAI_API_BASE"; from = "CHAT_API_BASE"; required = $false },
@@ -570,6 +578,225 @@ Describe "1C agent workflow static checks" {
                 $envValues["OPENAI_API_KEY"] | Should -Be "lm-studio"
                 $envValues["OPENAI_API_BASE"] | Should -Be "http://host.docker.internal:19000/v1"
                 $envValues["OPENAI_MODEL"] | Should -Be "fixture-embedding-model"
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "uses standalone CPU embedding model without OpenAI env, lms, or LM Studio bootstrap" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-cpu-embedding-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "test-host"
+                baseUrl = "http://localhost"
+                stateRoot = (Join-Path $tempRoot "state")
+                embedding = [ordered]@{
+                    model = "intfloat/multilingual-e5-base"
+                }
+                enabledServers = [ordered]@{ global = @(); project = @("code") }
+                configurations = @()
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:HostCpuLmsWasCalled = $false
+                function Get-HostLmsCommand {
+                    $script:HostCpuLmsWasCalled = $true
+                    return $null
+                }
+
+                $hostConfig = Read-JsonFile -Path $configPath
+                $server = [pscustomobject]@{
+                    id = "code"
+                    scope = "project"
+                    embedding = $true
+                    env = @(
+                        [ordered]@{ name = "OPENAI_API_BASE"; embedding = "base"; required = $true },
+                        [ordered]@{ name = "OPENAI_API_KEY"; embedding = "key"; required = $true },
+                        [ordered]@{ name = "OPENAI_MODEL"; embedding = "model"; required = $true }
+                    )
+                }
+                $manifest = [pscustomobject]@{ servers = @($server) }
+
+                Ensure-HostEmbeddingModel -Config $hostConfig -Manifest $manifest -GlobalServerIds @() -ProjectServerIds @("code")
+                $script:HostCpuLmsWasCalled | Should -Be $false
+
+                $envValues = Resolve-ServerEnv -Config $hostConfig -Server $server
+                $envValues["EMBEDDING_MODEL"] | Should -Be "intfloat/multilingual-e5-base"
+                $envValues.Contains("OPENAI_API_BASE") | Should -Be $false
+                $envValues.Contains("OPENAI_API_KEY") | Should -Be $false
+                $envValues.Contains("OPENAI_MODEL") | Should -Be $false
+
+                $volumes = @(Resolve-ServerVolumes -Config $hostConfig -Server $server)
+                @($volumes | Where-Object { $_.container -eq "/app/model_cache" }).Count | Should -Be 1
+                (Test-Path -LiteralPath (Join-Path $hostConfig.stateRoot "model-cache") -PathType Container) | Should -Be $true
+                Remove-Variable -Scope Script -Name HostCpuLmsWasCalled -ErrorAction SilentlyContinue
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "maps standalone CodeMetadata and Graph index settings to server env" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-index-env-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "test-host"
+                baseUrl = "http://localhost"
+                stateRoot = (Join-Path $tempRoot "state")
+                embedding = [ordered]@{ model = "intfloat/multilingual-e5-base" }
+                codeMetadataSearchServer = [ordered]@{
+                    resetDatabase = $true
+                    reindexIntervalHours = 6
+                }
+                graphMetadataSearchServer = [ordered]@{
+                    resetDatabase = $false
+                    reindexIntervalHours = 12
+                    autoUpdateOnStartup = $false
+                }
+                enabledServers = [ordered]@{ global = @(); project = @("code", "graph") }
+                configurations = @()
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+
+                $codeEnv = Resolve-ServerEnv -Config $hostConfig -Server ([pscustomobject]@{ id = "code"; scope = "project"; embedding = $false; env = @() })
+                $codeEnv["RESET_DATABASE"] | Should -Be "true"
+                $codeEnv["REINDEX_INTERVAL_HOURS"] | Should -Be "6"
+
+                $graphEnv = Resolve-ServerEnv -Config $hostConfig -Server ([pscustomobject]@{ id = "graph"; scope = "project"; embedding = $false; env = @() })
+                $graphEnv["RESET_DATABASE"] | Should -Be "false"
+                $graphEnv["REINDEX_INTERVAL_HOURS"] | Should -Be "12"
+                $graphEnv["AUTO_UPDATE_ON_STARTUP"] | Should -Be "false"
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "extracts configuration name and version from Configuration.xml and tolerates a missing file" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-config-xml-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $mainRoot = Join-Path $tempRoot "src\cf"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $mainRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (@{ schemaVersion = 1; stateRoot = (Join-Path $tempRoot "state") } | ConvertTo-Json)
+            Set-Content -LiteralPath (Join-Path $mainRoot "Configuration.xml") -Encoding UTF8 -Value @"
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses">
+  <Configuration uuid="fixture">
+    <Properties>
+      <Name>TradeManagement</Name>
+      <Version>11.5.10.99</Version>
+    </Properties>
+  </Configuration>
+</MetaDataObject>
+"@
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $info = Read-ConfigurationXmlInfo -MainConfigRoot $mainRoot -FallbackName "Fallback"
+                $info.configurationName | Should -Be "TradeManagement"
+                $info.configurationVersion | Should -Be "11.5.10.99"
+
+                $missing = Read-ConfigurationXmlInfo -MainConfigRoot (Join-Path $tempRoot "missing") -FallbackName "Fallback"
+                $missing.configurationName | Should -Be "Fallback"
+                $missing.configurationVersion | Should -Be ""
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "merges standalone registry v2 hosts without overwriting another host" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-registry-v2-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $registryPath = Join-Path $tempRoot "state\registry\registry.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $registryPath) | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "host-a"
+                baseUrl = "http://host-a"
+                stateRoot = (Join-Path $tempRoot "state")
+                embedding = [ordered]@{ model = "intfloat/multilingual-e5-base" }
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            $existing = [ordered]@{
+                schemaVersion = 2
+                publishedAt = "2026-07-04T00:00:00Z"
+                hosts = @([ordered]@{
+                    hostId = "host-b"
+                    baseUrl = "http://host-b"
+                    publishedAt = "2026-07-04T00:00:00Z"
+                    configurations = @([ordered]@{ configId = "trade"; title = "Trade B" })
+                    servers = @([ordered]@{ id = "code"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-code"; url = "http://host-b:18100/mcp"; image = "image-b"; health = "running" })
+                })
+                configurations = @()
+                servers = @()
+            }
+            Set-Content -LiteralPath $registryPath -Encoding UTF8 -Value (($existing | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                $state = [ordered]@{
+                    schemaVersion = 1
+                    configurations = @([ordered]@{
+                        configId = "trade"
+                        title = "Trade A"
+                        configurationName = "Trade A Name"
+                        configurationVersion = "1.0"
+                        reportHash = "abc"
+                        indexedAt = "2026-07-05T00:00:00Z"
+                    })
+                    servers = @([ordered]@{
+                        id = "code"
+                        scope = "project"
+                        family = "vibecoding1c"
+                        provider = "remote"
+                        configId = "trade"
+                        name = "itl-trade-code"
+                        url = "http://host-a:18100/mcp"
+                        image = "image-a"
+                        health = "running"
+                        configurationName = "Trade A Name"
+                        configurationVersion = "1.0"
+                        embeddingMode = "cpu"
+                        embeddingModel = "intfloat/multilingual-e5-base"
+                        indexedAt = "2026-07-05T00:00:00Z"
+                    })
+                }
+                Write-HostState -Config $hostConfig -State $state
+                Write-MergedRegistryPayload -Config $hostConfig -RegistryPath $registryPath -PublishedAt "2026-07-05T00:00:00Z"
+                $registry = Read-JsonFile -Path $registryPath
+
+                @($registry.hosts).Count | Should -Be 2
+                @($registry.hosts | Where-Object { $_.hostId -eq "host-b" }).Count | Should -Be 1
+                @($registry.servers | Where-Object { $_.hostId -eq "host-a" -and $_.embeddingModel -eq "intfloat/multilingual-e5-base" }).Count | Should -Be 1
+                @($registry.configurations | Where-Object { $_.hostId -eq "host-a" -and $_.configurationName -eq "Trade A Name" }).Count | Should -Be 1
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -833,6 +1060,11 @@ Describe "1C agent workflow static checks" {
                     Add-HostBootstrapTestEvent -Name "refresh"
                     return [pscustomobject]@{
                         configId = "trade"
+                        sourceRoot = (Join-Path $tempRoot "source")
+                        mainConfigPath = "src/cf"
+                        metadataRoot = (Join-Path $tempRoot "metadata")
+                        configurationName = "Trade"
+                        configurationVersion = "1.0"
                         sourceCommit = "fixture"
                         sourceFingerprint = "fixture"
                         reportHash = "fixture"
@@ -1120,6 +1352,102 @@ Describe "1C agent workflow static checks" {
                 $runtime.url | Should -Be "http://vibecoding1c-mcp-host:18100/mcp"
                 $runtime.configId | Should -Be "trade"
                 (Get-Vibecoding1cMcpEndpointFreshness -Endpoint $runtime) | Should -Be "remote-shared"
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "requires McpHostId for duplicate remote registry endpoints and resolves v2 host metadata" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-registry-v2-host-select-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $registryRoot = Join-Path $tempRoot "registry"
+        $localHome = Join-Path $tempRoot "local-home"
+        $oldRegistryPath = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", "Process")
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot, $registryRoot | Out-Null
+            $registry = [ordered]@{
+                schemaVersion = 2
+                publishedAt = "2026-07-05T00:00:00Z"
+                hosts = @(
+                    [ordered]@{
+                        hostId = "host-a"
+                        baseUrl = "http://host-a"
+                        publishedAt = "2026-07-05T00:00:00Z"
+                        configurations = @([ordered]@{ configId = "trade"; title = "Trade"; configurationName = "Trade A"; configurationVersion = "1.0" })
+                        servers = @([ordered]@{
+                            id = "code"
+                            scope = "project"
+                            family = "vibecoding1c"
+                            provider = "remote"
+                            configId = "trade"
+                            name = "itl-trade-code"
+                            url = "http://host-a:18100/mcp"
+                            health = "running"
+                            configurationName = "Trade A"
+                            configurationVersion = "1.0"
+                            embeddingMode = "cpu"
+                            embeddingModel = "intfloat/multilingual-e5-base"
+                            indexedAt = "2026-07-05T00:00:00Z"
+                        })
+                    },
+                    [ordered]@{
+                        hostId = "host-b"
+                        baseUrl = "http://host-b"
+                        publishedAt = "2026-07-05T00:05:00Z"
+                        configurations = @([ordered]@{ configId = "trade"; title = "Trade"; configurationName = "Trade B"; configurationVersion = "2.0" })
+                        servers = @([ordered]@{
+                            id = "code"
+                            scope = "project"
+                            family = "vibecoding1c"
+                            provider = "remote"
+                            configId = "trade"
+                            name = "itl-trade-code"
+                            url = "http://host-b:18100/mcp"
+                            health = "running"
+                            configurationName = "Trade B"
+                            configurationVersion = "2.0"
+                            embeddingMode = "cpu"
+                            embeddingModel = "intfloat/multilingual-e5-base"
+                            indexedAt = "2026-07-05T00:05:00Z"
+                        })
+                    }
+                )
+                configurations = @()
+                servers = @()
+            }
+            Set-Content -LiteralPath (Join-Path $registryRoot "registry.json") -Value (($registry | ConvertTo-Json -Depth 20) + [Environment]::NewLine) -Encoding UTF8
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $registryRoot, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $localHome, "Process")
+
+            {
+                & {
+                    . $HelperPath -ProjectRoot $projectRoot -Action help -McpServerId code -McpProvider remote -McpConfigId trade *> $null
+                    Set-Vibecoding1cMcpSelection *> $null
+                    $selection = Read-Vibecoding1cMcpSelection
+                    $server = (Read-Vibecoding1cMcpManifest).servers | Where-Object { $_.id -eq "code" } | Select-Object -First 1
+                    New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection | Out-Null
+                }
+            } | Should -Throw "*multiple matching hosts*"
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help -McpServerId code -McpProvider remote -McpConfigId trade -McpHostId host-b *> $null
+                Set-Vibecoding1cMcpSelection *> $null
+                $selection = Read-Vibecoding1cMcpSelection
+                $selection.remoteHostId | Should -Be "host-b"
+                $server = (Read-Vibecoding1cMcpManifest).servers | Where-Object { $_.id -eq "code" } | Select-Object -First 1
+                $runtime = New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection
+                $runtime.url | Should -Be "http://host-b:18100/mcp"
+                $runtime.hostId | Should -Be "host-b"
+                $runtime.configurationName | Should -Be "Trade B"
+                $runtime.configurationVersion | Should -Be "2.0"
+                $runtime.embeddingModel | Should -Be "intfloat/multilingual-e5-base"
             }
         } finally {
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")
