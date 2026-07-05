@@ -1477,9 +1477,9 @@ function ConvertTo-LauncherLabel {
 }
 
 function Get-LauncherListPath {
-    $appData = [Environment]::GetFolderPath("ApplicationData")
+    $appData = $env:APPDATA
     if (-not $appData) {
-        $appData = $env:APPDATA
+        $appData = [Environment]::GetFolderPath("ApplicationData")
     }
     if (-not $appData) {
         throw "APPDATA path is not available; cannot update 1C infobase list."
@@ -1489,7 +1489,9 @@ function Get-LauncherListPath {
 }
 
 function Get-LauncherProjectFolder {
-    $projectName = Split-Path -Leaf $script:ProjectRoot
+    param([string]$ProjectRootForFolder = $script:ProjectRoot)
+
+    $projectName = Split-Path -Leaf $ProjectRootForFolder
     return "/ITL/" + (ConvertTo-LauncherLabel -Value $projectName)
 }
 
@@ -1568,6 +1570,7 @@ function Register-DevBranchInLauncher {
         [string]$InfoBaseKind,
         [string]$InfoBasePath,
         [string]$DevBranchName,
+        [string]$ProjectRootForFolder = $script:ProjectRoot,
         [string]$ExistingLauncherId = ""
     )
 
@@ -1581,9 +1584,8 @@ function Register-DevBranchInLauncher {
     }
 
     $sections = @(Get-LauncherSections -Lines $lines)
-    $projectName = ConvertTo-LauncherLabel -Value (Split-Path -Leaf $script:ProjectRoot)
-    $displayName = "ITL $projectName - $(ConvertTo-LauncherLabel -Value $DevBranchName)"
-    $folder = Get-LauncherProjectFolder
+    $displayName = ConvertTo-LauncherLabel -Value $DevBranchName
+    $folder = Get-LauncherProjectFolder -ProjectRootForFolder $ProjectRootForFolder
     $connect = New-LauncherConnectString -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
 
     $target = $null
@@ -1603,7 +1605,7 @@ function Register-DevBranchInLauncher {
     }
     if ($null -eq $target) {
         foreach ($section in $sections) {
-            if ($section.name -eq $displayName) {
+            if ($section.name -eq $displayName -and $section.values.ContainsKey("Folder") -and $section.values["Folder"] -eq $folder) {
                 $target = $section
                 break
             }
@@ -1843,7 +1845,8 @@ function Initialize-DevBranchRuntime {
     $launcherRegistration = Register-DevBranchInLauncher `
         -InfoBaseKind $kind `
         -InfoBasePath $DevBranchInfoBasePath `
-        -DevBranchName $DevBranchName
+        -DevBranchName $DevBranchName `
+        -ProjectRootForFolder $MainProjectRoot
 
     $publishDefault = Get-WebPublishByDefault
     $publicationUrl = ""
@@ -2567,7 +2570,7 @@ Actions:
   start-vanessa-mcp  Start branch-local Vanessa MCP on an auto-assigned port.
   stop-vanessa-mcp   Stop Vanessa MCP for the current development branch.
   vanessa-mcp-status Show Vanessa MCP PID, port, URL, log, and client snippets.
-  vibecoding1c-mcp-setup          Rotate local keys, ensure embedding model, start current-scope vibecoding1c MCP, write client config.
+  vibecoding1c-mcp-setup          Select if needed, rotate local keys, start current-scope vibecoding1c MCP, write client config.
   vibecoding1c-mcp-update         Rotate keys and pull configured vibecoding1c MCP Docker images.
   vibecoding1c-mcp-status         Show active vibecoding1c MCP names, URLs, provider, health, and freshness.
   vibecoding1c-mcp-start          Start global, project, and current branch vibecoding1c MCP servers.
@@ -2616,6 +2619,7 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action start-vanessa-mcp
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vanessa-mcp-status
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup -Force
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-status
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-select -McpServerId code -McpProvider remote -McpConfigId trade -McpHostId vibecoding1c-mcp-host-01
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-select -McpServerId graph -McpProvider local -McpLocalScope branch

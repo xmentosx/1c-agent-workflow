@@ -67,6 +67,28 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Not -Match ([regex]::Escape($flag))
     }
 
+    It "uses process APPDATA for the 1C launcher list path" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-launcher-appdata-test-" + [guid]::NewGuid().ToString("N"))
+        $oldAppData = $env:APPDATA
+
+        try {
+            $env:APPDATA = Join-Path $tempRoot "appdata"
+            $expectedPath = Join-Path $env:APPDATA "1C\1CEStart\ibases.v8i"
+
+            $actualPath = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                Get-LauncherListPath
+            }
+
+            $actualPath | Should -Be $expectedPath
+        } finally {
+            $env:APPDATA = $oldAppData
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "keeps Markdown files valid UTF-8 without mojibake markers" {
         $strictUtf8 = New-Object System.Text.UTF8Encoding $false, $true
         $mojibakePattern = "Рџ|Рђ|Р’|Рљ|Рњ|Рќ|Рћ|РЎ|Рў|РЈ|РЅРµС‚|СЂ|СЃ|С‚|Р°|Рµ|Рё|Рѕ"
@@ -349,6 +371,9 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match "VIBECODING1C_MCP_DISTRIBUTION_REPO"
         $HelperText | Should -Match "VIBECODING1C_MCP_REGISTRY_REPO"
         $HelperText | Should -Match "vibecoding1c-selection.json"
+        $HelperText | Should -Match "Get-Vibecoding1cMcpSelectionCompleteness"
+        $HelperText | Should -Match "vibecoding1c MCP selection is missing or incomplete"
+        $HelperText | Should -Match "Force was specified; running vibecoding1c MCP selection"
         $HelperText | Should -Match "remote-shared"
         $HelperText | Should -Match "Get-Vibecoding1cMcpStatusSummary"
         $HelperText | Should -Match "vibecoding1c MCP skipped servers"
@@ -1784,6 +1809,161 @@ Describe "1C agent workflow static checks" {
                 $runtime.configurationName | Should -Be "Trade B"
                 $runtime.configurationVersion | Should -Be "2.0"
                 $runtime.embeddingModel | Should -Be "intfloat/multilingual-e5-base"
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "marks missing and incomplete vibecoding1c MCP selections before setup" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-selection-complete-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot | Out-Null
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", (Join-Path $tempRoot "local-home"), "Process")
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                $missing = Get-Vibecoding1cMcpSelectionCompleteness -Selection (Read-Vibecoding1cMcpSelection)
+                $missing.isComplete | Should -Be $false
+                $missing.reasons | Should -Contain "selection file is missing"
+
+                $serverIds = @("docs", "templates", "syntax", "codechecker", "ssl", "code", "graph")
+                $selectionPath = Get-Vibecoding1cMcpSelectionPath
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $selectionPath) | Out-Null
+                $incompleteSelection = [ordered]@{
+                    schemaVersion = 1
+                    family = "vibecoding1c"
+                    defaultProvider = "remote"
+                    remoteConfigId = ""
+                    remoteHostId = ""
+                    localScopeDefault = "project"
+                    servers = @($serverIds | ForEach-Object {
+                        [ordered]@{ id = $_; family = "vibecoding1c"; provider = "remote"; configId = ""; hostId = ""; localScope = "project" }
+                    })
+                }
+                Set-Content -LiteralPath $selectionPath -Encoding UTF8 -Value (($incompleteSelection | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+                $incomplete = Get-Vibecoding1cMcpSelectionCompleteness -Selection (Read-Vibecoding1cMcpSelection)
+                $incomplete.isComplete | Should -Be $false
+                ($incomplete.reasons -join [Environment]::NewLine) | Should -Match "code/project remote provider has no configId"
+
+                $completeSelection = [ordered]@{
+                    schemaVersion = 1
+                    family = "vibecoding1c"
+                    defaultProvider = "remote"
+                    remoteConfigId = "trade"
+                    remoteHostId = "host-a"
+                    localScopeDefault = "project"
+                    servers = @($serverIds | ForEach-Object {
+                        [ordered]@{
+                            id = $_
+                            family = "vibecoding1c"
+                            provider = "remote"
+                            configId = $(if ($_ -eq "code" -or $_ -eq "graph") { "trade" } else { "" })
+                            hostId = "host-a"
+                            localScope = "project"
+                        }
+                    })
+                }
+                Set-Content -LiteralPath $selectionPath -Encoding UTF8 -Value (($completeSelection | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+                $complete = Get-Vibecoding1cMcpSelectionCompleteness -Selection (Read-Vibecoding1cMcpSelection)
+                $complete.isComplete | Should -Be $true
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "requires a host selection for duplicate remote endpoints and formats host details for selection" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-selection-host-details-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $registryRoot = Join-Path $tempRoot "registry"
+        $oldRegistryPath = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", "Process")
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot, $registryRoot | Out-Null
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $registryRoot, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", (Join-Path $tempRoot "local-home"), "Process")
+
+            $registry = [ordered]@{
+                schemaVersion = 2
+                publishedAt = "2026-07-05T00:10:00Z"
+                hosts = @(
+                    [ordered]@{
+                        hostId = "host-a"
+                        baseUrl = "http://host-a"
+                        publishedAt = "2026-07-05T00:00:00Z"
+                        configurations = @([ordered]@{ configId = "trade"; title = "Trade"; configurationName = "Trade A"; configurationVersion = "1.0" })
+                        servers = @([ordered]@{ id = "code"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-code"; url = "http://host-a:18100/mcp"; health = "running"; configurationName = "Trade A"; configurationVersion = "1.0"; embeddingModel = "intfloat/multilingual-e5-base"; indexedAt = "2026-07-05T00:00:00Z" })
+                    },
+                    [ordered]@{
+                        hostId = "host-b"
+                        baseUrl = "http://host-b"
+                        publishedAt = "2026-07-05T00:05:00Z"
+                        configurations = @([ordered]@{ configId = "trade"; title = "Trade"; configurationName = "Trade B"; configurationVersion = "2.0" })
+                        servers = @([ordered]@{ id = "code"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-code"; url = "http://host-b:18100/mcp"; health = "running"; configurationName = "Trade B"; configurationVersion = "2.0"; embeddingModel = "intfloat/multilingual-e5-base"; indexedAt = "2026-07-05T00:05:00Z" })
+                    }
+                )
+                configurations = @()
+                servers = @()
+            }
+            Set-Content -LiteralPath (Join-Path $registryRoot "registry.json") -Encoding UTF8 -Value (($registry | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                $serverIds = @("docs", "templates", "syntax", "codechecker", "ssl", "code", "graph")
+                $selectionPath = Get-Vibecoding1cMcpSelectionPath
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $selectionPath) | Out-Null
+                $selection = [ordered]@{
+                    schemaVersion = 1
+                    family = "vibecoding1c"
+                    defaultProvider = "remote"
+                    remoteConfigId = "trade"
+                    remoteHostId = ""
+                    localScopeDefault = "project"
+                    servers = @($serverIds | ForEach-Object {
+                        [ordered]@{
+                            id = $_
+                            family = "vibecoding1c"
+                            provider = "remote"
+                            configId = $(if ($_ -eq "code" -or $_ -eq "graph") { "trade" } else { "" })
+                            hostId = ""
+                            localScope = "project"
+                        }
+                    })
+                }
+                Set-Content -LiteralPath $selectionPath -Encoding UTF8 -Value (($selection | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+                $duplicate = Get-Vibecoding1cMcpSelectionCompleteness -Selection (Read-Vibecoding1cMcpSelection) -RefreshRegistry
+                $duplicate.isComplete | Should -Be $false
+                ($duplicate.reasons -join [Environment]::NewLine) | Should -Match "code/project remote provider has multiple matching hosts and no hostId"
+
+                $endpoint = (Get-Vibecoding1cMcpRegistryServers -Registry (Read-Vibecoding1cMcpRegistry) | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "hostId" -Default "") -eq "host-b" } | Select-Object -First 1)
+                $details = Format-Vibecoding1cMcpRemoteEndpointInfo -Endpoint $endpoint
+                $details | Should -Match "hostId=host-b"
+                $details | Should -Match ([regex]::Escape("url=http://host-b:18100/mcp"))
+                $details | Should -Match "health=running"
+                $details | Should -Match "configId=trade"
+                $details | Should -Match "configuration=Trade B 2.0"
+                $details | Should -Match "model=intfloat/multilingual-e5-base"
+                $details | Should -Match "indexedAt=2026-07-05T00:05:00Z"
+
+                $selection["remoteHostId"] = "host-b"
+                Set-Content -LiteralPath $selectionPath -Encoding UTF8 -Value (($selection | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+                $complete = Get-Vibecoding1cMcpSelectionCompleteness -Selection (Read-Vibecoding1cMcpSelection) -RefreshRegistry
+                $complete.isComplete | Should -Be $true
             }
         } finally {
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")
@@ -3288,6 +3468,13 @@ if (`$?) { exit 0 } else { exit 1 }
             ([bool]$state.createdWithWorktree) | Should -Be $true
             $state.worktreePath | Should -Be ([System.IO.Path]::GetFullPath($worktreePath))
             $state.mainWorktreePath | Should -Be ([System.IO.Path]::GetFullPath($tempRoot))
+            $expectedLauncherFolder = "/ITL/" + (Split-Path -Leaf $tempRoot)
+            $state.launcherInfoBaseName | Should -Be "Fixture Branch"
+            $state.launcherFolder | Should -Be $expectedLauncherFolder
+            $launcherText = Get-Content -Encoding UTF8 -Raw (Join-Path $env:APPDATA "1C\1CEStart\ibases.v8i")
+            $launcherText | Should -Match "(?m)^\[Fixture Branch\]\r?$"
+            $launcherText | Should -Match ("(?m)^Folder={0}\r?$" -f [regex]::Escape($expectedLauncherFolder))
+            $launcherText | Should -Not -Match "(?m)^Folder=/ITL/fixture-branch\r?$"
 
             $statusOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action status 2>&1
             $LASTEXITCODE | Should -Be 0

@@ -282,17 +282,18 @@ Goal: install the standard executable test tool for ITL development branches.
 
 Goal: make vibecoding1c MCP usable on weak developer machines by preferring remote LAN endpoints while preserving local overrides.
 
-1. `/itl-vibecoding1c-mcp` runs `vibecoding1c-mcp-setup` by default. Remote is the default provider. The helper clones or fast-forwards the endpoint registry from `VIBECODING1C_MCP_REGISTRY_REPO` into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\registry`, unless `VIBECODING1C_MCP_REGISTRY_PATH` points to a prepared checkout.
-2. Config-specific remote vibecoding1c MCP always requires explicit `configId`; ask even when the registry currently has one configuration. Store the per-developer choice in ignored `.agent-1c/mcp/vibecoding1c-selection.json`.
-3. Use `vibecoding1c-mcp-select` for per-server `remote|local`, remote `configId`, and local `project|branch` scope. Vanessa MCP is managed separately by the Vanessa MCP actions and is always branch-local.
-4. Local MCP clones or fast-forwards the private GitLab distribution from `VIBECODING1C_MCP_DISTRIBUTION_REPO`, rotates license keys locally, ensures the local embedding model when needed, starts Docker/compose containers, and writes Codex/Kilo client config.
-5. The distribution may provide `vibecoding1c-mcp.manifest.json`. If it is absent, the helper uses the built-in vibecoding1c manifest for `docs`, `templates`, `syntax`, `codechecker`, `ssl`, `code`, and `graph`.
-6. Global servers use deterministic names such as `itl-1c-docs`, `itl-1c-templates`, `itl-1c-syntax`, and `itl-1c-codechecker`. Project/branch local `code` and `graph` names include project and optionally branch slug. Remote names come from the registry.
-7. Local host ports are allocated under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\ports.json` with a lock file. Vendor ports `8000`, `8002`, `8003`, `8004`, `8006`, `8007`, and `8008` remain container-internal only. Host ranges are `18000..18099` for global, `18100..18499` for project, `18500..18999` for branch, and `19000..19049` for local model fallback.
-8. Do not ask users to paste license keys into chat. Keys come from the private distribution `config.env` or local config; the project repo only stores ignored runtime state.
-9. `vibecoding1c-mcp-write-client-config` removes only config entries marked `managedBy = vibecoding1c-mcp` and `family = vibecoding1c`; do not delete unrelated or External MCP config.
-10. `vibecoding1c-mcp-stop` stops selected local containers. For remote endpoints it only disconnects local client config; host stop is done by `vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1`.
-11. `vibecoding1c-mcp-status`, `/itl-status`, and `list-dev-branches` show active vibecoding1c MCP names, URLs, provider, configId, health, indexed time, and freshness (`fresh`, `stale`, `remote-shared`, `unknown`, `indexing`).
+1. `/itl-vibecoding1c-mcp` runs `vibecoding1c-mcp-setup` by default. The setup action applies the saved selection; if `.agent-1c/mcp/vibecoding1c-selection.json` is missing or incomplete, it runs selection first. Use `vibecoding1c-mcp-setup -Force` to force a new selection before applying it.
+2. Remote is the default provider. The helper clones or fast-forwards the endpoint registry from `VIBECODING1C_MCP_REGISTRY_REPO` into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\registry`, unless `VIBECODING1C_MCP_REGISTRY_PATH` points to a prepared checkout.
+3. Config-specific remote vibecoding1c MCP always requires explicit `configId`; ask even when the registry currently has one configuration. Store the per-developer choice in ignored `.agent-1c/mcp/vibecoding1c-selection.json`.
+4. Use `vibecoding1c-mcp-select` for explicit per-server `remote|local`, remote `configId`/`hostId`, and local `project|branch` scope. The selection flow shows matching remote hosts/endpoints with URL, health, freshness, configuration, model, and timestamps. Vanessa MCP is managed separately by the Vanessa MCP actions and is always branch-local.
+5. Local MCP clones or fast-forwards the private GitLab distribution from `VIBECODING1C_MCP_DISTRIBUTION_REPO`, rotates license keys locally, ensures the local embedding model when needed, starts Docker/compose containers, and writes Codex/Kilo client config.
+6. The distribution may provide `vibecoding1c-mcp.manifest.json`. If it is absent, the helper uses the built-in vibecoding1c manifest for `docs`, `templates`, `syntax`, `codechecker`, `ssl`, `code`, and `graph`.
+7. Global servers use deterministic names such as `itl-1c-docs`, `itl-1c-templates`, `itl-1c-syntax`, and `itl-1c-codechecker`. Project/branch local `code` and `graph` names include project and optionally branch slug. Remote names come from the registry.
+8. Local host ports are allocated under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\ports.json` with a lock file. Vendor ports `8000`, `8002`, `8003`, `8004`, `8006`, `8007`, and `8008` remain container-internal only. Host ranges are `18000..18099` for global, `18100..18499` for project, `18500..18999` for branch, and `19000..19049` for local model fallback.
+9. Do not ask users to paste license keys into chat. Keys come from the private distribution `config.env` or local config; the project repo only stores ignored runtime state.
+10. `vibecoding1c-mcp-write-client-config` removes only config entries marked `managedBy = vibecoding1c-mcp` and `family = vibecoding1c`; do not delete unrelated or External MCP config.
+11. `vibecoding1c-mcp-stop` stops selected local containers. For remote endpoints it only disconnects local client config; host stop is done by `vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1`.
+12. `vibecoding1c-mcp-status`, `/itl-status`, and `list-dev-branches` show active vibecoding1c MCP names, URLs, provider, configId, health, indexed time, and freshness (`fresh`, `stale`, `remote-shared`, `unknown`, `indexing`).
 
 ## INSTALL_VANESSA_MCP / START_VANESSA_MCP / STOP_VANESSA_MCP / VANESSA_MCP_STATUS
 
@@ -403,7 +404,7 @@ Goal: create a configuration or extension development branch as an isolated work
    - File base: recursive directory copy under `devBranchInfoBaseRoot` unless a specific path is supplied.
    - Server base: run the configured `serverBaseCopyScript`; do not invent server copy commands.
 6. If `sourceUsesRepository=true`, unbind the development branch copy from 1C configuration repository storage without repository parameters. If `false`, skip unbind.
-7. Register the development branch infobase in `%APPDATA%\1C\1CEStart\ibases.v8i` under folder `/ITL/<project-root-name>`.
+7. Register the development branch infobase in `%APPDATA%\1C\1CEStart\ibases.v8i` under folder `/ITL/<project-root-name>` with the launcher entry name equal to the development branch name.
 8. Optionally publish the development branch copy to Apache through `webinst`.
 9. Save development branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json` inside the worktree, including `createdWithWorktree`, `worktreePath`, `mainWorktreePath`, launcher registration metadata, and `devBranchKind`.
 10. Activate the development branch context in the worktree `.dev.env` for ai_rules_1c infobase-bound commands. For extension branches with no extension name yet, clear `INFOBASE_PATH` and tell the developer to run `set-dev-branch-extension` before `/update1cbase`.
