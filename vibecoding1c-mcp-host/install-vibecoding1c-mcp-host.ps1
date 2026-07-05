@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "publish", "dump-config")]
+    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "publish", "dump-config")]
     [string]$Action = "status",
 
     [string]$ConfigPath = ".\host.config.json",
@@ -1172,6 +1172,53 @@ function Update-HostStateConfigurations {
     Write-HostState -Config $Config -State $hash
 }
 
+function Get-HostServerStateKey {
+    param([object]$ServerState)
+    $containerName = [string](Get-ObjectValue -Object $ServerState -Name "containerName" -Default "")
+    if ($containerName) {
+        return "container:$containerName"
+    }
+    $composeProject = [string](Get-ObjectValue -Object $ServerState -Name "composeProject" -Default "")
+    if ($composeProject) {
+        return "compose:$composeProject"
+    }
+    $name = [string](Get-ObjectValue -Object $ServerState -Name "name" -Default "")
+    if ($name) {
+        return "name:$name"
+    }
+    $scope = [string](Get-ObjectValue -Object $ServerState -Name "scope" -Default "")
+    $configId = [string](Get-ObjectValue -Object $ServerState -Name "configId" -Default "")
+    $id = [string](Get-ObjectValue -Object $ServerState -Name "id" -Default "")
+    return "$scope|$configId|$id"
+}
+
+function Update-HostStateServers {
+    param(
+        [object]$Config,
+        [object[]]$ServerStates
+    )
+    $state = Read-HostState -Config $Config
+    $hash = Convert-ToHash -Object $state
+    $updatedByKey = @{}
+    foreach ($serverState in @($ServerStates)) {
+        $key = Get-HostServerStateKey -ServerState $serverState
+        if ($key) {
+            $updatedByKey[$key] = $true
+        }
+    }
+    $servers = @()
+    foreach ($existing in As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @())) {
+        $key = Get-HostServerStateKey -ServerState $existing
+        if ($key -and $updatedByKey.ContainsKey($key)) {
+            continue
+        }
+        $servers += $existing
+    }
+    $servers += @($ServerStates)
+    $hash["servers"] = $servers
+    Write-HostState -Config $Config -State $hash
+}
+
 function Refresh-HostConfigurations {
     param(
         [object]$Config,
@@ -1248,7 +1295,8 @@ function Get-HostSecretValues {
 function Get-HostLocalValues {
     param(
         [object]$Config,
-        [object]$ConfigState = $null
+        [object]$ConfigState = $null,
+        [switch]$ForceResetDatabase
     )
     $help = Get-ObjectValue -Object $Config -Name "helpSearchServer" -Default $null
     $ssl = Get-ObjectValue -Object $Config -Name "sslSearchServer" -Default $null
@@ -1257,6 +1305,9 @@ function Get-HostLocalValues {
     $platformBinPath = [string](Get-ObjectValue -Object $help -Name "platformBinPath" -Default "")
     $platformVersion = [string](Get-ObjectValue -Object $help -Name "platformVersion" -Default "")
     $bspVersion = [string](Get-ObjectValue -Object $ssl -Name "bspVersion" -Default "")
+    $defaultResetDatabase = $(if ($ForceResetDatabase) { "true" } else { "false" })
+    $codeResetDatabase = $(if ($ForceResetDatabase) { "true" } else { ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $code -Name "resetDatabase" -Default $false) -Default $false })
+    $graphResetDatabase = $(if ($ForceResetDatabase) { "true" } else { ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $graph -Name "resetDatabase" -Default $false) -Default $false })
     return [ordered]@{
         PATH_METADATA = $(if ($ConfigState) { $ConfigState.metadataRoot } else { "" })
         PATH_CODE = $(if ($ConfigState) { Get-ConfigSubPath -Root $ConfigState.sourceRoot -RelativePath $ConfigState.mainConfigPath } else { "" })
@@ -1267,10 +1318,10 @@ function Get-HostLocalValues {
         HELP_PLATFORM_VERSION = $platformVersion
         SSL_VERSION = $bspVersion
         BSP_VERSION = $bspVersion
-        RESET_DATABASE = "false"
-        CODE_RESET_DATABASE = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $code -Name "resetDatabase" -Default $false) -Default $false)
+        RESET_DATABASE = $defaultResetDatabase
+        CODE_RESET_DATABASE = $codeResetDatabase
         CODE_REINDEX_INTERVAL_HOURS = [string](Get-ObjectValue -Object $code -Name "reindexIntervalHours" -Default "")
-        GRAPH_RESET_DATABASE = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $graph -Name "resetDatabase" -Default $false) -Default $false)
+        GRAPH_RESET_DATABASE = $graphResetDatabase
         GRAPH_REINDEX_INTERVAL_HOURS = [string](Get-ObjectValue -Object $graph -Name "reindexIntervalHours" -Default "")
         GRAPH_AUTO_UPDATE_ON_STARTUP = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $graph -Name "autoUpdateOnStartup" -Default $true) -Default $true)
         PROJECT_NAME = $(if ($ConfigState) { $ConfigState.configId } else { [string](Get-ObjectValue -Object $Config -Name "hostId" -Default "vibecoding1c-mcp-host") })
@@ -1397,7 +1448,8 @@ function Resolve-ServerEnv {
     param(
         [object]$Config,
         [object]$Server,
-        [object]$ConfigState = $null
+        [object]$ConfigState = $null,
+        [switch]$ForceResetDatabase
     )
     $secretValues = Get-HostSecretValues -Config $Config
     $serverNeedsEmbedding = Test-HostServerNeedsEmbedding -Server $Server
@@ -1406,7 +1458,7 @@ function Resolve-ServerEnv {
         $embeddingSettings = Get-HostEmbeddingSettings -Config $Config
     }
     $values = [ordered]@{}
-    $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState
+    $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase
     $envEntries = @(As-Array (Get-ObjectValue -Object $Server -Name "env" -Default @())) + @(Get-HostDefaultEnvEntries -Server $Server)
     foreach ($entry in $envEntries) {
         $name = [string](Get-ObjectValue -Object $entry -Name "name" -Default "")
@@ -1451,6 +1503,9 @@ function Resolve-ServerEnv {
         $values["EMBEDDING_MODEL"] = [string]$embeddingSettings.model
     }
     Set-GraphOpenAiFallbackEnv -Config $Config -Server $Server -Values $values
+    if ($ForceResetDatabase -and $serverNeedsEmbedding) {
+        $values["RESET_DATABASE"] = "true"
+    }
     return $values
 }
 
@@ -1505,19 +1560,28 @@ function Start-DockerServer {
         [object]$Config,
         [object]$Server,
         [object]$Runtime,
-        [object]$ConfigState = $null
+        [object]$ConfigState = $null,
+        [switch]$Recreate,
+        [switch]$ForceResetDatabase
     )
     $containerName = [string]$Runtime.containerName
     $existing = Invoke-DockerCommandCapture -Arguments @("ps", "-a", "--filter", "name=^/$containerName$", "--format", "{{.Names}}") -TimeoutSec 60 -Description "docker ps for $containerName"
     if ($existing -contains $containerName) {
-        Write-Host "Starting existing container: $containerName"
-        if (-not $DryRun) {
-            Invoke-DockerCommandChecked -Arguments @("start", $containerName) -TimeoutSec 120 -Description "docker start $containerName"
+        if ($Recreate) {
+            Write-Host "Removing existing container before reindex: $containerName"
+            if (-not $DryRun) {
+                Invoke-DockerCommandChecked -Arguments @("rm", "-f", $containerName) -TimeoutSec 120 -Description "docker rm $containerName"
+            }
+        } else {
+            Write-Host "Starting existing container: $containerName"
+            if (-not $DryRun) {
+                Invoke-DockerCommandChecked -Arguments @("start", $containerName) -TimeoutSec 120 -Description "docker start $containerName"
+            }
+            Write-Host "Container ready: $containerName -> $($Runtime.url)"
+            return
         }
-        Write-Host "Container ready: $containerName -> $($Runtime.url)"
-        return
     }
-    $envValues = Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState
+    $envValues = Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase
     $volumes = Resolve-ServerVolumes -Config $Config -Server $Server -ConfigState $ConfigState
     $args = @("run", "-d", "--name", $containerName, "-p", "$($Runtime.hostPort):$($Runtime.internalPort)")
     foreach ($key in @($envValues.Keys | Sort-Object)) {
@@ -1540,7 +1604,9 @@ function Start-ComposeServer {
         [object]$Config,
         [object]$Server,
         [object]$Runtime,
-        [object]$ConfigState
+        [object]$ConfigState,
+        [switch]$Recreate,
+        [switch]$ForceResetDatabase
     )
     $distributionRoot = Get-DistributionRoot -Config $Config
     $sourceCompose = Join-Path $distributionRoot ([string](Get-ObjectValue -Object $Server -Name "composePath" -Default ""))
@@ -1556,10 +1622,15 @@ function Start-ComposeServer {
     $composeText = [regex]::Replace($composeText, '(?ms)^    ports:\r?\n      - "7474:7474"\r?\n      - "7687:7687"\r?\n', '')
     $composeText = $composeText -replace '"8006:8006"', "`"$($Runtime.hostPort):$($Runtime.internalPort)`""
     Write-Text -Path $targetCompose -Value $composeText
-    Write-DotEnv -Path (Join-Path $runtimeDir ".env") -Values (Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState)
+    $envFilePath = Join-Path $runtimeDir ".env"
+    Write-DotEnv -Path $envFilePath -Values (Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase)
     Write-Host "Starting compose project: $($Runtime.composeProject) -> $($Runtime.url)"
     if (-not $DryRun) {
-        Invoke-DockerCommandChecked -Arguments @("compose", "-p", $Runtime.composeProject, "-f", $targetCompose, "--env-file", (Join-Path $runtimeDir ".env"), "up", "-d") -TimeoutSec 240 -Description "docker compose up $($Runtime.composeProject)"
+        if ($Recreate) {
+            Write-Host "Stopping compose project before reindex: $($Runtime.composeProject)"
+            Invoke-DockerCommandChecked -Arguments @("compose", "-p", $Runtime.composeProject, "-f", $targetCompose, "--env-file", $envFilePath, "down") -TimeoutSec 180 -Description "docker compose down $($Runtime.composeProject)"
+        }
+        Invoke-DockerCommandChecked -Arguments @("compose", "-p", $Runtime.composeProject, "-f", $targetCompose, "--env-file", $envFilePath, "up", "-d") -TimeoutSec 240 -Description "docker compose up $($Runtime.composeProject)"
     }
     $Runtime | Add-Member -NotePropertyName runtimePath -NotePropertyValue $runtimeDir -Force
     Write-Host "Compose project ready: $($Runtime.composeProject) -> $($Runtime.url)"
@@ -1694,6 +1765,99 @@ function Start-HostServers {
         servers = $serverStates
     }
     Write-HostState -Config $Config -State $state
+}
+
+function Invoke-HostReindex {
+    param(
+        [object]$Config,
+        [string]$TargetConfigId = ""
+    )
+    Ensure-HostPrerequisites -Config $Config
+    Ensure-Distribution -Config $Config
+    $manifest = Read-DistributionManifest -Config $Config
+    $globalIds = Get-EnabledServerIds -Config $Config -Scope "global"
+    $projectIds = Get-EnabledServerIds -Config $Config -Scope "project"
+    Ensure-HostEmbeddingModel -Config $Config -Manifest $manifest -GlobalServerIds $globalIds -ProjectServerIds $projectIds
+
+    $configStates = @()
+    $serverStates = @()
+    $reindexed = 0
+
+    Write-HostPhase "Reindexing embedding-dependent MCP servers"
+    Write-Host "Enabled global servers: $(if (@($globalIds).Count -gt 0) { @($globalIds) -join ', ' } else { '<none>' })"
+    Write-Host "Enabled project servers: $(if (@($projectIds).Count -gt 0) { @($projectIds) -join ', ' } else { '<none>' })"
+    if ($TargetConfigId) {
+        Write-Host "Target configId: $TargetConfigId"
+    }
+
+    $globalIndex = 0
+    if (-not $TargetConfigId) {
+        foreach ($server in As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @())) {
+            $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
+            $scope = Get-ServerScope -Server $server
+            if ($scope -ne "global" -or $globalIds -notcontains $id) { continue }
+            if (Test-HostServerNeedsEmbedding -Server $server) {
+                $runtime = New-ServerRuntime -Config $Config -Server $server -Index $globalIndex
+                Write-Host "Reindexing global server '$id': container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
+                Start-DockerServer -Config $Config -Server $server -Runtime $runtime -Recreate -ForceResetDatabase
+                $runtime.health = "running"
+                $serverStates += $runtime
+                $reindexed++
+            }
+            $globalIndex++
+        }
+    } else {
+        Write-Host "Skipping global embedding servers because a specific configId was requested."
+    }
+
+    $matched = $false
+    $configIndex = 0
+    foreach ($configuration in As-Array (Get-ObjectValue -Object $Config -Name "configurations" -Default @())) {
+        $configurationId = [string](Get-ObjectValue -Object $configuration -Name "configId" -Default "")
+        if ($TargetConfigId -and $configurationId -ne $TargetConfigId) {
+            continue
+        }
+        $matched = $true
+        Write-Host "Refreshing configuration before reindex: '$configurationId'"
+        $configState = Refresh-Configuration -Config $Config -Configuration $configuration
+        $configStates += $configState
+        $projectIndex = 0
+        foreach ($server in As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @())) {
+            $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
+            $scope = Get-ServerScope -Server $server
+            if ($scope -ne "project" -or $projectIds -notcontains $id) { continue }
+            if (Test-HostServerNeedsEmbedding -Server $server) {
+                $runtime = New-ServerRuntime -Config $Config -Server $server -Index $projectIndex -ConfigState $configState -ConfigIndex $configIndex
+                Write-Host "Reindexing project server '$id' for configId $($configState.configId): container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
+                if ([bool](Get-ObjectValue -Object $server -Name "compose" -Default $false)) {
+                    Start-ComposeServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState -Recreate -ForceResetDatabase
+                } else {
+                    Start-DockerServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState -Recreate -ForceResetDatabase
+                }
+                $runtime.health = "running"
+                $serverStates += $runtime
+                $reindexed++
+            }
+            $projectIndex++
+        }
+        $configIndex++
+    }
+
+    if ($TargetConfigId -and -not $matched) {
+        throw "Configuration '$TargetConfigId' was not found in host config."
+    }
+    if ($configStates.Count -gt 0) {
+        Update-HostStateConfigurations -Config $Config -ConfigStates $configStates
+    }
+    if ($serverStates.Count -gt 0) {
+        Update-HostStateServers -Config $Config -ServerStates $serverStates
+    }
+    if ($reindexed -eq 0) {
+        Write-Host "No enabled embedding-dependent MCP servers were found to reindex."
+    } else {
+        Write-Host "Reindex command started for embedding-dependent MCP servers: $reindexed"
+        Write-Host "Run -Action publish after reindex if the remote registry should expose the new indexedAt/reportHash values."
+    }
 }
 
 function Stop-HostServers {
@@ -1973,6 +2137,9 @@ switch ($Action) {
     }
     "refresh-config" {
         Refresh-HostConfigurations -Config $config -TargetConfigId $ConfigId | Out-Null
+    }
+    "reindex" {
+        Invoke-HostReindex -Config $config -TargetConfigId $ConfigId
     }
     "publish" {
         Publish-Registry -Config $config

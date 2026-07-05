@@ -433,6 +433,11 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match "family"
         $McpHostText | Should -Match "sourceFingerprint"
         $McpHostText | Should -Match "dump-config"
+        $McpHostText | Should -Match '"reindex"'
+        $McpHostText | Should -Match "Invoke-HostReindex"
+        $McpHostText | Should -Match "Update-HostStateServers"
+        $McpHostText | Should -Match "ForceResetDatabase"
+        $McpHostText | Should -Match "Reindexing embedding-dependent MCP servers"
         $McpHostText | Should -Match "Invoke-HostConfigDumpHelper"
         $McpHostText | Should -Match 'Refresh-HostConfigurations -Config \$config -TargetConfigId \$ConfigId'
         $McpHostText | Should -Match "sourcePath"
@@ -695,6 +700,12 @@ Describe "1C agent workflow static checks" {
                 $graphEnv["RESET_DATABASE"] | Should -Be "false"
                 $graphEnv["REINDEX_INTERVAL_HOURS"] | Should -Be "12"
                 $graphEnv["AUTO_UPDATE_ON_STARTUP"] | Should -Be "false"
+
+                $codeReindexEnv = Resolve-ServerEnv -Config $hostConfig -Server ([pscustomobject]@{ id = "code"; scope = "project"; embedding = $true; env = @() }) -ForceResetDatabase
+                $codeReindexEnv["RESET_DATABASE"] | Should -Be "true"
+
+                $genericReindexEnv = Resolve-ServerEnv -Config $hostConfig -Server ([pscustomobject]@{ id = "docs"; scope = "global"; embedding = $true; env = @() }) -ForceResetDatabase
+                $genericReindexEnv["RESET_DATABASE"] | Should -Be "true"
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -1149,6 +1160,143 @@ Describe "1C agent workflow static checks" {
                 $events | Should -Contain "start"
                 [array]::IndexOf($events, "embedding") | Should -BeLessThan ([array]::IndexOf($events, "start"))
                 Remove-Variable -Scope Script -Name HostBootstrapTestEvents -ErrorAction SilentlyContinue
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "reindexes only embedding-dependent standalone servers with stable port indexes" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-reindex-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "test-host"
+                baseUrl = "http://localhost"
+                stateRoot = (Join-Path $tempRoot "state")
+                embedding = [ordered]@{ model = "intfloat/multilingual-e5-base" }
+                enabledServers = [ordered]@{
+                    global = @("ssl", "docs")
+                    project = @("codechecker", "code", "graph")
+                }
+                configurations = @([ordered]@{ configId = "trade" })
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:HostReindexTestEvents = New-Object System.Collections.Generic.List[string]
+                function Add-HostReindexTestEvent {
+                    param([string]$Name)
+                    $script:HostReindexTestEvents.Add($Name)
+                }
+                function Ensure-HostPrerequisites {
+                    param([object]$Config)
+                    Add-HostReindexTestEvent -Name "prerequisites"
+                }
+                function Ensure-Distribution {
+                    param([object]$Config)
+                    Add-HostReindexTestEvent -Name "distribution"
+                }
+                function Read-DistributionManifest {
+                    param([object]$Config)
+                    Add-HostReindexTestEvent -Name "manifest"
+                    return [pscustomobject]@{
+                        servers = @(
+                            [pscustomobject]@{ id = "ssl"; scope = "global"; embedding = $false; internalPort = 8008; image = "fixture-ssl:latest" },
+                            [pscustomobject]@{ id = "docs"; scope = "global"; embedding = $true; internalPort = 8001; image = "fixture-docs:latest" },
+                            [pscustomobject]@{ id = "codechecker"; scope = "project"; embedding = $false; internalPort = 8002; image = "fixture-codechecker:latest" },
+                            [pscustomobject]@{ id = "code"; scope = "project"; embedding = $true; internalPort = 8000; image = "fixture-code:latest" },
+                            [pscustomobject]@{ id = "graph"; scope = "project"; embedding = $true; internalPort = 8006; image = "fixture-graph:latest"; compose = $true }
+                        )
+                    }
+                }
+                function Ensure-HostEmbeddingModel {
+                    param(
+                        [object]$Config,
+                        [object]$Manifest,
+                        [string[]]$GlobalServerIds,
+                        [string[]]$ProjectServerIds
+                    )
+                    Add-HostReindexTestEvent -Name "embedding"
+                }
+                function Refresh-Configuration {
+                    param([object]$Config, [object]$Configuration)
+                    Add-HostReindexTestEvent -Name "refresh:$([string](Get-ObjectValue -Object $Configuration -Name 'configId' -Default ''))"
+                    return [pscustomobject]@{
+                        configId = "trade"
+                        sourceRoot = (Join-Path $tempRoot "source")
+                        mainConfigPath = "src/cf"
+                        metadataRoot = (Join-Path $tempRoot "metadata")
+                        configurationName = "Trade"
+                        configurationVersion = "1.0"
+                        sourceCommit = "fixture"
+                        sourceFingerprint = "fixture-fingerprint"
+                        reportHash = "fixture-report"
+                        indexedAt = "2026-07-05T00:00:00Z"
+                    }
+                }
+                function Start-DockerServer {
+                    param(
+                        [object]$Config,
+                        [object]$Server,
+                        [object]$Runtime,
+                        [object]$ConfigState = $null,
+                        [switch]$Recreate,
+                        [switch]$ForceResetDatabase
+                    )
+                    Add-HostReindexTestEvent -Name "docker:$($Runtime.id):$($Runtime.hostPort):recreate=$($Recreate.IsPresent):reset=$($ForceResetDatabase.IsPresent)"
+                }
+                function Start-ComposeServer {
+                    param(
+                        [object]$Config,
+                        [object]$Server,
+                        [object]$Runtime,
+                        [object]$ConfigState,
+                        [switch]$Recreate,
+                        [switch]$ForceResetDatabase
+                    )
+                    Add-HostReindexTestEvent -Name "compose:$($Runtime.id):$($Runtime.hostPort):recreate=$($Recreate.IsPresent):reset=$($ForceResetDatabase.IsPresent)"
+                }
+
+                $hostConfig = Read-JsonFile -Path $configPath
+                $initialState = [ordered]@{
+                    schemaVersion = 1
+                    updatedAt = "2026-07-05T00:00:00Z"
+                    configurations = @()
+                    servers = @([ordered]@{
+                        id = "ssl"
+                        scope = "global"
+                        name = "itl-ssl"
+                        containerName = "itl-ssl"
+                        health = "running"
+                    })
+                }
+                Write-HostState -Config $hostConfig -State $initialState
+
+                Invoke-HostReindex -Config $hostConfig
+
+                $events = @($script:HostReindexTestEvents)
+                $events | Should -Contain "embedding"
+                $events | Should -Contain "refresh:trade"
+                $events | Should -Contain "docker:docs:18001:recreate=True:reset=True"
+                $events | Should -Contain "docker:code:18101:recreate=True:reset=True"
+                $events | Should -Contain "compose:graph:18102:recreate=True:reset=True"
+                ($events -join "|") | Should -Not -Match "docker:ssl"
+                ($events -join "|") | Should -Not -Match "docker:codechecker"
+
+                $state = Read-HostState -Config $hostConfig
+                @($state.configurations | Where-Object { $_.configId -eq "trade" }).Count | Should -Be 1
+                @($state.servers | Where-Object { $_.id -eq "ssl" }).Count | Should -Be 1
+                @($state.servers | Where-Object { $_.id -eq "docs" }).Count | Should -Be 1
+                @($state.servers | Where-Object { $_.id -eq "code" }).Count | Should -Be 1
+                @($state.servers | Where-Object { $_.id -eq "graph" }).Count | Should -Be 1
+                Remove-Variable -Scope Script -Name HostReindexTestEvents -ErrorAction SilentlyContinue
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {

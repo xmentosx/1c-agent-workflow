@@ -41,12 +41,14 @@ stop            Stop containers tracked in host state.
 status          Show tracked servers and endpoints.
 dump-config     Update a local sourcePath from a 1C configuration repository infobase.
 refresh-config  Regenerate Report.txt and fingerprints for one or all configs.
+reindex         Regenerate Report.txt, recreate embedding-dependent servers with RESET_DATABASE=true.
 publish         Publish current host state to the registry repo.
 ```
 
-Use `-ConfigId <id>` with `start` or `refresh-config` to limit config-specific work.
+Use `-ConfigId <id>` with `start`, `refresh-config`, or `reindex` to limit config-specific work.
 Use `-ConfigId <id>` with `dump-config` to update one local dump.
 Use `-DryRun` to validate generated paths and payloads without Docker/Git writes where possible.
+Run `publish` after `reindex` when remote clients should see updated registry freshness metadata.
 
 ## Registry Contract
 
