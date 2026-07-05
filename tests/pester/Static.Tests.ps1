@@ -754,6 +754,7 @@ Describe "1C agent workflow static checks" {
                 $envValues.Contains("OPENAI_API_BASE") | Should -Be $false
                 $envValues.Contains("OPENAI_API_KEY") | Should -Be $false
                 $envValues.Contains("OPENAI_MODEL") | Should -Be $false
+                $envValues["RESET_CACHE"] | Should -Be "false"
 
                 $volumes = @(Resolve-ServerVolumes -Config $hostConfig -Server $server)
                 @($volumes | Where-Object { $_.container -eq "/app/model_cache" }).Count | Should -Be 1
@@ -808,6 +809,15 @@ Describe "1C agent workflow static checks" {
 
                 $codeReindexEnv = Resolve-ServerEnv -Config $hostConfig -Server ([pscustomobject]@{ id = "code"; scope = "project"; embedding = $true; env = @() }) -ForceResetDatabase
                 $codeReindexEnv["RESET_DATABASE"] | Should -Be "true"
+
+                $docsSetupEnv = Resolve-ServerEnv -Config $hostConfig -Server ([pscustomobject]@{
+                    id = "docs"
+                    scope = "global"
+                    embedding = $true
+                    env = @([ordered]@{ name = "RESET_CACHE"; value = "true" })
+                })
+                $docsSetupEnv["RESET_CACHE"] | Should -Be "false"
+                $docsSetupEnv["EMBEDDING_MODEL"] | Should -Be "intfloat/multilingual-e5-base"
 
                 $docsReindexEnv = Resolve-ServerEnv -Config $hostConfig -Server ([pscustomobject]@{
                     id = "docs"

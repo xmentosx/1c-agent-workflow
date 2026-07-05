@@ -1543,6 +1543,7 @@ function Resolve-ServerEnv {
     }
     if ($serverNeedsEmbedding -and $null -ne $embeddingSettings -and $embeddingSettings.mode -eq "cpu") {
         $values["EMBEDDING_MODEL"] = [string]$embeddingSettings.model
+        $values["RESET_CACHE"] = "false"
     }
     Set-GraphOpenAiFallbackEnv -Config $Config -Server $Server -Values $values
     if ($ForceResetDatabase) {
