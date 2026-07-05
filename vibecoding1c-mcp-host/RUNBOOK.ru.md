@@ -302,6 +302,8 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 
 `reindex` специально не включает `RESET_CACHE`: при CPU embeddings общий cache модели смонтирован как `/app/model_cache`, и контейнер не должен удалять эту mount point.
 
+В CPU embedding mode Graph server получает не секретный placeholder `OPENAI_API_KEY` только для прохождения startup initialization OpenAI client. Если Graph должен реально вызывать LLM для chat-функций, задайте `CHAT_API_KEY`, `CHAT_API_BASE` и `CHAT_MODEL` в `config.env` distribution или в `host.config.json` secrets.
+
 Опубликовать текущее состояние в GitLab registry repo:
 
 ```powershell

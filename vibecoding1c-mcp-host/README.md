@@ -50,6 +50,7 @@ Use `-ConfigId <id>` with `dump-config` to update one local dump.
 Use `-DryRun` to validate generated paths and payloads without Docker/Git writes where possible.
 Run `publish` after `reindex` when remote clients should see updated registry freshness metadata.
 `reindex` does not set `RESET_CACHE` because CPU model cache is mounted at `/app/model_cache` and must not be removed from inside a container.
+In CPU embedding mode the Graph server receives a non-secret placeholder `OPENAI_API_KEY` only to satisfy its startup OpenAI client initialization; set `CHAT_API_KEY`, `CHAT_API_BASE`, and `CHAT_MODEL` in `config.env` or `host.config.json` secrets when real Graph chat calls must use an LLM.
 
 ## Registry Contract
 

@@ -439,6 +439,7 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match "ForceResetDatabase"
         $McpHostText | Should -Match "Test-HostServerSupportsDatabaseReset"
         $McpHostText | Should -Match "Reindexing database-backed MCP servers"
+        $McpHostText | Should -Match "standalone-cpu-embedding-placeholder"
         $McpHostText | Should -Match "Invoke-HostConfigDumpHelper"
         $McpHostText | Should -Match 'Refresh-HostConfigurations -Config \$config -TargetConfigId \$ConfigId'
         $McpHostText | Should -Match "sourcePath"
@@ -594,6 +595,66 @@ Describe "1C agent workflow static checks" {
                 $envValues["OPENAI_API_KEY"] | Should -Be "lm-studio"
                 $envValues["OPENAI_API_BASE"] | Should -Be "http://host.docker.internal:19000/v1"
                 $envValues["OPENAI_MODEL"] | Should -Be "fixture-embedding-model"
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "supplies a placeholder graph OpenAI key in standalone CPU embedding mode" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-graph-cpu-key-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+
+        try {
+            $stateRoot = Join-Path $tempRoot "state"
+            New-Item -ItemType Directory -Force -Path (Join-Path $stateRoot "distribution") | Out-Null
+            Set-Content -LiteralPath (Join-Path $stateRoot "distribution\config.env") -Encoding UTF8 -Value "CHAT_API_KEY=`nCHAT_API_BASE=`nCHAT_MODEL=`n"
+
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "test-host"
+                baseUrl = "http://localhost"
+                stateRoot = $stateRoot
+                embedding = [ordered]@{ model = "intfloat/multilingual-e5-base" }
+                enabledServers = [ordered]@{ global = @(); project = @("graph") }
+                configurations = @()
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                $graphServer = [pscustomobject]@{
+                    id = "graph"
+                    embedding = $true
+                    env = @(
+                        [ordered]@{ name = "OPENAI_API_KEY"; from = "CHAT_API_KEY"; required = $false },
+                        [ordered]@{ name = "OPENAI_API_BASE"; from = "CHAT_API_BASE"; required = $false },
+                        [ordered]@{ name = "OPENAI_MODEL"; from = "CHAT_MODEL"; required = $false }
+                    )
+                }
+                $codeServer = [pscustomobject]@{
+                    id = "code"
+                    embedding = $true
+                    env = @(
+                        [ordered]@{ name = "OPENAI_API_BASE"; embedding = "base"; required = $true },
+                        [ordered]@{ name = "OPENAI_API_KEY"; embedding = "key"; required = $true },
+                        [ordered]@{ name = "OPENAI_MODEL"; embedding = "model"; required = $true }
+                    )
+                }
+
+                $graphEnv = Resolve-ServerEnv -Config $hostConfig -Server $graphServer
+                $graphEnv["OPENAI_API_KEY"] | Should -Be "standalone-cpu-embedding-placeholder"
+                $graphEnv.Contains("OPENAI_API_BASE") | Should -Be $false
+                $graphEnv.Contains("OPENAI_MODEL") | Should -Be $false
+                $graphEnv["EMBEDDING_MODEL"] | Should -Be "intfloat/multilingual-e5-base"
+
+                $codeEnv = Resolve-ServerEnv -Config $hostConfig -Server $codeServer
+                $codeEnv.Contains("OPENAI_API_KEY") | Should -Be $false
+                $codeEnv.Contains("OPENAI_API_BASE") | Should -Be $false
+                $codeEnv.Contains("OPENAI_MODEL") | Should -Be $false
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {

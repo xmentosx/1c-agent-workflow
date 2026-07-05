@@ -1373,6 +1373,16 @@ function Set-GraphOpenAiFallbackEnv {
         return
     }
     $settings = Get-HostEmbeddingSettings -Config $Config
+    if ($settings.mode -eq "cpu") {
+        $currentKey = ""
+        if ($Values.Contains("OPENAI_API_KEY")) {
+            $currentKey = [string]$Values["OPENAI_API_KEY"]
+        }
+        if ([string]::IsNullOrWhiteSpace($currentKey)) {
+            $Values["OPENAI_API_KEY"] = "standalone-cpu-embedding-placeholder"
+        }
+        return
+    }
     if ($settings.mode -ne "openai") {
         return
     }
