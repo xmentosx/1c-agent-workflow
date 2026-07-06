@@ -196,11 +196,13 @@ Describe "1C agent workflow static checks" {
             $body = $match.Groups["body"].Value
             $mergeIndex = $body.IndexOf('Invoke-Git @("merge", (Get-MasterBranch))')
             $guardIndex = $body.IndexOf('Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit')
+            $phaseRestartIndex = $body.IndexOf('Restart-Agent1cAfterDevBranchMerge -Operation')
             $loadIndex = $body.IndexOf('Load-ConfigFromFiles')
 
             $mergeIndex | Should -BeGreaterOrEqual 0
             $guardIndex | Should -BeGreaterThan $mergeIndex
-            $loadIndex | Should -BeGreaterThan $guardIndex
+            $phaseRestartIndex | Should -BeGreaterThan $guardIndex
+            $loadIndex | Should -BeGreaterThan $phaseRestartIndex
         }
     }
 
@@ -237,6 +239,28 @@ Describe "1C agent workflow static checks" {
             $args | Should -Contain $logPath
             $args | Should -Contain "-AllowUnverifiedClose"
             $args | Should -Not -Contain "-AllowUnverifiedResult"
+            $args | Should -Not -Contain "-LifecyclePhase"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "preserves the post-merge lifecycle phase for second phase reexec" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-reexec-phase-test-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $args = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help -LifecyclePhase post-merge *> $null
+                Get-Agent1cReexecArguments
+            }
+
+            $args | Should -Contain "-Action"
+            $args | Should -Contain "help"
+            $args | Should -Contain "-LifecyclePhase"
+            $args | Should -Contain "post-merge"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

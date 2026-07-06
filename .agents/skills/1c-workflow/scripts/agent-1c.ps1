@@ -40,7 +40,9 @@ param(
     [switch]$OfferOpenAgent,
     [string]$RunStatusPath,
     [string]$RunLogPath,
-    [switch]$PauseOnFailure
+    [switch]$PauseOnFailure,
+    [ValidateSet("", "post-merge")]
+    [string]$LifecyclePhase = ""
 )
 
 Set-StrictMode -Version Latest
@@ -115,6 +117,7 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "RunStatusPath" -Value $RunStatusPath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "RunLogPath" -Value $RunLogPath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "PauseOnFailure" -Value $PauseOnFailure
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "LifecyclePhase" -Value $LifecyclePhase
     return [string[]]$arguments.ToArray()
 }
 

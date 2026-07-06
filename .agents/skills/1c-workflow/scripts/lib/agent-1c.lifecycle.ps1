@@ -200,17 +200,25 @@ function Test-WorkflowHelperChangedSince {
     return (@($changed | Where-Object { $_ }).Count -gt 0)
 }
 
-function Restart-Agent1cAfterWorkflowHelperUpdate {
-    Write-Host "ITL workflow helper scripts changed during merge. Restarting helper in a fresh PowerShell process before continuing."
+function Invoke-Agent1cFreshProcess {
+    param(
+        [string[]]$AdditionalArguments = @()
+    )
+
     $arguments = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File", $script:Agent1cScriptPath
-    ) + @($script:Agent1cReexecArguments)
+    ) + @($script:Agent1cReexecArguments) + @($AdditionalArguments)
 
     & powershell @arguments
     $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 }
     exit $exitCode
+}
+
+function Restart-Agent1cAfterWorkflowHelperUpdate {
+    Write-Host "ITL workflow helper scripts changed during merge. Restarting helper in a fresh PowerShell process before continuing."
+    Invoke-Agent1cFreshProcess
 }
 
 function Restart-Agent1cIfWorkflowHelperChangedSince {
@@ -219,6 +227,13 @@ function Restart-Agent1cIfWorkflowHelperChangedSince {
     if (Test-WorkflowHelperChangedSince -BeforeCommit $BeforeCommit) {
         Restart-Agent1cAfterWorkflowHelperUpdate
     }
+}
+
+function Restart-Agent1cAfterDevBranchMerge {
+    param([string]$Operation)
+
+    Write-Host "Development branch merge completed for $Operation. Restarting helper in a fresh PowerShell process before loading config files."
+    Invoke-Agent1cFreshProcess -AdditionalArguments @("-LifecyclePhase", "post-merge")
 }
 
 function Get-ConfigLoadChangeSet {
@@ -2112,15 +2127,20 @@ function Update-DevBranchBase {
 function Refresh-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "refresh-dev-branch"
-    Assert-CleanGit
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
-    Sync-Master
-    if ((Get-CurrentBranch) -ne $state.devBranch) {
-        Invoke-Git @("checkout", $state.devBranch)
+
+    if ($LifecyclePhase -ne "post-merge") {
+        Assert-CleanGit
+        Sync-Master
+        if ((Get-CurrentBranch) -ne $state.devBranch) {
+            Invoke-Git @("checkout", $state.devBranch)
+        }
+        $beforeMergeCommit = Get-CurrentCommit
+        Invoke-Git @("merge", (Get-MasterBranch))
+        Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit
+        Restart-Agent1cAfterDevBranchMerge -Operation "refresh-dev-branch"
     }
-    $beforeMergeCommit = Get-CurrentCommit
-    Invoke-Git @("merge", (Get-MasterBranch))
-    Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit
+
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
     $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
@@ -2320,16 +2340,20 @@ function Close-DevBranch {
     Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "close-dev-branch"
     Stop-VanessaMcpForState -State $state -Quiet | Out-Null
     $state = Read-DevBranchState -Name $DevBranchName
-    Assert-CleanGit
     Sync-DevBranchContextToDotEnv -State $state
 
-    Sync-Master
-    if ((Get-CurrentBranch) -ne $state.devBranch) {
-        Invoke-Git @("checkout", $state.devBranch)
+    if ($LifecyclePhase -ne "post-merge") {
+        Assert-CleanGit
+        Sync-Master
+        if ((Get-CurrentBranch) -ne $state.devBranch) {
+            Invoke-Git @("checkout", $state.devBranch)
+        }
+        $beforeMergeCommit = Get-CurrentCommit
+        Invoke-Git @("merge", (Get-MasterBranch))
+        Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit
+        Restart-Agent1cAfterDevBranchMerge -Operation "close-dev-branch"
     }
-    $beforeMergeCommit = Get-CurrentCommit
-    Invoke-Git @("merge", (Get-MasterBranch))
-    Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit
+
     Sync-DevBranchContextToDotEnv -State $state
 
     $kind = Get-DevBranchKind -State $state
