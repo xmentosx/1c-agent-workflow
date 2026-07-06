@@ -148,6 +148,60 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "treats empty Git path list output as an empty array" {
+        $tempParent = Join-Path ([System.IO.Path]::GetTempPath()) ("itl git paths parent " + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path $tempParent "проект с пробелом"
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Value "<Configuration />" -Encoding UTF8
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add src/cf/Configuration.xml
+            & git -C $tempRoot commit -m "base" *> $null
+
+            $paths = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help -LifecyclePhase post-merge *> $null
+                @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard", "--", "src/cf"))
+            }
+
+            @($paths).Count | Should -Be 0
+        } finally {
+            if (Test-Path -LiteralPath $tempParent -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempParent -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "reports detailed diagnostics when Git path collection fails" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-git-path-failure-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $errorText = ""
+            try {
+                & {
+                    . $HelperPath -ProjectRoot $tempRoot -Action help -LifecyclePhase post-merge *> $null
+                    Get-GitPathList -Arguments @("not-a-git-command")
+                }
+            } catch {
+                $errorText = $_.Exception.Message
+            }
+
+            $errorText | Should -Match "Git path collection failed"
+            $errorText | Should -Match ([regex]::Escape([System.IO.Path]::GetFullPath($tempRoot)))
+            $errorText | Should -Match "LifecyclePhase: post-merge"
+            $errorText | Should -Match "ExitCode:"
+            $errorText | Should -Match "not-a-git-command"
+            $errorText | Should -Match "Stderr:"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "detects workflow helper script changes after a merge base commit" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-helper-change-test-" + [guid]::NewGuid().ToString("N"))
 
@@ -195,7 +249,7 @@ Describe "1C agent workflow static checks" {
             $match.Success | Should -Be $true
             $body = $match.Groups["body"].Value
             $mergeIndex = $body.IndexOf('Invoke-Git @("merge", (Get-MasterBranch))')
-            $guardIndex = $body.IndexOf('Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit')
+            $guardIndex = $body.IndexOf('Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit -AdditionalArguments @("-LifecyclePhase", "post-merge")')
             $phaseRestartIndex = $body.IndexOf('Restart-Agent1cAfterDevBranchMerge -Operation')
             $loadIndex = $body.IndexOf('Load-ConfigFromFiles')
 

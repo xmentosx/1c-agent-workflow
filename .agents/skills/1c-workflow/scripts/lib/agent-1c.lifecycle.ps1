@@ -176,14 +176,40 @@ function ConvertTo-ConfigLoadRelativePath {
 function Get-GitPathList {
     param([string[]]$Arguments)
 
-    $output = & git -C $script:ProjectRoot -c core.quotepath=false @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        return $null
+    $stderrPath = New-TimestampedFilePath -Directory ([System.IO.Path]::GetTempPath()) -Prefix "agent-1c-git-stderr-" -Extension ".log"
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & git -C $script:ProjectRoot -c core.quotepath=false @Arguments 2> $stderrPath
+        $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 1 }
+        $stderr = ""
+        if (Test-Path -LiteralPath $stderrPath -PathType Leaf -ErrorAction SilentlyContinue) {
+            $stderr = [System.IO.File]::ReadAllText($stderrPath, (Get-Utf8Encoding))
+        }
+
+        if ($exitCode -ne 0) {
+            $phase = if ($LifecyclePhase) { $LifecyclePhase } else { "<none>" }
+            throw @"
+Git path collection failed.
+ProjectRoot: $script:ProjectRoot
+CurrentDirectory: $((Get-Location).Path)
+LifecyclePhase: $phase
+ExitCode: $exitCode
+Command: git -C "$script:ProjectRoot" -c core.quotepath=false $($Arguments -join ' ')
+Stderr:
+$stderr
+"@
+        }
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+        if (Test-Path -LiteralPath $stderrPath -PathType Leaf -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+        }
     }
 
     $text = (@($output) -join "")
     if (-not $text) {
-        return @()
+        return
     }
 
     return @($text -split ([string][char]0) | Where-Object { $_ })
@@ -222,10 +248,14 @@ function Restart-Agent1cAfterWorkflowHelperUpdate {
 }
 
 function Restart-Agent1cIfWorkflowHelperChangedSince {
-    param([string]$BeforeCommit)
+    param(
+        [string]$BeforeCommit,
+        [string[]]$AdditionalArguments = @()
+    )
 
     if (Test-WorkflowHelperChangedSince -BeforeCommit $BeforeCommit) {
-        Restart-Agent1cAfterWorkflowHelperUpdate
+        Write-Host "ITL workflow helper scripts changed during merge. Restarting helper in a fresh PowerShell process before continuing."
+        Invoke-Agent1cFreshProcess -AdditionalArguments $AdditionalArguments
     }
 }
 
@@ -247,15 +277,8 @@ function Get-ConfigLoadChangeSet {
     $absoluteExportPath = Assert-ExportPathInsideProject $ExportPath
     $baseCommit = Get-DevBranchLoadBaseCommit -State $State -ContentKind $ContentKind
 
-    $tracked = Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", $baseCommit, "--", $ExportPath)
-    if ($null -eq $tracked) {
-        throw "Cannot calculate changed config files from commit: $baseCommit"
-    }
-
-    $untracked = Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard", "--", $ExportPath)
-    if ($null -eq $untracked) {
-        throw "Cannot calculate untracked config files under $ExportPath"
-    }
+    $tracked = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", $baseCommit, "--", $ExportPath))
+    $untracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard", "--", $ExportPath))
 
     $files = @()
     foreach ($path in @($tracked) + @($untracked)) {
@@ -2137,7 +2160,7 @@ function Refresh-DevBranch {
         }
         $beforeMergeCommit = Get-CurrentCommit
         Invoke-Git @("merge", (Get-MasterBranch))
-        Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit
+        Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit -AdditionalArguments @("-LifecyclePhase", "post-merge")
         Restart-Agent1cAfterDevBranchMerge -Operation "refresh-dev-branch"
     }
 
@@ -2350,7 +2373,7 @@ function Close-DevBranch {
         }
         $beforeMergeCommit = Get-CurrentCommit
         Invoke-Git @("merge", (Get-MasterBranch))
-        Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit
+        Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit -AdditionalArguments @("-LifecyclePhase", "post-merge")
         Restart-Agent1cAfterDevBranchMerge -Operation "close-dev-branch"
     }
 
