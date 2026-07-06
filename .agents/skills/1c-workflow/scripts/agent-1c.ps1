@@ -74,6 +74,7 @@ $script:Agent1cModuleFiles = @(
     "agent-1c.core.ps1",
     "agent-1c.vanessa.ps1",
     "agent-1c.vibecoding1c-mcp.ps1",
+    "agent-1c.data-mcp.ps1",
     "agent-1c.lifecycle.ps1"
 )
 foreach ($moduleFile in $script:Agent1cModuleFiles) {

@@ -13,9 +13,11 @@ temp/
 .agent-1c/event-log-baselines/
 .agent-1c/runs/
 .agent-1c/tools/event-log-exporter/
+.agent-1c/tools/data-mcp/
 .agent-1c/tools/vanessa-automation/
 .agent-1c/tools/vanessa-mcp/
 .agent-1c/mcp/
+build/data-mcp-tools-loader/
 .codex/config.toml
 .kilo/kilo.json
 .kilo/kilo.jsonc

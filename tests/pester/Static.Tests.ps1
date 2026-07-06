@@ -320,6 +320,8 @@ Describe "1C agent workflow static checks" {
     It "ignores local agent client and MCP runtime state without blocking branch creation" {
         $requiredPaths = @(
             ".agent-1c/mcp/",
+            ".agent-1c/tools/data-mcp/",
+            "build/data-mcp-tools-loader/",
             ".codex/config.toml",
             ".kilo/kilo.json",
             ".kilo/kilo.jsonc"
@@ -2449,6 +2451,12 @@ url = "http://127.0.0.1:18100/mcp"
 enabled = true
 managedBy = "vibecoding1c-mcp"
 family = "vibecoding1c"
+
+[mcp_servers."1c-data-mcp"]
+url = "http://127.0.0.1/published/hs/mcp"
+enabled = true
+managedBy = "vibecoding1c-mcp"
+family = "vibecoding1c"
 # <<< vibecoding1c-mcp project
 
 [mcp_servers."custom-tool"]
@@ -2490,6 +2498,13 @@ enabled = true
       "managedBy": "vibecoding1c-mcp",
       "family": "vibecoding1c"
     },
+    "1c-data-mcp": {
+      "type": "remote",
+      "url": "http://127.0.0.1/published/hs/mcp",
+      "enabled": true,
+      "managedBy": "vibecoding1c-mcp",
+      "family": "vibecoding1c"
+    },
     "custom-tool": {
       "type": "remote",
       "url": "http://localhost:9999/mcp",
@@ -2509,6 +2524,7 @@ enabled = true
             $codexText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".codex\config.toml")
             $codexText | Should -Not -Match "http://localhost:8000/mcp"
             $codexText | Should -Match ([regex]::Escape('[mcp_servers."1c-code-metadata-mcp"]'))
+            $codexText | Should -Match ([regex]::Escape('[mcp_servers."1c-data-mcp"]'))
             $codexText | Should -Match "1c-ssl-mcp"
             $codexText | Should -Match "external-mcp"
             $codexText | Should -Match ([regex]::Escape("# >>> vibecoding1c-mcp project"))
@@ -2521,6 +2537,7 @@ enabled = true
             $kilo.mcp.'1c-ssl-mcp'.managedBy | Should -Be "external-mcp"
             $kilo.mcp.'itl-demo-code'.managedBy | Should -Be "vibecoding1c-mcp"
             $kilo.mcp.'1c-graph-metadata-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
+            $kilo.mcp.'1c-data-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
             $kilo.mcp.'custom-tool'.managedBy | Should -Be "external-mcp"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -2814,6 +2831,53 @@ local after
         $results.CpuSmall | Should -Be "intfloat/multilingual-e5-small"
     }
 
+    It "patches Data MCP tools XML from vcvalidatequery to validatequery" {
+        $patched = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            Convert-DataMcpToolsXmlText -Text @"
+<ДанныеОбмена>
+  <CatalogObject.APA_Инструменты>
+    <Description>vcvalidatequery</Description>
+  </CatalogObject.APA_Инструменты>
+</ДанныеОбмена>
+"@
+        }
+
+        $patched | Should -Match "<Description>validatequery</Description>"
+        $patched | Should -Not -Match "vcvalidatequery"
+    }
+
+    It "patches a publication default.vrd with the Data MCP HTTP service" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("data-mcp-vrd-test-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "default.vrd") -Encoding UTF8 -Value @"
+<?xml version="1.0" encoding="UTF-8"?>
+<point xmlns="http://v8.1c.ru/8.2/virtual-resource-system"
+       base="/published"
+       ib="File='C:\base';Usr='Admin';Pwd=''"
+       enable="false">
+  <httpServices publishByDefault="false"/>
+</point>
+"@
+
+            & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                Enable-DataMcpHttpService -PublicationDir $tempRoot *> $null
+            }
+
+            $vrdText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "default.vrd")
+            $vrdText | Should -Match 'name="APA_MCP"'
+            $vrdText | Should -Match 'rootUrl="mcp"'
+            $vrdText | Should -Match 'enable="true"'
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "merges managed Codex TOML and Kilo MCP JSON without deleting unrelated entries" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-config-test-" + [guid]::NewGuid().ToString("N"))
 
@@ -2852,7 +2916,8 @@ url = "http://localhost:9999/mcp"
                     [pscustomobject]@{ id = "docs"; name = "itl-1c-docs"; url = "http://127.0.0.1:18000/mcp"; scope = "global"; provider = "remote" },
                     [pscustomobject]@{ id = "code"; name = "itl-dead-code"; url = "http://127.0.0.1:18102/mcp"; scope = "project"; provider = "remote"; configId = "trade"; status = "stopped"; clientNames = [pscustomobject]@{ aiRules1c = "1c-code-metadata-mcp" } },
                     [pscustomobject]@{ id = "code"; name = "itl-trade-code"; url = "http://127.0.0.1:18100/mcp"; scope = "project"; provider = "remote"; configId = "trade"; clientNames = [pscustomobject]@{ aiRules1c = "1c-code-metadata-mcp" } },
-                    [pscustomobject]@{ id = "code"; name = "itl-erp-code"; url = "http://127.0.0.1:18101/mcp"; scope = "project"; provider = "remote"; configId = "erp"; clientNames = [pscustomobject]@{ aiRules1c = "1c-code-metadata-mcp" } }
+                    [pscustomobject]@{ id = "code"; name = "itl-erp-code"; url = "http://127.0.0.1:18101/mcp"; scope = "project"; provider = "remote"; configId = "erp"; clientNames = [pscustomobject]@{ aiRules1c = "1c-code-metadata-mcp" } },
+                    [pscustomobject]@{ id = "data"; name = "itl-current-data"; url = "http://localhost/current/hs/mcp"; scope = "branch"; provider = "local"; clientNames = [pscustomobject]@{ aiRules1c = "1c-data-mcp" } }
                 )
                 Write-Vibecoding1cMcpCodexConfig -Path (Join-Path $tempRoot ".codex\config.toml") -BlockId "project" -Endpoints $endpoints
                 Write-Vibecoding1cMcpCodexConfig -Path (Join-Path $tempRoot ".codex\config.toml") -BlockId "project" -Endpoints $endpoints
@@ -2863,7 +2928,9 @@ url = "http://localhost:9999/mcp"
             $codexText | Should -Match "mcp_servers.unrelated"
             $codexText | Should -Match ([regex]::Escape('[mcp_servers."1C-docs-mcp"]'))
             $codexText | Should -Match ([regex]::Escape('[mcp_servers."1c-code-metadata-mcp"]'))
+            $codexText | Should -Match ([regex]::Escape('[mcp_servers."1c-data-mcp"]'))
             $codexText | Should -Match "http://127.0.0.1:18100/mcp"
+            $codexText | Should -Match "http://localhost/current/hs/mcp"
             $codexText | Should -Not -Match "http://127.0.0.1:18101/mcp"
             $codexText | Should -Not -Match "http://127.0.0.1:18102/mcp"
             @([regex]::Matches($codexText, [regex]::Escape("# >>> vibecoding1c-mcp project"))).Count | Should -Be 1
@@ -2878,6 +2945,119 @@ url = "http://localhost:9999/mcp"
             $kilo.mcp.'1c-code-metadata-mcp'.family | Should -Be "vibecoding1c"
             $kilo.mcp.'1c-code-metadata-mcp'.logicalId | Should -Be "code"
             $kilo.mcp.'1c-code-metadata-mcp'.registryName | Should -Be "itl-trade-code"
+            $kilo.mcp.'1c-data-mcp'.url | Should -Be "http://localhost/current/hs/mcp"
+            $kilo.mcp.'1c-data-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
+            $kilo.mcp.'1c-data-mcp'.logicalId | Should -Be "data"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "connects Data MCP for a published branch with stubbed 1C calls" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("data-mcp-success-test-" + [guid]::NewGuid().ToString("N"))
+        $publicationDir = Join-Path $tempRoot "publication"
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), $publicationDir | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $tempRoot ".agent-1c\project.json")
+            Set-Content -LiteralPath (Join-Path $publicationDir "default.vrd") -Encoding UTF8 -Value @"
+<?xml version="1.0" encoding="UTF-8"?>
+<point xmlns="http://v8.1c.ru/8.2/virtual-resource-system" base="/published" ib="File='C:\base';Usr='Admin';Pwd=''" enable="false"/>
+"@
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+
+                function Ensure-DataMcpPackage {
+                    return [pscustomobject]@{
+                        cfePath = "C:\fake\OneMCP.cfe"
+                        toolsXmlPath = "C:\fake\APA_Инструменты.xml"
+                    }
+                }
+                function Install-DataMcpExtension {
+                    param([object]$State, [string]$CfePath)
+                    $script:DataMcpCfePath = $CfePath
+                    return "designer.log"
+                }
+                function Invoke-DataMcpToolsLoader {
+                    param([object]$State, [string]$ToolsXmlPath)
+                    $script:DataMcpToolsXmlPath = $ToolsXmlPath
+                    return "tools-loader.json"
+                }
+                function Test-DataMcpEndpointReachable {
+                    param([string]$Url)
+                    return $true
+                }
+                function Write-Vibecoding1cMcpClientConfig {
+                    $localEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -ne "global" })
+                    Write-Vibecoding1cMcpCodexConfig -Path (Join-Path $script:ProjectRoot ".codex\config.toml") -BlockId "project" -Endpoints $localEndpoints
+                    Write-Vibecoding1cMcpKiloConfig -Endpoints $localEndpoints
+                }
+
+                $state = [pscustomobject]@{
+                    devBranchInfoBasePath = "C:\base"
+                    infoBaseKind = "file"
+                    publicationUrl = "http://localhost/published"
+                }
+                $updates = Install-DevBranchDataMcpBestEffort -State $state -PublicationUrl "http://localhost/published" -PublicationDir $publicationDir
+                $updates.dataMcpStatus | Should -Be "running"
+                $updates.dataMcpEndpointUrl | Should -Be "http://localhost/published/hs/mcp"
+                $script:DataMcpCfePath | Should -Be "C:\fake\OneMCP.cfe"
+                $script:DataMcpToolsXmlPath | Should -Be "C:\fake\APA_Инструменты.xml"
+            }
+
+            $codexText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".codex\config.toml")
+            $codexText | Should -Match ([regex]::Escape('[mcp_servers."1c-data-mcp"]'))
+            $codexText | Should -Match "http://localhost/published/hs/mcp"
+            $vrdText = Get-Content -Encoding UTF8 -Raw (Join-Path $publicationDir "default.vrd")
+            $vrdText | Should -Match 'name="APA_MCP"'
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "keeps published branch creation non-blocking when Data MCP package is missing" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("data-mcp-failure-test-" + [guid]::NewGuid().ToString("N"))
+        $publicationDir = Join-Path $tempRoot "publication"
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), $publicationDir | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $tempRoot ".agent-1c\project.json")
+            Set-Content -LiteralPath (Join-Path $publicationDir "default.vrd") -Encoding UTF8 -Value @"
+<?xml version="1.0" encoding="UTF-8"?>
+<point xmlns="http://v8.1c.ru/8.2/virtual-resource-system" base="/published" ib="File='C:\base';Usr='Admin';Pwd=''" enable="false"/>
+"@
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+
+                function Ensure-DataMcpPackage {
+                    throw "MCP_1C_Distr.zip was not found"
+                }
+                function Write-Vibecoding1cMcpClientConfig {
+                    $localEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -ne "global" })
+                    Write-Vibecoding1cMcpCodexConfig -Path (Join-Path $script:ProjectRoot ".codex\config.toml") -BlockId "project" -Endpoints $localEndpoints
+                    Write-Vibecoding1cMcpKiloConfig -Endpoints $localEndpoints
+                }
+
+                $state = [pscustomobject]@{
+                    devBranchInfoBasePath = "C:\base"
+                    infoBaseKind = "file"
+                    publicationUrl = "http://localhost/published"
+                }
+                $updates = Install-DevBranchDataMcpBestEffort -State $state -PublicationUrl "http://localhost/published" -PublicationDir $publicationDir 3>$null
+                $updates.dataMcpStatus | Should -Be "failed"
+                $updates.dataMcpError | Should -Match "MCP_1C_Distr.zip"
+            }
+
+            $codexPath = Join-Path $tempRoot ".codex\config.toml"
+            if (Test-Path -LiteralPath $codexPath -PathType Leaf -ErrorAction SilentlyContinue) {
+                (Get-Content -Encoding UTF8 -Raw $codexPath) | Should -Not -Match "1c-data-mcp"
+            }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -3000,6 +3180,7 @@ url = "http://localhost:9999/mcp"
     It "keeps required package files visible for Git packaging" {
         $requiredFiles = @(
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+            ".agents/skills/1c-workflow/scripts/lib/agent-1c.data-mcp.ps1",
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
@@ -3009,6 +3190,7 @@ url = "http://localhost:9999/mcp"
             "templates/AGENTS.append.md",
             "templates/USER-RULES.append.md",
             "templates/dependency-lock.json",
+            ".agents/skills/1c-workflow/tools/data-mcp-tools-loader/DataMcpToolsLoader.xml",
             ".agents/skills/1c-workflow/tools/event-log-exporter/EventLogExporter.xml"
         )
 

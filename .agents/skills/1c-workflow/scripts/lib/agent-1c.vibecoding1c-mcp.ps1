@@ -732,6 +732,7 @@ function Get-Vibecoding1cMcpAiRules1cClientName {
         "ssl" { return "1c-ssl-mcp" }
         "code" { return "1c-code-metadata-mcp" }
         "graph" { return "1c-graph-metadata-mcp" }
+        "data" { return "1c-data-mcp" }
         default { return "" }
     }
 }
@@ -1323,7 +1324,7 @@ function Write-Vibecoding1cMcpDotEnvFile {
         $replacement = $line
         if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=') {
             $name = $matches[1]
-            if ($Values.ContainsKey($name)) {
+            if ($Values.Contains($name)) {
                 $replacement = "$name=$($Values[$name])"
                 $seen[$name] = $true
             }

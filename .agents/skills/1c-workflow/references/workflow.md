@@ -405,8 +405,8 @@ Goal: create a configuration or extension development branch as an isolated work
    - Server base: run the configured `serverBaseCopyScript`; do not invent server copy commands.
 6. If `sourceUsesRepository=true`, unbind the development branch copy from 1C configuration repository storage without repository parameters. If `false`, skip unbind.
 7. Register the development branch infobase in `%APPDATA%\1C\1CEStart\ibases.v8i` under folder `/ITL/<project-root-name>` with the launcher entry name equal to the development branch name.
-8. Optionally publish the development branch copy to Apache through `webinst`.
-9. Save development branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json` inside the worktree, including `createdWithWorktree`, `worktreePath`, `mainWorktreePath`, launcher registration metadata, and `devBranchKind`.
+8. Optionally publish the development branch copy to Apache through `webinst`; when published, best-effort install branch-local `1c-data-mcp` from `MCP_1C_Distr.zip`, patch the `APA_Инструменты` XML tool name from `vcvalidatequery` to `validatequery`, expose `/hs/mcp`, and connect the branch-scoped MCP endpoint.
+9. Save development branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json` inside the worktree, including `createdWithWorktree`, `worktreePath`, `mainWorktreePath`, launcher registration metadata, `devBranchKind`, and Data MCP status when publication was requested.
 10. Activate the development branch context in the worktree `.dev.env` for ai_rules_1c infobase-bound commands. For extension branches with no extension name yet, clear `INFOBASE_PATH` and tell the developer to run `set-dev-branch-extension` before `/update1cbase`.
 11. Report branch, worktree path, development branch infobase path, launcher folder/name, and publication URL if any.
 12. Print the Russian instruction that the current folder stayed on `master`, the new worktree path, and that the developer should open a separate Codex/Kilo/IDE window there. If `-OfferOpenAgent` is passed, try a best-effort open, for example via `code -n <worktree-path>`.
@@ -567,7 +567,7 @@ Goal: show active development branches and the current development branch.
 2. Show only development branch states without `closedAt`.
 3. Show current Git branch and current development branch; if current branch is `master`, report current development branch as `none`.
 4. Mark the development branch whose saved branch matches the current Git branch.
-5. For each active development branch, show name, branch, worktree path, main worktree path, development branch infobase path, launcher folder/name, publication URL if any, Vanessa verify test port/status, Vanessa MCP status when configured, vibecoding1c MCP current-scope status, created timestamp, last base update timestamp, and last refresh timestamp.
+5. For each active development branch, show name, branch, worktree path, main worktree path, development branch infobase path, launcher folder/name, publication URL and Data MCP status if any, Vanessa verify test port/status, Vanessa MCP status when configured, vibecoding1c MCP current-scope status, created timestamp, last base update timestamp, and last refresh timestamp.
 
 ## SWITCH_MASTER
 

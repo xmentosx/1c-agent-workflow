@@ -1734,7 +1734,11 @@ function Publish-DevBranchToApache {
         throw "webinst failed with exit code $LASTEXITCODE"
     }
 
-    return ($urlBase.TrimEnd("/") + "/" + $publicationName)
+    return [pscustomobject]@{
+        url = ($urlBase.TrimEnd("/") + "/" + $publicationName)
+        publicationName = $publicationName
+        publicationDir = $publicationDir
+    }
 }
 
 function Initialize-Project {
@@ -1868,8 +1872,13 @@ function Initialize-DevBranchRuntime {
 
     $publishDefault = Get-WebPublishByDefault
     $publicationUrl = ""
+    $publicationName = ""
+    $publicationDir = ""
     if ($PublishToApache -or $publishDefault) {
-        $publicationUrl = Publish-DevBranchToApache -DevBranchPath $DevBranchInfoBasePath -SafeDevBranchName $SafeDevBranchName
+        $publication = Publish-DevBranchToApache -DevBranchPath $DevBranchInfoBasePath -SafeDevBranchName $SafeDevBranchName
+        $publicationUrl = [string]$publication.url
+        $publicationName = [string]$publication.publicationName
+        $publicationDir = [string]$publication.publicationDir
     }
 
     $statePath = Save-DevBranchState -SafeDevBranchName $SafeDevBranchName -State @{
@@ -1892,6 +1901,8 @@ function Initialize-DevBranchRuntime {
         launcherInfoBaseId = $launcherRegistration.id
         launcherListPath = $launcherRegistration.listPath
         publicationUrl = $publicationUrl
+        publicationName = $publicationName
+        publicationDir = $publicationDir
         createdAt = (Get-Date).ToString("o")
         lastLogPath = $script:LastLogPath
     }
@@ -1908,9 +1919,14 @@ function Initialize-DevBranchRuntime {
     if ($publicationUrl) {
         Write-Host "Publication URL: $publicationUrl"
     }
-    $state = Read-Utf8Text -Path $statePath | ConvertFrom-Json
-    $state | Add-Member -NotePropertyName statePath -NotePropertyValue $statePath -Force
-    $state | Add-Member -NotePropertyName stateProjectRoot -NotePropertyValue $script:ProjectRoot -Force
+    $state = Read-DevBranchStateFile -Path $statePath
+    if ($publicationUrl) {
+        $dataMcpUpdates = Install-DevBranchDataMcpBestEffort -State $state -PublicationUrl $publicationUrl -PublicationDir $publicationDir
+        if ($dataMcpUpdates.Count -gt 0) {
+            Update-DevBranchState -State $state -Updates $dataMcpUpdates
+            $state = Read-DevBranchStateFile -Path $statePath
+        }
+    }
     $state = Initialize-DevBranchEventLogBaseline -State $state
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
 }
@@ -2127,6 +2143,7 @@ function Show-WorkflowStatus {
                 Write-Host "  $name"
                 Write-VanessaTestStatusLines -State $state -Indent "    "
                 Write-VanessaMcpStatusLines -State $state -Indent "    "
+                Write-DataMcpStatusLines -State $state -Indent "    "
             }
             Write-Host "Run list-dev-branches to see full paths."
         }
@@ -2158,10 +2175,11 @@ function Show-WorkflowStatus {
     if ($publicationUrl) {
         Write-Host "Publication URL: $publicationUrl"
     }
-        Write-VanessaTestStatusLines -State $state
-        Write-VanessaMcpStatusLines -State $state
-        Write-Vibecoding1cMcpStatusLines
-        Write-Host "Last config base update: $(Get-StateValue -State $state -Name 'lastConfigBaseUpdateAt' -Default '<never>')"
+    Write-DataMcpStatusLines -State $state
+    Write-VanessaTestStatusLines -State $state
+    Write-VanessaMcpStatusLines -State $state
+    Write-Vibecoding1cMcpStatusLines
+    Write-Host "Last config base update: $(Get-StateValue -State $state -Name 'lastConfigBaseUpdateAt' -Default '<never>')"
     if ($kind -eq "extension") {
         Write-Host "Last extension base update: $(Get-StateValue -State $state -Name 'lastExtensionBaseUpdateAt' -Default '<never>')"
     }
@@ -2407,6 +2425,7 @@ function List-DevBranches {
         if ($publicationUrl) {
             Write-Host "  Publication URL: $publicationUrl"
         }
+        Write-DataMcpStatusLines -State $state -Indent "  "
         Write-VanessaTestStatusLines -State $state -Indent "  "
         Write-VanessaMcpStatusLines -State $state -Indent "  "
         Write-Vibecoding1cMcpStatusLines -Indent "  "
@@ -2491,6 +2510,7 @@ function Switch-DevBranch {
     if ($state.publicationUrl) {
         Write-Host "Publication URL: $($state.publicationUrl)"
     }
+    Write-DataMcpStatusLines -State $state
 }
 
 function Detect-Apache {
