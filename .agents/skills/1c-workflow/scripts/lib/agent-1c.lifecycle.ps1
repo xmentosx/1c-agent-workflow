@@ -173,6 +173,22 @@ function ConvertTo-ConfigLoadRelativePath {
     return ($relative -replace "/", [System.IO.Path]::DirectorySeparatorChar)
 }
 
+function Get-GitPathList {
+    param([string[]]$Arguments)
+
+    $output = & git -C $script:ProjectRoot -c core.quotepath=false @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    $text = (@($output) -join "")
+    if (-not $text) {
+        return @()
+    }
+
+    return @($text -split ([string][char]0) | Where-Object { $_ })
+}
+
 function Get-ConfigLoadChangeSet {
     param(
         [object]$State,
@@ -184,13 +200,13 @@ function Get-ConfigLoadChangeSet {
     $absoluteExportPath = Assert-ExportPathInsideProject $ExportPath
     $baseCommit = Get-DevBranchLoadBaseCommit -State $State -ContentKind $ContentKind
 
-    $tracked = & git -C $script:ProjectRoot diff --name-only --diff-filter=ACMRTUXBD $baseCommit -- $ExportPath
-    if ($LASTEXITCODE -ne 0) {
+    $tracked = Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", $baseCommit, "--", $ExportPath)
+    if ($null -eq $tracked) {
         throw "Cannot calculate changed config files from commit: $baseCommit"
     }
 
-    $untracked = & git -C $script:ProjectRoot ls-files --others --exclude-standard -- $ExportPath
-    if ($LASTEXITCODE -ne 0) {
+    $untracked = Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard", "--", $ExportPath)
+    if ($null -eq $untracked) {
         throw "Cannot calculate untracked config files under $ExportPath"
     }
 

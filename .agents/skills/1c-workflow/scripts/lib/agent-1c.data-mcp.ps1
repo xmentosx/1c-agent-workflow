@@ -14,6 +14,16 @@ function Get-DataMcpAiRules1cClientName {
     return "1c-data-mcp"
 }
 
+function Get-DataMcpToolsCatalogLocalName {
+    $suffix = -join ([char[]](0x0418, 0x043D, 0x0441, 0x0442, 0x0440, 0x0443, 0x043C, 0x0435, 0x043D, 0x0442, 0x044B))
+    return "CatalogObject.APA_$suffix"
+}
+
+function Get-DataMcpToolsPreparedFileName {
+    $suffix = -join ([char[]](0x0418, 0x043D, 0x0441, 0x0442, 0x0440, 0x0443, 0x043C, 0x0435, 0x043D, 0x0442, 0x044B))
+    return "APA_$suffix.xml"
+}
+
 function Get-DataMcpRuntimeRoot {
     return (Resolve-ProjectPath ".agent-1c/tools/data-mcp")
 }
@@ -48,14 +58,15 @@ function Expand-DataMcpArchive {
 function Find-DataMcpToolsXmlPath {
     param([string]$ExtractRoot)
 
+    $catalogLocalName = Get-DataMcpToolsCatalogLocalName
     foreach ($file in Get-ChildItem -LiteralPath $ExtractRoot -Recurse -File -Filter "*.xml" -ErrorAction SilentlyContinue) {
         $text = Read-Utf8Text -Path $file.FullName
-        if ($text.Contains("CatalogObject.APA_Инструменты")) {
+        if ($text.Contains($catalogLocalName)) {
             return $file.FullName
         }
     }
 
-    throw "APA_Инструменты XML was not found in Data MCP archive extract: $ExtractRoot"
+    throw "APA tools XML was not found in Data MCP archive extract: $ExtractRoot"
 }
 
 function Find-DataMcpCfePath {
@@ -80,16 +91,23 @@ function Convert-DataMcpToolsXmlText {
     }
 
     $changed = 0
-    foreach ($node in $doc.SelectNodes("//*[local-name()='CatalogObject.APA_Инструменты']//*[local-name()='Description']")) {
-        if ([string]$node.InnerText -eq "vcvalidatequery") {
-            $node.InnerText = "validatequery"
-            $changed += 1
+    $catalogLocalName = Get-DataMcpToolsCatalogLocalName
+    foreach ($catalogNode in $doc.GetElementsByTagName("*")) {
+        if ([string]$catalogNode.LocalName -ne $catalogLocalName) {
+            continue
+        }
+
+        foreach ($node in $catalogNode.GetElementsByTagName("*")) {
+            if ([string]$node.LocalName -eq "Description" -and ([string]$node.InnerText).Trim() -eq "vcvalidatequery") {
+                $node.InnerText = "validatequery"
+                $changed += 1
+            }
         }
     }
 
     $patched = $doc.OuterXml
     if ($changed -eq 0) {
-        throw "Data MCP tools XML does not contain APA_Инструменты description vcvalidatequery to patch."
+        throw "Data MCP tools XML does not contain APA tools description vcvalidatequery to patch."
     }
     if ($patched.Contains("vcvalidatequery")) {
         throw "Data MCP tools XML still contains vcvalidatequery after patch."
@@ -105,7 +123,7 @@ function Prepare-DataMcpToolsXml {
 
     $preparedDir = Join-Path (Get-DataMcpRuntimeRoot) "prepared"
     New-Item -ItemType Directory -Force -Path $preparedDir | Out-Null
-    $preparedPath = Join-Path $preparedDir "APA_Инструменты.xml"
+    $preparedPath = Join-Path $preparedDir (Get-DataMcpToolsPreparedFileName)
     $patched = Convert-DataMcpToolsXmlText -Text (Read-Utf8Text -Path $SourcePath)
     Write-Utf8Text -Path $preparedPath -Value $patched
     return $preparedPath

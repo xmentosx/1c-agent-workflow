@@ -89,6 +89,65 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "collects config load paths from Git without losing Cyrillic names" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-config-load-paths-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf\Enums") | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf\CommonModules") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Value "<Configuration />" -Encoding UTF8
+
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot config core.quotepath true
+            & git -C $tempRoot add src/cf/Configuration.xml
+            & git -C $tempRoot commit -m "base config" *> $null
+            $baseCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Value "<Configuration changed=`"true`" />" -Encoding UTF8
+            $trackedEnumName = "упо_ПоведениеПриЗагрузкеНерассчитаннойВерсии.xml"
+            $untrackedEnumName = "упо_ПоведениеПриЗаписиНерассчитаннойВерсии.xml"
+            $spacedModuleName = "Модуль с пробелом.xml"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Enums\$trackedEnumName") -Value "<Enum />" -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Enums\$untrackedEnumName") -Value "<Enum />" -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\CommonModules\$spacedModuleName") -Value "<CommonModule />" -Encoding UTF8
+            & git -C $tempRoot add -- "src/cf/Enums/$trackedEnumName" "src/cf/CommonModules/$spacedModuleName"
+
+            $changeSet = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Get-ConfigLoadChangeSet -State ([pscustomobject]@{ createdFromCommit = $baseCommit }) -ExportPath "src/cf"
+            }
+
+            $expectedFiles = @(
+                "Configuration.xml",
+                (Join-Path "CommonModules" $spacedModuleName),
+                (Join-Path "Enums" $trackedEnumName),
+                (Join-Path "Enums" $untrackedEnumName)
+            )
+            foreach ($expectedFile in $expectedFiles) {
+                $changeSet.files | Should -Contain $expectedFile
+            }
+
+            foreach ($file in $changeSet.files) {
+                $file | Should -Not -Match '^"'
+                $file | Should -Not -Match '\\3(20|21)'
+                $file -replace "\\", "/" | Should -Not -Match "^src/cf/"
+            }
+
+            $oldQuotedEscapedPath = '"src/cf/Enums/\321\203.xml"'
+            $converted = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                ConvertTo-ConfigLoadRelativePath -RepoPath $oldQuotedEscapedPath -ExportPath "src/cf"
+            }
+            $converted | Should -BeNullOrEmpty
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "keeps Markdown files valid UTF-8 without mojibake markers" {
         $strictUtf8 = New-Object System.Text.UTF8Encoding $false, $true
         $mojibakePattern = "Рџ|Рђ|Р’|Рљ|Рњ|Рќ|Рћ|РЎ|Рў|РЈ|РЅРµС‚|СЂ|СЃ|С‚|Р°|Рµ|Рё|Рѕ"
@@ -2834,13 +2893,15 @@ local after
     It "patches Data MCP tools XML from vcvalidatequery to validatequery" {
         $patched = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-            Convert-DataMcpToolsXmlText -Text @"
-<ДанныеОбмена>
-  <CatalogObject.APA_Инструменты>
+            $catalogName = Get-DataMcpToolsCatalogLocalName
+            $xml = @"
+<DataExchange>
+  <$catalogName>
     <Description>vcvalidatequery</Description>
-  </CatalogObject.APA_Инструменты>
-</ДанныеОбмена>
+  </$catalogName>
+</DataExchange>
 "@
+            Convert-DataMcpToolsXmlText -Text $xml
         }
 
         $patched | Should -Match "<Description>validatequery</Description>"
@@ -2973,7 +3034,7 @@ url = "http://localhost:9999/mcp"
                 function Ensure-DataMcpPackage {
                     return [pscustomobject]@{
                         cfePath = "C:\fake\OneMCP.cfe"
-                        toolsXmlPath = "C:\fake\APA_Инструменты.xml"
+                        toolsXmlPath = "C:\fake\tools.xml"
                     }
                 }
                 function Install-DataMcpExtension {
@@ -3005,7 +3066,7 @@ url = "http://localhost:9999/mcp"
                 $updates.dataMcpStatus | Should -Be "running"
                 $updates.dataMcpEndpointUrl | Should -Be "http://localhost/published/hs/mcp"
                 $script:DataMcpCfePath | Should -Be "C:\fake\OneMCP.cfe"
-                $script:DataMcpToolsXmlPath | Should -Be "C:\fake\APA_Инструменты.xml"
+                $script:DataMcpToolsXmlPath | Should -Be "C:\fake\tools.xml"
             }
 
             $codexText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".codex\config.toml")
