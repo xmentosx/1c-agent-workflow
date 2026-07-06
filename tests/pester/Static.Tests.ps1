@@ -964,7 +964,95 @@ Describe "1C agent workflow static checks" {
                 @($registry.hosts | Where-Object { $_.hostId -eq "host-b" }).Count | Should -Be 1
                 @($registry.servers | Where-Object { $_.hostId -eq "host-a" -and $_.embeddingModel -eq "intfloat/multilingual-e5-base" }).Count | Should -Be 1
                 ($registry.servers | Where-Object { $_.hostId -eq "host-a" -and $_.id -eq "code" } | Select-Object -First 1).clientNames.aiRules1c | Should -Be "1c-code-metadata-mcp"
+                (Read-HostState -Config $hostConfig).servers[0].clientNames.aiRules1c | Should -Be "1c-code-metadata-mcp"
                 @($registry.configurations | Where-Object { $_.hostId -eq "host-a" -and $_.configurationName -eq "Trade A Name" }).Count | Should -Be 1
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "refreshes standalone publish state statuses without starting containers or changing index metadata" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-publish-refresh-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $registryPath = Join-Path $tempRoot "state\registry\registry.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $registryPath) | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "host-a"
+                baseUrl = "http://host-a"
+                stateRoot = (Join-Path $tempRoot "state")
+                embedding = [ordered]@{ model = "intfloat/multilingual-e5-base" }
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            Set-Content -LiteralPath $registryPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 2; hosts = @(); configurations = @(); servers = @() } | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:PublishDockerCalls = New-Object System.Collections.Generic.List[string]
+                function Invoke-DockerCommandCapture {
+                    param([string[]]$Arguments, [int]$TimeoutSec = 300, [string]$Description = "docker command")
+                    $script:PublishDockerCalls.Add("capture:$($Arguments -join ' ')")
+                    $name = $Arguments[-1]
+                    switch ($name) {
+                        "itl-trade-code" { return @("exited") }
+                        "itl-trade-graph" { return @("running") }
+                        "itl-1c-docs" { throw "No such object: $name" }
+                        "itl-1c-ssl" { return @("running") }
+                        "itl-1c-syntax" { throw "Cannot connect to the Docker daemon" }
+                        default { throw "Unexpected docker inspect for $name" }
+                    }
+                }
+                function Invoke-DockerCommandChecked {
+                    param([string[]]$Arguments, [int]$TimeoutSec = 300, [string]$Description = "docker command")
+                    $script:PublishDockerCalls.Add("checked:$($Arguments -join ' ')")
+                    throw "publish refresh must not run docker checked commands"
+                }
+                function Test-HostTcpPortOpen {
+                    param([int]$Port, [int]$TimeoutMilliseconds = 500)
+                    return ($Port -eq 18004)
+                }
+
+                $hostConfig = Read-JsonFile -Path $configPath
+                $state = [ordered]@{
+                    schemaVersion = 1
+                    configurations = @()
+                    servers = @(
+                        [ordered]@{ id = "code"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-code"; containerName = "itl-trade-code"; hostPort = 18100; url = "http://host-a:18100/mcp"; image = "image-code"; sourceFingerprint = "fp-code"; reportHash = "hash-code"; indexedAt = "2026-07-05T00:00:00Z" },
+                        [ordered]@{ id = "graph"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-graph"; containerName = "itl-trade-graph"; hostPort = 18101; url = "http://host-a:18101/mcp"; image = "image-graph"; sourceFingerprint = "fp-graph"; reportHash = "hash-graph"; indexedAt = "2026-07-05T01:00:00Z" },
+                        [ordered]@{ id = "docs"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-docs"; containerName = "itl-1c-docs"; hostPort = 18000; url = "http://host-a:18000/mcp"; image = "image-docs" },
+                        [ordered]@{ id = "ssl"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-ssl"; containerName = "itl-1c-ssl"; hostPort = 18004; url = "http://host-a:18004/mcp"; image = "image-ssl" },
+                        [ordered]@{ id = "syntax"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-syntax"; containerName = "itl-1c-syntax"; hostPort = 18003; url = "http://host-a:18003/mcp"; image = "image-syntax" }
+                    )
+                }
+                Write-HostState -Config $hostConfig -State $state
+                Write-MergedRegistryPayload -Config $hostConfig -RegistryPath $registryPath -PublishedAt "2026-07-05T00:00:00Z"
+
+                $updatedState = Read-HostState -Config $hostConfig
+                $registry = Read-JsonFile -Path $registryPath
+                $stateServers = @($updatedState.servers)
+                $registryServers = @($registry.servers | Where-Object { $_.hostId -eq "host-a" })
+
+                ($stateServers | Where-Object { $_.id -eq "code" } | Select-Object -First 1).status | Should -Be "stopped"
+                ($stateServers | Where-Object { $_.id -eq "graph" } | Select-Object -First 1).status | Should -Be "unreachable"
+                ($stateServers | Where-Object { $_.id -eq "docs" } | Select-Object -First 1).status | Should -Be "missing"
+                ($stateServers | Where-Object { $_.id -eq "ssl" } | Select-Object -First 1).status | Should -Be "running"
+                ($stateServers | Where-Object { $_.id -eq "syntax" } | Select-Object -First 1).status | Should -Be "unknown"
+
+                ($registryServers | Where-Object { $_.id -eq "code" } | Select-Object -First 1).status | Should -Be "stopped"
+                ($registryServers | Where-Object { $_.id -eq "graph" } | Select-Object -First 1).status | Should -Be "unreachable"
+                ($registryServers | Where-Object { $_.id -eq "docs" } | Select-Object -First 1).status | Should -Be "missing"
+                ($registryServers | Where-Object { $_.id -eq "ssl" } | Select-Object -First 1).status | Should -Be "running"
+                ($registryServers | Where-Object { $_.id -eq "syntax" } | Select-Object -First 1).status | Should -Be "unknown"
+                ($registryServers | Where-Object { $_.id -eq "code" } | Select-Object -First 1).clientNames.aiRules1c | Should -Be "1c-code-metadata-mcp"
+                ($registryServers | Where-Object { $_.id -eq "graph" } | Select-Object -First 1).sourceFingerprint | Should -Be "fp-graph"
+                ($registryServers | Where-Object { $_.id -eq "graph" } | Select-Object -First 1).reportHash | Should -Be "hash-graph"
+                ($registryServers | Where-Object { $_.id -eq "graph" } | Select-Object -First 1).indexedAt | Should -Be "2026-07-05T01:00:00Z"
+                @($script:PublishDockerCalls | Where-Object { $_ -match "checked:| start | run | compose up" }).Count | Should -Be 0
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -2762,6 +2850,7 @@ url = "http://localhost:9999/mcp"
                 . $HelperPath -ProjectRoot $tempRoot -Action help -McpServerId code -McpProvider remote -McpConfigId trade *> $null
                 $endpoints = @(
                     [pscustomobject]@{ id = "docs"; name = "itl-1c-docs"; url = "http://127.0.0.1:18000/mcp"; scope = "global"; provider = "remote" },
+                    [pscustomobject]@{ id = "code"; name = "itl-dead-code"; url = "http://127.0.0.1:18102/mcp"; scope = "project"; provider = "remote"; configId = "trade"; status = "stopped"; clientNames = [pscustomobject]@{ aiRules1c = "1c-code-metadata-mcp" } },
                     [pscustomobject]@{ id = "code"; name = "itl-trade-code"; url = "http://127.0.0.1:18100/mcp"; scope = "project"; provider = "remote"; configId = "trade"; clientNames = [pscustomobject]@{ aiRules1c = "1c-code-metadata-mcp" } },
                     [pscustomobject]@{ id = "code"; name = "itl-erp-code"; url = "http://127.0.0.1:18101/mcp"; scope = "project"; provider = "remote"; configId = "erp"; clientNames = [pscustomobject]@{ aiRules1c = "1c-code-metadata-mcp" } }
                 )
@@ -2776,6 +2865,7 @@ url = "http://localhost:9999/mcp"
             $codexText | Should -Match ([regex]::Escape('[mcp_servers."1c-code-metadata-mcp"]'))
             $codexText | Should -Match "http://127.0.0.1:18100/mcp"
             $codexText | Should -Not -Match "http://127.0.0.1:18101/mcp"
+            $codexText | Should -Not -Match "http://127.0.0.1:18102/mcp"
             @([regex]::Matches($codexText, [regex]::Escape("# >>> vibecoding1c-mcp project"))).Count | Should -Be 1
 
             $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json

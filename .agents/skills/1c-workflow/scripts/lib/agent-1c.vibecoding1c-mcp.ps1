@@ -666,6 +666,29 @@ function Get-Vibecoding1cMcpSelectedHostId {
     return [string](Get-Vibecoding1cMcpObjectValue -Object $Selection -Name "remoteHostId" -Default "")
 }
 
+function Get-Vibecoding1cMcpEndpointUnavailableStatus {
+    param([object]$Endpoint)
+
+    $badStatuses = @("stopped", "missing", "unreachable", "unknown", "remote-disconnected")
+    $status = ([string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "status" -Default "")).Trim().ToLowerInvariant()
+    if ($status -and $badStatuses -contains $status) {
+        return $status
+    }
+
+    $health = ([string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "health" -Default "")).Trim().ToLowerInvariant()
+    if ($health -and $health -ne "unknown" -and $badStatuses -contains $health) {
+        return $health
+    }
+
+    return ""
+}
+
+function Test-Vibecoding1cMcpEndpointUsableForClientConfig {
+    param([object]$Endpoint)
+
+    return -not [bool](Get-Vibecoding1cMcpEndpointUnavailableStatus -Endpoint $Endpoint)
+}
+
 function Format-Vibecoding1cMcpRemoteEndpointInfo {
     param([object]$Endpoint)
 
@@ -673,6 +696,7 @@ function Format-Vibecoding1cMcpRemoteEndpointInfo {
     $publishedAt = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "hostPublishedAt" -Default (Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "publishedAt" -Default ""))
     $url = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "url" -Default "")
     $configId = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "configId" -Default "")
+    $status = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "status" -Default "")
     $health = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "health" -Default "")
     $configName = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "configurationName" -Default "")
     $configVersion = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "configurationVersion" -Default "")
@@ -681,6 +705,7 @@ function Format-Vibecoding1cMcpRemoteEndpointInfo {
     $details = @("hostId=$hostId")
     if ($publishedAt) { $details += "publishedAt=$publishedAt" }
     if ($url) { $details += "url=$url" }
+    if ($status) { $details += "status=$status" }
     if ($health) { $details += "health=$health" }
     if ($configId) { $details += "configId=$configId" }
     if ($configName) {
@@ -822,7 +847,8 @@ function Get-Vibecoding1cMcpSelectionCompleteness {
                 $registryReady = $true
             }
             $candidates = @(Get-Vibecoding1cMcpRemoteEndpointCandidates -Server $server -Selection $Selection -ConfigId $configId)
-            if ($candidates.Count -gt 1) {
+            $usableCandidates = @($candidates | Where-Object { Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_ })
+            if ($usableCandidates.Count -gt 1) {
                 $reasons += "$id/$scope remote provider has multiple matching hosts and no hostId"
             }
         }
@@ -1035,6 +1061,12 @@ function New-Vibecoding1cMcpRemoteRuntime {
 
     $candidates = @(Get-Vibecoding1cMcpRemoteEndpointCandidates -Server $Server -Selection $Selection -ConfigId $configId)
     if ($candidates.Count -gt 1) {
+        $usableCandidates = @($candidates | Where-Object { Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_ })
+        if ($usableCandidates.Count -gt 0) {
+            $candidates = $usableCandidates
+        }
+    }
+    if ($candidates.Count -gt 1) {
         if ($AllowPrompt) {
             $chosenHostId = Read-Vibecoding1cMcpRemoteHostChoice -Candidates $candidates -ServerId $id -ConfigId $configId
             $candidates = @($candidates | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "hostId" -Default "") -eq $chosenHostId })
@@ -1068,6 +1100,7 @@ function New-Vibecoding1cMcpRemoteRuntime {
             hostPublishedAt = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "hostPublishedAt" -Default (Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "publishedAt" -Default ""))
             hostBaseUrl = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "hostBaseUrl" -Default "")
             configId = $configId
+            status = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "status" -Default "")
             health = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "health" -Default "")
             platformVersion = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "platformVersion" -Default "")
             bspVersion = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "bspVersion" -Default "")
@@ -2370,6 +2403,14 @@ function Start-Vibecoding1cMcp {
                 continue
             }
             $runtime | Add-Member -NotePropertyName freshness -NotePropertyValue (Get-Vibecoding1cMcpEndpointFreshness -Endpoint $runtime) -Force
+            $unavailableStatus = Get-Vibecoding1cMcpEndpointUnavailableStatus -Endpoint $runtime
+            if ($unavailableStatus) {
+                Set-Vibecoding1cMcpEndpointState -Runtime $runtime -Status $unavailableStatus
+                $runtimeHostId = [string](Get-Vibecoding1cMcpObjectValue -Object $runtime -Name "hostId" -Default "")
+                $runtimeHostSuffix = if ($runtimeHostId) { " hostId=$runtimeHostId" } else { "" }
+                Write-Host "Skipped unavailable remote vibecoding1c MCP endpoint: $($runtime.name)$runtimeHostSuffix status=$unavailableStatus -> $($runtime.url)"
+                continue
+            }
             Set-Vibecoding1cMcpEndpointState -Runtime $runtime -Status "running"
             $runtimeHostId = [string](Get-Vibecoding1cMcpObjectValue -Object $runtime -Name "hostId" -Default "")
             $runtimeHostSuffix = if ($runtimeHostId) { " hostId=$runtimeHostId" } else { "" }
@@ -2535,8 +2576,7 @@ function Get-Vibecoding1cMcpCurrentEndpoints {
         if (-not $url) {
             continue
         }
-        $status = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "status" -Default "running")
-        if ($status -eq "stopped" -or $status -eq "remote-disconnected") {
+        if (-not (Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $server)) {
             continue
         }
         $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "scope" -Default "")
@@ -2809,7 +2849,7 @@ function Select-Vibecoding1cMcpClientConfigEndpoints {
     param([object[]]$Endpoints)
 
     $selection = Read-Vibecoding1cMcpSelection
-    $selected = @($Endpoints | Where-Object { Test-Vibecoding1cMcpEndpointMatchesSelection -Endpoint $_ -Selection $selection })
+    $selected = @($Endpoints | Where-Object { (Test-Vibecoding1cMcpEndpointMatchesSelection -Endpoint $_ -Selection $selection) -and (Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_) })
     $byClientName = [ordered]@{}
     foreach ($endpoint in @($selected | Sort-Object @{ Expression = { Get-Vibecoding1cMcpEndpointClientName -Endpoint $_ } }, @{ Expression = { Get-Vibecoding1cMcpObjectValue -Object $_ -Name "name" -Default "" } })) {
         $clientName = Get-Vibecoding1cMcpEndpointClientName -Endpoint $endpoint

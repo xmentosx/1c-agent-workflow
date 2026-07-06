@@ -1732,6 +1732,117 @@ function Get-McpClientNames {
     }
 }
 
+function Get-HostContainerPublishState {
+    param([string]$ContainerName)
+
+    if (-not $ContainerName) {
+        return "unknown"
+    }
+
+    try {
+        $state = @(Invoke-DockerCommandCapture -Arguments @("inspect", "-f", "{{.State.Status}}", $ContainerName) -TimeoutSec 60 -Description "docker inspect $ContainerName")
+        $value = [string]($state | Where-Object { $_ } | Select-Object -First 1)
+        if (-not $value) {
+            return "unknown"
+        }
+        return $value.Trim().ToLowerInvariant()
+    } catch {
+        $message = $_.Exception.Message
+        if ($message -match "No such (object|container)|not found") {
+            return "missing"
+        }
+        Write-Host "WARNING: Could not inspect Docker container '$ContainerName': $message"
+        return "unknown"
+    }
+}
+
+function Test-HostTcpPortOpen {
+    param(
+        [int]$Port,
+        [int]$TimeoutMilliseconds = 500
+    )
+
+    if ($Port -le 0) {
+        return $false
+    }
+
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        $task = $client.ConnectAsync("127.0.0.1", $Port)
+        if (-not $task.Wait($TimeoutMilliseconds)) {
+            return $false
+        }
+        return [bool]$client.Connected
+    } catch {
+        return $false
+    } finally {
+        $client.Dispose()
+    }
+}
+
+function Get-HostServerPublishStatus {
+    param([object]$Server)
+
+    $containerName = [string](Get-ObjectValue -Object $Server -Name "containerName" -Default "")
+    $containerState = Get-HostContainerPublishState -ContainerName $containerName
+    if ($containerState -eq "missing" -or $containerState -eq "unknown") {
+        return $containerState
+    }
+    if ($containerState -ne "running") {
+        return "stopped"
+    }
+
+    $hostPort = [int](Get-ObjectValue -Object $Server -Name "hostPort" -Default 0)
+    if (Test-HostTcpPortOpen -Port $hostPort) {
+        return "running"
+    }
+    return "unreachable"
+}
+
+function Update-HostStateForPublish {
+    param([object]$Config)
+
+    $state = Read-HostState -Config $Config
+    $stateHash = Convert-ToHash -Object $state
+    $servers = @()
+    $changed = $false
+
+    foreach ($server in As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @())) {
+        $serverHash = Convert-ToHash -Object $server
+        $id = [string](Get-ObjectValue -Object $serverHash -Name "id" -Default "")
+        $expectedNames = Get-McpClientNames -ServerId $id
+        $expectedAiRules1cName = [string](Get-ObjectValue -Object $expectedNames -Name "aiRules1c" -Default "")
+        if ($expectedAiRules1cName) {
+            $clientNames = Convert-ToHash -Object (Get-ObjectValue -Object $serverHash -Name "clientNames" -Default ([ordered]@{}))
+            $currentAiRules1cName = [string](Get-ObjectValue -Object $clientNames -Name "aiRules1c" -Default "")
+            if ($currentAiRules1cName -ne $expectedAiRules1cName) {
+                $clientNames["aiRules1c"] = $expectedAiRules1cName
+                $serverHash["clientNames"] = $clientNames
+                $changed = $true
+            }
+        }
+
+        $publishStatus = Get-HostServerPublishStatus -Server $serverHash
+        $currentStatus = [string](Get-ObjectValue -Object $serverHash -Name "status" -Default "")
+        if ($currentStatus -ne $publishStatus) {
+            $serverHash["status"] = $publishStatus
+            $changed = $true
+        }
+        $currentHealth = [string](Get-ObjectValue -Object $serverHash -Name "health" -Default "")
+        if ($currentHealth -ne $publishStatus) {
+            $serverHash["health"] = $publishStatus
+            $changed = $true
+        }
+        $servers += $serverHash
+    }
+
+    if ($changed) {
+        $stateHash["servers"] = $servers
+        Write-HostState -Config $Config -State $stateHash
+        Write-Host "Host state refreshed for registry publish."
+    }
+}
+
 function New-ServerRuntime {
     param(
         [object]$Config,
@@ -2029,6 +2140,7 @@ function ConvertTo-RegistryServers {
             name = [string](Get-ObjectValue -Object $server -Name "name" -Default "")
             clientNames = $clientNames
             url = [string](Get-ObjectValue -Object $server -Name "url" -Default "")
+            status = [string](Get-ObjectValue -Object $server -Name "status" -Default "unknown")
             health = [string](Get-ObjectValue -Object $server -Name "health" -Default "unknown")
             image = [string](Get-ObjectValue -Object $server -Name "image" -Default "")
             platformVersion = [string](Get-ObjectValue -Object $server -Name "platformVersion" -Default "")
@@ -2152,6 +2264,7 @@ function Write-MergedRegistryPayload {
         [string]$RegistryPath,
         [string]$PublishedAt
     )
+    Update-HostStateForPublish -Config $Config
     $state = Read-HostState -Config $Config
     $hostId = Get-HostId -Config $Config
     $currentPayload = Read-RegistryPayload -RegistryPath $RegistryPath
