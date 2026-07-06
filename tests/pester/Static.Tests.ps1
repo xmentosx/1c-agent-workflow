@@ -148,6 +148,102 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "detects workflow helper script changes after a merge base commit" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-helper-change-test-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agents\skills\1c-workflow\scripts\lib") | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Value "base" -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Value "<Configuration />" -Encoding UTF8
+
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            $baseCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Value "<Configuration changed=`"true`" />" -Encoding UTF8
+            & git -C $tempRoot add src/cf/Configuration.xml
+            & git -C $tempRoot commit -m "config only" *> $null
+            $configCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+            $onlyConfigChanged = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Test-WorkflowHelperChangedSince -BeforeCommit $baseCommit
+            }
+            $onlyConfigChanged | Should -BeFalse
+
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Value "changed" -Encoding UTF8
+            & git -C $tempRoot add .agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1
+            & git -C $tempRoot commit -m "helper change" *> $null
+            $helperChanged = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Test-WorkflowHelperChangedSince -BeforeCommit $configCommit
+            }
+            $helperChanged | Should -BeTrue
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "restarts after refresh and close merges before loading config files" {
+        foreach ($functionName in @("Refresh-DevBranch", "Close-DevBranch")) {
+            $match = [regex]::Match($HelperText, "(?s)function\s+$functionName\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
+            $match.Success | Should -Be $true
+            $body = $match.Groups["body"].Value
+            $mergeIndex = $body.IndexOf('Invoke-Git @("merge", (Get-MasterBranch))')
+            $guardIndex = $body.IndexOf('Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit')
+            $loadIndex = $body.IndexOf('Load-ConfigFromFiles')
+
+            $mergeIndex | Should -BeGreaterOrEqual 0
+            $guardIndex | Should -BeGreaterThan $mergeIndex
+            $loadIndex | Should -BeGreaterThan $guardIndex
+        }
+    }
+
+    It "preserves helper arguments needed for automatic reexec" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-reexec-args-test-" + [guid]::NewGuid().ToString("N"))
+        $statusPath = Join-Path $tempRoot "status.json"
+        $logPath = Join-Path $tempRoot "run.log"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $args = & {
+                . $HelperPath `
+                    -ProjectRoot $tempRoot `
+                    -Action help `
+                    -DevBranchName "branch3" `
+                    -DevBranch "itldev/branch3" `
+                    -RunStatusPath $statusPath `
+                    -RunLogPath $logPath `
+                    -AllowUnverifiedClose *> $null
+                Get-Agent1cReexecArguments
+            }
+
+            $args | Should -Contain "-Action"
+            $args | Should -Contain "help"
+            $args | Should -Contain "-ProjectRoot"
+            $args | Should -Contain ([System.IO.Path]::GetFullPath($tempRoot))
+            $args | Should -Contain "-DevBranchName"
+            $args | Should -Contain "branch3"
+            $args | Should -Contain "-DevBranch"
+            $args | Should -Contain "itldev/branch3"
+            $args | Should -Contain "-RunStatusPath"
+            $args | Should -Contain $statusPath
+            $args | Should -Contain "-RunLogPath"
+            $args | Should -Contain $logPath
+            $args | Should -Contain "-AllowUnverifiedClose"
+            $args | Should -Not -Contain "-AllowUnverifiedResult"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "keeps Markdown files valid UTF-8 without mojibake markers" {
         $strictUtf8 = New-Object System.Text.UTF8Encoding $false, $true
         $mojibakePattern = "Рџ|Рђ|Р’|Рљ|Рњ|Рќ|Рћ|РЎ|Рў|РЈ|РЅРµС‚|СЂ|СЃ|С‚|Р°|Рµ|Рё|Рѕ"

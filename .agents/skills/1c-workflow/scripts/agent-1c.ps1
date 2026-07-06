@@ -54,6 +54,70 @@ if (-not $ConfigPath) {
     $ConfigPath = Join-Path $ProjectRoot ".agent-1c\project.json"
 }
 
+function Add-Agent1cReexecArgument {
+    param(
+        [System.Collections.Generic.List[string]]$Arguments,
+        [string]$Name,
+        [AllowNull()][object]$Value
+    )
+
+    if ($null -eq $Value) {
+        return
+    }
+    if ($Value -is [System.Management.Automation.SwitchParameter]) {
+        if ($Value.IsPresent) {
+            $Arguments.Add("-$Name") | Out-Null
+        }
+        return
+    }
+
+    $text = [string]$Value
+    if ($text -eq "") {
+        return
+    }
+
+    $Arguments.Add("-$Name") | Out-Null
+    $Arguments.Add($text) | Out-Null
+}
+
+function Get-Agent1cReexecArguments {
+    $arguments = [System.Collections.Generic.List[string]]::new()
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "Action" -Value $Action
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "ProjectRoot" -Value ([System.IO.Path]::GetFullPath($ProjectRoot))
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "ConfigPath" -Value ([System.IO.Path]::GetFullPath($ConfigPath))
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranchName" -Value $DevBranchName
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranch" -Value $DevBranch
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranchInfoBasePath" -Value $DevBranchInfoBasePath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranchWorktreePath" -Value $DevBranchWorktreePath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "ExtensionName" -Value $ExtensionName
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaFeaturePath" -Value $VanessaFeaturePath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaFilterTags" -Value $VanessaFilterTags
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaTestPort" -Value $(if ($VanessaTestPort -ne 0) { $VanessaTestPort } else { $null })
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaMcpPort" -Value $(if ($VanessaMcpPort -ne 0) { $VanessaMcpPort } else { $null })
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "McpDistributionPath" -Value $McpDistributionPath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "McpScope" -Value $McpScope
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "McpServerId" -Value $McpServerId
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "McpProvider" -Value $McpProvider
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "McpConfigId" -Value $McpConfigId
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "McpHostId" -Value $McpHostId
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "McpLocalScope" -Value $McpLocalScope
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "InitMode" -Value $InitMode
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "InitAnswersPath" -Value $InitAnswersPath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "DependencyMode" -Value $DependencyMode
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AgentTarget" -Value $AgentTarget
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "PublishToApache" -Value $PublishToApache
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "Force" -Value $Force
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "SkipAiRules" -Value $SkipAiRules
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AllowUnverifiedResult" -Value $AllowUnverifiedResult
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AllowUnverifiedClose" -Value $AllowUnverifiedClose
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "UseCurrentWorktree" -Value $UseCurrentWorktree
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "OfferOpenAgent" -Value $OfferOpenAgent
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "RunStatusPath" -Value $RunStatusPath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "RunLogPath" -Value $RunLogPath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "PauseOnFailure" -Value $PauseOnFailure
+    return [string[]]$arguments.ToArray()
+}
+
 $script:LastLogPath = $null
 $script:LastProcessId = 0
 $script:LastProcessTimedOut = $false
@@ -67,6 +131,8 @@ $script:ToolsManifest = $null
 $script:ToolsManifestLoaded = $false
 $script:InitVibecoding1cMcpSetupRequested = $false
 $script:DependencyLockPath = Join-Path $script:ProjectRoot ".agent-1c\dependency-lock.json"
+$script:Agent1cScriptPath = [System.IO.Path]::GetFullPath($PSCommandPath)
+$script:Agent1cReexecArguments = Get-Agent1cReexecArguments
 
 $script:Agent1cScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $script:Agent1cLibRoot = Join-Path $script:Agent1cScriptRoot "lib"

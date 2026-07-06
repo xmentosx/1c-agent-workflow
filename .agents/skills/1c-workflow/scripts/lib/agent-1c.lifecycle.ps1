@@ -189,6 +189,38 @@ function Get-GitPathList {
     return @($text -split ([string][char]0) | Where-Object { $_ })
 }
 
+function Test-WorkflowHelperChangedSince {
+    param([string]$BeforeCommit)
+
+    if ([string]::IsNullOrWhiteSpace($BeforeCommit)) {
+        return $false
+    }
+
+    $changed = @(Get-GitOutput @("diff", "--name-only", $BeforeCommit, "HEAD", "--", ".agents/skills/1c-workflow/scripts"))
+    return (@($changed | Where-Object { $_ }).Count -gt 0)
+}
+
+function Restart-Agent1cAfterWorkflowHelperUpdate {
+    Write-Host "ITL workflow helper scripts changed during merge. Restarting helper in a fresh PowerShell process before continuing."
+    $arguments = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $script:Agent1cScriptPath
+    ) + @($script:Agent1cReexecArguments)
+
+    & powershell @arguments
+    $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 }
+    exit $exitCode
+}
+
+function Restart-Agent1cIfWorkflowHelperChangedSince {
+    param([string]$BeforeCommit)
+
+    if (Test-WorkflowHelperChangedSince -BeforeCommit $BeforeCommit) {
+        Restart-Agent1cAfterWorkflowHelperUpdate
+    }
+}
+
 function Get-ConfigLoadChangeSet {
     param(
         [object]$State,
@@ -2086,7 +2118,9 @@ function Refresh-DevBranch {
     if ((Get-CurrentBranch) -ne $state.devBranch) {
         Invoke-Git @("checkout", $state.devBranch)
     }
+    $beforeMergeCommit = Get-CurrentCommit
     Invoke-Git @("merge", (Get-MasterBranch))
+    Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
     $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
@@ -2293,7 +2327,9 @@ function Close-DevBranch {
     if ((Get-CurrentBranch) -ne $state.devBranch) {
         Invoke-Git @("checkout", $state.devBranch)
     }
+    $beforeMergeCommit = Get-CurrentCommit
     Invoke-Git @("merge", (Get-MasterBranch))
+    Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit
     Sync-DevBranchContextToDotEnv -State $state
 
     $kind = Get-DevBranchKind -State $state
