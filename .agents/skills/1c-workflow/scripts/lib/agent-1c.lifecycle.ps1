@@ -651,6 +651,20 @@ function Get-AiRules1cTomlMcpManagedBy {
     return ""
 }
 
+function Test-TextIndexInsideVibecoding1cMcpManagedBlock {
+    param(
+        [string]$Text,
+        [int]$Index
+    )
+
+    foreach ($match in [regex]::Matches($Text, "(?ms)^# >>> vibecoding1c-mcp\b.*?^# <<< vibecoding1c-mcp\b.*?(?:\r?\n|$)")) {
+        if ($Index -ge $match.Index -and $Index -lt ($match.Index + $match.Length)) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Remove-AiRules1cCodexMcpEntries {
     param([string[]]$ServerIds)
 
@@ -670,6 +684,10 @@ function Remove-AiRules1cCodexMcpEntries {
         foreach ($pattern in $patterns) {
             $matches = @([regex]::Matches($text, $pattern) | Sort-Object Index -Descending)
             foreach ($match in $matches) {
+                if (Test-TextIndexInsideVibecoding1cMcpManagedBlock -Text $text -Index $match.Index) {
+                    continue
+                }
+
                 $managedBy = Get-AiRules1cTomlMcpManagedBy -SectionText $match.Value
                 if (-not (Test-AiRules1cMcpEntryCanBeRemoved -ManagedBy $managedBy)) {
                     continue

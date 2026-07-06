@@ -963,6 +963,7 @@ Describe "1C agent workflow static checks" {
                 @($registry.hosts).Count | Should -Be 2
                 @($registry.hosts | Where-Object { $_.hostId -eq "host-b" }).Count | Should -Be 1
                 @($registry.servers | Where-Object { $_.hostId -eq "host-a" -and $_.embeddingModel -eq "intfloat/multilingual-e5-base" }).Count | Should -Be 1
+                ($registry.servers | Where-Object { $_.hostId -eq "host-a" -and $_.id -eq "code" } | Select-Object -First 1).clientNames.aiRules1c | Should -Be "1c-code-metadata-mcp"
                 @($registry.configurations | Where-Object { $_.hostId -eq "host-a" -and $_.configurationName -eq "Trade A Name" }).Count | Should -Be 1
             }
         } finally {
@@ -2355,7 +2356,7 @@ enabled = true
 managedBy = "external-mcp"
 
 # >>> vibecoding1c-mcp project
-[mcp_servers."itl-demo-code"]
+[mcp_servers."1c-code-metadata-mcp"]
 url = "http://127.0.0.1:18100/mcp"
 enabled = true
 managedBy = "vibecoding1c-mcp"
@@ -2394,6 +2395,13 @@ enabled = true
       "managedBy": "vibecoding1c-mcp",
       "family": "vibecoding1c"
     },
+    "1c-graph-metadata-mcp": {
+      "type": "remote",
+      "url": "http://127.0.0.1:18101/mcp",
+      "enabled": true,
+      "managedBy": "vibecoding1c-mcp",
+      "family": "vibecoding1c"
+    },
     "custom-tool": {
       "type": "remote",
       "url": "http://localhost:9999/mcp",
@@ -2411,12 +2419,12 @@ enabled = true
             }
 
             $codexText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".codex\config.toml")
-            $codexText | Should -Not -Match "1c-code-metadata-mcp"
+            $codexText | Should -Not -Match "http://localhost:8000/mcp"
+            $codexText | Should -Match ([regex]::Escape('[mcp_servers."1c-code-metadata-mcp"]'))
             $codexText | Should -Match "1c-ssl-mcp"
             $codexText | Should -Match "external-mcp"
             $codexText | Should -Match ([regex]::Escape("# >>> vibecoding1c-mcp project"))
             $codexText | Should -Match ([regex]::Escape("# <<< vibecoding1c-mcp project"))
-            $codexText | Should -Match ([regex]::Escape('[mcp_servers."itl-demo-code"]'))
             $codexText | Should -Match ([regex]::Escape('[mcp_servers."custom-tool"]'))
 
             $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
@@ -2424,6 +2432,7 @@ enabled = true
             $kilo.mcp.PSObject.Properties["1C-docs-mcp"] | Should -BeNullOrEmpty
             $kilo.mcp.'1c-ssl-mcp'.managedBy | Should -Be "external-mcp"
             $kilo.mcp.'itl-demo-code'.managedBy | Should -Be "vibecoding1c-mcp"
+            $kilo.mcp.'1c-graph-metadata-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
             $kilo.mcp.'custom-tool'.managedBy | Should -Be "external-mcp"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -2750,10 +2759,11 @@ url = "http://localhost:9999/mcp"
 "@ -Encoding UTF8
 
             & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                . $HelperPath -ProjectRoot $tempRoot -Action help -McpServerId code -McpProvider remote -McpConfigId trade *> $null
                 $endpoints = @(
-                    [pscustomobject]@{ name = "itl-1c-docs"; url = "http://127.0.0.1:18000/mcp"; scope = "global" },
-                    [pscustomobject]@{ name = "itl-demo-code"; url = "http://127.0.0.1:18100/mcp"; scope = "project" }
+                    [pscustomobject]@{ id = "docs"; name = "itl-1c-docs"; url = "http://127.0.0.1:18000/mcp"; scope = "global"; provider = "remote" },
+                    [pscustomobject]@{ id = "code"; name = "itl-trade-code"; url = "http://127.0.0.1:18100/mcp"; scope = "project"; provider = "remote"; configId = "trade"; clientNames = [pscustomobject]@{ aiRules1c = "1c-code-metadata-mcp" } },
+                    [pscustomobject]@{ id = "code"; name = "itl-erp-code"; url = "http://127.0.0.1:18101/mcp"; scope = "project"; provider = "remote"; configId = "erp"; clientNames = [pscustomobject]@{ aiRules1c = "1c-code-metadata-mcp" } }
                 )
                 Write-Vibecoding1cMcpCodexConfig -Path (Join-Path $tempRoot ".codex\config.toml") -BlockId "project" -Endpoints $endpoints
                 Write-Vibecoding1cMcpCodexConfig -Path (Join-Path $tempRoot ".codex\config.toml") -BlockId "project" -Endpoints $endpoints
@@ -2762,7 +2772,10 @@ url = "http://localhost:9999/mcp"
 
             $codexText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".codex\config.toml")
             $codexText | Should -Match "mcp_servers.unrelated"
-            $codexText | Should -Match ([regex]::Escape('[mcp_servers."itl-demo-code"]'))
+            $codexText | Should -Match ([regex]::Escape('[mcp_servers."1C-docs-mcp"]'))
+            $codexText | Should -Match ([regex]::Escape('[mcp_servers."1c-code-metadata-mcp"]'))
+            $codexText | Should -Match "http://127.0.0.1:18100/mcp"
+            $codexText | Should -Not -Match "http://127.0.0.1:18101/mcp"
             @([regex]::Matches($codexText, [regex]::Escape("# >>> vibecoding1c-mcp project"))).Count | Should -Be 1
 
             $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
@@ -2770,9 +2783,11 @@ url = "http://localhost:9999/mcp"
             $kilo.mcp.'external-tool'.url | Should -Be "http://localhost:9998/mcp"
             $kilo.mcp.'external-tool'.family | Should -Be "external"
             $kilo.mcp.PSObject.Properties["itl-old"] | Should -BeNullOrEmpty
-            $kilo.mcp.'itl-demo-code'.url | Should -Be "http://127.0.0.1:18100/mcp"
-            $kilo.mcp.'itl-demo-code'.managedBy | Should -Be "vibecoding1c-mcp"
-            $kilo.mcp.'itl-demo-code'.family | Should -Be "vibecoding1c"
+            $kilo.mcp.'1c-code-metadata-mcp'.url | Should -Be "http://127.0.0.1:18100/mcp"
+            $kilo.mcp.'1c-code-metadata-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
+            $kilo.mcp.'1c-code-metadata-mcp'.family | Should -Be "vibecoding1c"
+            $kilo.mcp.'1c-code-metadata-mcp'.logicalId | Should -Be "code"
+            $kilo.mcp.'1c-code-metadata-mcp'.registryName | Should -Be "itl-trade-code"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

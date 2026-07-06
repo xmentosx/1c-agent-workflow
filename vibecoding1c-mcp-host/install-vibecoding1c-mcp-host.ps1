@@ -1705,6 +1705,33 @@ function Expand-Template {
     return $Template.Replace("{projectSlug}", $ConfigId).Replace("{branchSlug}", "").Replace("{serverId}", $ServerId)
 }
 
+function Get-AiRules1cMcpClientName {
+    param([string]$ServerId)
+
+    switch ($ServerId) {
+        "docs" { return "1C-docs-mcp" }
+        "templates" { return "1c-templates-mcp" }
+        "syntax" { return "1c-syntax-checker-mcp" }
+        "codechecker" { return "1c-code-check-mcp" }
+        "ssl" { return "1c-ssl-mcp" }
+        "code" { return "1c-code-metadata-mcp" }
+        "graph" { return "1c-graph-metadata-mcp" }
+        default { return "" }
+    }
+}
+
+function Get-McpClientNames {
+    param([string]$ServerId)
+
+    $aiRules1cName = Get-AiRules1cMcpClientName -ServerId $ServerId
+    if (-not $aiRules1cName) {
+        return [ordered]@{}
+    }
+    return [ordered]@{
+        aiRules1c = $aiRules1cName
+    }
+}
+
 function New-ServerRuntime {
     param(
         [object]$Config,
@@ -1740,6 +1767,7 @@ function New-ServerRuntime {
         hostId = $hostId
         configId = $configId
         name = $name
+        clientNames = (Get-McpClientNames -ServerId $id)
         containerName = $containerName
         composeProject = (Expand-Template -Template $composeProjectTemplate -ConfigId $configId -ServerId $id)
         image = $image
@@ -1984,16 +2012,22 @@ function ConvertTo-RegistryServers {
     )
     $servers = @()
     foreach ($server in As-Array (Get-ObjectValue -Object $State -Name "servers" -Default @())) {
+        $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
+        $clientNames = Get-ObjectValue -Object $server -Name "clientNames" -Default $null
+        if ($null -eq $clientNames) {
+            $clientNames = Get-McpClientNames -ServerId $id
+        }
         $servers += [ordered]@{
             hostId = $HostId
             hostPublishedAt = $PublishedAt
             publishedAt = $PublishedAt
-            id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
+            id = $id
             scope = [string](Get-ObjectValue -Object $server -Name "scope" -Default "")
             family = "vibecoding1c"
             provider = "remote"
             configId = [string](Get-ObjectValue -Object $server -Name "configId" -Default "")
             name = [string](Get-ObjectValue -Object $server -Name "name" -Default "")
+            clientNames = $clientNames
             url = [string](Get-ObjectValue -Object $server -Name "url" -Default "")
             health = [string](Get-ObjectValue -Object $server -Name "health" -Default "unknown")
             image = [string](Get-ObjectValue -Object $server -Name "image" -Default "")
