@@ -2444,6 +2444,48 @@ JSON:
 "@
 }
 
+function Write-VanessaMcpKiloConfig {
+    param([object]$State)
+
+    $safeName = Get-StateValue -State $State -Name "safeDevBranchName" -Default (ConvertTo-SafeName (Get-StateValue -State $State -Name "devBranchName" -Default "dev-branch"))
+    $devBranchName = Get-StateValue -State $State -Name "devBranchName" -Default $safeName
+    $port = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaMcpPort" -Default 0)
+    $url = Get-StateValue -State $State -Name "vanessaMcpUrl" -Default $(if ($port -gt 0) { Get-VanessaMcpUrl -Port $port } else { "" })
+    if (-not $url) {
+        return
+    }
+
+    $path = Join-Path $script:ProjectRoot ".kilo\kilo.json"
+    $config = [ordered]@{}
+    if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) {
+        $current = Read-Utf8Text -Path $path | ConvertFrom-Json
+        $config = ConvertTo-Vibecoding1cMcpHashtable -Object $current
+    }
+
+    $mcp = [ordered]@{}
+    if ($config.Contains("mcp")) {
+        $mcp = ConvertTo-Vibecoding1cMcpHashtable -Object $config["mcp"]
+    }
+
+    $serverName = "VanessaAutomation-$safeName"
+    $mcp[$serverName] = [ordered]@{
+        type = "remote"
+        url = $url
+        enabled = $true
+        timeout = 15000
+        managedBy = "vanessa-mcp"
+        family = "vanessa"
+        scope = "branch"
+        devBranchName = $devBranchName
+        safeDevBranchName = $safeName
+    }
+
+    $config["mcp"] = $mcp
+    Write-Vibecoding1cMcpJsonFile -Path $path -Value $config
+    Write-Host "Kilo Vanessa MCP config: $path"
+    Write-Host "If Kilo Code does not show this MCP server immediately, reload or restart Kilo Code so it rereads .kilo/kilo.json."
+}
+
 function Write-VanessaMcpStatusLines {
     param(
         [object]$State,
@@ -2510,6 +2552,7 @@ function Start-VanessaMcp {
     $runtime = Get-VanessaMcpRuntimeInfo -State $state
     if ($runtime.processAlive) {
         Save-VanessaMcpSettingsToDotEnv -Port $runtime.port -Url $runtime.url
+        Write-VanessaMcpKiloConfig -State $state
         Write-Host "Vanessa MCP process is already running for this branch."
         Write-VanessaMcpStatusLines -State $state
         Write-VanessaMcpClientSnippets -State $state
@@ -2551,6 +2594,7 @@ function Start-VanessaMcp {
     }
 
     Write-Host "Vanessa MCP started."
+    Write-VanessaMcpKiloConfig -State $state
     Write-VanessaMcpStatusLines -State $state
     Write-VanessaMcpClientSnippets -State $state
 }

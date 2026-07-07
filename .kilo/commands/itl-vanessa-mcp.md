@@ -13,3 +13,5 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 ```
 
 Use Vanessa MCP for authoring and debugging scenarios against the current branch infobase. Keep `/itl-verify` as the final repeatable verification gate; it runs packet `StartFeaturePlayer` through `TESTMANAGER -> TESTCLIENT`, not MCP.
+
+`start-vanessa-mcp` writes the branch-local server to `.kilo/kilo.json`. If Kilo Code does not show it immediately, reload or restart Kilo Code so it rereads the MCP config.

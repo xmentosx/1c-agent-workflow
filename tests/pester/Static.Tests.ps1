@@ -2488,6 +2488,10 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match "client_mcp.cfe"
         $HelperText | Should -Match "VAExtension"
         $HelperText | Should -Match "runMcp;mcpPort="
+        $HelperText | Should -Match "Write-VanessaMcpKiloConfig"
+        $HelperText | Should -Match 'managedBy = "vanessa-mcp"'
+        $HelperText | Should -Match 'family = "vanessa"'
+        $HelperText | Should -Match "reload or restart Kilo Code"
         $HelperText | Should -Match "StartFeaturePlayer"
 
         $mcpToolPath = ".agent-1c/tools/vanessa-mcp/"
@@ -2495,6 +2499,7 @@ Describe "1C agent workflow static checks" {
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($mcpToolPath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_MCP_URL"
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-vanessa-mcp.md") -PathType Leaf) | Should -Be $true
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl-vanessa-mcp.md")) | Should -Match "reload or restart Kilo Code"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl.md")) | Should -Not -Match "/itl-vanessa-mcp"
     }
 
@@ -3140,6 +3145,13 @@ url = "http://localhost:9999/mcp"
       "url": "http://localhost:1/mcp",
       "managedBy": "vibecoding1c-mcp",
       "family": "vibecoding1c"
+    },
+    "VanessaAutomation-demo": {
+      "type": "remote",
+      "url": "http://localhost:9874/mcp",
+      "managedBy": "vanessa-mcp",
+      "family": "vanessa",
+      "scope": "branch"
     }
   }
 }
@@ -3174,6 +3186,9 @@ url = "http://localhost:9999/mcp"
             $kilo.mcp.unrelated.url | Should -Be "http://localhost:9999/mcp"
             $kilo.mcp.'external-tool'.url | Should -Be "http://localhost:9998/mcp"
             $kilo.mcp.'external-tool'.family | Should -Be "external"
+            $kilo.mcp.'VanessaAutomation-demo'.url | Should -Be "http://localhost:9874/mcp"
+            $kilo.mcp.'VanessaAutomation-demo'.managedBy | Should -Be "vanessa-mcp"
+            $kilo.mcp.'VanessaAutomation-demo'.family | Should -Be "vanessa"
             $kilo.mcp.PSObject.Properties["itl-old"] | Should -BeNullOrEmpty
             $kilo.mcp.'1c-code-metadata-mcp'.url | Should -Be "http://127.0.0.1:18100/mcp"
             $kilo.mcp.'1c-code-metadata-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
@@ -3183,6 +3198,64 @@ url = "http://localhost:9999/mcp"
             $kilo.mcp.'1c-data-mcp'.url | Should -Be "http://localhost/current/hs/mcp"
             $kilo.mcp.'1c-data-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
             $kilo.mcp.'1c-data-mcp'.logicalId | Should -Be "data"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "writes branch-local Vanessa MCP into Kilo config without deleting custom entries" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vanessa-mcp-kilo-config-test-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".kilo") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value @"
+{
+  "mcp": {
+    "custom-tool": {
+      "type": "remote",
+      "url": "http://localhost:9999/mcp",
+      "managedBy": "external-mcp",
+      "family": "external"
+    },
+    "VanessaAutomation-demo": {
+      "type": "remote",
+      "url": "http://localhost:9874/mcp",
+      "managedBy": "vanessa-mcp",
+      "family": "vanessa",
+      "scope": "branch",
+      "devBranchName": "demo",
+      "safeDevBranchName": "demo"
+    }
+  }
+}
+"@ -Encoding UTF8
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranchName = "feature/demo"
+                    safeDevBranchName = "feature-demo"
+                    vanessaMcpPort = 9888
+                    vanessaMcpUrl = "http://localhost:9888/mcp"
+                }
+                Write-VanessaMcpKiloConfig -State $state *> $null
+            }
+
+            $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
+            $kilo.mcp.'custom-tool'.url | Should -Be "http://localhost:9999/mcp"
+            $kilo.mcp.'custom-tool'.managedBy | Should -Be "external-mcp"
+            $kilo.mcp.'VanessaAutomation-demo'.url | Should -Be "http://localhost:9874/mcp"
+            $kilo.mcp.'VanessaAutomation-feature-demo'.type | Should -Be "remote"
+            $kilo.mcp.'VanessaAutomation-feature-demo'.url | Should -Be "http://localhost:9888/mcp"
+            $kilo.mcp.'VanessaAutomation-feature-demo'.enabled | Should -Be $true
+            $kilo.mcp.'VanessaAutomation-feature-demo'.timeout | Should -Be 15000
+            $kilo.mcp.'VanessaAutomation-feature-demo'.managedBy | Should -Be "vanessa-mcp"
+            $kilo.mcp.'VanessaAutomation-feature-demo'.family | Should -Be "vanessa"
+            $kilo.mcp.'VanessaAutomation-feature-demo'.scope | Should -Be "branch"
+            $kilo.mcp.'VanessaAutomation-feature-demo'.devBranchName | Should -Be "feature/demo"
+            $kilo.mcp.'VanessaAutomation-feature-demo'.safeDevBranchName | Should -Be "feature-demo"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
