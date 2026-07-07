@@ -882,6 +882,15 @@ function Get-WebPublishByDefault {
     return ConvertTo-BoolSetting -Value (Get-ConfigValue -Path "web.publishByDefault" -Default $false) -Default $false
 }
 
+function Get-WebPublishAuto {
+    $envValue = Get-EnvValue -Name "WEB_PUBLISH_AUTO"
+    if ($null -ne $envValue -and -not [string]::IsNullOrWhiteSpace([string]$envValue)) {
+        return ConvertTo-BoolSetting -Value $envValue -Default $false
+    }
+
+    return ConvertTo-BoolSetting -Value (Get-ConfigValue -Path "web.publishAuto" -Default $false) -Default $false
+}
+
 function Get-DefaultWebInstPath {
     $rawPlatformPath = Get-Setting -EnvName "PLATFORM_PATH" -ConfigName "platformPath"
     if (-not $rawPlatformPath) {
@@ -1189,7 +1198,7 @@ function Find-ApacheConfig {
         }
     }
 
-    $message = "Apache httpd.conf was not found. Run install-apache after explicit developer confirmation, install Apache 2.4 manually, or set APACHE_HTTPD_CONF_PATH, then rerun detect-apache or check-tools."
+    $message = "Apache/httpd config was not found. Prepare the web server outside ITL workflow, or set APACHE_HTTPD_CONF_PATH/WEB_PUBLICATION_ROOT/WEB_PUBLICATION_URL_BASE, then rerun detect-web-publication or check-tools."
     if ($errors.Count -gt 0) {
         $message += " Checked candidates: $($errors -join '; ')"
     }
@@ -1332,6 +1341,7 @@ function New-DefaultProjectConfig {
         }
         web = [ordered]@{
             publishByDefault = $false
+            publishAuto = $false
             webInstPath = ""
             apacheKind = "apache24"
             apacheHttpdConfPath = ""
@@ -1346,6 +1356,10 @@ function New-DefaultProjectConfig {
             reportsPath = "build/test-results/vanessa"
         }
     }
+}
+
+function Get-EffectiveWebPublicationSettings {
+    return Get-EffectiveApacheSettings
 }
 
 function New-DefaultDependencyLockManifest {
@@ -1367,11 +1381,6 @@ function New-DefaultDependencyLockManifest {
             }
             vanessaAutomation = [ordered]@{
                 version = ""
-                url = ""
-                sha256 = ""
-                source = ""
-            }
-            apache = [ordered]@{
                 url = ""
                 sha256 = ""
                 source = ""
@@ -1548,13 +1557,13 @@ function New-DefaultToolsManifest {
             },
             [ordered]@{
                 id = "apache-webinst"
-                name = "Apache/webinst"
+                name = "Web publication"
                 requiredWhenWebPublication = $true
                 install = [ordered]@{
-                    policy = "confirm-then-run"
+                    policy = "manual"
                     commands = @(
-                        "After explicit developer confirmation, run: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache",
-                        "If automatic install is declined, install/configure Apache 2.4 manually so httpd.conf can be detected, then run detect-apache."
+                        "Prepare the web server and 1C web publication tooling outside ITL workflow.",
+                        "Then run: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action configure-web-publication"
                     )
                 }
             },
@@ -1598,42 +1607,6 @@ function Get-ApacheInstallRoot {
     return [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables(([string]$value).Trim()))
 }
 
-function Get-ApacheServiceName {
-    return [string](Get-Setting -EnvName "APACHE_SERVICE_NAME" -ConfigName "web.apacheServiceName" -Default "Apache24")
-}
-
-function Get-ApachePreferredPort {
-    $value = Get-Setting -EnvName "APACHE_LISTEN_PORT" -ConfigName "web.apacheListenPort"
-    if (-not $value) {
-        return $null
-    }
-
-    $port = 0
-    if (-not [int]::TryParse(([string]$value).Trim(), [ref]$port) -or $port -lt 1 -or $port -gt 65535) {
-        throw "Invalid APACHE_LISTEN_PORT value: $value"
-    }
-
-    return $port
-}
-
-function Test-IsAdministrator {
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal $identity
-    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-
-function Test-ApacheSkipServiceInstall {
-    return ConvertTo-BoolSetting -Value (Get-EnvValue -Name "APACHE_SKIP_SERVICE") -Default $false
-}
-
-function Test-ApacheSkipVcRedistInstall {
-    return ConvertTo-BoolSetting -Value (Get-EnvValue -Name "APACHE_SKIP_VCREDIST") -Default $false
-}
-
-function Test-ApacheAllowNonAdminInstall {
-    return ConvertTo-BoolSetting -Value (Get-EnvValue -Name "APACHE_ALLOW_NONADMIN") -Default $false
-}
-
 function Test-TcpPortAvailable {
     param([int]$Port)
 
@@ -1651,95 +1624,6 @@ function Test-TcpPortAvailable {
     }
 }
 
-function Get-ApacheInstallPort {
-    $preferred = Get-ApachePreferredPort
-    if ($preferred) {
-        if (-not (Test-TcpPortAvailable -Port $preferred)) {
-            throw "Configured Apache listen port is busy: $preferred"
-        }
-        return $preferred
-    }
-
-    foreach ($port in @(80) + (8080..8090)) {
-        if (Test-TcpPortAvailable -Port $port) {
-            return $port
-        }
-    }
-
-    throw "No free Apache listen port found. Checked 80 and 8080..8090."
-}
-
-function Get-ApacheLoungeDownloadFromWinget {
-    $winget = Get-Command winget -ErrorAction SilentlyContinue
-    if (-not $winget) {
-        return $null
-    }
-
-    try {
-        $output = & $winget.Source show --id ApacheLounge.httpd -e --accept-source-agreements 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            return $null
-        }
-
-        $text = (@($output) -join "`n")
-        $urlMatch = [regex]::Match($text, 'https?://\S*apachelounge\.com/\S*httpd-[^\s]+?Win64[^\s]+?\.zip', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-        if (-not $urlMatch.Success) {
-            $urlMatch = [regex]::Match($text, 'https?://\S+?httpd-[^\s]+?\.zip', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-        }
-        if (-not $urlMatch.Success) {
-            return $null
-        }
-
-        $shaMatch = [regex]::Match($text, '\b[A-Fa-f0-9]{64}\b')
-        return [pscustomobject]@{
-            url = $urlMatch.Value.Trim()
-            expectedSha256 = $(if ($shaMatch.Success) { $shaMatch.Value.ToLowerInvariant() } else { "" })
-            source = "winget show ApacheLounge.httpd"
-        }
-    } catch {
-        return $null
-    }
-}
-
-function Get-ApacheDownloadInfo {
-    if ((Get-DependencyMode) -eq "locked") {
-        $locked = Get-DependencyLockEntry -Name "apache"
-        $url = [string](Get-ConfigValueFromObject -Object $locked -Path "url" -Default "")
-        if (-not $url) {
-            throw "Dependency mode is locked, but apache.url is empty in .agent-1c/dependency-lock.json."
-        }
-        return [pscustomobject]@{
-            url = $url
-            expectedSha256 = [string](Get-ConfigValueFromObject -Object $locked -Path "sha256" -Default "")
-            source = "dependency-lock"
-        }
-    }
-
-    $override = Get-EnvValue -Name "APACHE_ARCHIVE_URL"
-    if ($override) {
-        return [pscustomobject]@{
-            url = [string]$override
-            expectedSha256 = ""
-            source = "APACHE_ARCHIVE_URL"
-        }
-    }
-
-    $wingetInfo = Get-ApacheLoungeDownloadFromWinget
-    if ($wingetInfo) {
-        return $wingetInfo
-    }
-
-    return [pscustomobject]@{
-        url = "https://www.apachelounge.com/download/VS18/binaries/httpd-2.4.68-260610-Win64-VS18.zip"
-        expectedSha256 = ""
-        source = "Apache Lounge fallback URL"
-    }
-}
-
-function Get-ApacheCacheDirectory {
-    return (Join-Path $env:TEMP "1c-agent-workflow\apache")
-}
-
 function ConvertFrom-FileUri {
     param([string]$Value)
 
@@ -1750,233 +1634,16 @@ function ConvertFrom-FileUri {
     return $Value
 }
 
-function Save-ApacheArchive {
-    param([object]$DownloadInfo)
-
-    $cacheDir = Get-ApacheCacheDirectory
-    New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
-    $archivePath = Join-Path $cacheDir "apache-httpd.zip"
-    $source = [string]$DownloadInfo.url
-
-    Write-Host "Apache archive source: $source"
-    if (Test-Path -LiteralPath (ConvertFrom-FileUri -Value $source) -PathType Leaf -ErrorAction SilentlyContinue) {
-        Copy-Item -LiteralPath (ConvertFrom-FileUri -Value $source) -Destination $archivePath -Force
-    } else {
-        try {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-        } catch {
-            # Best effort for older Windows PowerShell hosts.
-        }
-        Invoke-WebRequest -Uri $source -UseBasicParsing -OutFile $archivePath
-    }
-
-    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
-    Write-Host "Apache archive SHA256: $hash"
-
-    $expected = [string]$DownloadInfo.expectedSha256
-    if ($expected) {
-        $expected = $expected.ToLowerInvariant()
-        if ($hash -eq $expected) {
-            Write-Host "Apache archive hash matches metadata from $($DownloadInfo.source)."
-        } elseif ((Get-DependencyMode) -eq "locked") {
-            throw "Apache archive SHA256 mismatch in locked dependency mode. Expected $expected, got $hash."
-        } else {
-            Write-Host "[WARN] Apache archive hash differs from metadata from $($DownloadInfo.source). Continuing because winget metadata can be stale; actual SHA256 is logged above."
-        }
-    }
-
-    Update-DependencyLockEntry -Name "apache" -Values @{
-        url = $source
-        sha256 = $hash
-        source = [string]$DownloadInfo.source
-    }
-
-    return $archivePath
-}
-
-function Find-ApacheFolderInExtractedArchive {
-    param([string]$ExtractRoot)
-
-    $direct = Join-Path $ExtractRoot "Apache24"
-    if ((Test-Path -LiteralPath (Join-Path $direct "bin\httpd.exe") -PathType Leaf -ErrorAction SilentlyContinue) -and
-        (Test-Path -LiteralPath (Join-Path $direct "conf\httpd.conf") -PathType Leaf -ErrorAction SilentlyContinue)) {
-        return $direct
-    }
-
-    foreach ($dir in Get-ChildItem -LiteralPath $ExtractRoot -Directory -Recurse -ErrorAction SilentlyContinue) {
-        if ((Test-Path -LiteralPath (Join-Path $dir.FullName "bin\httpd.exe") -PathType Leaf -ErrorAction SilentlyContinue) -and
-            (Test-Path -LiteralPath (Join-Path $dir.FullName "conf\httpd.conf") -PathType Leaf -ErrorAction SilentlyContinue)) {
-            return $dir.FullName
-        }
-    }
-
-    throw "Downloaded Apache archive does not contain an Apache24 folder with bin\httpd.exe and conf\httpd.conf."
-}
-
-function Expand-ApacheArchiveToInstallRoot {
+function Save-WebPublicationDetectedSettingsToDotEnv {
     param(
-        [string]$ArchivePath,
-        [string]$InstallRoot
+        [bool]$PublishByDefault = $true,
+        [bool]$Auto = $true
     )
 
-    $httpdExe = Join-Path $InstallRoot "bin\httpd.exe"
-    $httpdConf = Join-Path $InstallRoot "conf\httpd.conf"
-    if ((Test-Path -LiteralPath $httpdExe -PathType Leaf -ErrorAction SilentlyContinue) -and
-        (Test-Path -LiteralPath $httpdConf -PathType Leaf -ErrorAction SilentlyContinue)) {
-        Write-Host "Apache files already exist: $InstallRoot"
-        return
-    }
-
-    if (Test-Path -LiteralPath $InstallRoot -ErrorAction SilentlyContinue) {
-        $children = @(Get-ChildItem -LiteralPath $InstallRoot -Force -ErrorAction SilentlyContinue)
-        if ($children.Count -gt 0) {
-            throw "Apache install root already exists but does not look like Apache: $InstallRoot"
-        }
-    } else {
-        New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
-    }
-
-    $extractRoot = Join-Path (Get-ApacheCacheDirectory) ("extract-" + [guid]::NewGuid().ToString("N"))
-    New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
-    try {
-        Expand-Archive -LiteralPath $ArchivePath -DestinationPath $extractRoot -Force
-        $apacheFolder = Find-ApacheFolderInExtractedArchive -ExtractRoot $extractRoot
-        Copy-Item -Path (Join-Path $apacheFolder "*") -Destination $InstallRoot -Recurse -Force
-    } finally {
-        Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
-    }
-
-    if (-not (Test-Path -LiteralPath $httpdExe -PathType Leaf -ErrorAction SilentlyContinue)) {
-        throw "Apache httpd.exe was not installed to expected path: $httpdExe"
-    }
-    if (-not (Test-Path -LiteralPath $httpdConf -PathType Leaf -ErrorAction SilentlyContinue)) {
-        throw "Apache httpd.conf was not installed to expected path: $httpdConf"
-    }
-}
-
-function Set-ApacheHttpdConfig {
-    param(
-        [string]$InstallRoot,
-        [int]$Port
-    )
-
-    $confPath = Join-Path $InstallRoot "conf\httpd.conf"
-    if (-not (Test-Path -LiteralPath $confPath -PathType Leaf -ErrorAction SilentlyContinue)) {
-        throw "Apache httpd.conf was not found: $confPath"
-    }
-
-    $serverRoot = ($InstallRoot -replace "\\", "/")
-    $lines = @(Read-Utf8Lines -Path $confPath)
-    $result = New-Object System.Collections.ArrayList
-    $definedSrvRoot = $false
-    $serverRootSet = $false
-    $listenSet = $false
-    $serverNameSet = $false
-
-    foreach ($line in $lines) {
-        if ($line -match '^\s*Define\s+SRVROOT\b') {
-            [void]$result.Add("Define SRVROOT `"$serverRoot`"")
-            $definedSrvRoot = $true
-            continue
-        }
-        if ($line -match '^\s*ServerRoot\b') {
-            [void]$result.Add('ServerRoot "${SRVROOT}"')
-            $serverRootSet = $true
-            continue
-        }
-        if (-not $listenSet -and $line -match '^\s*Listen\s+') {
-            [void]$result.Add("Listen $Port")
-            $listenSet = $true
-            continue
-        }
-        if (-not $serverNameSet -and $line -match '^\s*#?\s*ServerName\s+') {
-            [void]$result.Add("ServerName localhost:$Port")
-            $serverNameSet = $true
-            continue
-        }
-
-        [void]$result.Add($line)
-    }
-
-    if (-not $definedSrvRoot) {
-        [void]$result.Insert(0, "Define SRVROOT `"$serverRoot`"")
-    }
-    if (-not $serverRootSet) {
-        [void]$result.Add('ServerRoot "${SRVROOT}"')
-    }
-    if (-not $listenSet) {
-        [void]$result.Add("Listen $Port")
-    }
-    if (-not $serverNameSet) {
-        [void]$result.Add("ServerName localhost:$Port")
-    }
-
-    Write-Utf8Text -Path $confPath -Value ((@($result) -join [Environment]::NewLine) + [Environment]::NewLine)
-    Write-Host "Apache httpd.conf configured: $confPath"
-    Write-Host "Apache Listen port: $Port"
-}
-
-function Install-VcRedistForApache {
-    if (Test-ApacheSkipVcRedistInstall) {
-        Write-Host "Skipping VC++ Redistributable install because APACHE_SKIP_VCREDIST is true."
-        return
-    }
-
-    $winget = Get-Command winget -ErrorAction SilentlyContinue
-    if (-not $winget) {
-        throw "winget was not found. Install Microsoft Visual C++ Redistributable 2015-2022 x64 manually, then rerun install-apache."
-    }
-
-    Write-Host "Ensuring Microsoft Visual C++ Redistributable 2015-2022 x64 is installed..."
-    & $winget.Source install --id Microsoft.VCRedist.2015+.x64 -e --accept-package-agreements --accept-source-agreements
-    if ($LASTEXITCODE -ne 0) {
-        throw "VC++ Redistributable install failed with exit code $LASTEXITCODE"
-    }
-}
-
-function Install-ApacheService {
-    param([string]$InstallRoot)
-
-    if (Test-ApacheSkipServiceInstall) {
-        Write-Host "Skipping Apache service install/start because APACHE_SKIP_SERVICE is true."
-        return
-    }
-
-    $serviceName = Get-ApacheServiceName
-    $httpdExe = Join-Path $InstallRoot "bin\httpd.exe"
-    if (-not (Test-Path -LiteralPath $httpdExe -PathType Leaf -ErrorAction SilentlyContinue)) {
-        throw "Apache httpd.exe was not found: $httpdExe"
-    }
-
-    $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-    if (-not $service) {
-        Write-Host "Installing Apache service: $serviceName"
-        & $httpdExe -k install -n $serviceName
-        if ($LASTEXITCODE -ne 0) {
-            throw "Apache service install failed with exit code $LASTEXITCODE"
-        }
-    } else {
-        Write-Host "Apache service already exists: $serviceName"
-    }
-
-    $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-    if ($service -and $service.Status -ne "Running") {
-        Write-Host "Starting Apache service: $serviceName"
-        & $httpdExe -k start -n $serviceName
-        if ($LASTEXITCODE -ne 0) {
-            throw "Apache service start failed with exit code $LASTEXITCODE"
-        }
-    } elseif ($service) {
-        Write-Host "Apache service is already running: $serviceName"
-    } else {
-        throw "Apache service was not found after install: $serviceName"
-    }
-}
-
-function Save-ApacheDetectedSettingsToDotEnv {
     $settings = Get-EffectiveApacheSettings
     $values = @{
-        WEB_PUBLISH_BY_DEFAULT = "true"
+        WEB_PUBLISH_BY_DEFAULT = $(if ($PublishByDefault) { "true" } else { "false" })
+        WEB_PUBLISH_AUTO = $(if ($Auto) { "true" } else { "false" })
         APACHE_KIND = $settings.apacheKind
     }
 
@@ -1994,97 +1661,150 @@ function Save-ApacheDetectedSettingsToDotEnv {
     }
 
     Set-DotEnvValues -Values $values
-    Write-Host "Apache settings saved to .dev.env"
+    Write-Host "Web publication settings saved to .dev.env"
     return $settings
 }
 
-function Invoke-ElevatedInstallApache {
-    $scriptPath = $PSCommandPath
-    if (-not $scriptPath) {
-        throw "Cannot determine helper script path for elevated Apache install."
-    }
-
-    $powershell = (Get-Command powershell -ErrorAction SilentlyContinue).Source
-    if (-not $powershell) {
-        throw "powershell.exe was not found for elevated Apache install."
-    }
-
-    $arguments = @(
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-File", $scriptPath,
-        "-Action", "install-apache",
-        "-ProjectRoot", $script:ProjectRoot,
-        "-ConfigPath", $script:ConfigPath
+function Set-WebPublicationPolicy {
+    param(
+        [bool]$PublishByDefault,
+        [bool]$Auto
     )
-    $argumentLine = Join-NativeCommandLineArguments -Arguments $arguments
-    $commandPreview = "$(ConvertTo-NativeCommandLineArgument $powershell) $argumentLine"
 
-    Write-Host "Apache install needs administrator privileges."
-    Write-Host "Elevated command: $commandPreview"
-    try {
-        $process = Start-Process -FilePath $powershell -ArgumentList $argumentLine -Verb RunAs -Wait -PassThru
-    } catch {
-        throw "Failed to start elevated PowerShell. Run this command as Administrator: $commandPreview"
+    Set-DotEnvValues -Values @{
+        WEB_PUBLISH_BY_DEFAULT = $(if ($PublishByDefault) { "true" } else { "false" })
+        WEB_PUBLISH_AUTO = $(if ($Auto) { "true" } else { "false" })
     }
+    Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+}
 
-    if ($null -eq $process) {
-        throw "Failed to start elevated PowerShell. Run this command as Administrator: $commandPreview"
-    }
-    if ($process.ExitCode -ne 0) {
-        throw "Elevated Apache install failed with exit code $($process.ExitCode)."
+function Read-WebPublicationValue {
+    param(
+        [string]$Prompt,
+        [string]$Default = "",
+        [switch]$Required
+    )
+
+    while ($true) {
+        $suffix = if ($Default) { " [$Default]" } else { "" }
+        $value = Read-Host ($Prompt + $suffix)
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            $value = $Default
+        }
+        $value = [string]$value
+        if (-not $Required -or -not [string]::IsNullOrWhiteSpace($value)) {
+            return $value.Trim()
+        }
+        Write-Host "Value is required."
     }
 }
 
-function Install-Apache {
-    Write-Section "Install Apache"
+function Read-WebPublicationSettingsInteractively {
+    param(
+        [bool]$PublishByDefault = $true,
+        [bool]$Auto = $true
+    )
 
-    $existing = Find-ApacheConfig
-    if ($existing.found) {
-        Write-Host "Apache is already detected: $($existing.httpdConfPath)"
-        Save-ApacheDetectedSettingsToDotEnv | Out-Null
-        Detect-Apache
+    $settings = Get-EffectiveWebPublicationSettings
+    Write-Host "Automatic web publication uses an existing 1C webinst-compatible web server. ITL workflow does not install or configure the web server."
+
+    $webInstPath = Read-WebPublicationValue -Prompt "Full path to webinst.exe" -Default $settings.webInstPath -Required
+    $publicationRoot = Read-WebPublicationValue -Prompt "Publication root directory" -Default $settings.publicationRoot -Required
+    $publicationUrlBase = Read-WebPublicationValue -Prompt "Publication URL base" -Default $settings.publicationUrlBase -Required
+    $apacheKind = Read-WebPublicationValue -Prompt "webinst kind" -Default $settings.apacheKind -Required
+    $httpdConfPath = Read-WebPublicationValue -Prompt "Optional Apache/httpd config path, empty if not needed" -Default $settings.httpdConfPath
+
+    $values = @{
+        WEB_PUBLISH_BY_DEFAULT = $(if ($PublishByDefault) { "true" } else { "false" })
+        WEB_PUBLISH_AUTO = $(if ($Auto) { "true" } else { "false" })
+        WEBINST_PATH = $webInstPath
+        WEB_PUBLICATION_ROOT = $publicationRoot
+        WEB_PUBLICATION_URL_BASE = $publicationUrlBase
+        APACHE_KIND = $apacheKind
+        APACHE_HTTPD_CONF_PATH = $httpdConfPath
+    }
+    Set-DotEnvValues -Values $values
+    Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+    return Get-EffectiveWebPublicationSettings
+}
+
+function Ensure-WebPublicationForInit {
+    param([object]$Answers)
+
+    if (-not $Answers.webPublishByDefault) {
+        Set-WebPublicationPolicy -PublishByDefault $false -Auto $false
         return
     }
 
-    if (-not (Test-IsAdministrator) -and -not (Test-ApacheSkipServiceInstall) -and -not (Test-ApacheAllowNonAdminInstall)) {
-        Invoke-ElevatedInstallApache
+    if (-not $Answers.webPublishAuto) {
+        Set-WebPublicationPolicy -PublishByDefault $true -Auto $false
+        return
+    }
+
+    $settings = Get-EffectiveWebPublicationSettings
+    if ($settings.ready) {
+        Save-WebPublicationDetectedSettingsToDotEnv -PublishByDefault $true -Auto $true | Out-Null
         Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
-        Detect-Apache
         return
     }
 
-    $installRoot = Get-ApacheInstallRoot
-    Write-Host "Apache install root: $installRoot"
+    Write-Host "Automatic web publication was requested, but the existing web publication tooling is not ready: $($settings.message)"
+    if (Test-InteractiveInputAvailable) {
+        try {
+            $settings = Read-WebPublicationSettingsInteractively -PublishByDefault $true -Auto $true
+            if ($settings.ready) {
+                Write-Host "Automatic web publication is configured."
+                return
+            }
+            Write-Warning "Web publication settings are incomplete. Automatic publication will be disabled; manual branch publication remains available."
+        } catch {
+            Write-Warning "Could not collect web publication settings. Automatic publication will be disabled; manual branch publication remains available. $($_.Exception.Message)"
+        }
+    } else {
+        Write-Warning "Interactive input is unavailable. Automatic publication will be disabled; manual branch publication remains available."
+    }
 
-    $httpdExe = Join-Path $installRoot "bin\httpd.exe"
-    $httpdConf = Join-Path $installRoot "conf\httpd.conf"
-    $apacheFilesExist = ((Test-Path -LiteralPath $httpdExe -PathType Leaf -ErrorAction SilentlyContinue) -and
-        (Test-Path -LiteralPath $httpdConf -PathType Leaf -ErrorAction SilentlyContinue))
-    if (-not $apacheFilesExist -and (Test-Path -LiteralPath $installRoot -ErrorAction SilentlyContinue)) {
-        $children = @(Get-ChildItem -LiteralPath $installRoot -Force -ErrorAction SilentlyContinue)
-        if ($children.Count -gt 0) {
-            throw "Apache install root already exists but does not look like Apache: $installRoot"
+    Set-WebPublicationPolicy -PublishByDefault $true -Auto $false
+}
+
+function Configure-WebPublication {
+    if (-not (Test-InteractiveInputAvailable)) {
+        throw "configure-web-publication needs terminal input. Run it from an interactive terminal."
+    }
+
+    Write-Section "Configure web publication"
+    $publishByDefault = Read-InitYesNo -Prompt "Publish development branch infobases to a web server by default?" -Default (Get-WebPublishByDefault)
+    if (-not $publishByDefault) {
+        Set-WebPublicationPolicy -PublishByDefault $false -Auto $false
+        Write-Host "Web publication disabled for new development branches."
+        return
+    }
+
+    $auto = Read-InitYesNo -Prompt "Attempt automatic web publication when a development branch is created?" -Default (Get-WebPublishAuto)
+    if (-not $auto) {
+        Set-WebPublicationPolicy -PublishByDefault $true -Auto $false
+        Write-Host "Web publication enabled; branch publication will be manual."
+        return
+    }
+
+    $settings = Get-EffectiveWebPublicationSettings
+    if ($settings.ready) {
+        Write-Host "Detected usable web publication settings."
+        if (Read-InitYesNo -Prompt "Use detected settings for automatic publication?" -Default $true) {
+            Save-WebPublicationDetectedSettingsToDotEnv -PublishByDefault $true -Auto $true | Out-Null
+            Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+            return
         }
     }
 
-    Install-VcRedistForApache
-
-    if (-not $apacheFilesExist) {
-        $downloadInfo = Get-ApacheDownloadInfo
-        Write-Host "Apache download metadata source: $($downloadInfo.source)"
-        $archivePath = Save-ApacheArchive -DownloadInfo $downloadInfo
-        Expand-ApacheArchiveToInstallRoot -ArchivePath $archivePath -InstallRoot $installRoot
-    } else {
-        Write-Host "Apache files already exist: $installRoot"
+    $settings = Read-WebPublicationSettingsInteractively -PublishByDefault $true -Auto $true
+    if ($settings.ready) {
+        Write-Host "Automatic web publication is configured."
+        return
     }
 
-    $port = Get-ApacheInstallPort
-    Set-ApacheHttpdConfig -InstallRoot $installRoot -Port $port
-    Install-ApacheService -InstallRoot $installRoot
-
-    Save-ApacheDetectedSettingsToDotEnv | Out-Null
-    Detect-Apache
+    Set-WebPublicationPolicy -PublishByDefault $true -Auto $false
+    Write-Warning "Web publication settings are incomplete. Publication remains enabled, but automatic publication is disabled."
 }
 
 function Find-Installed1CPlatforms {
@@ -2317,6 +2037,7 @@ function Read-InitAnswersFromWizard {
         repositoryUser = ""
         repositoryPassword = ""
         webPublishByDefault = $false
+        webPublishAuto = $false
     }
 
     if ($infoBaseKind -eq "server") {
@@ -2335,7 +2056,10 @@ function Read-InitAnswersFromWizard {
         $answers.repositoryPassword = ConvertFrom-OptionalPasswordAnswer (Read-InitOptional "Configuration repository password (empty or '-' if none)")
     }
 
-    $answers.webPublishByDefault = Read-InitYesNo -Prompt "Publish development branch infobases to Apache for web-client testing?" -Default $false
+    $answers.webPublishByDefault = Read-InitYesNo -Prompt "Publish development branch infobases to a web server for web-client testing?" -Default $false
+    if ($answers.webPublishByDefault) {
+        $answers.webPublishAuto = Read-InitYesNo -Prompt "Attempt automatic web publication when a development branch is created?" -Default $false
+    }
     $answers.dependencyMode = Read-InitDependencyMode
     $answers.vibecoding1cMcpSetupDuringInit = Read-InitYesNo -Prompt "Configure vibecoding1c MCP now? Answer no to do it later through a normal agent request or helper action." -Default $false
 
@@ -2355,7 +2079,8 @@ function Read-InitAnswersFromWizard {
         Write-Host "Repository path: $($answers.repositoryPath)"
         Write-Host "Repository user: $($answers.repositoryUser)"
     }
-    Write-Host "Apache publication by default: $($answers.webPublishByDefault)"
+    Write-Host "Web publication by default: $($answers.webPublishByDefault)"
+    Write-Host "Automatic web publication: $($answers.webPublishAuto)"
     Write-Host "Dependency mode: $($answers.dependencyMode)"
     Write-Host "Configure vibecoding1c MCP now: $($answers.vibecoding1cMcpSetupDuringInit)"
     Write-Host "Passwords: hidden"
@@ -2371,6 +2096,10 @@ function Normalize-InitAnswers {
 
     $sourceUsesRepository = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("sourceUsesRepository", "SOURCE_USES_REPOSITORY") -Default $true) -Default $true
     $webPublishByDefault = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("webPublishByDefault", "WEB_PUBLISH_BY_DEFAULT") -Default $false) -Default $false
+    $webPublishAuto = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("webPublishAuto", "WEB_PUBLISH_AUTO") -Default $false) -Default $false
+    if (-not $webPublishByDefault) {
+        $webPublishAuto = $false
+    }
     $vibecoding1cMcpSetupDuringInit = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("vibecoding1cMcpSetupDuringInit", "VIBECODING1C_MCP_SETUP_DURING_INIT") -Default $false) -Default $false
     $dependencyModeValue = Get-AnswerValue -Answers $Answers -Names @("dependencyMode", "DEPENDENCY_MODE") -Default ""
     if (-not $dependencyModeValue) {
@@ -2391,9 +2120,9 @@ function Normalize-InitAnswers {
         repositoryUser = [string](Get-AnswerValue -Answers $Answers -Names @("repositoryUser", "REPOSITORY_USER") -Default "")
         repositoryPassword = ConvertFrom-OptionalPasswordAnswer ([string](Get-AnswerValue -Answers $Answers -Names @("repositoryPassword", "REPOSITORY_PASSWORD") -Default ""))
         webPublishByDefault = $webPublishByDefault
+        webPublishAuto = $webPublishAuto
         dependencyMode = ConvertTo-DependencyMode -Value $dependencyModeValue
         vibecoding1cMcpSetupDuringInit = $vibecoding1cMcpSetupDuringInit
-        installApacheIfMissing = (ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("installApacheIfMissing", "INSTALL_APACHE_IF_MISSING") -Default $false) -Default $false)
         installVanessaIfMissing = (ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("installVanessaIfMissing", "INSTALL_VANESSA_IF_MISSING") -Default $false) -Default $false)
     }
 }
@@ -2436,6 +2165,7 @@ function Save-InitAnswers {
         REPOSITORY_USER = $(if ($Answers.sourceUsesRepository) { $Answers.repositoryUser } else { "" })
         REPOSITORY_PASSWORD = $(if ($Answers.sourceUsesRepository) { $Answers.repositoryPassword } else { "" })
         WEB_PUBLISH_BY_DEFAULT = $(if ($Answers.webPublishByDefault) { "true" } else { "false" })
+        WEB_PUBLISH_AUTO = $(if ($Answers.webPublishAuto) { "true" } else { "false" })
         DEPENDENCY_MODE = $Answers.dependencyMode
         VIBECODING1C_MCP_SETUP_DURING_INIT = $(if ($Answers.vibecoding1cMcpSetupDuringInit) { "true" } else { "false" })
     }
@@ -2446,52 +2176,10 @@ function Save-InitAnswers {
     $script:InitVibecoding1cMcpSetupRequested = [bool]$Answers.vibecoding1cMcpSetupDuringInit
 }
 
-function Ensure-ApacheForInit {
-    param([object]$Answers)
-
-    if (-not $Answers.webPublishByDefault) {
-        return
-    }
-
-    $settings = Get-EffectiveApacheSettings
-    if ($settings.ready) {
-        Save-ApacheDetectedSettingsToDotEnv | Out-Null
-        Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
-        return
-    }
-
-    Write-Host "Apache publication is enabled, but Apache is not ready: $($settings.message)"
-    if ($InitMode -eq "wizard") {
-        if (Read-InitYesNo -Prompt "Install Apache automatically now?" -Default $false) {
-            Install-Apache
-            Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
-            return
-        }
-        if (Read-InitYesNo -Prompt "Disable Apache publication and continue init?" -Default $true) {
-            Set-DotEnvValues -Values @{ WEB_PUBLISH_BY_DEFAULT = "false" }
-            Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
-            return
-        }
-        throw "Init stopped until Apache is installed or publication is disabled."
-    }
-
-    if ($Answers.installApacheIfMissing) {
-        Install-Apache
-        Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
-        return
-    }
-
-    if ($InitMode -eq "configured") {
-        throw "Apache publication is enabled but Apache is not ready. After explicit developer confirmation, rerun init-project with -InitMode configured -InstallApacheIfMissing, or set WEB_PUBLISH_BY_DEFAULT=false."
-    }
-
-    throw "Apache publication is enabled but Apache is not ready. Pass installApacheIfMissing=true in init JSON after explicit confirmation, or set WEB_PUBLISH_BY_DEFAULT=false."
-}
-
 function New-ConfiguredInitAnswers {
     return [pscustomobject]@{
         webPublishByDefault = (Get-WebPublishByDefault)
-        installApacheIfMissing = [bool]$InstallApacheIfMissing
+        webPublishAuto = (Get-WebPublishAuto)
         installVanessaIfMissing = [bool]$InstallVanessaIfMissing
     }
 }
@@ -2511,7 +2199,7 @@ function Prepare-InitProjectSettings {
     $answers = Normalize-InitAnswers -Answers $rawAnswers
     Assert-InitAnswers -Answers $answers
     Save-InitAnswers -Answers $answers
-    Ensure-ApacheForInit -Answers $answers
+    Ensure-WebPublicationForInit -Answers $answers
     Ensure-VanessaAutomationForInit -Answers $answers
     Read-ProjectConfig
 }
@@ -2521,7 +2209,7 @@ function Prepare-ConfiguredInitProjectSettings {
     Read-ProjectConfig
 
     $answers = New-ConfiguredInitAnswers
-    Ensure-ApacheForInit -Answers $answers
+    Ensure-WebPublicationForInit -Answers $answers
     Ensure-VanessaAutomationForInit -Answers $answers
     Read-ProjectConfig
 }
@@ -2742,12 +2430,13 @@ function Check-Tools {
         -Offer (Get-ToolOffer -Id "vanessa-automation" -Fallback "Run helper action install-vanessa-automation after explicit developer confirmation.")
 
     $publishDefault = Get-WebPublishByDefault
-    if ($PublishToApache -or $publishDefault) {
+    $publishAuto = Get-WebPublishAuto
+    if ($PublishToWeb -or ($publishDefault -and $publishAuto)) {
         $apacheSettings = Get-EffectiveApacheSettings
         $webInstDetail = if ($apacheSettings.webInstPath) { $apacheSettings.webInstPath } else { "webinst.exe was not found next to PLATFORM_PATH and WEBINST_PATH is not set" }
         $results += New-ToolResult `
             -Id "apache-webinst" `
-            -Name "Apache/webinst" `
+            -Name "Web publication webinst" `
             -Required $true `
             -Ok ([bool]$apacheSettings.webInstOk) `
             -Detail $webInstDetail `
@@ -2762,16 +2451,16 @@ function Check-Tools {
         }
         $results += New-ToolResult `
             -Id "apache-httpd" `
-            -Name "Apache/httpd config" `
+            -Name "Web server config" `
             -Required $true `
             -Ok ([bool]($apacheSettings.apacheFound -or $apacheSettings.manualPublicationRoot)) `
             -Detail $apacheDetail `
-            -Offer (Get-ToolOffer -Id "apache-webinst" -Fallback "Run helper action install-apache after explicit developer confirmation, or install/configure Apache 2.4 manually and rerun detect-apache.")
+            -Offer (Get-ToolOffer -Id "apache-webinst" -Fallback "Prepare the web server outside ITL workflow, then run configure-web-publication or detect-web-publication.")
 
         $publicationDetail = if ($apacheSettings.publicationRoot) {
             "$($apacheSettings.publicationRoot) -> $($apacheSettings.publicationUrlBase)"
         } else {
-            "Publication root could not be derived because Apache was not detected."
+            "Publication root could not be derived from the current web server settings."
         }
         $results += New-ToolResult `
             -Id "web-publication" `
@@ -2779,7 +2468,7 @@ function Check-Tools {
             -Required $true `
             -Ok (-not [string]::IsNullOrWhiteSpace([string]$apacheSettings.publicationRoot)) `
             -Detail $publicationDetail `
-            -Offer "After Apache is detected, the default publication root is DocumentRoot\1c and the URL base is derived from Listen."
+            -Offer "Set WEB_PUBLICATION_ROOT and WEB_PUBLICATION_URL_BASE, or run configure-web-publication."
     }
 
     $missingRequired = @()

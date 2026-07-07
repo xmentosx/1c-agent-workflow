@@ -57,7 +57,7 @@ VANESSA-TESTS-GUIDE.md
 - `templates/dev.env.example` - пример локальных настроек и секретов.
 - `templates/tools.json` - проверки необходимого софта.
 - `templates/AGENTS.append.md` и `templates/USER-RULES.append.md` - bridge для загрузки правил агентами и подробные project rules.
-- PowerShell-helper для Git, 1С Designer, копий баз, Apache-публикации, Vanessa Automation и выгрузки `CF`/`CFE`.
+- PowerShell-helper для Git, 1С Designer, копий баз, web-публикации, Vanessa Automation и выгрузки `CF`/`CFE`.
 
 ## Первый запуск
 
@@ -71,7 +71,7 @@ VANESSA-TESTS-GUIDE.md
 
 При инициализации script wizard:
 
-1. Проверит Git, платформу 1С, Vanessa Automation и, если нужно, Apache.
+1. Проверит Git, платформу 1С, Vanessa Automation и, если нужно, готовый web-контур публикации.
 2. Создаст локальный Git-репозиторий, если его еще нет.
 3. Если исходная база подключена к хранилищу, обновит ее из хранилища 1С; иначе использует текущее состояние исходной базы.
 4. Выгрузит конфигурацию в `src/cf`.

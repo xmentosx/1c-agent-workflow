@@ -2073,7 +2073,7 @@ function Confirm-DevBranchUnsafeActionProtection {
     }
 }
 
-function Publish-DevBranchToApache {
+function Publish-DevBranchToWeb {
     param(
         [string]$DevBranchPath,
         [string]$SafeDevBranchName
@@ -2087,13 +2087,13 @@ function Publish-DevBranchToApache {
     $confPath = $apacheSettings.httpdConfPath
 
     Require-Value "WEBINST_PATH, web.webInstPath, or webinst.exe next to PLATFORM_PATH" $webInstPath | Out-Null
-    Require-Value "Apache publication root from autodetect or WEB_PUBLICATION_ROOT override" $publicationRoot | Out-Null
+    Require-Value "WEB_PUBLICATION_ROOT or publication root from detected web server settings" $publicationRoot | Out-Null
 
     if (-not (Test-Path -LiteralPath $webInstPath)) {
         throw "webinst.exe was not found: $webInstPath"
     }
     if (-not ($apacheSettings.apacheFound -or $apacheSettings.manualPublicationRoot)) {
-        throw "Apache was not detected. Run detect-apache, install/configure Apache, or set APACHE_HTTPD_CONF_PATH for a nonstandard installation."
+        throw "Web server publication settings were not detected. Prepare the web server outside ITL workflow, run configure-web-publication, or set APACHE_HTTPD_CONF_PATH/WEB_PUBLICATION_ROOT."
     }
 
     $publicationName = $SafeDevBranchName -replace "[^a-zA-Z0-9_]", "_"
@@ -2121,6 +2121,256 @@ function Publish-DevBranchToApache {
         url = ($urlBase.TrimEnd("/") + "/" + $publicationName)
         publicationName = $publicationName
         publicationDir = $publicationDir
+    }
+}
+
+function Test-WebPublicationUrl {
+    param([string]$Url)
+
+    if ([string]::IsNullOrWhiteSpace($Url)) {
+        return $false
+    }
+
+    $uri = $null
+    if (-not [System.Uri]::TryCreate($Url.Trim(), [System.UriKind]::Absolute, [ref]$uri)) {
+        return $false
+    }
+
+    return ($uri.Scheme -eq "http" -or $uri.Scheme -eq "https")
+}
+
+function Read-WebPublicationUrl {
+    while ($true) {
+        $url = (Read-Host "HTTP/HTTPS publication URL").Trim()
+        if (Test-WebPublicationUrl -Url $url) {
+            return $url.TrimEnd("/")
+        }
+        Write-Host "Enter a valid absolute http or https URL."
+    }
+}
+
+function Get-PublicationNameFromUrl {
+    param([string]$Url)
+
+    if (-not (Test-WebPublicationUrl -Url $Url)) {
+        return ""
+    }
+
+    $uri = [System.Uri]$Url
+    $segments = @($uri.AbsolutePath.Trim("/") -split "/" | Where-Object { $_ })
+    if ($segments.Count -eq 0) {
+        return ""
+    }
+    return [System.Uri]::UnescapeDataString($segments[$segments.Count - 1])
+}
+
+function Get-PublicationDirCandidateFromUrl {
+    param([string]$Url)
+
+    $publicationName = Get-PublicationNameFromUrl -Url $Url
+    if (-not $publicationName) {
+        return ""
+    }
+
+    $settings = Get-EffectiveWebPublicationSettings
+    if (-not $settings.publicationRoot) {
+        return ""
+    }
+
+    return (Join-Path $settings.publicationRoot $publicationName)
+}
+
+function Read-ManualPublicationDir {
+    param([string]$Url)
+
+    $candidate = Get-PublicationDirCandidateFromUrl -Url $Url
+    $default = ""
+    if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Container -ErrorAction SilentlyContinue)) {
+        $default = $candidate
+    }
+
+    return Read-WebPublicationValue -Prompt "Publication directory for Data MCP patching, empty if unknown" -Default $default
+}
+
+function Update-DevBranchPublicationState {
+    param(
+        [object]$State,
+        [string]$Status,
+        [string]$Mode,
+        [string]$ErrorMessage = "",
+        [string]$Url = "",
+        [string]$Name = "",
+        [string]$Dir = ""
+    )
+
+    $updates = @{
+        publicationStatus = $Status
+        publicationMode = $Mode
+        publicationError = $ErrorMessage
+        publicationUpdatedAt = (Get-Date).ToString("o")
+        publicationUrl = $Url
+        publicationName = $Name
+        publicationDir = $Dir
+    }
+    Update-DevBranchState -State $State -Updates $updates
+    $statePath = Get-StateValue -State $State -Name "statePath" -Default ""
+    if ($statePath) {
+        return Read-DevBranchStateFile -Path $statePath
+    }
+    return $State
+}
+
+function Invoke-DevBranchDataMcpAfterPublication {
+    param([object]$State)
+
+    $publicationUrl = Get-StateValue -State $State -Name "publicationUrl" -Default ""
+    if (-not $publicationUrl) {
+        return $State
+    }
+
+    $publicationDir = Get-StateValue -State $State -Name "publicationDir" -Default ""
+    $dataMcpUpdates = Install-DevBranchDataMcpBestEffort -State $State -PublicationUrl $publicationUrl -PublicationDir $publicationDir
+    if ($dataMcpUpdates.Count -gt 0) {
+        Update-DevBranchState -State $State -Updates $dataMcpUpdates
+        $statePath = Get-StateValue -State $State -Name "statePath" -Default ""
+        if ($statePath) {
+            return Read-DevBranchStateFile -Path $statePath
+        }
+    }
+
+    return $State
+}
+
+function Write-ManualWebPublicationInstructions {
+    param([object]$State)
+
+    Write-Section "Manual web publication"
+    Write-Host "Publish this development branch infobase outside ITL workflow, then return here with the HTTP URL."
+    Write-Host "Development branch: $(Get-StateValue -State $State -Name 'devBranchName' -Default '<unknown>')"
+    Write-Host "Infobase kind: $(Get-StateValue -State $State -Name 'infoBaseKind' -Default '<unknown>')"
+    Write-Host "Infobase: $(Get-StateValue -State $State -Name 'devBranchInfoBasePath' -Default '<unknown>')"
+    Write-Host "If the branch should not be published, choose skip."
+}
+
+function Read-ManualWebPublicationChoice {
+    while ($true) {
+        $choice = (Read-Host "Choose: published, skip, retry-auto [published]").Trim().ToLowerInvariant()
+        if (-not $choice) {
+            return "published"
+        }
+        switch ($choice) {
+            "published" { return "published" }
+            "p" { return "published" }
+            "yes" { return "published" }
+            "y" { return "published" }
+            "skip" { return "skip" }
+            "s" { return "skip" }
+            "no" { return "skip" }
+            "n" { return "skip" }
+            "retry-auto" { return "retry-auto" }
+            "retry" { return "retry-auto" }
+            "r" { return "retry-auto" }
+            default { Write-Host "Use published, skip, or retry-auto." }
+        }
+    }
+}
+
+function Invoke-DevBranchPublicationCycle {
+    param(
+        [object]$State,
+        [bool]$PublicationEnabled,
+        [bool]$AttemptAuto
+    )
+
+    if (-not $PublicationEnabled) {
+        return Update-DevBranchPublicationState -State $State -Status "disabled" -Mode "none"
+    }
+
+    $state = $State
+    if ($AttemptAuto) {
+        try {
+            $publication = Publish-DevBranchToWeb `
+                -DevBranchPath (Get-StateValue -State $state -Name "devBranchInfoBasePath" -Default "") `
+                -SafeDevBranchName (Get-StateValue -State $state -Name "safeDevBranchName" -Default "")
+            $state = Update-DevBranchPublicationState `
+                -State $state `
+                -Status "published" `
+                -Mode "auto" `
+                -Url ([string]$publication.url) `
+                -Name ([string]$publication.publicationName) `
+                -Dir ([string]$publication.publicationDir)
+            Write-Host "Publication URL: $($publication.url)"
+            return Invoke-DevBranchDataMcpAfterPublication -State $state
+        } catch {
+            $message = $_.Exception.Message
+            Write-Warning "Automatic web publication failed. $message"
+            $state = Update-DevBranchPublicationState -State $state -Status "failed" -Mode "auto" -ErrorMessage $message
+        }
+    } else {
+        $state = Update-DevBranchPublicationState -State $state -Status "pending" -Mode "manual"
+    }
+
+    if (-not (Test-InteractiveInputAvailable)) {
+        Write-Warning "Interactive input is unavailable. Run publish-dev-branch later to finish or skip web publication."
+        if ((Get-StateValue -State $state -Name "publicationStatus" -Default "") -ne "failed") {
+            $state = Update-DevBranchPublicationState -State $state -Status "pending" -Mode "manual"
+        }
+        return $state
+    }
+
+    while ($true) {
+        Write-ManualWebPublicationInstructions -State $state
+        $choice = Read-ManualWebPublicationChoice
+        if ($choice -eq "skip") {
+            return Update-DevBranchPublicationState -State $state -Status "skipped" -Mode "manual"
+        }
+
+        if ($choice -eq "retry-auto") {
+            try {
+                $publication = Publish-DevBranchToWeb `
+                    -DevBranchPath (Get-StateValue -State $state -Name "devBranchInfoBasePath" -Default "") `
+                    -SafeDevBranchName (Get-StateValue -State $state -Name "safeDevBranchName" -Default "")
+                $state = Update-DevBranchPublicationState `
+                    -State $state `
+                    -Status "published" `
+                    -Mode "auto" `
+                    -Url ([string]$publication.url) `
+                    -Name ([string]$publication.publicationName) `
+                    -Dir ([string]$publication.publicationDir)
+                Write-Host "Publication URL: $($publication.url)"
+                return Invoke-DevBranchDataMcpAfterPublication -State $state
+            } catch {
+                $message = $_.Exception.Message
+                Write-Warning "Automatic web publication failed. $message"
+                $state = Update-DevBranchPublicationState -State $state -Status "failed" -Mode "auto" -ErrorMessage $message
+                continue
+            }
+        }
+
+        $url = Read-WebPublicationUrl
+        $publicationName = Get-PublicationNameFromUrl -Url $url
+        $publicationDir = Read-ManualPublicationDir -Url $url
+        $state = Update-DevBranchPublicationState `
+            -State $state `
+            -Status "published" `
+            -Mode "manual" `
+            -Url $url `
+            -Name $publicationName `
+            -Dir $publicationDir
+        return Invoke-DevBranchDataMcpAfterPublication -State $state
+    }
+}
+
+function Publish-DevBranch {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "publish-dev-branch"
+    $state = Invoke-DevBranchPublicationCycle -State $state -PublicationEnabled $true -AttemptAuto (Get-WebPublishAuto)
+    Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
+    $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
+    if ($publicationUrl) {
+        Write-Host "Publication URL: $publicationUrl"
+    } else {
+        Write-Host "Publication status: $(Get-StateValue -State $state -Name 'publicationStatus' -Default '<unknown>')"
     }
 }
 
@@ -2260,15 +2510,10 @@ function Initialize-DevBranchRuntime {
         -ProjectRootForFolder $MainProjectRoot
 
     $publishDefault = Get-WebPublishByDefault
-    $publicationUrl = ""
-    $publicationName = ""
-    $publicationDir = ""
-    if ($PublishToApache -or $publishDefault) {
-        $publication = Publish-DevBranchToApache -DevBranchPath $DevBranchInfoBasePath -SafeDevBranchName $SafeDevBranchName
-        $publicationUrl = [string]$publication.url
-        $publicationName = [string]$publication.publicationName
-        $publicationDir = [string]$publication.publicationDir
-    }
+    $publicationEnabled = ($PublishToWeb -or $publishDefault)
+    $publicationAuto = ($PublishToWeb -or ($publishDefault -and (Get-WebPublishAuto)))
+    $publicationStatus = if ($publicationEnabled) { "pending" } else { "disabled" }
+    $publicationMode = if ($publicationAuto) { "auto" } elseif ($publicationEnabled) { "manual" } else { "none" }
 
     $statePath = Save-DevBranchState -SafeDevBranchName $SafeDevBranchName -State @{
         devBranchName = $DevBranchName
@@ -2289,9 +2534,13 @@ function Initialize-DevBranchRuntime {
         launcherFolder = $launcherRegistration.folder
         launcherInfoBaseId = $launcherRegistration.id
         launcherListPath = $launcherRegistration.listPath
-        publicationUrl = $publicationUrl
-        publicationName = $publicationName
-        publicationDir = $publicationDir
+        publicationUrl = ""
+        publicationName = ""
+        publicationDir = ""
+        publicationStatus = $publicationStatus
+        publicationMode = $publicationMode
+        publicationError = ""
+        publicationUpdatedAt = (Get-Date).ToString("o")
         unsafeActionProtectionSetupMode = $unsafeActionProtectionSetup.mode
         unsafeActionProtectionConfirmed = $unsafeActionProtectionSetup.confirmed
         unsafeActionProtectionConfirmedAt = $unsafeActionProtectionSetup.confirmedAt
@@ -2309,15 +2558,15 @@ function Initialize-DevBranchRuntime {
     Write-Host "Development branch state: $statePath"
     Write-Host "1C launcher infobase: $($launcherRegistration.name)"
     Write-Host "1C launcher folder: $($launcherRegistration.folder)"
+    $state = Read-DevBranchStateFile -Path $statePath
+    $state = Invoke-DevBranchPublicationCycle -State $state -PublicationEnabled $publicationEnabled -AttemptAuto $publicationAuto
+    $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
     if ($publicationUrl) {
         Write-Host "Publication URL: $publicationUrl"
-    }
-    $state = Read-DevBranchStateFile -Path $statePath
-    if ($publicationUrl) {
-        $dataMcpUpdates = Install-DevBranchDataMcpBestEffort -State $state -PublicationUrl $publicationUrl -PublicationDir $publicationDir
-        if ($dataMcpUpdates.Count -gt 0) {
-            Update-DevBranchState -State $state -Updates $dataMcpUpdates
-            $state = Read-DevBranchStateFile -Path $statePath
+    } else {
+        $publicationStatus = Get-StateValue -State $state -Name "publicationStatus" -Default ""
+        if ($publicationStatus) {
+            Write-Host "Publication status: $publicationStatus"
         }
     }
     $state = Initialize-DevBranchEventLogBaseline -State $state
@@ -2863,6 +3112,11 @@ function List-DevBranches {
         $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
         if ($publicationUrl) {
             Write-Host "  Publication URL: $publicationUrl"
+        } else {
+            $publicationStatus = Get-StateValue -State $state -Name "publicationStatus" -Default ""
+            if ($publicationStatus) {
+                Write-Host "  Publication status: $publicationStatus"
+            }
         }
         Write-DataMcpStatusLines -State $state -Indent "  "
         Write-VanessaTestStatusLines -State $state -Indent "  "
@@ -2955,8 +3209,8 @@ function Switch-DevBranch {
     Write-DataMcpStatusLines -State $state
 }
 
-function Detect-Apache {
-    Write-Section "Detect Apache"
+function Detect-WebPublication {
+    Write-Section "Detect web publication"
     $settings = Get-EffectiveApacheSettings
 
     if ($settings.webInstOk) {
@@ -2968,12 +3222,12 @@ function Detect-Apache {
     }
 
     if ($settings.apacheFound) {
-        Write-Host "[OK] Apache config: $($settings.httpdConfPath)"
+        Write-Host "[OK] Apache/httpd config: $($settings.httpdConfPath)"
         Write-Host "Source: $($settings.apacheSource)"
         Write-Host "DocumentRoot: $($settings.documentRoot)"
         Write-Host "Listen port: $($settings.listenPort)"
     } elseif ($settings.manualPublicationRoot) {
-        Write-Host "[OK] Apache publication root is set manually: $($settings.publicationRoot)"
+        Write-Host "[OK] Web publication root is set manually: $($settings.publicationRoot)"
     } else {
         Write-Host "[MISSING] $($settings.message)"
     }
@@ -2986,6 +3240,7 @@ function Detect-Apache {
     Write-Host ""
     Write-Host "Values for .dev.env:"
     Write-Host "WEB_PUBLISH_BY_DEFAULT=true"
+    Write-Host "WEB_PUBLISH_AUTO=true"
     if ($settings.webInstPath) {
         Write-Host "WEBINST_PATH=$($settings.webInstPath)"
     }
@@ -3001,8 +3256,12 @@ function Detect-Apache {
     }
 
     if (-not $settings.ready) {
-        throw "Apache publication is not ready. Run helper action install-apache after explicit developer confirmation, or install/configure Apache 2.4 manually and make sure webinst.exe exists next to 1cv8.exe, then rerun detect-apache."
+        throw "Web publication is not ready. Prepare the web server outside ITL workflow, make sure webinst.exe is available, then rerun configure-web-publication or detect-web-publication."
     }
+}
+
+function Detect-Apache {
+    Detect-WebPublication
 }
 
 function Validate-Project {

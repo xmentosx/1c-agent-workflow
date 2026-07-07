@@ -15,8 +15,10 @@ init-project
 validate
 check-tools
 list-platforms
+detect-web-publication
 detect-apache
-install-apache
+configure-web-publication
+publish-dev-branch
 install-vanessa-automation
 install-vanessa-mcp
 start-vanessa-mcp

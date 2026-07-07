@@ -82,8 +82,8 @@ Required for initial project setup:
 - Directory for development branch Git worktrees: do not ask during normal initialization. By default, create sibling worktrees under `<project-folder>-worktrees/<branch>`. Use `DEV_BRANCH_WORKTREE_ROOT` or `devBranchWorktreeRoot` only as an explicit override.
 - Development branch infobase copies must be registered automatically in the user's 1C launcher list `%APPDATA%\1C\1CEStart\ibases.v8i` under `/ITL/<project-root-name>`, with the launcher entry name equal to the development branch name. Write that file as UTF-8 with BOM and create a timestamped backup before changing it.
 - 1C platform version/path. Before asking for a manual path, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`. Either folder may be absent; treat missing folders as normal and skip them without error. If versions are found, ask the developer to choose one of them and store the selected `...\bin\1cv8.exe` path. Do not offer the common root `C:\Program Files\1cv8` as a platform version. Ask for a custom full path only when no installed version is found or the developer chooses manual input.
-- Apache web-client testing. Ask only whether new development branch infobases should be published to Apache by default. Store `WEB_PUBLISH_BY_DEFAULT=true|false` in local `.dev.env`, not in committed `project.json`. If the answer is no, do not ask Apache paths. If the answer is yes, the helper detects Apache, saves detected local values to `.dev.env`, and does not ask the developer for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf`. If Apache is not detected, ask for explicit permission to install it automatically. In wizard mode the helper installs Apache inside the same init run after confirmation; in configured mode rerun `init-project -InitMode configured -InstallApacheIfMissing`; in JSON mode set `installApacheIfMissing=true`.
-- Dependency mode. Ask one choice during initialization: use fresh dependency versions or locked versions from `.agent-1c/dependency-lock.json`. The default is fresh. Store `DEPENDENCY_MODE=fresh|locked` in `.dev.env` and mirror the choice in the dependency lock manifest. In fresh mode, the helper resolves the latest available dependencies and records the `ai_rules_1c` commit plus Vanessa/Apache URLs and SHA256 hashes. In locked mode, the helper must use only pinned lock values and must stop if a required pin or hash is missing or mismatched.
+- Web-client testing. Ask whether new development branch infobases should be web-published by default. Store `WEB_PUBLISH_BY_DEFAULT=true|false` in local `.dev.env`, not in committed `project.json`. If the answer is yes, ask whether to attempt automatic publication during branch creation and store `WEB_PUBLISH_AUTO=true|false`. Automatic publication uses an already prepared `webinst`-compatible web contour; the helper may detect or ask for `WEBINST_PATH`, `APACHE_KIND`, `WEB_PUBLICATION_ROOT`, `WEB_PUBLICATION_URL_BASE`, and optional `APACHE_HTTPD_CONF_PATH`, but it must never install Apache or any web server.
+- Dependency mode. Ask one choice during initialization: use fresh dependency versions or locked versions from `.agent-1c/dependency-lock.json`. The default is fresh. Store `DEPENDENCY_MODE=fresh|locked` in `.dev.env` and mirror the choice in the dependency lock manifest. In fresh mode, the helper resolves the latest available dependencies and records the `ai_rules_1c` commit plus Vanessa Automation URL/SHA256 metadata. In locked mode, the helper must use only pinned lock values and must stop if a required pin or hash is missing or mismatched.
 - Vanessa Automation. It is required for executable development branch tests. If `VANESSA_AUTOMATION_EPF` is missing or invalid, ask for explicit permission to install it automatically. In wizard mode the helper installs it inside the same init run after confirmation; in configured mode rerun `init-project -InitMode configured -InstallVanessaIfMissing`; in JSON mode set `installVanessaIfMissing=true`. Store downloaded files under `.agent-1c/tools/vanessa-automation` and local paths in `.dev.env`. Standard `/itl-check` uses `StartFeaturePlayer` through `TESTMANAGER -> TESTCLIENT` with branch-local `VANESSA_TEST_PORT`, not MCP. `verify-dev-branch helper alias` remains a compatibility alias. It also checks the local branch infobase event log against `.agent-1c/event-log-baselines/<branch>.json`; fresh non-baseline `Error` records fail verification. Foreign branch Vanessa processes are warnings by default; set `VANESSA_TEST_FOREIGN_WAIT_MODE=wait` only for conservative serialized local runs.
 - vibecoding1c MCP. Do not ask developers to choose ports, models, or keys during initialization. Ask only whether vibecoding1c MCP should be configured now or later through a normal agent request. The default setup applies saved selection and opens selection first only when it is missing or incomplete; use `vibecoding1c-mcp-select` or `vibecoding1c-mcp-setup -Force` for an explicit reselect. Remote LAN vibecoding1c MCP is the default and is discovered from `VIBECODING1C_MCP_REGISTRY_REPO` (default `http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git`); config-specific remote vibecoding1c MCP always requires an explicit per-server `configId` selection, even when the registry has one configuration. The `code` and `graph` selections do not inherit `configId` or `hostId` from each other. Developers can override each server to local. Local vibecoding1c MCP still clones or fast-forwards the private GitLab distribution from `VIBECODING1C_MCP_DISTRIBUTION_REPO` (default `http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git`) into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\distribution`, rotates license keys into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c`, allocates ports from the local registry, writes ignored Codex/Kilo config for the current scope, removes default upstream `ai_rules_1c` MCP client entries after rules install/update, and keeps project/branch vibecoding1c MCP out of neighboring worktrees. Use `VIBECODING1C_MCP_REGISTRY_PATH` and `VIBECODING1C_MCP_DISTRIBUTION_PATH` only as explicit manual checkout overrides.
 - Vanessa MCP. Do not configure a shared MCP server during project initialization. When a developer needs AI-assisted scenario authoring/debugging, run `install-vanessa-mcp` and `start-vanessa-mcp` from the target `itldev/*` worktree so the MCP port, PID, URL, and infobase are branch-local.
@@ -116,8 +116,8 @@ Required for development branch setup:
 - Git branch if not `itldev/<safe-dev-branch-name>`.
 - Development branch worktree path if not derived from `DEV_BRANCH_WORKTREE_ROOT`.
 - Development branch infobase path if not derived from `DEV_BRANCH_INFOBASE_ROOT`.
-- Whether to publish to Apache only when the project was not configured during initialization or the developer wants a one-off override.
-- If publishing is requested and Apache settings are missing, let the helper detect Apache and ask for automatic install only when needed; otherwise do not ask for Apache paths in the ordinary workflow.
+- Whether to web-publish only when the project was not configured during initialization or the developer wants a one-off override.
+- If publication is requested and automatic publication settings are missing, let the helper ask inside `configure-web-publication` or `publish-dev-branch`; otherwise do not collect publication details in agent chat.
 
 Secrets must go to `.dev.env` or process environment variables. Never commit secrets.
 
@@ -154,7 +154,7 @@ Encoding rules:
 
 6. Create `.agent-1c/tools.json` from `templates/tools.json` when missing. Keep it committed so the team can adjust required software checks and install suggestions.
 
-7. Create `.dev.env` from `templates/dev.env.example` when missing. Fill local paths, secrets, local Apache preference, and the chosen `DEPENDENCY_MODE`. Write it as UTF-8 and ensure `.dev.env` is ignored by Git.
+7. Create `.dev.env` from `templates/dev.env.example` when missing. Fill local paths, secrets, web publication preference, and the chosen `DEPENDENCY_MODE`. Write it as UTF-8 and ensure `.dev.env` is ignored by Git.
 
 8. Append `templates/gitignore.append` lines to `.gitignore` if absent.
 
@@ -188,7 +188,7 @@ Default checks come from `.agent-1c/tools.json`:
 - Git: `git --version`, offer `winget install --id Git.Git -e`.
 - 1C platform: check `PLATFORM_PATH` or `platformPath`; when missing/invalid, search installed versions in existing standard `1cv8` folders and offer the discovered `...\bin\1cv8.exe` paths before asking for manual input. Missing `Program Files`/`Program Files (x86)` `1cv8` folders are not errors.
 - Vanessa Automation: check `VANESSA_AUTOMATION_EPF` or `.agent-1c/tools/vanessa-automation`; if missing, diagnostic output can mention `install-vanessa-automation`, but normal init continuation should rerun `init-project` with `-InstallVanessaIfMissing` after explicit confirmation.
-- Apache/webinst: check only when web publication is enabled/requested. Prefer `WEB_PUBLISH_BY_DEFAULT` from local `.dev.env`; fall back to `project.web.publishByDefault` only for compatibility. If `WEBINST_PATH` is empty, use `webinst.exe` found next to the selected `1cv8.exe`. Detect Apache from `APACHE_HTTPD_CONF_PATH`, Windows services, `httpd.exe` in `PATH`, or standard folders such as `C:\Apache24`. If Apache is missing, diagnostic output can mention `install-apache`, but normal init continuation should rerun `init-project` with `-InstallApacheIfMissing` after explicit confirmation.
+- Web publication: check `webinst`/publication settings only when automatic web publication is enabled/requested. Prefer `WEB_PUBLISH_BY_DEFAULT` and `WEB_PUBLISH_AUTO` from local `.dev.env`; fall back to `project.web.publishByDefault`/`project.web.publishAuto` only for compatibility. If `WEBINST_PATH` is empty, use `webinst.exe` found next to the selected `1cv8.exe`. Detect an existing Apache/httpd contour from `APACHE_HTTPD_CONF_PATH`, Windows services, `httpd.exe` in `PATH`, or standard folders such as `C:\Apache24`; ITL workflow does not install or configure the web server.
 
 When the workflow helper is available, the agent may list installed 1C versions with:
 
@@ -196,19 +196,19 @@ When the workflow helper is available, the agent may list installed 1C versions 
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-platforms
 ```
 
-When Apache publication is enabled, detect local Apache settings with:
+When automatic web publication is enabled, inspect existing publication settings with:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action detect-apache
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action detect-web-publication
 ```
 
-For diagnostic/manual recovery, if Apache is not detected and the developer explicitly asks for the standalone install action, run:
+To change publication policy or collect settings after init, run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action configure-web-publication
 ```
 
-`install-apache` downloads the official Apache Lounge zip, logs the actual SHA256, unpacks Apache to `C:\Apache24`, configures `Listen`/`ServerName`, installs and starts the `Apache24` service, saves detected values to `.dev.env`, and reruns Apache detection. A stale or mismatched `winget install ApacheLounge.httpd` hash is not a blocker for this path.
+To finish, skip, or retry publication for an existing development branch, run `publish-dev-branch` from that branch worktree. The helper owns the manual prompt and records the URL/status in branch state.
 
 For diagnostic/manual recovery, if Vanessa Automation is missing and the developer explicitly asks for the standalone install action, run:
 

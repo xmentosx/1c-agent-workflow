@@ -523,6 +523,32 @@ function Ensure-DockerImageAvailable {
     }
 }
 
+function Test-BookStackProductDocsServer {
+    param([object]$Server)
+    return ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "bookstack")
+}
+
+function Get-BookStackProductDocsSourceRoot {
+    return (Join-Path $PSScriptRoot "bookstack-product-docs-mcp")
+}
+
+function Ensure-ServerDockerImageAvailable {
+    param(
+        [object]$Server,
+        [string]$Image
+    )
+    if (Test-BookStackProductDocsServer -Server $Server) {
+        $sourceRoot = Get-BookStackProductDocsSourceRoot
+        if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot "Dockerfile") -PathType Leaf)) {
+            throw "BookStack product docs MCP Dockerfile was not found: $sourceRoot"
+        }
+        Write-Host "Building BookStack product docs MCP image: $Image"
+        Invoke-DockerCommandChecked -Arguments @("build", "-t", $Image, $sourceRoot) -TimeoutSec 900 -Description "docker build BookStack product docs MCP"
+        return
+    }
+    Ensure-DockerImageAvailable -Image $Image
+}
+
 function Ensure-Distribution {
     param([object]$Config)
     $repo = [string](Get-ObjectValue -Object $Config -Name "distributionRepo" -Default "http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git")
@@ -535,7 +561,51 @@ function Read-DistributionManifest {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Distribution manifest was not found: $path"
     }
-    return (Read-JsonFile -Path $path)
+    return (Add-HostVirtualServersToManifest -Manifest (Read-JsonFile -Path $path))
+}
+
+function Get-BookStackProductDocsServerDefinition {
+    return [pscustomobject][ordered]@{
+        id = "bookstack"
+        title = "BookStack product documentation"
+        scope = "global"
+        image = "itl/bookstack-product-docs-mcp:local"
+        internalPort = 8000
+        mcpNameTemplate = "bookstack-product-docs"
+        containerNameTemplate = "itl-bookstack-product-docs"
+        env = @(
+            [ordered]@{ name = "BOOKSTACK_BASE_URL"; from = "BOOKSTACK_BASE_URL"; required = $true },
+            [ordered]@{ name = "BOOKSTACK_TOKEN_ID"; from = "BOOKSTACK_TOKEN_ID"; required = $true },
+            [ordered]@{ name = "BOOKSTACK_TOKEN_SECRET"; from = "BOOKSTACK_TOKEN_SECRET"; required = $true },
+            [ordered]@{ name = "BOOKSTACK_CACHE_PATH"; value = "/data/bookstack-cache.sqlite"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_TIMEOUT_SECONDS"; from = "BOOKSTACK_TIMEOUT_SECONDS"; default = "20"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_REINDEX_INTERVAL_HOURS"; from = "BOOKSTACK_REINDEX_INTERVAL_HOURS"; default = "24"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_INDEX_ON_STARTUP"; from = "BOOKSTACK_INDEX_ON_STARTUP"; default = "true"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_MAX_INDEX_PAGES"; from = "BOOKSTACK_MAX_INDEX_PAGES"; required = $false },
+            [ordered]@{ name = "RESET_DATABASE"; from = "BOOKSTACK_RESET_DATABASE"; default = "false"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_EMBEDDING_API_BASE"; embedding = "base"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_EMBEDDING_API_KEY"; embedding = "key"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_EMBEDDING_MODEL"; embedding = "model"; required = $false }
+        )
+    }
+}
+
+function Add-HostVirtualServersToManifest {
+    param([object]$Manifest)
+    $manifestHash = Convert-ToHash -Object $Manifest
+    $servers = @(As-Array (Get-ObjectValue -Object $manifestHash -Name "servers" -Default @()))
+    $hasBookStack = $false
+    foreach ($server in $servers) {
+        if ([string](Get-ObjectValue -Object $server -Name "id" -Default "") -eq "bookstack") {
+            $hasBookStack = $true
+            break
+        }
+    }
+    if (-not $hasBookStack) {
+        $servers += Get-BookStackProductDocsServerDefinition
+    }
+    $manifestHash["servers"] = $servers
+    return [pscustomobject]$manifestHash
 }
 
 function Test-ConfigSpecificServerId {
@@ -1318,17 +1388,21 @@ function Get-HostLocalValues {
     $ssl = Get-ObjectValue -Object $Config -Name "sslSearchServer" -Default $null
     $code = Get-ObjectValue -Object $Config -Name "codeMetadataSearchServer" -Default $null
     $graph = Get-ObjectValue -Object $Config -Name "graphMetadataSearchServer" -Default $null
+    $bookstack = Get-ObjectValue -Object $Config -Name "bookStackProductDocsServer" -Default $null
     $platformBinPath = [string](Get-ObjectValue -Object $help -Name "platformBinPath" -Default "")
     $platformVersion = [string](Get-ObjectValue -Object $help -Name "platformVersion" -Default "")
     $bspVersion = [string](Get-ObjectValue -Object $ssl -Name "bspVersion" -Default "")
+    $bookStackCachePath = [string](Get-ObjectValue -Object $bookstack -Name "cachePath" -Default (Join-Path (Get-StateRoot -Config $Config) "bookstack-product-docs"))
     $defaultResetDatabase = "false"
     $codeResetDatabase = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $code -Name "resetDatabase" -Default $false) -Default $false)
     $graphResetDatabase = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $graph -Name "resetDatabase" -Default $false) -Default $false)
+    $bookStackResetDatabase = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $bookstack -Name "resetDatabase" -Default $false) -Default $false)
     return [ordered]@{
         PATH_METADATA = $(if ($ConfigState) { $ConfigState.metadataRoot } else { "" })
         PATH_CODE = $(if ($ConfigState) { Get-ConfigSubPath -Root $ConfigState.sourceRoot -RelativePath $ConfigState.mainConfigPath } else { "" })
         PATH_BASES = (Join-Path (Get-StateRoot -Config $Config) "bases")
         PATH_MODEL_CACHE = (Join-Path (Get-StateRoot -Config $Config) "model-cache")
+        PATH_BOOKSTACK_CACHE = (Get-FullPath $bookStackCachePath)
         PATH_1C_BIN = $(if ($platformBinPath) { Get-FullPath $platformBinPath } else { "" })
         PLATFORM_VERSION = $platformVersion
         HELP_PLATFORM_VERSION = $platformVersion
@@ -1340,6 +1414,12 @@ function Get-HostLocalValues {
         GRAPH_RESET_DATABASE = $graphResetDatabase
         GRAPH_REINDEX_INTERVAL_HOURS = [string](Get-ObjectValue -Object $graph -Name "reindexIntervalHours" -Default "")
         GRAPH_AUTO_UPDATE_ON_STARTUP = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $graph -Name "autoUpdateOnStartup" -Default $true) -Default $true)
+        BOOKSTACK_BASE_URL = [string](Get-ObjectValue -Object $bookstack -Name "baseUrl" -Default "")
+        BOOKSTACK_TIMEOUT_SECONDS = [string](Get-ObjectValue -Object $bookstack -Name "timeoutSeconds" -Default "20")
+        BOOKSTACK_REINDEX_INTERVAL_HOURS = [string](Get-ObjectValue -Object $bookstack -Name "reindexIntervalHours" -Default "24")
+        BOOKSTACK_INDEX_ON_STARTUP = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $bookstack -Name "indexOnStartup" -Default $true) -Default $true)
+        BOOKSTACK_MAX_INDEX_PAGES = [string](Get-ObjectValue -Object $bookstack -Name "maxIndexPages" -Default "")
+        BOOKSTACK_RESET_DATABASE = $bookStackResetDatabase
         PROJECT_NAME = $(if ($ConfigState) { $ConfigState.configId } else { [string](Get-ObjectValue -Object $Config -Name "hostId" -Default "vibecoding1c-mcp-host") })
     }
 }
@@ -1466,6 +1546,9 @@ function Get-HostDefaultVolumeEntries {
     $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
     if ($id -eq "docs") {
         return @([ordered]@{ from = "PATH_1C_BIN"; to = "/app/1c_bin"; required = $false })
+    }
+    if ($id -eq "bookstack") {
+        return @([ordered]@{ from = "PATH_BOOKSTACK_CACHE"; to = "/data"; required = $false })
     }
     return @()
 }
@@ -1653,7 +1736,7 @@ function Start-DockerServer {
     $args += $Runtime.image
     Write-Host "Starting container: $containerName -> $($Runtime.url)"
     if (-not $DryRun) {
-        Ensure-DockerImageAvailable -Image ([string]$Runtime.image)
+        Ensure-ServerDockerImageAvailable -Server $Server -Image ([string]$Runtime.image)
         Invoke-DockerCommandChecked -Arguments $args -TimeoutSec 180 -Description "docker run $containerName"
     }
     Write-Host "Container ready: $containerName -> $($Runtime.url)"
@@ -1716,6 +1799,7 @@ function Get-AiRules1cMcpClientName {
         "ssl" { return "1c-ssl-mcp" }
         "code" { return "1c-code-metadata-mcp" }
         "graph" { return "1c-graph-metadata-mcp" }
+        "bookstack" { return "BookStack-product-docs-mcp" }
         default { return "" }
     }
 }

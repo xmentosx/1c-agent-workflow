@@ -7,7 +7,9 @@
   "stateRoot": "D:/ITL/MCP/vibecoding1c",
   "pythonPath": "python",
   "secrets": {
-    "ONEC_AI_TOKEN": "<local-1c-assistant-token>"
+    "ONEC_AI_TOKEN": "<local-1c-assistant-token>",
+    "BOOKSTACK_TOKEN_ID": "<bookstack-readonly-token-id>",
+    "BOOKSTACK_TOKEN_SECRET": "<bookstack-readonly-token-secret>"
   },
   "embedding": {
     "model": "intfloat/multilingual-e5-base"
@@ -21,6 +23,15 @@
     "reindexIntervalHours": null,
     "autoUpdateOnStartup": true
   },
+  "bookStackProductDocsServer": {
+    "baseUrl": "http://bookstack.itland.local",
+    "cachePath": "D:/ITL/MCP/vibecoding1c/bookstack-product-docs",
+    "resetDatabase": false,
+    "reindexIntervalHours": 24,
+    "indexOnStartup": true,
+    "maxIndexPages": null,
+    "timeoutSeconds": 20
+  },
   "helpSearchServer": {
     "platformVersion": "8.3.24.1548",
     "platformBinPath": "C:/Program Files/1cv8/8.3.24.1548/bin"
@@ -33,7 +44,7 @@
     "projectStart": 18100
   },
   "enabledServers": {
-    "global": [ "docs", "templates", "syntax", "codechecker", "ssl" ],
+    "global": [ "docs", "templates", "syntax", "codechecker", "ssl", "bookstack" ],
     "project": [ "code", "graph" ]
   },
   "configurations": [

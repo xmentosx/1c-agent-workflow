@@ -8,9 +8,9 @@ For the administrator runbook in Russian, see [`RUNBOOK.ru.md`](RUNBOOK.ru.md).
 ## Setup
 
 1. Copy `host.config.example.json` to `host.config.json`.
-2. Edit `hostId`, `baseUrl`, `stateRoot`, GitLab URLs, server settings, and `configurations`.
+2. Edit `hostId`, `baseUrl`, `stateRoot`, GitLab URLs, server settings, BookStack settings, and `configurations`.
    Set `pythonPath` to a real Python 3 executable if `python` in PATH is not reliable.
-3. Keep the working `host.config.json` local; it is ignored because it can contain `ONEC_AI_TOKEN`, local paths, and passwords.
+3. Keep the working `host.config.json` local; it is ignored because it can contain `ONEC_AI_TOKEN`, BookStack API tokens, local paths, and passwords.
 4. Run:
 
 ```powershell
@@ -25,6 +25,12 @@ refreshes configured Git XML dump repositories or reads configured local `source
 Before creating a new container the installer checks that the configured Docker image exists locally.
 If the image is missing, it runs `docker pull <image>` and stops with an explicit Docker daemon/registry
 diagnostic if the pull fails.
+
+The `bookstack` global server is built locally from `bookstack-product-docs-mcp/`.
+Configure `bookStackProductDocsServer.baseUrl`, set read-only `BOOKSTACK_TOKEN_ID` and
+`BOOKSTACK_TOKEN_SECRET` in `secrets`, and keep `bookstack` in `enabledServers.global`.
+The MCP publishes as `BookStack-product-docs-mcp` and exposes `search_docs`, `read_page`,
+`list_structure`, and `reindex_docs`.
 
 Use `dump-config` manually when a local `sourcePath` should be refreshed from a 1C infobase connected to configuration repository storage:
 

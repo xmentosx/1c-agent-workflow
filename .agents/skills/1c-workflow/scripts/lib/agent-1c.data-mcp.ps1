@@ -489,6 +489,33 @@ function Install-DevBranchDataMcpBestEffort {
         }
     }
 
+    if (-not $PublicationDir) {
+        if (Test-DataMcpEndpointReachable -Url $endpointUrl) {
+            Set-DataMcpEndpointState -State $State -EndpointUrl $endpointUrl
+            Write-Vibecoding1cMcpClientConfig
+            Write-Host "Data MCP endpoint connected: $endpointUrl"
+            return @{
+                dataMcpStatus = "running"
+                dataMcpEndpointUrl = $endpointUrl
+                dataMcpExtensionInstalled = $false
+                dataMcpToolsLoaded = $false
+                dataMcpPublicationPatched = $false
+                dataMcpError = ""
+                dataMcpInstalledAt = $installedAt
+            }
+        }
+
+        return @{
+            dataMcpStatus = "skipped"
+            dataMcpEndpointUrl = $endpointUrl
+            dataMcpExtensionInstalled = $false
+            dataMcpToolsLoaded = $false
+            dataMcpPublicationPatched = $false
+            dataMcpError = "Publication directory is empty; cannot patch Data MCP HTTP service."
+            dataMcpInstalledAt = ""
+        }
+    }
+
     try {
         Write-Section "Install branch Data MCP"
         $package = Ensure-DataMcpPackage

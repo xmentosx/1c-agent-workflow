@@ -1,0 +1,4 @@
+interface:
+  display_name: "Product Docs"
+  short_description: "Check BookStack product docs"
+  default_prompt: "Use $product-docs to check BookStack product behavior before changing business logic."

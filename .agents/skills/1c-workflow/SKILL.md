@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow
-description: Initialize and operate ITL 1C configuration or extension projects with Git, source infobases, isolated branch infobase copies, optional Apache publication, Vanessa Automation, CF/CFE export, and refresh. Use for init, tool checks, Vanessa/Apache setup, branch lifecycle, verification, result export, switching, or available ITL commands.
+description: Initialize and operate ITL 1C configuration or extension projects with Git, source infobases, isolated branch infobase copies, optional web publication, Vanessa Automation, CF/CFE export, and refresh. Use for init, tool checks, Vanessa/web publication setup, branch lifecycle, verification, result export, switching, or available ITL commands.
 ---
 
 # 1C Workflow
@@ -9,11 +9,11 @@ Detailed ITL workflow router. For installed projects, prefer `.agents/skills/1c-
 
 ## Routing
 
-Use `scripts/agent-1c.ps1` whenever PowerShell is available; it owns Git, 1C, worktrees, infobases, Apache, Vanessa, manifests, and state.
+Use `scripts/agent-1c.ps1` whenever PowerShell is available; it owns Git, 1C, worktrees, infobases, web publication state, Vanessa, manifests, and state.
 
 Open `references/workflow.md` first for the lightweight lifecycle panel and topic index. Then open only the matching topic file:
 
-- `references/init-setup.md`: initialization, tool checks, Apache/Vanessa install, `update-workflow`, `update-ai-rules`.
+- `references/init-setup.md`: initialization, tool checks, web publication/Vanessa setup, `update-workflow`, `update-ai-rules`.
 - `references/mcp.md`: vibecoding1c MCP, branch-local Vanessa MCP, External MCP, branch Data MCP.
 - `references/branch-lifecycle.md`: new branches, worktrees, extension helpers, context activation, refresh, list/switch, advanced close.
 - `references/verification-result.md`: `/itl-check`, Vanessa Automation, event-log baseline, result export, `verificationPolicy`.
@@ -26,7 +26,7 @@ Intent mapping:
 
 - Help/menu: show helper `help` or the panel in `references/workflow.md`.
 - Init/bootstrap: run the monitored init wizard.
-- Tool checks: `check-tools`, `list-platforms`, `detect-apache`, `install-apache`, `install-vanessa-automation`.
+- Tool checks and web publication: `check-tools`, `list-platforms`, `detect-web-publication`, `configure-web-publication`, `publish-dev-branch`, `install-vanessa-automation`.
 - vibecoding1c MCP: `vibecoding1c-mcp-setup`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`, `vibecoding1c-mcp-update`, `vibecoding1c-mcp-status`, start/stop/key/model/client-config helper actions.
 - Workflow/rule refresh: `update-workflow`, `update-ai-rules`.
 - New work: `new-dev-branch`, `new-extension-dev-branch`.

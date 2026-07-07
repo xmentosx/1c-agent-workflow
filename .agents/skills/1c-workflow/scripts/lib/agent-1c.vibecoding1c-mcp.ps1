@@ -729,6 +729,7 @@ function Get-Vibecoding1cMcpAiRules1cClientName {
         "code" { return "1c-code-metadata-mcp" }
         "graph" { return "1c-graph-metadata-mcp" }
         "data" { return "1c-data-mcp" }
+        "bookstack" { return "BookStack-product-docs-mcp" }
         default { return "" }
     }
 }
@@ -1560,13 +1561,84 @@ function Get-Vibecoding1cMcpDefaultManifest {
     }
 }
 
+function Get-Vibecoding1cMcpBookStackServerDefinition {
+    return [pscustomobject][ordered]@{
+        id = "bookstack"
+        title = "BookStack product documentation"
+        scope = "global"
+        image = "itl/bookstack-product-docs-mcp:local"
+        internalPort = 8000
+        mcpNameTemplate = "bookstack-product-docs"
+        containerNameTemplate = "itl-bookstack-product-docs"
+        env = @(
+            [ordered]@{ name = "BOOKSTACK_BASE_URL"; from = "BOOKSTACK_BASE_URL"; required = $true },
+            [ordered]@{ name = "BOOKSTACK_TOKEN_ID"; from = "BOOKSTACK_TOKEN_ID"; required = $true },
+            [ordered]@{ name = "BOOKSTACK_TOKEN_SECRET"; from = "BOOKSTACK_TOKEN_SECRET"; required = $true },
+            [ordered]@{ name = "BOOKSTACK_CACHE_PATH"; value = "/data/bookstack-cache.sqlite"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_REINDEX_INTERVAL_HOURS"; from = "BOOKSTACK_REINDEX_INTERVAL_HOURS"; default = "24"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_INDEX_ON_STARTUP"; from = "BOOKSTACK_INDEX_ON_STARTUP"; default = "true"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_MAX_INDEX_PAGES"; from = "BOOKSTACK_MAX_INDEX_PAGES"; required = $false },
+            [ordered]@{ name = "RESET_DATABASE"; from = "BOOKSTACK_RESET_DATABASE"; default = "false"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_EMBEDDING_API_BASE"; embedding = "base"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_EMBEDDING_API_KEY"; embedding = "key"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_EMBEDDING_MODEL"; embedding = "model"; required = $false }
+        )
+        volumes = @()
+    }
+}
+
+function Test-Vibecoding1cMcpBookStackVirtualServerEnabled {
+    $configured = [string](Get-EnvValue -Name "VIBECODING1C_MCP_BOOKSTACK_ENABLED" -Default (Get-ConfigValue -Path "vibecoding1cMcp.bookStackProductDocsEnabled" -Default ""))
+    if ($configured -match '^(1|true|yes|on)$') {
+        return $true
+    }
+    if ($configured -match '^(0|false|no|off)$') {
+        return $false
+    }
+
+    $registryPath = Join-Path (Get-Vibecoding1cMcpRegistryRoot) "registry.json"
+    if (-not (Test-Path -LiteralPath $registryPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+
+    $registry = Read-Vibecoding1cMcpRegistry
+    foreach ($endpoint in Get-Vibecoding1cMcpRegistryServers -Registry $registry) {
+        if ([string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "family" -Default "") -ne "vibecoding1c") {
+            continue
+        }
+        if ([string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "id" -Default "") -eq "bookstack") {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Add-Vibecoding1cMcpVirtualServersToManifest {
+    param([object]$Manifest)
+
+    $manifestHash = ConvertTo-Vibecoding1cMcpHashtable -Object $Manifest
+    $servers = @(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $manifestHash -Name "servers" -Default @()))
+    $hasBookStack = $false
+    foreach ($server in $servers) {
+        if ([string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "id" -Default "") -eq "bookstack") {
+            $hasBookStack = $true
+            break
+        }
+    }
+    if ((-not $hasBookStack) -and (Test-Vibecoding1cMcpBookStackVirtualServerEnabled)) {
+        $servers += Get-Vibecoding1cMcpBookStackServerDefinition
+    }
+    $manifestHash["servers"] = $servers
+    return [pscustomobject]$manifestHash
+}
+
 function Read-Vibecoding1cMcpManifest {
     $distributionRoot = Get-Vibecoding1cMcpDistributionRoot
     $manifestPath = Join-Path $distributionRoot "vibecoding1c-mcp.manifest.json"
     if (Test-Path -LiteralPath $manifestPath -PathType Leaf -ErrorAction SilentlyContinue) {
-        return (Read-Utf8Text -Path $manifestPath | ConvertFrom-Json)
+        return (Add-Vibecoding1cMcpVirtualServersToManifest -Manifest (Read-Utf8Text -Path $manifestPath | ConvertFrom-Json))
     }
-    return (Get-Vibecoding1cMcpDefaultManifest)
+    return (Add-Vibecoding1cMcpVirtualServersToManifest -Manifest (Get-Vibecoding1cMcpDefaultManifest))
 }
 
 function Get-Vibecoding1cMcpScopeContext {
@@ -1874,7 +1946,7 @@ function Ensure-Vibecoding1cMcpModel {
     }
 
     if ($previousModel -and $previousModel -ne $selection.modelId) {
-        $stateHash["staleIndexes"] = @("docs", "templates", "ssl", "code", "graph")
+        $stateHash["staleIndexes"] = @("docs", "templates", "ssl", "code", "graph", "bookstack")
         Write-Host "Embedding model changed from $previousModel to $($selection.modelId). Affected indexes are marked stale; set RESET_DATABASE=true explicitly before reindexing."
     } elseif (-not $stateHash.Contains("staleIndexes")) {
         $stateHash["staleIndexes"] = @()

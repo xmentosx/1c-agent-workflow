@@ -403,7 +403,6 @@ Describe "1C agent workflow static checks" {
                     -DevBranch "itldev/branch3" `
                     -RunStatusPath $statusPath `
                     -RunLogPath $logPath `
-                    -InstallApacheIfMissing `
                     -InstallVanessaIfMissing `
                     -AllowUnverifiedClose *> $null
                 Get-Agent1cReexecArguments
@@ -421,7 +420,6 @@ Describe "1C agent workflow static checks" {
             $args | Should -Contain $statusPath
             $args | Should -Contain "-RunLogPath"
             $args | Should -Contain $logPath
-            $args | Should -Contain "-InstallApacheIfMissing"
             $args | Should -Contain "-InstallVanessaIfMissing"
             $args | Should -Contain "-AllowUnverifiedClose"
             $args | Should -Not -Contain "-AllowUnverifiedResult"
@@ -670,23 +668,23 @@ Describe "1C agent workflow static checks" {
         $text | Should -Match "do not collect the (initialization )?questionnaire in chat"
     }
 
-    It "wires configured init install flags without standalone install rerun guidance" {
-        foreach ($parameter in @('$InstallApacheIfMissing', '$InstallVanessaIfMissing')) {
-            $HelperText | Should -Match ([regex]::Escape($parameter))
-        }
+    It "keeps Apache install out of helper API and keeps Vanessa configured install flag" {
+        $HelperText | Should -Not -Match "InstallApacheIfMissing"
+        $HelperText | Should -Not -Match "install-apache"
+        $HelperText | Should -Match ([regex]::Escape('$InstallVanessaIfMissing'))
         $HelperText | Should -Match "Prepare-ConfiguredInitProjectSettings"
         $HelperText | Should -Match "New-ConfiguredInitAnswers"
-        $HelperText | Should -Match "InstallApacheIfMissing"
         $HelperText | Should -Match "InstallVanessaIfMissing"
-        $HelperText | Should -Match "rerun init-project with -InitMode configured -InstallApacheIfMissing"
         $HelperText | Should -Match "rerun init-project with -InitMode configured -InstallVanessaIfMissing"
+        $HelperText | Should -Match "configure-web-publication"
+        $HelperText | Should -Match "publish-dev-branch"
 
         $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
         $installText | Should -Match "Diagnostic Tool Checks"
         $installText | Should -Match ([regex]::Escape('should not be expanded into `check-tools`, separate install actions, and a second init run'))
-        $installText | Should -Match "init-project -InitMode configured -InstallApacheIfMissing"
         $installText | Should -Match "init-project -InitMode configured -InstallVanessaIfMissing"
-        $installText | Should -Not -Match ([regex]::Escape('rerun `detect-apache`/`check-tools`'))
+        $installText | Should -Not -Match "InstallApacheIfMissing"
+        $installText | Should -Not -Match "install-apache"
     }
 
     It "documents monitored init as a foreground command, not a background direct wizard" {
@@ -858,6 +856,9 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match "itl-1c-codechecker"
         $HelperText | Should -Match "itl-{projectSlug}-code"
         $HelperText | Should -Match "itl-{projectSlug}-graph"
+        $HelperText | Should -Match "bookstack-product-docs"
+        $HelperText | Should -Match "BookStack-product-docs-mcp"
+        $HelperText | Should -Match "Add-Vibecoding1cMcpVirtualServersToManifest"
         $HelperText | Should -Not -Match "itl-{projectSlug}-{branchSlug}-vanessa"
         $HelperText | Should -Not -Match "localVanessa"
         foreach ($portMarker in @("18000", "18100", "18500", "19000")) {
@@ -920,6 +921,17 @@ Describe "1C agent workflow static checks" {
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\host.config.example.json") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\README.md") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\Dockerfile") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\server.py") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\requirements.txt") -PathType Leaf) | Should -Be $true
+        $bookStackServerText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\server.py")
+        foreach ($toolName in @("search_docs", "read_page", "list_structure", "reindex_docs")) {
+            $bookStackServerText | Should -Match "def $toolName"
+        }
+        $bookStackServerText | Should -Match "/api/search"
+        $bookStackServerText | Should -Match "/api/pages"
+        $bookStackServerText | Should -Match "CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts"
+        $bookStackServerText | Should -Match "/embeddings"
 
         $hostConfig = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\host.config.example.json") | ConvertFrom-Json
         $hostConfig.registryRepo | Should -Be "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git"
@@ -937,6 +949,11 @@ Describe "1C agent workflow static checks" {
         $hostConfig.configurations[1].sourcePath | Should -Match "trade-local"
         $hostConfig.configurations[1].dump.repositoryPath | Should -Match "tcp://"
         $hostConfig.secrets.ONEC_AI_TOKEN | Should -Match "^<"
+        $hostConfig.secrets.BOOKSTACK_TOKEN_ID | Should -Match "^<"
+        $hostConfig.secrets.BOOKSTACK_TOKEN_SECRET | Should -Match "^<"
+        $hostConfig.bookStackProductDocsServer.baseUrl | Should -Match "^http"
+        $hostConfig.bookStackProductDocsServer.reindexIntervalHours | Should -Be 24
+        $hostConfig.enabledServers.global | Should -Contain "bookstack"
         $hostConfig.helpSearchServer.platformVersion | Should -Match "8\.3\."
         $hostConfig.helpSearchServer.platformBinPath | Should -Match "1cv8"
         $hostConfig.sslSearchServer.bspVersion | Should -Match "3\."
@@ -978,6 +995,10 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match "standalone-cpu-embedding-placeholder"
         $McpHostText | Should -Match "Invoke-HostConfigDumpHelper"
         $McpHostText | Should -Match 'Refresh-HostConfigurations -Config \$config -TargetConfigId \$ConfigId'
+        $McpHostText | Should -Match "Get-BookStackProductDocsServerDefinition"
+        $McpHostText | Should -Match "Ensure-ServerDockerImageAvailable"
+        $McpHostText | Should -Match "BOOKSTACK_BASE_URL"
+        $McpHostText | Should -Match "BookStack-product-docs-mcp"
         $McpHostText | Should -Match "sourcePath"
         $McpHostText | Should -Match "Ensure-HostEmbeddingModel"
         $McpHostText | Should -Match "Test-HostEmbeddingModelPresent"
@@ -2860,6 +2881,8 @@ Describe "1C agent workflow static checks" {
             $text | Should -Not -Match '(?m)^\s*LICENSE_KEY_[A-Z0-9_]+\s*=\s*[^#\s]+'
             $text | Should -Not -Match '(?m)^\s*ONEC_AI_TOKEN\s*=\s*(?!<)[^#\s]+'
             $text | Should -Not -Match '"ONEC_AI_TOKEN"\s*:\s*"(?!<)[^"]+"'
+            $text | Should -Not -Match '(?m)^\s*BOOKSTACK_TOKEN_(ID|SECRET)\s*=\s*(?!<)[^#\s]+'
+            $text | Should -Not -Match '"BOOKSTACK_TOKEN_(ID|SECRET)"\s*:\s*"(?!<)[^"]+"'
         }
     }
 
@@ -2911,7 +2934,16 @@ Describe "1C agent workflow static checks" {
         $userRulesTemplateText | Should -Match "content/skills"
         $userRulesTemplateText | Should -Match ([regex]::Escape("/installmcp"))
         $userRulesTemplateText | Should -Match "vibecoding1c MCP helper request"
+        $userRulesTemplateText | Should -Match "product-docs/SKILL.md"
+        $userRulesTemplateText | Should -Match "BookStack-product-docs-mcp"
         $userRulesTemplateText | Should -Not -Match ([regex]::Escape("/itl-vibecoding1c-mcp"))
+
+        $productDocsSkillPath = Join-Path $RepoRoot ".agents\skills\product-docs\SKILL.md"
+        (Test-Path -LiteralPath $productDocsSkillPath -PathType Leaf) | Should -Be $true
+        $productDocsSkillText = Get-Content -Encoding UTF8 -Raw $productDocsSkillPath
+        $productDocsSkillText | Should -Match "BookStack-product-docs-mcp"
+        $productDocsSkillText | Should -Match "search_docs"
+        $productDocsSkillText | Should -Match "read_page"
 
         $HelperText | Should -Match "function Update-AgentGuidanceBridge"
         $HelperText | Should -Match "function Update-UserRules"
@@ -4591,13 +4623,35 @@ if (`$?) { exit 0 } else { exit 1 }
         $lockTemplate.mode | Should -Be "fresh"
         $lockTemplate.dependencies.aiRules1c.repo | Should -Match "ai_rules_1c"
         $lockTemplate.dependencies.vanessaAutomation.PSObject.Properties.Name | Should -Contain "sha256"
-        $lockTemplate.dependencies.apache.PSObject.Properties.Name | Should -Contain "sha256"
+        $lockTemplate.dependencies.PSObject.Properties.Name | Should -Not -Contain "apache"
 
         $HelperText | Should -Match "function Get-DependencyMode"
         $HelperText | Should -Match "function Update-DependencyLockEntry"
         $HelperText | Should -Match "function Get-VerificationPolicy"
         $HelperText | Should -Match "verificationPolicy=block"
         $HelperText | Should -Match "Dependency mode is locked"
+    }
+
+    It "wires web publication policy, actions, and branch state fields" {
+        $projectTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\project.json")
+        $devEnvTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")
+
+        $projectTemplate | Should -Match '"publishByDefault"\s*:\s*false'
+        $projectTemplate | Should -Match '"publishAuto"\s*:\s*false'
+        $devEnvTemplate | Should -Match "WEB_PUBLISH_BY_DEFAULT=false"
+        $devEnvTemplate | Should -Match "WEB_PUBLISH_AUTO=false"
+
+        $HelperText | Should -Match "function Get-WebPublishAuto"
+        $HelperText | Should -Match "function Configure-WebPublication"
+        $HelperText | Should -Match "function Publish-DevBranch"
+        $HelperText | Should -Match "detect-web-publication"
+        $HelperText | Should -Match "configure-web-publication"
+        $HelperText | Should -Match "publish-dev-branch"
+        foreach ($field in @("publicationStatus", "publicationMode", "publicationError", "publicationUpdatedAt")) {
+            $HelperText | Should -Match $field
+        }
+        $HelperText | Should -Match "Invoke-DevBranchPublicationCycle"
+        $HelperText | Should -Match "Install-DevBranchDataMcpBestEffort"
     }
 
     It "declares worktree branch parameters, state fields, and Russian open guidance" {
@@ -4701,6 +4755,9 @@ if (`$?) { exit 0 } else { exit 1 }
             $state.launcherFolder | Should -Be $expectedLauncherFolder
             $state.unsafeActionProtectionSetupMode | Should -Be "skip"
             ([bool]$state.unsafeActionProtectionConfirmed) | Should -Be $false
+            $state.publicationStatus | Should -Be "disabled"
+            $state.publicationMode | Should -Be "none"
+            $state.publicationUrl | Should -Be ""
             $launcherText = Get-Content -Encoding UTF8 -Raw (Join-Path $env:APPDATA "1C\1CEStart\ibases.v8i")
             $launcherText | Should -Match "(?m)^\[Fixture Branch\]\r?$"
             $launcherText | Should -Match ("(?m)^Folder={0}\r?$" -f [regex]::Escape($expectedLauncherFolder))
@@ -4773,6 +4830,9 @@ if (`$?) { exit 0 } else { exit 1 }
             $legacyWorktreeRoot = Join-Path (Split-Path -Parent $tempRoot) ((Split-Path -Leaf $tempRoot) + "-worktrees")
             (Test-Path -LiteralPath $legacyWorktreeRoot -PathType Container -ErrorAction SilentlyContinue) | Should -Be $false
             $statePath = Join-Path $tempRoot ".agent-1c\dev-branches\legacy-branch.json"
+            $state = Get-Content -Encoding UTF8 -Raw $statePath | ConvertFrom-Json
+            $state.publicationStatus | Should -Be "disabled"
+            $state.publicationMode | Should -Be "none"
             (Test-Path -LiteralPath $statePath -PathType Leaf) | Should -Be $true
             $state = Get-Content -Encoding UTF8 -Raw $statePath | ConvertFrom-Json
             ([bool]$state.createdWithWorktree) | Should -Be $false

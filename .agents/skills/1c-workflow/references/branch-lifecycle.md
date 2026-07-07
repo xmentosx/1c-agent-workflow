@@ -23,8 +23,8 @@ Goal: create an isolated development branch worktree plus isolated copied infoba
    - Server base: run configured `serverBaseCopyScript`; do not invent server copy commands.
 6. If `sourceUsesRepository=true`, unbind the development branch copy from 1C configuration repository storage without repository parameters.
 7. Register the branch infobase in `%APPDATA%\1C\1CEStart\ibases.v8i` under `/ITL/<project-root-name>` with entry name equal to the development branch name.
-8. Optionally publish to Apache and best-effort connect branch Data MCP when reachable.
-9. Save branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json` inside the worktree, including `createdWithWorktree`, `worktreePath`, `mainWorktreePath`, launcher metadata, `devBranchKind`, publication URL, Data MCP status, and verification fields.
+8. Save branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json` inside the worktree, including `createdWithWorktree`, `worktreePath`, `mainWorktreePath`, launcher metadata, `devBranchKind`, publication status fields, Data MCP status, and verification fields.
+9. If web publication is enabled, run the helper-owned publication cycle: automatic publication only when `WEB_PUBLISH_AUTO=true`, otherwise manual URL entry or skip. Best-effort branch Data MCP connects only after a publication URL exists.
 10. Activate branch context in the worktree `.dev.env` for `ai_rules_1c` infobase-bound commands.
 11. Report branch, worktree path, copied infobase path, launcher folder/name, and publication URL if any.
 12. Print the Russian instruction that the current folder stayed on `master`, the new worktree path, and the developer should open a separate Codex/Kilo/IDE window there.
@@ -53,7 +53,7 @@ Development branch changes must never be loaded directly into the source infobas
 ## STATUS / LIST / SWITCH
 
 - `status` shows current worktree, branch, verification/MCP summaries, and target worktree paths.
-- `list-dev-branches` shows active branches, branch/worktree paths, main worktree path, copied infobase path, launcher metadata, publication URL, Data MCP status, Vanessa verify port/status, Vanessa MCP status, vibecoding1c MCP current-scope status, and timestamps.
+- `list-dev-branches` shows active branches, branch/worktree paths, main worktree path, copied infobase path, launcher metadata, publication URL/status, Data MCP status, Vanessa verify port/status, Vanessa MCP status, vibecoding1c MCP current-scope status, and timestamps.
 - `switch-master` clears active branch infobase values and returns legacy single-folder checkouts to `master`.
 - `switch-dev-branch` is mainly legacy recovery. For worktree-created branches, report the saved worktree path instead of changing the current folder.
 

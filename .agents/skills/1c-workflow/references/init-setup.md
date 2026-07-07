@@ -47,7 +47,7 @@ Use this as `.agent-1c/project.json`:
 }
 ```
 
-Use `.dev.env` for secrets, passwords, Apache/web publication values, local tool paths, `DEPENDENCY_MODE`, `VERIFICATION_POLICY`, and optional overrides. Empty password values mean the password is not set.
+Use `.dev.env` for secrets, passwords, web publication values, local tool paths, `DEPENDENCY_MODE`, `VERIFICATION_POLICY`, and optional overrides. Empty password values mean the password is not set.
 
 ## Required Questions
 
@@ -57,9 +57,10 @@ Ask only for values the helper cannot collect or infer:
 - Whether the source uses 1C configuration repository storage.
 - Repository path/user/password only when source storage is enabled.
 - 1C platform executable. First inspect standard `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` version folders and offer installed versions.
-- Whether branch infobases should be published to Apache by default. If no, store `WEB_PUBLISH_BY_DEFAULT=false` and do not ask Apache paths.
+- Whether branch infobases should be web-published by default. If no, store `WEB_PUBLISH_BY_DEFAULT=false` and `WEB_PUBLISH_AUTO=false`.
+- If branch infobases should be web-published, whether to attempt automatic publication during branch creation. Store `WEB_PUBLISH_AUTO=true|false`; if automatic publication is requested, collect existing `webinst`/publication settings but never install a web server.
 - Whether dependencies are `fresh` or `locked`. Default is `fresh`; `locked` requires a complete `.agent-1c/dependency-lock.json`.
-- Whether to install missing Apache or Vanessa Automation automatically.
+- Whether to install missing Vanessa Automation automatically.
 
 Ask one raw value at a time unless the agent surface supports structured fields. Do not ask for `KEY=value` blocks. For optional passwords, first ask whether the password is set.
 
@@ -83,10 +84,11 @@ Goal: create baseline project state.
 
 ## Tool Actions
 
-- `check-tools`: validate configured platform, Git, Apache/webinst when needed, Vanessa Automation, and writable workflow folders.
+- `check-tools`: validate configured platform, Git, existing web publication tooling when automatic publication is enabled/requested, Vanessa Automation, and writable workflow folders.
 - `list-platforms`: show discovered 1C platform versions.
-- `detect-apache`: detect local Apache/httpd and save usable publication defaults.
-- `install-apache`: install Apache only after explicit confirmation or configured init flag.
+- `detect-web-publication`: detect existing web publication tooling and show usable `.dev.env` values.
+- `configure-web-publication`: run the interactive web publication policy/settings wizard after init.
+- `publish-dev-branch`: publish or record publication for an existing development branch.
 - `install-vanessa-automation`: download `vanessa-automation-single.*.zip`, verify SHA256 when available, unpack under `.agent-1c/tools/vanessa-automation`, and save `VANESSA_*` paths.
 
 ## UPDATE_WORKFLOW

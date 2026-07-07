@@ -28,7 +28,7 @@ For Codex, prefer `$1c-workflow-fast` for routine installed-project actions. Use
 
 ## Topic References
 
-- `init-setup.md`: state files, `.agent-1c/project.json`, `.dev.env`, required init questions, monitored wizard, tool checks, Apache/Vanessa install, `update-workflow`, and `update-ai-rules`.
+- `init-setup.md`: state files, `.agent-1c/project.json`, `.dev.env`, required init questions, monitored wizard, tool checks, web publication/Vanessa setup, `update-workflow`, and `update-ai-rules`.
 - `mcp.md`: vibecoding1c MCP selection/setup/status/update, branch-local Vanessa MCP, External MCP preservation, and branch Data MCP publication.
 - `branch-lifecycle.md`: Git/worktree rules, new configuration or extension branches, extension bootstrap/dump, branch context activation, base update, refresh, list, switch, and advanced close.
 - `verification-result.md`: `/itl-check`, `verify-dev-branch`, Vanessa Automation `TESTMANAGER -> TESTCLIENT`, `VANESSA_TEST_FOREIGN_WAIT_MODE=warn`, event-log baselines, `/itl-result`, result manifests, and `verificationPolicy`.
@@ -39,7 +39,7 @@ Open only the matching topic file. Do not load the whole reference set for norma
 
 ## Hot Path
 
-Use `scripts/agent-1c.ps1` whenever PowerShell is available; it owns Git, 1C, worktrees, infobases, Apache, Vanessa, manifests, and state.
+Use `scripts/agent-1c.ps1` whenever PowerShell is available; it owns Git, 1C, worktrees, infobases, web publication state, Vanessa, manifests, and state.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action <action>
