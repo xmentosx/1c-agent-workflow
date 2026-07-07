@@ -2994,6 +2994,29 @@ function Invoke-NativeProcessAndWait {
     return $result.exitCode
 }
 
+function Invoke-VisibleNativeProcessAndWait {
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments
+    )
+
+    $argumentLine = Join-NativeCommandLineArguments -Arguments $Arguments
+    $process = Start-Process `
+        -FilePath $FilePath `
+        -ArgumentList $argumentLine `
+        -WorkingDirectory $script:ProjectRoot `
+        -PassThru
+
+    if ($null -eq $process) {
+        throw "Failed to start process: $FilePath"
+    }
+
+    $script:LastProcessId = $process.Id
+    $process.WaitForExit()
+    $process.Refresh()
+    return $process.ExitCode
+}
+
 function Start-NativeProcessBackground {
     param(
         [string]$FilePath,
@@ -3043,6 +3066,40 @@ function Invoke-Designer {
     Write-Host "1C log: $logPath"
 
     $exitCode = Invoke-NativeProcessAndWait -FilePath $platformPath -Arguments $args
+    if ($exitCode -ne 0) {
+        throw "1C Designer failed with exit code $exitCode. Log: $logPath"
+    }
+
+    return $logPath
+}
+
+function Invoke-DesignerInteractive {
+    param(
+        [string]$InfoBasePath,
+        [string]$InfoBaseKind,
+        [string]$User = (Get-EnvValue -Name "IB_USER"),
+        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
+    )
+
+    $platformPath = Get-PlatformPath
+    if (-not (Test-Path -LiteralPath $platformPath)) {
+        throw "1cv8.exe was not found: $platformPath"
+    }
+
+    Assert-InfoBaseAvailable -Kind $InfoBaseKind -Path $InfoBasePath -SettingName "infobase path"
+
+    $logsPath = Resolve-ProjectPath (Get-ConfigValue -Path "logsPath" -Default "logs/1c")
+    New-Item -ItemType Directory -Force -Path $logsPath | Out-Null
+    $logPath = New-TimestampedFilePath -Directory $logsPath -Prefix "1c-designer-interactive-" -Extension ".log"
+    $script:LastLogPath = $logPath
+
+    $ibArgs = New-InfobaseArgs -Kind $InfoBaseKind -Path $InfoBasePath -User $User -Password $Password
+    $args = @("DESIGNER") + $ibArgs + @("/DisableStartupMessages", "/Out", $logPath)
+
+    Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
+    Write-Host "1C log: $logPath"
+
+    $exitCode = Invoke-VisibleNativeProcessAndWait -FilePath $platformPath -Arguments $args
     if ($exitCode -ne 0) {
         throw "1C Designer failed with exit code $exitCode. Log: $logPath"
     }

@@ -4152,6 +4152,30 @@ if (`$?) { exit 0 } else { exit 1 }
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "DEVELOPER-GUIDE.ru.md")) | Should -Match "-UseCurrentWorktree"
     }
 
+    It "declares manual unsafe action protection confirmation for development branches" {
+        $HelperText | Should -Match "function Confirm-DevBranchUnsafeActionProtection"
+        $HelperText | Should -Match "function Get-DevBranchUnsafeActionProtectionSetup"
+        $HelperText | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP"
+        $HelperText | Should -Match "manual-confirm"
+        $HelperText | Should -Match "unsafeActionProtectionSetupMode"
+        $HelperText | Should -Match "unsafeActionProtectionConfirmed"
+        $HelperText | Should -Match "unsafeActionProtectionConfirmedAt"
+        $HelperText | Should -Match "unsafeActionProtectionUser"
+        $HelperText | Should -Match "Read-Host"
+        $HelperText | Should -Match '\[System\.StringComparison\]::OrdinalIgnoreCase'
+        $HelperText | Should -Match "Invoke-DesignerInteractive"
+        $HelperText | Should -Match "Invoke-VisibleNativeProcessAndWait"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=manual-confirm"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")) | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP"
+    }
+
+    It "keeps interactive Designer confirmation launch visible" {
+        $match = [regex]::Match($HelperText, "(?s)function\s+Invoke-VisibleNativeProcessAndWait\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
+        $match.Success | Should -Be $true
+        $match.Groups["body"].Value | Should -Match "Start-Process"
+        $match.Groups["body"].Value | Should -Not -Match "WindowStyle"
+    }
+
     It "creates a sibling worktree branch by default without switching the main folder" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-worktree-test-" + [guid]::NewGuid().ToString("N"))
         $worktreeRoot = "$tempRoot-worktrees"
@@ -4172,6 +4196,7 @@ if (`$?) { exit 0 } else { exit 1 }
                 "SOURCE_INFOBASE_PATH=$sourceBase",
                 "IB_USER=",
                 "IB_PASSWORD=",
+                "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip",
                 "WEB_PUBLISH_BY_DEFAULT=false"
             ) -join [Environment]::NewLine
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value $devEnv -Encoding UTF8
@@ -4203,6 +4228,8 @@ if (`$?) { exit 0 } else { exit 1 }
             $expectedLauncherFolder = "/ITL/" + (Split-Path -Leaf $tempRoot)
             $state.launcherInfoBaseName | Should -Be "Fixture Branch"
             $state.launcherFolder | Should -Be $expectedLauncherFolder
+            $state.unsafeActionProtectionSetupMode | Should -Be "skip"
+            ([bool]$state.unsafeActionProtectionConfirmed) | Should -Be $false
             $launcherText = Get-Content -Encoding UTF8 -Raw (Join-Path $env:APPDATA "1C\1CEStart\ibases.v8i")
             $launcherText | Should -Match "(?m)^\[Fixture Branch\]\r?$"
             $launcherText | Should -Match ("(?m)^Folder={0}\r?$" -f [regex]::Escape($expectedLauncherFolder))
@@ -4252,6 +4279,7 @@ if (`$?) { exit 0 } else { exit 1 }
                 "SOURCE_INFOBASE_PATH=$sourceBase",
                 "IB_USER=",
                 "IB_PASSWORD=",
+                "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip",
                 "WEB_PUBLISH_BY_DEFAULT=false"
             ) -join [Environment]::NewLine
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value $devEnv -Encoding UTF8

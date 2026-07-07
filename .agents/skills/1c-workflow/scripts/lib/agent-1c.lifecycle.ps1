@@ -1776,6 +1776,105 @@ function Register-DevBranchInLauncher {
     }
 }
 
+function Get-DevBranchUnsafeActionProtectionSetup {
+    $value = (Get-Setting -EnvName "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP" -ConfigName "devBranchUnsafeActionProtectionSetup" -Default "manual-confirm").Trim().ToLowerInvariant()
+    if ($value -notin @("manual-confirm", "skip")) {
+        throw "Unsupported DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP value: $value. Use manual-confirm or skip."
+    }
+
+    return $value
+}
+
+function Confirm-DevBranchUnsafeActionProtection {
+    param(
+        [string]$InfoBaseKind,
+        [string]$InfoBasePath,
+        [string]$DevBranchName
+    )
+
+    function Get-UnsafeActionProtectionMessage {
+        param([int]$Index)
+
+        $messages = @(
+            "0J/QoNCV0JTQo9Cf0KDQldCW0JTQldCd0JjQlTog0L/QvtC00YLQstC10YDQttC00LXQvdC40LUg0L7RgtC60LvRjtGH0LXQvdC40Y8g0LfQsNGJ0LjRgtGLINC+0YIg0L7Qv9Cw0YHQvdGL0YUg0LTQtdC50YHRgtCy0LjQuSDQv9GA0L7Qv9GD0YnQtdC90L4g0L/QviDQvdCw0YHRgtGA0L7QudC60LUgREVWX0JSQU5DSF9VTlNBRkVfQUNUSU9OX1BST1RFQ1RJT05fU0VUVVA9c2tpcC4=",
+            "0J/QvtC00YLQstC10YDQttC00LXQvdC40LUg0LfQsNGJ0LjRgtGLINC+0YIg0L7Qv9Cw0YHQvdGL0YUg0LTQtdC50YHRgtCy0LjQuQ==",
+            "0JLQtdGC0LrQsCDRgNCw0LfRgNCw0LHQvtGC0LrQuDog",
+            "0JHQsNC30LAg0LLQtdGC0LrQuCDRgNCw0LfRgNCw0LHQvtGC0LrQuDog",
+            "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30Ys6IA==",
+            "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30Ysg0LIgLmRldi5lbnYg0L3QtSDQt9Cw0LTQsNC9Lg==",
+            "0J7RgtC60LvRjtGH0LjRgtC1INC30LDRidC40YLRgyDRgyDQv9C+0LvRjNC30L7QstCw0YLQtdC70Y8g0JjQkSwg0L/QvtC0INC60L7RgtC+0YDRi9C8INGA0LDQt9GA0LDQsdC+0YLRh9C40Log0YDQsNCx0L7RgtCw0LXRgiDRgSDQsdCw0LfQvtC5INCy0LXRgtC60Lgu",
+            "0JXRgdC70Lgg0L7RgtCy0LXRgiDQvdC1INCU0JAsINCx0YPQtNC10YIg0LfQsNC/0YPRidC10L0g0JrQvtC90YTQuNCz0YPRgNCw0YLQvtGALiDQkiDQvdC10Lwg0L3Rg9C20L3QviDQvtGC0LrQu9GO0YfQuNGC0Ywg0LfQsNGJ0LjRgtGDINC+0YIg0L7Qv9Cw0YHQvdGL0YUg0LTQtdC50YHRgtCy0LjQuSwg0YHQvtGF0YDQsNC90LjRgtGMINC/0L7Qu9GM0LfQvtCy0LDRgtC10LvRjyDQuCDQt9Cw0LrRgNGL0YLRjCDQmtC+0L3RhNC40LPRg9GA0LDRgtC+0YAu",
+            "0JfQsNGJ0LjRgtCwINC+0YIg0L7Qv9Cw0YHQvdGL0YUg0LTQtdC50YHRgtCy0LjQuSDRg9C20LUg0L7RgtC60LvRjtGH0LXQvdCwPyDQktCy0LXQtNC40YLQtSDQlNCQINC00LvRjyDQv9GA0L7QtNC+0LvQttC10L3QuNGP",
+            "0JTQkA==",
+            "0KHQtdC50YfQsNGBINCx0YPQtNC10YIg0L7RgtC60YDRi9GCINCa0L7QvdGE0LjQs9GD0YDQsNGC0L7RgCDQsdCw0LfRiyDQstC10YLQutC4INGA0LDQt9GA0LDQsdC+0YLQutC4Lg==",
+            "0JjQvdGB0YLRgNGD0LrRhtC40Y86",
+            "MS4g0J7RgtC60YDQvtC50YLQtSDRgdC/0LjRgdC+0Log0L/QvtC70YzQt9C+0LLQsNGC0LXQu9C10Lkg0LjQvdGE0L7RgNC80LDRhtC40L7QvdC90L7QuSDQsdCw0LfRiy4=",
+            "Mi4g0JLRi9Cx0LXRgNC40YLQtSDQv9C+0LvRjNC30L7QstCw0YLQtdC70Y8gJ3swfScsINC/0L7QtCDQutC+0YLQvtGA0YvQvCB3b3JrZmxvdyDQt9Cw0L/Rg9GB0LrQsNC10YIg0L7QsdGA0LDQsdC+0YLQutC4INC4INGA0LDRgdGI0LjRgNC10L3QuNGPLg==",
+            "Mi4g0JLRi9Cx0LXRgNC40YLQtSDQv9C+0LvRjNC30L7QstCw0YLQtdC70Y8g0JjQkSwg0L/QvtC0INC60L7RgtC+0YDRi9C8INGA0LDQt9GA0LDQsdC+0YLRh9C40Log0YDQsNCx0L7RgtCw0LXRgiDRgSDQsdCw0LfQvtC5INCy0LXRgtC60Lgu",
+            "My4g0J7RgtC60LvRjtGH0LjRgtC1INC30LDRidC40YLRgyDQvtGCINC+0L/QsNGB0L3Ri9GFINC00LXQudGB0YLQstC40Lku",
+            "NC4g0KHQvtGF0YDQsNC90LjRgtC1INC/0L7Qu9GM0LfQvtCy0LDRgtC10LvRjy4=",
+            "NS4g0JfQsNC60YDQvtC50YLQtSDQmtC+0L3RhNC40LPRg9GA0LDRgtC+0YAu",
+            "Ni4g0J/QvtGB0LvQtSDQt9Cw0LrRgNGL0YLQuNGPINC/0L7QtNGC0LLQtdGA0LTQuNGC0LUg0JTQkCDQsiDRjdGC0L7QvCDQvtC60L3QtSBQb3dlclNoZWxsLg=="
+        )
+
+        return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($messages[$Index]))
+    }
+
+    $mode = Get-DevBranchUnsafeActionProtectionSetup
+    $user = [string](Get-EnvValue -Name "IB_USER")
+    if ($mode -eq "skip") {
+        Write-Host (Get-UnsafeActionProtectionMessage 0)
+        return [pscustomobject]@{
+            mode = $mode
+            confirmed = $false
+            confirmedAt = ""
+            user = $user
+        }
+    }
+
+    Write-Section (Get-UnsafeActionProtectionMessage 1)
+    while ($true) {
+        Write-Host ((Get-UnsafeActionProtectionMessage 2) + $DevBranchName)
+        Write-Host ((Get-UnsafeActionProtectionMessage 3) + $InfoBasePath)
+        if ($user) {
+            Write-Host ((Get-UnsafeActionProtectionMessage 4) + $user)
+        } else {
+            Write-Host (Get-UnsafeActionProtectionMessage 5)
+            Write-Host (Get-UnsafeActionProtectionMessage 6)
+        }
+        Write-Host (Get-UnsafeActionProtectionMessage 7)
+
+        $answer = (Read-Host (Get-UnsafeActionProtectionMessage 8)).Trim()
+        if ([string]::Equals($answer, (Get-UnsafeActionProtectionMessage 9), [System.StringComparison]::OrdinalIgnoreCase)) {
+            return [pscustomobject]@{
+                mode = $mode
+                confirmed = $true
+                confirmedAt = (Get-Date).ToString("o")
+                user = $user
+            }
+        }
+
+        Write-Host (Get-UnsafeActionProtectionMessage 10)
+        Write-Host (Get-UnsafeActionProtectionMessage 11)
+        Write-Host (Get-UnsafeActionProtectionMessage 12)
+        if ($user) {
+            Write-Host ((Get-UnsafeActionProtectionMessage 13) -f $user)
+        } else {
+            Write-Host (Get-UnsafeActionProtectionMessage 14)
+        }
+        Write-Host (Get-UnsafeActionProtectionMessage 15)
+        Write-Host (Get-UnsafeActionProtectionMessage 16)
+        Write-Host (Get-UnsafeActionProtectionMessage 17)
+        Write-Host (Get-UnsafeActionProtectionMessage 18)
+
+        Invoke-DesignerInteractive `
+            -InfoBasePath $InfoBasePath `
+            -InfoBaseKind $InfoBaseKind `
+            -User $user `
+            -Password (Get-EnvValue -Name "IB_PASSWORD") | Out-Null
+    }
+}
+
 function Publish-DevBranchToApache {
     param(
         [string]$DevBranchPath,
@@ -1950,6 +2049,11 @@ function Initialize-DevBranchRuntime {
         Write-Host "Source infobase is configured without repository connection. Skipping repository unbind for development branch copy."
     }
 
+    $unsafeActionProtectionSetup = Confirm-DevBranchUnsafeActionProtection `
+        -InfoBaseKind $kind `
+        -InfoBasePath $DevBranchInfoBasePath `
+        -DevBranchName $DevBranchName
+
     $launcherRegistration = Register-DevBranchInLauncher `
         -InfoBaseKind $kind `
         -InfoBasePath $DevBranchInfoBasePath `
@@ -1989,6 +2093,10 @@ function Initialize-DevBranchRuntime {
         publicationUrl = $publicationUrl
         publicationName = $publicationName
         publicationDir = $publicationDir
+        unsafeActionProtectionSetupMode = $unsafeActionProtectionSetup.mode
+        unsafeActionProtectionConfirmed = $unsafeActionProtectionSetup.confirmed
+        unsafeActionProtectionConfirmedAt = $unsafeActionProtectionSetup.confirmedAt
+        unsafeActionProtectionUser = $unsafeActionProtectionSetup.user
         createdAt = (Get-Date).ToString("o")
         lastLogPath = $script:LastLogPath
     }
