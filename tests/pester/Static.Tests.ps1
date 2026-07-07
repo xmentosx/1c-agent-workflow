@@ -2875,6 +2875,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Match "Assert-WorkflowPackageUpdateContext"
         $HelperText | Should -Match "Assert-WorkflowTrackedGitClean"
         $HelperText | Should -Match "updatedAt"
+        $HelperText | Should -Match "VANESSA-TESTS-GUIDE\.ru\.md"
 
         $lockTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dependency-lock.json") | ConvertFrom-Json
         $lockTemplate.dependencies.workflowPackage.repo | Should -Be "https://github.com/xmentosx/1c-agent-workflow.git"
@@ -2904,6 +2905,15 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             $text = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot $relativePath)
             $text | Should -Match "update-workflow"
         }
+
+        $workflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
+        $workflowText | Should -Match "VANESSA-TESTS-GUIDE\.ru\.md"
+
+        $vanessaGuideText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "VANESSA-TESTS-GUIDE.ru.md")
+        $vanessaGuideText | Should -Match "reference"
+        $vanessaGuideText | Should -Match "2-3"
+        $vanessaGuideText | Should -Match "smoke"
+        $vanessaGuideText | Should -Match "tests/features"
     }
 
     It "removes default upstream ai_rules_1c MCP entries without deleting ITL or External MCP config" {
@@ -3084,6 +3094,7 @@ enabled = true
             Set-Content -LiteralPath (Join-Path $projectRoot "AGENT-INSTALL.md") -Encoding UTF8 -Value "old install"
             Set-Content -LiteralPath (Join-Path $projectRoot "DEVELOPER-GUIDE.ru.md") -Encoding UTF8 -Value "old developer guide"
             Set-Content -LiteralPath (Join-Path $projectRoot "DEV-BRANCH-DEVELOPMENT.ru.md") -Encoding UTF8 -Value "old branch guide"
+            Set-Content -LiteralPath (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.ru.md") -Encoding UTF8 -Value "old vanessa guide"
             Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\stale.txt") -Encoding UTF8 -Value "stale"
             Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow-fast\stale.txt") -Encoding UTF8 -Value "stale"
             Set-Content -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-old.md") -Encoding UTF8 -Value "stale command"
@@ -3135,6 +3146,7 @@ local after
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\custom.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot "templates\dependency-lock.json") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot "templates\stale.txt") -PathType Leaf) | Should -Be $false
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.ru.md")) | Should -Match "Vanessa Automation"
 
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".dev.env")) | Should -Match "SECRET=keep"
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\project.json")) | Should -Match "keep-project"

@@ -370,7 +370,7 @@ Helper action: `update-workflow`. Kilo wrapper: `/itl-update-workflow`.
 1. Run only from the `master` worktree. If invoked from `itldev/*`, stop and print the saved main worktree path when available.
 2. Require a clean tracked Git worktree, while still ignoring local runtime state such as `.dev.env`, `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
 3. Resolve the package source from `ITL_WORKFLOW_SOURCE_PATH`, or clone/update `ITL_WORKFLOW_REPO` and `ITL_WORKFLOW_REF`. Defaults are `https://github.com/xmentosx/1c-agent-workflow.git` and `master`.
-4. Copy only managed workflow files: `.agents/skills/1c-workflow*`, `.kilo/commands/itl*.md`, `templates/`, `README.md`, `AGENT-INSTALL.md`, `DEVELOPER-GUIDE.ru.md`, and `DEV-BRANCH-DEVELOPMENT.ru.md`.
+4. Copy only managed workflow files: `.agents/skills/1c-workflow*`, `.kilo/commands/itl*.md`, `templates/`, `README.md`, `AGENT-INSTALL.md`, `DEVELOPER-GUIDE.ru.md`, `DEV-BRANCH-DEVELOPMENT.ru.md`, and `VANESSA-TESTS-GUIDE.ru.md`.
 5. Never overwrite local project/runtime state: `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, existing `.agent-1c/project.json`, or existing `.agent-1c/tools.json`.
 6. Record `workflowPackage.repo/ref/commit/source/updatedAt` in `.agent-1c/dependency-lock.json` and reapply the managed ITL `USER-RULES.md` block.
 7. Run `UPDATE_AI_RULES` unless `-SkipAiRules` is passed.

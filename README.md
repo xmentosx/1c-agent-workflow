@@ -32,6 +32,12 @@ DEVELOPER-GUIDE.ru.md
 DEV-BRANCH-DEVELOPMENT.ru.md
 ```
 
+Краткие агентские правила написания Vanessa-проверок для текущей фичи:
+
+```text
+VANESSA-TESTS-GUIDE.ru.md
+```
+
 Низкоуровневые helper-actions для диагностики описаны отдельно и не являются основным интерфейсом разработчика:
 
 ```text
@@ -44,6 +50,7 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 - `.agents/skills/1c-workflow-fast` - быстрый Skill для регулярных операций через PowerShell-helper без чтения полного workflow.
 - `.kilo/commands` - короткие slash-команды Kilo Code с префиксом `/itl`.
 - `AGENT-INSTALL.md` - bootstrap-инструкция для агента.
+- `VANESSA-TESTS-GUIDE.ru.md` - компактные правила для агента, который пишет Vanessa-проверки текущей фичи.
 - `templates/project.json` - шаблон настроек проекта без секретов.
 - `templates/dependency-lock.json` - фиксируемые версии, URL и SHA256 для воспроизводимого bootstrap.
 - `templates/dev.env.example` - пример локальных настроек и секретов.
