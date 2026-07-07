@@ -570,6 +570,7 @@ function Get-BookStackProductDocsServerDefinition {
         id = "bookstack"
         title = "BookStack product documentation"
         scope = "global"
+        embedding = $true
         image = "itl/bookstack-product-docs-mcp:local"
         internalPort = 8000
         mcpNameTemplate = "bookstack-product-docs"

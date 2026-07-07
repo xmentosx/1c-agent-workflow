@@ -924,6 +924,8 @@ Describe "1C agent workflow static checks" {
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\Dockerfile") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\server.py") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\requirements.txt") -PathType Leaf) | Should -Be $true
+        $bookStackRequirementsText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\requirements.txt")
+        $bookStackRequirementsText | Should -Match "sentence-transformers"
         $bookStackServerText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\server.py")
         foreach ($toolName in @("search_docs", "read_page", "list_structure", "index_status", "reindex_docs")) {
             $bookStackServerText | Should -Match "def $toolName"
@@ -935,6 +937,11 @@ Describe "1C agent workflow static checks" {
         $bookStackServerText | Should -Match "embedded_pages"
         $bookStackServerText | Should -Match "newest_indexed_at"
         $bookStackServerText | Should -Match "last_embedding_error"
+        $bookStackServerText | Should -Match "EMBEDDING_MODEL"
+        $bookStackServerText | Should -Match "/app/model_cache"
+        $bookStackServerText | Should -Match "SentenceTransformer"
+        $bookStackServerText | Should -Match "cache_folder=self.cache_dir"
+        $bookStackServerText | Should -Match "normalize_embeddings=True"
         $indexStatusStart = $bookStackServerText.IndexOf("    def index_status(self) -> Dict[str, Any]:")
         $indexStatusEnd = $bookStackServerText.IndexOf("    def index_page", $indexStatusStart)
         $indexStatusStart | Should -BeGreaterThan -1
@@ -1008,6 +1015,7 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match "Invoke-HostConfigDumpHelper"
         $McpHostText | Should -Match 'Refresh-HostConfigurations -Config \$config -TargetConfigId \$ConfigId'
         $McpHostText | Should -Match "Get-BookStackProductDocsServerDefinition"
+        $McpHostText | Should -Match '(?s)Get-BookStackProductDocsServerDefinition.*embedding = \$true'
         $McpHostText | Should -Match "Ensure-ServerDockerImageAvailable"
         $McpHostText | Should -Match "BOOKSTACK_BASE_URL"
         $McpHostText | Should -Match "BookStack-product-docs-mcp"
@@ -1031,6 +1039,10 @@ Describe "1C agent workflow static checks" {
         $readmeText | Should -Match ([regex]::Escape("-Action stop -ConfigPath .\host.config.json -ServerId bookstack"))
         $readmeText | Should -Match ([regex]::Escape("-Action reindex -ConfigPath .\host.config.json -ServerId bookstack"))
         $readmeText | Should -Match "index_status"
+        $readmeText | Should -Match "intfloat/multilingual-e5-base"
+        $readmeText | Should -Match ([regex]::Escape("/app/model_cache"))
+        $readmeText | Should -Match "sentence-transformers"
+        $readmeText | Should -Match "embedded_pages > 0"
         $runbookText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\RUNBOOK.ru.md")
         $runbookText | Should -Match ([regex]::Escape("-Action setup -ConfigPath .\host.config.json -ServerId bookstack"))
         $runbookText | Should -Match ([regex]::Escape("-Action start -ConfigPath .\host.config.json -ServerId bookstack"))
@@ -1038,6 +1050,10 @@ Describe "1C agent workflow static checks" {
         $runbookText | Should -Match ([regex]::Escape("-Action stop -ConfigPath .\host.config.json -ServerId bookstack"))
         $runbookText | Should -Match ([regex]::Escape("-Action reindex -ConfigPath .\host.config.json -ServerId bookstack"))
         $runbookText | Should -Match "index_status"
+        $runbookText | Should -Match "intfloat/multilingual-e5-base"
+        $runbookText | Should -Match ([regex]::Escape("/app/model_cache"))
+        $runbookText | Should -Match "sentence-transformers"
+        $runbookText | Should -Match "embedded_pages > 0"
         $McpHostDumpText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1")
         $nativeEmptyStringFunction = [regex]::Match($McpHostDumpText, '(?s)function ConvertTo-NativeEmptyStringArgument \{.*?\n\}')
         $nativeEmptyStringFunction.Success | Should -Be $true
@@ -1217,6 +1233,13 @@ Describe "1C agent workflow static checks" {
                     apiKey = "lm-studio"
                     model = "fixture-embedding-model"
                 }
+                secrets = [ordered]@{
+                    ("BOOKSTACK_TOKEN_" + "ID") = "fixture-id"
+                    ("BOOKSTACK_TOKEN_" + "SECRET") = "fixture-secret"
+                }
+                bookStackProductDocsServer = [ordered]@{
+                    baseUrl = "http://bookstack.test"
+                }
                 enabledServers = [ordered]@{ global = @(); project = @("graph") }
                 configurations = @()
             }
@@ -1240,6 +1263,12 @@ Describe "1C agent workflow static checks" {
                 $envValues["OPENAI_API_KEY"] | Should -Be "lm-studio"
                 $envValues["OPENAI_API_BASE"] | Should -Be "http://host.docker.internal:19000/v1"
                 $envValues["OPENAI_MODEL"] | Should -Be "fixture-embedding-model"
+
+                $bookStackEnv = Resolve-ServerEnv -Config $hostConfig -Server (Get-BookStackProductDocsServerDefinition)
+                $bookStackEnv["BOOKSTACK_EMBEDDING_API_KEY"] | Should -Be "lm-studio"
+                $bookStackEnv["BOOKSTACK_EMBEDDING_API_BASE"] | Should -Be "http://host.docker.internal:19000/v1"
+                $bookStackEnv["BOOKSTACK_EMBEDDING_MODEL"] | Should -Be "fixture-embedding-model"
+                $bookStackEnv.Contains("EMBEDDING_MODEL") | Should -Be $false
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -1365,6 +1394,13 @@ Describe "1C agent workflow static checks" {
                 embedding = [ordered]@{
                     model = "intfloat/multilingual-e5-base"
                 }
+                secrets = [ordered]@{
+                    ("BOOKSTACK_TOKEN_" + "ID") = "fixture-id"
+                    ("BOOKSTACK_TOKEN_" + "SECRET") = "fixture-secret"
+                }
+                bookStackProductDocsServer = [ordered]@{
+                    baseUrl = "http://bookstack.test"
+                }
                 enabledServers = [ordered]@{ global = @(); project = @("code") }
                 configurations = @()
             }
@@ -1404,6 +1440,17 @@ Describe "1C agent workflow static checks" {
                 $volumes = @(Resolve-ServerVolumes -Config $hostConfig -Server $server)
                 @($volumes | Where-Object { $_.container -eq "/app/model_cache" }).Count | Should -Be 1
                 (Test-Path -LiteralPath (Join-Path $hostConfig.stateRoot "model-cache") -PathType Container) | Should -Be $true
+
+                $bookStackServer = Get-BookStackProductDocsServerDefinition
+                $bookStackServer.embedding | Should -Be $true
+                $bookStackEnv = Resolve-ServerEnv -Config $hostConfig -Server $bookStackServer
+                $bookStackEnv["EMBEDDING_MODEL"] | Should -Be "intfloat/multilingual-e5-base"
+                $bookStackEnv["RESET_CACHE"] | Should -Be "false"
+                $bookStackEnv.Contains("BOOKSTACK_EMBEDDING_API_BASE") | Should -Be $false
+                $bookStackEnv.Contains("BOOKSTACK_EMBEDDING_API_KEY") | Should -Be $false
+                $bookStackEnv.Contains("BOOKSTACK_EMBEDDING_MODEL") | Should -Be $false
+                $bookStackVolumes = @(Resolve-ServerVolumes -Config $hostConfig -Server $bookStackServer)
+                @($bookStackVolumes | Where-Object { $_.container -eq "/app/model_cache" }).Count | Should -Be 1
                 Remove-Variable -Scope Script -Name HostCpuLmsWasCalled -ErrorAction SilentlyContinue
             }
         } finally {

@@ -100,6 +100,7 @@ class Settings:
     embedding_api_base: str
     embedding_api_key: str
     embedding_model: str
+    embedding_cache_dir: str
 
     @staticmethod
     def from_env() -> "Settings":
@@ -117,7 +118,11 @@ class Settings:
             reset_database=truthy(os.environ.get("RESET_DATABASE", os.environ.get("BOOKSTACK_RESET_DATABASE", "false"))),
             embedding_api_base=os.environ.get("BOOKSTACK_EMBEDDING_API_BASE", os.environ.get("OPENAI_API_BASE", "")).strip().rstrip("/"),
             embedding_api_key=os.environ.get("BOOKSTACK_EMBEDDING_API_KEY", os.environ.get("OPENAI_API_KEY", "")).strip(),
-            embedding_model=os.environ.get("BOOKSTACK_EMBEDDING_MODEL", os.environ.get("OPENAI_MODEL", "")).strip(),
+            embedding_model=os.environ.get("BOOKSTACK_EMBEDDING_MODEL", os.environ.get("EMBEDDING_MODEL", os.environ.get("OPENAI_MODEL", ""))).strip(),
+            embedding_cache_dir=os.environ.get(
+                "MODEL_CACHE_DIR",
+                os.environ.get("SENTENCE_TRANSFORMERS_HOME", "/app/model_cache"),
+            ).strip(),
         )
 
     def validate(self) -> None:
@@ -219,13 +224,27 @@ class EmbeddingClient:
         self.api_base = settings.embedding_api_base
         self.api_key = settings.embedding_api_key
         self.model = settings.embedding_model
+        self.cache_dir = settings.embedding_cache_dir or "/app/model_cache"
+        self._local_model: Any = None
+
+    def mode(self) -> str:
+        if not self.model:
+            return "disabled"
+        if self.api_base:
+            return "remote"
+        return "local"
 
     def enabled(self) -> bool:
-        return bool(self.api_base and self.model)
+        return self.mode() != "disabled"
 
     def embed(self, text: str) -> List[float]:
         if not self.enabled():
             return []
+        if self.api_base:
+            return self.embed_remote(text)
+        return self.embed_local(text)
+
+    def embed_remote(self, text: str) -> List[float]:
         payload = json.dumps({"model": self.model, "input": text[:6000]}).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -240,6 +259,25 @@ class EmbeddingClient:
         if not data:
             return []
         vector = data[0].get("embedding", [])
+        return [float(value) for value in vector]
+
+    def embed_local(self, text: str) -> List[float]:
+        if self._local_model is None:
+            Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
+            os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", self.cache_dir)
+            os.environ.setdefault("HF_HOME", self.cache_dir)
+            try:
+                from sentence_transformers import SentenceTransformer
+            except Exception as exc:
+                raise BookStackApiError(f"Local embedding runtime is unavailable: {exc}") from exc
+            self._local_model = SentenceTransformer(self.model, cache_folder=self.cache_dir)
+        vector = self._local_model.encode(
+            text[:6000],
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        if hasattr(vector, "tolist"):
+            vector = vector.tolist()
         return [float(value) for value in vector]
 
 
@@ -637,7 +675,9 @@ class ProductDocsService:
                 "ok": True,
                 "cache_path": self.settings.cache_path,
                 "embedding_enabled": self.embeddings.enabled(),
+                "embedding_mode": self.embeddings.mode(),
                 "embedding_model": self.embeddings.model,
+                "embedding_cache_dir": self.embeddings.cache_dir,
                 "last_embedding_error": self.last_embedding_error,
                 "reindex_interval_hours": self.settings.reindex_interval_hours,
                 "index_on_startup": self.settings.index_on_startup,

@@ -32,6 +32,19 @@ Configure `bookStackProductDocsServer.baseUrl`, set read-only `BOOKSTACK_TOKEN_I
 The MCP publishes as `BookStack-product-docs-mcp` and exposes `search_docs`, `read_page`,
 `list_structure`, `index_status`, and `reindex_docs`.
 
+For local CPU semantic search, keep the shared embedding setting:
+
+```json
+"embedding": {
+  "model": "intfloat/multilingual-e5-base"
+}
+```
+
+BookStack MCP receives `EMBEDDING_MODEL`, uses the shared `<stateRoot>/model-cache`
+mounted as `/app/model_cache`, and loads the model locally through `sentence-transformers`.
+When `embedding.apiKey` is configured instead, the server uses the existing
+OpenAI-compatible `/embeddings` endpoint path.
+
 To set up and publish only the BookStack MCP without touching other configured servers:
 
 ```powershell
@@ -63,6 +76,8 @@ Use `-ConfigId <id>` with `dump-config` to update one local dump.
 Use `-DryRun` to validate generated paths and payloads without Docker/Git writes where possible.
 Run `publish` after `reindex` when remote clients should see updated registry freshness metadata.
 For BookStack, `index_status` reports local cache freshness and embedding coverage; `reindex_docs` refreshes the cache.
+In CPU mode, `index_status` should show `embedding_enabled: true`,
+`embedding_model: intfloat/multilingual-e5-base`, and `embedded_pages > 0` after reindex.
 
 BookStack-only operations:
 

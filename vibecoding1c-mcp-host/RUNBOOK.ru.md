@@ -197,6 +197,19 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action setup -ConfigPath .\host.config.json -ServerId bookstack
 ```
 
+Для локального CPU semantic search достаточно оставить общий embedding model:
+
+```json
+"embedding": {
+  "model": "intfloat/multilingual-e5-base"
+}
+```
+
+BookStack MCP получит `EMBEDDING_MODEL`, использует общий cache `<stateRoot>\model-cache`,
+смонтированный в контейнер как `/app/model_cache`, и загрузит модель локально через
+`sentence-transformers`. Если в `embedding` задан `apiKey`, BookStack MCP вместо этого
+использует OpenAI-compatible `/embeddings` endpoint.
+
 `setup` делает полный цикл:
 
 1. Проверяет `git`, `docker`, `python`.
@@ -329,6 +342,9 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 ```
 
 Для BookStack MCP tool `index_status` показывает состояние локального cache и покрытие embeddings без обращения к BookStack API. Tool `reindex_docs` запускает обновление индекса.
+
+После reindex для CPU mode в `index_status` ожидаются `embedding_enabled: true`,
+`embedding_model: intfloat/multilingual-e5-base` и `embedded_pages > 0`.
 
 После `reindex` выполните `publish`, если клиентам нужно увидеть обновленные `indexedAt`/`reportHash` в registry.
 
