@@ -659,11 +659,7 @@ function Get-Vibecoding1cMcpSelectedHostId {
         }
     }
 
-    if (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $Server) {
-        return ""
-    }
-
-    return [string](Get-Vibecoding1cMcpObjectValue -Object $Selection -Name "remoteHostId" -Default "")
+    return ""
 }
 
 function Get-Vibecoding1cMcpEndpointUnavailableStatus {
@@ -814,6 +810,8 @@ function Get-Vibecoding1cMcpSelectionCompleteness {
     }
 
     $registryReady = $false
+    $registryPath = Join-Path (Get-Vibecoding1cMcpRegistryRoot) "registry.json"
+    $canValidateRegistryEndpoints = $RefreshRegistry -or (Test-Path -LiteralPath $registryPath -PathType Leaf -ErrorAction SilentlyContinue)
     foreach ($server in Select-Vibecoding1cMcpManifestServers) {
         $id = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "id" -Default "")
         if (-not $id) {
@@ -841,17 +839,29 @@ function Get-Vibecoding1cMcpSelectionCompleteness {
             }
         }
 
+        if ($RefreshRegistry -and -not $registryReady) {
+            Ensure-Vibecoding1cMcpRegistry | Out-Null
+            $registryReady = $true
+        }
         $hostId = Get-Vibecoding1cMcpSelectedHostId -Server $server -Selection $Selection
-        if (-not $hostId) {
-            if ($RefreshRegistry -and -not $registryReady) {
-                Ensure-Vibecoding1cMcpRegistry | Out-Null
-                $registryReady = $true
-            }
-            $candidates = @(Get-Vibecoding1cMcpRemoteEndpointCandidates -Server $server -Selection $Selection -ConfigId $configId)
-            $usableCandidates = @($candidates | Where-Object { Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_ })
-            if ($usableCandidates.Count -gt 1) {
-                $reasons += "$id/$scope remote provider has multiple matching hosts and no hostId"
-            }
+        if (-not $canValidateRegistryEndpoints) {
+            continue
+        }
+        $candidates = @(Get-Vibecoding1cMcpRemoteEndpointCandidates -Server $server -Selection $Selection -ConfigId $configId)
+        if ($candidates.Count -eq 0) {
+            $hostSuffix = if ($hostId) { " for hostId '$hostId'" } else { "" }
+            $reasons += "$id/$scope remote provider has no registry endpoint$hostSuffix"
+            continue
+        }
+
+        $usableCandidates = @($candidates | Where-Object { Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_ })
+        if ($usableCandidates.Count -eq 0) {
+            $unavailable = (($candidates | ForEach-Object { Format-Vibecoding1cMcpRemoteEndpointInfo -Endpoint $_ }) -join " | ")
+            $reasons += "$id/$scope remote provider has no usable endpoint: $unavailable"
+            continue
+        }
+        if (-not $hostId -and $usableCandidates.Count -gt 1) {
+            $reasons += "$id/$scope remote provider has multiple matching hosts and no hostId"
         }
     }
 
@@ -1061,11 +1071,13 @@ function New-Vibecoding1cMcpRemoteRuntime {
     }
 
     $candidates = @(Get-Vibecoding1cMcpRemoteEndpointCandidates -Server $Server -Selection $Selection -ConfigId $configId)
-    if ($candidates.Count -gt 1) {
-        $usableCandidates = @($candidates | Where-Object { Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_ })
-        if ($usableCandidates.Count -gt 0) {
-            $candidates = $usableCandidates
-        }
+    $usableCandidates = @($candidates | Where-Object { Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_ })
+    if ($usableCandidates.Count -gt 0) {
+        $candidates = $usableCandidates
+    } elseif ($candidates.Count -gt 0) {
+        $candidateText = (($candidates | ForEach-Object { Format-Vibecoding1cMcpRemoteEndpointInfo -Endpoint $_ }) -join " | ")
+        Write-Host "Skipping remote vibecoding1c MCP server '$id': endpoint is not usable for client config. Candidates: $candidateText"
+        return $null
     }
     if ($candidates.Count -gt 1) {
         if ($AllowPrompt) {
@@ -1230,18 +1242,20 @@ function Set-Vibecoding1cMcpSelection {
             $McpHostId
         } elseif ($existingHostId) {
             $existingHostId
-        } elseif ($requiresRemoteConfig) {
-            ""
         } else {
-            [string](Get-Vibecoding1cMcpObjectValue -Object $selectionHash -Name "remoteHostId" -Default "")
+            $bulkHostId = [string](Get-Vibecoding1cMcpObjectValue -Object $selectionHash -Name "remoteHostId" -Default "")
+            if ((-not $McpServerId) -and $bulkHostId) { $bulkHostId } else { "" }
         }
         if ($provider -eq "remote") {
             Ensure-Vibecoding1cMcpRegistry | Out-Null
             $candidateSelection = [pscustomobject]$selectionHash
             $candidates = @(Get-Vibecoding1cMcpRemoteEndpointCandidates -Server $server -Selection $candidateSelection -ConfigId $configId)
             Write-Vibecoding1cMcpRemoteEndpointChoices -Candidates $candidates -ServerId $id -ConfigId $configId
-            if (-not $hostId -and $candidates.Count -gt 1 -and (Test-InteractiveInputAvailable)) {
-                $hostId = Read-Vibecoding1cMcpRemoteHostChoice -Candidates $candidates -ServerId $id -ConfigId $configId
+            $usableCandidates = @($candidates | Where-Object { Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_ })
+            if (-not $hostId -and $usableCandidates.Count -eq 1) {
+                $hostId = [string](Get-Vibecoding1cMcpObjectValue -Object $usableCandidates[0] -Name "hostId" -Default "")
+            } elseif (-not $hostId -and $usableCandidates.Count -gt 1 -and (Test-InteractiveInputAvailable)) {
+                $hostId = Read-Vibecoding1cMcpRemoteHostChoice -Candidates $usableCandidates -ServerId $id -ConfigId $configId
             }
         }
 

@@ -2199,7 +2199,12 @@ Describe "1C agent workflow static checks" {
                     [ordered]@{ id = "code"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-code"; url = "http://vibecoding1c-mcp-host:18100/mcp"; health = "running"; indexedAt = "2026-07-05T00:00:00Z" },
                     [ordered]@{ id = "code"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "erp"; name = "itl-erp-code"; url = "http://vibecoding1c-mcp-host:18101/mcp"; health = "running"; indexedAt = "2026-07-05T00:00:00Z" },
                     [ordered]@{ id = "graph"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-graph"; url = "http://vibecoding1c-mcp-host:18106/mcp"; health = "running"; indexedAt = "2026-07-05T00:00:00Z" },
-                    [ordered]@{ id = "graph"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "erp"; name = "itl-erp-graph"; url = "http://vibecoding1c-mcp-host:18107/mcp"; health = "running"; indexedAt = "2026-07-05T00:00:00Z" }
+                    [ordered]@{ id = "graph"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "erp"; name = "itl-erp-graph"; url = "http://vibecoding1c-mcp-host:18107/mcp"; health = "running"; indexedAt = "2026-07-05T00:00:00Z" },
+                    [ordered]@{ id = "docs"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-docs"; url = "http://vibecoding1c-mcp-host:18000/mcp"; health = "running" },
+                    [ordered]@{ id = "templates"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-templates"; url = "http://vibecoding1c-mcp-host:18001/mcp"; health = "running" },
+                    [ordered]@{ id = "syntax"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-syntax"; url = "http://vibecoding1c-mcp-host:18002/mcp"; health = "running" },
+                    [ordered]@{ id = "codechecker"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-codechecker"; url = "http://vibecoding1c-mcp-host:18003/mcp"; health = "running" },
+                    [ordered]@{ id = "ssl"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-ssl"; url = "http://vibecoding1c-mcp-host:18004/mcp"; health = "running" }
                 )
             }
             Set-Content -LiteralPath (Join-Path $registryRoot "registry.json") -Encoding UTF8 -Value (($registry | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
@@ -2268,42 +2273,64 @@ Describe "1C agent workflow static checks" {
                         baseUrl = "http://host-a"
                         publishedAt = "2026-07-05T00:00:00Z"
                         configurations = @([ordered]@{ configId = "trade"; title = "Trade"; configurationName = "Trade A"; configurationVersion = "1.0" })
-                        servers = @([ordered]@{
-                            id = "code"
-                            scope = "project"
-                            family = "vibecoding1c"
-                            provider = "remote"
-                            configId = "trade"
-                            name = "itl-trade-code"
-                            url = "http://host-a:18100/mcp"
-                            health = "running"
-                            configurationName = "Trade A"
-                            configurationVersion = "1.0"
-                            embeddingMode = "cpu"
-                            embeddingModel = "intfloat/multilingual-e5-base"
-                            indexedAt = "2026-07-05T00:00:00Z"
-                        })
+                        servers = @(
+                            [ordered]@{
+                                id = "code"
+                                scope = "project"
+                                family = "vibecoding1c"
+                                provider = "remote"
+                                configId = "trade"
+                                name = "itl-trade-code"
+                                url = "http://host-a:18100/mcp"
+                                health = "running"
+                                configurationName = "Trade A"
+                                configurationVersion = "1.0"
+                                embeddingMode = "cpu"
+                                embeddingModel = "intfloat/multilingual-e5-base"
+                                indexedAt = "2026-07-05T00:00:00Z"
+                            },
+                            [ordered]@{
+                                id = "docs"
+                                scope = "global"
+                                family = "vibecoding1c"
+                                provider = "remote"
+                                name = "itl-1c-docs"
+                                url = "http://host-a:18000/mcp"
+                                health = "running"
+                            }
+                        )
                     },
                     [ordered]@{
                         hostId = "host-b"
                         baseUrl = "http://host-b"
                         publishedAt = "2026-07-05T00:05:00Z"
                         configurations = @([ordered]@{ configId = "trade"; title = "Trade"; configurationName = "Trade B"; configurationVersion = "2.0" })
-                        servers = @([ordered]@{
-                            id = "code"
-                            scope = "project"
-                            family = "vibecoding1c"
-                            provider = "remote"
-                            configId = "trade"
-                            name = "itl-trade-code"
-                            url = "http://host-b:18100/mcp"
-                            health = "running"
-                            configurationName = "Trade B"
-                            configurationVersion = "2.0"
-                            embeddingMode = "cpu"
-                            embeddingModel = "intfloat/multilingual-e5-base"
-                            indexedAt = "2026-07-05T00:05:00Z"
-                        })
+                        servers = @(
+                            [ordered]@{
+                                id = "code"
+                                scope = "project"
+                                family = "vibecoding1c"
+                                provider = "remote"
+                                configId = "trade"
+                                name = "itl-trade-code"
+                                url = "http://host-b:18100/mcp"
+                                health = "running"
+                                configurationName = "Trade B"
+                                configurationVersion = "2.0"
+                                embeddingMode = "cpu"
+                                embeddingModel = "intfloat/multilingual-e5-base"
+                                indexedAt = "2026-07-05T00:05:00Z"
+                            },
+                            [ordered]@{
+                                id = "docs"
+                                scope = "global"
+                                family = "vibecoding1c"
+                                provider = "remote"
+                                name = "itl-1c-docs"
+                                url = "http://host-b:18000/mcp"
+                                health = "running"
+                            }
+                        )
                     }
                 )
                 configurations = @()
@@ -2339,6 +2366,30 @@ Describe "1C agent workflow static checks" {
                 $runtime.configurationName | Should -Be "Trade B"
                 $runtime.configurationVersion | Should -Be "2.0"
                 $runtime.embeddingModel | Should -Be "intfloat/multilingual-e5-base"
+            }
+
+            {
+                & {
+                    . $HelperPath -ProjectRoot $projectRoot -Action help -McpServerId docs -McpProvider remote *> $null
+                    Set-Vibecoding1cMcpSelection *> $null
+                    $selection = Read-Vibecoding1cMcpSelection
+                    $server = (Read-Vibecoding1cMcpManifest).servers | Where-Object { $_.id -eq "docs" } | Select-Object -First 1
+                    New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection | Out-Null
+                }
+            } | Should -Throw "*multiple matching hosts*"
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help -McpServerId docs -McpProvider remote -McpHostId host-b *> $null
+                Set-Vibecoding1cMcpSelection *> $null
+                $selection = Read-Vibecoding1cMcpSelection
+                $selectionEntry = $selection.servers | Where-Object { $_.id -eq "docs" } | Select-Object -First 1
+                $selectionEntry.configId | Should -Be ""
+                $selectionEntry.hostId | Should -Be "host-b"
+                $server = (Read-Vibecoding1cMcpManifest).servers | Where-Object { $_.id -eq "docs" } | Select-Object -First 1
+                $runtime = New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection
+                $runtime.url | Should -Be "http://host-b:18000/mcp"
+                $runtime.hostId | Should -Be "host-b"
+                $runtime.configId | Should -Be ""
             }
         } finally {
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")
@@ -2436,14 +2487,20 @@ Describe "1C agent workflow static checks" {
                         baseUrl = "http://host-a"
                         publishedAt = "2026-07-05T00:00:00Z"
                         configurations = @([ordered]@{ configId = "trade"; title = "Trade"; configurationName = "Trade A"; configurationVersion = "1.0" })
-                        servers = @([ordered]@{ id = "code"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-code"; url = "http://host-a:18100/mcp"; health = "running"; configurationName = "Trade A"; configurationVersion = "1.0"; embeddingModel = "intfloat/multilingual-e5-base"; indexedAt = "2026-07-05T00:00:00Z" })
+                        servers = @(
+                            [ordered]@{ id = "code"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-code"; url = "http://host-a:18100/mcp"; health = "running"; configurationName = "Trade A"; configurationVersion = "1.0"; embeddingModel = "intfloat/multilingual-e5-base"; indexedAt = "2026-07-05T00:00:00Z" },
+                            [ordered]@{ id = "docs"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-docs"; url = "http://host-a:18000/mcp"; health = "running" }
+                        )
                     },
                     [ordered]@{
                         hostId = "host-b"
                         baseUrl = "http://host-b"
                         publishedAt = "2026-07-05T00:05:00Z"
                         configurations = @([ordered]@{ configId = "trade"; title = "Trade"; configurationName = "Trade B"; configurationVersion = "2.0" })
-                        servers = @([ordered]@{ id = "code"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-code"; url = "http://host-b:18100/mcp"; health = "running"; configurationName = "Trade B"; configurationVersion = "2.0"; embeddingModel = "intfloat/multilingual-e5-base"; indexedAt = "2026-07-05T00:05:00Z" })
+                        servers = @(
+                            [ordered]@{ id = "code"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-code"; url = "http://host-b:18100/mcp"; health = "running"; configurationName = "Trade B"; configurationVersion = "2.0"; embeddingModel = "intfloat/multilingual-e5-base"; indexedAt = "2026-07-05T00:05:00Z" },
+                            [ordered]@{ id = "docs"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-docs"; url = "http://host-b:18000/mcp"; health = "running" }
+                        )
                     }
                 )
                 configurations = @()
@@ -2464,11 +2521,12 @@ Describe "1C agent workflow static checks" {
                     remoteHostId = ""
                     localScopeDefault = "project"
                     servers = @($serverIds | ForEach-Object {
+                        $isRemoteTestServer = ($_ -eq "code" -or $_ -eq "docs")
                         [ordered]@{
                             id = $_
                             family = "vibecoding1c"
-                            provider = "remote"
-                            configId = $(if ($_ -eq "code" -or $_ -eq "graph") { "trade" } else { "" })
+                            provider = $(if ($isRemoteTestServer) { "remote" } else { "local" })
+                            configId = $(if ($_ -eq "code") { "trade" } else { "" })
                             hostId = ""
                             localScope = "project"
                         }
@@ -2479,6 +2537,7 @@ Describe "1C agent workflow static checks" {
                 $duplicate = Get-Vibecoding1cMcpSelectionCompleteness -Selection (Read-Vibecoding1cMcpSelection) -RefreshRegistry
                 $duplicate.isComplete | Should -Be $false
                 ($duplicate.reasons -join [Environment]::NewLine) | Should -Match "code/project remote provider has multiple matching hosts and no hostId"
+                ($duplicate.reasons -join [Environment]::NewLine) | Should -Match "docs/global remote provider has multiple matching hosts and no hostId"
 
                 $endpoint = (Get-Vibecoding1cMcpRegistryServers -Registry (Read-Vibecoding1cMcpRegistry) | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "hostId" -Default "") -eq "host-b" } | Select-Object -First 1)
                 $details = Format-Vibecoding1cMcpRemoteEndpointInfo -Endpoint $endpoint
@@ -2491,13 +2550,64 @@ Describe "1C agent workflow static checks" {
                 $details | Should -Match "indexedAt=2026-07-05T00:05:00Z"
 
                 foreach ($serverSelection in $selection["servers"]) {
-                    if ($serverSelection["id"] -eq "code") {
+                    if ($serverSelection["id"] -eq "code" -or $serverSelection["id"] -eq "docs") {
                         $serverSelection["hostId"] = "host-b"
                     }
                 }
                 Set-Content -LiteralPath $selectionPath -Encoding UTF8 -Value (($selection | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
                 $complete = Get-Vibecoding1cMcpSelectionCompleteness -Selection (Read-Vibecoding1cMcpSelection) -RefreshRegistry
                 $complete.isComplete | Should -Be $true
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "marks a single unusable global remote endpoint as incomplete and skips runtime connection" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-global-unusable-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $registryRoot = Join-Path $tempRoot "registry"
+        $oldRegistryPath = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", "Process")
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot, $registryRoot | Out-Null
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $registryRoot, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", (Join-Path $tempRoot "local-home"), "Process")
+
+            $registry = [ordered]@{
+                schemaVersion = 2
+                publishedAt = "2026-07-05T00:10:00Z"
+                hosts = @([ordered]@{
+                    hostId = "dead-host"
+                    baseUrl = "http://dead-host"
+                    publishedAt = "2026-07-05T00:00:00Z"
+                    configurations = @()
+                    servers = @([ordered]@{ id = "docs"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-docs"; url = "http://dead-host:18000/mcp"; status = "missing"; health = "missing" })
+                })
+                configurations = @()
+                servers = @()
+            }
+            Set-Content -LiteralPath (Join-Path $registryRoot "registry.json") -Encoding UTF8 -Value (($registry | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help -McpServerId docs -McpProvider remote *> $null
+                Set-Vibecoding1cMcpSelection *> $null
+                $selection = Read-Vibecoding1cMcpSelection
+                $selectionEntry = $selection.servers | Where-Object { $_.id -eq "docs" } | Select-Object -First 1
+                $selectionEntry.hostId | Should -Be ""
+
+                $complete = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry
+                $complete.isComplete | Should -Be $false
+                ($complete.reasons -join [Environment]::NewLine) | Should -Match "docs/global remote provider has no usable endpoint"
+
+                $server = (Read-Vibecoding1cMcpManifest).servers | Where-Object { $_.id -eq "docs" } | Select-Object -First 1
+                $runtime = New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection
+                $runtime | Should -BeNullOrEmpty
             }
         } finally {
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")
