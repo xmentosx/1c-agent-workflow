@@ -4,6 +4,8 @@ Use `.agents/skills/1c-workflow/SKILL.md` for detailed project initialization, d
 
 For routine lifecycle operations in an already installed project, prefer the short Kilo `/itl-*` commands or `.agents/skills/1c-workflow-fast/SKILL.md`. The fast path runs `.agents/skills/1c-workflow/scripts/agent-1c.ps1` directly and should read detailed workflow references only after helper failure or when the developer asks for explanation.
 
+For long ITL lifecycle actions (`new-dev-branch`, `new-extension-dev-branch`, `update-workflow`, `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`), if the shell tool supports `timeout_ms`, set `timeout_ms >= 1800000`. Do not use `120000 ms` or other short defaults because these actions may launch 1C Designer/Enterprise operations such as `/LoadConfigFromFiles ... /UpdateDBCfg` that can legitimately take longer than 2 minutes. `/itl-status` and helper `status`/`help` do not need this long timeout.
+
 Use `DEV-BRANCH-DEVELOPMENT.ru.md` for the development process inside a development branch: quick-fix for small local fixes, OpenSpec for business feature work or risky behavior changes.
 
 When asking the developer for missing setup values, ask one value at a time and accept the raw value only. Do not ask for `KEY=value` blocks, one large free-form block with all missing variables, or variable names.

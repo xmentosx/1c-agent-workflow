@@ -30,6 +30,8 @@ Do not open the full workflow references before normal lifecycle execution. Open
 
 Run commands from the project root:
 
+For long lifecycle actions (`new-dev-branch`, `new-extension-dev-branch`, `update-workflow`, `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`), if the shell tool supports `timeout_ms`, set `timeout_ms >= 1800000`. Do not use `120000 ms` or other short defaults because these actions may launch 1C Designer/Enterprise operations such as `/LoadConfigFromFiles ... /UpdateDBCfg` that can legitimately take longer than 2 minutes. `status` and `help` do not need this long timeout.
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action <action>
 ```

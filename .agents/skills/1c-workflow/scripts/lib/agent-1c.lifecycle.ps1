@@ -2516,6 +2516,7 @@ function Dump-DevBranchExtension {
 
 function Show-WorkflowStatus {
     Write-Section "ITL status"
+    Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 1800000."
 
     if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git"))) {
         Write-Host "Git repository: missing"
@@ -3044,6 +3045,7 @@ function Show-Help {
     }
     Write-Host "Context: $surface"
     Write-Host "Git branch: $(if ($currentBranch) { $currentBranch } else { '<none>' })"
+    Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 1800000."
 
     if ($surface -eq "master") {
         Write-Host ""

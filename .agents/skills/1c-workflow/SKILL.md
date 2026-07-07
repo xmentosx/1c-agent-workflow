@@ -5,15 +5,15 @@ description: Initialize and operate ITL 1C configuration or extension projects w
 
 # 1C Workflow
 
-This is the detailed ITL workflow router. For installed projects, prefer `.agents/skills/1c-workflow-fast/SKILL.md` or Kilo `/itl-*` wrappers. Open details only after helper failure or request.
+Detailed ITL workflow router. For installed projects, prefer `.agents/skills/1c-workflow-fast/SKILL.md` or Kilo `/itl-*`; open details only after helper failure/request.
 
 ## Routing
 
-Use `scripts/agent-1c.ps1` whenever PowerShell is available. It owns Git, 1C Designer, worktrees, infobase copies, Apache, Vanessa, manifests, and local state.
+Use `scripts/agent-1c.ps1` whenever PowerShell is available; it owns Git, 1C, worktrees, infobases, Apache, Vanessa, manifests, and state.
 
 Open `references/workflow.md` for initialization, setup, recovery, lifecycle semantics, or unclear helper output. Open `references/advanced-actions.md` only for diagnostics, automation, extension helpers, or Vanessa MCP. For work inside `itldev/*`, open `references/dev-branch-development.md`.
 
-Do not use root `DEVELOPER-GUIDE.ru.md` or `DEV-BRANCH-DEVELOPMENT.ru.md` as mandatory references. They are human-facing; read only on request or for explanations.
+Root `DEVELOPER-GUIDE.ru.md` and `DEV-BRANCH-DEVELOPMENT.ru.md` are human-facing; read only on request/explanation, never as mandatory references.
 
 Intent mapping:
 
@@ -30,7 +30,7 @@ Intent mapping:
 - Switching/listing: `switch-master`, `switch-dev-branch`, `list-dev-branches`.
 - Vanessa MCP authoring/debugging: `install-vanessa-mcp`, `start-vanessa-mcp`, `vanessa-mcp-status`, `stop-vanessa-mcp`.
 
-If intent is unclear, show the lifecycle panel and wait for the user's choice.
+If intent is unclear, show lifecycle panel and wait.
 
 ## Safety Guardrails
 
@@ -41,6 +41,8 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ru
 ```
 
 Do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly by default. Do not run separate `Test-Path` preflight, background PowerShell, or `timeout: 0`; do not collect the questionnaire in chat when terminal input is unavailable; do not continue the lifecycle manually. The launcher owns CLIXML status and positive long timeout. Use `-KeepWindowOnFailure` only for manual debugging. Use JSON mode only when requested or when an answers file exists.
+
+Long lifecycle runs need `timeout_ms >= 1800000`; do not use `120000 ms`. They may run 1C Designer/Enterprise (`/LoadConfigFromFiles ... /UpdateDBCfg`). `status`/`help` do not.
 
 Ask setup questions only when the helper cannot collect them; ask one raw value at a time unless the agent surface provides structured fields. Store secrets only in `.dev.env` or environment variables. Keep ITL overlay rules in `USER-RULES.md`; do not append to upstream-managed `AGENTS.md` when it already points there.
 
