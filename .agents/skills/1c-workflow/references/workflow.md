@@ -447,9 +447,10 @@ Goal: update the current development branch infobase from current branch files.
 6. If no changed files are found, skip `/LoadConfigFromFiles` and report that the development branch infobase already matches current branch files.
 7. For configuration branches, run `/LoadConfigFromFiles <src/cf> -listFile <listFile> -Format Hierarchical /UpdateDBCfg`.
 8. For extension branches, run `/LoadConfigFromFiles <src/cfe/<name>> -Extension <extensionName> -listFile <listFile> -Format Hierarchical /UpdateDBCfg`.
-9. Do not pass `-updateConfigDumpInfo`.
-10. Update separate configuration/extension base update fields in branch state and report the 1C log path.
-11. If previous verification no longer matches the current commit/base state, mark verification as stale.
+9. When files were actually loaded, copy both bundled auto-update EPFs from `.agents/skills/1c-workflow/tools/auto-update` to ignored `.agent-1c/tools/auto-update`, then launch only `ДляАвтоматическогоОбновленияИБ.epf` in 1C Enterprise user mode with `/Execute <epf>`. This applies update handlers and answers the legal-copy update prompt non-interactively. Do not launch the deferred-handlers EPF in the current workflow.
+10. Do not pass `-updateConfigDumpInfo`.
+11. Update separate configuration/extension base update fields in branch state, save `lastEnterpriseAutoUpdateAt` and `lastEnterpriseAutoUpdateLogPath` when the post-update launch ran, and report the 1C log paths.
+12. If previous verification no longer matches the current commit/base state, mark verification as stale.
 
 ## STATUS
 
@@ -505,7 +506,7 @@ Goal: update a development branch with the latest master dump without closing it
 5. Ensure the current worktree is on the development branch.
 6. Merge `master` into the development branch.
 7. If conflicts occur, stop and resolve them in config files before continuing.
-8. For configuration branches, update changed merged `src/cf` files in the branch infobase.
+8. For configuration branches, update changed merged `src/cf` files in the branch infobase, then run the Enterprise auto-update post-step when files were actually loaded.
 9. For extension branches, update only the base configuration from `src/cf`; do not update extension files during refresh.
 10. Update development branch state with refresh timestamp, config-base update metadata, and latest 1C log path.
 
@@ -517,8 +518,8 @@ Goal: create a CF or CFE result from the current development branch without clos
 2. For worktree-created branches, require the command to run from the branch worktree.
 3. Require a clean Git worktree.
 4. Ensure the current worktree is on the development branch.
-5. For configuration branches, update `src/cf` and export `.cf` into `artifactsPath`.
-6. For extension branches, update `src/cfe/<safeExtensionName>` with `-Extension <extensionName>` and export `.cfe` into `artifactsPath`.
+5. For configuration branches, update `src/cf`, run the Enterprise auto-update post-step when files were actually loaded, and export `.cf` into `artifactsPath`.
+6. For extension branches, update `src/cfe/<safeExtensionName>` with `-Extension <extensionName>`, run the Enterprise auto-update post-step when files were actually loaded, and export `.cfe` into `artifactsPath`.
 7. Do not refresh `master` or merge fresh source changes unless the user explicitly requested `REFRESH_DEV_BRANCH` first.
 8. If verification is missing, failed, stale, or unknown, apply `verificationPolicy`: `warn` requires explicit confirmation or `-AllowUnverifiedResult` before exporting; `block` stops without an override path.
 9. Create `<artifact>.manifest.json` next to the exported CF/CFE with schema version, artifact SHA256, operation, branch metadata, master/development commits, verification status/report/log, latest 1C log path, publication URL, manual import note, and unverified override flag.
@@ -549,7 +550,7 @@ Goal: prepare tested current work for manual import into the source base and clo
 6. Ensure the current worktree is on the development branch.
 7. Merge `master` into the development branch.
 8. If conflicts occur, stop and resolve them in config files before continuing.
-9. Update merged `src/cf` files in the branch infobase. For extension branches, also update extension files from `src/cfe/<safeExtensionName>` before exporting the result.
+9. Update merged `src/cf` files in the branch infobase. For extension branches, also update extension files from `src/cfe/<safeExtensionName>` before exporting the result. After each real load, run the Enterprise auto-update post-step.
 10. Check whether verification is still fresh after sync/merge/update. If it is missing, failed, stale, or unknown, apply `verificationPolicy`: `warn` requires explicit confirmation or `-AllowUnverifiedClose`; `block` stops without an override path.
 11. Export final CF or CFE result from the development branch infobase into `artifactsPath`.
 12. Create `<artifact>.manifest.json` next to the exported CF/CFE with schema version, artifact SHA256, operation, branch metadata, master/development commits, verification status/report/log, latest 1C log path, publication URL, manual import note, and unverified override flag.

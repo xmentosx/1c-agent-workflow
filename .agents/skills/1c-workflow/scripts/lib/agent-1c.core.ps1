@@ -818,6 +818,7 @@ function Ensure-GitIgnore {
         ".agent-1c/runs/",
         ".agent-1c/infobases/",
         ".agent-1c/tools/event-log-exporter/",
+        ".agent-1c/tools/auto-update/",
         ".agent-1c/tools/data-mcp/",
         ".agent-1c/tools/vanessa-automation/",
         ".agent-1c/tools/vanessa-mcp/",

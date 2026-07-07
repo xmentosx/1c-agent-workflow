@@ -89,6 +89,134 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "copies both dev branch auto-update EPFs but launches only the main EPF after a real load" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-auto-update-epf-test-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            $sourceRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\tools\auto-update"
+            New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
+
+            & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:mainEpfName = Get-DevBranchAutoUpdateMainEpfName
+                $script:deferredEpfName = Get-DevBranchAutoUpdateDeferredHandlersEpfName
+            }
+
+            Set-Content -LiteralPath (Join-Path $sourceRoot $script:mainEpfName) -Value "main" -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $sourceRoot $script:deferredEpfName) -Value "deferred" -Encoding UTF8
+
+            $enterpriseCalls = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+
+                $script:EnterpriseCalls = @()
+                function Invoke-Enterprise {
+                    param(
+                        [string]$InfoBasePath,
+                        [string]$InfoBaseKind,
+                        [string[]]$EnterpriseArgs
+                    )
+                    $script:LastLogPath = "C:\logs\enterprise-auto-update.log"
+                    $script:EnterpriseCalls += [pscustomobject]@{
+                        infoBasePath = $InfoBasePath
+                        infoBaseKind = $InfoBaseKind
+                        enterpriseArgs = @($EnterpriseArgs)
+                    }
+                }
+
+                $state = [pscustomobject]@{
+                    devBranchInfoBasePath = "C:\bases\branch"
+                    infoBaseKind = "file"
+                }
+                $updates = @{}
+                $loadResult = [pscustomobject]@{
+                    loaded = $true
+                    currentCommit = "abc"
+                    listFile = "C:\logs\list.txt"
+                    lastLogPath = "C:\logs\designer.log"
+                }
+
+                Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
+
+                [pscustomobject]@{
+                    calls = @($script:EnterpriseCalls)
+                    updates = $updates
+                    mainEpf = Get-DevBranchAutoUpdateMainEpfName
+                    deferredEpf = Get-DevBranchAutoUpdateDeferredHandlersEpfName
+                    installRoot = Get-DevBranchAutoUpdateInstallRoot
+                }
+            }
+
+            @($enterpriseCalls.calls).Count | Should -Be 1
+            $enterpriseCalls.calls[0].infoBasePath | Should -Be "C:\bases\branch"
+            $enterpriseCalls.calls[0].infoBaseKind | Should -Be "file"
+            $enterpriseCalls.calls[0].enterpriseArgs | Should -Contain "/Execute"
+            $enterpriseCalls.calls[0].enterpriseArgs[1] | Should -Be (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.mainEpf)
+            $enterpriseCalls.calls[0].enterpriseArgs[1] | Should -Not -Be (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.deferredEpf)
+            $enterpriseCalls.updates["lastEnterpriseAutoUpdateLogPath"] | Should -Be "C:\logs\enterprise-auto-update.log"
+            Test-Path -LiteralPath (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.mainEpf) -PathType Leaf | Should -Be $true
+            Test-Path -LiteralPath (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.deferredEpf) -PathType Leaf | Should -Be $true
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "does not launch dev branch Enterprise auto-update after a no-op load" {
+        $enterpriseCalls = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            $script:EnterpriseCallCount = 0
+            function Invoke-DevBranchEnterpriseAutoUpdate {
+                param([object]$State)
+                $script:EnterpriseCallCount += 1
+            }
+
+            $updates = @{}
+            $loadResult = [pscustomobject]@{
+                loaded = $false
+                currentCommit = "abc"
+                listFile = ""
+                lastLogPath = ""
+            }
+            Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State ([pscustomobject]@{}) -LoadResult $loadResult -Updates $updates
+            [pscustomobject]@{
+                callCount = $script:EnterpriseCallCount
+                updateCount = $updates.Count
+            }
+        }
+
+        $enterpriseCalls.callCount | Should -Be 0
+        $enterpriseCalls.updateCount | Should -Be 0
+    }
+
+    It "propagates dev branch Enterprise auto-update failures" {
+        $errorText = ""
+        try {
+            & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+                function Invoke-DevBranchEnterpriseAutoUpdate {
+                    param([object]$State)
+                    throw "auto-update failed"
+                }
+
+                $updates = @{}
+                $loadResult = [pscustomobject]@{
+                    loaded = $true
+                    currentCommit = "abc"
+                    listFile = "C:\logs\list.txt"
+                    lastLogPath = "C:\logs\designer.log"
+                }
+                Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State ([pscustomobject]@{}) -LoadResult $loadResult -Updates $updates
+            }
+        } catch {
+            $errorText = $_.Exception.Message
+        }
+
+        $errorText | Should -Match "auto-update failed"
+    }
+
     It "collects config load paths from Git without losing Cyrillic names" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-config-load-paths-" + [guid]::NewGuid().ToString("N"))
 
@@ -2953,6 +3081,7 @@ local after
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow-fast\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo\commands\itl-vanessa-mcp.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\event-log-exporter\EventLogExporter.xml") -PathType Leaf) | Should -Be $true
+            @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\auto-update") -File -Filter "*.epf").Count | Should -Be 2
             (Test-Path -LiteralPath (Join-Path $tempRoot "AGENTS.md") -PathType Leaf) | Should -Be $true
             (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "AGENTS.md")) | Should -Match "USER-RULES.md"
             (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "USER-RULES.md")) | Should -Match "1C Project Lifecycle"

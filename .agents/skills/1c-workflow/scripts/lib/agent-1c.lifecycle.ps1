@@ -340,6 +340,111 @@ function New-LoadStateUpdates {
     return $updates
 }
 
+function Get-DevBranchAutoUpdateToolRoot {
+    return (Join-Path $script:ProjectRoot ".agents\skills\1c-workflow\tools\auto-update")
+}
+
+function Get-DevBranchAutoUpdateInstallRoot {
+    return (Resolve-ProjectPath ".agent-1c/tools/auto-update")
+}
+
+function Get-DevBranchAutoUpdateMainEpfName {
+    $baseName = -join ([char[]](
+        0x0414, 0x043B, 0x044F, 0x0410, 0x0432, 0x0442, 0x043E, 0x043C,
+        0x0430, 0x0442, 0x0438, 0x0447, 0x0435, 0x0441, 0x043A, 0x043E,
+        0x0433, 0x043E, 0x041E, 0x0431, 0x043D, 0x043E, 0x0432, 0x043B,
+        0x0435, 0x043D, 0x0438, 0x044F, 0x0418, 0x0411
+    ))
+    return "$baseName.epf"
+}
+
+function Get-DevBranchAutoUpdateDeferredHandlersEpfName {
+    $baseName = -join ([char[]](
+        0x0414, 0x043B, 0x044F, 0x0410, 0x0432, 0x0442, 0x043E, 0x043C,
+        0x0430, 0x0442, 0x0438, 0x0447, 0x0435, 0x0441, 0x043A, 0x043E,
+        0x0433, 0x043E, 0x041E, 0x0431, 0x043D, 0x043E, 0x0432, 0x043B,
+        0x0435, 0x043D, 0x0438, 0x044F, 0x0418, 0x0411, 0x005F, 0x041E,
+        0x0442, 0x043B, 0x043E, 0x0436, 0x0435, 0x043D, 0x043D, 0x044B,
+        0x0435, 0x041E, 0x0431, 0x0440, 0x0430, 0x0431, 0x043E, 0x0442,
+        0x0447, 0x0438, 0x043A, 0x0438
+    ))
+    return "$baseName.epf"
+}
+
+function Ensure-DevBranchAutoUpdateEpfs {
+    $sourceRoot = Get-DevBranchAutoUpdateToolRoot
+    if (-not (Test-Path -LiteralPath $sourceRoot -PathType Container -ErrorAction SilentlyContinue)) {
+        throw "Development branch auto-update tool source was not found: $sourceRoot"
+    }
+
+    $installRoot = Get-DevBranchAutoUpdateInstallRoot
+    New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
+
+    $epfNames = @(
+        (Get-DevBranchAutoUpdateMainEpfName),
+        (Get-DevBranchAutoUpdateDeferredHandlersEpfName)
+    )
+    foreach ($epfName in $epfNames) {
+        $sourcePath = Join-Path $sourceRoot $epfName
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf -ErrorAction SilentlyContinue)) {
+            throw "Development branch auto-update EPF was not found: $sourcePath"
+        }
+
+        $targetPath = Join-Path $installRoot $epfName
+        $needsCopy = -not (Test-Path -LiteralPath $targetPath -PathType Leaf -ErrorAction SilentlyContinue)
+        if (-not $needsCopy) {
+            $sourceFile = Get-Item -LiteralPath $sourcePath
+            $targetFile = Get-Item -LiteralPath $targetPath
+            if ($sourceFile.LastWriteTime -gt $targetFile.LastWriteTime -or $sourceFile.Length -ne $targetFile.Length) {
+                $needsCopy = $true
+            }
+        }
+
+        if ($needsCopy) {
+            Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force
+        }
+    }
+
+    return (Join-Path $installRoot (Get-DevBranchAutoUpdateMainEpfName))
+}
+
+function Invoke-DevBranchEnterpriseAutoUpdate {
+    param([object]$State)
+
+    $epfPath = Ensure-DevBranchAutoUpdateEpfs
+    Write-Host "Running development branch Enterprise auto-update: $epfPath"
+    Invoke-Enterprise `
+        -InfoBasePath $State.devBranchInfoBasePath `
+        -InfoBaseKind $State.infoBaseKind `
+        -EnterpriseArgs @("/Execute", $epfPath) | Out-Null
+
+    return [pscustomobject]@{
+        epfPath = $epfPath
+        logPath = $script:LastLogPath
+        updatedAt = (Get-Date).ToString("o")
+    }
+}
+
+function Invoke-DevBranchEnterpriseAutoUpdateIfLoaded {
+    param(
+        [object]$State,
+        [object]$LoadResult,
+        [hashtable]$Updates
+    )
+
+    if (-not $LoadResult.loaded) {
+        return
+    }
+
+    $autoUpdateResult = Invoke-DevBranchEnterpriseAutoUpdate -State $State
+    $Updates["lastEnterpriseAutoUpdateAt"] = $autoUpdateResult.updatedAt
+    $Updates["lastEnterpriseAutoUpdateLogPath"] = $autoUpdateResult.logPath
+    $Updates["lastEnterpriseAutoUpdateEpfPath"] = $autoUpdateResult.epfPath
+    if ($autoUpdateResult.logPath) {
+        $Updates["lastLogPath"] = $autoUpdateResult.logPath
+    }
+}
+
 function Dump-ConfigToFiles {
     $exportPath = Get-ExportPath
     $absoluteExportPath = Assert-ExportPathInsideProject $exportPath
@@ -2228,6 +2333,10 @@ function Write-BaseUpdateResult {
     if ($LoadResult.loaded) {
         Write-Host "$Label updated: $($State.devBranchInfoBasePath)"
         Write-Host "Last 1C log: $($LoadResult.lastLogPath)"
+        $autoUpdateLogPath = Get-StateValue -State $State -Name "lastEnterpriseAutoUpdateLogPath" -Default ""
+        if ($autoUpdateLogPath) {
+            Write-Host "Last Enterprise auto-update log: $autoUpdateLogPath"
+        }
     } else {
         Write-Host "$Label unchanged: $($State.devBranchInfoBasePath)"
     }
@@ -2243,15 +2352,19 @@ function Update-DevBranchBase {
         $extensionExportPath = Assert-ExtensionFilesReady -State $state
         $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath $extensionExportPath -ContentKind "extension" -ExtensionName $extensionName
         $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "extension"
+        Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch extension base was updated." -CurrentCommit $loadResult.currentCommit
         Update-DevBranchState -State $state -Updates $updates
-        Write-BaseUpdateResult -State $state -LoadResult $loadResult -Label "Development branch extension"
+        $updatedState = Read-DevBranchState -Name $DevBranchName
+        Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch extension"
     } else {
         $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
         $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
+        Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch configuration base was updated." -CurrentCommit $loadResult.currentCommit
         Update-DevBranchState -State $state -Updates $updates
-        Write-BaseUpdateResult -State $state -LoadResult $loadResult -Label "Development branch infobase"
+        $updatedState = Read-DevBranchState -Name $DevBranchName
+        Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch infobase"
     }
 }
 
@@ -2275,11 +2388,13 @@ function Refresh-DevBranch {
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
     $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
+    Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
     $updates["lastRefreshAt"] = (Get-Date).ToString("o")
     Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch was refreshed from master." -CurrentCommit $loadResult.currentCommit
     Update-DevBranchState -State $state -Updates $updates
+    $updatedState = Read-DevBranchState -Name $DevBranchName
     Write-Host "Development branch refreshed from master: $($state.devBranch)"
-    Write-BaseUpdateResult -State $state -LoadResult $loadResult -Label "Development branch configuration"
+    Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch configuration"
     if ((Get-DevBranchKind -State $state) -eq "extension") {
         Write-Host "Extension files were not loaded during refresh. Run update-dev-branch-base when you need to update the extension in the branch infobase."
     }
@@ -2384,6 +2499,11 @@ function Show-WorkflowStatus {
     if ($kind -eq "extension") {
         Write-Host "Last extension base update: $(Get-StateValue -State $state -Name 'lastExtensionBaseUpdateAt' -Default '<never>')"
     }
+    Write-Host "Last Enterprise auto-update: $(Get-StateValue -State $state -Name 'lastEnterpriseAutoUpdateAt' -Default '<never>')"
+    $autoUpdateLog = Get-StateValue -State $state -Name "lastEnterpriseAutoUpdateLogPath" -Default ""
+    if ($autoUpdateLog) {
+        Write-Host "Last Enterprise auto-update log: $autoUpdateLog"
+    }
     Write-Host "Last refresh: $(Get-StateValue -State $state -Name 'lastRefreshAt' -Default '<never>')"
     Write-Host "Verification status: $($verification.effectiveStatus)"
     Write-Host "Verification fresh passed: $($verification.isFreshPassed)"
@@ -2432,6 +2552,7 @@ function Export-DevBranchResult {
     $devBranchCommit = Get-CurrentCommit
     $masterCommit = Get-GitCommitOrEmpty (Get-MasterBranch)
     $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind $kind
+    Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
     Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch base was updated before result export." -CurrentCommit $loadResult.currentCommit
     Update-DevBranchState -State $state -Updates $updates
     $state = Read-DevBranchState -Name $DevBranchName
@@ -2490,12 +2611,14 @@ function Close-DevBranch {
     $kind = Get-DevBranchKind -State $state
     $configLoadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
     $updates = New-LoadStateUpdates -LoadResult $configLoadResult -ContentKind "configuration"
+    Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $configLoadResult -Updates $updates
     Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch was refreshed and updated before close." -CurrentCommit $configLoadResult.currentCommit
     if ($kind -eq "extension") {
         $extensionName = Require-DevBranchExtensionName -State $state
         $extensionExportPath = Assert-ExtensionFilesReady -State $state
         $extensionLoadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath $extensionExportPath -ContentKind "extension" -ExtensionName $extensionName
         $extensionUpdates = New-LoadStateUpdates -LoadResult $extensionLoadResult -ContentKind "extension"
+        Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $extensionLoadResult -Updates $extensionUpdates
         foreach ($key in $extensionUpdates.Keys) {
             $updates[$key] = $extensionUpdates[$key]
         }
@@ -2641,6 +2764,7 @@ function List-DevBranches {
         if ($kind -eq "extension") {
             Write-Host "  Last extension base update: $lastExtensionBaseUpdateAt"
         }
+        Write-Host "  Last Enterprise auto-update: $(Get-StateValue -State $state -Name 'lastEnterpriseAutoUpdateAt' -Default '<never>')"
         Write-Host "  Last refresh: $lastRefreshAt"
     }
 }

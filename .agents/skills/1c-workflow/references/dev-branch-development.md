@@ -55,6 +55,8 @@
 
 `/deploy-and-test` не используется как обычная проверка в ITL-ветке: эта команда повторно загружает все файлы конфигурации. Стандартный путь быстрее и безопаснее: `/itl-verify`. Если нужно только обновить базу без тестов, используйте `/itl-update-base`.
 
+After a real file load, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, and `/itl-close` automatically launch the branch infobase in Enterprise user mode through bundled `ДляАвтоматическогоОбновленияИБ.epf`. This applies update handlers and answers the legal-copy prompt non-interactively. No-op updates do not launch Enterprise.
+
 ## Как выбрать режим
 
 Используйте **quick-fix**, если выполняются все условия:
