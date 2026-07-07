@@ -508,7 +508,7 @@ Describe "1C agent workflow static checks" {
         $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates"
         $expected = @{
             common = @("itl.md", "itl-status.md")
-            master = @("itl-new-config-branch.md", "itl-new-extension-branch.md")
+            master = @("itl-new-config-branch.md", "itl-new-extension-branch.md", "itl-update-workflow.md")
             dev = @("itl-check.md", "itl-refresh.md", "itl-result.md")
         }
 
@@ -687,7 +687,6 @@ Describe "1C agent workflow static checks" {
             "/itl-dump-dev-branch-extension",
             "/itl-vanessa-mcp",
             "/itl-update-rules",
-            "/itl-update-workflow",
             "/itl-vibecoding1c-mcp",
             "/itl-update-base",
             "/itl-verify",
@@ -2996,9 +2995,8 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $lockTemplate.dependencies.workflowPackage.ref | Should -Be "master"
         $lockTemplate.dependencies.workflowPackage.PSObject.Properties.Name | Should -Contain "updatedAt"
 
-        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-update-workflow.md") -PathType Leaf) | Should -Be $false
         $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
-        $kiloTemplateText | Should -Not -Match "update-workflow"
+        $kiloTemplateText | Should -Match "update-workflow"
         $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
         $advancedText | Should -Match "update-workflow"
         $advancedText | Should -Match ([regex]::Escape(".kilo/commands/itl*.md"))
@@ -3258,8 +3256,8 @@ local after
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-status.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-new-config-branch.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-new-extension-branch.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-update-workflow.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-check.md") -PathType Leaf) | Should -Be $false
-            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-update-workflow.md") -PathType Leaf) | Should -Be $false
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-old.md") -PathType Leaf) | Should -Be $false
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\custom.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot "templates\dependency-lock.json") -PathType Leaf) | Should -Be $true
@@ -3863,6 +3861,7 @@ url = "http://localhost:9999/mcp"
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
             ".agents/skills/1c-workflow/kilo-command-templates/common/itl.md",
             ".agents/skills/1c-workflow/kilo-command-templates/master/itl-new-config-branch.md",
+            ".agents/skills/1c-workflow/kilo-command-templates/master/itl-update-workflow.md",
             ".agents/skills/1c-workflow/kilo-command-templates/dev/itl-result.md",
             "scripts/test.ps1",
             "templates/AGENTS.append.md",

@@ -323,6 +323,7 @@ For Kilo Code, slash commands are generated per worktree. In the `master` worktr
 /itl-status
 /itl-new-config-branch <branch name>
 /itl-new-extension-branch <branch name>
+/itl-update-workflow
 ```
 
 In an `itldev/*` development worktree, show only:

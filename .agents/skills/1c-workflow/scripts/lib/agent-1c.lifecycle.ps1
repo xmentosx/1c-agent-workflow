@@ -3055,6 +3055,7 @@ function Show-Help {
         Write-Host "  /itl-status"
         Write-Host "  /itl-new-config-branch <name>"
         Write-Host "  /itl-new-extension-branch <name>"
+        Write-Host "  /itl-update-workflow"
         Write-Host ""
         Write-Host "Active development worktrees:"
         $states = @(Get-WorkflowActiveDevBranchStates)
@@ -3149,6 +3150,6 @@ function Show-Help {
 
     Write-Host ""
     Write-Host "Rare actions:"
-    Write-Host "  Ask the agent in natural language for vibecoding1c MCP setup/status, branch-local Vanessa MCP, extension setup/dump, marking a branch closed, workflow updates, or rule updates."
+    Write-Host "  Ask the agent in natural language for vibecoding1c MCP setup/status, branch-local Vanessa MCP, extension setup/dump, marking a branch closed, or rule updates."
     Write-Host "  The full helper action catalog is documented in .agents/skills/1c-workflow/references/advanced-actions.md."
 }

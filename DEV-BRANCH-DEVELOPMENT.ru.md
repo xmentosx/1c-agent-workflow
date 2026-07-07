@@ -50,7 +50,7 @@ verify helper action                       Совместимый alias для /
 
 `vibecoding1c-mcp helper action` в worktree текущей `itldev/*` ветки подключает выбранные vibecoding1c MCP endpoints. По умолчанию используются remote LAN endpoints из registry; config-specific remote vibecoding1c MCP требует явного `configId`. Если для `code` или `graph` выбран local branch scope, helper поднимает отдельный локальный vibecoding1c MCP для текущей ветки. vibecoding1c MCP соседних веток в client config не добавляются; Vanessa MCP управляется отдельно через `vanessa-mcp helper action`.
 
-`update-workflow helper action` не запускается из `itldev/*` worktree. Обновляйте ITL workflow-пакет в `master`, коммитьте изменения, затем подтягивайте их в текущую ветку через merge свежего `master` или `/itl-refresh`. После этого при необходимости обновите MCP текущей ветки через `vibecoding1c-mcp helper action`; для branch-local Vanessa MCP используйте stop, install, затем start через `vanessa-mcp helper action`.
+`/itl-update-workflow` и `update-workflow helper action` запускаются только из `master` worktree. Обновляйте ITL workflow-пакет в `master`, коммитьте изменения, затем подтягивайте их в текущую ветку через merge свежего `master` или `/itl-refresh`. После этого при необходимости обновите MCP текущей ветки через `vibecoding1c-mcp helper action`; для branch-local Vanessa MCP используйте stop, install, затем start через `vanessa-mcp helper action`.
 
 Команды `set-dev-branch-extension helper action` и `dump-dev-branch-extension helper action` являются helper-командами для extension-веток. Они доступны напрямую, но могут не показываться в коротком beginner-меню `/itl`.
 

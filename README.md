@@ -90,7 +90,7 @@ VANESSA-TESTS-GUIDE.ru.md
 
 Свежие upstream-правила `ai_rules_1c` после установки обновляются по обычному запросу агенту или helper-действием `update-ai-rules`. Обновление запускает upstream installer, убирает дефолтные upstream MCP-записи из локальных Codex/Kilo конфигов, повторно применяет ITL overlay в `USER-RULES.md` и записывает новый commit `ai_rules_1c` в `.agent-1c/dependency-lock.json`.
 
-Уже установленный ITL workflow-пакет обновляется из `master` по обычному запросу агенту или helper-действием `update-workflow`. Команду запускают только из `master` worktree: она обновляет управляемые файлы workflow, не трогает `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, существующие `.agent-1c/project.json` и `.agent-1c/tools.json`, регенерирует локальные `.kilo/commands/itl*.md`, по умолчанию запускает `update-ai-rules` и оставляет tracked-изменения для review/commit. Активные `itldev/*` ветки обновляются отдельно через merge свежего `master` или `/itl-refresh`; runtime MCP обновляется по запросу агенту, а branch-local Vanessa MCP - через stop/install/start в нужной worktree.
+Уже установленный ITL workflow-пакет обновляется из `master` через `/itl-update-workflow`, по обычному запросу агенту или helper-действием `update-workflow`. Команду запускают только из `master` worktree: она обновляет управляемые файлы workflow, не трогает `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, существующие `.agent-1c/project.json` и `.agent-1c/tools.json`, регенерирует локальные `.kilo/commands/itl*.md`, по умолчанию запускает `update-ai-rules` и оставляет tracked-изменения для review/commit. Активные `itldev/*` ветки обновляются отдельно через merge свежего `master` или `/itl-refresh`; runtime MCP обновляется по запросу агенту, а branch-local Vanessa MCP - через stop/install/start в нужной worktree.
 
 Проверка перед `/itl-result` по умолчанию работает в режиме `VERIFICATION_POLICY=warn`: без fresh passed `/itl-check` нужен явный unverified override, который попадет в manifest. Для более строгого промышленного режима задайте `VERIFICATION_POLICY=block`: выгрузка результата будет запрещена до свежей успешной Vanessa-проверки.
 
@@ -113,6 +113,7 @@ Slash-команды генерируются локально для каждо
 /itl-status
 /itl-new-config-branch <name>
 /itl-new-extension-branch <name>
+/itl-update-workflow
 ```
 
 В worktree ветки `itldev/*` Kilo показывает:
@@ -125,7 +126,7 @@ Slash-команды генерируются локально для каждо
 /itl-result
 ```
 
-`/itl` показывает карту lifecycle, текущий контекст, доступные действия и пути соседних worktree. Редкие/helper-действия вызываются обычным текстом через агента или напрямую через PowerShell helper, но не засоряют slash-палитру.
+`/itl` показывает карту lifecycle, текущий контекст, доступные действия и пути соседних worktree. Редкие/helper-действия вызываются обычным текстом через агента или напрямую через PowerShell helper, но не засоряют slash-палитру. `/itl-update-workflow` виден в `master`, потому что обновление workflow-пакета - регулярное обслуживание проекта.
 
 ## Важные правила
 

@@ -240,6 +240,7 @@ vibecoding1c MCP для поиска по документации, шаблон
 /itl-status
 /itl-new-config-branch <name>
 /itl-new-extension-branch <name>
+/itl-update-workflow
 ```
 
 В `itldev/*` worktree:
@@ -264,5 +265,5 @@ vibecoding1c MCP для поиска по документации, шаблон
 - Перед созданием worktree, обновлением ветки, обновлением `master`, выгрузкой результата и legacy-переключением Git-дерево должно быть чистым.
 - Если 1С или Git вернули ошибку, агент должен остановиться и показать путь к логу.
 - По умолчанию `DEPENDENCY_MODE=fresh`: workflow берет свежие зависимости и обновляет `.agent-1c/dependency-lock.json`. Для воспроизводимого bootstrap используйте `DEPENDENCY_MODE=locked` с заполненными pin/hash значениями.
-- Чтобы обновить сам установленный ITL workflow-пакет в уже развернутом проекте, попросите агента выполнить update-workflow или запустите helper-действие `update-workflow` из `master` worktree. Команда обновляет только управляемые workflow-файлы, регенерирует локальную Kilo surface, не трогает локальное состояние (`.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, существующие `.agent-1c/project.json` и `.agent-1c/tools.json`), по умолчанию запускает `update-ai-rules` и оставляет изменения для review/commit. Уже созданные `itldev/*` ветки обновляйте отдельно через merge свежего `master` или `/itl-refresh`; runtime MCP обновляйте обычным запросом агенту.
+- Чтобы обновить сам установленный ITL workflow-пакет в уже развернутом проекте, используйте `/itl-update-workflow`, попросите агента выполнить update-workflow или запустите helper-действие `update-workflow` из `master` worktree. Команда обновляет только управляемые workflow-файлы, регенерирует локальную Kilo surface, не трогает локальное состояние (`.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, существующие `.agent-1c/project.json` и `.agent-1c/tools.json`), по умолчанию запускает `update-ai-rules` и оставляет изменения для review/commit. Уже созданные `itldev/*` ветки обновляйте отдельно через merge свежего `master` или `/itl-refresh`; runtime MCP обновляйте обычным запросом агенту.
 - Чтобы получить свежую версию upstream-правил `ai_rules_1c`, попросите агента обновить правила или запустите helper-действие `update-ai-rules`. Helper убирает дефолтные upstream MCP-записи из локальных Codex/Kilo конфигов, ITL-надстройка повторно применяется в `USER-RULES.md`, а root `AGENTS.md` остается управляемым upstream-инсталлером, если он уже ссылается на `USER-RULES.md`.

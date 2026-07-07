@@ -12,6 +12,7 @@ master:
   /itl-status
   /itl-new-config-branch <name>
   /itl-new-extension-branch <name>
+  /itl-update-workflow
 
 itldev/*:
   /itl
@@ -21,7 +22,7 @@ itldev/*:
   /itl-result
 ```
 
-For Kilo Code, `.kilo/commands/itl*.md` is generated local state. The `master` worktree gets only the master command surface; each `itldev/*` worktree gets only the development command surface. Rare actions such as MCP setup, extension setup/dump, workflow updates, and rule updates are available through natural-language requests or direct helper actions, but are not generated as visible slash commands.
+For Kilo Code, `.kilo/commands/itl*.md` is generated local state. The `master` worktree gets only the master command surface; each `itldev/*` worktree gets only the development command surface. Workflow package updates are visible in `master` as `/itl-update-workflow`. Rare actions such as MCP setup, extension setup/dump, and rule updates are available through natural-language requests or direct helper actions, but are not generated as visible slash commands.
 
 For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
@@ -367,7 +368,7 @@ Goal: create the baseline project state.
 
 Goal: refresh the installed ITL workflow package in an already initialized project without rerunning `init-project`.
 
-Helper action: `update-workflow`. In Kilo, ask the agent to update the workflow; no visible wrapper is generated.
+Helper action: `update-workflow`. In Kilo master, use `/itl-update-workflow`.
 
 1. Run only from the `master` worktree. If invoked from `itldev/*`, stop and print the saved main worktree path when available.
 2. Require a clean tracked Git worktree, while still ignoring local runtime state such as `.dev.env`, `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
