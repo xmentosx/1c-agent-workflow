@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow-fast
-description: Run routine 1C Agent Workflow lifecycle commands through the PowerShell helper with minimal context loading. Use for status, vibecoding1c MCP setup/status, configuration or extension development branch creation, branch base update, verification, refresh, CF/CFE result export, close, and branch switching when the project is already installed.
+description: Run routine 1C Agent Workflow lifecycle commands through the PowerShell helper with minimal context loading. Use for status, vibecoding1c MCP setup/status, configuration or extension development branch creation from master, branch verification, refresh, CF/CFE result export, and close when the project is already installed.
 ---
 
 # 1C Workflow Fast
@@ -16,16 +16,15 @@ Do not open the full workflow references before normal lifecycle execution. Open
 - show ITL status: `status`
 - setup or inspect vibecoding1c MCP servers: `vibecoding1c-mcp-setup` by default, `vibecoding1c-mcp-status` for status-only, `vibecoding1c-mcp-select` to choose remote/local or configId, `vibecoding1c-mcp-refresh-registry` to update remote endpoint discovery
 - update the installed ITL workflow package from `master`: `update-workflow`
-- create new configuration development branch worktree: `new-dev-branch`
-- create new extension development branch worktree: `new-extension-dev-branch`
+- create new configuration development branch worktree from `master`: `new-dev-branch`
+- create new extension development branch worktree from `master`: `new-extension-dev-branch`
 - check current branch after changes through update plus Vanessa tests: `check-dev-branch`
-- update current development branch infobase from branch files without tests: `update-dev-branch-base`
+- update current development branch infobase from branch files without tests, when explicitly requested: `update-dev-branch-base`
 - verify current branch through update plus Vanessa tests, when compatibility wording is used: `verify-dev-branch`
 - refresh current development branch from master/source: `refresh-dev-branch`
 - export CF or CFE result from current development branch: `export-dev-branch-result`
 - close current development branch: `close-dev-branch`
-- switch to master: `switch-master`
-- switch to development branch: `switch-dev-branch`
+- show/open worktree paths: `status` first; use direct switch helper actions only for legacy recovery.
 
 ## Command Template
 
@@ -40,14 +39,13 @@ For actions that require a branch name:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "<dev-branch-name>"
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-extension-dev-branch -DevBranchName "<dev-branch-name>"
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action switch-dev-branch -DevBranchName "<dev-branch-name>"
 ```
 
-New branch commands create a sibling Git worktree by default. Report the printed worktree path and tell the developer to open a separate Codex/Kilo/IDE window there. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
+New branch commands must run from `master` and create a sibling Git worktree by default. Report the printed worktree path and tell the developer to open a separate Codex/Kilo/IDE window there. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
 
 For `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`, and `close-dev-branch`, do not ask for a branch name. The helper infers it from the current `itldev/<name>` Git branch.
 
-For the normal post-change check, do not call `/deploy-and-test` and do not run `update-dev-branch-base` first. Run `check-dev-branch` (`/itl-check` wrapper); it updates the branch base partially and then runs Vanessa Automation through packet `StartFeaturePlayer` in `TESTMANAGER -> TESTCLIENT` mode with a branch-local test port. `verify-dev-branch` remains a compatibility alias for the same helper cycle. The helper also checks the local branch infobase event log against the branch baseline created during branch initialization; fresh non-baseline `Error` records fail verification. MCP is not the final verification runner. Foreign branch 1C test processes are warnings by default, not a reason to wait, unless there is a real port/infobase conflict or `VANESSA_TEST_FOREIGN_WAIT_MODE=wait` is set.
+For the normal post-change check, do not call `/deploy-and-test` and do not run `update-dev-branch-base` first. Run `check-dev-branch` (`/itl-check` in a dev worktree); it updates the branch base partially and then runs Vanessa Automation through packet `StartFeaturePlayer` in `TESTMANAGER -> TESTCLIENT` mode with a branch-local test port. `verify-dev-branch` remains a compatibility alias for the same helper cycle. The helper also checks the local branch infobase event log against the branch baseline created during branch initialization; fresh non-baseline `Error` records fail verification. MCP is not the final verification runner. Foreign branch 1C test processes are warnings by default, not a reason to wait, unless there is a real port/infobase conflict or `VANESSA_TEST_FOREIGN_WAIT_MODE=wait` is set.
 
 For result or close, let the helper enforce `verificationPolicy`: default `warn` allows only explicit unverified override; `block` stops until `check-dev-branch` or `verify-dev-branch` is fresh passed.
 

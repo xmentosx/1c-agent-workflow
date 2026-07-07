@@ -14,11 +14,11 @@
 В Kilo Code жизненный цикл ветки выполняется slash-командами:
 
 ```text
-/itl-vibecoding1c-mcp            Настроить, запустить, обновить или проверить vibecoding1c MCP текущего scope.
+vibecoding1c-mcp helper action            Настроить, запустить, обновить или проверить vibecoding1c MCP текущего scope.
 /itl-status                       Показать текущую ветку, базу и статус проверки.
 /itl-check                        Обновить базу ветки и запустить Vanessa Automation.
-/itl-update-base                  Обновить базу ветки без тестов.
-/itl-verify                       Совместимый alias для /itl-check.
+update-base helper action                  Обновить базу ветки без тестов.
+verify helper action                       Совместимый alias для /itl-check.
 /itl-refresh                      Обновить ветку разработки свежим master.
 /itl-result                       Выгрузить CF/CFE по текущей ветке без закрытия ветки.
 /itl-close                        Закрыть ветку разработки, выгрузить финальный CF/CFE и перейти на master.
@@ -36,27 +36,27 @@
 
 Команды жизненного цикла ветки выполняются через `/itl-*` или естественные текстовые команды. Роли остаются внутренней логикой агента.
 
-`/itl-vibecoding1c-mcp` в worktree текущей `itldev/*` ветки подключает выбранные vibecoding1c MCP endpoints. Если для `code` или `graph` выбран local branch scope, helper поднимает отдельный vibecoding1c MCP для текущей ветки. vibecoding1c MCP соседних веток в client config не добавляются; Vanessa MCP управляется отдельно через `/itl-vanessa-mcp`.
+`vibecoding1c-mcp helper action` в worktree текущей `itldev/*` ветки подключает выбранные vibecoding1c MCP endpoints. Если для `code` или `graph` выбран local branch scope, helper поднимает отдельный vibecoding1c MCP для текущей ветки. vibecoding1c MCP соседних веток в client config не добавляются; Vanessa MCP управляется отдельно через `vanessa-mcp helper action`.
 
 Если текущая ветка предназначена для разработки расширения, в начале работы задайте имя расширения:
 
 ```text
-/itl-set-dev-branch-extension <имя-расширения>
+set-dev-branch-extension helper action <имя-расширения>
 ```
 
 После создания расширения в копии базы ветки выгрузите его в файлы:
 
 ```text
-/itl-dump-dev-branch-extension
+dump-dev-branch-extension helper action
 ```
 
-Дальше `/itl-check` обновляет расширение в базе ветки из `src/cfe/<имя-расширения>` и запускает Vanessa Automation, а `/itl-result` выгружает `CFE`. Если нужно только обновить базу без тестов, используйте `/itl-update-base`.
+Дальше `/itl-check` обновляет расширение в базе ветки из `src/cfe/<имя-расширения>` и запускает Vanessa Automation, а `/itl-result` выгружает `CFE`. Если нужно только обновить базу без тестов, используйте `update-base helper action`.
 
 Команды жизненного цикла автоматически активируют контекст базы ветки разработки для `ai_rules_1c`.
 
-`/deploy-and-test` не используется как обычная проверка в ITL-ветке: эта команда повторно загружает все файлы конфигурации. Стандартный путь быстрее и безопаснее: `/itl-check`. Если нужно только обновить базу без тестов, используйте `/itl-update-base`. `/itl-verify` остается совместимым alias.
+`/deploy-and-test` не используется как обычная проверка в ITL-ветке: эта команда повторно загружает все файлы конфигурации. Стандартный путь быстрее и безопаснее: `/itl-check`. Если нужно только обновить базу без тестов, используйте `update-base helper action`. `verify helper action` остается совместимым alias.
 
-After a real file load, `/itl-check`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, and `/itl-close` automatically launch the branch infobase in Enterprise user mode through bundled `ДляАвтоматическогоОбновленияИБ.epf`. This applies update handlers and answers the legal-copy prompt non-interactively. No-op updates do not launch Enterprise.
+After a real file load, `/itl-check`, `update-base helper action`, `verify helper action`, `/itl-refresh`, `/itl-result`, and `/itl-close` automatically launch the branch infobase in Enterprise user mode through bundled `ДляАвтоматическогоОбновленияИБ.epf`. This applies update handlers and answers the legal-copy prompt non-interactively. No-op updates do not launch Enterprise.
 
 ## Как выбрать режим
 
@@ -332,7 +332,7 @@ Review должен искать:
 Закрой текущую ветку разработки и подготовь финальный результат.
 ```
 
-Если нет свежей успешной проверки Vanessa, helper применяет `VERIFICATION_POLICY`. По умолчанию `warn`: агент должен предупредить об этом, а получить результат или закрыть ветку без такой проверки можно только после явного подтверждения разработчика. В режиме `block` helper запрещает `result/close` до fresh passed `/itl-check` или `/itl-verify`.
+Если нет свежей успешной проверки Vanessa, helper применяет `VERIFICATION_POLICY`. По умолчанию `warn`: агент должен предупредить об этом, а получить результат или закрыть ветку без такой проверки можно только после явного подтверждения разработчика. В режиме `block` helper запрещает `result/close` до fresh passed `/itl-check` или `verify helper action`.
 
 ### 9. Закрыть OpenSpec change
 
@@ -355,9 +355,9 @@ Review должен искать:
 
 После изменений запускайте единый цикл проверки: /itl-check.
 
-Если нужно только обновить базу без тестов: /itl-update-base.
+Если нужно только обновить базу без тестов: update-base helper action.
 
-Стандартная проверка идет через `/itl-check`; `/itl-verify` остается совместимым alias.
+Стандартная проверка идет через `/itl-check`; `verify helper action` остается совместимым alias.
 
 Если Vanessa нашла ошибку, агент сам исправляет ее и повторяет /itl-check. Лимит - 3 попытки.
 

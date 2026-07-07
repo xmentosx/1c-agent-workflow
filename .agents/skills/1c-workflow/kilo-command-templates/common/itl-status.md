@@ -9,4 +9,4 @@ Run the helper directly from the current project directory:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action status
 ```
 
-Report the current branch, infobase, publication URL, verification status, and latest result paths. Open detailed workflow references only if the helper fails or the user asks for explanation.
+Report the current Git branch, worktree path, infobase, verification status, result paths, MCP freshness, and the printed master or development worktree paths. Do not switch folders automatically.

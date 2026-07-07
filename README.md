@@ -48,7 +48,8 @@ VANESSA-TESTS-GUIDE.ru.md
 
 - `.agents/skills/1c-workflow` - общий Agent Skill для Codex и Kilo Code.
 - `.agents/skills/1c-workflow-fast` - быстрый Skill для регулярных операций через PowerShell-helper без чтения полного workflow.
-- `.kilo/commands` - короткие slash-команды Kilo Code с префиксом `/itl`.
+- `.agents/skills/1c-workflow/kilo-command-templates` - шаблоны коротких slash-команд Kilo Code.
+- `.kilo/commands/itl*.md` - локально сгенерированная командная поверхность для текущей папки/worktree; игнорируется Git.
 - `AGENT-INSTALL.md` - bootstrap-инструкция для агента.
 - `VANESSA-TESTS-GUIDE.ru.md` - компактные правила для агента, который пишет Vanessa-проверки текущей фичи.
 - `templates/project.json` - шаблон настроек проекта без секретов.
@@ -87,54 +88,57 @@ VANESSA-TESTS-GUIDE.ru.md
 
 Зависимости при инициализации по умолчанию берутся свежими (`DEPENDENCY_MODE=fresh`) и записываются в `.agent-1c/dependency-lock.json`: commit ITL workflow-пакета, commit `ai_rules_1c`, URL/версия/SHA256 Vanessa Automation и SHA256 скачиваемых архивов. Если нужен воспроизводимый bootstrap, выберите `DEPENDENCY_MODE=locked`: helper будет использовать только значения из lock manifest и остановится, если pin или hash отсутствует или не совпадает.
 
-Свежие upstream-правила `ai_rules_1c` после установки обновляются командой `/itl-update-rules` или helper-действием `update-ai-rules`. Обновление запускает upstream installer, убирает дефолтные upstream MCP-записи из локальных Codex/Kilo конфигов, повторно применяет ITL overlay в `USER-RULES.md` и записывает новый commit `ai_rules_1c` в `.agent-1c/dependency-lock.json`.
+Свежие upstream-правила `ai_rules_1c` после установки обновляются по обычному запросу агенту или helper-действием `update-ai-rules`. Обновление запускает upstream installer, убирает дефолтные upstream MCP-записи из локальных Codex/Kilo конфигов, повторно применяет ITL overlay в `USER-RULES.md` и записывает новый commit `ai_rules_1c` в `.agent-1c/dependency-lock.json`.
 
-Уже установленный ITL workflow-пакет обновляется из `master` командой `/itl-update-workflow` или helper-действием `update-workflow`. Команду запускают только из `master` worktree: она обновляет управляемые файлы workflow, не трогает `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, существующие `.agent-1c/project.json` и `.agent-1c/tools.json`, по умолчанию запускает `update-ai-rules` и оставляет tracked-изменения для review/commit. Активные `itldev/*` ветки обновляются отдельно через merge свежего `master` или `/itl-refresh`; runtime MCP обновляется через `/itl-vibecoding1c-mcp`, а branch-local Vanessa MCP - через stop/install/start в нужной worktree.
+Уже установленный ITL workflow-пакет обновляется из `master` по обычному запросу агенту или helper-действием `update-workflow`. Команду запускают только из `master` worktree: она обновляет управляемые файлы workflow, не трогает `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, существующие `.agent-1c/project.json` и `.agent-1c/tools.json`, регенерирует локальные `.kilo/commands/itl*.md`, по умолчанию запускает `update-ai-rules` и оставляет tracked-изменения для review/commit. Активные `itldev/*` ветки обновляются отдельно через merge свежего `master` или `/itl-refresh`; runtime MCP обновляется по запросу агенту, а branch-local Vanessa MCP - через stop/install/start в нужной worktree.
 
-Проверка перед `/itl-result` и `/itl-close` по умолчанию работает в режиме `VERIFICATION_POLICY=warn`: без fresh passed `/itl-check` или `/itl-verify` нужен явный unverified override, который попадет в manifest. Для более строгого промышленного режима задайте `VERIFICATION_POLICY=block`: выгрузка результата и закрытие ветки будут запрещены до свежей успешной Vanessa-проверки.
+Проверка перед `/itl-result` и `/itl-close` по умолчанию работает в режиме `VERIFICATION_POLICY=warn`: без fresh passed `/itl-check` нужен явный unverified override, который попадет в manifest. Для более строгого промышленного режима задайте `VERIFICATION_POLICY=block`: выгрузка результата и закрытие ветки будут запрещены до свежей успешной Vanessa-проверки.
 
 Vanessa Automation устанавливается локально в `.agent-1c/tools/vanessa-automation`. Тесты хранятся в `tests/features`, отчеты - в `build/test-results/vanessa`; отчеты и скачанная EPF не коммитятся.
 
-vibecoding1c MCP подключаются через `/itl-vibecoding1c-mcp`. По умолчанию setup применяет сохраненный выбор серверов, а если выбор отсутствует или неполный - сначала запускает выбор; для явного повторного выбора используйте `vibecoding1c-mcp-select` или `vibecoding1c-mcp-setup -Force`. Затем helper берет опубликованные LAN HTTP endpoints из registry-репозитория `http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git`; для config-specific vibecoding1c MCP разработчик явно выбирает `configId`, даже если опубликована только одна конфигурация. Выбор `hostId` хранится отдельно для каждого remote-сервера, включая global `docs`/`templates`/`syntax`/`codechecker`/`ssl`; `configId` хранится отдельно для `code` и `graph`, поэтому они не наследуют выбор друг друга. По каждому серверу можно выбрать remote или local. Локальный режим по-прежнему клонирует приватный GitLab-дистрибутив `http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git` в `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\distribution`, ротирует ключи в локальный `%LOCALAPPDATA%\ITL\MCP\vibecoding1c`, выбирает embedding-модель, выделяет host-порты и пишет ignored Codex/Kilo config только для текущего scope. Для ручного registry checkout задайте `VIBECODING1C_MCP_REGISTRY_PATH`; для ручного distribution checkout - `VIBECODING1C_MCP_DISTRIBUTION_PATH`. Выбор remote/local хранится в ignored `.agent-1c/mcp/vibecoding1c-selection.json`.
+vibecoding1c MCP подключаются по обычному запросу агенту или helper-действием `vibecoding1c-mcp-setup`. По умолчанию setup применяет сохраненный выбор серверов, а если выбор отсутствует или неполный - сначала запускает выбор; для явного повторного выбора используйте `vibecoding1c-mcp-select` или `vibecoding1c-mcp-setup -Force`. Затем helper берет опубликованные LAN HTTP endpoints из registry-репозитория `http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git`; для config-specific vibecoding1c MCP разработчик явно выбирает `configId`, даже если опубликована только одна конфигурация. Выбор `hostId` хранится отдельно для каждого remote-сервера, включая global `docs`/`templates`/`syntax`/`codechecker`/`ssl`; `configId` хранится отдельно для `code` и `graph`, поэтому они не наследуют выбор друг друга. По каждому серверу можно выбрать remote или local. Локальный режим по-прежнему клонирует приватный GitLab-дистрибутив `http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git` в `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\distribution`, ротирует ключи в локальный `%LOCALAPPDATA%\ITL\MCP\vibecoding1c`, выбирает embedding-модель, выделяет host-порты и пишет ignored Codex/Kilo config только для текущего scope. Для ручного registry checkout задайте `VIBECODING1C_MCP_REGISTRY_PATH`; для ручного distribution checkout - `VIBECODING1C_MCP_DISTRIBUTION_PATH`. Выбор remote/local хранится в ignored `.agent-1c/mcp/vibecoding1c-selection.json`.
 
 Для выделенной машины без агента используйте standalone tooling в `vibecoding1c-mcp-host/`: `install-vibecoding1c-mcp-host.ps1` поднимает общие vibecoding1c MCP, config-specific `code`/`graph` vibecoding1c MCP, читает XML-выгрузки из Git `sourceRepo` или локального `sourcePath`, автоматически генерирует `Report.txt` через `norkins/metadata` и публикует `registry.json` без секретов. Для локального `sourcePath` ручная команда `-Action dump-config` обновляет базу из 1C-хранилища и выгружает конфигурацию в файлы.
 
-Vanessa MCP запускается отдельно для каждой ветки разработки. Используйте продвинутую команду `/itl-vanessa-mcp` из worktree нужной `itldev/*` ветки: helper установит MCP-расширения в копию базы этой ветки, назначит отдельный порт и сохранит PID/URL в `.agent-1c/dev-branches/*.json`. Финальный `/itl-check` по-прежнему запускает пакетный `StartFeaturePlayer`, но делает это через реальный `TESTMANAGER -> TESTCLIENT` контур с branch-local `VANESSA_TEST_PORT`. `/itl-verify` остается совместимым alias. Успех подтверждается JUnit-отчетом с выполненными тестами без failures/errors.
+Vanessa MCP запускается отдельно для каждой ветки разработки по обычному запросу агенту или helper-действиями `install-vanessa-mcp` и `start-vanessa-mcp` из worktree нужной `itldev/*` ветки. Helper установит MCP-расширения в копию базы этой ветки, назначит отдельный порт и сохранит PID/URL в `.agent-1c/dev-branches/*.json`. Финальный `/itl-check` по-прежнему запускает пакетный `StartFeaturePlayer`, но делает это через реальный `TESTMANAGER -> TESTCLIENT` контур с branch-local `VANESSA_TEST_PORT`. Успех подтверждается JUnit-отчетом с выполненными тестами без failures/errors.
 
 External MCP - это отдельные будущие MCP-серверы вне Vanessa MCP и vibecoding1c MCP. Текущий helper их не настраивает и не удаляет из Codex/Kilo config; managed rewrite трогает только записи с `managedBy = "vibecoding1c-mcp"` и `family = "vibecoding1c"`.
 
 ## Команды Kilo Code
 
+Slash-команды генерируются локально для каждой открытой папки. В `master` Kilo показывает:
+
 ```text
-/itl                              Показать короткое меню.
-/itl-new-config-branch <name>     Создать worktree-ветку разработки конфигурации.
-/itl-new-extension-branch <name>  Создать worktree-ветку разработки расширения.
-/itl-vibecoding1c-mcp            Настроить, запустить, обновить или проверить vibecoding1c MCP.
-/itl-status                       Показать текущую ветку, базу и статус проверки.
-/itl-check                        Обновить базу ветки и запустить Vanessa Automation.
-/itl-update-base                  Обновить базу текущей ветки без тестов.
-/itl-verify                       Совместимый alias для /itl-check.
-/itl-refresh                      Обновить ветку свежим master.
-/itl-result                       Выгрузить CF/CFE без закрытия ветки.
-/itl-close                        Закрыть ветку и выгрузить финальный CF/CFE.
-/itl-switch <master|branch name>  Показать/открыть нужную рабочую папку или переключить legacy-ветку.
+/itl
+/itl-status
+/itl-new-config-branch <name>
+/itl-new-extension-branch <name>
 ```
 
-Эти команды сами являются быстрым контуром: wrapper сразу запускает PowerShell-helper и читает подробные правила только при ошибке или по запросу. В Codex можно писать те же действия обычным текстом, вызывать `$1c-workflow` для подробного режима или `$1c-workflow-fast` для регулярных операций.
+В worktree ветки `itldev/*` Kilo показывает:
 
-Продвинутые/helper-команды `/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`, `/itl-init-project` и `/itl-vanessa-mcp` доступны для прямого вызова, но не входят в короткое меню `/itl`.
+```text
+/itl
+/itl-status
+/itl-check
+/itl-refresh
+/itl-result
+/itl-close
+```
+
+`/itl` показывает карту lifecycle, текущий контекст, доступные действия и пути соседних worktree. Редкие/helper-действия вызываются обычным текстом через агента или напрямую через PowerShell helper, но не засоряют slash-палитру.
 
 ## Важные правила
 
 - Не коммитьте `.dev.env`, пароли, `*.cf`, `*.dt`, логи и локальные базы.
 - Не коммитьте `.agent-1c/dev-branches/*.json`: это локальное runtime-состояние веток.
-- Не коммитьте `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json` и `.kilo/kilo.jsonc`: это локальные MCP/client config state.
-- Remote vibecoding1c MCP registry не является источником правды по текущей ветке разработки. Проверяйте `/itl-status` или `/itl-vibecoding1c-mcp` freshness: `fresh`, `stale`, `remote-shared`, `unknown`, `indexing`.
+- Не коммитьте `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/commands/itl*.md`, `.kilo/kilo.json` и `.kilo/kilo.jsonc`: это локальные generated/runtime state.
+- Remote vibecoding1c MCP registry не является источником правды по текущей ветке разработки. Проверяйте `/itl-status` или MCP freshness по запросу агенту: `fresh`, `stale`, `remote-shared`, `unknown`, `indexing`.
 - Не загружайте изменения ветки разработки напрямую в исходную базу.
 - Все изменения загружаются только в базу текущей ветки разработки.
 - Не используйте один Vanessa MCP на несколько веток разработки: запускайте Vanessa MCP из worktree нужной `itldev/*` ветки, чтобы порт, PID, URL и база были branch-local. Vanessa MCP нужен для авторинга, исследования форм, записи и точечной отладки; финальный `/itl-check` не запускается через MCP.
 - Перед командами `ai_rules_1c`, которые работают с базой (`/update1cbase`, `/loadfrom1cbase`, `/getconfigfiles`), в ветке `itldev/*` должен быть активирован контекст ветки. Команды жизненного цикла делают это автоматически.
-- Для обычной проверки в ITL-ветке не используйте `/deploy-and-test`: он повторно загружает все файлы. Используйте `/itl-check`; если нужно только обновить базу без тестов, используйте `/itl-update-base`. `/itl-verify` остается совместимым alias. Чужой Vanessa-run в другой worktree по умолчанию выводится как диагностика и не блокирует запуск, пока нет реального конфликта порта или базы; helper никогда не завершает `TESTMANAGER`/`TESTCLIENT` другой worktree.
+- Для обычной проверки в ITL-ветке не используйте `/deploy-and-test`: он повторно загружает все файлы. Используйте `/itl-check`; если нужно только обновить базу без тестов, попросите агента выполнить update-base. Чужой Vanessa-run в другой worktree по умолчанию выводится как диагностика и не блокирует запуск, пока нет реального конфликта порта или базы; helper никогда не завершает `TESTMANAGER`/`TESTCLIENT` другой worktree.
 - Для изменения бизнес-поведения агент создает или обновляет 2-4 Vanessa Automation проверки: основной успешный сценарий и минимум один значимый граничный или негативный сценарий; integration/UI используются только по сути изменения.
 - `/itl-result` и `/itl-close` предупреждают, если нет свежей успешной проверки Vanessa. Продолжить без нее можно только после явного подтверждения.
 - Перед созданием worktree, обновлением ветки, выгрузкой результата и legacy-переключением Git-дерево должно быть чистым.

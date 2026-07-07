@@ -504,29 +504,23 @@ Describe "1C agent workflow static checks" {
         $templateIgnoreText | Should -Match 'build/test-results/'
     }
 
-    It "has Kilo wrapper files for every documented /itl command" {
-        $docPaths = @(
-            "README.md",
-            "DEVELOPER-GUIDE.ru.md",
-            "DEV-BRANCH-DEVELOPMENT.ru.md",
-            "AGENT-INSTALL.md",
-            ".agents\skills\1c-workflow\references\workflow.md",
-            ".kilo\commands\itl.md"
-        ) | ForEach-Object { Join-Path $RepoRoot $_ }
-
-        $documentedCommands = foreach ($path in $docPaths) {
-            $text = Get-Content -Encoding UTF8 -Raw $path
-            [regex]::Matches($text, "(?<![\w-])/(itl(?:-[a-z0-9-]+)?)") | ForEach-Object { "/" + $_.Groups[1].Value }
+    It "has context-specific Kilo command templates for the public surface" {
+        $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates"
+        $expected = @{
+            common = @("itl.md", "itl-status.md")
+            master = @("itl-new-config-branch.md", "itl-new-extension-branch.md")
+            dev = @("itl-check.md", "itl-refresh.md", "itl-result.md", "itl-close.md")
         }
 
-        $documentedCommands = @($documentedCommands | Sort-Object -Unique)
-        ($documentedCommands -contains "/itl") | Should -Be $true
-
-        foreach ($command in ($documentedCommands | Where-Object { $_ -ne "/itl" })) {
-            $fileName = $command.TrimStart("/") + ".md"
-            $wrapperPath = Join-Path $RepoRoot (Join-Path ".kilo\commands" $fileName)
-            (Test-Path -LiteralPath $wrapperPath -PathType Leaf) | Should -Be $true
+        foreach ($setName in $expected.Keys) {
+            $setPath = Join-Path $templateRoot $setName
+            (Test-Path -LiteralPath $setPath -PathType Container) | Should -Be $true
+            $actual = @(Get-ChildItem -LiteralPath $setPath -File -Filter "itl*.md" | Sort-Object Name | Select-Object -ExpandProperty Name)
+            $actual | Should -Be @($expected[$setName] | Sort-Object)
         }
+
+        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands") -PathType Container) | Should -Be $true
+        @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".kilo\commands") -File -Filter "itl*.md" -ErrorAction SilentlyContinue).Count | Should -Be 0
     }
 
     It "uses only helper actions that are declared in the Action ValidateSet" {
@@ -536,7 +530,7 @@ Describe "1C agent workflow static checks" {
         $actionPattern = [regex]::Escape($quote) + "(.+?)" + [regex]::Escape($quote)
         $allowedActions = @([regex]::Matches($match.Groups[1].Value, $actionPattern) | ForEach-Object { $_.Groups[1].Value })
 
-        $wrapperFiles = Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".kilo\commands") -File -Filter "itl*.md"
+        $wrapperFiles = Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md"
         foreach ($file in $wrapperFiles) {
             $text = Get-Content -Encoding UTF8 -Raw $file.FullName
             $actionMatch = [regex]::Match($text, "-Action\s+(\S+)")
@@ -546,21 +540,38 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "guards context-specific lifecycle actions in the helper" {
+        $HelperText | Should -Match "function Assert-MasterWorktreeContext"
+        $HelperText | Should -Match "function Assert-DevelopmentBranchWorktreeContext"
+        $HelperText | Should -Match "(?s)function New-DevBranchCore.*Assert-MasterWorktreeContext"
+
+        foreach ($functionName in @(
+            "Update-DevBranchBase",
+            "Refresh-DevBranch",
+            "Export-DevBranchResult",
+            "Close-DevBranch",
+            "Set-DevBranchExtension",
+            "Dump-DevBranchExtension"
+        )) {
+            $HelperText | Should -Match "(?s)function $functionName.*Assert-DevelopmentBranchWorktreeContext"
+        }
+    }
+
     It "wires the post-change check action through helper, docs, and Kilo wrapper" {
         $HelperText | Should -Match ([regex]::Escape('"check-dev-branch"'))
         $HelperText | Should -Match "function Check-DevBranch"
         $HelperText | Should -Match "function Invoke-DevBranchCheck"
         $HelperText | Should -Match "function Verify-DevBranch"
 
-        $wrapperPath = Join-Path $RepoRoot ".kilo\commands\itl-check.md"
+        $wrapperPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md"
         (Test-Path -LiteralPath $wrapperPath -PathType Leaf) | Should -Be $true
         $wrapperText = Get-Content -Encoding UTF8 -Raw $wrapperPath
         $wrapperText | Should -Match "-Action\s+check-dev-branch"
-        $wrapperText | Should -Match ([regex]::Escape('Do not run `/itl-update-base` first'))
+        $wrapperText | Should -Match ([regex]::Escape('Do not run a separate base update first'))
 
-        $menuText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl.md")
+        $menuText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
         $menuText | Should -Match ([regex]::Escape("/itl-check"))
-        $menuText | Should -Match "Compatibility alias"
+        $menuText | Should -Match "itldev/\*"
 
         foreach ($relativePath in @(
             "README.md",
@@ -576,16 +587,13 @@ Describe "1C agent workflow static checks" {
         }
     }
 
-    It "keeps the Kilo init command on the helper wizard path" {
-        $wrapperPath = Join-Path $RepoRoot ".kilo\commands\itl-init-project.md"
-        (Test-Path -LiteralPath $wrapperPath -PathType Leaf) | Should -Be $true
-        $text = Get-Content -Encoding UTF8 -Raw $wrapperPath
+    It "keeps initialization on the monitored helper wizard path" {
+        $text = (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")) + [Environment]::NewLine + (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\SKILL.md"))
         $text | Should -Match ([regex]::Escape(".\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"))
         $text | Should -Match "-Action\s+init-project"
         $text | Should -Match "-InitMode\s+wizard"
         $text | Should -Match ([regex]::Escape(".agent-1c/runs/<run>/status.json"))
-        $text | Should -Match "Do not collect the initialization questionnaire"
-        $text | Should -Match "direct bootstrap-only wrapper"
+        $text | Should -Match "do not collect the (initialization )?questionnaire in chat"
     }
 
     It "wires configured init install flags without standalone install rerun guidance" {
@@ -612,7 +620,7 @@ Describe "1C agent workflow static checks" {
             "AGENT-INSTALL.md",
             ".agents\skills\1c-workflow\SKILL.md",
             ".agents\skills\1c-workflow\references\workflow.md",
-            ".kilo\commands\itl-init-project.md"
+            "AGENT-INSTALL.md"
         ) | ForEach-Object { Join-Path $RepoRoot $_ }
 
         foreach ($path in $docPaths) {
@@ -626,7 +634,7 @@ Describe "1C agent workflow static checks" {
 
         $strictInitDocs = @(
             (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")),
-            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl-init-project.md"))
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md"))
         ) -join [Environment]::NewLine
         $strictInitDocs | Should -Not -Match "Start-Process"
         $strictInitDocs | Should -Not -Match "-NoExit"
@@ -638,30 +646,38 @@ Describe "1C agent workflow static checks" {
             "/itl-set-dev-branch-extension",
             "/itl-dump-dev-branch-extension",
             "/itl-vanessa-mcp",
-            "/itl-update-rules"
+            "/itl-update-rules",
+            "/itl-update-workflow",
+            "/itl-vibecoding1c-mcp",
+            "/itl-update-base",
+            "/itl-verify",
+            "/itl-switch"
         )
 
-        $kiloMenuText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl.md")
+        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
         foreach ($command in $advancedCommands) {
-            $kiloMenuText | Should -Not -Match ([regex]::Escape($command))
+            $kiloTemplateText | Should -Not -Match ([regex]::Escape($command))
         }
 
         $readmeText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")
-        $readmeMenuMatch = [regex]::Match($readmeText, '(?s)```text\s*(?<commands>/itl\s+.*?/itl-switch[^\r\n]*.*?)```')
-        $readmeMenuMatch.Success | Should -Be $true
+        $readmeMenuStart = $readmeText.IndexOf("Slash-")
+        $readmeMenuStart | Should -BeGreaterThan -1
+        $readmeMenuEnd = $readmeText.IndexOf("## ", $readmeMenuStart + 1)
+        $readmeMenuEnd | Should -BeGreaterThan $readmeMenuStart
+        $readmeMenuText = $readmeText.Substring($readmeMenuStart, $readmeMenuEnd - $readmeMenuStart)
         foreach ($command in $advancedCommands) {
-            $readmeMenuMatch.Groups["commands"].Value | Should -Not -Match ([regex]::Escape($command))
+            $readmeMenuText | Should -Not -Match ([regex]::Escape($command))
         }
 
         $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
-        $installMenuMatch = [regex]::Match($installText, '(?s)show only the short command surface:\s*```text(?<commands>.*?)```')
+        $installMenuMatch = [regex]::Match($installText, '(?s)In the `master` worktree, show only:(?<commands>.*?)Advanced/helper actions')
         $installMenuMatch.Success | Should -Be $true
         foreach ($command in $advancedCommands) {
             $installMenuMatch.Groups["commands"].Value | Should -Not -Match ([regex]::Escape($command))
         }
 
         $workflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
-        $shortSurfaceMatch = [regex]::Match($workflowText, "short command surface: (?<commands>.+?)\. These wrappers")
+        $shortSurfaceMatch = [regex]::Match($workflowText, "(?s)master:\s*(?<commands>.*?)For Kilo Code")
         $shortSurfaceMatch.Success | Should -Be $true
         foreach ($command in $advancedCommands) {
             $shortSurfaceMatch.Groups["commands"].Value | Should -Not -Match ([regex]::Escape($command))
@@ -688,9 +704,12 @@ Describe "1C agent workflow static checks" {
             ($allowedActions -contains $action) | Should -Be $true
         }
 
-        $advancedText | Should -Match ([regex]::Escape("/itl-set-dev-branch-extension"))
-        $advancedText | Should -Match ([regex]::Escape("/itl-dump-dev-branch-extension"))
-        $advancedText | Should -Match ([regex]::Escape("/itl-vanessa-mcp"))
+        $advancedText | Should -Match "set-dev-branch-extension"
+        $advancedText | Should -Match "dump-dev-branch-extension"
+        $advancedText | Should -Match "install-vanessa-mcp"
+        $advancedText | Should -Not -Match ([regex]::Escape("/itl-set-dev-branch-extension"))
+        $advancedText | Should -Not -Match ([regex]::Escape("/itl-dump-dev-branch-extension"))
+        $advancedText | Should -Not -Match ([regex]::Escape("/itl-vanessa-mcp"))
         $advancedText | Should -Match "beginner"
     }
 
@@ -698,8 +717,7 @@ Describe "1C agent workflow static checks" {
         $docTexts = @(
             (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")),
             (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\SKILL.md")),
-            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")),
-            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl-init-project.md"))
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md"))
         )
 
         foreach ($text in $docTexts) {
@@ -804,11 +822,14 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Not -Match "itl-mcp"
         $HelperText | Should -Not -Match "(?<![A-Za-z0-9])mcpSetupDuringInit"
 
-        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-vibecoding1c-mcp.md") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-vibecoding1c-mcp.md") -PathType Leaf) | Should -Be $false
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-mcp.md") -PathType Leaf) | Should -Be $false
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl.md")) | Should -Match "/itl-vibecoding1c-mcp"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")) | Should -Match "/itl-vibecoding1c-mcp"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")) | Should -Match "/itl-vibecoding1c-mcp"
+        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
+        $kiloTemplateText | Should -Not -Match "/itl-vibecoding1c-mcp"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")) | Should -Match "vibecoding1c-mcp-setup"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")) | Should -Not -Match "/itl-vibecoding1c-mcp"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")) | Should -Match "vibecoding1c-mcp-setup"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")) | Should -Not -Match "/itl-vibecoding1c-mcp"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VIBECODING1C_MCP_DISTRIBUTION_PATH"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VIBECODING1C_MCP_DISTRIBUTION_REPO"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VIBECODING1C_MCP_REGISTRY_PATH"
@@ -2789,9 +2810,10 @@ Describe "1C agent workflow static checks" {
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($mcpToolPath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($mcpToolPath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_MCP_URL"
-        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-vanessa-mcp.md") -PathType Leaf) | Should -Be $true
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl-vanessa-mcp.md")) | Should -Match "reload or restart Kilo Code"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl.md")) | Should -Not -Match "/itl-vanessa-mcp"
+        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-vanessa-mcp.md") -PathType Leaf) | Should -Be $false
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")) | Should -Match "reload or restart Kilo Code"
+        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
+        $kiloTemplateText | Should -Not -Match "/itl-vanessa-mcp"
     }
 
     It "keeps the ITL overlay in USER-RULES and AGENTS as a fallback bridge" {
@@ -2814,7 +2836,8 @@ Describe "1C agent workflow static checks" {
         $userRulesTemplateText | Should -Match "standards and role library"
         $userRulesTemplateText | Should -Match "content/skills"
         $userRulesTemplateText | Should -Match ([regex]::Escape("/installmcp"))
-        $userRulesTemplateText | Should -Match ([regex]::Escape("/itl-vibecoding1c-mcp"))
+        $userRulesTemplateText | Should -Match "vibecoding1c MCP helper request"
+        $userRulesTemplateText | Should -Not -Match ([regex]::Escape("/itl-vibecoding1c-mcp"))
 
         $HelperText | Should -Match "function Update-AgentGuidanceBridge"
         $HelperText | Should -Match "function Update-UserRules"
@@ -2832,26 +2855,23 @@ Describe "1C agent workflow static checks" {
         $installText | Should -Match "USER-RULES.md"
     }
 
-    It "wires ai_rules_1c update through the helper and Kilo wrapper" {
+    It "wires ai_rules_1c update through the helper and advanced docs" {
         $HelperText | Should -Match ([regex]::Escape('"update-ai-rules"'))
         $HelperText | Should -Match "function Update-AiRules1c"
         $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cInstaller -Command "update"'))
         $HelperText | Should -Match ([regex]::Escape('powershell -NoProfile -ExecutionPolicy Bypass -File $installScript @installArgs'))
         $HelperText | Should -Match ([regex]::Escape('$effectiveCommand,'))
         $HelperText | Should -Match ([regex]::Escape('"-Force"'))
-        $HelperText | Should -Match "Update ai_rules_1c managed rules"
+        $HelperText | Should -Match "Invoke-AiRules1cInstaller -Command `"update`""
         $HelperText | Should -Match "function Remove-AiRules1cManagedMcpConfig"
         $HelperText | Should -Match "function Get-AiRules1cManagedMcpServerIds"
         $HelperText | Should -Match "1c-code-metadata-mcp"
         $HelperText | Should -Match "1C-docs-mcp"
         $HelperText | Should -Match "1c-data-mcp"
 
-        $wrapperPath = Join-Path $RepoRoot ".kilo\commands\itl-update-rules.md"
-        (Test-Path -LiteralPath $wrapperPath -PathType Leaf) | Should -Be $true
-        $wrapperText = Get-Content -Encoding UTF8 -Raw $wrapperPath
-        $wrapperText | Should -Match "-Action\s+update-ai-rules"
-        $wrapperText | Should -Match "USER-RULES.md"
-        $wrapperText | Should -Match "MCP"
+        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-update-rules.md") -PathType Leaf) | Should -Be $false
+        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
+        $kiloTemplateText | Should -Not -Match "update-ai-rules"
 
         $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
         $workflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
@@ -2917,7 +2937,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Not -Match '(?im)^\s*\$home\s*='
     }
 
-    It "wires ITL workflow package update through the helper, docs, and Kilo wrapper" {
+    It "wires ITL workflow package update through the helper and advanced docs" {
         $HelperText | Should -Match ([regex]::Escape('"update-workflow"'))
         $HelperText | Should -Match "function Update-WorkflowPackage"
         $HelperText | Should -Match "ITL_WORKFLOW_SOURCE_PATH"
@@ -2935,13 +2955,12 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $lockTemplate.dependencies.workflowPackage.ref | Should -Be "master"
         $lockTemplate.dependencies.workflowPackage.PSObject.Properties.Name | Should -Contain "updatedAt"
 
-        $wrapperPath = Join-Path $RepoRoot ".kilo\commands\itl-update-workflow.md"
-        (Test-Path -LiteralPath $wrapperPath -PathType Leaf) | Should -Be $true
-        $wrapperText = Get-Content -Encoding UTF8 -Raw $wrapperPath
-        $wrapperText | Should -Match "-Action\s+update-workflow"
-        $wrapperText | Should -Match "ITL_WORKFLOW_SOURCE_PATH"
-        $wrapperText | Should -Match "SkipAiRules"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl.md")) | Should -Not -Match "/itl-update-workflow"
+        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-update-workflow.md") -PathType Leaf) | Should -Be $false
+        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
+        $kiloTemplateText | Should -Not -Match "update-workflow"
+        $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
+        $advancedText | Should -Match "update-workflow"
+        $advancedText | Should -Match ([regex]::Escape(".kilo/commands/itl*.md"))
 
         $docPaths = @(
             "README.md",
@@ -3194,7 +3213,12 @@ local after
 
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\stale.txt") -PathType Leaf) | Should -Be $false
-            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-update-workflow.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-status.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-new-config-branch.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-new-extension-branch.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-check.md") -PathType Leaf) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-update-workflow.md") -PathType Leaf) | Should -Be $false
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-old.md") -PathType Leaf) | Should -Be $false
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\custom.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot "templates\dependency-lock.json") -PathType Leaf) | Should -Be $true
@@ -3244,7 +3268,6 @@ local after
 
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow") -Destination (Join-Path $tempRoot ".agents\skills\1c-workflow") -Recurse
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast") -Destination (Join-Path $tempRoot ".agents\skills\1c-workflow-fast") -Recurse
-            Copy-Item -LiteralPath (Join-Path $RepoRoot ".kilo\commands") -Destination (Join-Path $tempRoot ".kilo\commands") -Recurse
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $tempRoot "templates\project.json")
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\tools.json") -Destination (Join-Path $tempRoot "templates\tools.json")
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dev.env.example") -Destination (Join-Path $tempRoot "templates\dev.env.example")
@@ -3254,7 +3277,8 @@ local after
 
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow-fast\SKILL.md") -PathType Leaf) | Should -Be $true
-            (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo\commands\itl-vanessa-mcp.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-close.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\event-log-exporter\EventLogExporter.xml") -PathType Leaf) | Should -Be $true
             @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\auto-update") -File -Filter "*.epf").Count | Should -Be 2
             (Test-Path -LiteralPath (Join-Path $tempRoot "AGENTS.md") -PathType Leaf) | Should -Be $true
@@ -3796,8 +3820,9 @@ url = "http://localhost:9999/mcp"
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
-            ".kilo/commands/itl-update-rules.md",
-            ".kilo/commands/itl-vanessa-mcp.md",
+            ".agents/skills/1c-workflow/kilo-command-templates/common/itl.md",
+            ".agents/skills/1c-workflow/kilo-command-templates/master/itl-new-config-branch.md",
+            ".agents/skills/1c-workflow/kilo-command-templates/dev/itl-close.md",
             "scripts/test.ps1",
             "templates/AGENTS.append.md",
             "templates/USER-RULES.append.md",
@@ -4206,8 +4231,7 @@ url = "http://localhost:9999/mcp"
         $docPaths = @(
             "AGENT-INSTALL.md",
             ".agents\skills\1c-workflow\SKILL.md",
-            ".agents\skills\1c-workflow\references\workflow.md",
-            ".kilo\commands\itl-init-project.md"
+            ".agents\skills\1c-workflow\references\workflow.md"
         ) | ForEach-Object { Join-Path $RepoRoot $_ }
 
         foreach ($path in $docPaths) {
@@ -4494,6 +4518,9 @@ if (`$?) { exit 0 } else { exit 1 }
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`n" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
+            $templateTarget = Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Destination $templateTarget -Recurse
             $devEnv = @(
                 "INFOBASE_KIND=file",
                 "SOURCE_USES_REPOSITORY=false",
@@ -4508,7 +4535,7 @@ if (`$?) { exit 0 } else { exit 1 }
             & git -C $tempRoot init | Out-Null
             & git -C $tempRoot config user.email "test@example.com"
             & git -C $tempRoot config user.name "Test User"
-            & git -C $tempRoot add .gitignore README.md
+            & git -C $tempRoot add .gitignore README.md .agents
             & git -C $tempRoot commit -m init | Out-Null
             & git -C $tempRoot branch -M master
 
@@ -4577,6 +4604,9 @@ if (`$?) { exit 0 } else { exit 1 }
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`n" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
+            $templateTarget = Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Destination $templateTarget -Recurse
             $devEnv = @(
                 "INFOBASE_KIND=file",
                 "SOURCE_USES_REPOSITORY=false",
@@ -4591,7 +4621,7 @@ if (`$?) { exit 0 } else { exit 1 }
             & git -C $tempRoot init | Out-Null
             & git -C $tempRoot config user.email "test@example.com"
             & git -C $tempRoot config user.name "Test User"
-            & git -C $tempRoot add .gitignore README.md
+            & git -C $tempRoot add .gitignore README.md .agents
             & git -C $tempRoot commit -m init | Out-Null
             & git -C $tempRoot branch -M master
 

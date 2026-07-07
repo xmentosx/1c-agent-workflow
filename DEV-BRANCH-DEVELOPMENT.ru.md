@@ -16,13 +16,13 @@
 В Kilo Code жизненный цикл ветки выполняется slash-командами:
 
 ```text
-/itl-vibecoding1c-mcp            Настроить, запустить, обновить или проверить vibecoding1c MCP текущего scope.
+vibecoding1c-mcp helper action            Настроить, запустить, обновить или проверить vibecoding1c MCP текущего scope.
 /itl-status                       Показать текущую ветку, базу и статус проверки.
-/itl-set-dev-branch-extension     Задать имя расширения для текущей extension-ветки.
-/itl-dump-dev-branch-extension    Выгрузить файлы расширения из базы текущей ветки.
+set-dev-branch-extension helper action     Задать имя расширения для текущей extension-ветки.
+dump-dev-branch-extension helper action    Выгрузить файлы расширения из базы текущей ветки.
 /itl-check                        Обновить базу ветки и запустить Vanessa Automation.
-/itl-update-base                  Обновить базу ветки без тестов.
-/itl-verify                       Совместимый alias для /itl-check.
+update-base helper action                  Обновить базу ветки без тестов.
+verify helper action                       Совместимый alias для /itl-check.
 /itl-refresh                      Обновить ветку разработки свежим master.
 /itl-result                       Выгрузить CF/CFE по текущей ветке без закрытия ветки.
 /itl-close                        Закрыть ветку разработки, выгрузить финальный CF/CFE и перейти на master.
@@ -40,29 +40,29 @@
 
 Команды жизненного цикла ветки выполняются через `/itl-*` или естественные текстовые команды. Роли остаются внутренней логикой агента.
 
-`/itl-vibecoding1c-mcp` в worktree текущей `itldev/*` ветки подключает выбранные vibecoding1c MCP endpoints. По умолчанию используются remote LAN endpoints из registry; config-specific remote vibecoding1c MCP требует явного `configId`. Если для `code` или `graph` выбран local branch scope, helper поднимает отдельный локальный vibecoding1c MCP для текущей ветки. vibecoding1c MCP соседних веток в client config не добавляются; Vanessa MCP управляется отдельно через `/itl-vanessa-mcp`.
+`vibecoding1c-mcp helper action` в worktree текущей `itldev/*` ветки подключает выбранные vibecoding1c MCP endpoints. По умолчанию используются remote LAN endpoints из registry; config-specific remote vibecoding1c MCP требует явного `configId`. Если для `code` или `graph` выбран local branch scope, helper поднимает отдельный локальный vibecoding1c MCP для текущей ветки. vibecoding1c MCP соседних веток в client config не добавляются; Vanessa MCP управляется отдельно через `vanessa-mcp helper action`.
 
-`/itl-update-workflow` не запускается из `itldev/*` worktree. Обновляйте ITL workflow-пакет в `master`, коммитьте изменения, затем подтягивайте их в текущую ветку через merge свежего `master` или `/itl-refresh`. После этого при необходимости обновите MCP текущей ветки через `/itl-vibecoding1c-mcp`; для branch-local Vanessa MCP используйте stop, install, затем start через `/itl-vanessa-mcp`.
+`update-workflow helper action` не запускается из `itldev/*` worktree. Обновляйте ITL workflow-пакет в `master`, коммитьте изменения, затем подтягивайте их в текущую ветку через merge свежего `master` или `/itl-refresh`. После этого при необходимости обновите MCP текущей ветки через `vibecoding1c-mcp helper action`; для branch-local Vanessa MCP используйте stop, install, затем start через `vanessa-mcp helper action`.
 
-Команды `/itl-set-dev-branch-extension` и `/itl-dump-dev-branch-extension` являются helper-командами для extension-веток. Они доступны напрямую, но могут не показываться в коротком beginner-меню `/itl`.
+Команды `set-dev-branch-extension helper action` и `dump-dev-branch-extension helper action` являются helper-командами для extension-веток. Они доступны напрямую, но могут не показываться в коротком beginner-меню `/itl`.
 
 Если текущая ветка предназначена для разработки расширения, в начале работы задайте имя расширения:
 
 ```text
-/itl-set-dev-branch-extension <имя-расширения>
+set-dev-branch-extension helper action <имя-расширения>
 ```
 
 После создания расширения в копии базы ветки выгрузите его в файлы:
 
 ```text
-/itl-dump-dev-branch-extension
+dump-dev-branch-extension helper action
 ```
 
-Дальше `/itl-check` обновляет расширение в базе ветки из `src/cfe/<имя-расширения>` и запускает Vanessa Automation, а `/itl-result` выгружает `CFE`. Если нужно только обновить базу без тестов, используйте `/itl-update-base`.
+Дальше `/itl-check` обновляет расширение в базе ветки из `src/cfe/<имя-расширения>` и запускает Vanessa Automation, а `/itl-result` выгружает `CFE`. Если нужно только обновить базу без тестов, используйте `update-base helper action`.
 
 Команды жизненного цикла автоматически активируют контекст базы ветки разработки для `ai_rules_1c`.
 
-`/deploy-and-test` не используется как обычная проверка в ITL-ветке: эта команда повторно загружает все файлы конфигурации. Стандартный путь быстрее и безопаснее: `/itl-check`. Если нужно только обновить базу без тестов, используйте `/itl-update-base`. `/itl-verify` остается совместимым alias.
+`/deploy-and-test` не используется как обычная проверка в ITL-ветке: эта команда повторно загружает все файлы конфигурации. Стандартный путь быстрее и безопаснее: `/itl-check`. Если нужно только обновить базу без тестов, используйте `update-base helper action`. `verify helper action` остается совместимым alias.
 
 ## Как выбрать режим
 
@@ -165,7 +165,7 @@ Quick-fix делается без OpenSpec.
 /itl-check
 ```
 
-Для написания и отладки Vanessa-сценариев агент может запустить branch-local Vanessa MCP через `/itl-vanessa-mcp` из текущей `itldev/*` worktree. MCP не заменяет финальный gate: после отладки нужно выполнить `/itl-check`, который запускает пакетный `StartFeaturePlayer` в реальном `TESTMANAGER -> TESTCLIENT` контуре, назначает branch-local `VANESSA_TEST_PORT` и сохраняет воспроизводимые JUnit/status/log paths. `/itl-verify` остается совместимым alias.
+Для написания и отладки Vanessa-сценариев агент может запустить branch-local Vanessa MCP через `vanessa-mcp helper action` из текущей `itldev/*` worktree. MCP не заменяет финальный gate: после отладки нужно выполнить `/itl-check`, который запускает пакетный `StartFeaturePlayer` в реальном `TESTMANAGER -> TESTCLIENT` контуре, назначает branch-local `VANESSA_TEST_PORT` и сохраняет воспроизводимые JUnit/status/log paths. `verify helper action` остается совместимым alias.
 
 Для изменения бизнес-поведения агент обязан создать или обновить небольшой набор Vanessa Automation проверок: минимум 2, обычно 2-3 и не больше 4 без отдельного обоснования. Набор должен включать основной успешный сценарий и минимум один значимый граничный или негативный сценарий.
 
@@ -350,7 +350,7 @@ Review должен искать:
 Закрой текущую ветку разработки и подготовь финальный результат.
 ```
 
-Если нет свежей успешной проверки Vanessa, helper применяет `VERIFICATION_POLICY`. По умолчанию `warn`: агент должен предупредить об этом, а получить результат или закрыть ветку без такой проверки можно только после явного подтверждения разработчика. В режиме `block` helper запрещает `result/close` до fresh passed `/itl-check` или `/itl-verify`.
+Если нет свежей успешной проверки Vanessa, helper применяет `VERIFICATION_POLICY`. По умолчанию `warn`: агент должен предупредить об этом, а получить результат или закрыть ветку без такой проверки можно только после явного подтверждения разработчика. В режиме `block` helper запрещает `result/close` до fresh passed `/itl-check` или `verify helper action`.
 
 Рядом с `CF`/`CFE` создается `<artifact>.manifest.json` со статусом проверки, SHA256, commit-ами, логами и признаком unverified override, если override был разрешен политикой.
 
@@ -375,9 +375,9 @@ Review должен искать:
 
 После изменений запускайте единый цикл проверки: /itl-check.
 
-Если нужно только обновить базу без тестов: /itl-update-base.
+Если нужно только обновить базу без тестов: update-base helper action.
 
-`/itl-check` запускает Vanessa через `TESTMANAGER -> TESTCLIENT`, а не через MCP. `/itl-verify` остается совместимым alias.
+`/itl-check` запускает Vanessa через `TESTMANAGER -> TESTCLIENT`, а не через MCP. `verify helper action` остается совместимым alias.
 
 Если Vanessa нашла ошибку, агент сам исправляет ее и повторяет /itl-check. Лимит - 3 попытки.
 

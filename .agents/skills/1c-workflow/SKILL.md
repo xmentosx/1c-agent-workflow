@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow
-description: Initialize and operate 1C configuration or extension development projects with Git, source infobases, isolated development branch infobase copies, optional Apache publication, Vanessa Automation tests, config/extension dump/load, CF/CFE result export, development branch refresh, and branch switching. Use for 1C project init, tool checks, Vanessa/Apache setup, configuration or extension dev branch lifecycle, branch verification, result export, close, switching, or when the user asks what ITL 1C workflow commands are available.
+description: Initialize and operate ITL 1C configuration or extension projects with Git, source infobases, isolated branch infobase copies, optional Apache publication, Vanessa Automation, CF/CFE export, refresh, and close. Use for init, tool checks, Vanessa/Apache setup, branch lifecycle, verification, result export, switching, or available ITL commands.
 ---
 
 # 1C Workflow
@@ -17,7 +17,7 @@ Do not use root `DEVELOPER-GUIDE.ru.md` or `DEV-BRANCH-DEVELOPMENT.ru.md` as man
 
 Intent mapping:
 
-- Help/menu: show the short menu from `references/workflow.md`.
+- Help/menu: show the lifecycle panel from `references/workflow.md` or helper `help`.
 - Init/bootstrap: run the monitored init wizard.
 - Tool checks: `check-tools`, `list-platforms`, `detect-apache`, `install-apache`, `install-vanessa-automation`.
 - vibecoding1c MCP setup/update/status: `vibecoding1c-mcp-setup`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`, `vibecoding1c-mcp-update`, `vibecoding1c-mcp-status`, `vibecoding1c-mcp-start`, `vibecoding1c-mcp-stop`, `vibecoding1c-mcp-rotate-keys`, `vibecoding1c-mcp-ensure-model`, `vibecoding1c-mcp-write-client-config`.
@@ -29,7 +29,7 @@ Intent mapping:
 - Switching/listing: `switch-master`, `switch-dev-branch`, `list-dev-branches`.
 - Vanessa MCP authoring/debugging: `install-vanessa-mcp`, `start-vanessa-mcp`, `vanessa-mcp-status`, `stop-vanessa-mcp`.
 
-If intent is unclear, show the short menu and wait for the user's choice.
+If intent is unclear, show the lifecycle panel and wait for the user's choice.
 
 ## Safety Guardrails
 
@@ -51,12 +51,12 @@ Use sibling Git worktrees for new development branches by default and leave the 
 
 Development branch changes must load only into the copied development branch infobase, never directly into the source infobase. Stop on unexpected dirty Git state before worktree creation, legacy switching, copying bases, dumping config files, or running 1C Designer.
 
-Use `/itl-check` or `check-dev-branch` for the normal post-change executable gate; `/itl-verify` and `verify-dev-branch` remain compatibility aliases. The helper updates the branch base, runs Vanessa Automation through `TESTMANAGER -> TESTCLIENT` with packet `StartFeaturePlayer`, reads JUnit, and checks the branch-local event log baseline. Do not replace final verification with MCP, headless EPF, or `/deploy-and-test`.
+Use `/itl-check` or `check-dev-branch` for the normal post-change executable gate; `verify-dev-branch` remains a helper compatibility alias. The helper updates the branch base, runs Vanessa Automation through `TESTMANAGER -> TESTCLIENT` with packet `StartFeaturePlayer`, reads JUnit, and checks the branch-local event log baseline. Do not replace final verification with MCP, headless EPF, or `/deploy-and-test`.
 
-`/itl-result` and `/itl-close` obey `verificationPolicy`: default `warn` requires explicit unverified override unless verification is fresh passed; `block` requires `/itl-check` or `/itl-verify`.
+`/itl-result` and `/itl-close` obey `verificationPolicy`: default `warn` requires explicit unverified override unless verification is fresh passed; `block` requires `/itl-check`.
 
-vibecoding1c MCP is exposed through `/itl-vibecoding1c-mcp`; setup selects when saved selection is missing/incomplete; `-Force` reselects. Remote is default. Every remote server needs per-server `hostId` when multiple usable hosts are published; remote `code`/`graph` need per-server `configId`. Developers may override each server to local; local `code`/`graph` needs scope. Vanessa MCP is separate branch-local tooling exposed through `/itl-vanessa-mcp`. External MCP is not managed. Helper may write ignored `.codex/config.toml`, `.kilo/kilo.json`, `.agent-1c/mcp/*`, and `%LOCALAPPDATA%\ITL\MCP\vibecoding1c` state. Do not paste keys into chat or tracked files.
+vibecoding1c MCP is managed through helper actions and natural-language requests; setup selects when saved selection is missing/incomplete; `-Force` reselects. Remote is default. Every remote server needs per-server `hostId` when multiple usable hosts are published; remote `code`/`graph` need per-server `configId`. Developers may override each server to local; local `code`/`graph` needs scope. Vanessa MCP is separate branch-local tooling managed through helper actions and natural-language requests. External MCP is not managed. Helper may write ignored `.codex/config.toml`, `.kilo/kilo.json`, `.agent-1c/mcp/*`, and `%LOCALAPPDATA%\ITL\MCP\vibecoding1c` state. Do not paste keys into chat or tracked files.
 
-Vanessa MCP is advanced tooling for authoring, form inspection, recording, and debugging. Run one server per `itldev/*` worktree. Do not run shared Vanessa MCP from `master` or show `/itl-vanessa-mcp` in the beginner menu.
+Vanessa MCP is advanced tooling for authoring, form inspection, recording, and debugging. Run one server per `itldev/*` worktree. Do not run shared Vanessa MCP from `master` or generate it as a visible Kilo slash command.
 
 When launching native Windows executables such as `1cv8.exe` through `Start-Process`, pass `-ArgumentList` as one joined and correctly quoted native command-line string, never as a PowerShell array.

@@ -19,6 +19,7 @@ temp/
 .agent-1c/mcp/
 build/data-mcp-tools-loader/
 .codex/config.toml
+.kilo/commands/itl*.md
 .kilo/kilo.json
 .kilo/kilo.jsonc
 vibecoding1c-mcp-host/host.config.json

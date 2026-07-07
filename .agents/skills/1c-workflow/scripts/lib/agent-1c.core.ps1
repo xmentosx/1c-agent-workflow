@@ -2337,7 +2337,7 @@ function Read-InitAnswersFromWizard {
 
     $answers.webPublishByDefault = Read-InitYesNo -Prompt "Publish development branch infobases to Apache for web-client testing?" -Default $false
     $answers.dependencyMode = Read-InitDependencyMode
-    $answers.vibecoding1cMcpSetupDuringInit = Read-InitYesNo -Prompt "Configure vibecoding1c MCP now? Answer no to do it later through /itl-vibecoding1c-mcp." -Default $false
+    $answers.vibecoding1cMcpSetupDuringInit = Read-InitYesNo -Prompt "Configure vibecoding1c MCP now? Answer no to do it later through a normal agent request or helper action." -Default $false
 
     Write-Section "Init summary"
     Write-Host "Project root: $script:ProjectRoot"

@@ -1167,25 +1167,118 @@ function Copy-WorkflowManagedFile {
     Write-Host "Updated workflow file: $RelativePath"
 }
 
-function Sync-WorkflowKiloItlWrappers {
-    param([string]$SourceRoot)
-
-    $sourceDir = Join-Path $SourceRoot ".kilo\commands"
-    $targetDir = Join-Path $script:ProjectRoot ".kilo\commands"
-    if (-not (Test-Path -LiteralPath $sourceDir -PathType Container -ErrorAction SilentlyContinue)) {
-        throw "Workflow package Kilo commands directory is missing: .kilo\commands"
+function Get-KiloItlCommandSurface {
+    try {
+        $currentBranch = Get-CurrentBranch
+    } catch {
+        return "unknown"
     }
 
+    if ($currentBranch -eq (Get-MasterBranch)) {
+        return "master"
+    }
+    if ($currentBranch -like "itldev/*") {
+        return "dev"
+    }
+    return "unknown"
+}
+
+function Untrack-GeneratedKiloItlCommands {
+    try {
+        if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git") -ErrorAction SilentlyContinue)) {
+            return
+        }
+        $tracked = @(Get-GitOutput @("ls-files", "--", ".kilo/commands/itl*.md") | Where-Object { $_ })
+        if ($tracked.Count -gt 0) {
+            Invoke-Git (@("rm", "--cached", "--ignore-unmatch", "--") + $tracked)
+            Write-Host "Untracked generated Kilo ITL commands from Git index."
+        }
+    } catch {
+        Write-Host "[WARN] Could not untrack generated Kilo ITL commands: $($_.Exception.Message)"
+    }
+}
+
+function Sync-KiloItlCommandSurface {
+    param([string]$SourceRoot = $script:ProjectRoot)
+
+    $templateRoot = Join-Path $SourceRoot ".agents\skills\1c-workflow\kilo-command-templates"
+    if (-not (Test-Path -LiteralPath $templateRoot -PathType Container -ErrorAction SilentlyContinue)) {
+        throw "Workflow package Kilo command templates directory is missing: .agents\skills\1c-workflow\kilo-command-templates"
+    }
+
+    $surface = Get-KiloItlCommandSurface
+    $targetDir = Join-Path $script:ProjectRoot ".kilo\commands"
     Assert-WorkflowManagedTargetPath -Path $targetDir
     New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+
+    Untrack-GeneratedKiloItlCommands
 
     foreach ($existing in @(Get-ChildItem -LiteralPath $targetDir -File -Filter "itl*.md" -ErrorAction SilentlyContinue)) {
         Remove-Item -LiteralPath $existing.FullName -Force
     }
-    foreach ($sourceFile in @(Get-ChildItem -LiteralPath $sourceDir -File -Filter "itl*.md" -ErrorAction Stop)) {
-        Copy-Item -LiteralPath $sourceFile.FullName -Destination (Join-Path $targetDir $sourceFile.Name) -Force
+
+    $sourceDirs = @((Join-Path $templateRoot "common"))
+    if ($surface -in @("master", "dev")) {
+        $sourceDirs += (Join-Path $templateRoot $surface)
     }
-    Write-Host "Updated workflow Kilo wrappers: .kilo\commands\itl*.md"
+
+    foreach ($sourceDir in $sourceDirs) {
+        if (-not (Test-Path -LiteralPath $sourceDir -PathType Container -ErrorAction SilentlyContinue)) {
+            throw "Workflow package Kilo command template set is missing: $sourceDir"
+        }
+        foreach ($sourceFile in @(Get-ChildItem -LiteralPath $sourceDir -File -Filter "itl*.md" -ErrorAction Stop)) {
+            Copy-Item -LiteralPath $sourceFile.FullName -Destination (Join-Path $targetDir $sourceFile.Name) -Force
+        }
+    }
+
+    Write-Host "Generated Kilo ITL command surface: $surface (.kilo\commands\itl*.md)"
+}
+
+function Assert-MasterWorktreeContext {
+    param([string]$Operation)
+
+    $currentBranch = ""
+    try {
+        $currentBranch = Get-CurrentBranch
+    } catch {
+        $currentBranch = ""
+    }
+
+    $masterBranch = Get-MasterBranch
+    if ($currentBranch -ne $masterBranch) {
+        throw "$Operation must be run from the '$masterBranch' worktree. Current branch: $(if ($currentBranch) { $currentBranch } else { '<none>' }). Open the master project folder and run it there."
+    }
+}
+
+function Assert-DevelopmentBranchWorktreeContext {
+    param(
+        [object]$State,
+        [string]$Operation
+    )
+
+    $currentBranch = ""
+    try {
+        $currentBranch = Get-CurrentBranch
+    } catch {
+        $currentBranch = ""
+    }
+
+    if ($currentBranch -notlike "itldev/*") {
+        $worktreePath = ""
+        if ($State) {
+            $worktreePath = Get-StateValue -State $State -Name "worktreePath" -Default ""
+        }
+        $hint = $(if ($worktreePath) { " Open the development branch worktree: $worktreePath" } else { " Open the required itldev/* worktree and run it there." })
+        throw "$Operation must be run from an active itldev/* development branch worktree. Current branch: $(if ($currentBranch) { $currentBranch } else { '<none>' }).$hint"
+    }
+
+    if ($State) {
+        $stateBranch = Get-StateValue -State $State -Name "devBranch" -Default ""
+        if ($stateBranch -and $currentBranch -ne $stateBranch) {
+            throw "$Operation must be run from development branch '$stateBranch'. Current branch: $currentBranch."
+        }
+        Assert-CurrentProjectRootMatchesDevBranchState -State $State -Operation $Operation
+    }
 }
 
 function Update-WorkflowPackageLockEntry {
@@ -1302,7 +1395,6 @@ function Update-WorkflowPackage {
 
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow"
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow-fast"
-    Sync-WorkflowKiloItlWrappers -SourceRoot $source.root
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "templates"
     foreach ($relativePath in @("README.md", "AGENT-INSTALL.md", "DEVELOPER-GUIDE.ru.md", "DEV-BRANCH-DEVELOPMENT.ru.md", "VANESSA-TESTS-GUIDE.ru.md")) {
         Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
@@ -1310,6 +1402,7 @@ function Update-WorkflowPackage {
 
     Update-WorkflowPackageLockEntry -Source $source
     Ensure-GitIgnore
+    Sync-KiloItlCommandSurface
     Update-AgentGuidanceBridge
     Update-UserRules
 
@@ -2059,11 +2152,12 @@ function Initialize-Project {
     Install-AiRules1c
     Update-AgentGuidanceBridge
     Update-UserRules
+    Sync-KiloItlCommandSurface
     Commit-IfChanged "chore: install 1C agent workflow"
     if ($script:InitVibecoding1cMcpSetupRequested -or (ConvertTo-YesNoBool -Value (Get-EnvValue -Name "VIBECODING1C_MCP_SETUP_DURING_INIT" -Default $false) -Default $false)) {
         Setup-Vibecoding1cMcp
     } else {
-        Write-Host "vibecoding1c MCP setup was deferred. Run /itl-vibecoding1c-mcp or -Action vibecoding1c-mcp-setup when needed."
+        Write-Host "vibecoding1c MCP setup was deferred. Ask the agent to configure vibecoding1c MCP, or run -Action vibecoding1c-mcp-setup when needed."
     }
 }
 
@@ -2099,6 +2193,7 @@ function Sync-Master {
     $dumpResult = Dump-ConfigToFiles
     $dumpMessage = if ($sourceUsesRepository) { "sync: refresh 1C configuration from repository" } else { "sync: refresh 1C configuration from source infobase" }
     Commit-IfChanged -Message $dumpMessage -PathSpec @($dumpResult.exportPath) -ForceAdd | Out-Null
+    Sync-KiloItlCommandSurface
 }
 
 function Initialize-DevBranchRuntime {
@@ -2227,6 +2322,7 @@ function Initialize-DevBranchRuntime {
     }
     $state = Initialize-DevBranchEventLogBaseline -State $state
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
+    Sync-KiloItlCommandSurface
 }
 
 function New-DevBranchCore {
@@ -2241,6 +2337,7 @@ function New-DevBranchCore {
         $DevBranch = "itldev/$safe"
     }
 
+    Assert-MasterWorktreeContext -Operation "new development branch"
     Assert-CleanGit
     Checkout-Master
 
@@ -2297,7 +2394,7 @@ function New-ExtensionDevBranch {
 
 function Set-DevBranchExtension {
     $state = Read-DevBranchState -Name $DevBranchName
-    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "set-dev-branch-extension"
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "set-dev-branch-extension"
     Assert-DevBranchKind -State $state -Expected "extension"
     Require-Value "ExtensionName" $ExtensionName | Out-Null
 
@@ -2343,7 +2440,7 @@ function Write-BaseUpdateResult {
 
 function Update-DevBranchBase {
     $state = Read-DevBranchState -Name $DevBranchName
-    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "update-dev-branch-base"
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "update-dev-branch-base"
     Sync-DevBranchContextToDotEnv -State $state
 
     if ((Get-DevBranchKind -State $state) -eq "extension") {
@@ -2369,7 +2466,7 @@ function Update-DevBranchBase {
 
 function Refresh-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
-    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "refresh-dev-branch"
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "refresh-dev-branch"
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
 
     if ($LifecyclePhase -ne "post-merge") {
@@ -2397,11 +2494,12 @@ function Refresh-DevBranch {
     if ((Get-DevBranchKind -State $state) -eq "extension") {
         Write-Host "Extension files were not loaded during refresh. Run update-dev-branch-base when you need to update the extension in the branch infobase."
     }
+    Sync-KiloItlCommandSurface
 }
 
 function Dump-DevBranchExtension {
     $state = Read-DevBranchState -Name $DevBranchName
-    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "dump-dev-branch-extension"
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "dump-dev-branch-extension"
     $dumpResult = Dump-ExtensionToFiles -State $state
     $updates = @{
         lastExtensionDumpAt = (Get-Date).ToString("o")
@@ -2456,11 +2554,14 @@ function Show-WorkflowStatus {
             foreach ($state in ($worktreeStates | Sort-Object @{ Expression = { Get-StateValue -State $_ -Name "createdAt" -Default "" } }, @{ Expression = { Get-StateValue -State $_ -Name "devBranchName" -Default "" } })) {
                 $name = Get-StateValue -State $state -Name "devBranchName" -Default (Get-StateValue -State $state -Name "safeDevBranchName" -Default "<unknown>")
                 Write-Host "  $name"
+                $worktreePath = Get-StateValue -State $state -Name "worktreePath" -Default ""
+                if ($worktreePath) {
+                    Write-Host "    Worktree: $worktreePath"
+                }
                 Write-VanessaTestStatusLines -State $state -Indent "    "
                 Write-VanessaMcpStatusLines -State $state -Indent "    "
                 Write-DataMcpStatusLines -State $state -Indent "    "
             }
-            Write-Host "Run list-dev-branches to see full paths."
         }
         return
     }
@@ -2541,7 +2642,7 @@ function Verify-DevBranch {
 
 function Export-DevBranchResult {
     $state = Read-DevBranchState -Name $DevBranchName
-    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "export-dev-branch-result"
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "export-dev-branch-result"
     Assert-CleanGit
     Sync-DevBranchContextToDotEnv -State $state
     $currentBranch = Get-CurrentBranch
@@ -2596,7 +2697,7 @@ function Export-DevBranchResult {
 
 function Close-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
-    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "close-dev-branch"
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "close-dev-branch"
     Stop-VanessaMcpForState -State $state -Quiet | Out-Null
     $state = Read-DevBranchState -Name $DevBranchName
     Sync-DevBranchContextToDotEnv -State $state
@@ -2805,6 +2906,7 @@ function Switch-Master {
     }
     Invoke-Git @("checkout", $masterBranch)
     Clear-DevBranchContext
+    Sync-KiloItlCommandSurface
     $currentCommit = (Get-GitOutput @("rev-parse", "HEAD")).Trim()
     Write-Host "Switched to master branch: $masterBranch"
     Write-Host "Current commit: $currentCommit"
@@ -2833,6 +2935,7 @@ function Switch-DevBranch {
     Assert-CleanGit
     Invoke-Git @("checkout", $state.devBranch)
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
+    Sync-KiloItlCommandSurface
     $currentCommit = (Get-GitOutput @("rev-parse", "HEAD")).Trim()
     Write-Host "Switched to development branch: $($state.devBranch)"
     Write-Host "Current commit: $currentCommit"
@@ -2929,95 +3032,118 @@ function Validate-Project {
 }
 
 function Show-Help {
-    Write-Host @"
-1C workflow helper
+    Write-Section "ITL lifecycle panel"
+    Write-Host "Project root: $script:ProjectRoot"
 
-Actions:
-  help                Show this help.
-  validate            Check required local settings.
-  check-tools         Check Git, 1C platform, and optional web tools.
-  list-platforms      Show installed 1C platform versions found in Program Files.
-  detect-apache       Detect Apache/httpd settings for web publication.
-  install-apache      Install Apache Lounge httpd from official archive after confirmation.
-  install-vanessa-automation
-                      Install Vanessa Automation single EPF from official GitHub release.
-  install-vanessa-mcp
-                      Install Vanessa MCP extensions into the current development branch infobase.
-  start-vanessa-mcp  Start branch-local Vanessa MCP on an auto-assigned port.
-  stop-vanessa-mcp   Stop Vanessa MCP for the current development branch.
-  vanessa-mcp-status Show Vanessa MCP PID, port, URL, log, and client snippets.
-  vibecoding1c-mcp-setup          Select if needed, rotate local keys, start current-scope vibecoding1c MCP, write client config.
-  vibecoding1c-mcp-update         Rotate keys and pull configured vibecoding1c MCP Docker images.
-  vibecoding1c-mcp-status         Show active vibecoding1c MCP names, URLs, provider, health, and freshness.
-  vibecoding1c-mcp-start          Start global, project, and current branch vibecoding1c MCP servers.
-  vibecoding1c-mcp-stop           Stop vibecoding1c MCP servers for the selected/current scope.
-  vibecoding1c-mcp-select         Select remote/local provider, remote configId/hostId, or local project/branch scope.
-  vibecoding1c-mcp-refresh-registry
-                      Clone or update the remote vibecoding1c MCP endpoint registry.
-  vibecoding1c-mcp-rotate-keys    Copy license keys from the private distribution config.env to local storage.
-  vibecoding1c-mcp-ensure-model   Select and bootstrap the local embedding model through LM Studio CLI when available.
-  vibecoding1c-mcp-write-client-config
-                      Write Codex and Kilo vibecoding1c MCP config for the current worktree scope.
-  update-workflow    Update managed ITL workflow package files in an existing project.
-  update-ai-rules    Update ai_rules_1c managed rules, then reapply the ITL USER-RULES overlay.
-  status              Show current ITL branch, infobase, and verification status.
-  run-dev-branch-tests
-                      Advanced: run Vanessa tests without updating the current development branch base.
-  check-dev-branch    Update the current development branch base, then run Vanessa tests.
-  verify-dev-branch   Alias for check-dev-branch.
-  init-project        Dump source infobase config to master and install rules.
-  sync-master         Refresh master from storage or from the current source infobase state.
-  new-dev-branch             Create a configuration development branch, sibling worktree, and infobase copy.
-                             Use -UseCurrentWorktree for the legacy checkout-based mode.
-                             Use -OfferOpenAgent to try opening the worktree in VS Code/Kilo.
-  new-extension-dev-branch   Create an extension development branch, sibling worktree, and infobase copy.
-  set-dev-branch-extension   Set the extension name for the current extension branch.
-  dump-dev-branch-extension  Dump the current branch extension files to src/cfe/<extension>.
-  activate-dev-branch-context
-                      Write current development branch infobase context to .dev.env for ai_rules_1c commands.
-  update-dev-branch-base     Update the current development branch infobase from branch files.
-  refresh-dev-branch         Refresh master, merge it into the development branch, update the branch base.
-  export-dev-branch-result   Export CF or CFE from the current development branch.
-                             Use -AllowUnverifiedResult for explicit unverified override.
-  close-dev-branch           Refresh master, merge into the development branch, export final result, mark closed.
-                             Use -AllowUnverifiedClose for explicit unverified override.
-  switch-master       Checkout master in legacy mode, or show the main worktree path.
-  switch-dev-branch      Checkout a legacy branch or show the development branch worktree path.
-  list-dev-branches      Show active development branches, worktrees, and the current branch.
+    $surface = Get-KiloItlCommandSurface
+    $currentBranch = ""
+    try {
+        $currentBranch = Get-CurrentBranch
+    } catch {
+        $currentBranch = ""
+    }
+    Write-Host "Context: $surface"
+    Write-Host "Git branch: $(if ($currentBranch) { $currentBranch } else { '<none>' })"
 
-Examples:
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode json -InitAnswersPath .\init.answers.json
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-platforms
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action detect-apache
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-apache
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-vanessa-automation
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-vanessa-mcp
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action start-vanessa-mcp
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vanessa-mcp-status
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup -Force
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-status
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-select -McpServerId code -McpProvider remote -McpConfigId trade -McpHostId vibecoding1c-mcp-host-01
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-select -McpServerId graph -McpProvider local -McpLocalScope branch
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-start
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-workflow
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-ai-rules
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action status
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts"
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts" -OfferOpenAgent
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "order-discounts" -UseCurrentWorktree
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-extension-dev-branch -DevBranchName "bonus-extension"
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action set-dev-branch-extension -ExtensionName "BonusExtension"
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action dump-dev-branch-extension
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action activate-dev-branch-context
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-dev-branch-base
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action check-dev-branch
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action verify-dev-branch
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action run-dev-branch-tests
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-dev-branch
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-dev-branch-result
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action close-dev-branch
-  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action list-dev-branches
-"@
+    if ($surface -eq "master") {
+        Write-Host ""
+        Write-Host "Lifecycle:"
+        Write-Host "  master -> create branch -> open worktree -> work -> check -> result/close"
+        Write-Host ""
+        Write-Host "Visible slash commands in this folder:"
+        Write-Host "  /itl"
+        Write-Host "  /itl-status"
+        Write-Host "  /itl-new-config-branch <name>"
+        Write-Host "  /itl-new-extension-branch <name>"
+        Write-Host ""
+        Write-Host "Active development worktrees:"
+        $states = @(Get-WorkflowActiveDevBranchStates)
+        if ($states.Count -eq 0) {
+            Write-Host "  none"
+        } else {
+            foreach ($state in ($states | Sort-Object @{ Expression = { Get-StateValue -State $_ -Name "createdAt" -Default "" } }, @{ Expression = { Get-StateValue -State $_ -Name "devBranchName" -Default "" } })) {
+                $name = Get-StateValue -State $state -Name "devBranchName" -Default (Get-StateValue -State $state -Name "safeDevBranchName" -Default "<unknown>")
+                $branch = Get-StateValue -State $state -Name "devBranch" -Default ""
+                $worktreePath = Get-StateValue -State $state -Name "worktreePath" -Default ""
+                $branchSuffix = if ($branch) { " ($branch)" } else { "" }
+                Write-Host "  $name$branchSuffix"
+                if ($worktreePath) {
+                    Write-Host "    Worktree: $worktreePath"
+                }
+                Write-VanessaTestStatusLines -State $state -Indent "    "
+            }
+        }
+        Write-Host ""
+        Write-Host "Next step: create a configuration or extension branch, then open the printed worktree folder."
+    } elseif ($surface -eq "dev") {
+        $state = $null
+        try {
+            $state = Read-DevBranchState -Name ""
+        } catch {
+            Write-Host "Development branch state: missing"
+            Write-Host "Next step: run /itl-status, then open the worktree recorded for this branch if it exists."
+        }
+
+        Write-Host ""
+        Write-Host "Lifecycle:"
+        Write-Host "  work -> /itl-check -> /itl-refresh when needed -> /itl-result or /itl-close"
+        Write-Host ""
+        Write-Host "Visible slash commands in this folder:"
+        Write-Host "  /itl"
+        Write-Host "  /itl-status"
+        Write-Host "  /itl-check"
+        Write-Host "  /itl-refresh"
+        Write-Host "  /itl-result"
+        Write-Host "  /itl-close"
+
+        if ($state) {
+            $verification = Get-VerificationState -State $state
+            $kind = Get-DevBranchKind -State $state
+            Write-Host ""
+            Write-Host "Branch:"
+            Write-Host "  Name: $(Get-StateValue -State $state -Name 'devBranchName' -Default (Get-StateValue -State $state -Name 'safeDevBranchName' -Default '<unknown>'))"
+            Write-Host "  Type: $kind"
+            Write-Host "  Infobase: $($state.devBranchInfoBasePath)"
+            $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
+            if ($publicationUrl) {
+                Write-Host "  Publication URL: $publicationUrl"
+            }
+            $mainWorktreePath = Get-StateValue -State $state -Name "mainWorktreePath" -Default ""
+            if ($mainWorktreePath) {
+                Write-Host "  Master worktree: $mainWorktreePath"
+            }
+            Write-Host ""
+            Write-Host "Verification:"
+            Write-Host "  Status: $($verification.effectiveStatus)"
+            Write-Host "  Fresh passed: $($verification.isFreshPassed)"
+            if ($verification.reportPath) {
+                Write-Host "  Report: $($verification.reportPath)"
+            }
+            Write-Host "  Last result: $(Get-StateValue -State $state -Name 'lastResultPath' -Default '<none>')"
+            Write-Host "  Final result: $(Get-StateValue -State $state -Name 'finalResultPath' -Default '<none>')"
+            Write-Host ""
+            if (-not $verification.isFreshPassed) {
+                Write-Host "Recommended next step: /itl-check"
+            } elseif (-not (Get-StateValue -State $state -Name "lastResultPath" -Default "")) {
+                Write-Host "Recommended next step: /itl-result for an intermediate artifact, or /itl-close for the final artifact."
+            } else {
+                Write-Host "Recommended next step: continue work and rerun /itl-check, or use /itl-close when the branch is ready."
+            }
+        }
+    } else {
+        Write-Host ""
+        Write-Host "Lifecycle:"
+        Write-Host "  Open the master worktree to create branches, or open an itldev/* worktree to check/result/close work."
+        Write-Host ""
+        Write-Host "Visible slash commands in this folder:"
+        Write-Host "  /itl"
+        Write-Host "  /itl-status"
+        Write-Host ""
+        Write-Host "Next step: run /itl-status to inspect this folder, then open the correct worktree."
+    }
+
+    Write-Host ""
+    Write-Host "Rare actions:"
+    Write-Host "  Ask the agent in natural language for vibecoding1c MCP setup/status, branch-local Vanessa MCP, extension setup/dump, workflow updates, or rule updates."
+    Write-Host "  The full helper action catalog is documented in .agents/skills/1c-workflow/references/advanced-actions.md."
 }

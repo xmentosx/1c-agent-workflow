@@ -4,23 +4,25 @@ This file is the source of truth for the 1C lifecycle skill. It is written for a
 
 ## User-Facing Menu
 
-When the user asks for help or the requested action is unclear, show this menu:
+When the user asks for help or the requested action is unclear, show the helper lifecycle panel. Its shape is:
 
 ```text
-Available 1C workflow actions:
-1. New configuration branch: create an itldev/<name> branch worktree for configuration changes.
-2. New extension branch: create an itldev/<name> branch worktree for extension development; set the extension name later.
-3. MCP: setup, start, update, or inspect vibecoding1c MCP servers for the current project/worktree scope.
-4. Status: show current Git branch, active development branch, infobase, publication URL, verification status, MCP status, and latest result.
-5. Check: update the branch base, then run Vanessa Automation scenarios.
-6. Update base: update configuration files or extension files in the branch infobase without tests.
-7. Refresh: sync master from storage or the current source infobase state, merge master into the branch, and update the branch base configuration.
-8. Result: export CF for configuration branches or CFE for extension branches.
-9. Close: refresh master, merge master into the branch, export final CF/CFE result, and mark the branch closed.
-10. Switch: show/open a saved development branch worktree or switch a legacy branch.
+master:
+  /itl
+  /itl-status
+  /itl-new-config-branch <name>
+  /itl-new-extension-branch <name>
+
+itldev/*:
+  /itl
+  /itl-status
+  /itl-check
+  /itl-refresh
+  /itl-result
+  /itl-close
 ```
 
-For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-vibecoding1c-mcp`, `/itl-status`, `/itl-check`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request. The direct `/itl-init-project` wrapper exists for explicit bootstrap use, but it is not part of the beginner menu after initialization. Extension helper wrappers (`/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`), the advanced `/itl-vanessa-mcp` wrapper, and the maintenance `/itl-update-rules` and `/itl-update-workflow` wrappers remain available when directly needed, but are intentionally not shown in the beginner menu.
+For Kilo Code, `.kilo/commands/itl*.md` is generated local state. The `master` worktree gets only the master command surface; each `itldev/*` worktree gets only the development command surface. Rare actions such as MCP setup, extension setup/dump, workflow updates, and rule updates are available through natural-language requests or direct helper actions, but are not generated as visible slash commands.
 
 For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
@@ -37,7 +39,8 @@ Create and maintain:
 - `.dev.env`: local secrets and machine-specific values; never commit it.
 - `.agents/skills/1c-workflow/`: shared detailed Agent Skill used by Codex and Kilo Code.
 - `.agents/skills/1c-workflow-fast/`: compact Agent Skill for routine helper-first lifecycle actions.
-- `.kilo/commands/`: optional Kilo Code slash command wrappers.
+- `.agents/skills/1c-workflow/kilo-command-templates/`: tracked canonical Kilo command templates.
+- `.kilo/commands/`: ignored generated Kilo Code slash command wrappers for the current worktree context.
 - `.codex/config.toml`: project/worktree Codex MCP layer written by `vibecoding1c-mcp-write-client-config`; ignored by Git.
 - `.kilo/kilo.json` or `.kilo/kilo.jsonc`: local Kilo Code runtime state; ignored by Git.
 
@@ -47,7 +50,7 @@ All workflow state files and `.dev.env` must be UTF-8. Preserve Cyrillic usernam
 
 Current policy notes:
 
-- `verificationPolicy=warn` is the default and requires explicit unverified confirmation before result export or branch close when verification is not fresh passed. `verificationPolicy=block` forbids result export and branch close until `/itl-check` or `/itl-verify` is fresh passed.
+- `verificationPolicy=warn` is the default and requires explicit unverified confirmation before result export or branch close when verification is not fresh passed. `verificationPolicy=block` forbids result export and branch close until `/itl-check` is fresh passed.
 - `dependencyMode=fresh` is the default and records resolved dependency revisions/hashes into `.agent-1c/dependency-lock.json`. `dependencyMode=locked` uses only pinned lock values and fails on missing pins or hash mismatch.
 - Parallel independent development lines should use separate `itldev/*` branches/worktrees. One development branch may remain long-lived and contain several sequential tasks.
 
@@ -282,7 +285,7 @@ Goal: install the standard executable test tool for ITL development branches.
 
 Goal: make vibecoding1c MCP usable on weak developer machines by preferring remote LAN endpoints while preserving local overrides.
 
-1. `/itl-vibecoding1c-mcp` runs `vibecoding1c-mcp-setup` by default. The setup action applies the saved selection; if `.agent-1c/mcp/vibecoding1c-selection.json` is missing or incomplete, it runs selection first. Use `vibecoding1c-mcp-setup -Force` to force a new selection before applying it.
+1. A natural-language MCP setup/status request maps to `vibecoding1c-mcp-setup` by default. The setup action applies the saved selection; if `.agent-1c/mcp/vibecoding1c-selection.json` is missing or incomplete, it runs selection first. Use `vibecoding1c-mcp-setup -Force` to force a new selection before applying it.
 2. Remote is the default provider. The helper clones or fast-forwards the endpoint registry from `VIBECODING1C_MCP_REGISTRY_REPO` into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\registry`, unless `VIBECODING1C_MCP_REGISTRY_PATH` points to a prepared checkout.
 3. Config-specific remote vibecoding1c MCP always requires explicit `configId`; ask even when the registry currently has one configuration. Store the per-developer choice in ignored `.agent-1c/mcp/vibecoding1c-selection.json`.
 4. Use `vibecoding1c-mcp-select` for explicit per-server `remote|local`, remote `configId`/`hostId`, and local `project|branch` scope. The selection flow shows matching remote hosts/endpoints with URL, health, freshness, configuration, model, and timestamps. Vanessa MCP is managed separately by the Vanessa MCP actions and is always branch-local.
@@ -356,7 +359,7 @@ Goal: create the baseline project state.
 13. Install `ai_rules_1c` using the current agent target (`codex`, `kilocode`, or fallback `codex`). In fresh mode, use the configured repo and record the resolved commit in `.agent-1c/dependency-lock.json`; in locked mode, use `dependencies.aiRules1c.ref` or `commit` and stop if neither is set. Invoke its installer with named parameters: `-Command init -ProjectRoot <project> -Source <rulesDir> -Tools <tools> -AssumeYes`.
 14. Remove default upstream `ai_rules_1c` MCP client entries from ignored Codex/Kilo config. ITL vibecoding1c MCP owns client config; preserve External MCP and entries marked for other managers.
 15. Install this workflow skill into `.agents/skills/1c-workflow` and the fast routine skill into `.agents/skills/1c-workflow-fast`.
-16. If the current agent is Kilo Code, install slash wrappers into `.kilo/commands`.
+16. If the current agent is Kilo Code, generate the context-specific slash wrappers into ignored `.kilo/commands` from `.agents/skills/1c-workflow/kilo-command-templates`.
 17. Keep the ITL overlay in `USER-RULES.md`. Do not append to upstream-managed `AGENTS.md` when the `ai_rules_1c` installer already made it point to `USER-RULES.md`; add the short bridge only as a fallback for projects without such a root `AGENTS.md`.
 18. Add detailed project workflow notes to `USER-RULES.md`, not to `AGENTS.md`.
 19. Commit rules and workflow files when there are changes.
@@ -365,12 +368,12 @@ Goal: create the baseline project state.
 
 Goal: refresh the installed ITL workflow package in an already initialized project without rerunning `init-project`.
 
-Helper action: `update-workflow`. Kilo wrapper: `/itl-update-workflow`.
+Helper action: `update-workflow`. In Kilo, ask the agent to update the workflow; no visible wrapper is generated.
 
 1. Run only from the `master` worktree. If invoked from `itldev/*`, stop and print the saved main worktree path when available.
 2. Require a clean tracked Git worktree, while still ignoring local runtime state such as `.dev.env`, `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
 3. Resolve the package source from `ITL_WORKFLOW_SOURCE_PATH`, or clone/update `ITL_WORKFLOW_REPO` and `ITL_WORKFLOW_REF`. Defaults are `https://github.com/xmentosx/1c-agent-workflow.git` and `master`.
-4. Copy only managed workflow files: `.agents/skills/1c-workflow*`, `.kilo/commands/itl*.md`, `templates/`, `README.md`, `AGENT-INSTALL.md`, `DEVELOPER-GUIDE.ru.md`, `DEV-BRANCH-DEVELOPMENT.ru.md`, and `VANESSA-TESTS-GUIDE.ru.md`.
+4. Copy only managed workflow files: `.agents/skills/1c-workflow*` including Kilo command templates, `templates/`, `README.md`, `AGENT-INSTALL.md`, `DEVELOPER-GUIDE.ru.md`, `DEV-BRANCH-DEVELOPMENT.ru.md`, and `VANESSA-TESTS-GUIDE.ru.md`.
 5. Never overwrite local project/runtime state: `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, existing `.agent-1c/project.json`, or existing `.agent-1c/tools.json`.
 6. Record `workflowPackage.repo/ref/commit/source/updatedAt` in `.agent-1c/dependency-lock.json` and reapply the managed ITL `USER-RULES.md` block.
 7. Run `UPDATE_AI_RULES` unless `-SkipAiRules` is passed.
@@ -381,7 +384,7 @@ Helper action: `update-workflow`. Kilo wrapper: `/itl-update-workflow`.
 
 Goal: refresh upstream `ai_rules_1c` while preserving the ITL overlay above it.
 
-Helper action: `update-ai-rules`. Kilo wrapper: `/itl-update-rules`.
+Helper action: `update-ai-rules`. In Kilo, ask the agent to update the rules; no visible wrapper is generated.
 
 1. Clone or update the configured `ai_rules_1c` repo under `%TEMP%\ai_rules_1c`.
 2. In `dependencyMode=fresh`, checkout the remote origin HEAD. In `dependencyMode=locked`, checkout `dependencies.aiRules1c.commit` or `ref` and stop when neither is set.
@@ -612,4 +615,4 @@ Stop immediately when:
 
 - "Ошибка блокировки информационной базы для конфигурирования" during initialization means another Designer process still holds the infobase lock. This can be a manually opened Configurator or a previous `1cv8.exe` process that has not exited yet. Close the manual Configurator; the workflow helper must wait between its own consecutive Designer launches.
 - `1cv8.exe` exits with code 1 or appears to hang with `-WindowStyle Hidden` after a PowerShell launch can mean `Start-Process -ArgumentList` received a PowerShell array. Native Windows executables parse one command-line string; without native quoting, a path such as `C:\My Path\base` is split at the space and 1C Designer receives the wrong arguments. Use `Join-NativeCommandLineArguments` or the `&` call operator.
-- If `/itl-result` or `/itl-close` stops because verification is missing, failed, stale, or unknown, run `/itl-check` or `/itl-verify`. With `verificationPolicy=warn`, an explicit unverified override is allowed when the risk is acceptable; with `verificationPolicy=block`, it is not.
+- If `/itl-result` or `/itl-close` stops because verification is missing, failed, stale, or unknown, run `/itl-check`. With `verificationPolicy=warn`, an explicit unverified override is allowed when the risk is acceptable; with `verificationPolicy=block`, it is not.
