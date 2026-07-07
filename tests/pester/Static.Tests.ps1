@@ -509,7 +509,7 @@ Describe "1C agent workflow static checks" {
         $expected = @{
             common = @("itl.md", "itl-status.md")
             master = @("itl-new-config-branch.md", "itl-new-extension-branch.md")
-            dev = @("itl-check.md", "itl-refresh.md", "itl-result.md", "itl-close.md")
+            dev = @("itl-check.md", "itl-refresh.md", "itl-result.md")
         }
 
         foreach ($setName in $expected.Keys) {
@@ -519,6 +519,7 @@ Describe "1C agent workflow static checks" {
             $actual | Should -Be @($expected[$setName] | Sort-Object)
         }
 
+        @(Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "opsx*.md" -ErrorAction SilentlyContinue).Count | Should -Be 0
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands") -PathType Container) | Should -Be $true
         @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".kilo\commands") -File -Filter "itl*.md" -ErrorAction SilentlyContinue).Count | Should -Be 0
     }
@@ -557,6 +558,26 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "shows existing OpenSpec commands only in the dev ITL lifecycle panel" {
+        $masterStart = $HelperText.IndexOf('if ($surface -eq "master")')
+        $devStart = $HelperText.IndexOf('} elseif ($surface -eq "dev")', $masterStart)
+        $unknownStart = $HelperText.IndexOf('} else {', $devStart)
+        $masterStart | Should -BeGreaterThan -1
+        $devStart | Should -BeGreaterThan $masterStart
+        $unknownStart | Should -BeGreaterThan $devStart
+
+        $masterBlock = $HelperText.Substring($masterStart, $devStart - $masterStart)
+        $devBlock = $HelperText.Substring($devStart, $unknownStart - $devStart)
+        foreach ($command in @("/opsx-propose", "/opsx-apply", "/opsx-archive", "/opsx-explore")) {
+            $devBlock | Should -Match ([regex]::Escape($command))
+            $masterBlock | Should -Not -Match ([regex]::Escape($command))
+        }
+
+        $devBlock | Should -Match "OpenSpec"
+        $devBlock | Should -Match "Optional"
+        $devBlock | Should -Match "proposal"
+    }
+
     It "wires the post-change check action through helper, docs, and Kilo wrapper" {
         $HelperText | Should -Match ([regex]::Escape('"check-dev-branch"'))
         $HelperText | Should -Match "function Check-DevBranch"
@@ -584,6 +605,25 @@ Describe "1C agent workflow static checks" {
         )) {
             $text = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot $relativePath)
             $text | Should -Match ([regex]::Escape("/itl-check"))
+        }
+    }
+
+    It "documents OpenSpec slash commands at the matching branch development steps" {
+        foreach ($relativePath in @(
+            "DEV-BRANCH-DEVELOPMENT.ru.md",
+            ".agents\skills\1c-workflow\references\dev-branch-development.md"
+        )) {
+            $text = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot $relativePath)
+            foreach ($command in @("/opsx-propose", "/opsx-apply", "/opsx-archive", "/opsx-explore")) {
+                $text | Should -Match ([regex]::Escape($command))
+            }
+
+            $text | Should -Match "/opsx-propose.*proposal"
+            $text | Should -Match "/opsx-explore.*optional"
+            $text | Should -Match "(?s)### 0\..*?/opsx-explore"
+            $text | Should -Match "(?s)### 1\..*?/opsx-propose"
+            $text | Should -Match "(?s)### 4\..*?/opsx-apply"
+            $text | Should -Match "(?s)### 9\..*?/opsx-archive"
         }
     }
 
@@ -651,7 +691,8 @@ Describe "1C agent workflow static checks" {
             "/itl-vibecoding1c-mcp",
             "/itl-update-base",
             "/itl-verify",
-            "/itl-switch"
+            "/itl-switch",
+            "/itl-close"
         )
 
         $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
@@ -3278,7 +3319,7 @@ local after
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow-fast\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md") -PathType Leaf) | Should -Be $true
-            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-close.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\event-log-exporter\EventLogExporter.xml") -PathType Leaf) | Should -Be $true
             @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\auto-update") -File -Filter "*.epf").Count | Should -Be 2
             (Test-Path -LiteralPath (Join-Path $tempRoot "AGENTS.md") -PathType Leaf) | Should -Be $true
@@ -3822,7 +3863,7 @@ url = "http://localhost:9999/mcp"
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
             ".agents/skills/1c-workflow/kilo-command-templates/common/itl.md",
             ".agents/skills/1c-workflow/kilo-command-templates/master/itl-new-config-branch.md",
-            ".agents/skills/1c-workflow/kilo-command-templates/dev/itl-close.md",
+            ".agents/skills/1c-workflow/kilo-command-templates/dev/itl-result.md",
             "scripts/test.ps1",
             "templates/AGENTS.append.md",
             "templates/USER-RULES.append.md",

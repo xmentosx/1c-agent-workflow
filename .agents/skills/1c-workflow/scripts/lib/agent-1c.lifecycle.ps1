@@ -3048,7 +3048,7 @@ function Show-Help {
     if ($surface -eq "master") {
         Write-Host ""
         Write-Host "Lifecycle:"
-        Write-Host "  master -> create branch -> open worktree -> work -> check -> result/close"
+        Write-Host "  master -> create branch -> open worktree -> work -> check -> result"
         Write-Host ""
         Write-Host "Visible slash commands in this folder:"
         Write-Host "  /itl"
@@ -3086,7 +3086,7 @@ function Show-Help {
 
         Write-Host ""
         Write-Host "Lifecycle:"
-        Write-Host "  work -> /itl-check -> /itl-refresh when needed -> /itl-result or /itl-close"
+        Write-Host "  work -> /itl-check -> /itl-refresh when needed -> /itl-result"
         Write-Host ""
         Write-Host "Visible slash commands in this folder:"
         Write-Host "  /itl"
@@ -3094,7 +3094,12 @@ function Show-Help {
         Write-Host "  /itl-check"
         Write-Host "  /itl-refresh"
         Write-Host "  /itl-result"
-        Write-Host "  /itl-close"
+        Write-Host ""
+        Write-Host "OpenSpec:"
+        Write-Host "  /opsx-propose  Start the normal OpenSpec flow: proposal, design/tasks/test-plan/spec deltas; no code changes."
+        Write-Host "  /opsx-apply    Implement an approved OpenSpec change from tasks.md."
+        Write-Host "  /opsx-archive  Archive an accepted OpenSpec change."
+        Write-Host "  /opsx-explore  Optional: explore code or task boundaries before proposal when context is unclear."
 
         if ($state) {
             $verification = Get-VerificationState -State $state
@@ -3125,15 +3130,15 @@ function Show-Help {
             if (-not $verification.isFreshPassed) {
                 Write-Host "Recommended next step: /itl-check"
             } elseif (-not (Get-StateValue -State $state -Name "lastResultPath" -Default "")) {
-                Write-Host "Recommended next step: /itl-result for an intermediate artifact, or /itl-close for the final artifact."
+                Write-Host "Recommended next step: /itl-result"
             } else {
-                Write-Host "Recommended next step: continue work and rerun /itl-check, or use /itl-close when the branch is ready."
+                Write-Host "Recommended next step: continue work and rerun /itl-check, or use /itl-result again when the artifact is ready."
             }
         }
     } else {
         Write-Host ""
         Write-Host "Lifecycle:"
-        Write-Host "  Open the master worktree to create branches, or open an itldev/* worktree to check/result/close work."
+        Write-Host "  Open the master worktree to create branches, or open an itldev/* worktree to check/result work."
         Write-Host ""
         Write-Host "Visible slash commands in this folder:"
         Write-Host "  /itl"
@@ -3144,6 +3149,6 @@ function Show-Help {
 
     Write-Host ""
     Write-Host "Rare actions:"
-    Write-Host "  Ask the agent in natural language for vibecoding1c MCP setup/status, branch-local Vanessa MCP, extension setup/dump, workflow updates, or rule updates."
+    Write-Host "  Ask the agent in natural language for vibecoding1c MCP setup/status, branch-local Vanessa MCP, extension setup/dump, marking a branch closed, workflow updates, or rule updates."
     Write-Host "  The full helper action catalog is documented in .agents/skills/1c-workflow/references/advanced-actions.md."
 }

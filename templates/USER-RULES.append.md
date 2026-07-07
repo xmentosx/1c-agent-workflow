@@ -1,6 +1,6 @@
 ﻿## 1C Project Lifecycle
 
-Use `.agents/skills/1c-workflow/SKILL.md` for detailed project initialization, development branch creation, development branch refresh, development branch base update, Vanessa Automation test runs, master sync, development branch listing, branch switching, development branch close, and CF/CFE result export.
+Use `.agents/skills/1c-workflow/SKILL.md` for detailed project initialization, development branch creation, development branch refresh, development branch base update, Vanessa Automation test runs, master sync, development branch listing, branch switching, advanced branch bookkeeping, and CF/CFE result export.
 
 For routine lifecycle operations in an already installed project, prefer the short Kilo `/itl-*` commands or `.agents/skills/1c-workflow-fast/SKILL.md`. The fast path runs `.agents/skills/1c-workflow/scripts/agent-1c.ps1` directly and should read detailed workflow references only after helper failure or when the developer asks for explanation.
 
@@ -44,7 +44,7 @@ Use Vanessa Automation scenarios from `tests/features` for OpenSpec and quick-fi
 
 Before creating or editing Vanessa Automation feature files, read `VANESSA-TESTS-GUIDE.ru.md`; do not load it for routine lifecycle commands.
 
-For `/itl-result` and `/itl-close`, create `<artifact>.manifest.json` next to the exported CF/CFE. The manifest records artifact SHA256, operation, branch metadata, master/development commits, verification status/report/log, latest 1C log path, publication URL, manual import note, and whether an unverified override was used.
+For `/itl-result` and advanced `close-dev-branch`, create `<artifact>.manifest.json` next to the exported CF/CFE. The manifest records artifact SHA256, operation, branch metadata, master/development commits, verification status/report/log, latest 1C log path, publication URL, manual import note, and whether an unverified override was used.
 
 Use `DEPENDENCY_MODE=fresh` by default during initialization: resolve current dependencies and record the ITL workflow package commit, `ai_rules_1c` commit, and Vanessa/Apache URL and SHA256 values in `.agent-1c/dependency-lock.json`. Use `DEPENDENCY_MODE=locked` only when the developer explicitly chooses reproducible pins; stop if the lock manifest is incomplete or a hash does not match.
 
@@ -52,7 +52,7 @@ Use helper action `update-workflow` to refresh the installed ITL workflow packag
 
 Use helper action `update-ai-rules` to refresh upstream `ai_rules_1c` after initialization. The helper runs the upstream updater, removes default upstream MCP client entries, records the resolved commit in `.agent-1c/dependency-lock.json`, reapplies this ITL overlay, and avoids modifying upstream-managed `AGENTS.md` when it already points to `USER-RULES.md`.
 
-For `/itl-result` and `/itl-close`, follow `VERIFICATION_POLICY`: default `warn` requires explicit unverified confirmation when `/itl-check` is not fresh passed; `block` forbids export/close until verification passes. Parallel independent development lines should use separate `itldev/*` branches/worktrees, while one development branch may remain long-lived and contain several sequential tasks.
+For `/itl-result` and advanced `close-dev-branch`, follow `VERIFICATION_POLICY`: default `warn` requires explicit unverified confirmation when `/itl-check` is not fresh passed; `block` forbids export/advanced close until verification passes. Parallel independent development lines should use separate `itldev/*` branches/worktrees, while one development branch may remain long-lived and contain several sequential tasks.
 
 When Git is on `master`, do not run `/update1cbase` unless the developer explicitly chooses a test infobase. For worktree-created branches, `/itl-status` shows target worktree paths instead of switching the current folder. The ITL workflow clears active development branch infobase values when switching to `master` or closing a worktree branch.
 

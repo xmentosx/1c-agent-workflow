@@ -19,7 +19,6 @@ itldev/*:
   /itl-check
   /itl-refresh
   /itl-result
-  /itl-close
 ```
 
 For Kilo Code, `.kilo/commands/itl*.md` is generated local state. The `master` worktree gets only the master command surface; each `itldev/*` worktree gets only the development command surface. Rare actions such as MCP setup, extension setup/dump, workflow updates, and rule updates are available through natural-language requests or direct helper actions, but are not generated as visible slash commands.
@@ -50,7 +49,7 @@ All workflow state files and `.dev.env` must be UTF-8. Preserve Cyrillic usernam
 
 Current policy notes:
 
-- `verificationPolicy=warn` is the default and requires explicit unverified confirmation before result export or branch close when verification is not fresh passed. `verificationPolicy=block` forbids result export and branch close until `/itl-check` is fresh passed.
+- `verificationPolicy=warn` is the default and requires explicit unverified confirmation before result export when verification is not fresh passed. `verificationPolicy=block` forbids result export until `/itl-check` is fresh passed. Advanced `close-dev-branch` follows the same policy only when explicitly requested.
 - `dependencyMode=fresh` is the default and records resolved dependency revisions/hashes into `.agent-1c/dependency-lock.json`. `dependencyMode=locked` uses only pinned lock values and fails on missing pins or hash mismatch.
 - Parallel independent development lines should use separate `itldev/*` branches/worktrees. One development branch may remain long-lived and contain several sequential tasks.
 
@@ -254,7 +253,7 @@ Before destructive or stateful actions:
 - Do not ask for, create, or configure a Git remote during initialization.
 - Do not pull automatically during simple branch switching.
 - Create new development branches in sibling Git worktrees by default. Use `-UseCurrentWorktree` only for the legacy single-folder checkout mode.
-- Require a clean worktree before worktree creation, legacy branch switching, development branch refresh, development branch result export, or development branch close.
+- Require a clean worktree before worktree creation, legacy branch switching, development branch refresh, development branch result export, or advanced branch close.
 - `src/cf` is tracked project content. During source dumps, stage and commit only `src/cf`; do not include unrelated staged files in dump commits.
 - Force-add `src/cf` during source dump commits so broad ignore rules such as `src/` cannot hide the standard configuration dump.
 
@@ -603,16 +602,16 @@ Stop immediately when:
 - Required software is missing during initialization.
 - Source infobase cannot be opened.
 - Repository credentials are missing for source synchronization when `sourceUsesRepository=true`.
-- Git worktree is dirty before worktree creation, legacy branch switching, refresh, result, or close.
+- Git worktree is dirty before worktree creation, legacy branch switching, refresh, result, or advanced close.
 - Development branch infobase target already exists.
 - Development branch copy cannot be unbound from storage when `sourceUsesRepository=true`.
 - 1C Designer returns a non-zero exit code.
 - CF/CFE result export fails.
 - Apache publication is requested but `webinst.exe` or Apache/httpd is missing and the developer declined automatic install or manual setup.
-- `/itl-result` or `/itl-close` found missing, failed, stale, or unknown verification and either `verificationPolicy=block` or the developer did not explicitly confirm unverified continuation.
+- `/itl-result` or advanced `close-dev-branch` found missing, failed, stale, or unknown verification and either `verificationPolicy=block` or the developer did not explicitly confirm unverified continuation.
 
 ## Troubleshooting
 
 - "Ошибка блокировки информационной базы для конфигурирования" during initialization means another Designer process still holds the infobase lock. This can be a manually opened Configurator or a previous `1cv8.exe` process that has not exited yet. Close the manual Configurator; the workflow helper must wait between its own consecutive Designer launches.
 - `1cv8.exe` exits with code 1 or appears to hang with `-WindowStyle Hidden` after a PowerShell launch can mean `Start-Process -ArgumentList` received a PowerShell array. Native Windows executables parse one command-line string; without native quoting, a path such as `C:\My Path\base` is split at the space and 1C Designer receives the wrong arguments. Use `Join-NativeCommandLineArguments` or the `&` call operator.
-- If `/itl-result` or `/itl-close` stops because verification is missing, failed, stale, or unknown, run `/itl-check`. With `verificationPolicy=warn`, an explicit unverified override is allowed when the risk is acceptable; with `verificationPolicy=block`, it is not.
+- If `/itl-result` or advanced `close-dev-branch` stops because verification is missing, failed, stale, or unknown, run `/itl-check`. With `verificationPolicy=warn`, an explicit unverified override is allowed when the risk is acceptable; with `verificationPolicy=block`, it is not.

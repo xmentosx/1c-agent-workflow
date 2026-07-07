@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow
-description: Initialize and operate ITL 1C configuration or extension projects with Git, source infobases, isolated branch infobase copies, optional Apache publication, Vanessa Automation, CF/CFE export, refresh, and close. Use for init, tool checks, Vanessa/Apache setup, branch lifecycle, verification, result export, switching, or available ITL commands.
+description: Initialize and operate ITL 1C configuration or extension projects with Git, source infobases, isolated branch infobase copies, optional Apache publication, Vanessa Automation, CF/CFE export, and refresh. Use for init, tool checks, Vanessa/Apache setup, branch lifecycle, verification, result export, switching, or available ITL commands.
 ---
 
 # 1C Workflow
@@ -24,7 +24,8 @@ Intent mapping:
 - Workflow refresh: `update-workflow`.
 - Rule refresh: `update-ai-rules`.
 - New work: `new-dev-branch` for configuration branches, `new-extension-dev-branch` for extension branches.
-- Branch lifecycle: `status`, `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`, `close-dev-branch`.
+- Branch lifecycle: `status`, `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`.
+- Advanced: `close-dev-branch`.
 - Extension helpers: `set-dev-branch-extension`, `dump-dev-branch-extension`.
 - Switching/listing: `switch-master`, `switch-dev-branch`, `list-dev-branches`.
 - Vanessa MCP authoring/debugging: `install-vanessa-mcp`, `start-vanessa-mcp`, `vanessa-mcp-status`, `stop-vanessa-mcp`.
@@ -53,7 +54,7 @@ Development branch changes must load only into the copied development branch inf
 
 Use `/itl-check` or `check-dev-branch` for the normal post-change executable gate; `verify-dev-branch` remains a helper compatibility alias. The helper updates the branch base, runs Vanessa Automation through `TESTMANAGER -> TESTCLIENT` with packet `StartFeaturePlayer`, reads JUnit, and checks the branch-local event log baseline. Do not replace final verification with MCP, headless EPF, or `/deploy-and-test`.
 
-`/itl-result` and `/itl-close` obey `verificationPolicy`: default `warn` requires explicit unverified override unless verification is fresh passed; `block` requires `/itl-check`.
+`/itl-result` obeys `verificationPolicy`: default `warn` requires explicit unverified override unless verification is fresh passed; `block` requires `/itl-check`. `close-dev-branch` is advanced bookkeeping for hiding a branch from active lists.
 
 vibecoding1c MCP is managed through helper actions and natural-language requests; setup selects when saved selection is missing/incomplete; `-Force` reselects. Remote is default. Every remote server needs per-server `hostId` when multiple usable hosts are published; remote `code`/`graph` need per-server `configId`. Developers may override each server to local; local `code`/`graph` needs scope. Vanessa MCP is separate branch-local tooling managed through helper actions and natural-language requests. External MCP is not managed. Helper may write ignored `.codex/config.toml`, `.kilo/kilo.json`, `.agent-1c/mcp/*`, and `%LOCALAPPDATA%\ITL\MCP\vibecoding1c` state. Do not paste keys into chat or tracked files.
 
