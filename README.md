@@ -35,7 +35,7 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 Краткие агентские правила написания Vanessa-проверок для текущей фичи:
 
 ```text
-VANESSA-TESTS-GUIDE.ru.md
+VANESSA-TESTS-GUIDE.md
 ```
 
 Низкоуровневые helper-actions для диагностики описаны отдельно и не являются основным интерфейсом разработчика:
@@ -51,7 +51,7 @@ VANESSA-TESTS-GUIDE.ru.md
 - `.agents/skills/1c-workflow/kilo-command-templates` - шаблоны коротких slash-команд Kilo Code.
 - `.kilo/commands/itl*.md` - локально сгенерированная командная поверхность для текущей папки/worktree; игнорируется Git.
 - `AGENT-INSTALL.md` - bootstrap-инструкция для агента.
-- `VANESSA-TESTS-GUIDE.ru.md` - компактные правила для агента, который пишет Vanessa-проверки текущей фичи.
+- `VANESSA-TESTS-GUIDE.md` - compact agent rules for writing Russian Vanessa feature checks for the current change.
 - `templates/project.json` - шаблон настроек проекта без секретов.
 - `templates/dependency-lock.json` - фиксируемые версии, URL и SHA256 для воспроизводимого bootstrap.
 - `templates/dev.env.example` - пример локальных настроек и секретов.

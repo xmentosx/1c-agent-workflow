@@ -310,7 +310,7 @@ The agent must wait for the monitored launcher process to finish. A background l
 7. Installation of `ai_rules_1c`.
 8. Commit of workflow/rules files.
 
-If PowerShell is unavailable, follow `.agents/skills/1c-workflow/references/workflow.md` manually with equivalent commands.
+If PowerShell is unavailable, start with `.agents/skills/1c-workflow/references/workflow.md`, then open only the matching topic reference for the manual equivalent commands.
 
 ## User Commands After Initialization
 

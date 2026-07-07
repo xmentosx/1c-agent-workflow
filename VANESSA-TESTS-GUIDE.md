@@ -1,0 +1,196 @@
+# Vanessa Automation: Agent Guide
+
+> Agent reference. Read this file only before creating or editing Vanessa Automation feature tests. Do not load it for routine lifecycle commands.
+
+The goal of ITL feature tests is to verify the behavior currently being changed. Do not create broad smoke coverage, whole-system E2E flows, or long user regressions unless the developer explicitly asks for that.
+
+## Quick Algorithm
+
+1. Identify the behavior changed by the feature.
+2. Choose the cheapest reliable check type:
+   - `unit-like`: calculation, condition, filling, or local applied logic;
+   - `integration`: object, document, register, exchange, or data movement between subsystems;
+   - `UI`: form, command, or visible user behavior.
+3. Search existing steps and local `Libraries`/`@exportscenarios` before inventing new steps.
+4. Write 2-3 small scenarios: the main successful path and one meaningful boundary or negative case. More than 4 scenarios needs explicit justification.
+5. Run the final ITL check flow. Vanessa MCP is only for authoring, step search, recording, and debugging.
+
+## Context Economy
+
+- Do not read large external smoke suites before every task; use them only as pattern references.
+- Do not paste full catalogs of known steps into the prompt. Search for the specific step by meaning or through Vanessa MCP.
+- Prefer data/object/register checks over long UI sequences when they prove the same behavior.
+- Reuse an existing library step when it already expresses the business action.
+- Keep each scenario short: setup, action, 1-3 observable assertions, cleanup if needed.
+- Do not describe Vanessa history, generic framework capabilities, or unrelated test suites in `test-plan.md`.
+
+## Feature File Structure
+
+Minimal structure:
+
+```gherkin
+#language: ru
+
+@tree
+@feature_<change-id>
+
+Функционал: <Короткое имя проверяемой фичи>
+
+Контекст:
+	Дано Я запускаю сценарий открытия TestClient или подключаю уже существующий
+	И я закрываю все окна клиентского приложения
+
+Сценарий: <Успешный путь>
+	* Подготовка
+		...
+
+	* Действие
+		...
+
+	* Проверка
+		...
+```
+
+Rules:
+
+- Store application scenarios in `tests/features`.
+- Name scenarios by checked behavior, not by internal task number.
+- Use `@tree` when readable groups such as `* Подготовка`, `* Действие`, and `* Проверка` help.
+- Add `@exportscenarios` only to library feature files that are actually reused.
+- Do not add tags for large smoke/E2E suites to feature-focused checks.
+
+## Unit-Like Template
+
+Use this when logic can be checked without walking through a form.
+
+```gherkin
+#language: ru
+
+@tree
+@feature_discount_rule
+
+Функционал: Расчет скидки договора
+
+Контекст:
+	Дано Я запускаю сценарий открытия TestClient или подключаю уже существующий
+
+Сценарий: Скидка применяется для договора с действующим условием
+	* Подготовка
+		И я выполняю код встроенного языка на сервере
+		"""bsl
+			// Создайте минимальные тестовые данные и сохраните ссылки в переменные контекста.
+		"""
+
+	* Действие
+		И я выполняю код встроенного языка на сервере
+		"""bsl
+			// Вызовите проверяемую экспортную процедуру или функцию и сохраните результат в Объект.Результат.
+		"""
+
+	* Проверка
+		И я выполняю код встроенного языка на сервере
+		"""bsl
+			Если Объект.Результат <> 100 Тогда
+				ВызватьИсключение "Ожидался результат 100";
+			КонецЕсли;
+		"""
+```
+
+## Integration Template
+
+Use this when persistence, posting, register movements, documents, objects, or exchange behavior matters.
+
+```gherkin
+#language: ru
+
+@tree
+@feature_order_posting
+
+Функционал: Проведение заказа с резервом
+
+Контекст:
+	Дано Я запускаю сценарий открытия TestClient или подключаю уже существующий
+	И я закрываю все окна клиентского приложения
+
+Сценарий: Проведение заказа создает резерв по складу
+	* Подготовка
+		И я выполняю код встроенного языка на сервере
+		"""bsl
+			// Создайте только необходимые справочники, документ и остатки.
+		"""
+
+	* Действие
+		И я выполняю код встроенного языка на сервере
+		"""bsl
+			// Проведите документ или вызовите прикладную операцию.
+		"""
+
+	* Проверка
+		И я выполняю код встроенного языка на сервере
+		"""bsl
+			// Прочитайте регистр и проверьте результат.
+			Если Объект.КоличествоРезерва <> 5 Тогда
+				ВызватьИсключение "Ожидался резерв 5";
+			КонецЕсли;
+		"""
+```
+
+## UI Template
+
+Use UI checks only for forms, commands, or visible behavior. Prefer form element names over captions and coordinates.
+
+```gherkin
+#language: ru
+
+@tree
+@feature_order_command
+
+Функционал: Команда заполнения заказа
+
+Контекст:
+	Дано Я запускаю сценарий открытия TestClient или подключаю уже существующий
+	И я закрываю все окна клиентского приложения
+
+Сценарий: Команда Заполнить добавляет строку товара
+	* Подготовка
+		И я выполняю код встроенного языка на сервере
+		"""bsl
+			// Создайте минимальные данные и получите навигационную ссылку.
+		"""
+
+	* Действие
+		И Я открываю навигационную ссылку "$НавигационнаяСсылка$"
+		Если появилось предупреждение Тогда
+			Тогда я вызываю исключение "Не удалось открыть заказ для проверки команды заполнения"
+		Если имя текущей формы "ErrorWindow" Тогда
+			Тогда я вызываю исключение "Открылась форма ошибки при открытии заказа"
+		И я нажимаю на кнопку с именем 'ФормаЗаполнить'
+
+	* Проверка
+		Тогда в таблице "Товары" количество строк "больше" 0
+```
+
+## Reliability
+
+- Create minimal test data inside the scenario or a library step. Do not rely on arbitrary database data except explicitly agreed fixtures.
+- Make test object names unique, for example with the change id plus date or UUID.
+- Assert observable results: value, record, movement, table row, command availability, not just absence of errors.
+- After opening a form, check warnings and `ErrorWindow` when the next step assumes a successful open.
+- Use explicit waits such as `я жду закрытия окна ... в течение 20 секунд`. Use blind pauses only when no stable event exists, and comment why.
+- For UI steps, use `с именем '<ИмяЭлемента>'` when the element name is known; window captions can change.
+- Do not stop or touch another worktree's `TESTMANAGER`/`TESTCLIENT`; the helper owns the final run.
+
+## Libraries And Custom Steps
+
+- Move an action to `Libraries` only when at least two scenarios reuse it or it removes real noise.
+- Mark library `.feature` files with `@exportscenarios`; application scenarios in `tests/features` call them with a business phrase.
+- Add a custom EPF step only when standard Vanessa steps and a library scenario cannot express the action reliably.
+- If a custom step is added, keep a minimal `.feature` example next to it.
+
+## Do Not
+
+- Do not write a "smoke test for the whole configuration" for one feature.
+- Do not go through menus and forms when server code and assertions can prove the result.
+- Do not copy large scenarios from external repositories.
+- Do not create more than 4 feature checks without explaining why in `test-plan.md`.
+- Do not replace the final ITL check flow with Vanessa MCP, a headless EPF launch, or `/deploy-and-test`.

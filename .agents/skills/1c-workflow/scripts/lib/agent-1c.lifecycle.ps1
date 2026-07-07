@@ -1396,7 +1396,7 @@ function Update-WorkflowPackage {
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow"
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow-fast"
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "templates"
-    foreach ($relativePath in @("README.md", "AGENT-INSTALL.md", "DEVELOPER-GUIDE.ru.md", "DEV-BRANCH-DEVELOPMENT.ru.md", "VANESSA-TESTS-GUIDE.ru.md")) {
+    foreach ($relativePath in @("README.md", "AGENT-INSTALL.md", "DEVELOPER-GUIDE.ru.md", "DEV-BRANCH-DEVELOPMENT.ru.md", "VANESSA-TESTS-GUIDE.md", "VANESSA-TESTS-GUIDE.ru.md")) {
         Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
     }
 

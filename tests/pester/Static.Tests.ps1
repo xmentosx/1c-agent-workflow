@@ -473,6 +473,10 @@ Describe "1C agent workflow static checks" {
         ([regex]::Matches($skillText, '\S+')).Count | Should -BeLessOrEqual 750
         $skillText | Should -Match 'detailed ITL workflow router'
         $skillText | Should -Match ([regex]::Escape('references/workflow.md'))
+        $skillText | Should -Match ([regex]::Escape('references/init-setup.md'))
+        $skillText | Should -Match ([regex]::Escape('references/mcp.md'))
+        $skillText | Should -Match ([regex]::Escape('references/branch-lifecycle.md'))
+        $skillText | Should -Match ([regex]::Escape('references/verification-result.md'))
         $skillText | Should -Match 'human-facing'
 
         $humanDocPaths = @('DEVELOPER-GUIDE.ru.md', 'DEV-BRANCH-DEVELOPMENT.ru.md')
@@ -485,6 +489,36 @@ Describe "1C agent workflow static checks" {
                 $docText | Should -Match ([regex]::Escape('.agents/skills/1c-workflow/references/dev-branch-development.md'))
             }
         }
+    }
+
+    It "keeps always-on workflow guidance within token budgets" {
+        $budgets = @(
+            @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 750; maxApproxTokens = 1500 },
+            @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 750; maxApproxTokens = 1500 },
+            @{ path = "templates\USER-RULES.append.md"; maxWords = 750; maxApproxTokens = 1500 },
+            @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 900; maxApproxTokens = 1500 }
+        )
+
+        foreach ($budget in $budgets) {
+            $path = Join-Path $RepoRoot $budget.path
+            $text = Get-Content -Encoding UTF8 -Raw $path
+            $wordCount = ([regex]::Matches($text, '\S+')).Count
+            $approxTokens = [math]::Ceiling(([System.Text.Encoding]::UTF8.GetByteCount($text)) / 4)
+
+            $wordCount | Should -BeLessOrEqual $budget.maxWords
+            $approxTokens | Should -BeLessOrEqual $budget.maxApproxTokens
+        }
+
+        $workflowIndexText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
+        foreach ($topic in @("init-setup.md", "mcp.md", "branch-lifecycle.md", "verification-result.md")) {
+            $workflowIndexText | Should -Match ([regex]::Escape($topic))
+        }
+        $workflowIndexText | Should -Match "Open only the matching topic file"
+
+        $userRulesText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\USER-RULES.append.md")
+        $userRulesText | Should -Match "Search hygiene"
+        $userRulesText | Should -Match ([regex]::Escape(".agent-1c/runs/"))
+        $userRulesText | Should -Match ([regex]::Escape("build/test-results/"))
     }
 
     It 'keeps Pester CI output under ignored build test-results path' {
@@ -2988,6 +3022,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Match "Assert-WorkflowPackageUpdateContext"
         $HelperText | Should -Match "Assert-WorkflowTrackedGitClean"
         $HelperText | Should -Match "updatedAt"
+        $HelperText | Should -Match "VANESSA-TESTS-GUIDE\.md"
         $HelperText | Should -Match "VANESSA-TESTS-GUIDE\.ru\.md"
 
         $lockTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dependency-lock.json") | ConvertFrom-Json
@@ -3018,13 +3053,28 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         }
 
         $workflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
-        $workflowText | Should -Match "VANESSA-TESTS-GUIDE\.ru\.md"
+        $workflowText | Should -Match "VANESSA-TESTS-GUIDE\.md"
 
-        $vanessaGuideText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "VANESSA-TESTS-GUIDE.ru.md")
-        $vanessaGuideText | Should -Match "reference"
+        $vanessaGuideText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "VANESSA-TESTS-GUIDE.md")
+        $vanessaGuideText | Should -Match "Agent reference"
+        $vanessaGuideText | Should -Match "Context Economy"
+        $vanessaGuideText | Should -Match "Do Not"
         $vanessaGuideText | Should -Match "2-3"
         $vanessaGuideText | Should -Match "smoke"
         $vanessaGuideText | Should -Match "tests/features"
+        $featureMarker = -join ([char[]](0x0424, 0x0443, 0x043D, 0x043A, 0x0446, 0x0438, 0x043E, 0x043D, 0x0430, 0x043B, 0x003A))
+        $contextMarker = -join ([char[]](0x041A, 0x043E, 0x043D, 0x0442, 0x0435, 0x043A, 0x0441, 0x0442, 0x003A))
+        $scenarioMarker = -join ([char[]](0x0421, 0x0446, 0x0435, 0x043D, 0x0430, 0x0440, 0x0438, 0x0439, 0x003A))
+        foreach ($marker in @("#language: ru", $featureMarker, $contextMarker, $scenarioMarker)) {
+            $vanessaGuideText | Should -Match ([regex]::Escape($marker))
+        }
+        [math]::Ceiling(([System.Text.Encoding]::UTF8.GetByteCount($vanessaGuideText)) / 4) | Should -BeLessOrEqual 2400
+
+        $vanessaGuideStubText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "VANESSA-TESTS-GUIDE.ru.md")
+        $vanessaGuideStubText | Should -Match ([regex]::Escape('moved to `VANESSA-TESTS-GUIDE.md`'))
+        $vanessaGuideStubText | Should -Match "compatibility"
+        $vanessaGuideStubText | Should -Not -Match ([regex]::Escape($featureMarker))
+        [math]::Ceiling(([System.Text.Encoding]::UTF8.GetByteCount($vanessaGuideStubText)) / 4) | Should -BeLessOrEqual 120
     }
 
     It "removes default upstream ai_rules_1c MCP entries without deleting ITL or External MCP config" {
@@ -3262,7 +3312,10 @@ local after
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\custom.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot "templates\dependency-lock.json") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot "templates\stale.txt") -PathType Leaf) | Should -Be $false
-            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.ru.md")) | Should -Match "Vanessa Automation"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.md")) | Should -Match "Vanessa Automation"
+            $featureMarker = -join ([char[]](0x0424, 0x0443, 0x043D, 0x043A, 0x0446, 0x0438, 0x043E, 0x043D, 0x0430, 0x043B, 0x003A))
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.md")) | Should -Match ([regex]::Escape($featureMarker))
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.ru.md")) | Should -Match "moved to"
 
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".dev.env")) | Should -Match "SECRET=keep"
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\project.json")) | Should -Match "keep-project"
