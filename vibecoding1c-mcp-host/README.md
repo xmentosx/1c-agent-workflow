@@ -30,7 +30,13 @@ The `bookstack` global server is built locally from `bookstack-product-docs-mcp/
 Configure `bookStackProductDocsServer.baseUrl`, set read-only `BOOKSTACK_TOKEN_ID` and
 `BOOKSTACK_TOKEN_SECRET` in `secrets`, and keep `bookstack` in `enabledServers.global`.
 The MCP publishes as `BookStack-product-docs-mcp` and exposes `search_docs`, `read_page`,
-`list_structure`, and `reindex_docs`.
+`list_structure`, `index_status`, and `reindex_docs`.
+
+To set up and publish only the BookStack MCP without touching other configured servers:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action setup -ConfigPath .\host.config.json -ServerId bookstack
+```
 
 Use `dump-config` manually when a local `sourcePath` should be refreshed from a 1C infobase connected to configuration repository storage:
 
@@ -52,9 +58,20 @@ publish         Publish current host state to the registry repo.
 ```
 
 Use `-ConfigId <id>` with `start`, `refresh-config`, or `reindex` to limit config-specific work.
+Use `-ServerId <id>` with `setup`, `start`, `stop`, `status`, or `reindex` to manage one MCP server, for example `-ServerId bookstack`.
 Use `-ConfigId <id>` with `dump-config` to update one local dump.
 Use `-DryRun` to validate generated paths and payloads without Docker/Git writes where possible.
 Run `publish` after `reindex` when remote clients should see updated registry freshness metadata.
+For BookStack, `index_status` reports local cache freshness and embedding coverage; `reindex_docs` refreshes the cache.
+
+BookStack-only operations:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action start -ConfigPath .\host.config.json -ServerId bookstack
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action status -ConfigPath .\host.config.json -ServerId bookstack
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action stop -ConfigPath .\host.config.json -ServerId bookstack
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action reindex -ConfigPath .\host.config.json -ServerId bookstack
+```
 CPU embedding mode always sets `RESET_CACHE=false` because CPU model cache is mounted at `/app/model_cache` and must not be removed from inside a container.
 In CPU embedding mode the Graph server receives a non-secret placeholder `OPENAI_API_KEY` only to satisfy its startup OpenAI client initialization; set `CHAT_API_KEY`, `CHAT_API_BASE`, and `CHAT_MODEL` in `config.env` or `host.config.json` secrets when real Graph chat calls must use an LLM.
 Config-specific vector stores from `PATH_BASES` are isolated as `<stateRoot>/bases/<configId>/<serverId>/...` so multiple `code` containers do not share the same zvec lock.

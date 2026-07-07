@@ -925,13 +925,21 @@ Describe "1C agent workflow static checks" {
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\server.py") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\requirements.txt") -PathType Leaf) | Should -Be $true
         $bookStackServerText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\server.py")
-        foreach ($toolName in @("search_docs", "read_page", "list_structure", "reindex_docs")) {
+        foreach ($toolName in @("search_docs", "read_page", "list_structure", "index_status", "reindex_docs")) {
             $bookStackServerText | Should -Match "def $toolName"
         }
         $bookStackServerText | Should -Match "/api/search"
         $bookStackServerText | Should -Match "/api/pages"
         $bookStackServerText | Should -Match "CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts"
         $bookStackServerText | Should -Match "/embeddings"
+        $bookStackServerText | Should -Match "embedded_pages"
+        $bookStackServerText | Should -Match "newest_indexed_at"
+        $bookStackServerText | Should -Match "last_embedding_error"
+        $indexStatusStart = $bookStackServerText.IndexOf("    def index_status(self) -> Dict[str, Any]:")
+        $indexStatusEnd = $bookStackServerText.IndexOf("    def index_page", $indexStatusStart)
+        $indexStatusStart | Should -BeGreaterThan -1
+        $indexStatusEnd | Should -BeGreaterThan $indexStatusStart
+        $bookStackServerText.Substring($indexStatusStart, $indexStatusEnd - $indexStatusStart) | Should -Not -Match "self\.client"
 
         $hostConfig = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\host.config.example.json") | ConvertFrom-Json
         $hostConfig.registryRepo | Should -Be "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git"
@@ -987,11 +995,15 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match "sourceFingerprint"
         $McpHostText | Should -Match "dump-config"
         $McpHostText | Should -Match '"reindex"'
+        $McpHostText | Should -Match '\[string\]\$ServerId'
+        $McpHostText | Should -Match "Select-TargetServerIds"
+        $McpHostText | Should -Match "Assert-TargetServerRequest"
         $McpHostText | Should -Match "Invoke-HostReindex"
         $McpHostText | Should -Match "Update-HostStateServers"
         $McpHostText | Should -Match "ForceResetDatabase"
         $McpHostText | Should -Match "Test-HostServerSupportsDatabaseReset"
         $McpHostText | Should -Match "Reindexing database-backed MCP servers"
+        $McpHostText | Should -Match "Skipping configuration refresh because targeted server"
         $McpHostText | Should -Match "standalone-cpu-embedding-placeholder"
         $McpHostText | Should -Match "Invoke-HostConfigDumpHelper"
         $McpHostText | Should -Match 'Refresh-HostConfigurations -Config \$config -TargetConfigId \$ConfigId'
@@ -1012,6 +1024,20 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match "ConfigurationRepositoryUpdateCfg"
         $McpHostText | Should -Match "DumpConfigToFiles"
         $McpHostText | Should -Match "ConfigDumpInfo.xml"
+        $readmeText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\README.md")
+        $readmeText | Should -Match ([regex]::Escape("-Action setup -ConfigPath .\host.config.json -ServerId bookstack"))
+        $readmeText | Should -Match ([regex]::Escape("-Action start -ConfigPath .\host.config.json -ServerId bookstack"))
+        $readmeText | Should -Match ([regex]::Escape("-Action status -ConfigPath .\host.config.json -ServerId bookstack"))
+        $readmeText | Should -Match ([regex]::Escape("-Action stop -ConfigPath .\host.config.json -ServerId bookstack"))
+        $readmeText | Should -Match ([regex]::Escape("-Action reindex -ConfigPath .\host.config.json -ServerId bookstack"))
+        $readmeText | Should -Match "index_status"
+        $runbookText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\RUNBOOK.ru.md")
+        $runbookText | Should -Match ([regex]::Escape("-Action setup -ConfigPath .\host.config.json -ServerId bookstack"))
+        $runbookText | Should -Match ([regex]::Escape("-Action start -ConfigPath .\host.config.json -ServerId bookstack"))
+        $runbookText | Should -Match ([regex]::Escape("-Action status -ConfigPath .\host.config.json -ServerId bookstack"))
+        $runbookText | Should -Match ([regex]::Escape("-Action stop -ConfigPath .\host.config.json -ServerId bookstack"))
+        $runbookText | Should -Match ([regex]::Escape("-Action reindex -ConfigPath .\host.config.json -ServerId bookstack"))
+        $runbookText | Should -Match "index_status"
         $McpHostDumpText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1")
         $nativeEmptyStringFunction = [regex]::Match($McpHostDumpText, '(?s)function ConvertTo-NativeEmptyStringArgument \{.*?\n\}')
         $nativeEmptyStringFunction.Success | Should -Be $true
@@ -1058,6 +1084,68 @@ Describe "1C agent workflow static checks" {
                 Get-ServerScope -Server $globalGraph | Should -Be "project"
                 Get-EnabledServerIds -Config $hostConfig -Scope "global" | Should -Not -Contain "graph"
                 Get-EnabledServerIds -Config $hostConfig -Scope "project" | Should -Contain "graph"
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "selects one standalone MCP host server without dropping other host state records" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-server-target-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "test-host"
+                baseUrl = "http://localhost"
+                stateRoot = (Join-Path $tempRoot "state")
+                enabledServers = [ordered]@{
+                    global = @("docs", "bookstack")
+                    project = @("code")
+                }
+                configurations = @()
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                $manifest = [pscustomobject]@{
+                    servers = @(
+                        [pscustomobject]@{ id = "docs"; scope = "global" },
+                        [pscustomobject]@{ id = "bookstack"; scope = "global" },
+                        [pscustomobject]@{ id = "code"; scope = "project" }
+                    )
+                }
+                $globalIds = Get-EnabledServerIds -Config $hostConfig -Scope "global"
+                $projectIds = Get-EnabledServerIds -Config $hostConfig -Scope "project"
+
+                Select-TargetServerIds -Ids $globalIds -TargetServerId "bookstack" | Should -Be @("bookstack")
+                @(Select-TargetServerIds -Ids $projectIds -TargetServerId "bookstack").Count | Should -Be 0
+                { Assert-TargetServerRequest -Manifest $manifest -TargetServerId "bookstack" -TargetConfigId "trade" -GlobalServerIds $globalIds -ProjectServerIds $projectIds } | Should -Throw "*global MCP server*"
+                { Assert-TargetServerRequest -Manifest $manifest -TargetServerId "missing" -GlobalServerIds $globalIds -ProjectServerIds $projectIds } | Should -Throw "*was not found*"
+
+                Write-HostState -Config $hostConfig -State ([ordered]@{
+                    schemaVersion = 1
+                    configurations = @()
+                    servers = @(
+                        [pscustomobject]@{ id = "docs"; scope = "global"; name = "docs"; configId = "" },
+                        [pscustomobject]@{ id = "code"; scope = "project"; name = "code-trade"; configId = "trade" }
+                    )
+                })
+                Update-HostStateServers -Config $hostConfig -ServerStates @(
+                    [pscustomobject]@{ id = "bookstack"; scope = "global"; name = "bookstack-product-docs"; configId = "" }
+                )
+                $state = Read-HostState -Config $hostConfig
+                $ids = @(As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @()) | ForEach-Object { [string](Get-ObjectValue -Object $_ -Name "id" -Default "") })
+                $ids.Count | Should -Be 3
+                $ids | Should -Contain "docs"
+                $ids | Should -Contain "code"
+                $ids | Should -Contain "bookstack"
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -2936,6 +3024,12 @@ Describe "1C agent workflow static checks" {
         $userRulesTemplateText | Should -Match "vibecoding1c MCP helper request"
         $userRulesTemplateText | Should -Match "product-docs/SKILL.md"
         $userRulesTemplateText | Should -Match "BookStack-product-docs-mcp"
+        $userRulesTemplateText | Should -Match "BookStack is advisory, not authoritative"
+        $userRulesTemplateText | Should -Match "code, tests, current 1C metadata"
+        $userRulesTemplateText | Should -Match "available MCP evidence"
+        $userRulesTemplateText | Should -Match "BookStack says"
+        $userRulesTemplateText | Should -Match "Code/MCP currently shows"
+        $userRulesTemplateText | Should -Match "Decision"
         $userRulesTemplateText | Should -Not -Match ([regex]::Escape("/itl-vibecoding1c-mcp"))
 
         $productDocsSkillPath = Join-Path $RepoRoot ".agents\skills\product-docs\SKILL.md"
@@ -2944,6 +3038,19 @@ Describe "1C agent workflow static checks" {
         $productDocsSkillText | Should -Match "BookStack-product-docs-mcp"
         $productDocsSkillText | Should -Match "search_docs"
         $productDocsSkillText | Should -Match "read_page"
+        $productDocsSkillText | Should -Match "source of product context and intended behavior"
+        $productDocsSkillText | Should -Not -Match "source of product behavior truth"
+        $productDocsSkillText | Should -Match "## Evidence Policy"
+        $productDocsSkillText | Should -Match "## Verification Workflow"
+        $productDocsSkillText | Should -Match "current code, tests, 1C metadata"
+        $productDocsSkillText | Should -Match "BookStack is advisory"
+        $productDocsSkillText | Should -Match "1c-code-metadata-mcp"
+        $productDocsSkillText | Should -Match "1C-docs-mcp"
+        $productDocsSkillText | Should -Match "Code/MCP evidence"
+
+        $productDocsOpenAiText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\product-docs\agents\openai.yaml")
+        $productDocsOpenAiText | Should -Match "Verify BookStack product context"
+        $productDocsOpenAiText | Should -Match "verify it against code/MCP evidence"
 
         $HelperText | Should -Match "function Update-AgentGuidanceBridge"
         $HelperText | Should -Match "function Update-UserRules"

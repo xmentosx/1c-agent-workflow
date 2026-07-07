@@ -5,6 +5,7 @@ param(
 
     [string]$ConfigPath = ".\host.config.json",
     [string]$ConfigId = "",
+    [string]$ServerId = "",
     [switch]$DryRun
 )
 
@@ -642,6 +643,56 @@ function Get-EnabledServerIds {
         return @($enabled + $configSpecificEnabled | Where-Object { $_ } | Select-Object -Unique)
     }
     return $enabled
+}
+
+function Select-TargetServerIds {
+    param(
+        [string[]]$Ids,
+        [string]$TargetServerId = ""
+    )
+    if ([string]::IsNullOrWhiteSpace($TargetServerId)) {
+        return @($Ids)
+    }
+    return @($Ids | Where-Object { $_ -eq $TargetServerId })
+}
+
+function Assert-TargetServerRequest {
+    param(
+        [object]$Manifest,
+        [string]$TargetServerId = "",
+        [string]$TargetConfigId = "",
+        [string[]]$GlobalServerIds = @(),
+        [string[]]$ProjectServerIds = @()
+    )
+    if ([string]::IsNullOrWhiteSpace($TargetServerId)) {
+        return
+    }
+
+    $knownScopes = @()
+    foreach ($server in As-Array (Get-ObjectValue -Object $Manifest -Name "servers" -Default @())) {
+        $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
+        if ($id -eq $TargetServerId) {
+            $knownScopes += (Get-ServerScope -Server $server)
+        }
+    }
+    $knownScopes = @($knownScopes | Select-Object -Unique)
+    if ($knownScopes.Count -eq 0) {
+        throw "Server '$TargetServerId' was not found in the MCP distribution manifest."
+    }
+
+    $enabledScopes = @()
+    if ($GlobalServerIds -contains $TargetServerId) {
+        $enabledScopes += "global"
+    }
+    if ($ProjectServerIds -contains $TargetServerId) {
+        $enabledScopes += "project"
+    }
+    if ($enabledScopes.Count -eq 0) {
+        throw "Server '$TargetServerId' is present in the MCP distribution manifest but is not enabled in host.config.json enabledServers."
+    }
+    if ($enabledScopes -contains "global" -and -not [string]::IsNullOrWhiteSpace($TargetConfigId)) {
+        throw "Server '$TargetServerId' is a global MCP server; do not pass -ConfigId with this -ServerId."
+    }
 }
 
 function ConvertTo-HostBoolSetting {
@@ -1984,12 +2035,19 @@ function New-ServerRuntime {
 }
 
 function Start-HostServers {
-    param([object]$Config)
+    param(
+        [object]$Config,
+        [string]$TargetServerId = "",
+        [string]$TargetConfigId = ""
+    )
     Ensure-HostPrerequisites -Config $Config
     Ensure-Distribution -Config $Config
     $manifest = Read-DistributionManifest -Config $Config
-    $globalIds = Get-EnabledServerIds -Config $Config -Scope "global"
-    $projectIds = Get-EnabledServerIds -Config $Config -Scope "project"
+    $allGlobalIds = Get-EnabledServerIds -Config $Config -Scope "global"
+    $allProjectIds = Get-EnabledServerIds -Config $Config -Scope "project"
+    Assert-TargetServerRequest -Manifest $manifest -TargetServerId $TargetServerId -TargetConfigId $TargetConfigId -GlobalServerIds $allGlobalIds -ProjectServerIds $allProjectIds
+    $globalIds = Select-TargetServerIds -Ids $allGlobalIds -TargetServerId $TargetServerId
+    $projectIds = Select-TargetServerIds -Ids $allProjectIds -TargetServerId $TargetServerId
     Ensure-HostEmbeddingModel -Config $Config -Manifest $manifest -GlobalServerIds $globalIds -ProjectServerIds $projectIds
     $configStates = @()
     $serverStates = @()
@@ -1997,69 +2055,95 @@ function Start-HostServers {
     Write-HostPhase "Starting global MCP servers"
     Write-Host "Enabled global servers: $(if (@($globalIds).Count -gt 0) { @($globalIds) -join ', ' } else { '<none>' })"
     $globalIndex = 0
+    $startedGlobal = 0
     foreach ($server in As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @())) {
         $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
         $scope = Get-ServerScope -Server $server
-        if ($scope -ne "global" -or $globalIds -notcontains $id) { continue }
-        $runtime = New-ServerRuntime -Config $Config -Server $server -Index $globalIndex
+        if ($scope -ne "global" -or $allGlobalIds -notcontains $id) { continue }
+        $runtimeIndex = $globalIndex
+        $globalIndex++
+        if ($globalIds -notcontains $id) { continue }
+        $runtime = New-ServerRuntime -Config $Config -Server $server -Index $runtimeIndex
         Write-Host "Global server '$id': container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
         Start-DockerServer -Config $Config -Server $server -Runtime $runtime
         $runtime.health = "running"
         $serverStates += $runtime
-        $globalIndex++
+        $startedGlobal++
     }
-    Write-Host "Global MCP servers started: $globalIndex"
+    Write-Host "Global MCP servers started: $startedGlobal"
 
-    Write-HostPhase "Refreshing configurations and starting project MCP servers"
-    Write-Host "Enabled project servers: $(if (@($projectIds).Count -gt 0) { @($projectIds) -join ', ' } else { '<none>' })"
-    $configIndex = 0
-    foreach ($configuration in As-Array (Get-ObjectValue -Object $Config -Name "configurations" -Default @())) {
-        $configurationId = [string](Get-ObjectValue -Object $configuration -Name "configId" -Default "")
-        if ($ConfigId -and $configurationId -ne $ConfigId) {
-            continue
-        }
-        Write-Host "Processing configuration '$configurationId'..."
-        $configState = Refresh-Configuration -Config $Config -Configuration $configuration
-        $configStates += $configState
-        $projectIndex = 0
-        foreach ($server in As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @())) {
-            $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
-            $scope = Get-ServerScope -Server $server
-            if ($scope -ne "project" -or $projectIds -notcontains $id) { continue }
-            $runtime = New-ServerRuntime -Config $Config -Server $server -Index $projectIndex -ConfigState $configState -ConfigIndex $configIndex
-            Write-Host "Project server '$id' for configId $($configState.configId): container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
-            if ([bool](Get-ObjectValue -Object $server -Name "compose" -Default $false)) {
-                Start-ComposeServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState
-            } else {
-                Start-DockerServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState
+    $processConfigurations = ([string]::IsNullOrWhiteSpace($TargetServerId) -or @($projectIds).Count -gt 0)
+    if ($processConfigurations) {
+        Write-HostPhase "Refreshing configurations and starting project MCP servers"
+        Write-Host "Enabled project servers: $(if (@($projectIds).Count -gt 0) { @($projectIds) -join ', ' } else { '<none>' })"
+        $configIndex = 0
+        foreach ($configuration in As-Array (Get-ObjectValue -Object $Config -Name "configurations" -Default @())) {
+            $configurationId = [string](Get-ObjectValue -Object $configuration -Name "configId" -Default "")
+            if ($TargetConfigId -and $configurationId -ne $TargetConfigId) {
+                continue
             }
-            $runtime.health = "running"
-            $serverStates += $runtime
-            $projectIndex++
+            Write-Host "Processing configuration '$configurationId'..."
+            $configState = Refresh-Configuration -Config $Config -Configuration $configuration
+            $configStates += $configState
+            $projectIndex = 0
+            $startedProject = 0
+            foreach ($server in As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @())) {
+                $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
+                $scope = Get-ServerScope -Server $server
+                if ($scope -ne "project" -or $allProjectIds -notcontains $id) { continue }
+                $runtimeIndex = $projectIndex
+                $projectIndex++
+                if ($projectIds -notcontains $id) { continue }
+                $runtime = New-ServerRuntime -Config $Config -Server $server -Index $runtimeIndex -ConfigState $configState -ConfigIndex $configIndex
+                Write-Host "Project server '$id' for configId $($configState.configId): container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
+                if ([bool](Get-ObjectValue -Object $server -Name "compose" -Default $false)) {
+                    Start-ComposeServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState
+                } else {
+                    Start-DockerServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState
+                }
+                $runtime.health = "running"
+                $serverStates += $runtime
+                $startedProject++
+            }
+            Write-Host "Configuration '$($configState.configId)' project MCP servers started: $startedProject"
+            $configIndex++
         }
-        Write-Host "Configuration '$($configState.configId)' project MCP servers started: $projectIndex"
-        $configIndex++
+    } else {
+        Write-Host "Skipping configuration refresh because targeted server '$TargetServerId' is global."
     }
 
-    $state = [ordered]@{
-        schemaVersion = 1
-        updatedAt = (Get-Date).ToString("o")
-        configurations = $configStates
-        servers = $serverStates
+    if ([string]::IsNullOrWhiteSpace($TargetServerId)) {
+        $state = [ordered]@{
+            schemaVersion = 1
+            updatedAt = (Get-Date).ToString("o")
+            configurations = $configStates
+            servers = $serverStates
+        }
+        Write-HostState -Config $Config -State $state
+    } else {
+        if ($configStates.Count -gt 0) {
+            Update-HostStateConfigurations -Config $Config -ConfigStates $configStates
+        }
+        if ($serverStates.Count -gt 0) {
+            Update-HostStateServers -Config $Config -ServerStates $serverStates
+        }
     }
-    Write-HostState -Config $Config -State $state
 }
 
 function Invoke-HostReindex {
     param(
         [object]$Config,
-        [string]$TargetConfigId = ""
+        [string]$TargetConfigId = "",
+        [string]$TargetServerId = ""
     )
     Ensure-HostPrerequisites -Config $Config
     Ensure-Distribution -Config $Config
     $manifest = Read-DistributionManifest -Config $Config
-    $globalIds = Get-EnabledServerIds -Config $Config -Scope "global"
-    $projectIds = Get-EnabledServerIds -Config $Config -Scope "project"
+    $allGlobalIds = Get-EnabledServerIds -Config $Config -Scope "global"
+    $allProjectIds = Get-EnabledServerIds -Config $Config -Scope "project"
+    Assert-TargetServerRequest -Manifest $manifest -TargetServerId $TargetServerId -TargetConfigId $TargetConfigId -GlobalServerIds $allGlobalIds -ProjectServerIds $allProjectIds
+    $globalIds = Select-TargetServerIds -Ids $allGlobalIds -TargetServerId $TargetServerId
+    $projectIds = Select-TargetServerIds -Ids $allProjectIds -TargetServerId $TargetServerId
     Ensure-HostEmbeddingModel -Config $Config -Manifest $manifest -GlobalServerIds $globalIds -ProjectServerIds $projectIds
 
     $configStates = @()
@@ -2072,22 +2156,27 @@ function Invoke-HostReindex {
     if ($TargetConfigId) {
         Write-Host "Target configId: $TargetConfigId"
     }
+    if ($TargetServerId) {
+        Write-Host "Target serverId: $TargetServerId"
+    }
 
     $globalIndex = 0
     if (-not $TargetConfigId) {
         foreach ($server in As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @())) {
             $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
             $scope = Get-ServerScope -Server $server
-            if ($scope -ne "global" -or $globalIds -notcontains $id) { continue }
+            if ($scope -ne "global" -or $allGlobalIds -notcontains $id) { continue }
+            $runtimeIndex = $globalIndex
+            $globalIndex++
+            if ($globalIds -notcontains $id) { continue }
             if (Test-HostServerSupportsDatabaseReset -Server $server) {
-                $runtime = New-ServerRuntime -Config $Config -Server $server -Index $globalIndex
+                $runtime = New-ServerRuntime -Config $Config -Server $server -Index $runtimeIndex
                 Write-Host "Reindexing global server '$id': container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
                 Start-DockerServer -Config $Config -Server $server -Runtime $runtime -Recreate -ForceResetDatabase
                 $runtime.health = "running"
                 $serverStates += $runtime
                 $reindexed++
             }
-            $globalIndex++
         }
     } else {
         Write-Host "Skipping global embedding servers because a specific configId was requested."
@@ -2095,38 +2184,45 @@ function Invoke-HostReindex {
 
     $matched = $false
     $configIndex = 0
-    foreach ($configuration in As-Array (Get-ObjectValue -Object $Config -Name "configurations" -Default @())) {
-        $configurationId = [string](Get-ObjectValue -Object $configuration -Name "configId" -Default "")
-        if ($TargetConfigId -and $configurationId -ne $TargetConfigId) {
-            continue
-        }
-        $matched = $true
-        Write-Host "Refreshing configuration before reindex: '$configurationId'"
-        $configState = Refresh-Configuration -Config $Config -Configuration $configuration
-        $configStates += $configState
-        $projectIndex = 0
-        foreach ($server in As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @())) {
-            $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
-            $scope = Get-ServerScope -Server $server
-            if ($scope -ne "project" -or $projectIds -notcontains $id) { continue }
-            if (Test-HostServerSupportsDatabaseReset -Server $server) {
-                $runtime = New-ServerRuntime -Config $Config -Server $server -Index $projectIndex -ConfigState $configState -ConfigIndex $configIndex
-                Write-Host "Reindexing project server '$id' for configId $($configState.configId): container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
-                if ([bool](Get-ObjectValue -Object $server -Name "compose" -Default $false)) {
-                    Start-ComposeServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState -Recreate -ForceResetDatabase
-                } else {
-                    Start-DockerServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState -Recreate -ForceResetDatabase
-                }
-                $runtime.health = "running"
-                $serverStates += $runtime
-                $reindexed++
+    $processConfigurations = ([string]::IsNullOrWhiteSpace($TargetServerId) -or @($projectIds).Count -gt 0)
+    if ($processConfigurations) {
+        foreach ($configuration in As-Array (Get-ObjectValue -Object $Config -Name "configurations" -Default @())) {
+            $configurationId = [string](Get-ObjectValue -Object $configuration -Name "configId" -Default "")
+            if ($TargetConfigId -and $configurationId -ne $TargetConfigId) {
+                continue
             }
-            $projectIndex++
+            $matched = $true
+            Write-Host "Refreshing configuration before reindex: '$configurationId'"
+            $configState = Refresh-Configuration -Config $Config -Configuration $configuration
+            $configStates += $configState
+            $projectIndex = 0
+            foreach ($server in As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @())) {
+                $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
+                $scope = Get-ServerScope -Server $server
+                if ($scope -ne "project" -or $allProjectIds -notcontains $id) { continue }
+                $runtimeIndex = $projectIndex
+                $projectIndex++
+                if ($projectIds -notcontains $id) { continue }
+                if (Test-HostServerSupportsDatabaseReset -Server $server) {
+                    $runtime = New-ServerRuntime -Config $Config -Server $server -Index $runtimeIndex -ConfigState $configState -ConfigIndex $configIndex
+                    Write-Host "Reindexing project server '$id' for configId $($configState.configId): container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
+                    if ([bool](Get-ObjectValue -Object $server -Name "compose" -Default $false)) {
+                        Start-ComposeServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState -Recreate -ForceResetDatabase
+                    } else {
+                        Start-DockerServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState -Recreate -ForceResetDatabase
+                    }
+                    $runtime.health = "running"
+                    $serverStates += $runtime
+                    $reindexed++
+                }
+            }
+            $configIndex++
         }
-        $configIndex++
+    } else {
+        Write-Host "Skipping configuration refresh because targeted server '$TargetServerId' is global."
     }
 
-    if ($TargetConfigId -and -not $matched) {
+    if ($processConfigurations -and $TargetConfigId -and -not $matched) {
         throw "Configuration '$TargetConfigId' was not found in host config."
     }
     if ($configStates.Count -gt 0) {
@@ -2144,9 +2240,16 @@ function Invoke-HostReindex {
 }
 
 function Stop-HostServers {
-    param([object]$Config)
+    param(
+        [object]$Config,
+        [string]$TargetServerId = ""
+    )
     $state = Read-HostState -Config $Config
     foreach ($server in As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @())) {
+        $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
+        if ($TargetServerId -and $id -ne $TargetServerId) {
+            continue
+        }
         $composeProject = [string](Get-ObjectValue -Object $server -Name "composeProject" -Default "")
         $runtimePath = [string](Get-ObjectValue -Object $server -Name "runtimePath" -Default "")
         $containerName = [string](Get-ObjectValue -Object $server -Name "containerName" -Default "")
@@ -2397,40 +2500,52 @@ function Publish-Registry {
 }
 
 function Show-HostStatus {
-    param([object]$Config)
+    param(
+        [object]$Config,
+        [string]$TargetServerId = ""
+    )
     $state = Read-HostState -Config $Config
     Write-Host "Host: $(Get-ObjectValue -Object $Config -Name 'hostId' -Default '<unknown>')"
     Write-Host "Base URL: $(Get-ObjectValue -Object $Config -Name 'baseUrl' -Default '<unknown>')"
     Write-Host "State root: $(Get-StateRoot -Config $Config)"
     Write-Host "Configurations: $(@(As-Array (Get-ObjectValue -Object $state -Name 'configurations' -Default @())).Count)"
     Write-Host "Servers:"
+    $shown = 0
     foreach ($server in As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @())) {
+        $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
+        if ($TargetServerId -and $id -ne $TargetServerId) {
+            continue
+        }
         Write-Host "  $(Get-ObjectValue -Object $server -Name 'name' -Default '<unknown>') [$(Get-ObjectValue -Object $server -Name 'scope' -Default '')] $(Get-ObjectValue -Object $server -Name 'url' -Default '') health=$(Get-ObjectValue -Object $server -Name 'health' -Default 'unknown') configId=$(Get-ObjectValue -Object $server -Name 'configId' -Default '') indexedAt=$(Get-ObjectValue -Object $server -Name 'indexedAt' -Default '')"
+        $shown++
+    }
+    if ($TargetServerId -and $shown -eq 0) {
+        Write-Host "  <no tracked state for serverId $TargetServerId>"
     }
 }
 
 $config = Read-HostConfig
 switch ($Action) {
     "setup" {
-        Start-HostServers -Config $config
+        Start-HostServers -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId
         Publish-Registry -Config $config
-        Show-HostStatus -Config $config
+        Show-HostStatus -Config $config -TargetServerId $ServerId
     }
     "start" {
-        Start-HostServers -Config $config
-        Show-HostStatus -Config $config
+        Start-HostServers -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId
+        Show-HostStatus -Config $config -TargetServerId $ServerId
     }
     "stop" {
-        Stop-HostServers -Config $config
+        Stop-HostServers -Config $config -TargetServerId $ServerId
     }
     "status" {
-        Show-HostStatus -Config $config
+        Show-HostStatus -Config $config -TargetServerId $ServerId
     }
     "refresh-config" {
         Refresh-HostConfigurations -Config $config -TargetConfigId $ConfigId | Out-Null
     }
     "reindex" {
-        Invoke-HostReindex -Config $config -TargetConfigId $ConfigId
+        Invoke-HostReindex -Config $config -TargetConfigId $ConfigId -TargetServerId $ServerId
     }
     "publish" {
         Publish-Registry -Config $config

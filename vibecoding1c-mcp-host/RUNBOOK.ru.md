@@ -191,6 +191,12 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action setup -ConfigPath .\host.config.json
 ```
 
+Чтобы настроить, запустить и опубликовать только BookStack MCP, не трогая остальные серверы:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action setup -ConfigPath .\host.config.json -ServerId bookstack
+```
+
 `setup` делает полный цикл:
 
 1. Проверяет `git`, `docker`, `python`.
@@ -254,16 +260,34 @@ git -C D:\ITL\MCP\vibecoding1c\registry status --short
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action status -ConfigPath .\host.config.json
 ```
 
+Посмотреть состояние только BookStack MCP:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action status -ConfigPath .\host.config.json -ServerId bookstack
+```
+
 Запустить или обновить containers без публикации registry:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action start -ConfigPath .\host.config.json
 ```
 
+Запустить или обновить только BookStack MCP без публикации registry:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action start -ConfigPath .\host.config.json -ServerId bookstack
+```
+
 Остановить tracked containers:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action stop -ConfigPath .\host.config.json
+```
+
+Остановить только BookStack MCP:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action stop -ConfigPath .\host.config.json -ServerId bookstack
 ```
 
 Обновить локальную XML-выгрузку из ИБ, подключенной к 1C-хранилищу:
@@ -297,6 +321,14 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action reindex -ConfigPath .\host.config.json -ConfigId trade
 ```
+
+Переиндексировать только BookStack MCP:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action reindex -ConfigPath .\host.config.json -ServerId bookstack
+```
+
+Для BookStack MCP tool `index_status` показывает состояние локального cache и покрытие embeddings без обращения к BookStack API. Tool `reindex_docs` запускает обновление индекса.
 
 После `reindex` выполните `publish`, если клиентам нужно увидеть обновленные `indexedAt`/`reportHash` в registry.
 

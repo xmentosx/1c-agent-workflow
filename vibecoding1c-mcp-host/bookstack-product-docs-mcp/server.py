@@ -307,6 +307,40 @@ class DocsCache:
             row = conn.execute("SELECT COUNT(*) AS count FROM pages").fetchone()
             return int(row["count"])
 
+    def index_status(self, embedding_model: str) -> Dict[str, Any]:
+        with self.connect() as conn:
+            page_row = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS cache_pages,
+                    MIN(NULLIF(updated_at, '')) AS oldest_page_updated_at,
+                    MAX(NULLIF(updated_at, '')) AS newest_page_updated_at,
+                    MIN(NULLIF(indexed_at, '')) AS oldest_indexed_at,
+                    MAX(NULLIF(indexed_at, '')) AS newest_indexed_at
+                FROM pages
+                """
+            ).fetchone()
+            embedded_pages = 0
+            if embedding_model:
+                embedding_row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM embeddings e
+                    JOIN pages p ON p.id = e.page_id
+                    WHERE e.model = ? AND e.content_hash = p.content_hash
+                    """,
+                    (embedding_model,),
+                ).fetchone()
+                embedded_pages = int(embedding_row["count"]) if embedding_row else 0
+        return {
+            "cache_pages": int(page_row["cache_pages"]) if page_row else 0,
+            "embedded_pages": embedded_pages,
+            "oldest_page_updated_at": page_row["oldest_page_updated_at"] if page_row else None,
+            "newest_page_updated_at": page_row["newest_page_updated_at"] if page_row else None,
+            "oldest_indexed_at": page_row["oldest_indexed_at"] if page_row else None,
+            "newest_indexed_at": page_row["newest_indexed_at"] if page_row else None,
+        }
+
     def get_page(self, page_id: int) -> Optional[Dict[str, Any]]:
         with self.connect() as conn:
             row = conn.execute("SELECT * FROM pages WHERE id = ?", (page_id,)).fetchone()
@@ -596,6 +630,22 @@ class ProductDocsService:
             "indexed_at": utc_now(),
         }
 
+    def index_status(self) -> Dict[str, Any]:
+        status = self.cache.index_status(self.embeddings.model)
+        status.update(
+            {
+                "ok": True,
+                "cache_path": self.settings.cache_path,
+                "embedding_enabled": self.embeddings.enabled(),
+                "embedding_model": self.embeddings.model,
+                "last_embedding_error": self.last_embedding_error,
+                "reindex_interval_hours": self.settings.reindex_interval_hours,
+                "index_on_startup": self.settings.index_on_startup,
+                "max_index_pages": self.settings.max_index_pages,
+            }
+        )
+        return status
+
     def index_page(self, page: Dict[str, Any]) -> None:
         markdown = str(page.get("markdown", "") or "")
         html = str(page.get("html", "") or "")
@@ -809,6 +859,14 @@ def create_mcp() -> Tuple[Any, ProductDocsService]:
         """Refresh the local BookStack cache and optional semantic embeddings."""
         try:
             return service.reindex_docs(force=force, limit=limit)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    @mcp.tool
+    def index_status() -> Dict[str, Any]:
+        """Return local BookStack cache and embedding index status without refreshing the index."""
+        try:
+            return service.index_status()
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
