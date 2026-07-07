@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$CI,
-    [string]$OutputFile = "build\test-results\pester\testResults.xml"
+    [string]$OutputFile = ""
 )
 
 Set-StrictMode -Version Latest
@@ -17,6 +17,10 @@ try {
     $configuration.Run.Path = @(".\tests\pester")
     $configuration.Run.PassThru = $true
     $configuration.Output.Verbosity = $(if ($CI) { "Detailed" } else { "Normal" })
+
+    if ($CI -and -not $OutputFile) {
+        $OutputFile = "build\test-results\pester\testResults.xml"
+    }
 
     if ($CI -or $OutputFile) {
         $resolvedOutputFile = if ([System.IO.Path]::IsPathRooted($OutputFile)) {

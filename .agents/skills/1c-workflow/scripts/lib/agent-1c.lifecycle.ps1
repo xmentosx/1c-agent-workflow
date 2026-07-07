@@ -2041,8 +2041,7 @@ function Initialize-Project {
     if ($InitMode -eq "wizard" -or $InitMode -eq "json") {
         Prepare-InitProjectSettings
     } else {
-        Ensure-WorkflowProjectFiles
-        Read-ProjectConfig
+        Prepare-ConfiguredInitProjectSettings
     }
     Check-Tools -StopOnMissing
     Get-DevBranchInfoBaseRoot | Out-Null
@@ -2527,9 +2526,17 @@ function Show-WorkflowStatus {
     }
 }
 
-function Verify-DevBranch {
+function Invoke-DevBranchCheck {
     Update-DevBranchBase
     Run-DevBranchTests
+}
+
+function Check-DevBranch {
+    Invoke-DevBranchCheck
+}
+
+function Verify-DevBranch {
+    Invoke-DevBranchCheck
 }
 
 function Export-DevBranchResult {
@@ -2955,8 +2962,9 @@ Actions:
   update-ai-rules    Update ai_rules_1c managed rules, then reapply the ITL USER-RULES overlay.
   status              Show current ITL branch, infobase, and verification status.
   run-dev-branch-tests
-                      Run Vanessa Automation tests against the current development branch base.
-  verify-dev-branch   Update the current development branch base, then run Vanessa tests.
+                      Advanced: run Vanessa tests without updating the current development branch base.
+  check-dev-branch    Update the current development branch base, then run Vanessa tests.
+  verify-dev-branch   Alias for check-dev-branch.
   init-project        Dump source infobase config to master and install rules.
   sync-master         Refresh master from storage or from the current source infobase state.
   new-dev-branch             Create a configuration development branch, sibling worktree, and infobase copy.
@@ -3004,6 +3012,7 @@ Examples:
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action dump-dev-branch-extension
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action activate-dev-branch-context
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-dev-branch-base
+  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action check-dev-branch
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action verify-dev-branch
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action run-dev-branch-tests
   powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action refresh-dev-branch

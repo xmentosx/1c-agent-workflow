@@ -1,7 +1,9 @@
 ---
-description: Verify the current ITL branch through partial base update and Vanessa tests
+description: Compatibility alias for checking the current ITL branch
 agent: code
 ---
+
+`/itl-verify` is kept for compatibility. For new instructions, prefer `/itl-check`.
 
 Run the helper directly from the current project directory:
 

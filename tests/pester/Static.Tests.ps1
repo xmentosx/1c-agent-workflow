@@ -403,6 +403,8 @@ Describe "1C agent workflow static checks" {
                     -DevBranch "itldev/branch3" `
                     -RunStatusPath $statusPath `
                     -RunLogPath $logPath `
+                    -InstallApacheIfMissing `
+                    -InstallVanessaIfMissing `
                     -AllowUnverifiedClose *> $null
                 Get-Agent1cReexecArguments
             }
@@ -419,6 +421,8 @@ Describe "1C agent workflow static checks" {
             $args | Should -Contain $statusPath
             $args | Should -Contain "-RunLogPath"
             $args | Should -Contain $logPath
+            $args | Should -Contain "-InstallApacheIfMissing"
+            $args | Should -Contain "-InstallVanessaIfMissing"
             $args | Should -Contain "-AllowUnverifiedClose"
             $args | Should -Not -Contain "-AllowUnverifiedResult"
             $args | Should -Not -Contain "-LifecyclePhase"
@@ -542,6 +546,36 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "wires the post-change check action through helper, docs, and Kilo wrapper" {
+        $HelperText | Should -Match ([regex]::Escape('"check-dev-branch"'))
+        $HelperText | Should -Match "function Check-DevBranch"
+        $HelperText | Should -Match "function Invoke-DevBranchCheck"
+        $HelperText | Should -Match "function Verify-DevBranch"
+
+        $wrapperPath = Join-Path $RepoRoot ".kilo\commands\itl-check.md"
+        (Test-Path -LiteralPath $wrapperPath -PathType Leaf) | Should -Be $true
+        $wrapperText = Get-Content -Encoding UTF8 -Raw $wrapperPath
+        $wrapperText | Should -Match "-Action\s+check-dev-branch"
+        $wrapperText | Should -Match ([regex]::Escape('Do not run `/itl-update-base` first'))
+
+        $menuText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".kilo\commands\itl.md")
+        $menuText | Should -Match ([regex]::Escape("/itl-check"))
+        $menuText | Should -Match "Compatibility alias"
+
+        foreach ($relativePath in @(
+            "README.md",
+            "DEVELOPER-GUIDE.ru.md",
+            "DEV-BRANCH-DEVELOPMENT.ru.md",
+            ".agents\skills\1c-workflow\references\workflow.md",
+            ".agents\skills\1c-workflow\references\dev-branch-development.md",
+            ".agents\skills\1c-workflow-fast\SKILL.md",
+            "templates\USER-RULES.append.md"
+        )) {
+            $text = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot $relativePath)
+            $text | Should -Match ([regex]::Escape("/itl-check"))
+        }
+    }
+
     It "keeps the Kilo init command on the helper wizard path" {
         $wrapperPath = Join-Path $RepoRoot ".kilo\commands\itl-init-project.md"
         (Test-Path -LiteralPath $wrapperPath -PathType Leaf) | Should -Be $true
@@ -552,6 +586,25 @@ Describe "1C agent workflow static checks" {
         $text | Should -Match ([regex]::Escape(".agent-1c/runs/<run>/status.json"))
         $text | Should -Match "Do not collect the initialization questionnaire"
         $text | Should -Match "direct bootstrap-only wrapper"
+    }
+
+    It "wires configured init install flags without standalone install rerun guidance" {
+        foreach ($parameter in @('$InstallApacheIfMissing', '$InstallVanessaIfMissing')) {
+            $HelperText | Should -Match ([regex]::Escape($parameter))
+        }
+        $HelperText | Should -Match "Prepare-ConfiguredInitProjectSettings"
+        $HelperText | Should -Match "New-ConfiguredInitAnswers"
+        $HelperText | Should -Match "InstallApacheIfMissing"
+        $HelperText | Should -Match "InstallVanessaIfMissing"
+        $HelperText | Should -Match "rerun init-project with -InitMode configured -InstallApacheIfMissing"
+        $HelperText | Should -Match "rerun init-project with -InitMode configured -InstallVanessaIfMissing"
+
+        $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
+        $installText | Should -Match "Diagnostic Tool Checks"
+        $installText | Should -Match ([regex]::Escape('should not be expanded into `check-tools`, separate install actions, and a second init run'))
+        $installText | Should -Match "init-project -InitMode configured -InstallApacheIfMissing"
+        $installText | Should -Match "init-project -InitMode configured -InstallVanessaIfMissing"
+        $installText | Should -Not -Match ([regex]::Escape('rerun `detect-apache`/`check-tools`'))
     }
 
     It "documents monitored init as a foreground command, not a background direct wizard" {

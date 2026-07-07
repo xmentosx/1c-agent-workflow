@@ -10,8 +10,9 @@ Show this short ITL menu:
 /itl-new-extension-branch <name>  Create an extension development branch worktree.
 /itl-vibecoding1c-mcp            Setup, start, update, or inspect vibecoding1c MCP servers for this scope.
 /itl-status                       Show branch, infobase, and verification status.
-/itl-update-base                  Update the current branch infobase from branch files.
-/itl-verify                       Update the branch base, then run Vanessa tests.
+/itl-check                        Update the branch base, then run Vanessa tests.
+/itl-update-base                  Update the branch infobase without tests.
+/itl-verify                       Compatibility alias for /itl-check.
 /itl-refresh                      Merge fresh master into the current branch.
 /itl-result                       Export CF/CFE without closing the branch.
 /itl-close                        Export final CF/CFE and close the branch.

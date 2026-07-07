@@ -285,6 +285,10 @@ function Ensure-VanessaAutomationForInit {
         return
     }
 
+    if ($InitMode -eq "configured") {
+        throw "Vanessa Automation is required but missing. After explicit developer confirmation, rerun init-project with -InitMode configured -InstallVanessaIfMissing."
+    }
+
     throw "Vanessa Automation is required but missing. Run install-vanessa-automation after explicit confirmation or pass installVanessaIfMissing=true in init JSON."
 }
 
@@ -1441,7 +1445,7 @@ function Run-DevBranchTests {
     if ($VanessaFilterTags) {
         Write-Host "Vanessa tag filter: $VanessaFilterTags"
     }
-    Write-Host "Dev branch tests use TESTMANAGER -> TESTCLIENT and do not load configuration files. Run update-dev-branch-base before tests when files changed."
+    Write-Host "Dev branch tests use TESTMANAGER -> TESTCLIENT and do not load configuration files. Use check-dev-branch for the normal post-change update plus test cycle."
 
     $command = New-VanessaStartFeaturePlayerCommand -ParamsPath $paramsPath
     $enterpriseArgs = @("/Execute", $vanessa.epfPath, "/C$command")

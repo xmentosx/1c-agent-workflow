@@ -12,15 +12,15 @@ Available 1C workflow actions:
 2. New extension branch: create an itldev/<name> branch worktree for extension development; set the extension name later.
 3. MCP: setup, start, update, or inspect vibecoding1c MCP servers for the current project/worktree scope.
 4. Status: show current Git branch, active development branch, infobase, publication URL, verification status, MCP status, and latest result.
-5. Update base: update configuration files or extension files in the branch infobase.
-6. Verify: update the branch base, then run Vanessa Automation scenarios.
+5. Check: update the branch base, then run Vanessa Automation scenarios.
+6. Update base: update configuration files or extension files in the branch infobase without tests.
 7. Refresh: sync master from storage or the current source infobase state, merge master into the branch, and update the branch base configuration.
 8. Result: export CF for configuration branches or CFE for extension branches.
 9. Close: refresh master, merge master into the branch, export final CF/CFE result, and mark the branch closed.
 10. Switch: show/open a saved development branch worktree or switch a legacy branch.
 ```
 
-For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-vibecoding1c-mcp`, `/itl-status`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request. The direct `/itl-init-project` wrapper exists for explicit bootstrap use, but it is not part of the beginner menu after initialization. Extension helper wrappers (`/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`), the advanced `/itl-vanessa-mcp` wrapper, and the maintenance `/itl-update-rules` and `/itl-update-workflow` wrappers remain available when directly needed, but are intentionally not shown in the beginner menu.
+For Kilo Code, project slash wrappers expose the short command surface: `/itl`, `/itl-new-config-branch`, `/itl-new-extension-branch`, `/itl-vibecoding1c-mcp`, `/itl-status`, `/itl-check`, `/itl-update-base`, `/itl-verify`, `/itl-refresh`, `/itl-result`, `/itl-close`, and `/itl-switch`. These wrappers call the PowerShell helper directly and should open detailed references only after helper failure or on user request. The direct `/itl-init-project` wrapper exists for explicit bootstrap use, but it is not part of the beginner menu after initialization. Extension helper wrappers (`/itl-set-dev-branch-extension`, `/itl-dump-dev-branch-extension`), the advanced `/itl-vanessa-mcp` wrapper, and the maintenance `/itl-update-rules` and `/itl-update-workflow` wrappers remain available when directly needed, but are intentionally not shown in the beginner menu.
 
 For Codex, the detailed skill can be chosen from `/skills` or invoked as `$1c-workflow`; routine helper-first commands can use `$1c-workflow-fast`. Enabled skills also appear in the app slash list when supported by the surface.
 
@@ -47,7 +47,7 @@ All workflow state files and `.dev.env` must be UTF-8. Preserve Cyrillic usernam
 
 Current policy notes:
 
-- `verificationPolicy=warn` is the default and requires explicit unverified confirmation before result export or branch close when verification is not fresh passed. `verificationPolicy=block` forbids result export and branch close until `/itl-verify` is fresh passed.
+- `verificationPolicy=warn` is the default and requires explicit unverified confirmation before result export or branch close when verification is not fresh passed. `verificationPolicy=block` forbids result export and branch close until `/itl-check` or `/itl-verify` is fresh passed.
 - `dependencyMode=fresh` is the default and records resolved dependency revisions/hashes into `.agent-1c/dependency-lock.json`. `dependencyMode=locked` uses only pinned lock values and fails on missing pins or hash mismatch.
 - Parallel independent development lines should use separate `itldev/*` branches/worktrees. One development branch may remain long-lived and contain several sequential tasks.
 
@@ -207,9 +207,9 @@ For project initialization:
 - Directory for development branch worktrees: do not ask by default. Use a sibling `<project-folder>-worktrees/<branch>` folder. Ask only if the developer explicitly wants a custom location.
 - Directory for development branch infobase copies: do not ask by default. Use `.agent-1c/infobases/dev-branches` inside the active branch worktree and ignore `.agent-1c/infobases/` in Git. Ask only if the developer explicitly wants a custom location.
 - Apache web-client testing: ask only whether new development branch infobases should be published to Apache by default. Store the answer locally in `.dev.env` as `WEB_PUBLISH_BY_DEFAULT=true|false`, never in committed project JSON.
-- If Apache publishing is enabled, run `detect-apache` and save detected local values to `.dev.env`. Do not ask for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf` in the ordinary initialization flow. If Apache is not detected, ask whether to install it automatically. On "yes", run `install-apache`, then rerun `detect-apache`/`check-tools`; on "no", offer only to disable publication or stop initialization until Apache is configured manually.
+- If Apache publishing is enabled, detect Apache and save detected local values to `.dev.env`. Do not ask for `webinst.exe`, Apache kind, publication root, URL base, or `httpd.conf` in the ordinary initialization flow. If Apache is not detected, ask whether to install it automatically. In wizard mode the helper installs inside the same init run after confirmation; in configured mode rerun `init-project -InitMode configured -InstallApacheIfMissing` after explicit confirmation; in JSON mode use `installApacheIfMissing=true`.
 - Dependency mode: ask whether initialization should use fresh dependencies or locked dependencies. Default to fresh and store `DEPENDENCY_MODE=fresh`. If locked is chosen, use `.agent-1c/dependency-lock.json` and stop when a required pin or hash is absent.
-- Ensure Vanessa Automation is installed for executable branch tests. If no EPF is found, ask whether to install it automatically. On "yes", run `install-vanessa-automation`; on "no", stop initialization with the manual command.
+- Ensure Vanessa Automation is installed for executable branch tests. If no EPF is found, ask whether to install it automatically. In wizard mode the helper installs inside the same init run after confirmation; in configured mode rerun `init-project -InitMode configured -InstallVanessaIfMissing` after explicit confirmation; in JSON mode use `installVanessaIfMissing=true`.
 - Do not ask whether the project is for Codex or Kilo Code. Configure the current agent surface; when it cannot be detected, use Codex as the fallback.
 
 For creating a development branch:
@@ -264,7 +264,7 @@ Goal: verify the local machine is ready and provide install suggestions without 
    - For 1C platform, list discovered versions from standard `1cv8` folders when `PLATFORM_PATH` is missing or invalid.
 3. If web publication is enabled/requested through `WEB_PUBLISH_BY_DEFAULT=true`, `project.web.publishByDefault=true`, or `-PublishToApache`, check Apache/webinst settings too. Apache detection uses `APACHE_HTTPD_CONF_PATH`, Windows services, `httpd.exe` in `PATH`, and standard folders such as `C:\Apache24`.
 4. Report `[OK]` and `[MISSING]` lines.
-5. If required software is missing during `INIT_PROJECT`, stop after showing suggested install/setup commands. When the missing component is Apache/httpd and publication is enabled, the preferred suggestion is `install-apache` after explicit developer confirmation.
+5. In normal initialization, `INIT_PROJECT` owns required tool preparation. `check-tools` is for diagnostics; do not turn it into a separate install-and-rerun lifecycle.
 
 ## INSTALL_VANESSA_AUTOMATION
 
@@ -326,7 +326,7 @@ Goal: install a local Apache/httpd for 1C web publication when the developer ena
 7. Configure `conf\httpd.conf`: set `SRVROOT`, choose port 80 when free, otherwise the first free port from 8080..8090, and set `ServerName localhost:<port>`.
 8. Register and start the `Apache24` service. If administrator privileges are required, the helper should launch an elevated PowerShell process or print the exact command to run as Administrator.
 9. Rerun Apache detection, save `WEB_PUBLISH_BY_DEFAULT`, `WEBINST_PATH`, `APACHE_KIND`, `APACHE_HTTPD_CONF_PATH`, `WEB_PUBLICATION_ROOT`, and `WEB_PUBLICATION_URL_BASE` to `.dev.env` when available.
-10. Resume the interrupted init/check-tools flow.
+10. For normal initialization, prefer rerunning `init-project` with the explicit install flag instead of running this action as a separate lifecycle step.
 
 ## INIT_PROJECT
 
@@ -336,13 +336,13 @@ Goal: create the baseline project state.
 2. The monitored launcher opens the wizard in an external PowerShell window, writes `.agent-1c/runs/<run>/status.json` and `console.log`, and lets the agent detect completion without asking the developer to close the wizard manually. Run the monitored command in the foreground and wait for it to exit; do not wrap it in a background PowerShell launch, do not keep the launched PowerShell session open after the helper exits, and do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly as the default agent path. Do not run a separate `Test-Path` preflight before this command because the launcher validates the helper path itself; a raw PowerShell probe can return `CLIXML` progress records that are not meaningful command output. If the agent shell tool exposes a timeout, use a positive long timeout such as `1800000` ms for the interactive wizard and never set `timeout: 0`. Use `-KeepWindowOnFailure` only for manual debugging when the developer explicitly wants the external PowerShell window to stay open after a failure. The wizard shows the current working directory as project root and confirms the developer wants to initialize there.
 3. The wizard collects missing parameters. Do not ask for `devBranchInfoBaseRoot` during normal initialization; use `.agent-1c/infobases/dev-branches`.
    - For the platform path, first offer discovered installed 1C versions; do not make the developer type `C:\Program Files\1cv8\...\bin\1cv8.exe` when it can be selected.
-   - Ask whether development branch infobases should be published to Apache for web-client testing. If no, write `WEB_PUBLISH_BY_DEFAULT=false` and do not ask Apache paths. If yes, write `WEB_PUBLISH_BY_DEFAULT=true`, run `detect-apache`, and save detected local Apache settings to `.dev.env`. If Apache is not detected, ask whether to run `install-apache`; after success, rerun `detect-apache`/`check-tools`.
+   - Ask whether development branch infobases should be published to Apache for web-client testing. If no, write `WEB_PUBLISH_BY_DEFAULT=false` and do not ask Apache paths. If yes, write `WEB_PUBLISH_BY_DEFAULT=true`, detect Apache, and save detected local Apache settings to `.dev.env`. If Apache is not detected, ask whether to install it automatically; after confirmation the helper installs it inside the same init run.
    - Ask whether to use fresh dependency versions or locked versions. Default to fresh. Write `DEPENDENCY_MODE=fresh|locked`; locked mode requires a populated `.agent-1c/dependency-lock.json`.
-   - Check Vanessa Automation. If missing, ask whether to install it automatically and run `install-vanessa-automation` after confirmation.
+   - Check Vanessa Automation. If missing, ask whether to install it automatically; after confirmation the helper installs it inside the same init run.
 4. If the wizard fails because terminal input is unavailable, do not collect the questionnaire in chat and do not continue the lifecycle manually. Use the monitored wizard command, or use JSON mode only when the developer explicitly requested non-interactive initialization or an answers file already exists.
 5. For non-interactive automation, pass `-InitMode json -InitAnswersPath <answers.json>` with the same values the wizard would collect. If required fields are missing, stop before launching 1C.
 6. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, `.agent-1c/dependency-lock.json`, and `.dev.env` if missing. Write them as UTF-8.
-7. Run `CHECK_TOOLS`; stop on missing required tools after showing suggestions.
+7. Run `CHECK_TOOLS` as a final readiness gate after helper-owned tool preparation.
 8. Initialize local Git if needed.
 9. Checkout or create `master`.
 10. If `sourceUsesRepository=true`, update the source infobase from 1C configuration repository storage. If `false`, skip repository update and use the source infobase exactly as it is.
@@ -486,9 +486,9 @@ Goal: run executable Vanessa Automation checks against the current development b
 16. Also check the branch-local file infobase event log from `devBranchInfoBasePath\1Cv8Log` after Vanessa exits. Directly read 8.3.22+ sequential `.lgf/.lgp`; if that reader cannot parse a valid sequential log, use the bundled external data processor fallback that calls `ВыгрузитьЖурналРегистрации`, honors requested event levels, and writes diagnostic JSON with `errorMessage`/`errorDetails` on failure. Do not use COM objects or `ibcmd.exe`.
 17. Verification passes only when 1C exits successfully, JUnit has executed tests with no failures/errors, and no fresh non-baseline `Error` signatures appeared during the test window. Apply `VANESSA_TEST_TIMEOUT_SECONDS` or default 1800 seconds; on timeout, stop only this branch's own `TESTMANAGER`/`TESTCLIENT`.
 
-## VERIFY_DEV_BRANCH
+## CHECK_DEV_BRANCH / VERIFY_DEV_BRANCH
 
-Goal: perform the standard ITL verification cycle without a full configuration load.
+Goal: perform the standard ITL post-change check without a full configuration load. `VERIFY_DEV_BRANCH` is a compatibility alias for `CHECK_DEV_BRANCH`.
 
 1. Run `UPDATE_DEV_BRANCH_BASE`.
 2. Run `RUN_DEV_BRANCH_TESTS` through the packet `StartFeaturePlayer` command in `TESTMANAGER -> TESTCLIENT` mode, not MCP and not headless EPF.
@@ -612,4 +612,4 @@ Stop immediately when:
 
 - "Ошибка блокировки информационной базы для конфигурирования" during initialization means another Designer process still holds the infobase lock. This can be a manually opened Configurator or a previous `1cv8.exe` process that has not exited yet. Close the manual Configurator; the workflow helper must wait between its own consecutive Designer launches.
 - `1cv8.exe` exits with code 1 or appears to hang with `-WindowStyle Hidden` after a PowerShell launch can mean `Start-Process -ArgumentList` received a PowerShell array. Native Windows executables parse one command-line string; without native quoting, a path such as `C:\My Path\base` is split at the space and 1C Designer receives the wrong arguments. Use `Join-NativeCommandLineArguments` or the `&` call operator.
-- If `/itl-result` or `/itl-close` stops because verification is missing, failed, stale, or unknown, run `/itl-verify`. With `verificationPolicy=warn`, an explicit unverified override is allowed when the risk is acceptable; with `verificationPolicy=block`, it is not.
+- If `/itl-result` or `/itl-close` stops because verification is missing, failed, stale, or unknown, run `/itl-check` or `/itl-verify`. With `verificationPolicy=warn`, an explicit unverified override is allowed when the risk is acceptable; with `verificationPolicy=block`, it is not.

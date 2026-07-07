@@ -5,15 +5,15 @@ description: Initialize and operate 1C configuration or extension development pr
 
 # 1C Workflow
 
-This skill is the detailed ITL workflow router. For routine commands in an installed project, prefer `.agents/skills/1c-workflow-fast/SKILL.md` or short Kilo `/itl-*` wrappers. Open details only after helper failure or on request.
+This is the detailed ITL workflow router. For installed projects, prefer `.agents/skills/1c-workflow-fast/SKILL.md` or Kilo `/itl-*` wrappers. Open details only after helper failure or request.
 
 ## Routing
 
-Use `scripts/agent-1c.ps1` whenever PowerShell is available. It owns Git, 1C Designer, worktrees, infobase copies, Apache, Vanessa, result manifests, and local state.
+Use `scripts/agent-1c.ps1` whenever PowerShell is available. It owns Git, 1C Designer, worktrees, infobase copies, Apache, Vanessa, manifests, and local state.
 
-Open `references/workflow.md` for initialization, first-time setup, recovery, lifecycle semantics, or unclear helper output. Open `references/advanced-actions.md` only for diagnostics, automation, extension helpers, or Vanessa MCP. For work inside `itldev/*`, open `references/dev-branch-development.md`.
+Open `references/workflow.md` for initialization, setup, recovery, lifecycle semantics, or unclear helper output. Open `references/advanced-actions.md` only for diagnostics, automation, extension helpers, or Vanessa MCP. For work inside `itldev/*`, open `references/dev-branch-development.md`.
 
-Do not use root `DEVELOPER-GUIDE.ru.md` or `DEV-BRANCH-DEVELOPMENT.ru.md` as mandatory references. They are human-facing; read them only on request or for explanations.
+Do not use root `DEVELOPER-GUIDE.ru.md` or `DEV-BRANCH-DEVELOPMENT.ru.md` as mandatory references. They are human-facing; read only on request or for explanations.
 
 Intent mapping:
 
@@ -24,7 +24,7 @@ Intent mapping:
 - Workflow refresh: `update-workflow`.
 - Rule refresh: `update-ai-rules`.
 - New work: `new-dev-branch` for configuration branches, `new-extension-dev-branch` for extension branches.
-- Branch lifecycle: `status`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`, `close-dev-branch`.
+- Branch lifecycle: `status`, `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`, `close-dev-branch`.
 - Extension helpers: `set-dev-branch-extension`, `dump-dev-branch-extension`.
 - Switching/listing: `switch-master`, `switch-dev-branch`, `list-dev-branches`.
 - Vanessa MCP authoring/debugging: `install-vanessa-mcp`, `start-vanessa-mcp`, `vanessa-mcp-status`, `stop-vanessa-mcp`.
@@ -39,9 +39,9 @@ Initialization must start with the monitored launcher and must run in the foregr
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard
 ```
 
-Do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly by default. Do not run separate `Test-Path` preflight, background PowerShell, `timeout: 0`; do not collect the questionnaire in chat when terminal input is unavailable; do not continue the lifecycle manually. The launcher owns CLIXML status and a positive long timeout. Use `-KeepWindowOnFailure` only for manual debugging. Use JSON mode only when requested or when an answers file exists.
+Do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly by default. Do not run separate `Test-Path` preflight, background PowerShell, or `timeout: 0`; do not collect the questionnaire in chat when terminal input is unavailable; do not continue the lifecycle manually. The launcher owns CLIXML status and positive long timeout. Use `-KeepWindowOnFailure` only for manual debugging. Use JSON mode only when requested or when an answers file exists.
 
-Ask setup questions only when the helper cannot collect them itself; ask one raw value at a time unless the agent surface provides structured fields. Store secrets only in `.dev.env` or environment variables. Keep detailed ITL overlay rules in `USER-RULES.md`; do not append to upstream-managed `AGENTS.md` when it already points there.
+Ask setup questions only when the helper cannot collect them; ask one raw value at a time unless the agent surface provides structured fields. Store secrets only in `.dev.env` or environment variables. Keep ITL overlay rules in `USER-RULES.md`; do not append to upstream-managed `AGENTS.md` when it already points there.
 
 Dependency mode defaults to `fresh` and records pins/hashes in `.agent-1c/dependency-lock.json`. Use `locked` only for reproducible pins; missing lock values stop initialization.
 
@@ -51,9 +51,9 @@ Use sibling Git worktrees for new development branches by default and leave the 
 
 Development branch changes must load only into the copied development branch infobase, never directly into the source infobase. Stop on unexpected dirty Git state before worktree creation, legacy switching, copying bases, dumping config files, or running 1C Designer.
 
-Use `/itl-verify` or `verify-dev-branch` for the executable gate. It updates the branch base, runs Vanessa Automation through `TESTMANAGER -> TESTCLIENT` with packet `StartFeaturePlayer`, reads JUnit, and checks the branch-local event log baseline. Do not replace final verification with MCP, headless EPF, or `/deploy-and-test`.
+Use `/itl-check` or `check-dev-branch` for the normal post-change executable gate; `/itl-verify` and `verify-dev-branch` remain compatibility aliases. The helper updates the branch base, runs Vanessa Automation through `TESTMANAGER -> TESTCLIENT` with packet `StartFeaturePlayer`, reads JUnit, and checks the branch-local event log baseline. Do not replace final verification with MCP, headless EPF, or `/deploy-and-test`.
 
-`/itl-result` and `/itl-close` obey `verificationPolicy`: default `warn` requires explicit unverified override unless verification is fresh passed; `block` requires `/itl-verify`.
+`/itl-result` and `/itl-close` obey `verificationPolicy`: default `warn` requires explicit unverified override unless verification is fresh passed; `block` requires `/itl-check` or `/itl-verify`.
 
 vibecoding1c MCP is exposed through `/itl-vibecoding1c-mcp`; setup selects when saved selection is missing/incomplete; `-Force` reselects. Remote is default. Every remote server needs per-server `hostId` when multiple usable hosts are published; remote `code`/`graph` need per-server `configId`. Developers may override each server to local; local `code`/`graph` needs scope. Vanessa MCP is separate branch-local tooling exposed through `/itl-vanessa-mcp`. External MCP is not managed. Helper may write ignored `.codex/config.toml`, `.kilo/kilo.json`, `.agent-1c/mcp/*`, and `%LOCALAPPDATA%\ITL\MCP\vibecoding1c` state. Do not paste keys into chat or tracked files.
 

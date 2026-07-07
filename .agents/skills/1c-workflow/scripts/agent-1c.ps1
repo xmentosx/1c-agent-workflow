@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "install-vanessa-automation", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "run-dev-branch-tests", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
+    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-apache", "install-apache", "install-vanessa-automation", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "run-dev-branch-tests", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -34,6 +34,8 @@ param(
     [switch]$PublishToApache,
     [switch]$Force,
     [switch]$SkipAiRules,
+    [switch]$InstallApacheIfMissing,
+    [switch]$InstallVanessaIfMissing,
     [switch]$AllowUnverifiedResult,
     [switch]$AllowUnverifiedClose,
     [switch]$UseCurrentWorktree,
@@ -110,6 +112,8 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "PublishToApache" -Value $PublishToApache
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Force" -Value $Force
     Add-Agent1cReexecArgument -Arguments $arguments -Name "SkipAiRules" -Value $SkipAiRules
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "InstallApacheIfMissing" -Value $InstallApacheIfMissing
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "InstallVanessaIfMissing" -Value $InstallVanessaIfMissing
     Add-Agent1cReexecArgument -Arguments $arguments -Name "AllowUnverifiedResult" -Value $AllowUnverifiedResult
     Add-Agent1cReexecArgument -Arguments $arguments -Name "AllowUnverifiedClose" -Value $AllowUnverifiedClose
     Add-Agent1cReexecArgument -Arguments $arguments -Name "UseCurrentWorktree" -Value $UseCurrentWorktree
@@ -185,6 +189,7 @@ try {
         "update-ai-rules" { Update-AiRules1c }
         "status" { Show-WorkflowStatus }
         "run-dev-branch-tests" { Run-DevBranchTests }
+        "check-dev-branch" { Check-DevBranch }
         "verify-dev-branch" { Verify-DevBranch }
         "init-project" { Initialize-Project }
         "sync-master" { Sync-Master }

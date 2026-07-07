@@ -2481,7 +2481,19 @@ function Ensure-ApacheForInit {
         return
     }
 
-    throw "Apache publication is enabled but Apache is not ready. Run install-apache after explicit confirmation or set WEB_PUBLISH_BY_DEFAULT=false."
+    if ($InitMode -eq "configured") {
+        throw "Apache publication is enabled but Apache is not ready. After explicit developer confirmation, rerun init-project with -InitMode configured -InstallApacheIfMissing, or set WEB_PUBLISH_BY_DEFAULT=false."
+    }
+
+    throw "Apache publication is enabled but Apache is not ready. Pass installApacheIfMissing=true in init JSON after explicit confirmation, or set WEB_PUBLISH_BY_DEFAULT=false."
+}
+
+function New-ConfiguredInitAnswers {
+    return [pscustomobject]@{
+        webPublishByDefault = (Get-WebPublishByDefault)
+        installApacheIfMissing = [bool]$InstallApacheIfMissing
+        installVanessaIfMissing = [bool]$InstallVanessaIfMissing
+    }
 }
 
 function Prepare-InitProjectSettings {
@@ -2499,6 +2511,16 @@ function Prepare-InitProjectSettings {
     $answers = Normalize-InitAnswers -Answers $rawAnswers
     Assert-InitAnswers -Answers $answers
     Save-InitAnswers -Answers $answers
+    Ensure-ApacheForInit -Answers $answers
+    Ensure-VanessaAutomationForInit -Answers $answers
+    Read-ProjectConfig
+}
+
+function Prepare-ConfiguredInitProjectSettings {
+    Ensure-WorkflowProjectFiles
+    Read-ProjectConfig
+
+    $answers = New-ConfiguredInitAnswers
     Ensure-ApacheForInit -Answers $answers
     Ensure-VanessaAutomationForInit -Answers $answers
     Read-ProjectConfig

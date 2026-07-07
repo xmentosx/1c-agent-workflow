@@ -42,6 +42,7 @@ dump-dev-branch-extension
 activate-dev-branch-context
 update-dev-branch-base
 run-dev-branch-tests
+check-dev-branch
 verify-dev-branch
 refresh-dev-branch
 export-dev-branch-result
