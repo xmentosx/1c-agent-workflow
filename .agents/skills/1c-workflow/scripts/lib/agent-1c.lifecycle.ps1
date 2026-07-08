@@ -215,6 +215,49 @@ $stderr
     return @($text -split ([string][char]0) | Where-Object { $_ })
 }
 
+function Test-GitPathHasChangesSince {
+    param(
+        [string]$BaseCommit,
+        [string[]]$PathSpec
+    )
+
+    $paths = @($PathSpec | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    if ($paths.Count -eq 0 -or -not (Test-GitCommitExists $BaseCommit)) {
+        return $false
+    }
+
+    $tracked = @(Get-GitPathList -Arguments (@("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", $BaseCommit, "--") + $paths))
+    $untracked = @(Get-GitPathList -Arguments (@("ls-files", "-z", "--others", "--exclude-standard", "--") + $paths))
+    return (($tracked.Count + $untracked.Count) -gt 0)
+}
+
+function Test-DevBranchHasCheckableChanges {
+    param([object]$State)
+
+    try {
+        $configChangeSet = Get-ConfigLoadChangeSet -State $State -ExportPath (Get-ExportPath) -ContentKind "configuration"
+        if (@($configChangeSet.files).Count -gt 0) {
+            return $true
+        }
+    } catch {
+    }
+
+    if ((Get-DevBranchKind -State $State) -eq "extension") {
+        try {
+            $extensionExportPath = Get-DevBranchExtensionExportPath -State $State
+            $extensionChangeSet = Get-ConfigLoadChangeSet -State $State -ExportPath $extensionExportPath -ContentKind "extension"
+            if (@($extensionChangeSet.files).Count -gt 0) {
+                return $true
+            }
+        } catch {
+        }
+    }
+
+    $featuresPath = [string](Get-ConfigValue -Path "vanessaAutomation.featuresPath" -Default (Get-ConfigValue -Path "testsPath" -Default "tests/features"))
+    $baseCommit = Get-DevBranchLoadBaseCommit -State $State -ContentKind "configuration"
+    return (Test-GitPathHasChangesSince -BaseCommit $baseCommit -PathSpec @($featuresPath))
+}
+
 function Test-WorkflowHelperChangedSince {
     param([string]$BeforeCommit)
 
@@ -264,6 +307,16 @@ function Restart-Agent1cAfterDevBranchMerge {
 
     Write-Host "Development branch merge completed for $Operation. Restarting helper in a fresh PowerShell process before loading config files."
     Invoke-Agent1cFreshProcess -AdditionalArguments @("-LifecyclePhase", "post-merge")
+}
+
+function Write-ItlAdditionalHelperActions {
+    Write-Host ""
+    Write-Host "Additional helper actions:"
+    Write-Host "  vibecoding1c MCP: ask for setup, status, select, refresh-registry, or update."
+    Write-Host "  Vanessa MCP: ask for branch-local install, start, status, or stop for authoring/debugging."
+    Write-Host "  Extension branches: ask to set extension name or dump extension files."
+    Write-Host "  Maintenance/recovery: ask to update base without tests, update workflow/rules, close/list/switch branches."
+    Write-Host "  Full helper action catalog: .agents/skills/1c-workflow/references/advanced-actions.md."
 }
 
 function Get-ConfigLoadChangeSet {
@@ -3343,29 +3396,15 @@ function Show-Help {
             $state = Read-DevBranchState -Name ""
         } catch {
             Write-Host "Development branch state: missing"
-            Write-Host "Next step: run /itl-status, then open the worktree recorded for this branch if it exists."
+            Write-Host ""
+            Write-Host "Recommended next step: run /itl-status, then open the worktree recorded for this branch if it exists."
         }
-
-        Write-Host ""
-        Write-Host "Lifecycle:"
-        Write-Host "  work -> /itl-check -> /itl-refresh when needed -> /itl-result"
-        Write-Host ""
-        Write-Host "Visible slash commands in this folder:"
-        Write-Host "  /itl"
-        Write-Host "  /itl-status"
-        Write-Host "  /itl-check"
-        Write-Host "  /itl-refresh"
-        Write-Host "  /itl-result"
-        Write-Host ""
-        Write-Host "OpenSpec:"
-        Write-Host "  /opsx-propose  Start the normal OpenSpec flow: proposal, design/tasks/test-plan/spec deltas; no code changes."
-        Write-Host "  /opsx-apply    Implement an approved OpenSpec change from tasks.md."
-        Write-Host "  /opsx-archive  Archive an accepted OpenSpec change."
-        Write-Host "  /opsx-explore  Optional: explore code or task boundaries before proposal when context is unclear."
 
         if ($state) {
             $verification = Get-VerificationState -State $state
             $kind = Get-DevBranchKind -State $state
+            $hasCheckableChanges = Test-DevBranchHasCheckableChanges -State $state
+
             Write-Host ""
             Write-Host "Branch:"
             Write-Host "  Name: $(Get-StateValue -State $state -Name 'devBranchName' -Default (Get-StateValue -State $state -Name 'safeDevBranchName' -Default '<unknown>'))"
@@ -3383,20 +3422,41 @@ function Show-Help {
             Write-Host "Verification:"
             Write-Host "  Status: $($verification.effectiveStatus)"
             Write-Host "  Fresh passed: $($verification.isFreshPassed)"
+            Write-Host "  Checkable changes: $hasCheckableChanges"
             if ($verification.reportPath) {
                 Write-Host "  Report: $($verification.reportPath)"
             }
             Write-Host "  Last result: $(Get-StateValue -State $state -Name 'lastResultPath' -Default '<none>')"
             Write-Host "  Final result: $(Get-StateValue -State $state -Name 'finalResultPath' -Default '<none>')"
             Write-Host ""
-            if (-not $verification.isFreshPassed) {
+            if ($hasCheckableChanges -or (@("failed", "stale", "unknown") -contains $verification.effectiveStatus)) {
                 Write-Host "Recommended next step: /itl-check"
+            } elseif (-not $verification.isFreshPassed) {
+                Write-Host "Recommended next step: choose development mode: quick-fix, /opsx-explore, or /opsx-propose"
             } elseif (-not (Get-StateValue -State $state -Name "lastResultPath" -Default "")) {
                 Write-Host "Recommended next step: /itl-result"
             } else {
                 Write-Host "Recommended next step: continue work and rerun /itl-check, or use /itl-result again when the artifact is ready."
             }
         }
+
+        Write-Host ""
+        Write-Host "Lifecycle:"
+        Write-Host "  optional /opsx-explore -> quick-fix or /opsx-propose -> /opsx-apply/work -> /itl-check -> /itl-result"
+        Write-Host "  use /itl-refresh when master changes must be merged into this branch."
+        Write-Host ""
+        Write-Host "Visible slash commands in this folder:"
+        Write-Host "  /itl"
+        Write-Host "  /itl-status"
+        Write-Host "  /itl-check"
+        Write-Host "  /itl-refresh"
+        Write-Host "  /itl-result"
+        Write-Host ""
+        Write-Host "OpenSpec:"
+        Write-Host "  /opsx-propose  Start the normal OpenSpec flow: proposal, design/tasks/test-plan/spec deltas; no code changes."
+        Write-Host "  /opsx-apply    Implement an approved OpenSpec change from tasks.md."
+        Write-Host "  /opsx-archive  Archive an accepted OpenSpec change."
+        Write-Host "  /opsx-explore  Optional: explore code or task boundaries before proposal when context is unclear."
     } else {
         Write-Host ""
         Write-Host "Lifecycle:"
@@ -3409,8 +3469,5 @@ function Show-Help {
         Write-Host "Next step: run /itl-status to inspect this folder, then open the correct worktree."
     }
 
-    Write-Host ""
-    Write-Host "Rare actions:"
-    Write-Host "  Ask the agent in natural language for vibecoding1c MCP setup/status, branch-local Vanessa MCP, extension setup/dump, marking a branch closed, or rule updates."
-    Write-Host "  The full helper action catalog is documented in .agents/skills/1c-workflow/references/advanced-actions.md."
+    Write-ItlAdditionalHelperActions
 }

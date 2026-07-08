@@ -338,7 +338,9 @@ In an `itldev/*` development worktree, show only:
 
 New branch commands create a sibling Git worktree by default and leave the current project folder on `master`. After creation, report the printed worktree path and tell the developer to open a separate Codex/Kilo/IDE window there. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
 
-Advanced/helper actions such as extension setup/dump, project initialization, workflow/rules update, vibecoding1c MCP, and Vanessa MCP remain available through natural-language requests or direct PowerShell helper actions, but they are intentionally not generated as visible Kilo slash commands.
+`/itl` must present the lifecycle as a process panel, not as a flat command list: current state, recommended next step, lifecycle path, visible slash commands, then grouped additional helper actions. In a fresh clean `itldev/*` branch with `verification missing`, recommend choosing a development mode (`quick-fix`, `/opsx-explore`, or `/opsx-propose`), not `/itl-check`. Recommend `/itl-check` after checkable configuration/extension/Vanessa feature changes or stale/failed/unknown verification.
+
+Advanced/helper actions such as extension setup/dump, project initialization, workflow/rules update, vibecoding1c MCP, and Vanessa MCP remain available through natural-language requests or direct PowerShell helper actions, and `/itl` may show them as grouped additional capabilities, but they are intentionally not generated as visible Kilo slash commands.
 
 Typing `/` shows available project commands.
 

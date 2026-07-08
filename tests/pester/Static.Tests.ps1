@@ -593,7 +593,7 @@ Describe "1C agent workflow static checks" {
     It "shows existing OpenSpec commands only in the dev ITL lifecycle panel" {
         $masterStart = $HelperText.IndexOf('if ($surface -eq "master")')
         $devStart = $HelperText.IndexOf('} elseif ($surface -eq "dev")', $masterStart)
-        $unknownStart = $HelperText.IndexOf('} else {', $devStart)
+        $unknownStart = $HelperText.IndexOf('Write-Host "  Open the master worktree to create branches', $devStart)
         $masterStart | Should -BeGreaterThan -1
         $devStart | Should -BeGreaterThan $masterStart
         $unknownStart | Should -BeGreaterThan $devStart
@@ -608,6 +608,115 @@ Describe "1C agent workflow static checks" {
         $devBlock | Should -Match "OpenSpec"
         $devBlock | Should -Match "Optional"
         $devBlock | Should -Match "proposal"
+        $devBlock | Should -Match "choose development mode"
+        $devBlock | Should -Match "Checkable changes"
+    }
+
+    It "keeps additional helper actions grouped without adding visible slash commands" {
+        $HelperText | Should -Match "Additional helper actions:"
+        foreach ($group in @("vibecoding1c MCP", "Vanessa MCP", "Extension branches", "Maintenance/recovery")) {
+            $HelperText | Should -Match ([regex]::Escape($group))
+        }
+
+        foreach ($hiddenCommand in @("/itl-vibecoding1c-mcp", "/itl-vanessa-mcp", "/itl-set-extension", "/itl-close")) {
+            $HelperText | Should -Not -Match ([regex]::Escape($hiddenCommand))
+        }
+    }
+
+    It "keeps the common /itl wrapper as a structured helper panel" {
+        $wrapperPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md"
+        $wrapperText = Get-Content -Encoding UTF8 -Raw $wrapperPath
+
+        $wrapperText | Should -Match "-Action\s+help"
+        $wrapperText | Should -Match "keep its structure"
+        $wrapperText | Should -Match "Do not flatten"
+        $wrapperText | Should -Not -Match "Lifecycle-действия не выполнялись"
+    }
+
+    It "recommends choosing development mode for a fresh clean dev branch" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-help-clean-dev-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Value "<Configuration />" -Encoding UTF8
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add src/cf/Configuration.xml
+            & git -C $tempRoot commit -m "base config" *> $null
+            & git -C $tempRoot branch -M master
+            $baseCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+            & git -C $tempRoot checkout -q -b itldev/branch3
+
+            $stateDir = Join-Path $tempRoot ".agent-1c\dev-branches"
+            New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+            $state = [ordered]@{
+                devBranchName = "branch3"
+                safeDevBranchName = "branch3"
+                devBranchKind = "configuration"
+                devBranch = "itldev/branch3"
+                devBranchInfoBasePath = (Join-Path $tempRoot ".agent-1c\infobases\dev-branches\branch3")
+                mainWorktreePath = $tempRoot
+                worktreePath = $tempRoot
+                createdFromCommit = $baseCommit
+            }
+            Set-Content -LiteralPath (Join-Path $stateDir "branch3.json") -Encoding UTF8 -Value (($state | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action help 2>&1
+            $LASTEXITCODE | Should -Be 0
+            $text = ($output | Out-String)
+
+            $text | Should -Match "Checkable changes: False"
+            $text | Should -Match "Recommended next step: choose development mode: quick-fix, /opsx-explore, or /opsx-propose"
+            $text | Should -Not -Match "Recommended next step: /itl-check"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "recommends /itl-check when a dev branch has checkable changes" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-help-changed-dev-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Value "<Configuration />" -Encoding UTF8
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add src/cf/Configuration.xml
+            & git -C $tempRoot commit -m "base config" *> $null
+            & git -C $tempRoot branch -M master
+            $baseCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+            & git -C $tempRoot checkout -q -b itldev/branch3
+
+            $stateDir = Join-Path $tempRoot ".agent-1c\dev-branches"
+            New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+            $state = [ordered]@{
+                devBranchName = "branch3"
+                safeDevBranchName = "branch3"
+                devBranchKind = "configuration"
+                devBranch = "itldev/branch3"
+                devBranchInfoBasePath = (Join-Path $tempRoot ".agent-1c\infobases\dev-branches\branch3")
+                mainWorktreePath = $tempRoot
+                worktreePath = $tempRoot
+                createdFromCommit = $baseCommit
+            }
+            Set-Content -LiteralPath (Join-Path $stateDir "branch3.json") -Encoding UTF8 -Value (($state | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Value "<Configuration changed=`"true`" />" -Encoding UTF8
+
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action help 2>&1
+            $LASTEXITCODE | Should -Be 0
+            $text = ($output | Out-String)
+
+            $text | Should -Match "Checkable changes: True"
+            $text | Should -Match "Recommended next step: /itl-check"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     It "wires the post-change check action through helper, docs, and Kilo wrapper" {
