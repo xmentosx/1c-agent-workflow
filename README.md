@@ -51,6 +51,7 @@ VANESSA-TESTS-GUIDE.md
 - `.agents/skills/1c-workflow/kilo-command-templates` - шаблоны коротких slash-команд Kilo Code.
 - `.kilo/commands/itl*.md` - локально сгенерированная командная поверхность для текущей папки/worktree; игнорируется Git.
 - `AGENT-INSTALL.md` - bootstrap-инструкция для агента.
+- `install-agent-1c-workflow.ps1` - one-step bootstrap script: копирует managed workflow-файлы в целевой проект и запускает monitored init wizard.
 - `VANESSA-TESTS-GUIDE.md` - compact agent rules for writing Russian Vanessa feature checks for the current change.
 - `templates/project.json` - шаблон настроек проекта без секретов.
 - `templates/dependency-lock.json` - фиксируемые версии, URL и SHA256 для воспроизводимого bootstrap.
@@ -67,7 +68,13 @@ VANESSA-TESTS-GUIDE.md
 Инициализируй 1С-проект по файлу https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTALL.md
 ```
 
-Текущая папка агента считается папкой проекта. Основной путь инициализации - PowerShell script wizard: он показывает абсолютный путь, спрашивает подтверждение, собирает параметры и запускает весь lifecycle.
+Текущая папка агента считается папкой проекта. Основной путь инициализации - one-step PowerShell bootstrap:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File <source>\install-agent-1c-workflow.ps1 -ProjectRoot <project>
+```
+
+Bootstrap копирует только managed workflow-файлы и затем запускает monitored script wizard. Wizard показывает абсолютный путь, спрашивает подтверждение, собирает параметры, устанавливает нужные зависимости workflow и запускает весь lifecycle. Ручное копирование файлов остается recovery-сценарием, а не обычным init flow.
 
 При инициализации script wizard:
 

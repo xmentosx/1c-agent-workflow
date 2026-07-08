@@ -1,6 +1,6 @@
 # 1C Agent Workflow Reference Index
 
-This file is the lightweight routing index for the 1C lifecycle skill. Keep it small. Open the topic references below only when the helper output, failure, or user request needs those details.
+Lightweight lifecycle routing index. Open topic references only when helper output, failure, or user request needs those details.
 
 ## User-Facing Menu
 
@@ -45,15 +45,23 @@ Use `scripts/agent-1c.ps1` whenever PowerShell is available; it owns Git, 1C, wo
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action <action>
 ```
 
-Long lifecycle actions may run 1C Designer/Enterprise. If the shell tool supports `timeout_ms`, use `timeout_ms >= 1800000`; do not use `120000 ms`. `status` and `help` do not need the long timeout.
+Long lifecycle actions may run 1C Designer/Enterprise. Use `timeout_ms >= 1800000`; `status` and `help` can stay short.
 
-Initialization must start with the monitored foreground launcher:
+Fresh target bootstrap:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File <source>\install-agent-1c-workflow.ps1 -ProjectRoot <project>
+```
+
+Copies managed files, then starts the monitored foreground launcher; do not expand into manual copy steps.
+
+Installed project launcher:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard
 ```
 
-Do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly by default. Do not run a separate `Test-Path` preflight, use a background PowerShell launch, or set `timeout: 0`; raw probes may emit CLIXML progress records. Do not collect the initialization questionnaire in chat when terminal input is unavailable and do not continue the lifecycle manually. The launcher validates the helper path, owns status/log files under `.agent-1c/runs/<run>/status.json`, needs a positive long timeout, and supports `-KeepWindowOnFailure` only for explicit manual debugging.
+Do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly by default, run `Test-Path` preflight, use background PowerShell, or set `timeout: 0`; raw probes may emit CLIXML. Do not collect the questionnaire in chat when terminal input is unavailable and do not continue the lifecycle manually. The launcher owns `.agent-1c/runs/<run>/status.json`, needs a positive long timeout, and supports `-KeepWindowOnFailure` only for manual debugging.
 
 ## Always-On Safety Notes
 

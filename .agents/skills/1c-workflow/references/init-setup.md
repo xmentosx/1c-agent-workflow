@@ -68,7 +68,15 @@ Ask one raw value at a time unless the agent surface supports structured fields.
 
 Goal: create baseline project state.
 
-1. Start with the monitored foreground launcher:
+0. If the target project does not have workflow files yet, start with the one-step bootstrap script from the workflow package:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File <source>\install-agent-1c-workflow.ps1 -ProjectRoot <project>
+   ```
+
+   The bootstrap script copies only managed workflow files (`.agents/skills/1c-workflow*`, `templates/`, root docs/guides, and `install-agent-1c-workflow.ps1`) and then starts the monitored launcher. Do not expand normal initialization into manual copy steps.
+
+1. In an already installed project, start with the monitored foreground launcher:
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard
@@ -79,7 +87,7 @@ Goal: create baseline project state.
 4. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, `.agent-1c/dependency-lock.json`, and `.dev.env` if missing.
 5. Run tool checks, initialize Git, checkout/create `master`, update the source infobase from storage when configured, and dump configuration files to `src/cf`.
 6. Initial dump must produce `src/cf/ConfigDumpInfo.xml`; later dumps use incremental `-update -force` when that file exists. Stop if `src/cf` is non-empty without `ConfigDumpInfo.xml`.
-7. Install/cache ROCTUP MCP Toolkit, install `ai_rules_1c` using the current agent target, record resolved dependency pins in the dependency lock, reconcile default upstream MCP client entries only when ready vibecoding1c replacements are available, install this workflow skill and fast skill, generate Kilo wrappers when applicable, and apply the ITL overlay to `USER-RULES.md`.
+7. Install/cache ROCTUP MCP Toolkit, install `ai_rules_1c` using the current agent target, record resolved dependency pins in the dependency lock, reconcile default upstream MCP client entries only when ready vibecoding1c replacements are available, generate Kilo wrappers when applicable, and apply the ITL overlay to `USER-RULES.md`.
 8. Commit rules and workflow files when there are changes.
 
 ## Tool Actions
@@ -99,7 +107,7 @@ Goal: refresh the installed ITL workflow package without rerunning initializatio
 1. Run only from the `master` worktree.
 2. Require a clean tracked Git worktree while ignoring local runtime state such as `.dev.env`, `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
 3. Resolve the package source from `ITL_WORKFLOW_SOURCE_PATH` or clone/update `ITL_WORKFLOW_REPO` and `ITL_WORKFLOW_REF` (`https://github.com/xmentosx/1c-agent-workflow.git`, `master` by default).
-4. Copy only managed workflow files: `.agents/skills/1c-workflow*`, Kilo templates, `templates/`, `README.md`, `AGENT-INSTALL.md`, `DEVELOPER-GUIDE.ru.md`, `DEV-BRANCH-DEVELOPMENT.ru.md`, `VANESSA-TESTS-GUIDE.md`, and the compatibility stub `VANESSA-TESTS-GUIDE.ru.md`.
+4. Copy only managed workflow files: `.agents/skills/1c-workflow*`, Kilo templates, `templates/`, `install-agent-1c-workflow.ps1`, `README.md`, `AGENT-INSTALL.md`, `DEVELOPER-GUIDE.ru.md`, `DEV-BRANCH-DEVELOPMENT.ru.md`, `VANESSA-TESTS-GUIDE.md`, and the compatibility stub `VANESSA-TESTS-GUIDE.ru.md`.
 5. Preserve local runtime/project state. Do not overwrite `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, or existing project/tools config.
 6. Record `workflowPackage.repo/ref/commit/source/updatedAt`, reapply `USER-RULES.md`, refresh ROCTUP MCP cache, run `update-ai-rules` unless `-SkipAiRules` is explicit, and leave tracked changes for review.
 7. Do not update active `itldev/*` worktrees automatically; print whether MCP client config was reconciled or preserved as upstream fallback, plus follow-up commands for MCP setup/update, branch merge or `/itl-refresh`, and branch-local ROCTUP/Vanessa MCP restart when used.

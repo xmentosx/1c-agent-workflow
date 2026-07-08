@@ -417,6 +417,9 @@ function Invoke-GitCommand {
     }
 
     $outputToLog = if ($exitCode -ne 0 -or (-not $PassThru)) { $displayOutput } else { $errorOutput }
+    if ($exitCode -eq 0) {
+        $outputToLog = @($outputToLog | Where-Object { -not (Test-GitBenignSuccessfulOutputLine -Line ([string]$_)) })
+    }
     foreach ($line in $outputToLog) {
         if ($line) {
             Write-Host $line
@@ -430,6 +433,16 @@ function Invoke-GitCommand {
     if ($PassThru) {
         return $standardOutput
     }
+}
+
+function Test-GitBenignSuccessfulOutputLine {
+    param([string]$Line)
+
+    if (-not $Line) {
+        return $false
+    }
+
+    return ($Line -match "LF will be replaced by CRLF" -or $Line -match "CRLF will be replaced by LF")
 }
 
 function Invoke-Git {
@@ -789,8 +802,9 @@ function Commit-IfChanged {
     $addArgs += @($PathSpec)
     Invoke-Git $addArgs
     if (Test-GitHasStagedChanges -PathSpec $PathSpec) {
-        $commitArgs = @("commit", "-m", $Message, "--") + @($PathSpec)
+        $commitArgs = @("commit", "--quiet", "-m", $Message, "--") + @($PathSpec)
         Invoke-Git $commitArgs
+        Write-Host "Committed: $Message"
         return $true
     } elseif ($RequireChanges) {
         $status = Get-GitStatusForPathSpec -PathSpec $PathSpec

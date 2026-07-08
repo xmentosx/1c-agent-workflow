@@ -1205,6 +1205,7 @@ function Assert-WorkflowPackageSourceRoot {
     param([string]$SourceRoot)
 
     foreach ($relativePath in @(
+        "install-agent-1c-workflow.ps1",
         "AGENT-INSTALL.md",
         ".agents\skills\1c-workflow\scripts\agent-1c.ps1",
         ".agents\skills\1c-workflow-fast\SKILL.md",
@@ -1580,7 +1581,7 @@ function Update-WorkflowPackage {
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow"
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow-fast"
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "templates"
-    foreach ($relativePath in @("README.md", "AGENT-INSTALL.md", "DEVELOPER-GUIDE.ru.md", "DEV-BRANCH-DEVELOPMENT.ru.md", "VANESSA-TESTS-GUIDE.md", "VANESSA-TESTS-GUIDE.ru.md")) {
+    foreach ($relativePath in @("install-agent-1c-workflow.ps1", "README.md", "AGENT-INSTALL.md", "DEVELOPER-GUIDE.ru.md", "DEV-BRANCH-DEVELOPMENT.ru.md", "VANESSA-TESTS-GUIDE.md", "VANESSA-TESTS-GUIDE.ru.md")) {
         Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
     }
 
@@ -2574,7 +2575,8 @@ function Commit-BaselineDumpIfNeeded {
     $pathSpec = @($ExportPath)
     Invoke-Git (@("add", "--all", "--force", "--") + $pathSpec)
     if (Test-GitHasStagedChanges -PathSpec $pathSpec) {
-        Invoke-Git (@("commit", "-m", $Message, "--") + $pathSpec)
+        Invoke-Git (@("commit", "--quiet", "-m", $Message, "--") + $pathSpec)
+        Write-Host "Committed: $Message"
         return $true
     }
 

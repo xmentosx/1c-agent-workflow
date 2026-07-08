@@ -4,6 +4,7 @@ Describe "1C agent workflow static checks" {
         $HelperPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
         $HelperModulePaths = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib") -File -Filter "agent-1c.*.ps1" | Sort-Object Name | ForEach-Object { $_.FullName })
         $LauncherPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"
+        $InstallerPath = Join-Path $RepoRoot "install-agent-1c-workflow.ps1"
         $McpHostPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\install-vibecoding1c-mcp-host.ps1"
         $McpHostDumpPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1"
         $helperParts = @()
@@ -42,6 +43,14 @@ Describe "1C agent workflow static checks" {
         $tokens = $null
         $errors = $null
         [System.Management.Automation.Language.Parser]::ParseFile($LauncherPath, [ref]$tokens, [ref]$errors) | Out-Null
+
+        @($errors).Count | Should -Be 0
+    }
+
+    It "parses the one-step workflow installer" {
+        $tokens = $null
+        $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($InstallerPath, [ref]$tokens, [ref]$errors) | Out-Null
 
         @($errors).Count | Should -Be 0
     }
@@ -782,11 +791,34 @@ Describe "1C agent workflow static checks" {
 
     It "keeps initialization on the monitored helper wizard path" {
         $text = (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")) + [Environment]::NewLine + (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\SKILL.md"))
+        $text | Should -Match "install-agent-1c-workflow\.ps1"
+        $text | Should -Match "one-step bootstrap"
         $text | Should -Match ([regex]::Escape(".\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"))
         $text | Should -Match "-Action\s+init-project"
         $text | Should -Match "-InitMode\s+wizard"
         $text | Should -Match ([regex]::Escape(".agent-1c/runs/<run>/status.json"))
         $text | Should -Match "do not collect the (initialization )?questionnaire in chat"
+    }
+
+    It "documents the one-step bootstrap as the normal install path" {
+        $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
+        $installText | Should -Match ([regex]::Escape("install-agent-1c-workflow.ps1 -ProjectRoot <project>"))
+        $installText | Should -Match "Do not expand the normal bootstrap into manual copy commands"
+        $installText | Should -Match "## Manual Recovery Copy Steps"
+
+        $normalInstallText = $installText.Substring(0, $installText.IndexOf("## Manual Recovery Copy Steps"))
+        $normalInstallText | Should -Not -Match "Copy the common skills into the target project"
+        $normalInstallText | Should -Not -Match ([regex]::Escape('Create `.agent-1c/project.json`'))
+
+        foreach ($relativePath in @(
+            ".agents\skills\1c-workflow\SKILL.md",
+            ".agents\skills\1c-workflow\references\workflow.md",
+            ".agents\skills\1c-workflow\references\init-setup.md"
+        )) {
+            $text = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot $relativePath)
+            $text | Should -Match "install-agent-1c-workflow\.ps1"
+            $text | Should -Match "manual copy"
+        }
     }
 
     It "keeps Apache install out of helper API and auto-installs Vanessa during init" {
@@ -3377,6 +3409,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Match "ITL_WORKFLOW_SOURCE_PATH"
         $HelperText | Should -Match "workflowPackage"
         $HelperText | Should -Match "Update-WorkflowPackageLockEntry"
+        $HelperText | Should -Match "install-agent-1c-workflow\.ps1"
         $HelperText | Should -Match "Update-AgentGuidanceBridge"
         $HelperText | Should -Match "Update-UserRules"
         $HelperText | Should -Match "Assert-WorkflowPackageUpdateContext"
@@ -3848,6 +3881,7 @@ local after
 
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\stale.txt") -PathType Leaf) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $projectRoot "install-agent-1c-workflow.ps1") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-status.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-new-config-branch.md") -PathType Leaf) | Should -Be $true
@@ -3897,16 +3931,17 @@ local after
         }
     }
 
-    It "smoke-copies bootstrap package files into a temp project" {
+    It "installs bootstrap package files into a temp project without runtime state when NoInit is used" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-package-smoke-" + [guid]::NewGuid().ToString("N"))
+        $stdoutPath = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-package-smoke-stdout-" + [guid]::NewGuid().ToString("N") + ".log")
+        $stderrPath = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-package-smoke-stderr-" + [guid]::NewGuid().ToString("N") + ".log")
 
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agents\skills"), (Join-Path $tempRoot ".kilo") | Out-Null
 
-            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow") -Destination (Join-Path $tempRoot ".agents\skills\1c-workflow") -Recurse
-            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast") -Destination (Join-Path $tempRoot ".agents\skills\1c-workflow-fast") -Recurse
-            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates") -Destination (Join-Path $tempRoot "templates") -Recurse
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $InstallerPath -ProjectRoot $tempRoot -NoInit > $stdoutPath 2> $stderrPath
+            $LASTEXITCODE | Should -Be 0
+            (Get-Content -Encoding UTF8 -Raw $stdoutPath) | Should -Match "Initialization skipped because -NoInit was specified"
 
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow-fast\SKILL.md") -PathType Leaf) | Should -Be $true
@@ -3920,11 +3955,24 @@ local after
             (Test-Path -LiteralPath (Join-Path $tempRoot "templates\gitignore.append") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot "templates\USER-RULES.append.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot "templates\AGENTS.append.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "install-agent-1c-workflow.ps1") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "AGENT-INSTALL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "README.md") -PathType Leaf) | Should -Be $true
             (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "templates\AGENTS.append.md")) | Should -Match "USER-RULES.md"
             (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "templates\USER-RULES.append.md")) | Should -Match "1C Project Lifecycle"
+
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agent-1c") -ErrorAction SilentlyContinue) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".dev.env") -ErrorAction SilentlyContinue) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".codex") -ErrorAction SilentlyContinue) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo") -ErrorAction SilentlyContinue) | Should -Be $false
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            foreach ($path in @($stdoutPath, $stderrPath)) {
+                if (Test-Path -LiteralPath $path -ErrorAction SilentlyContinue) {
+                    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+                }
             }
         }
     }
@@ -4651,6 +4699,7 @@ url = "http://localhost:9999/mcp"
             ".agents/skills/1c-workflow/kilo-command-templates/master/itl-new-config-branch.md",
             ".agents/skills/1c-workflow/kilo-command-templates/master/itl-update-workflow.md",
             ".agents/skills/1c-workflow/kilo-command-templates/dev/itl-result.md",
+            "install-agent-1c-workflow.ps1",
             "scripts/test.ps1",
             "templates/AGENTS.append.md",
             "templates/USER-RULES.append.md",
@@ -5416,7 +5465,7 @@ url = "http://localhost:9999/mcp"
         }
     }
 
-    It "commits LF files when Git emits CRLF warnings under monitored logging" {
+    It "commits LF files without showing benign CRLF warnings under monitored logging" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-git-crlf-warning-" + [guid]::NewGuid().ToString("N"))
         $probePath = Join-Path $tempRoot "probe.ps1"
         $launcherPath = Join-Path $tempRoot "launcher.ps1"
@@ -5468,8 +5517,57 @@ if (`$?) { exit 0 } else { exit 1 }
             ((& git -C $tempRoot rev-list --count HEAD).Trim()) | Should -Be "1"
             ((& git -C $tempRoot diff --cached --name-only) -join [Environment]::NewLine) | Should -Be ""
             $logText = Get-Content -Encoding UTF8 -Raw $logPath
-            $logText | Should -Match "LF will be replaced by CRLF"
+            $logText | Should -Not -Match "LF will be replaced by CRLF"
+            $logText | Should -Match "Committed: test: commit lf file"
             $logText | Should -Not -Match "NativeCommandError"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "does not print Git create mode lines for successful helper-created commits" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-git-quiet-commit-" + [guid]::NewGuid().ToString("N"))
+        $probePath = Join-Path $tempRoot "probe.ps1"
+        $launcherPath = Join-Path $tempRoot "launcher.ps1"
+        $logPath = Join-Path $tempRoot "console.log"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            for ($i = 1; $i -le 20; $i++) {
+                Set-Content -LiteralPath (Join-Path $tempRoot ("file-{0:000}.txt" -f $i)) -Encoding UTF8 -Value "content $i"
+            }
+
+            Set-Content -LiteralPath $probePath -Encoding UTF8 -Value @'
+param(
+    [string]$HelperPath,
+    [string]$ProjectRoot
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+. $HelperPath -ProjectRoot $ProjectRoot -Action help *> $null
+Commit-IfChanged -Message "test: quiet commit output" -PathSpec @(".") -RequireChanges | Out-Null
+'@
+
+            Set-Content -LiteralPath $launcherPath -Encoding UTF8 -Value @"
+`$ErrorActionPreference = "Stop"
+& '$probePath' '$HelperPath' '$tempRoot' *>&1 | Tee-Object -FilePath '$logPath'
+if (`$LASTEXITCODE -is [int]) { exit `$LASTEXITCODE }
+if (`$?) { exit 0 } else { exit 1 }
+"@
+
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $launcherPath *> $null
+            $LASTEXITCODE | Should -Be 0
+
+            ((& git -C $tempRoot rev-list --count HEAD).Trim()) | Should -Be "1"
+            $logText = Get-Content -Encoding UTF8 -Raw $logPath
+            $logText | Should -Match "Committed: test: quiet commit output"
+            $logText | Should -Not -Match "create mode"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

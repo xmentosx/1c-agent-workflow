@@ -25,7 +25,7 @@ Root `DEVELOPER-GUIDE.ru.md` and `DEV-BRANCH-DEVELOPMENT.ru.md` are human-facing
 Intent mapping:
 
 - Help/menu: show helper `help` or the panel in `references/workflow.md`.
-- Init/bootstrap: run the monitored init wizard.
+- Init/bootstrap: fresh target uses root `install-agent-1c-workflow.ps1`; installed project uses monitored init wizard.
 - Tool checks and web publication: `check-tools`, `list-platforms`, `detect-web-publication`, `configure-web-publication`, `publish-dev-branch`, `install-vanessa-automation`.
 - ROCTUP branch data MCP: `install-roctup-mcp`, `update-roctup-mcp`, `start-roctup-mcp`, `stop-roctup-mcp`, `roctup-mcp-status`.
 - vibecoding1c MCP: `vibecoding1c-mcp-setup`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`, `vibecoding1c-mcp-update`, `vibecoding1c-mcp-status`, start/stop/key/model/client-config helper actions.
@@ -38,7 +38,15 @@ If intent is unclear, show the lifecycle panel and wait.
 
 ## Safety Guardrails
 
-Initialization must start with the monitored launcher and run in the foreground:
+Fresh target projects must start with the package bootstrap:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File <source>\install-agent-1c-workflow.ps1 -ProjectRoot <project>
+```
+
+Bootstrap copies managed workflow files, then starts the monitored launcher. Do not expand normal bootstrap into manual copy steps.
+
+Installed projects must start with the foreground monitored launcher:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard

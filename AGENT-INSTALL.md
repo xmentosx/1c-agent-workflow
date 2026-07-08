@@ -6,13 +6,14 @@ This public file is the bootstrap contract for agents. A developer can say:
 Initialize a 1C agent project using this file: https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTALL.md
 ```
 
-The agent must read this file, install the shared workflow files into the target project, then run the monitored PowerShell helper script wizard. The wizard collects missing inputs, writes local settings, writes run status/log files, and runs the project initialization lifecycle.
+The agent must read this file, run the one-step bootstrap script for the target project, and wait for it to finish. The bootstrap script installs the shared workflow files and starts the monitored PowerShell helper wizard. The wizard collects missing inputs, writes local settings, writes run status/log files, and runs the project initialization lifecycle.
 
 Canonical bootstrap source:
 
 - Repository: `https://github.com/xmentosx/1c-agent-workflow.git`
 - Branch: `master`
 - Bootstrap file: `AGENT-INSTALL.md`
+- Bootstrap script: `install-agent-1c-workflow.ps1`
 
 Do not infer or try `main` for this package unless the user explicitly provides a different branch or URL.
 
@@ -32,9 +33,17 @@ Do not rely on Codex-only custom prompts for this workflow. They are local to on
 
 ## Agent Input Collection
 
-Prefer the monitored PowerShell helper script wizard for initialization. The wizard collects local setup values, writes `.dev.env`, ensures `.agent-1c/project.json` exists, generates the local Kilo command surface, and then runs the lifecycle. Use `-InitMode configured` only when `.agent-1c/project.json` and `.dev.env` are already prepared.
+Prefer the root bootstrap script for initialization. It copies only managed workflow files into the target project and then starts the monitored PowerShell helper wizard. The wizard collects local setup values, writes `.dev.env`, ensures `.agent-1c/project.json` exists, generates the local Kilo command surface, and then runs the lifecycle. Use `-InitMode configured` only when `.agent-1c/project.json` and `.dev.env` are already prepared.
 
-Default initialization command:
+Default bootstrap command from the cloned workflow package:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File <source>\install-agent-1c-workflow.ps1 -ProjectRoot <project>
+```
+
+The bootstrap command copies `.agents/skills/1c-workflow*`, `templates/`, the root docs/guides, and `install-agent-1c-workflow.ps1`. It does not copy `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, or generated `.kilo/commands/`.
+
+The bootstrap script then runs this monitored initialization command from the target project:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard
@@ -136,47 +145,59 @@ Encoding rules:
    - If this file was read from the canonical URL and the repository root is unknown, clone `https://github.com/xmentosx/1c-agent-workflow.git` with `--branch master --single-branch` to a temporary directory, and use that clone.
    - If the user provided a different bootstrap URL, derive the repository and branch from that URL. If the branch is not present in the URL, ask one short clarifying question instead of guessing `main`.
 
-2. Copy the common skills into the target project:
+2. Run the one-step bootstrap script and wait for it to finish:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File <source>\install-agent-1c-workflow.ps1 -ProjectRoot <project>
+```
+
+For package-copy verification or other non-init automation, add `-NoInit`. Do not expand the normal bootstrap into manual copy commands.
+
+## Manual Recovery Copy Steps
+
+Use these steps only when `install-agent-1c-workflow.ps1` is unavailable or failed before copying the managed files.
+
+1. Copy the common skills into the target project:
 
 ```text
 <project>/.agents/skills/1c-workflow/
 <project>/.agents/skills/1c-workflow-fast/
 ```
 
-3. Generate context-specific Kilo command wrappers into ignored local state:
+2. Generate context-specific Kilo command wrappers into ignored local state:
 
 ```text
 <project>/.kilo/commands/
 ```
 
-4. Copy the whole bootstrap templates directory into the target project before running the initialization helper:
+3. Copy the whole bootstrap templates directory into the target project before running the initialization helper:
 
 ```text
 <project>/templates/
 ```
 
-5. Create `.agent-1c/project.json` from `templates/project.json` when missing. Use the default `devBranchInfoBaseRoot` unless the developer explicitly requested a custom location.
+4. Create `.agent-1c/project.json` from `templates/project.json` when missing. Use the default `devBranchInfoBaseRoot` unless the developer explicitly requested a custom location.
 
-6. Create `.agent-1c/dependency-lock.json` from `templates/dependency-lock.json` when missing. Keep it committed when the team wants reproducible bootstrap pins; fresh mode updates it with resolved workflow package revision, dependency revisions, URLs, and hashes.
+5. Create `.agent-1c/dependency-lock.json` from `templates/dependency-lock.json` when missing. Keep it committed when the team wants reproducible bootstrap pins; fresh mode updates it with resolved workflow package revision, dependency revisions, URLs, and hashes.
 
-7. Create `.agent-1c/tools.json` from `templates/tools.json` when missing. Keep it committed so the team can adjust required software checks and install suggestions.
+6. Create `.agent-1c/tools.json` from `templates/tools.json` when missing. Keep it committed so the team can adjust required software checks and install suggestions.
 
-8. Create `.dev.env` from `templates/dev.env.example` when missing. Fill local paths, secrets, web publication preference, and the chosen `DEPENDENCY_MODE`. Write it as UTF-8 and ensure `.dev.env` is ignored by Git.
+7. Create `.dev.env` from `templates/dev.env.example` when missing. Fill local paths, secrets, web publication preference, and the chosen `DEPENDENCY_MODE`. Write it as UTF-8 and ensure `.dev.env` is ignored by Git.
 
-9. Append `templates/gitignore.append` lines to `.gitignore` if absent.
+8. Append `templates/gitignore.append` lines to `.gitignore` if absent.
 
-10. Append `templates/AGENTS.append.md` to `AGENTS.md` only as a fallback when `AGENTS.md` does not already reference `USER-RULES.md`. Current `ai_rules_1c` creates and manages the normal root `AGENTS.md`; do not modify it just to add ITL notes.
+9. Append `templates/AGENTS.append.md` to `AGENTS.md` only as a fallback when `AGENTS.md` does not already reference `USER-RULES.md`. Current `ai_rules_1c` creates and manages the normal root `AGENTS.md`; do not modify it just to add ITL notes.
 
-11. Apply the managed ITL block from `templates/USER-RULES.append.md` to `USER-RULES.md`. New helpers wrap this block with markers so future `update-workflow` runs can replace it safely.
+10. Apply the managed ITL block from `templates/USER-RULES.append.md` to `USER-RULES.md`. New helpers wrap this block with markers so future `update-workflow` runs can replace it safely.
 
-12. Copy developer-facing docs into the target project when present:
+11. Copy developer-facing docs into the target project when present:
 
 ```text
 <project>/DEVELOPER-GUIDE.ru.md
 <project>/DEV-BRANCH-DEVELOPMENT.ru.md
 ```
 
-13. Do not add detailed workflow text to `AGENTS.md`. Keep ITL-specific rules in `USER-RULES.md` so upstream-managed `AGENTS.md` can continue to update cleanly.
+12. Do not add detailed workflow text to `AGENTS.md`. Keep ITL-specific rules in `USER-RULES.md` so upstream-managed `AGENTS.md` can continue to update cleanly.
 
 ## Diagnostic Tool Checks
 
