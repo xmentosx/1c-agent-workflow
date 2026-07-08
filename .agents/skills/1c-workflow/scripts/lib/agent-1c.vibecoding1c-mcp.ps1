@@ -3080,7 +3080,7 @@ function Write-Vibecoding1cMcpKiloConfig {
             type = "remote"
             url = $url
             enabled = $true
-            timeout = 15000
+            timeout = 120000
             managedBy = "vibecoding1c-mcp"
             family = "vibecoding1c"
             logicalId = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "id" -Default "")

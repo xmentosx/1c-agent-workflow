@@ -2476,7 +2476,7 @@ function Write-VanessaMcpKiloConfig {
         type = "remote"
         url = $url
         enabled = $true
-        timeout = 15000
+        timeout = 120000
         managedBy = "vanessa-mcp"
         family = "vanessa"
         scope = "branch"
