@@ -175,7 +175,7 @@ Quick-fix делается без OpenSpec.
 /itl-check
 ```
 
-Branch-local Vanessa MCP в новых `itldev/*` ветках запускается автоматически; `vanessa-mcp helper action` нужен для ручного status/stop/start/repair. MCP не заменяет финальный gate: после отладки нужно выполнить `/itl-check`, который запускает пакетный `StartFeaturePlayer` в реальном `TESTMANAGER -> TESTCLIENT` контуре, назначает branch-local `VANESSA_TEST_PORT` и сохраняет воспроизводимые JUnit/status/log paths. `verify helper action` остается совместимым alias.
+Branch-local Vanessa MCP в новых `itldev/*` ветках запускается автоматически; `vanessa-mcp helper action` нужен для ручного status/stop/start/repair. MCP не заменяет финальный gate: после отладки нужно выполнить `/itl-check`, который запускает пакетный `StartFeaturePlayer` в реальном `TESTMANAGER -> TESTCLIENT` контуре, назначает branch-local `VANESSA_TEST_PORT` как порт запуска/подключения TestClient и сохраняет воспроизводимые JUnit/status/log paths. `verify helper action` остается совместимым alias.
 
 Для изменения бизнес-поведения агент обязан создать или обновить небольшой набор Vanessa Automation проверок: минимум 2, обычно 2-3 и не больше 4 без отдельного обоснования. Набор должен включать основной успешный сценарий и минимум один значимый граничный или негативный сценарий.
 
@@ -293,7 +293,7 @@ Vanessa Automation - стандартный тестовый фреймворк 
 
 Перед созданием или правкой Vanessa-тестов агент читает `VANESSA-TESTS-GUIDE.md`; для обычных lifecycle-команд этот файл не нужен.
 
-ROCTUP MCP - основной branch-local канал исследования данных текущей копии базы без web-публикации. Vanessa MCP - branch-local поддержка для авторинга и отладки. Оба сервера запускаются отдельно для каждой новой ветки разработки; порты сохраняются в state ветки, поэтому параллельные worktree не конфликтуют. Финальная проверка не идет через MCP: `/itl-check` запускает Vanessa как `TESTMANAGER -> TESTCLIENT` с отдельным test port текущей ветки.
+ROCTUP MCP - основной branch-local канал исследования данных текущей копии базы без web-публикации. Vanessa MCP - branch-local поддержка для авторинга и отладки. Оба сервера запускаются отдельно для каждой новой ветки разработки; порты сохраняются в state ветки и резервируются через ITL port registry, поэтому параллельные worktree, проекты и пользователи терминального сервера не конфликтуют. Финальная проверка не идет через MCP: `/itl-check` запускает Vanessa как `TESTMANAGER -> TESTCLIENT` с отдельным TestClient port текущей ветки.
 
 Remote `code`/`graph` MCP и project-scope local MCP могут быть построены по снимку конфигурации, который не включает текущие изменения ветки. Перед использованием данных MCP смотрите `/itl-status`: freshness `remote-shared`, `stale`, `unknown` или `indexing` означает, что MCP не является точным индексом текущей branch head.
 

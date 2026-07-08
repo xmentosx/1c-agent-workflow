@@ -1771,55 +1771,25 @@ function Resolve-Vibecoding1cMcpPort {
         [string]$ContainerName
     )
 
-    $result = Invoke-Vibecoding1cMcpPortRegistryLock -ScriptBlock {
-        $registry = Remove-Vibecoding1cMcpStalePortAllocations -Registry (Read-Vibecoding1cMcpPortRegistry)
-        $allocations = @(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $registry -Name "allocations" -Default @()))
-        foreach ($allocation in $allocations) {
-            if ([string](Get-Vibecoding1cMcpObjectValue -Object $allocation -Name "key" -Default "") -eq $Key) {
-                $savedPort = ConvertTo-IntOrDefault -Value (Get-Vibecoding1cMcpObjectValue -Object $allocation -Name "port" -Default 0)
-                if ($savedPort -gt 0) {
-                    Write-Vibecoding1cMcpPortRegistry -Registry $registry
-                    return [pscustomobject]@{ port = $savedPort }
-                }
-            }
-        }
-
-        $used = @{}
-        foreach ($allocation in $allocations) {
-            $usedPort = ConvertTo-IntOrDefault -Value (Get-Vibecoding1cMcpObjectValue -Object $allocation -Name "port" -Default 0)
-            if ($usedPort -gt 0) {
-                $used[$usedPort] = $true
-            }
-        }
-
-        $range = Get-Vibecoding1cMcpPortRange -Scope $Scope
-        for ($port = $range.start; $port -le $range.end; $port++) {
-            if ($used.ContainsKey($port)) {
-                continue
-            }
-            if (-not (Test-TcpPortAvailable -Port $port)) {
-                continue
-            }
-
-            $newAllocation = [ordered]@{
-                key = $Key
-                scope = $Scope
-                serverId = $ServerId
-                port = $port
-                containerName = $ContainerName
-                projectRoot = $script:ProjectRoot
-                updatedAt = (Get-Date).ToString("o")
-            }
-            $hash = ConvertTo-Vibecoding1cMcpHashtable -Object $registry
-            $hash["allocations"] = @($allocations + $newAllocation)
-            Write-Vibecoding1cMcpPortRegistry -Registry $hash
-            return [pscustomobject]@{ port = $port }
-        }
-
-        throw "No free vibecoding1c MCP host port found in range $($range.start)..$($range.end) for $Scope server '$ServerId'."
+    $range = Get-Vibecoding1cMcpPortRange -Scope $Scope
+    $context = Get-Vibecoding1cMcpScopeContext
+    $state = [pscustomobject]@{
+        stateProjectRoot = $script:ProjectRoot
+        worktreePath = $script:ProjectRoot
+        devBranchName = $context.branchSlug
+        safeDevBranchName = $context.branchSlug
+        devBranch = $context.gitBranch
     }
-
-    return [int]$result.port
+    return (Resolve-ItlManagedPort `
+        -Family "vibecoding1c-mcp" `
+        -Key $Key `
+        -Start $range.start `
+        -End $range.end `
+        -State $state `
+        -Scope $Scope `
+        -ServerId $ServerId `
+        -ContainerName $ContainerName `
+        -Subject "vibecoding1c MCP host port")
 }
 
 function Resolve-Vibecoding1cMcpModelPort {
@@ -2267,6 +2237,7 @@ function Start-Vibecoding1cMcpDockerRunServer {
         }
         Write-Host "Started existing MCP container: $($Runtime.containerName) -> $($Runtime.url)"
         Set-Vibecoding1cMcpEndpointState -Runtime $Runtime -Status "running"
+        Set-ItlManagedPortAllocationStatus -Family "vibecoding1c-mcp" -Key "$($Runtime.scope):$($Runtime.name)" -Status "running"
         return
     }
 
@@ -2290,6 +2261,7 @@ function Start-Vibecoding1cMcpDockerRunServer {
 
     Write-Host "Started MCP container: $($Runtime.containerName) -> $($Runtime.url)"
     Set-Vibecoding1cMcpEndpointState -Runtime $Runtime -Status "running"
+    Set-ItlManagedPortAllocationStatus -Family "vibecoding1c-mcp" -Key "$($Runtime.scope):$($Runtime.name)" -Status "running"
 }
 
 function New-Vibecoding1cMcpScopedCompose {
@@ -2367,6 +2339,7 @@ function Start-Vibecoding1cMcpComposeServer {
 
     Write-Host "Started MCP compose project: $($compose.composeProject) -> $($Runtime.url)"
     Set-Vibecoding1cMcpEndpointState -Runtime $Runtime -Status "running" -RuntimePath $compose.runtimeDir -ComposeProject $compose.composeProject
+    Set-ItlManagedPortAllocationStatus -Family "vibecoding1c-mcp" -Key "$($Runtime.scope):$($Runtime.name)" -Status "running"
 }
 
 function Get-Vibecoding1cMcpTargetScopes {
@@ -2565,6 +2538,9 @@ function Stop-Vibecoding1cMcp {
         $serverHash["status"] = "stopped"
         $serverHash["updatedAt"] = (Get-Date).ToString("o")
         $servers += $serverHash
+        if ($provider -ne "remote") {
+            Set-ItlManagedPortAllocationStatus -Family "vibecoding1c-mcp" -Key "${scope}:$name" -Status "stopped"
+        }
         Write-Host "Stopped MCP server: $name"
     }
 

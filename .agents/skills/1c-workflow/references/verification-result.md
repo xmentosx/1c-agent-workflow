@@ -4,11 +4,11 @@ Use this reference for `/itl-check`, `verify-dev-branch`, Vanessa Automation, ev
 
 ## Normal Gate
 
-Use `/itl-check` or helper action `check-dev-branch` for the normal post-change executable gate. It updates the copied branch infobase and then runs Vanessa Automation through packet `StartFeaturePlayer` in a real `TESTMANAGER -> TESTCLIENT` topology with a branch-local `VANESSA_TEST_PORT`.
+Use `/itl-check` or helper action `check-dev-branch` for the normal post-change executable gate. It updates the copied branch infobase and then runs Vanessa Automation through packet `StartFeaturePlayer` in a real `TESTMANAGER -> TESTCLIENT` topology with a branch-local `VANESSA_TEST_PORT` used as the TestClient launch/connect port in VAParams.
 
 Do not run a separate base update first for normal verification. Do not use `/deploy-and-test` as the normal gate because it reloads all files. Do not replace the final gate with MCP or a headless EPF. `verify-dev-branch` remains a compatibility alias.
 
-`VANESSA_TEST_FOREIGN_WAIT_MODE=warn` is the default: foreign branch 1C test processes are diagnostic warnings, not a reason to wait, unless there is a real port/infobase conflict or the mode is set to `wait`.
+`VANESSA_TEST_FOREIGN_WAIT_MODE=warn` is the default: foreign branch 1C test processes are diagnostic warnings, not a reason to wait, unless there is a real TestClient port/infobase conflict or the mode is set to `wait`.
 
 ## Vanessa Automation
 

@@ -82,7 +82,8 @@
 - `.agent-1c/tools/vanessa-mcp` - скачанные `client_mcp.cfe` и `VAExtension.*.cfe`, не коммитятся.
 - `.agent-1c/mcp/` - локальное состояние MCP текущего проекта/worktree и выбор remote/local, не коммитится.
 - `.codex/config.toml`, `.kilo/commands/itl*.md`, `.kilo/kilo.json`, `.kilo/kilo.jsonc` - локальные generated/client config, не коммитятся.
-- `VANESSA_TEST_PORT` в `.dev.env` - branch-local порт `TESTMANAGER -> TESTCLIENT` для `/itl-check`, управляется helper.
+- `ITL_PORT_REGISTRY_SCOPE` / `ITL_PORT_REGISTRY_HOME` в `.dev.env` - общий реестр helper-managed портов для проектов, worktree и пользователей терминального сервера.
+- `VANESSA_TEST_PORT` в `.dev.env` - branch-local порт запуска/подключения TestClient для `/itl-check`, управляется helper и передается в VAParams.
 - `VANESSA_MCP_PORT` и `VANESSA_MCP_URL` в `.dev.env` - активная MCP-точка текущей ветки, управляется helper.
 - `logs/1c` - логи запусков 1С, не коммитятся.
 
@@ -167,7 +168,7 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 /itl-check
 ```
 
-Новые `itldev/*` ветки по умолчанию получают branch-local ROCTUP MCP для исследования данных без web-публикации и branch-local Vanessa MCP для написания и отладки Vanessa-сценариев. Vanessa MCP помогает исследовать формы, подбирать шаги и отлаживать сценарий, но финальная проверка ветки остается через `/itl-check`: helper запускает пакетный `StartFeaturePlayer` в реальном `TESTMANAGER -> TESTCLIENT` контуре, назначает отдельный test port текущей ветки и проверяет JUnit-отчет.
+Новые `itldev/*` ветки по умолчанию получают branch-local ROCTUP MCP для исследования данных без web-публикации и branch-local Vanessa MCP для написания и отладки Vanessa-сценариев. Helper резервирует локальные порты через общий ITL port registry, чтобы соседние проекты, worktree и пользователи терминального сервера не пересекались. Vanessa MCP помогает исследовать формы, подбирать шаги и отлаживать сценарий, но финальная проверка ветки остается через `/itl-check`: helper запускает пакетный `StartFeaturePlayer` в реальном `TESTMANAGER -> TESTCLIENT` контуре, назначает отдельный TestClient port текущей ветки и проверяет JUnit-отчет.
 
 vibecoding1c MCP для поиска по документации, шаблонам, синтаксису, коду и графу подключается по запросу агенту. По умолчанию setup применяет сохраненный выбор серверов, а если выбор отсутствует или неполный - сначала запускает выбор; для явного повторного выбора используйте `vibecoding1c-mcp-select` или `vibecoding1c-mcp-setup -Force`. Затем helper берет remote LAN endpoints из GitLab registry `http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git`; для серверов по конкретной конфигурации нужно явно выбрать `configId`, даже если сейчас опубликована одна конфигурация. По каждому серверу можно переключиться на local. Для local `code`/`graph` выбирается scope `project` или `branch`. Vanessa MCP относится к отдельному семейству и всегда branch-local. `/itl-status` показывает freshness vibecoding1c MCP: `fresh`, `stale`, `remote-shared`, `unknown` или `indexing`, поэтому агент видит, когда индекс не отражает текущие изменения ветки.
 
@@ -259,9 +260,9 @@ vibecoding1c MCP для поиска по документации, шаблон
 - Не коммитьте `.dev.env`, пароли, `*.cf`, `*.dt`, логи и локальные базы.
 - Не коммитьте `.agent-1c/dev-branches/*.json`: это локальное runtime-состояние веток.
 - Не загружайте изменения ветки разработки напрямую в исходную базу.
-- Не используйте один Vanessa MCP или ROCTUP MCP на несколько веток разработки: у каждой `itldev/*` worktree должен быть свой сохраненный MCP порт, URL и копия базы. MCP не является финальным verify-runner.
+- Не используйте один Vanessa MCP или ROCTUP MCP на несколько веток разработки: у каждой `itldev/*` worktree должен быть свой сохраненный MCP порт, URL и копия базы. На терминальном сервере оставляйте machine-scope ITL port registry или задайте общий writable `ITL_PORT_REGISTRY_HOME`. MCP не является финальным verify-runner.
 - Перед командами `ai_rules_1c`, которые работают с базой (`/update1cbase`, `/loadfrom1cbase`, `/getconfigfiles`), в ветке `itldev/*` должен быть активирован контекст ветки. Команды жизненного цикла делают это автоматически.
-- `/deploy-and-test` в ITL-ветке запускайте только по явной просьбе разработчика, потому что он делает полную загрузку файлов. Для обычной проверки используйте `/itl-check`; чужие Vanessa `TESTMANAGER`/`TESTCLIENT` процессы в другой worktree по умолчанию только показываются как диагностика и не блокируют запуск, если нет конфликта порта или базы. Helper не завершает процессы другой worktree.
+- `/deploy-and-test` в ITL-ветке запускайте только по явной просьбе разработчика, потому что он делает полную загрузку файлов. Для обычной проверки используйте `/itl-check`; чужие Vanessa `TESTMANAGER`/`TESTCLIENT` процессы в другой worktree по умолчанию только показываются как диагностика и не блокируют запуск, если нет конфликта TestClient-порта или базы. Helper не завершает процессы другой worktree.
 - `/itl-result` следует `VERIFICATION_POLICY`: по умолчанию `warn` предупреждает при отсутствии свежей успешной проверки Vanessa и требует явное подтверждение; `block` запрещает продолжение до `/itl-check`.
 - Перед созданием worktree, обновлением ветки, обновлением `master`, выгрузкой результата и legacy-переключением Git-дерево должно быть чистым.
 - Если 1С или Git вернули ошибку, агент должен остановиться и показать путь к логу.

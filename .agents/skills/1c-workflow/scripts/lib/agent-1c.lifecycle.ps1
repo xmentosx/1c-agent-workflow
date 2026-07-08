@@ -3166,6 +3166,7 @@ function Close-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
     Stop-VanessaMcpForState -State $state -Quiet | Out-Null
     $state = Read-DevBranchState -Name $DevBranchName
+    Release-ItlManagedPortAllocationsForState -State $state
     Sync-DevBranchContextToDotEnv -State $state
 
     if ($LifecyclePhase -ne "post-merge") {

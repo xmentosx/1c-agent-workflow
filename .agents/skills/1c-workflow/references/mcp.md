@@ -10,7 +10,7 @@ Use this reference for ROCTUP branch data MCP, vibecoding1c MCP, branch-local Va
 - External MCP entries are user-provided or future integrations. ITL must preserve entries not marked as `managedBy = vibecoding1c-mcp` with `family = vibecoding1c`.
 - Final verification never uses MCP. Use `/itl-check` through Vanessa Automation `TESTMANAGER -> TESTCLIENT`.
 
-Do not paste MCP license keys into chat or tracked files. Helper-managed private keys, ports, and model state live under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c` and ignored project/worktree state under `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
+Do not paste MCP license keys into chat or tracked files. Helper-managed private keys and model state live under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c`; helper-managed local ports are reserved through the ITL port registry (`ITL_PORT_REGISTRY_SCOPE`, `ITL_PORT_REGISTRY_HOME`); ignored project/worktree state lives under `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
 
 ## ROCTUP MCP Toolkit
 
@@ -31,7 +31,7 @@ Actions:
 Rules:
 
 1. `new-dev-branch` and `new-extension-dev-branch` auto-start ROCTUP by default when `ROCTUP_MCP_ENABLED=true` and `ROCTUP_MCP_AUTO_START=true`.
-2. Ports come from `ROCTUP_MCP_PORT_RANGE` and are reserved across active branch states.
+2. Ports come from `ROCTUP_MCP_PORT_RANGE` and are reserved through the shared ITL port registry plus active branch states.
 3. Branch client names are unique, for example `itl-<project>-<branch>-roctup`.
 4. Failures are non-blocking unless `ROCTUP_MCP_REQUIRED=true`; status/error are written to branch state.
 5. Agent data exploration should start with filtered `get_metadata`, then bounded `execute_query`. Do not call `execute_code`, `restart_1c_session`, or `close_1c_session` without explicit user request.
@@ -78,7 +78,7 @@ Actions:
 Rules:
 
 1. Actions must run from the active `itldev/*` worktree.
-2. Allocate ports from branch state so neighboring branches do not collide.
+2. Allocate ports through the shared ITL port registry plus branch state so neighboring branches, projects, and terminal-server users do not collide.
 3. Print client snippets with a branch-specific server name such as `VanessaAutomation-<safeBranchName>`.
 4. `start-vanessa-mcp` writes ignored `.codex/config.toml` and `.kilo/kilo.json` through the shared branch MCP config writer.
 5. Already running Kilo sessions may not reload MCP config automatically; if the server is not visible after start, reload or restart Kilo Code.

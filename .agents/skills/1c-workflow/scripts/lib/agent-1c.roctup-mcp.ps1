@@ -354,36 +354,17 @@ function Resolve-RoctupMcpPort {
 
     $reserved = Get-RoctupMcpReservedPorts -CurrentState $State
     $savedPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "roctupMcpPort" -Default 0)
-    $savedPid = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "roctupMcpPid" -Default 0)
-    $savedProcess = Get-ProcessByIdOrNull -ProcessId $savedPid
-
-    if ($RoctupMcpPort -gt 0) {
-        if ($reserved.ContainsKey($RoctupMcpPort)) {
-            throw "Requested ROCTUP MCP port $RoctupMcpPort is already reserved by another development branch."
-        }
-        if (-not (Test-TcpPortAvailable -Port $RoctupMcpPort)) {
-            throw "Requested ROCTUP MCP port $RoctupMcpPort is already occupied."
-        }
-        return $RoctupMcpPort
-    }
-
-    if ($savedPort -gt 0 -and -not $reserved.ContainsKey($savedPort)) {
-        if ((Test-TcpPortAvailable -Port $savedPort) -or ($null -ne $savedProcess)) {
-            return $savedPort
-        }
-    }
-
     $range = Get-RoctupMcpPortRange
-    for ($port = $range.start; $port -le $range.end; $port++) {
-        if ($reserved.ContainsKey($port)) {
-            continue
-        }
-        if (Test-TcpPortAvailable -Port $port) {
-            return $port
-        }
-    }
-
-    throw "No free ROCTUP MCP port found in range $($range.start)..$($range.end). Stop another branch MCP server or override ROCTUP_MCP_PORT_RANGE."
+    return (Resolve-ItlManagedPort `
+        -Family "roctup-mcp" `
+        -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $State) `
+        -Start $range.start `
+        -End $range.end `
+        -PreferredPort $savedPort `
+        -ExplicitPort $RoctupMcpPort `
+        -ReservedPorts $reserved `
+        -State $State `
+        -Subject "ROCTUP MCP port")
 }
 
 function Get-RoctupMcpRuntimeInfo {
@@ -537,10 +518,12 @@ function Start-RoctupMcpForState {
         roctupMcpError = ""
         roctupMcpUpdatedAt = (Get-Date).ToString("o")
     }
+    Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $state) -Status "running" -ProcessId $result.process.Id
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
     if (-not (Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30)) {
         $message = "ROCTUP MCP process was started, but port $port did not become reachable within 30 seconds. PID: $($result.process.Id). Log: $($result.logPath)"
+        Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $state) -Status "failed" -ProcessId $result.process.Id
         Update-DevBranchState -State $state -Updates @{
             roctupMcpStatus = "failed"
             roctupMcpError = $message
@@ -592,12 +575,14 @@ function Stop-RoctupMcpForState {
         }
         Stop-Process -Id $runtime.pid -Force -ErrorAction Stop
         Start-Sleep -Milliseconds 500
+        Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $State) -Status "stopped"
         Update-DevBranchState -State $State -Updates $updates
         $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
         Write-ItlBranchMcpClientConfig -State $state
         return $true
     }
 
+    Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $State) -Status "stopped"
     Update-DevBranchState -State $State -Updates $updates
     $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
     Write-ItlBranchMcpClientConfig -State $state

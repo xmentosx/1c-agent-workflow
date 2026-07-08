@@ -3931,11 +3931,15 @@ local after
     It "allocates Vanessa MCP ports per development branch state" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-port-test-" + [guid]::NewGuid().ToString("N"))
         $oldRange = [Environment]::GetEnvironmentVariable("VANESSA_MCP_PORT_RANGE", "Process")
+        $oldRegistryHome = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", "Process")
+        $oldRegistryScope = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", "Process")
         $listener = $null
 
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches") | Out-Null
             & git -C $tempRoot init *> $null
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", (Join-Path $tempRoot "port-registry"), "Process")
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", $null, "Process")
 
             $basePort = 0
             for ($candidate = 41000; $candidate -lt 55000; $candidate += 10) {
@@ -3997,9 +4001,9 @@ local after
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $state = [pscustomobject]@{
-                    devBranchName = "Current Branch"
-                    safeDevBranchName = "current-branch"
-                    devBranch = "itldev/current-branch"
+                    devBranchName = "Saved Branch"
+                    safeDevBranchName = "saved-branch"
+                    devBranch = "itldev/saved-branch"
                     vanessaMcpPort = $basePort
                 }
                 Resolve-VanessaMcpPort -State $state
@@ -4009,6 +4013,189 @@ local after
                 $listener.Stop()
             }
             [Environment]::SetEnvironmentVariable("VANESSA_MCP_PORT_RANGE", $oldRange, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", $oldRegistryHome, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", $oldRegistryScope, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "allocates helper-managed ports through one shared registry across projects" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-shared-port-registry-test-" + [guid]::NewGuid().ToString("N"))
+        $oldRegistryHome = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", "Process")
+        $oldRegistryScope = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", "Process")
+        $oldVanessaTestRange = [Environment]::GetEnvironmentVariable("VANESSA_TEST_PORT_RANGE", "Process")
+        $oldVanessaMcpRange = [Environment]::GetEnvironmentVariable("VANESSA_MCP_PORT_RANGE", "Process")
+        $oldRoctupRange = [Environment]::GetEnvironmentVariable("ROCTUP_MCP_PORT_RANGE", "Process")
+
+        try {
+            $projectA = Join-Path $tempRoot "project-a"
+            $projectB = Join-Path $tempRoot "project-b"
+            New-Item -ItemType Directory -Force -Path $projectA, $projectB | Out-Null
+            & git -C $projectA init *> $null
+            & git -C $projectB init *> $null
+
+            $basePort = 0
+            for ($candidate = 43000; $candidate -lt 55000; $candidate += 20) {
+                $probes = @()
+                try {
+                    $ok = $true
+                    $address = [System.Net.IPAddress]::Parse("127.0.0.1")
+                    for ($offset = 0; $offset -lt 8; $offset++) {
+                        $probe = New-Object System.Net.Sockets.TcpListener($address, ($candidate + $offset))
+                        $probe.Start()
+                        $probes += $probe
+                    }
+                    if ($ok) {
+                        $basePort = $candidate
+                        break
+                    }
+                } catch {
+                } finally {
+                    foreach ($probe in $probes) {
+                        $probe.Stop()
+                    }
+                }
+            }
+            $basePort | Should -BeGreaterThan 0
+
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", (Join-Path $tempRoot "port-registry"), "Process")
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", $null, "Process")
+            [Environment]::SetEnvironmentVariable("VANESSA_TEST_PORT_RANGE", "$basePort..$($basePort + 1)", "Process")
+            [Environment]::SetEnvironmentVariable("VANESSA_MCP_PORT_RANGE", "$($basePort + 2)..$($basePort + 3)", "Process")
+            [Environment]::SetEnvironmentVariable("ROCTUP_MCP_PORT_RANGE", "$($basePort + 4)..$($basePort + 5)", "Process")
+
+            $vanessaTestA = & {
+                . $HelperPath -ProjectRoot $projectA -Action help *> $null
+                $state = [pscustomobject]@{ devBranchName = "Feature"; safeDevBranchName = "feature"; devBranch = "itldev/feature"; stateProjectRoot = $projectA; worktreePath = $projectA }
+                Resolve-VanessaTestPort -State $state
+            }
+            $vanessaTestB = & {
+                . $HelperPath -ProjectRoot $projectB -Action help *> $null
+                $state = [pscustomobject]@{ devBranchName = "Feature"; safeDevBranchName = "feature"; devBranch = "itldev/feature"; stateProjectRoot = $projectB; worktreePath = $projectB }
+                Resolve-VanessaTestPort -State $state
+            }
+            $vanessaTestA | Should -Not -Be $vanessaTestB
+
+            $vanessaMcpA = & {
+                . $HelperPath -ProjectRoot $projectA -Action help *> $null
+                $state = [pscustomobject]@{ devBranchName = "Feature"; safeDevBranchName = "feature"; devBranch = "itldev/feature"; stateProjectRoot = $projectA; worktreePath = $projectA }
+                Resolve-VanessaMcpPort -State $state
+            }
+            $vanessaMcpB = & {
+                . $HelperPath -ProjectRoot $projectB -Action help *> $null
+                $state = [pscustomobject]@{ devBranchName = "Feature"; safeDevBranchName = "feature"; devBranch = "itldev/feature"; stateProjectRoot = $projectB; worktreePath = $projectB }
+                Resolve-VanessaMcpPort -State $state
+            }
+            $vanessaMcpA | Should -Not -Be $vanessaMcpB
+
+            $roctupA = & {
+                . $HelperPath -ProjectRoot $projectA -Action help *> $null
+                $state = [pscustomobject]@{ devBranchName = "Feature"; safeDevBranchName = "feature"; devBranch = "itldev/feature"; stateProjectRoot = $projectA; worktreePath = $projectA }
+                Resolve-RoctupMcpPort -State $state
+            }
+            $roctupB = & {
+                . $HelperPath -ProjectRoot $projectB -Action help *> $null
+                $state = [pscustomobject]@{ devBranchName = "Feature"; safeDevBranchName = "feature"; devBranch = "itldev/feature"; stateProjectRoot = $projectB; worktreePath = $projectB }
+                Resolve-RoctupMcpPort -State $state
+            }
+            $roctupA | Should -Not -Be $roctupB
+
+            $vibecodingA = & {
+                . $HelperPath -ProjectRoot $projectA -Action help *> $null
+                function Get-Vibecoding1cMcpPortRange {
+                    param([string]$Scope)
+                    return [pscustomobject]@{ start = ($basePort + 6); end = ($basePort + 7) }
+                }
+                Resolve-Vibecoding1cMcpPort -Scope "project" -Key "project:itl-project-a-code" -ServerId "code" -ContainerName "itl-project-a-code"
+            }
+            $vibecodingB = & {
+                . $HelperPath -ProjectRoot $projectB -Action help *> $null
+                function Get-Vibecoding1cMcpPortRange {
+                    param([string]$Scope)
+                    return [pscustomobject]@{ start = ($basePort + 6); end = ($basePort + 7) }
+                }
+                Resolve-Vibecoding1cMcpPort -Scope "project" -Key "project:itl-project-b-code" -ServerId "code" -ContainerName "itl-project-b-code"
+            }
+            $vibecodingA | Should -Not -Be $vibecodingB
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", $oldRegistryHome, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", $oldRegistryScope, "Process")
+            [Environment]::SetEnvironmentVariable("VANESSA_TEST_PORT_RANGE", $oldVanessaTestRange, "Process")
+            [Environment]::SetEnvironmentVariable("VANESSA_MCP_PORT_RANGE", $oldVanessaMcpRange, "Process")
+            [Environment]::SetEnvironmentVariable("ROCTUP_MCP_PORT_RANGE", $oldRoctupRange, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "rejects explicit managed port conflicts and reuses released allocations" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-managed-port-explicit-test-" + [guid]::NewGuid().ToString("N"))
+        $oldRegistryHome = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", "Process")
+        $oldRegistryScope = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", "Process")
+        $listener = $null
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", (Join-Path $tempRoot "port-registry"), "Process")
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", $null, "Process")
+
+            $basePort = 0
+            for ($candidate = 44000; $candidate -lt 55000; $candidate += 10) {
+                $probe1 = $null
+                $probe2 = $null
+                try {
+                    $address = [System.Net.IPAddress]::Parse("127.0.0.1")
+                    $probe1 = New-Object System.Net.Sockets.TcpListener($address, $candidate)
+                    $probe2 = New-Object System.Net.Sockets.TcpListener($address, ($candidate + 1))
+                    $probe1.Start()
+                    $probe2.Start()
+                    $basePort = $candidate
+                    break
+                } catch {
+                } finally {
+                    if ($null -ne $probe1) { $probe1.Stop() }
+                    if ($null -ne $probe2) { $probe2.Stop() }
+                }
+            }
+            $basePort | Should -BeGreaterThan 0
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Resolve-ItlManagedPort -Family "test-family" -Key "one" -Start $basePort -End ($basePort + 1) -ExplicitPort $basePort -Subject "test port"
+            } | Should -Be $basePort
+
+            {
+                & {
+                    . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    Resolve-ItlManagedPort -Family "test-family" -Key "two" -Start $basePort -End ($basePort + 1) -ExplicitPort $basePort -Subject "test port"
+                }
+            } | Should -Throw "*already reserved*"
+
+            $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Parse("127.0.0.1"), ($basePort + 1))
+            $listener.Start()
+            {
+                & {
+                    . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    Resolve-ItlManagedPort -Family "test-family" -Key "two" -Start $basePort -End ($basePort + 1) -ExplicitPort ($basePort + 1) -Subject "test port"
+                }
+            } | Should -Throw "*occupied*"
+            $listener.Stop()
+            $listener = $null
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Release-ItlManagedPortAllocation -Family "test-family" -Key "one"
+                Resolve-ItlManagedPort -Family "test-family" -Key "two" -Start $basePort -End ($basePort + 1) -ExplicitPort $basePort -Subject "test port"
+            } | Should -Be $basePort
+        } finally {
+            if ($null -ne $listener) {
+                $listener.Stop()
+            }
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", $oldRegistryHome, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", $oldRegistryScope, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -4346,7 +4533,8 @@ url = "http://localhost:9999/mcp"
         $HelperText | Should -Match "Read-OneCEventLogDirect"
         $HelperText | Should -Match "Test-DevBranchEventLogAfterVanessa"
         $HelperText | Should -Match ([regex]::Escape("/TESTMANAGER"))
-        $HelperText | Should -Match ([regex]::Escape("-TPort"))
+        $HelperText | Should -Match "TestClientPort"
+        $HelperText | Should -Not -Match ([regex]::Escape('$args += @("/TESTMANAGER", "-TPort"'))
         $HelperText | Should -Match "New-VanessaStartFeaturePlayerCommand"
         $HelperText | Should -Match "StartFeaturePlayer;VAParams="
         $HelperText | Should -Match "Get-OneCProcessInfo"
@@ -4453,6 +4641,7 @@ url = "http://localhost:9999/mcp"
     It "keeps required package files visible for Git packaging" {
         $requiredFiles = @(
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+            ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1",
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.data-mcp.ps1",
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
@@ -4569,14 +4758,70 @@ url = "http://localhost:9999/mcp"
         }
     }
 
+    It "starts Vanessa verify TestManager without passing TPort on the TestManager command line" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-testmanager-args-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $fakePlatform = Join-Path $tempRoot "1cv8.exe"
+            Set-Content -LiteralPath $fakePlatform -Encoding ASCII -Value "fake"
+            $ibPath = Join-Path $tempRoot "ib"
+            New-Item -ItemType Directory -Force -Path $ibPath | Out-Null
+
+            $captured = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+
+                function Get-PlatformPath {
+                    return $fakePlatform
+                }
+                function Assert-InfoBaseAvailable {
+                }
+                function Invoke-NativeProcessAndWaitResult {
+                    param(
+                        [string]$FilePath,
+                        [string[]]$Arguments,
+                        [int]$TimeoutSeconds = 0,
+                        [scriptblock]$OnTimeout = $null
+                    )
+                    $script:LastNativeProcessArguments = @($Arguments)
+                    return [pscustomobject]@{
+                        timedOut = $false
+                        exitCode = 0
+                        processId = 4242
+                    }
+                }
+
+                Invoke-Enterprise `
+                    -InfoBasePath $ibPath `
+                    -InfoBaseKind "file" `
+                    -EnterpriseArgs @("/CStartFeaturePlayer;VAParams=C:\temp\VAParams.json") `
+                    -TestClientPort 48051 `
+                    -TimeoutSeconds 60 | Out-Null
+
+                $script:LastNativeProcessArguments
+            }
+
+            $captured | Should -Contain "/TESTMANAGER"
+            ($captured -join " ") | Should -Not -Match ([regex]::Escape("-TPort"))
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "allocates Vanessa verify test ports per development branch state" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-test-port-test-" + [guid]::NewGuid().ToString("N"))
         $oldRange = [Environment]::GetEnvironmentVariable("VANESSA_TEST_PORT_RANGE", "Process")
+        $oldRegistryHome = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", "Process")
+        $oldRegistryScope = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", "Process")
         $listener = $null
 
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches") | Out-Null
             & git -C $tempRoot init *> $null
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", (Join-Path $tempRoot "port-registry"), "Process")
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", $null, "Process")
 
             $basePort = 0
             for ($candidate = 42000; $candidate -lt 55000; $candidate += 10) {
@@ -4641,7 +4886,7 @@ url = "http://localhost:9999/mcp"
                     return @([pscustomobject]@{
                         processId = 2201
                         name = "1cv8c.exe"
-                        commandLine = "1cv8c.exe /TESTMANAGER -TPort $basePort /F `"D:\worktrees\other\.agent-1c\infobases\other`""
+                        commandLine = "1cv8c.exe /TESTCLIENT -TPort $basePort /F `"D:\worktrees\other\.agent-1c\infobases\other`""
                         workingSetMb = 20
                     })
                 }
@@ -4659,9 +4904,9 @@ url = "http://localhost:9999/mcp"
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $state = [pscustomobject]@{
-                    devBranchName = "Current Branch"
-                    safeDevBranchName = "current-branch"
-                    devBranch = "itldev/current-branch"
+                    devBranchName = "Saved Branch"
+                    safeDevBranchName = "saved-branch"
+                    devBranch = "itldev/saved-branch"
                     vanessaTestPort = $basePort
                 }
                 Resolve-VanessaTestPort -State $state
@@ -4671,6 +4916,8 @@ url = "http://localhost:9999/mcp"
                 $listener.Stop()
             }
             [Environment]::SetEnvironmentVariable("VANESSA_TEST_PORT_RANGE", $oldRange, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", $oldRegistryHome, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", $oldRegistryScope, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -4699,7 +4946,7 @@ url = "http://localhost:9999/mcp"
                     return @([pscustomobject]@{
                         processId = 2001
                         name = "1cv8c.exe"
-                        commandLine = "1cv8c.exe /TESTMANAGER -TPort 48052 /F `"D:\worktrees\other\.agent-1c\infobases\other`" /CStartFeaturePlayer;VAParams=D:\worktrees\other\params.json"
+                        commandLine = "1cv8c.exe /TESTCLIENT -TPort 48052 /F `"D:\worktrees\other\.agent-1c\infobases\other`" /CStartFeaturePlayer;VAParams=D:\worktrees\other\params.json"
                         workingSetMb = 20
                     })
                 }

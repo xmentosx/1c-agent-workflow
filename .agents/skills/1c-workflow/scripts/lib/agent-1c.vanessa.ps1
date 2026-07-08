@@ -1420,7 +1420,7 @@ function Run-DevBranchTests {
     Write-Host "Vanessa features: $(Resolve-ProjectPath $featuresPath)"
     Write-Host "Vanessa report directory: $runDirectory"
     Write-Host "Vanessa params: $paramsPath"
-    Write-Host "Vanessa TESTMANAGER/TestClient port: $testPort"
+    Write-Host "Vanessa TestClient port: $testPort"
     if ($VanessaFilterTags) {
         Write-Host "Vanessa tag filter: $VanessaFilterTags"
     }
@@ -1441,7 +1441,7 @@ function Run-DevBranchTests {
             -InfoBasePath $state.devBranchInfoBasePath `
             -InfoBaseKind $state.infoBaseKind `
             -EnterpriseArgs $enterpriseArgs `
-            -TestManagerPort $testPort `
+            -TestClientPort $testPort `
             -TimeoutSeconds $timeoutSeconds `
             -OnTimeout {
                 Write-Host "[WARN] Vanessa verify exceeded timeout; stopping own TESTMANAGER/TESTCLIENT processes."
@@ -1600,7 +1600,7 @@ function Get-VanessaTestPortRange {
     }
 
     if ($start -lt 1 -or $end -gt 65535 -or $start -gt $end) {
-        throw "Invalid Vanessa test port range: $start..$end"
+        throw "Invalid Vanessa TestClient port range: $start..$end"
     }
 
     return [pscustomobject]@{
@@ -1798,42 +1798,34 @@ function Resolve-VanessaTestPort {
     param([object]$State)
 
     $reserved = Get-VanessaTestReservedPorts -CurrentState $State
-
-    if ($VanessaTestPort -gt 0) {
-        if ($reserved.ContainsKey($VanessaTestPort)) {
-            throw "Requested Vanessa test port $VanessaTestPort is already reserved by another development branch."
-        }
-        if (Test-VanessaTestPortUsedByForeignProcess -State $State -Port $VanessaTestPort) {
-            throw "Requested Vanessa test port $VanessaTestPort is already used by another branch 1C test process."
-        }
-        if ((Test-TcpPortAvailable -Port $VanessaTestPort) -or (Test-VanessaTestPortOwnedByState -State $State -Port $VanessaTestPort)) {
-            return $VanessaTestPort
-        }
-        throw "Requested Vanessa test port $VanessaTestPort is already occupied by another process."
-    }
-
     $savedPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaTestPort" -Default 0)
-    if ($savedPort -gt 0 -and -not $reserved.ContainsKey($savedPort)) {
-        if (-not (Test-VanessaTestPortUsedByForeignProcess -State $State -Port $savedPort) -and
-            ((Test-TcpPortAvailable -Port $savedPort) -or (Test-VanessaTestPortOwnedByState -State $State -Port $savedPort))) {
-            return $savedPort
-        }
-    }
-
     $range = Get-VanessaTestPortRange
-    for ($port = $range.start; $port -le $range.end; $port++) {
-        if ($reserved.ContainsKey($port)) {
-            continue
-        }
-        if (Test-VanessaTestPortUsedByForeignProcess -State $State -Port $port) {
-            continue
-        }
-        if ((Test-TcpPortAvailable -Port $port) -or (Test-VanessaTestPortOwnedByState -State $State -Port $port)) {
+    $key = Get-ItlBranchManagedPortKey -Family "vanessa-testclient" -State $State
+
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $port = Resolve-ItlManagedPort `
+            -Family "vanessa-testclient" `
+            -Key $key `
+            -Start $range.start `
+            -End $range.end `
+            -PreferredPort $savedPort `
+            -ExplicitPort $VanessaTestPort `
+            -ReservedPorts $reserved `
+            -State $State `
+            -Subject "Vanessa TestClient port"
+
+        if (-not (Test-VanessaTestPortUsedByForeignProcess -State $State -Port $port)) {
             return $port
         }
+
+        Release-ItlManagedPortAllocation -Family "vanessa-testclient" -Key $key
+        if ($VanessaTestPort -gt 0) {
+            throw "Requested Vanessa TestClient port $VanessaTestPort is already used by another branch 1C test process."
+        }
+        $reserved[$port] = $true
     }
 
-    throw "No free Vanessa test port found in range $($range.start)..$($range.end). Stop another branch Vanessa run or override VANESSA_TEST_PORT_RANGE."
+    throw "No free Vanessa TestClient port found in range $($range.start)..$($range.end). Stop another branch Vanessa run or override VANESSA_TEST_PORT_RANGE."
 }
 
 function Save-VanessaTestSettingsToDotEnv {
@@ -1947,7 +1939,7 @@ function Stop-OwnHungVanessaTestClients {
 
     $ownClients = @(Get-OneCProcessInfo | Where-Object {
         ([string]$_.commandLine) -match "(?i)(/TESTCLIENT|/TESTMANAGER|StartFeaturePlayer|VAParams=)" -and
-        (Test-OneCProcessBelongsToState -ProcessInfo $_ -State $State -TestPort $TestPort -RequireTestPort)
+        (Test-OneCProcessBelongsToState -ProcessInfo $_ -State $State -TestPort $TestPort)
     })
 
     foreach ($processInfo in $ownClients) {
@@ -1989,7 +1981,7 @@ function Write-VanessaTestStatusLines {
     }
 
     if ($port -gt 0) {
-        Write-Host "${Indent}Vanessa verify test port: $port"
+        Write-Host "${Indent}Vanessa TestClient port: $port"
     }
     if ($lastAt) {
         Write-Host "${Indent}Last Vanessa verify run: $lastAt"
@@ -2168,36 +2160,17 @@ function Resolve-VanessaMcpPort {
 
     $reserved = Get-VanessaMcpReservedPorts -CurrentState $State
     $savedPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaMcpPort" -Default 0)
-    $savedPid = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaMcpPid" -Default 0)
-    $savedProcess = Get-ProcessByIdOrNull -ProcessId $savedPid
-
-    if ($VanessaMcpPort -gt 0) {
-        if ($reserved.ContainsKey($VanessaMcpPort)) {
-            throw "Requested Vanessa MCP port $VanessaMcpPort is already reserved by another development branch."
-        }
-        if (-not (Test-TcpPortAvailable -Port $VanessaMcpPort)) {
-            throw "Requested Vanessa MCP port $VanessaMcpPort is already occupied."
-        }
-        return $VanessaMcpPort
-    }
-
-    if ($savedPort -gt 0 -and -not $reserved.ContainsKey($savedPort)) {
-        if ((Test-TcpPortAvailable -Port $savedPort) -or ($null -ne $savedProcess)) {
-            return $savedPort
-        }
-    }
-
     $range = Get-VanessaMcpPortRange
-    for ($port = $range.start; $port -le $range.end; $port++) {
-        if ($reserved.ContainsKey($port)) {
-            continue
-        }
-        if (Test-TcpPortAvailable -Port $port) {
-            return $port
-        }
-    }
-
-    throw "No free Vanessa MCP port found in range $($range.start)..$($range.end). Stop another branch MCP server or override VANESSA_MCP_PORT_RANGE."
+    return (Resolve-ItlManagedPort `
+        -Family "vanessa-mcp" `
+        -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $State) `
+        -Start $range.start `
+        -End $range.end `
+        -PreferredPort $savedPort `
+        -ExplicitPort $VanessaMcpPort `
+        -ReservedPorts $reserved `
+        -State $State `
+        -Subject "Vanessa MCP port")
 }
 
 function Read-CurrentDevBranchStateForVanessaMcp {
@@ -2538,12 +2511,14 @@ function Stop-VanessaMcpForState {
         }
         Stop-Process -Id $runtime.pid -Force -ErrorAction Stop
         Start-Sleep -Milliseconds 500
+        Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $State) -Status "stopped"
         Update-DevBranchState -State $State -Updates $updates
         $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
         Write-VanessaMcpClientConfig -State $state
         return $true
     }
 
+    Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $State) -Status "stopped"
     Update-DevBranchState -State $State -Updates $updates
     $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
     Write-VanessaMcpClientConfig -State $state
@@ -2608,10 +2583,12 @@ function Start-VanessaMcp {
         vanessaMcpError = ""
         vanessaMcpUpdatedAt = (Get-Date).ToString("o")
     }
+    Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $state) -Status "running" -ProcessId $result.process.Id
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
     if (-not (Wait-VanessaMcpPort -Port $port -TimeoutSeconds 30)) {
         $message = "Vanessa MCP process was started, but port $port did not become reachable within 30 seconds. PID: $($result.process.Id). Log: $($result.logPath)"
+        Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $state) -Status "failed" -ProcessId $result.process.Id
         Update-DevBranchState -State $state -Updates @{
             vanessaMcpStatus = "failed"
             vanessaMcpError = $message

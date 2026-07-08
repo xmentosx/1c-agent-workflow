@@ -2877,7 +2877,8 @@ function Invoke-Enterprise {
         [string]$InfoBasePath,
         [string]$InfoBaseKind,
         [string[]]$EnterpriseArgs,
-        [int]$TestManagerPort = 0,
+        [int]$TestClientPort = 0,
+        [int]$VanessaTestPort = 0,
         [int]$TimeoutSeconds = 0,
         [scriptblock]$OnTimeout = $null,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
@@ -2898,8 +2899,14 @@ function Invoke-Enterprise {
 
     $ibArgs = New-InfobaseArgs -Kind $InfoBaseKind -Path $InfoBasePath -User $User -Password $Password
     $args = @("ENTERPRISE") + $ibArgs + @("/DisableStartupMessages")
-    if ($TestManagerPort -gt 0) {
-        $args += @("/TESTMANAGER", "-TPort", ([string]$TestManagerPort))
+    $effectiveTestClientPort = 0
+    if ($TestClientPort -gt 0) {
+        $effectiveTestClientPort = $TestClientPort
+    } elseif ($VanessaTestPort -gt 0) {
+        $effectiveTestClientPort = $VanessaTestPort
+    }
+    if ($effectiveTestClientPort -gt 0) {
+        $args += "/TESTMANAGER"
     }
     $args += @("/Out", $logPath) + $EnterpriseArgs
 
