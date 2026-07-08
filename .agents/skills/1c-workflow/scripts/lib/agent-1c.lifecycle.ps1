@@ -2565,6 +2565,30 @@ function Publish-DevBranch {
     }
 }
 
+function Commit-BaselineDumpIfNeeded {
+    param(
+        [string]$Message,
+        [string]$ExportPath
+    )
+
+    $pathSpec = @($ExportPath)
+    Invoke-Git (@("add", "--all", "--force", "--") + $pathSpec)
+    if (Test-GitHasStagedChanges -PathSpec $pathSpec) {
+        Invoke-Git (@("commit", "-m", $Message, "--") + $pathSpec)
+        return $true
+    }
+
+    $normalizedExportPath = (($ExportPath -replace "\\", "/").TrimEnd("/"))
+    $dumpInfoRepoPath = "$normalizedExportPath/ConfigDumpInfo.xml"
+    if (Test-GitHeadContainsPath -RepoPath $dumpInfoRepoPath) {
+        Write-Host "No Git changes to commit for: $($pathSpec -join ', '). Baseline configuration dump is already committed to HEAD."
+        return $false
+    }
+
+    $status = Get-GitStatusForPathSpec -PathSpec $pathSpec
+    throw "No Git changes to commit for: $($pathSpec -join ', '). Expected files from the 1C configuration dump. Git status for this path: $status"
+}
+
 function Initialize-Project {
     Write-Section "Initialize project"
     New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
@@ -2588,7 +2612,7 @@ function Initialize-Project {
     Update-BaseFromRepository
     $dumpResult = Dump-ConfigToFiles
     $dumpMessage = if ($sourceUsesRepository) { "sync: export 1C configuration from repository" } else { "sync: export 1C configuration from source infobase" }
-    Commit-IfChanged -Message $dumpMessage -PathSpec @($dumpResult.exportPath) -RequireChanges -ForceAdd | Out-Null
+    Commit-BaselineDumpIfNeeded -Message $dumpMessage -ExportPath $dumpResult.exportPath | Out-Null
     Assert-BaselineDumpCommitted -ExportPath $dumpResult.exportPath
 
     Install-AiRules1c

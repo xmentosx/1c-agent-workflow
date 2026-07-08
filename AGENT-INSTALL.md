@@ -149,28 +149,34 @@ Encoding rules:
 <project>/.kilo/commands/
 ```
 
-4. Create `.agent-1c/project.json` from `templates/project.json` when missing. Use the default `devBranchInfoBaseRoot` unless the developer explicitly requested a custom location.
+4. Copy the whole bootstrap templates directory into the target project before running the initialization helper:
 
-5. Create `.agent-1c/dependency-lock.json` from `templates/dependency-lock.json` when missing. Keep it committed when the team wants reproducible bootstrap pins; fresh mode updates it with resolved workflow package revision, dependency revisions, URLs, and hashes.
+```text
+<project>/templates/
+```
 
-6. Create `.agent-1c/tools.json` from `templates/tools.json` when missing. Keep it committed so the team can adjust required software checks and install suggestions.
+5. Create `.agent-1c/project.json` from `templates/project.json` when missing. Use the default `devBranchInfoBaseRoot` unless the developer explicitly requested a custom location.
 
-7. Create `.dev.env` from `templates/dev.env.example` when missing. Fill local paths, secrets, web publication preference, and the chosen `DEPENDENCY_MODE`. Write it as UTF-8 and ensure `.dev.env` is ignored by Git.
+6. Create `.agent-1c/dependency-lock.json` from `templates/dependency-lock.json` when missing. Keep it committed when the team wants reproducible bootstrap pins; fresh mode updates it with resolved workflow package revision, dependency revisions, URLs, and hashes.
 
-8. Append `templates/gitignore.append` lines to `.gitignore` if absent.
+7. Create `.agent-1c/tools.json` from `templates/tools.json` when missing. Keep it committed so the team can adjust required software checks and install suggestions.
 
-8. Append `templates/AGENTS.append.md` to `AGENTS.md` only as a fallback when `AGENTS.md` does not already reference `USER-RULES.md`. Current `ai_rules_1c` creates and manages the normal root `AGENTS.md`; do not modify it just to add ITL notes.
+8. Create `.dev.env` from `templates/dev.env.example` when missing. Fill local paths, secrets, web publication preference, and the chosen `DEPENDENCY_MODE`. Write it as UTF-8 and ensure `.dev.env` is ignored by Git.
 
-9. Apply the managed ITL block from `templates/USER-RULES.append.md` to `USER-RULES.md`. New helpers wrap this block with markers so future `update-workflow` runs can replace it safely.
+9. Append `templates/gitignore.append` lines to `.gitignore` if absent.
 
-10. Copy developer-facing docs into the target project when present:
+10. Append `templates/AGENTS.append.md` to `AGENTS.md` only as a fallback when `AGENTS.md` does not already reference `USER-RULES.md`. Current `ai_rules_1c` creates and manages the normal root `AGENTS.md`; do not modify it just to add ITL notes.
+
+11. Apply the managed ITL block from `templates/USER-RULES.append.md` to `USER-RULES.md`. New helpers wrap this block with markers so future `update-workflow` runs can replace it safely.
+
+12. Copy developer-facing docs into the target project when present:
 
 ```text
 <project>/DEVELOPER-GUIDE.ru.md
 <project>/DEV-BRANCH-DEVELOPMENT.ru.md
 ```
 
-11. Do not add detailed workflow text to `AGENTS.md`. Keep ITL-specific rules in `USER-RULES.md` so upstream-managed `AGENTS.md` can continue to update cleanly.
+13. Do not add detailed workflow text to `AGENTS.md`. Keep ITL-specific rules in `USER-RULES.md` so upstream-managed `AGENTS.md` can continue to update cleanly.
 
 ## Diagnostic Tool Checks
 

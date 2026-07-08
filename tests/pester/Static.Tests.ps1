@@ -3279,6 +3279,7 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match "AGENTS\.md already references USER-RULES\.md"
 
         $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
+        $installText | Should -Match ([regex]::Escape("<project>/templates/"))
         $installText | Should -Match "templates/USER-RULES.append.md"
         $installText | Should -Match "fallback"
         $installText | Should -Match "upstream-managed"
@@ -3901,16 +3902,11 @@ local after
 
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agents\skills"), (Join-Path $tempRoot ".kilo"), (Join-Path $tempRoot "templates") | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agents\skills"), (Join-Path $tempRoot ".kilo") | Out-Null
 
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow") -Destination (Join-Path $tempRoot ".agents\skills\1c-workflow") -Recurse
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast") -Destination (Join-Path $tempRoot ".agents\skills\1c-workflow-fast") -Recurse
-            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $tempRoot "templates\project.json")
-            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\tools.json") -Destination (Join-Path $tempRoot "templates\tools.json")
-            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dev.env.example") -Destination (Join-Path $tempRoot "templates\dev.env.example")
-            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Destination (Join-Path $tempRoot "templates\gitignore.append")
-            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\USER-RULES.append.md") -Destination (Join-Path $tempRoot "USER-RULES.md")
-            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\AGENTS.append.md") -Destination (Join-Path $tempRoot "AGENTS.md")
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates") -Destination (Join-Path $tempRoot "templates") -Recurse
 
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow-fast\SKILL.md") -PathType Leaf) | Should -Be $true
@@ -3918,9 +3914,14 @@ local after
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\event-log-exporter\EventLogExporter.xml") -PathType Leaf) | Should -Be $true
             @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\auto-update") -File -Filter "*.epf").Count | Should -Be 2
-            (Test-Path -LiteralPath (Join-Path $tempRoot "AGENTS.md") -PathType Leaf) | Should -Be $true
-            (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "AGENTS.md")) | Should -Match "USER-RULES.md"
-            (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "USER-RULES.md")) | Should -Match "1C Project Lifecycle"
+            (Test-Path -LiteralPath (Join-Path $tempRoot "templates\project.json") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "templates\tools.json") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "templates\dev.env.example") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "templates\gitignore.append") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "templates\USER-RULES.append.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "templates\AGENTS.append.md") -PathType Leaf) | Should -Be $true
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "templates\AGENTS.append.md")) | Should -Match "USER-RULES.md"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "templates\USER-RULES.append.md")) | Should -Match "1C Project Lifecycle"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -5247,6 +5248,62 @@ url = "http://localhost:9999/mcp"
             [int]$status.exitCode | Should -Be 1
             $status.runLogPath | Should -Be ([System.IO.Path]::GetFullPath($logPath))
             $status.errorMessage | Should -Not -BeNullOrEmpty
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "skips init baseline dump commit when the dump is already committed" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-baseline-dump-skip-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "<dump />"
+            & git -C $tempRoot add src/cf/ConfigDumpInfo.xml
+            & git -C $tempRoot commit -m "baseline dump" *> $null
+
+            $commitBefore = ((& git -C $tempRoot rev-parse HEAD).Trim())
+            $committed = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Commit-BaselineDumpIfNeeded -Message "sync: export 1C configuration from source infobase" -ExportPath "src/cf"
+            }
+
+            $committed | Should -Be $false
+            ((& git -C $tempRoot rev-parse HEAD).Trim()) | Should -Be $commitBefore
+            ((& git -C $tempRoot diff --cached --name-only) -join [Environment]::NewLine) | Should -Be ""
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "fails init baseline dump commit when no baseline dump is committed" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-baseline-dump-missing-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Other.xml") -Encoding UTF8 -Value "<other />"
+            & git -C $tempRoot add src/cf/Other.xml
+            & git -C $tempRoot commit -m "other dump file" *> $null
+
+            {
+                & {
+                    . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    Commit-BaselineDumpIfNeeded -Message "sync: export 1C configuration from source infobase" -ExportPath "src/cf"
+                }
+            } | Should -Throw "*Expected files from the 1C configuration dump*"
+
+            ((& git -C $tempRoot rev-list --count HEAD).Trim()) | Should -Be "1"
+            ((& git -C $tempRoot diff --cached --name-only) -join [Environment]::NewLine) | Should -Be ""
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
