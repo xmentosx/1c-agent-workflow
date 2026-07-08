@@ -340,6 +340,8 @@ New branch commands create a sibling Git worktree by default and leave the curre
 
 `/itl` must present the lifecycle as a process panel, not as a flat command list: current state, recommended next step, lifecycle path, visible slash commands, then grouped additional helper actions. In a fresh clean `itldev/*` branch with `verification missing`, recommend choosing a development mode (`quick-fix`, `/opsx-explore`, or `/opsx-propose`), not `/itl-check`. Recommend `/itl-check` after checkable configuration/extension/Vanessa feature changes or stale/failed/unknown verification.
 
+The Kilo `/itl` command wrapper must return helper `-Action help` stdout verbatim in one panel. It must not summarize, translate, split the panel into custom sections, merge OpenSpec into visible slash commands, omit `Lifecycle:` or `Additional helper actions:`, or append a "no lifecycle actions executed" note. Existing open worktrees may have stale ignored `.kilo/commands/itl.md`; regenerate the command surface by running `update-workflow` from `master`, `/itl-refresh` in the dev worktree, or `switch-dev-branch` when changing branches.
+
 Advanced/helper actions such as extension setup/dump, project initialization, workflow/rules update, vibecoding1c MCP, and Vanessa MCP remain available through natural-language requests or direct PowerShell helper actions, and `/itl` may show them as grouped additional capabilities, but they are intentionally not generated as visible Kilo slash commands.
 
 Typing `/` shows available project commands.

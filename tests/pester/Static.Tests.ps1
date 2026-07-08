@@ -628,9 +628,21 @@ Describe "1C agent workflow static checks" {
         $wrapperText = Get-Content -Encoding UTF8 -Raw $wrapperPath
 
         $wrapperText | Should -Match "-Action\s+help"
-        $wrapperText | Should -Match "keep its structure"
-        $wrapperText | Should -Match "Do not flatten"
+        $wrapperText | Should -Match "helper stdout verbatim"
+        $wrapperText | Should -Match "Do not summarize"
+        $wrapperText | Should -Match "Additional helper actions:"
+        $wrapperText | Should -Match "Lifecycle:"
         $wrapperText | Should -Not -Match "Lifecycle-действия не выполнялись"
+    }
+
+    It "tells Kilo rules to keep /itl as a verbatim process panel" {
+        $rulesTemplateText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\USER-RULES.append.md")
+
+        $rulesTemplateText | Should -Match 'For Kilo `/itl`'
+        $rulesTemplateText | Should -Match "stdout verbatim"
+        $rulesTemplateText | Should -Match "Additional helper actions:"
+        $rulesTemplateText | Should -Match "merge OpenSpec"
+        $rulesTemplateText | Should -Match "no lifecycle actions executed"
     }
 
     It "recommends choosing development mode for a fresh clean dev branch" {
