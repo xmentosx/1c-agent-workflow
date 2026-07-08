@@ -44,5 +44,10 @@
     "version": "",
     "featuresPath": "tests/features",
     "reportsPath": "build/test-results/vanessa"
+  },
+  "roctupMcpToolkit": {
+    "installRoot": ".agent-1c/tools/roctup-mcp-toolkit",
+    "epfPath": "",
+    "version": ""
   }
 }

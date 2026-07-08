@@ -50,9 +50,9 @@ verify helper action                       Совместимый alias для /
 
 `/itl` в ветке разработки показывает процессную панель, а не только список команд: состояние ветки, рекомендуемый следующий шаг, путь разработки, видимые slash-команды и дополнительные helper-действия. В свежей чистой ветке с `verification missing` следующий шаг - выбрать режим разработки: quick-fix естественным языком, `/opsx-explore`, если нужно сначала изучить контекст, или `/opsx-propose` для полноценного изменения. `/itl-check` запускайте после появления проверяемых изменений или когда предыдущая проверка stale/failed/unknown.
 
-`vibecoding1c-mcp helper action` в worktree текущей `itldev/*` ветки подключает выбранные vibecoding1c MCP endpoints. По умолчанию используются remote LAN endpoints из registry; config-specific remote vibecoding1c MCP требует явного `configId`. Если для `code` или `graph` выбран local branch scope, helper поднимает отдельный локальный vibecoding1c MCP для текущей ветки. vibecoding1c MCP соседних веток в client config не добавляются; Vanessa MCP управляется отдельно через `vanessa-mcp helper action`.
+`vibecoding1c-mcp helper action` в worktree текущей `itldev/*` ветки подключает выбранные vibecoding1c MCP endpoints. По умолчанию используются remote LAN endpoints из registry; config-specific remote vibecoding1c MCP требует явного `configId`. Если для `code` или `graph` выбран local branch scope, helper поднимает отдельный локальный vibecoding1c MCP для текущей ветки. vibecoding1c MCP соседних веток в client config не добавляются; ROCTUP MCP и Vanessa MCP являются отдельными branch-local серверами и автозапускаются lifecycle-командами.
 
-`/itl-update-workflow` и `update-workflow helper action` запускаются только из `master` worktree. Обновляйте ITL workflow-пакет в `master`, коммитьте изменения, затем подтягивайте их в текущую ветку через merge свежего `master` или `/itl-refresh`. После этого при необходимости обновите MCP текущей ветки через `vibecoding1c-mcp helper action`; для branch-local Vanessa MCP используйте stop, install, затем start через `vanessa-mcp helper action`.
+`/itl-update-workflow` и `update-workflow helper action` запускаются только из `master` worktree. Обновляйте ITL workflow-пакет в `master`, коммитьте изменения, затем подтягивайте их в текущую ветку через merge свежего `master` или `/itl-refresh`. После реальной загрузки базы lifecycle перезапускает уже работающие ROCTUP/Vanessa MCP; helper actions для ROCTUP, Vanessa и vibecoding1c MCP остаются для диагностики и восстановления.
 
 Команды `set-dev-branch-extension helper action` и `dump-dev-branch-extension helper action` являются helper-командами для extension-веток. Они доступны напрямую, но могут не показываться в коротком beginner-меню `/itl`.
 
@@ -175,7 +175,7 @@ Quick-fix делается без OpenSpec.
 /itl-check
 ```
 
-Для написания и отладки Vanessa-сценариев агент может запустить branch-local Vanessa MCP через `vanessa-mcp helper action` из текущей `itldev/*` worktree. MCP не заменяет финальный gate: после отладки нужно выполнить `/itl-check`, который запускает пакетный `StartFeaturePlayer` в реальном `TESTMANAGER -> TESTCLIENT` контуре, назначает branch-local `VANESSA_TEST_PORT` и сохраняет воспроизводимые JUnit/status/log paths. `verify helper action` остается совместимым alias.
+Branch-local Vanessa MCP в новых `itldev/*` ветках запускается автоматически; `vanessa-mcp helper action` нужен для ручного status/stop/start/repair. MCP не заменяет финальный gate: после отладки нужно выполнить `/itl-check`, который запускает пакетный `StartFeaturePlayer` в реальном `TESTMANAGER -> TESTCLIENT` контуре, назначает branch-local `VANESSA_TEST_PORT` и сохраняет воспроизводимые JUnit/status/log paths. `verify helper action` остается совместимым alias.
 
 Для изменения бизнес-поведения агент обязан создать или обновить небольшой набор Vanessa Automation проверок: минимум 2, обычно 2-3 и не больше 4 без отдельного обоснования. Набор должен включать основной успешный сценарий и минимум один значимый граничный или негативный сценарий.
 
@@ -293,7 +293,7 @@ Vanessa Automation - стандартный тестовый фреймворк 
 
 Перед созданием или правкой Vanessa-тестов агент читает `VANESSA-TESTS-GUIDE.md`; для обычных lifecycle-команд этот файл не нужен.
 
-Vanessa MCP - опциональная branch-local поддержка для авторинга и отладки. Запускайте отдельный MCP для каждой ветки разработки; порт сохраняется в state ветки, поэтому параллельные worktree не конфликтуют. Финальная проверка не идет через MCP: `/itl-check` запускает Vanessa как `TESTMANAGER -> TESTCLIENT` с отдельным test port текущей ветки.
+ROCTUP MCP - основной branch-local канал исследования данных текущей копии базы без web-публикации. Vanessa MCP - branch-local поддержка для авторинга и отладки. Оба сервера запускаются отдельно для каждой новой ветки разработки; порты сохраняются в state ветки, поэтому параллельные worktree не конфликтуют. Финальная проверка не идет через MCP: `/itl-check` запускает Vanessa как `TESTMANAGER -> TESTCLIENT` с отдельным test port текущей ветки.
 
 Remote `code`/`graph` MCP и project-scope local MCP могут быть построены по снимку конфигурации, который не включает текущие изменения ветки. Перед использованием данных MCP смотрите `/itl-status`: freshness `remote-shared`, `stale`, `unknown` или `indexing` означает, что MCP не является точным индексом текущей branch head.
 

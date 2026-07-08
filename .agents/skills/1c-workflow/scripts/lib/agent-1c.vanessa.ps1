@@ -267,29 +267,8 @@ function Ensure-VanessaAutomationForInit {
         return
     }
 
-    Write-Host "Vanessa Automation is required for development branch tests and is not installed."
-    if ($InitMode -eq "wizard") {
-        if (Read-InitYesNo -Prompt "Install Vanessa Automation automatically now?" -Default $true) {
-            Install-VanessaAutomation
-            return
-        }
-        throw "Init stopped until Vanessa Automation is installed. Run install-vanessa-automation, then rerun init."
-    }
-
-    $install = $false
-    if ($Answers -and $Answers.PSObject.Properties["installVanessaIfMissing"]) {
-        $install = [bool]$Answers.installVanessaIfMissing
-    }
-    if ($install) {
-        Install-VanessaAutomation
-        return
-    }
-
-    if ($InitMode -eq "configured") {
-        throw "Vanessa Automation is required but missing. After explicit developer confirmation, rerun init-project with -InitMode configured -InstallVanessaIfMissing."
-    }
-
-    throw "Vanessa Automation is required but missing. Run install-vanessa-automation after explicit confirmation or pass installVanessaIfMissing=true in init JSON."
+    Write-Host "Vanessa Automation is required for development branch tests and branch-local Vanessa MCP; installing it automatically."
+    Install-VanessaAutomation
 }
 
 function Get-VanessaFeatureFiles {
@@ -2132,6 +2111,7 @@ function Get-VanessaMcpRuntimeInfo {
 
     $pidValue = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaMcpPid" -Default 0)
     $port = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaMcpPort" -Default 0)
+    $savedStatus = [string](Get-StateValue -State $State -Name "vanessaMcpStatus" -Default "")
     $process = Get-ProcessByIdOrNull -ProcessId $pidValue
     $portOpen = $false
     if ($port -gt 0) {
@@ -2145,6 +2125,8 @@ function Get-VanessaMcpRuntimeInfo {
         $status = "process-running-port-closed"
     } elseif ($portOpen) {
         $status = "port-open-unknown-process"
+    } elseif (@("failed", "skipped", "disabled") -contains $savedStatus) {
+        $status = $savedStatus
     }
 
     return [pscustomobject]@{
@@ -2490,6 +2472,17 @@ function Write-VanessaMcpKiloConfig {
     Write-Host "If Kilo Code does not show this MCP server immediately, reload or restart Kilo Code so it rereads .kilo/kilo.json."
 }
 
+function Write-VanessaMcpClientConfig {
+    param([object]$State)
+
+    if (Get-Command -Name Write-ItlBranchMcpClientConfig -ErrorAction SilentlyContinue) {
+        Write-ItlBranchMcpClientConfig -State $State
+        return
+    }
+
+    Write-VanessaMcpKiloConfig -State $State
+}
+
 function Write-VanessaMcpStatusLines {
     param(
         [object]$State,
@@ -2498,7 +2491,8 @@ function Write-VanessaMcpStatusLines {
 
     $runtime = Get-VanessaMcpRuntimeInfo -State $State
     $installedAt = Get-StateValue -State $State -Name "vanessaMcpInstalledAt" -Default ""
-    if (-not $installedAt -and $runtime.port -le 0) {
+    $status = Get-StateValue -State $State -Name "vanessaMcpStatus" -Default ""
+    if (-not $installedAt -and -not $status -and $runtime.port -le 0) {
         Write-Host "${Indent}Vanessa MCP: not configured"
         return
     }
@@ -2518,6 +2512,10 @@ function Write-VanessaMcpStatusLines {
     if ($installedAt) {
         Write-Host "${Indent}Vanessa MCP installed: $installedAt"
     }
+    $errorMessage = Get-StateValue -State $State -Name "vanessaMcpError" -Default ""
+    if ($errorMessage) {
+        Write-Host "${Indent}Vanessa MCP error: $errorMessage"
+    }
 }
 
 function Stop-VanessaMcpForState {
@@ -2529,7 +2527,9 @@ function Stop-VanessaMcpForState {
     $runtime = Get-VanessaMcpRuntimeInfo -State $State
     $updates = @{
         vanessaMcpPid = ""
+        vanessaMcpStatus = "stopped"
         vanessaMcpStoppedAt = (Get-Date).ToString("o")
+        vanessaMcpUpdatedAt = (Get-Date).ToString("o")
     }
 
     if ($runtime.processAlive) {
@@ -2539,10 +2539,14 @@ function Stop-VanessaMcpForState {
         Stop-Process -Id $runtime.pid -Force -ErrorAction Stop
         Start-Sleep -Milliseconds 500
         Update-DevBranchState -State $State -Updates $updates
+        $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
+        Write-VanessaMcpClientConfig -State $state
         return $true
     }
 
     Update-DevBranchState -State $State -Updates $updates
+    $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
+    Write-VanessaMcpClientConfig -State $state
     if (-not $Quiet) {
         Write-Host "Vanessa MCP is not running for this branch."
     }
@@ -2556,7 +2560,13 @@ function Start-VanessaMcp {
     $runtime = Get-VanessaMcpRuntimeInfo -State $state
     if ($runtime.processAlive) {
         Save-VanessaMcpSettingsToDotEnv -Port $runtime.port -Url $runtime.url
-        Write-VanessaMcpKiloConfig -State $state
+        Update-DevBranchState -State $state -Updates @{
+            vanessaMcpStatus = "running"
+            vanessaMcpError = ""
+            vanessaMcpUpdatedAt = (Get-Date).ToString("o")
+        }
+        $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
+        Write-VanessaMcpClientConfig -State $state
         Write-Host "Vanessa MCP process is already running for this branch."
         Write-VanessaMcpStatusLines -State $state
         Write-VanessaMcpClientSnippets -State $state
@@ -2575,6 +2585,9 @@ function Start-VanessaMcp {
     Update-DevBranchState -State $state -Updates @{
         vanessaMcpPort = $port
         vanessaMcpUrl = $url
+        vanessaMcpStatus = "starting"
+        vanessaMcpError = ""
+        vanessaMcpUpdatedAt = (Get-Date).ToString("o")
     }
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
@@ -2582,6 +2595,7 @@ function Start-VanessaMcp {
     $result = Start-EnterpriseBackground `
         -InfoBasePath $state.devBranchInfoBasePath `
         -InfoBaseKind $state.infoBaseKind `
+        -UseTestManager `
         -EnterpriseArgs @("/Execute", $vanessa.epfPath, "/C$command")
 
     Update-DevBranchState -State $state -Updates @{
@@ -2590,15 +2604,31 @@ function Start-VanessaMcp {
         vanessaMcpPid = $result.process.Id
         vanessaMcpStartedAt = (Get-Date).ToString("o")
         vanessaMcpLogPath = $result.logPath
+        vanessaMcpStatus = "starting"
+        vanessaMcpError = ""
+        vanessaMcpUpdatedAt = (Get-Date).ToString("o")
     }
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
     if (-not (Wait-VanessaMcpPort -Port $port -TimeoutSeconds 30)) {
-        throw "Vanessa MCP process was started, but port $port did not become reachable within 30 seconds. PID: $($result.process.Id). Log: $($result.logPath)"
+        $message = "Vanessa MCP process was started, but port $port did not become reachable within 30 seconds. PID: $($result.process.Id). Log: $($result.logPath)"
+        Update-DevBranchState -State $state -Updates @{
+            vanessaMcpStatus = "failed"
+            vanessaMcpError = $message
+            vanessaMcpUpdatedAt = (Get-Date).ToString("o")
+        }
+        throw $message
     }
 
+    Update-DevBranchState -State $state -Updates @{
+        vanessaMcpStatus = "running"
+        vanessaMcpError = ""
+        vanessaMcpUpdatedAt = (Get-Date).ToString("o")
+    }
+    $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
+
     Write-Host "Vanessa MCP started."
-    Write-VanessaMcpKiloConfig -State $state
+    Write-VanessaMcpClientConfig -State $state
     Write-VanessaMcpStatusLines -State $state
     Write-VanessaMcpClientSnippets -State $state
 }

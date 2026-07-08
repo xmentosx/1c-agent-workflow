@@ -40,9 +40,9 @@
       "name": "Vanessa Automation",
       "required": true,
       "install": {
-        "policy": "confirm-then-run",
+        "policy": "auto",
         "commands": [
-          "After explicit developer confirmation, run: powershell -ExecutionPolicy Bypass -File .\\.agents\\skills\\1c-workflow\\scripts\\agent-1c.ps1 -Action install-vanessa-automation"
+          "The ITL helper installs Vanessa Automation automatically during init. Manual recovery: powershell -ExecutionPolicy Bypass -File .\\.agents\\skills\\1c-workflow\\scripts\\agent-1c.ps1 -Action install-vanessa-automation"
         ]
       }
     }

@@ -822,6 +822,7 @@ function Ensure-GitIgnore {
         ".agent-1c/tools/data-mcp/",
         ".agent-1c/tools/vanessa-automation/",
         ".agent-1c/tools/vanessa-mcp/",
+        ".agent-1c/tools/roctup-mcp-toolkit/",
         ".agent-1c/mcp/",
         "build/data-mcp-tools-loader/",
         "build/test-results/",
@@ -1355,6 +1356,11 @@ function New-DefaultProjectConfig {
             featuresPath = "tests/features"
             reportsPath = "build/test-results/vanessa"
         }
+        roctupMcpToolkit = [ordered]@{
+            installRoot = ".agent-1c/tools/roctup-mcp-toolkit"
+            epfPath = ""
+            version = ""
+        }
     }
 }
 
@@ -1384,6 +1390,14 @@ function New-DefaultDependencyLockManifest {
                 url = ""
                 sha256 = ""
                 source = ""
+            }
+            roctupMcpToolkit = [ordered]@{
+                version = ""
+                assetName = ""
+                url = ""
+                sha256 = ""
+                source = ""
+                updatedAt = ""
             }
         }
     }
@@ -1572,9 +1586,9 @@ function New-DefaultToolsManifest {
                 name = "Vanessa Automation"
                 required = $true
                 install = [ordered]@{
-                    policy = "confirm-then-run"
+                    policy = "auto"
                     commands = @(
-                        "After explicit developer confirmation, run: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-vanessa-automation"
+                        "The ITL helper installs Vanessa Automation automatically during init. Manual recovery: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-vanessa-automation"
                     )
                 }
             }
@@ -2427,7 +2441,7 @@ function Check-Tools {
         -Required $true `
         -Ok ([bool]$vanessa.ready) `
         -Detail $vanessaDetail `
-        -Offer (Get-ToolOffer -Id "vanessa-automation" -Fallback "Run helper action install-vanessa-automation after explicit developer confirmation.")
+        -Offer (Get-ToolOffer -Id "vanessa-automation" -Fallback "ITL installs Vanessa Automation automatically during init. Manual recovery: run helper action install-vanessa-automation.")
 
     $publishDefault = Get-WebPublishByDefault
     $publishAuto = Get-WebPublishAuto
@@ -2824,6 +2838,7 @@ function Start-EnterpriseBackground {
         [string]$InfoBasePath,
         [string]$InfoBaseKind,
         [string[]]$EnterpriseArgs,
+        [switch]$UseTestManager,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
     )
@@ -2841,7 +2856,11 @@ function Start-EnterpriseBackground {
     $script:LastLogPath = $logPath
 
     $ibArgs = New-InfobaseArgs -Kind $InfoBaseKind -Path $InfoBasePath -User $User -Password $Password
-    $args = @("ENTERPRISE", "/TESTMANAGER") + $ibArgs + @("/DisableStartupMessages", "/Out", $logPath) + $EnterpriseArgs
+    $args = @("ENTERPRISE")
+    if ($UseTestManager) {
+        $args += "/TESTMANAGER"
+    }
+    $args += $ibArgs + @("/DisableStartupMessages", "/Out", $logPath) + $EnterpriseArgs
 
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"

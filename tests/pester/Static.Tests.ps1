@@ -614,7 +614,7 @@ Describe "1C agent workflow static checks" {
 
     It "keeps additional helper actions grouped without adding visible slash commands" {
         $HelperText | Should -Match "Additional helper actions:"
-        foreach ($group in @("vibecoding1c MCP", "Vanessa MCP", "Extension branches", "Maintenance/recovery")) {
+        foreach ($group in @("ROCTUP MCP", "vibecoding1c MCP", "Vanessa MCP", "Extension branches", "Maintenance/recovery")) {
             $HelperText | Should -Match ([regex]::Escape($group))
         }
 
@@ -789,21 +789,23 @@ Describe "1C agent workflow static checks" {
         $text | Should -Match "do not collect the (initialization )?questionnaire in chat"
     }
 
-    It "keeps Apache install out of helper API and keeps Vanessa configured install flag" {
+    It "keeps Apache install out of helper API and auto-installs Vanessa during init" {
         $HelperText | Should -Not -Match "InstallApacheIfMissing"
         $HelperText | Should -Not -Match "install-apache"
         $HelperText | Should -Match ([regex]::Escape('$InstallVanessaIfMissing'))
         $HelperText | Should -Match "Prepare-ConfiguredInitProjectSettings"
         $HelperText | Should -Match "New-ConfiguredInitAnswers"
         $HelperText | Should -Match "InstallVanessaIfMissing"
-        $HelperText | Should -Match "rerun init-project with -InitMode configured -InstallVanessaIfMissing"
+        $HelperText | Should -Match "installing it automatically"
+        $HelperText | Should -Not -Match "rerun init-project with -InitMode configured -InstallVanessaIfMissing"
         $HelperText | Should -Match "configure-web-publication"
         $HelperText | Should -Match "publish-dev-branch"
 
         $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
         $installText | Should -Match "Diagnostic Tool Checks"
         $installText | Should -Match ([regex]::Escape('should not be expanded into `check-tools`, separate install actions, and a second init run'))
-        $installText | Should -Match "init-project -InitMode configured -InstallVanessaIfMissing"
+        $installText | Should -Match "Vanessa Automation"
+        $installText | Should -Not -Match "init-project -InitMode configured -InstallVanessaIfMissing"
         $installText | Should -Not -Match "InstallApacheIfMissing"
         $installText | Should -Not -Match "install-apache"
     }
@@ -946,6 +948,7 @@ Describe "1C agent workflow static checks" {
         $requiredPaths = @(
             ".agent-1c/mcp/",
             ".agent-1c/tools/data-mcp/",
+            ".agent-1c/tools/roctup-mcp-toolkit/",
             "build/data-mcp-tools-loader/",
             ".codex/config.toml",
             ".kilo/kilo.json",
@@ -959,13 +962,59 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match "Test-IgnorableLocalGitStatusLine"
     }
 
+    It "wires ROCTUP MCP defaults, actions, lock, client config, and agent token guardrails" {
+        foreach ($action in @("install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status")) {
+            $HelperText | Should -Match ([regex]::Escape("`"$action`""))
+        }
+
+        $HelperText | Should -Match "ROCTUP/1c-mcp-toolkit"
+        $HelperText | Should -Match "MCP_Toolkit.epf"
+        $HelperText | Should -Match "MCP_Toolkit_x86.epf"
+        $HelperText | Should -Match "MCP_Toolkit_linux.epf"
+        $HelperText | Should -Match "ROCTUP_MCP_PORT_RANGE"
+        $HelperText | Should -Match "6003"
+        $HelperText | Should -Match "6102"
+        $HelperText | Should -Match "startup;mode=embedded;port="
+        $HelperText | Should -Match "Invoke-DevBranchDefaultMcpSetup"
+        $HelperText | Should -Match "Invoke-DevBranchMcpRestartAfterInfobaseLoad"
+        $HelperText | Should -Match "Write-ItlBranchMcpClientConfig"
+        $HelperText | Should -Match 'itl-\$project-\$safeName-roctup'
+        $HelperText | Should -Match "ROCTUP_MCP_REQUIRED"
+        $HelperText | Should -Match "roctupMcpToolkit"
+        $HelperText | Should -Match "assetName"
+        $HelperText | Should -Match "Assert-DevBranchToolArtifactExportGuard"
+        $HelperText | Should -Match "client_mcp"
+        $HelperText | Should -Match "VAExtension"
+
+        $devEnvTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")
+        foreach ($name in @("ROCTUP_MCP_ENABLED=true", "ROCTUP_MCP_AUTO_START=true", "ROCTUP_MCP_REQUIRED=false", "ROCTUP_MCP_INSTALL_ROOT=.agent-1c/tools/roctup-mcp-toolkit", "ROCTUP_MCP_PORT_RANGE=6003..6102", "VANESSA_MCP_AUTO_START=true")) {
+            $devEnvTemplate | Should -Match ([regex]::Escape($name))
+        }
+
+        $dependencyLock = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dependency-lock.json") | ConvertFrom-Json
+        $dependencyLock.dependencies.roctupMcpToolkit.version | Should -Be ""
+        $dependencyLock.dependencies.roctupMcpToolkit.assetName | Should -Be ""
+        $dependencyLock.dependencies.roctupMcpToolkit.url | Should -Be ""
+        $dependencyLock.dependencies.roctupMcpToolkit.sha256 | Should -Be ""
+
+        $skillText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-roctup-1c-data\SKILL.md")
+        $skillText | Should -Match "get_metadata"
+        $skillText | Should -Match "execute_query"
+        $skillText | Should -Match "50"
+        $skillText | Should -Match "100"
+        $skillText | Should -Match "execute_code"
+        $skillText | Should -Match "restart_1c_session"
+        $skillText | Should -Match "close_1c_session"
+        $skillText | Should -Match "on-demand"
+    }
+
     It "wires vibecoding1c MCP actions, scopes, ports, registry, selection, and client config" {
         $actions = @("vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config")
         foreach ($action in $actions) {
             $HelperText | Should -Match ([regex]::Escape("`"$action`""))
         }
         foreach ($oldAction in @("mcp-setup", "mcp-update", "mcp-status", "mcp-start", "mcp-stop", "mcp-select", "mcp-refresh-registry", "mcp-rotate-keys", "mcp-ensure-model", "mcp-write-client-config")) {
-            $HelperText | Should -Not -Match "(?<!vibecoding1c-)(?<!vanessa-)$([regex]::Escape($oldAction))(?![A-Za-z0-9-])"
+            $HelperText | Should -Not -Match "(?<!vibecoding1c-)(?<!vanessa-)(?<!roctup-)$([regex]::Escape($oldAction))(?![A-Za-z0-9-])"
         }
         foreach ($parameter in @('$McpProvider', '$McpConfigId', '$McpHostId', '$McpLocalScope')) {
             $HelperText | Should -Match ([regex]::Escape($parameter))
@@ -3154,6 +3203,7 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match "VAExtension"
         $HelperText | Should -Match "runMcp;mcpPort="
         $HelperText | Should -Match "Write-VanessaMcpKiloConfig"
+        $HelperText | Should -Match "function Stop-VanessaMcpForState[\s\S]+Write-VanessaMcpClientConfig"
         $HelperText | Should -Match 'managedBy = "vanessa-mcp"'
         $HelperText | Should -Match 'family = "vanessa"'
         $HelperText | Should -Match "reload or restart Kilo Code"
@@ -4165,7 +4215,7 @@ url = "http://localhost:9999/mcp"
             $kilo.mcp.'VanessaAutomation-feature-demo'.type | Should -Be "remote"
             $kilo.mcp.'VanessaAutomation-feature-demo'.url | Should -Be "http://localhost:9888/mcp"
             $kilo.mcp.'VanessaAutomation-feature-demo'.enabled | Should -Be $true
-            $kilo.mcp.'VanessaAutomation-feature-demo'.timeout | Should -Be 15000
+            $kilo.mcp.'VanessaAutomation-feature-demo'.timeout | Should -Be 120000
             $kilo.mcp.'VanessaAutomation-feature-demo'.managedBy | Should -Be "vanessa-mcp"
             $kilo.mcp.'VanessaAutomation-feature-demo'.family | Should -Be "vanessa"
             $kilo.mcp.'VanessaAutomation-feature-demo'.scope | Should -Be "branch"
@@ -5185,7 +5235,9 @@ if (`$?) { exit 0 } else { exit 1 }
                 "IB_USER=",
                 "IB_PASSWORD=",
                 "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip",
-                "WEB_PUBLISH_BY_DEFAULT=false"
+                "WEB_PUBLISH_BY_DEFAULT=false",
+                "ROCTUP_MCP_AUTO_START=false",
+                "VANESSA_MCP_AUTO_START=false"
             ) -join [Environment]::NewLine
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value $devEnv -Encoding UTF8
 
@@ -5274,7 +5326,9 @@ if (`$?) { exit 0 } else { exit 1 }
                 "IB_USER=",
                 "IB_PASSWORD=",
                 "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip",
-                "WEB_PUBLISH_BY_DEFAULT=false"
+                "WEB_PUBLISH_BY_DEFAULT=false",
+                "ROCTUP_MCP_AUTO_START=false",
+                "VANESSA_MCP_AUTO_START=false"
             ) -join [Environment]::NewLine
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value $devEnv -Encoding UTF8
 

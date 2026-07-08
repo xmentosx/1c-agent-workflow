@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow
-description: Initialize and operate ITL 1C configuration or extension projects with Git, source infobases, isolated branch infobase copies, optional web publication, Vanessa Automation, CF/CFE export, and refresh. Use for init, tool checks, Vanessa/web publication setup, branch lifecycle, verification, result export, switching, or available ITL commands.
+description: Initialize and operate ITL 1C configuration or extension projects with Git, source infobases, isolated branch infobase copies, ROCTUP/Vanessa branch MCP, optional web publication, Vanessa Automation, CF/CFE export, and refresh. Use for init, tool checks, branch MCP setup/status, Vanessa/web publication setup, branch lifecycle, verification, result export, switching, or available ITL commands.
 ---
 
 # 1C Workflow
@@ -14,7 +14,7 @@ Use `scripts/agent-1c.ps1` whenever PowerShell is available; it owns Git, 1C, wo
 Open `references/workflow.md` first for the lightweight lifecycle panel and topic index. Then open only the matching topic file:
 
 - `references/init-setup.md`: initialization, tool checks, web publication/Vanessa setup, `update-workflow`, `update-ai-rules`.
-- `references/mcp.md`: vibecoding1c MCP, branch-local Vanessa MCP, External MCP, branch Data MCP.
+- `references/mcp.md`: ROCTUP branch data MCP, vibecoding1c MCP, branch-local Vanessa MCP, External MCP, legacy branch Data MCP.
 - `references/branch-lifecycle.md`: new branches, worktrees, extension helpers, context activation, refresh, list/switch, advanced close.
 - `references/verification-result.md`: `/itl-check`, Vanessa Automation, event-log baseline, result export, `verificationPolicy`.
 - `references/dev-branch-development.md`: work inside an existing `itldev/*` branch.
@@ -27,11 +27,12 @@ Intent mapping:
 - Help/menu: show helper `help` or the panel in `references/workflow.md`.
 - Init/bootstrap: run the monitored init wizard.
 - Tool checks and web publication: `check-tools`, `list-platforms`, `detect-web-publication`, `configure-web-publication`, `publish-dev-branch`, `install-vanessa-automation`.
+- ROCTUP branch data MCP: `install-roctup-mcp`, `update-roctup-mcp`, `start-roctup-mcp`, `stop-roctup-mcp`, `roctup-mcp-status`.
 - vibecoding1c MCP: `vibecoding1c-mcp-setup`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`, `vibecoding1c-mcp-update`, `vibecoding1c-mcp-status`, start/stop/key/model/client-config helper actions.
 - Workflow/rule refresh: `update-workflow`, `update-ai-rules`.
 - New work: `new-dev-branch`, `new-extension-dev-branch`.
 - Branch lifecycle: `status`, `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`.
-- Advanced/recovery: `close-dev-branch`, `set-dev-branch-extension`, `dump-dev-branch-extension`, `switch-master`, `switch-dev-branch`, `list-dev-branches`, Vanessa MCP actions.
+- Advanced/recovery: `close-dev-branch`, `set-dev-branch-extension`, `dump-dev-branch-extension`, `switch-master`, `switch-dev-branch`, `list-dev-branches`, ROCTUP/Vanessa MCP actions.
 
 If intent is unclear, show the lifecycle panel and wait.
 
@@ -53,7 +54,7 @@ Use sibling Git worktrees for new development branches by default and leave the 
 
 Use `/itl-check` or `check-dev-branch` for the final executable gate. It runs Vanessa Automation through `TESTMANAGER -> TESTCLIENT`, reads JUnit, and checks the branch event-log baseline. Do not replace final verification with MCP, headless EPF, or `/deploy-and-test`. `/itl-result` obeys `verificationPolicy`.
 
-vibecoding1c MCP is helper-managed; Vanessa MCP is separate branch-local tooling; External MCP is not managed. Do not paste keys into chat or tracked files.
+ROCTUP MCP is the preferred branch-local data channel in `itldev/*` branches and does not require web publication. vibecoding1c MCP is helper-managed; Vanessa MCP is separate branch-local tooling; External MCP is not managed. Do not paste keys into chat or tracked files.
 
 Do not search or read ignored runtime folders such as `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/infobases/`, `build/test-results/`, or `logs/` unless diagnosing a specific helper run or artifact.
 

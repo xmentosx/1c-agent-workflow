@@ -14,7 +14,9 @@ Treat upstream `ai_rules_1c` as a standards and role library loaded on demand. I
 
 Search hygiene: do not read or summarize ignored runtime folders such as `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/infobases/`, `.agent-1c/tools/`, `build/test-results/`, `logs/`, `tmp/`, or `temp/` unless diagnosing a specific helper run, MCP state, log, or artifact.
 
-Use the vibecoding1c MCP helper request for setup/status/update/selection and Codex/Kilo client config. Do not use upstream `/installmcp`, `/updatemcp`, or `/checkmcp`; ITL owns selected endpoints and removes duplicate stale upstream entries. Vanessa MCP is separate branch-local authoring/debugging tooling; External MCP entries are preserved. Do not paste MCP keys into chat/tracked files or expose a visible Kilo slash command for vibecoding1c MCP.
+Use the vibecoding1c MCP helper request for setup/status/update/selection and client config. Do not use upstream `/installmcp`, `/updatemcp`, or `/checkmcp`; ITL owns selected endpoints and removes duplicate upstream entries. Vanessa MCP is separate authoring/debugging tooling; external entries are preserved. Do not paste MCP keys into chat/tracked files or expose a Kilo slash command for vibecoding1c MCP.
+
+In `itldev/*`, prefer ROCTUP MCP for data. Use filtered `get_metadata` before `execute_query`; keep limits `<= 50` and `<= 100`. Never call `execute_code`, `restart_1c_session`, or `close_1c_session` unless requested. Read ROCTUP refs on demand.
 
 Before changing product logic, architecture, workflows, terminology, permissions, reports, integrations, or acceptance tests, use `.agents/skills/product-docs/SKILL.md` and search `BookStack-product-docs-mcp`. BookStack is advisory, not authoritative; verify against code, tests, current 1C metadata, and available MCP evidence. Cite relevant page URLs/`updated_at`. On conflict, report `BookStack says`, `Code/MCP currently shows`, and `Decision`.
 

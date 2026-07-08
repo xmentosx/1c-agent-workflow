@@ -8,7 +8,7 @@ Create and maintain:
 
 - `.agent-1c/project.json`: non-secret project settings.
 - `.agent-1c/tools.json`: configurable software checks and install suggestions.
-- `.agent-1c/dependency-lock.json`: committed dependency lock manifest for the ITL workflow package, `ai_rules_1c`, Vanessa Automation, and downloadable archive URLs/SHA256. Default dependency mode is `fresh`; `locked` mode uses only pinned values.
+- `.agent-1c/dependency-lock.json`: committed dependency lock manifest for the ITL workflow package, `ai_rules_1c`, Vanessa Automation, ROCTUP MCP Toolkit, and downloadable archive URLs/SHA256. Default dependency mode is `fresh`; `locked` mode uses only pinned values.
 - `.agent-1c/dev-branches/<safe-dev-branch-name>.json`: local branch runtime state; ignored by Git.
 - `.agent-1c/mcp/state.json` and `.agent-1c/mcp/vibecoding1c-selection.json`: local MCP runtime and developer selection; ignored by Git.
 - `.dev.env`: local secrets and machine-specific values; never commit it.
@@ -60,7 +60,7 @@ Ask only for values the helper cannot collect or infer:
 - Whether branch infobases should be web-published by default. If no, store `WEB_PUBLISH_BY_DEFAULT=false` and `WEB_PUBLISH_AUTO=false`.
 - If branch infobases should be web-published, whether to attempt automatic publication during branch creation. Store `WEB_PUBLISH_AUTO=true|false`; if automatic publication is requested, collect existing `webinst`/publication settings but never install a web server.
 - Whether dependencies are `fresh` or `locked`. Default is `fresh`; `locked` requires a complete `.agent-1c/dependency-lock.json`.
-- Whether to install missing Vanessa Automation automatically.
+- Missing Vanessa Automation and ROCTUP MCP Toolkit are installed automatically during init/update; do not ask whether they are needed.
 
 Ask one raw value at a time unless the agent surface supports structured fields. Do not ask for `KEY=value` blocks. For optional passwords, first ask whether the password is set.
 
@@ -79,7 +79,7 @@ Goal: create baseline project state.
 4. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, `.agent-1c/dependency-lock.json`, and `.dev.env` if missing.
 5. Run tool checks, initialize Git, checkout/create `master`, update the source infobase from storage when configured, and dump configuration files to `src/cf`.
 6. Initial dump must produce `src/cf/ConfigDumpInfo.xml`; later dumps use incremental `-update -force` when that file exists. Stop if `src/cf` is non-empty without `ConfigDumpInfo.xml`.
-7. Install `ai_rules_1c` using the current agent target, record its commit in the dependency lock, reconcile default upstream MCP client entries only when ready vibecoding1c replacements are available, install this workflow skill and fast skill, generate Kilo wrappers when applicable, and apply the ITL overlay to `USER-RULES.md`.
+7. Install/cache ROCTUP MCP Toolkit, install `ai_rules_1c` using the current agent target, record resolved dependency pins in the dependency lock, reconcile default upstream MCP client entries only when ready vibecoding1c replacements are available, install this workflow skill and fast skill, generate Kilo wrappers when applicable, and apply the ITL overlay to `USER-RULES.md`.
 8. Commit rules and workflow files when there are changes.
 
 ## Tool Actions
@@ -90,6 +90,7 @@ Goal: create baseline project state.
 - `configure-web-publication`: run the interactive web publication policy/settings wizard after init.
 - `publish-dev-branch`: publish or record publication for an existing development branch.
 - `install-vanessa-automation`: download `vanessa-automation-single.*.zip`, verify SHA256 when available, unpack under `.agent-1c/tools/vanessa-automation`, and save `VANESSA_*` paths.
+- `install-roctup-mcp` / `update-roctup-mcp`: download/cache the OS-specific `MCP_Toolkit*.epf`, verify SHA256 in locked mode, cache upstream skills under ignored `.agent-1c/tools/roctup-mcp-toolkit/skills`, and save `ROCTUP_*` paths.
 
 ## UPDATE_WORKFLOW
 
@@ -100,8 +101,8 @@ Goal: refresh the installed ITL workflow package without rerunning initializatio
 3. Resolve the package source from `ITL_WORKFLOW_SOURCE_PATH` or clone/update `ITL_WORKFLOW_REPO` and `ITL_WORKFLOW_REF` (`https://github.com/xmentosx/1c-agent-workflow.git`, `master` by default).
 4. Copy only managed workflow files: `.agents/skills/1c-workflow*`, Kilo templates, `templates/`, `README.md`, `AGENT-INSTALL.md`, `DEVELOPER-GUIDE.ru.md`, `DEV-BRANCH-DEVELOPMENT.ru.md`, `VANESSA-TESTS-GUIDE.md`, and the compatibility stub `VANESSA-TESTS-GUIDE.ru.md`.
 5. Preserve local runtime/project state. Do not overwrite `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, or existing project/tools config.
-6. Record `workflowPackage.repo/ref/commit/source/updatedAt`, reapply `USER-RULES.md`, run `update-ai-rules` unless `-SkipAiRules` is explicit, and leave tracked changes for review.
-7. Do not update active `itldev/*` worktrees automatically; print whether MCP client config was reconciled or preserved as upstream fallback, plus follow-up commands for MCP setup/update, branch merge or `/itl-refresh`, and branch-local Vanessa MCP reinstall when used.
+6. Record `workflowPackage.repo/ref/commit/source/updatedAt`, reapply `USER-RULES.md`, refresh ROCTUP MCP cache, run `update-ai-rules` unless `-SkipAiRules` is explicit, and leave tracked changes for review.
+7. Do not update active `itldev/*` worktrees automatically; print whether MCP client config was reconciled or preserved as upstream fallback, plus follow-up commands for MCP setup/update, branch merge or `/itl-refresh`, and branch-local ROCTUP/Vanessa MCP restart when used.
 
 ## UPDATE_AI_RULES
 

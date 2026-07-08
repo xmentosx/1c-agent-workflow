@@ -312,6 +312,7 @@ function Restart-Agent1cAfterDevBranchMerge {
 function Write-ItlAdditionalHelperActions {
     Write-Host ""
     Write-Host "Additional helper actions:"
+    Write-Host "  ROCTUP MCP: ask for branch-local install, update, start, status, or stop for data exploration."
     Write-Host "  vibecoding1c MCP: ask for setup, status, select, refresh-registry, or update."
     Write-Host "  Vanessa MCP: ask for branch-local install, start, status, or stop for authoring/debugging."
     Write-Host "  Extension branches: ask to set extension name or dump extension files."
@@ -1588,6 +1589,7 @@ function Update-WorkflowPackage {
     Sync-KiloItlCommandSurface
     Update-AgentGuidanceBridge
     Update-UserRules
+    Update-RoctupMcp
 
     if ($SkipAiRules) {
         Write-Host "Skipping ai_rules_1c update because -SkipAiRules was specified."
@@ -1887,6 +1889,9 @@ function Clear-DevBranchContext {
         VANESSA_TEST_PORT = ""
         VANESSA_MCP_PORT = ""
         VANESSA_MCP_URL = ""
+        ROCTUP_MCP_PORT = ""
+        ROCTUP_MCP_URL = ""
+        ROCTUP_MCP_HEALTH_URL = ""
     }
     Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
     Write-Host "Development branch context cleared in .dev.env."
@@ -1911,6 +1916,9 @@ function Sync-DevBranchContextToDotEnv {
         VANESSA_TEST_PORT = (Get-StateValue -State $State -Name "vanessaTestPort" -Default "")
         VANESSA_MCP_PORT = (Get-StateValue -State $State -Name "vanessaMcpPort" -Default "")
         VANESSA_MCP_URL = (Get-StateValue -State $State -Name "vanessaMcpUrl" -Default "")
+        ROCTUP_MCP_PORT = (Get-StateValue -State $State -Name "roctupMcpPort" -Default "")
+        ROCTUP_MCP_URL = (Get-StateValue -State $State -Name "roctupMcpUrl" -Default "")
+        ROCTUP_MCP_HEALTH_URL = (Get-StateValue -State $State -Name "roctupMcpHealthUrl" -Default "")
     }
 
     if ($kind -eq "extension") {
@@ -2570,6 +2578,7 @@ function Initialize-Project {
         Prepare-ConfiguredInitProjectSettings
     }
     Check-Tools -StopOnMissing
+    Install-RoctupMcp
     Get-DevBranchInfoBaseRoot | Out-Null
     Ensure-GitRepository
     Ensure-GitIgnore
@@ -2724,6 +2733,20 @@ function Initialize-DevBranchRuntime {
         publicationMode = $publicationMode
         publicationError = ""
         publicationUpdatedAt = (Get-Date).ToString("o")
+        roctupMcpPort = 0
+        roctupMcpUrl = ""
+        roctupMcpHealthUrl = ""
+        roctupMcpPid = ""
+        roctupMcpStatus = "pending"
+        roctupMcpError = ""
+        roctupMcpLogPath = ""
+        roctupMcpEpfPath = ""
+        vanessaMcpPort = 0
+        vanessaMcpUrl = ""
+        vanessaMcpPid = ""
+        vanessaMcpStatus = "pending"
+        vanessaMcpError = ""
+        vanessaMcpLogPath = ""
         unsafeActionProtectionSetupMode = $unsafeActionProtectionSetup.mode
         unsafeActionProtectionConfirmed = $unsafeActionProtectionSetup.confirmed
         unsafeActionProtectionConfirmedAt = $unsafeActionProtectionSetup.confirmedAt
@@ -2742,6 +2765,8 @@ function Initialize-DevBranchRuntime {
     Write-Host "1C launcher infobase: $($launcherRegistration.name)"
     Write-Host "1C launcher folder: $($launcherRegistration.folder)"
     $state = Read-DevBranchStateFile -Path $statePath
+    Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
+    $state = Invoke-DevBranchDefaultMcpSetup -State $state
     $state = Invoke-DevBranchPublicationCycle -State $state -PublicationEnabled $publicationEnabled -AttemptAuto $publicationAuto
     $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
     if ($publicationUrl) {
@@ -2883,7 +2908,7 @@ function Update-DevBranchBase {
         Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch extension base was updated." -CurrentCommit $loadResult.currentCommit
         Update-DevBranchState -State $state -Updates $updates
-        $updatedState = Read-DevBranchState -Name $DevBranchName
+        $updatedState = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "development branch extension base update"
         Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch extension"
     } else {
         $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
@@ -2891,7 +2916,7 @@ function Update-DevBranchBase {
         Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch configuration base was updated." -CurrentCommit $loadResult.currentCommit
         Update-DevBranchState -State $state -Updates $updates
-        $updatedState = Read-DevBranchState -Name $DevBranchName
+        $updatedState = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "development branch configuration base update"
         Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch infobase"
     }
 }
@@ -2920,7 +2945,7 @@ function Refresh-DevBranch {
     $updates["lastRefreshAt"] = (Get-Date).ToString("o")
     Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch was refreshed from master." -CurrentCommit $loadResult.currentCommit
     Update-DevBranchState -State $state -Updates $updates
-    $updatedState = Read-DevBranchState -Name $DevBranchName
+    $updatedState = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "refresh-dev-branch"
     Write-Host "Development branch refreshed from master: $($state.devBranch)"
     Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch configuration"
     if ((Get-DevBranchKind -State $state) -eq "extension") {
@@ -2993,6 +3018,7 @@ function Show-WorkflowStatus {
                     Write-Host "    Worktree: $worktreePath"
                 }
                 Write-VanessaTestStatusLines -State $state -Indent "    "
+                Write-RoctupMcpStatusLines -State $state -Indent "    "
                 Write-VanessaMcpStatusLines -State $state -Indent "    "
                 Write-DataMcpStatusLines -State $state -Indent "    "
             }
@@ -3026,6 +3052,7 @@ function Show-WorkflowStatus {
         Write-Host "Publication URL: $publicationUrl"
     }
     Write-DataMcpStatusLines -State $state
+    Write-RoctupMcpStatusLines -State $state
     Write-VanessaTestStatusLines -State $state
     Write-VanessaMcpStatusLines -State $state
     Write-Vibecoding1cMcpStatusLines
@@ -3097,10 +3124,13 @@ function Export-DevBranchResult {
     Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
     Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch base was updated before result export." -CurrentCommit $loadResult.currentCommit
     Update-DevBranchState -State $state -Updates $updates
+    $state = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "result export base update"
     $state = Read-DevBranchState -Name $DevBranchName
     $unverifiedOverride = Confirm-UnverifiedProceed -State $state -Operation "export-dev-branch-result" -Allow:$AllowUnverifiedResult
 
+    Assert-DevBranchToolArtifactExportGuard -State $state -ContentKind $kind
     $resultPath = Export-DevBranchResultFile -State $state -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -ContentKind $kind
+    Assert-DevBranchToolArtifactExportGuard -State $state -ContentKind $kind -ResultPath $resultPath
     $resultKind = $(if ($kind -eq "extension") { "cfe" } else { "cf" })
     $manifestPath = New-ResultManifest `
         -State $state `
@@ -3132,6 +3162,8 @@ function Export-DevBranchResult {
 function Close-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "close-dev-branch"
+    Stop-RoctupMcpForState -State $state -Quiet | Out-Null
+    $state = Read-DevBranchState -Name $DevBranchName
     Stop-VanessaMcpForState -State $state -Quiet | Out-Null
     $state = Read-DevBranchState -Name $DevBranchName
     Sync-DevBranchContextToDotEnv -State $state
@@ -3170,7 +3202,9 @@ function Close-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
     $unverifiedOverride = Confirm-UnverifiedProceed -State $state -Operation "close-dev-branch" -Allow:$AllowUnverifiedClose
 
+    Assert-DevBranchToolArtifactExportGuard -State $state -ContentKind $kind
     $resultPath = Export-DevBranchResultFile -State $state -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -ContentKind $kind
+    Assert-DevBranchToolArtifactExportGuard -State $state -ContentKind $kind -ResultPath $resultPath
 
     $masterBranch = Get-MasterBranch
     $masterCommit = (Get-GitOutput @("rev-parse", $masterBranch)).Trim()
@@ -3304,6 +3338,7 @@ function List-DevBranches {
         }
         Write-DataMcpStatusLines -State $state -Indent "  "
         Write-VanessaTestStatusLines -State $state -Indent "  "
+        Write-RoctupMcpStatusLines -State $state -Indent "  "
         Write-VanessaMcpStatusLines -State $state -Indent "  "
         Write-Vibecoding1cMcpStatusLines -Indent "  "
         Write-Host "  Created: $createdAt"
@@ -3517,6 +3552,8 @@ function Show-Help {
                     Write-Host "    Worktree: $worktreePath"
                 }
                 Write-VanessaTestStatusLines -State $state -Indent "    "
+                Write-RoctupMcpStatusLines -State $state -Indent "    "
+                Write-VanessaMcpStatusLines -State $state -Indent "    "
             }
         }
         Write-Host ""

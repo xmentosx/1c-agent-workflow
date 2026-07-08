@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow-fast
-description: Run routine 1C Agent Workflow lifecycle commands through the PowerShell helper with minimal context loading. Use for status, vibecoding1c MCP setup/status, configuration or extension development branch creation from master, branch verification, refresh, and CF/CFE result export when the project is already installed.
+description: Run routine 1C Agent Workflow lifecycle commands through the PowerShell helper with minimal context loading. Use for status, ROCTUP/Vanessa branch MCP status or manual start/stop, vibecoding1c MCP setup/status, configuration or extension development branch creation from master, branch verification, refresh, and CF/CFE result export when the project is already installed.
 ---
 
 # 1C Workflow Fast
@@ -14,6 +14,8 @@ Do not open the full workflow references before normal lifecycle execution. Open
 ## Intent Map
 
 - show ITL status: `status`
+- inspect or manually control ROCTUP branch data MCP: `roctup-mcp-status`, `start-roctup-mcp`, `stop-roctup-mcp`, `install-roctup-mcp`, or `update-roctup-mcp`
+- inspect or manually control Vanessa branch MCP: `vanessa-mcp-status`, `start-vanessa-mcp`, `stop-vanessa-mcp`, or `install-vanessa-mcp`
 - setup or inspect vibecoding1c MCP servers: `vibecoding1c-mcp-setup` by default, `vibecoding1c-mcp-status` for status-only, `vibecoding1c-mcp-select` to choose remote/local or configId, `vibecoding1c-mcp-refresh-registry` to update remote endpoint discovery
 - update the installed ITL workflow package from `master`: `update-workflow`
 - create new configuration development branch worktree from `master`: `new-dev-branch`
@@ -44,6 +46,8 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 ```
 
 New branch commands must run from `master` and create a sibling Git worktree by default. Report the printed worktree path and tell the developer to open a separate Codex/Kilo/IDE window there. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
+
+New branch commands auto-start branch-local ROCTUP and Vanessa MCP by default and write ignored Codex/Kilo MCP client config. Report failures as non-blocking unless the helper itself exits with an error.
 
 For `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`, and explicit advanced `close-dev-branch`, do not ask for a branch name. The helper infers it from the current `itldev/<name>` Git branch.
 

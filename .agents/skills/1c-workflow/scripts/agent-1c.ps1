@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "run-dev-branch-tests", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
+    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status", "install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "run-dev-branch-tests", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -14,6 +14,7 @@ param(
     [string]$VanessaFilterTags,
     [int]$VanessaTestPort = 0,
     [int]$VanessaMcpPort = 0,
+    [int]$RoctupMcpPort = 0,
     [string]$McpDistributionPath = "",
     [ValidateSet("", "global", "project", "branch", "current", "all")]
     [string]$McpScope = "",
@@ -97,6 +98,7 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaFilterTags" -Value $VanessaFilterTags
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaTestPort" -Value $(if ($VanessaTestPort -ne 0) { $VanessaTestPort } else { $null })
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaMcpPort" -Value $(if ($VanessaMcpPort -ne 0) { $VanessaMcpPort } else { $null })
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "RoctupMcpPort" -Value $(if ($RoctupMcpPort -ne 0) { $RoctupMcpPort } else { $null })
     Add-Agent1cReexecArgument -Arguments $arguments -Name "McpDistributionPath" -Value $McpDistributionPath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "McpScope" -Value $McpScope
     Add-Agent1cReexecArgument -Arguments $arguments -Name "McpServerId" -Value $McpServerId
@@ -146,6 +148,7 @@ $script:Agent1cModuleFiles = @(
     "agent-1c.vanessa.ps1",
     "agent-1c.vibecoding1c-mcp.ps1",
     "agent-1c.data-mcp.ps1",
+    "agent-1c.roctup-mcp.ps1",
     "agent-1c.lifecycle.ps1"
 )
 foreach ($moduleFile in $script:Agent1cModuleFiles) {
@@ -175,6 +178,11 @@ try {
         "start-vanessa-mcp" { Start-VanessaMcp }
         "stop-vanessa-mcp" { Stop-VanessaMcp }
         "vanessa-mcp-status" { Show-VanessaMcpStatus }
+        "install-roctup-mcp" { Install-RoctupMcp }
+        "update-roctup-mcp" { Update-RoctupMcp }
+        "start-roctup-mcp" { Start-RoctupMcp }
+        "stop-roctup-mcp" { Stop-RoctupMcp }
+        "roctup-mcp-status" { Show-RoctupMcpStatus }
         "vibecoding1c-mcp-setup" { Setup-Vibecoding1cMcp }
         "vibecoding1c-mcp-update" { Update-Vibecoding1cMcp }
         "vibecoding1c-mcp-status" { Show-Vibecoding1cMcpStatus }
