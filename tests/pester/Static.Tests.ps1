@@ -3245,6 +3245,8 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match ([regex]::Escape('"-Force"'))
         $HelperText | Should -Match "Invoke-AiRules1cInstaller -Command `"update`""
         $HelperText | Should -Match "function Remove-AiRules1cManagedMcpConfig"
+        $HelperText | Should -Match "function Invoke-AiRules1cManagedMcpConfigReconcile"
+        $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "ai_rules_1c $effectiveCommand"'))
         $HelperText | Should -Match "function Get-AiRules1cManagedMcpServerIds"
         $HelperText | Should -Match "1c-code-metadata-mcp"
         $HelperText | Should -Match "1C-docs-mcp"
@@ -3328,6 +3330,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Match "Update-UserRules"
         $HelperText | Should -Match "Assert-WorkflowPackageUpdateContext"
         $HelperText | Should -Match "Assert-WorkflowTrackedGitClean"
+        $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "refresh-dev-branch MCP reconcile"'))
         $HelperText | Should -Match "updatedAt"
         $HelperText | Should -Match "VANESSA-TESTS-GUIDE\.md"
         $HelperText | Should -Match "VANESSA-TESTS-GUIDE\.ru\.md"
@@ -3493,6 +3496,191 @@ enabled = true
             $kilo.mcp.'1c-graph-metadata-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
             $kilo.mcp.'1c-data-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
             $kilo.mcp.'custom-tool'.managedBy | Should -Be "external-mcp"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "reconciles ai_rules_1c MCP entries only after ready vibecoding1c replacements are available" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-rules-mcp-reconcile-ready-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".codex"), (Join-Path $tempRoot ".kilo") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".codex\config.toml") -Value @"
+[mcp_servers."1C-docs-mcp"]
+url = "http://localhost:8003/mcp"
+enabled = true
+
+[mcp_servers."1c-code-metadata-mcp"]
+url = "http://localhost:8000/mcp"
+enabled = true
+
+[mcp_servers."custom-tool"]
+url = "http://localhost:9999/mcp"
+enabled = true
+managedBy = "external-mcp"
+"@ -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value @"
+{
+  "mcp": {
+    "1C-docs-mcp": {
+      "type": "remote",
+      "url": "http://localhost:8003/mcp",
+      "enabled": true
+    },
+    "1c-code-metadata-mcp": {
+      "type": "remote",
+      "url": "http://localhost:8000/mcp",
+      "enabled": true,
+      "managedBy": "ai_rules_1c"
+    },
+    "custom-tool": {
+      "type": "remote",
+      "url": "http://localhost:9999/mcp",
+      "enabled": true,
+      "managedBy": "external-mcp",
+      "family": "external"
+    }
+  }
+}
+"@ -Encoding UTF8
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help -McpServerId code -McpProvider remote -McpConfigId trade *> $null
+
+                function Get-Vibecoding1cMcpSelectionCompleteness {
+                    return [pscustomobject]@{ isComplete = $true; reasons = @() }
+                }
+                function Get-Vibecoding1cMcpReadyClientConfigNames {
+                    return @("1C-docs-mcp", "1c-code-metadata-mcp")
+                }
+                function Write-Vibecoding1cMcpClientConfig {
+                    $endpoints = @(
+                        [pscustomobject]@{ id = "docs"; name = "itl-1c-docs"; url = "http://ready/docs"; scope = "global"; provider = "remote"; clientNames = [pscustomobject]@{ aiRules1c = "1C-docs-mcp" } },
+                        [pscustomobject]@{ id = "code"; name = "itl-trade-code"; url = "http://ready/code"; scope = "project"; provider = "remote"; configId = "trade"; clientNames = [pscustomobject]@{ aiRules1c = "1c-code-metadata-mcp" } }
+                    )
+                    Write-Vibecoding1cMcpCodexConfig -Path (Join-Path $script:ProjectRoot ".codex\config.toml") -BlockId "project" -Endpoints $endpoints
+                    Write-Vibecoding1cMcpKiloConfig -Endpoints $endpoints
+                }
+
+                Invoke-AiRules1cManagedMcpConfigReconcile -Operation "test-ready" *> $null
+            }
+
+            $codexText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".codex\config.toml")
+            $codexText | Should -Not -Match "http://localhost:8003/mcp"
+            $codexText | Should -Not -Match "http://localhost:8000/mcp"
+            $codexText | Should -Match "http://ready/docs"
+            $codexText | Should -Match "http://ready/code"
+            $codexText | Should -Match "custom-tool"
+
+            $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
+            $kilo.mcp.'1C-docs-mcp'.url | Should -Be "http://ready/docs"
+            $kilo.mcp.'1C-docs-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
+            $kilo.mcp.'1c-code-metadata-mcp'.url | Should -Be "http://ready/code"
+            $kilo.mcp.'1c-code-metadata-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
+            $kilo.mcp.'custom-tool'.managedBy | Should -Be "external-mcp"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "preserves upstream ai_rules_1c MCP entries when vibecoding1c selection or state is missing" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-rules-mcp-reconcile-missing-" + [guid]::NewGuid().ToString("N"))
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".kilo") | Out-Null
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", (Join-Path $tempRoot "local-home"), "Process")
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value @"
+{
+  "mcp": {
+    "1C-docs-mcp": {
+      "type": "remote",
+      "url": "http://localhost:8003/mcp",
+      "enabled": true
+    },
+    "1c-data-mcp": {
+      "type": "remote",
+      "url": "http://localhost:8008/mcp",
+      "enabled": true,
+      "managedBy": "ai_rules_1c"
+    },
+    "custom-tool": {
+      "type": "remote",
+      "url": "http://localhost:9999/mcp",
+      "enabled": true,
+      "managedBy": "external-mcp",
+      "family": "external"
+    }
+  }
+}
+"@ -Encoding UTF8
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Invoke-AiRules1cManagedMcpConfigReconcile -Operation "test-missing" *> $null
+            }
+
+            $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
+            $kilo.mcp.'1C-docs-mcp'.url | Should -Be "http://localhost:8003/mcp"
+            $kilo.mcp.'1c-data-mcp'.url | Should -Be "http://localhost:8008/mcp"
+            $kilo.mcp.'custom-tool'.managedBy | Should -Be "external-mcp"
+        } finally {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "restores MCP client config snapshot when replacement write fails" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-rules-mcp-reconcile-rollback-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".codex"), (Join-Path $tempRoot ".kilo") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".codex\config.toml") -Value @"
+[mcp_servers."1C-docs-mcp"]
+url = "http://localhost:8003/mcp"
+enabled = true
+"@ -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value @"
+{
+  "mcp": {
+    "1C-docs-mcp": {
+      "type": "remote",
+      "url": "http://localhost:8003/mcp",
+      "enabled": true
+    }
+  }
+}
+"@ -Encoding UTF8
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+
+                function Get-Vibecoding1cMcpSelectionCompleteness {
+                    return [pscustomobject]@{ isComplete = $true; reasons = @() }
+                }
+                function Get-Vibecoding1cMcpReadyClientConfigNames {
+                    return @("1C-docs-mcp")
+                }
+                function Write-Vibecoding1cMcpClientConfig {
+                    Set-Content -LiteralPath (Join-Path $script:ProjectRoot ".kilo\kilo.json") -Encoding UTF8 -Value '{"mcp":{}}'
+                    throw "simulated write failure"
+                }
+
+                Invoke-AiRules1cManagedMcpConfigReconcile -Operation "test-rollback" *> $null
+            }
+
+            $codexText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".codex\config.toml")
+            $codexText | Should -Match "http://localhost:8003/mcp"
+
+            $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
+            $kilo.mcp.'1C-docs-mcp'.url | Should -Be "http://localhost:8003/mcp"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

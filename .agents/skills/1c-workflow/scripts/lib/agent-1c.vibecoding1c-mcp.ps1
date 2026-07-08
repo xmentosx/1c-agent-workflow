@@ -2932,6 +2932,51 @@ function Test-Vibecoding1cMcpEndpointMatchesSelection {
     return ($scope -eq $expectedScope)
 }
 
+function Get-Vibecoding1cMcpCodexHomeConfigPath {
+    $userHome = [Environment]::GetFolderPath("UserProfile")
+    if ([string]::IsNullOrWhiteSpace($userHome)) {
+        $userHome = $HOME
+    }
+    return (Join-Path $userHome ".codex\config.toml")
+}
+
+function Get-Vibecoding1cMcpCodexProjectConfigPath {
+    return (Join-Path $script:ProjectRoot ".codex\config.toml")
+}
+
+function Get-Vibecoding1cMcpKiloConfigPath {
+    return (Join-Path $script:ProjectRoot ".kilo\kilo.json")
+}
+
+function Get-Vibecoding1cMcpClientConfigEndpointSet {
+    $globalEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints -IncludeGlobal | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -eq "global" })
+    $localEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -ne "global" })
+
+    return [pscustomobject]@{
+        globalEndpoints = @($globalEndpoints)
+        localEndpoints = @($localEndpoints)
+        allEndpoints = @($globalEndpoints + $localEndpoints)
+    }
+}
+
+function Get-Vibecoding1cMcpClientConfigClientNames {
+    param([object[]]$Endpoints)
+
+    $names = @()
+    foreach ($endpoint in @(Select-Vibecoding1cMcpClientConfigEndpoints -Endpoints $Endpoints)) {
+        $name = Get-Vibecoding1cMcpEndpointClientName -Endpoint $endpoint
+        if ($name) {
+            $names += $name
+        }
+    }
+    return @($names | Select-Object -Unique)
+}
+
+function Get-Vibecoding1cMcpReadyClientConfigNames {
+    $endpointSet = Get-Vibecoding1cMcpClientConfigEndpointSet
+    return @(Get-Vibecoding1cMcpClientConfigClientNames -Endpoints $endpointSet.allEndpoints)
+}
+
 function Select-Vibecoding1cMcpClientConfigEndpoints {
     param([object[]]$Endpoints)
 
@@ -3003,7 +3048,7 @@ function Write-Vibecoding1cMcpCodexConfig {
 function Write-Vibecoding1cMcpKiloConfig {
     param([object[]]$Endpoints)
 
-    $path = Join-Path $script:ProjectRoot ".kilo\kilo.json"
+    $path = Get-Vibecoding1cMcpKiloConfigPath
     $config = [ordered]@{}
     if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) {
         $current = Read-Utf8Text -Path $path | ConvertFrom-Json
@@ -3055,24 +3100,17 @@ function Write-Vibecoding1cMcpClientConfig {
     Write-Section "Write vibecoding1c MCP client config"
 
     Ensure-GitIgnore
-    $globalEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints -IncludeGlobal | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -eq "global" })
-    $localEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -ne "global" })
-    $allCurrentEndpoints = @($globalEndpoints + $localEndpoints)
+    $endpointSet = Get-Vibecoding1cMcpClientConfigEndpointSet
+    $codexHomeConfig = Get-Vibecoding1cMcpCodexHomeConfigPath
+    $codexProjectConfig = Get-Vibecoding1cMcpCodexProjectConfigPath
 
-    $userHome = [Environment]::GetFolderPath("UserProfile")
-    if ([string]::IsNullOrWhiteSpace($userHome)) {
-        $userHome = $HOME
-    }
-    $codexHomeConfig = Join-Path $userHome ".codex\config.toml"
-    $codexProjectConfig = Join-Path $script:ProjectRoot ".codex\config.toml"
-
-    Write-Vibecoding1cMcpCodexConfig -Path $codexHomeConfig -BlockId "global" -Endpoints $globalEndpoints
-    Write-Vibecoding1cMcpCodexConfig -Path $codexProjectConfig -BlockId "project" -Endpoints $localEndpoints
-    Write-Vibecoding1cMcpKiloConfig -Endpoints $allCurrentEndpoints
+    Write-Vibecoding1cMcpCodexConfig -Path $codexHomeConfig -BlockId "global" -Endpoints $endpointSet.globalEndpoints
+    Write-Vibecoding1cMcpCodexConfig -Path $codexProjectConfig -BlockId "project" -Endpoints $endpointSet.localEndpoints
+    Write-Vibecoding1cMcpKiloConfig -Endpoints $endpointSet.allEndpoints
 
     Write-Host "Codex global MCP config: $codexHomeConfig"
     Write-Host "Codex project MCP config: $codexProjectConfig"
-    Write-Host "Kilo project MCP config: $(Join-Path $script:ProjectRoot '.kilo\kilo.json')"
+    Write-Host "Kilo project MCP config: $(Get-Vibecoding1cMcpKiloConfigPath)"
 }
 
 function Show-Vibecoding1cMcpStatus {

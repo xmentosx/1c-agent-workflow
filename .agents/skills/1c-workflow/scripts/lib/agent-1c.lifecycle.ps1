@@ -854,7 +854,7 @@ function Invoke-AiRules1cInstaller {
         Pop-Location
     }
 
-    Remove-AiRules1cManagedMcpConfig
+    Invoke-AiRules1cManagedMcpConfigReconcile -Operation "ai_rules_1c $effectiveCommand" | Out-Null
 
     $commit = (Get-GitOutputAt -Root $rulesDir -Arguments @("rev-parse", "HEAD")).Trim()
     Update-DependencyLockEntry -Name "aiRules1c" -Values @{
@@ -997,7 +997,13 @@ function Remove-AiRules1cKiloMcpEntries {
 }
 
 function Remove-AiRules1cManagedMcpConfig {
-    $serverIds = Get-AiRules1cManagedMcpServerIds
+    param([string[]]$ServerIds = @())
+
+    $serverIds = @($ServerIds | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+    if ($serverIds.Count -eq 0) {
+        $serverIds = Get-AiRules1cManagedMcpServerIds
+    }
+
     $removed = @()
     $removed += @(Remove-AiRules1cCodexMcpEntries -ServerIds $serverIds)
     $removed += @(Remove-AiRules1cKiloMcpEntries -ServerIds $serverIds)
@@ -1005,6 +1011,128 @@ function Remove-AiRules1cManagedMcpConfig {
 
     if ($removed.Count -gt 0) {
         Write-Host "Removed ai_rules_1c default MCP client entries; ITL vibecoding1c MCP owns client config: $($removed -join ', ')."
+    }
+    return @($removed)
+}
+
+function Get-AiRules1cMcpClientConfigPaths {
+    $paths = @(
+        (Get-Vibecoding1cMcpCodexHomeConfigPath),
+        (Get-Vibecoding1cMcpCodexProjectConfigPath),
+        (Get-Vibecoding1cMcpKiloConfigPath)
+    )
+    return @($paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+}
+
+function New-AiRules1cMcpConfigSnapshot {
+    param([string[]]$Paths)
+
+    $snapshot = [ordered]@{}
+    foreach ($path in @($Paths)) {
+        if ([string]::IsNullOrWhiteSpace($path) -or $snapshot.Contains($path)) {
+            continue
+        }
+
+        $exists = Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue
+        $snapshot[$path] = [pscustomobject]@{
+            exists = $exists
+            text = $(if ($exists) { Read-Utf8Text -Path $path } else { "" })
+        }
+    }
+    return $snapshot
+}
+
+function Restore-AiRules1cMcpConfigSnapshot {
+    param([object]$Snapshot)
+
+    foreach ($path in @($Snapshot.Keys)) {
+        $entry = $Snapshot[$path]
+        if ([bool]$entry.exists) {
+            Write-Utf8Text -Path $path -Value ([string]$entry.text)
+        } elseif (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $path -Force
+        }
+    }
+}
+
+function Write-AiRules1cMcpPreservedWarning {
+    param(
+        [string]$Operation,
+        [string[]]$Reasons = @()
+    )
+
+    Write-Host "WARNING: ai_rules_1c default MCP client entries were preserved during $Operation because ITL vibecoding1c MCP client config is not ready."
+    foreach ($reason in @($Reasons | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        Write-Host "  - $reason"
+    }
+    Write-Host "Complete MCP setup when ready:"
+    Write-Host "  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup"
+}
+
+function Invoke-AiRules1cManagedMcpConfigReconcile {
+    param([string]$Operation = "MCP reconcile")
+
+    $managedServerIds = @(Get-AiRules1cManagedMcpServerIds)
+    $selection = Read-Vibecoding1cMcpSelection
+    $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection
+    if (-not $selectionCompleteness.isComplete) {
+        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons $selectionCompleteness.reasons
+        return [pscustomobject]@{
+            reconciled = $false
+            preserved = $true
+            replacements = @()
+        }
+    }
+
+    try {
+        $readyClientNames = @(Get-Vibecoding1cMcpReadyClientConfigNames)
+    } catch {
+        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons @("failed to calculate ready vibecoding1c MCP endpoints: $($_.Exception.Message)")
+        return [pscustomobject]@{
+            reconciled = $false
+            preserved = $true
+            replacements = @()
+        }
+    }
+
+    $replacementServerIds = @($readyClientNames | Where-Object { $managedServerIds -contains $_ } | Select-Object -Unique)
+    if ($replacementServerIds.Count -eq 0) {
+        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons @("no ready vibecoding1c MCP endpoints were found in saved state")
+        return [pscustomobject]@{
+            reconciled = $false
+            preserved = $true
+            replacements = @()
+        }
+    }
+
+    $snapshot = New-AiRules1cMcpConfigSnapshot -Paths (Get-AiRules1cMcpClientConfigPaths)
+    try {
+        Write-Vibecoding1cMcpClientConfig
+        $removed = @(Remove-AiRules1cManagedMcpConfig -ServerIds $replacementServerIds)
+        $withoutReplacement = @($managedServerIds | Where-Object { $replacementServerIds -notcontains $_ })
+        Write-Host "Reconciled ai_rules_1c MCP client entries with ITL vibecoding1c MCP config: $($replacementServerIds -join ', ')."
+        if ($withoutReplacement.Count -gt 0) {
+            Write-Host "Preserved ai_rules_1c MCP entries without a ready vibecoding1c replacement: $($withoutReplacement -join ', ')."
+        }
+        return [pscustomobject]@{
+            reconciled = $true
+            preserved = $false
+            replacements = @($replacementServerIds)
+            removed = @($removed)
+        }
+    } catch {
+        $errorMessage = $_.Exception.Message
+        try {
+            Restore-AiRules1cMcpConfigSnapshot -Snapshot $snapshot
+        } catch {
+            Write-Host "WARNING: failed to restore MCP client config snapshot after $Operation failure: $($_.Exception.Message)"
+        }
+        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons @("failed to write replacement client config: $errorMessage")
+        return [pscustomobject]@{
+            reconciled = $false
+            preserved = $true
+            replacements = @()
+        }
     }
 }
 
@@ -1370,9 +1498,11 @@ function Write-WorkflowUpdateFollowUp {
     Write-Host ""
     Write-Host "Next steps:"
     Write-Host "  Review and commit the updated workflow/rules files in master."
-    Write-Host "  Refresh vibecoding1c MCP when needed:"
-    Write-Host "    powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-update"
+    Write-Host "  MCP client config is reconciled automatically when saved vibecoding1c selection/state has ready replacements."
+    Write-Host "  If the helper preserved upstream MCP entries, complete setup when ready:"
     Write-Host "    powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup"
+    Write-Host "  Refresh vibecoding1c MCP registry/distribution when needed:"
+    Write-Host "    powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-update"
     if ($states.Count -gt 0) {
         Write-Host "  Active development branches must merge the updated master intentionally:"
         foreach ($state in ($states | Sort-Object @{ Expression = { Get-StateValue -State $_ -Name "devBranchName" -Default "" } })) {
@@ -2797,6 +2927,7 @@ function Refresh-DevBranch {
         Write-Host "Extension files were not loaded during refresh. Run update-dev-branch-base when you need to update the extension in the branch infobase."
     }
     Sync-KiloItlCommandSurface
+    Invoke-AiRules1cManagedMcpConfigReconcile -Operation "refresh-dev-branch MCP reconcile" | Out-Null
 }
 
 function Dump-DevBranchExtension {

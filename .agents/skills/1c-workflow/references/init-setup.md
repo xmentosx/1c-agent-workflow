@@ -79,7 +79,7 @@ Goal: create baseline project state.
 4. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, `.agent-1c/dependency-lock.json`, and `.dev.env` if missing.
 5. Run tool checks, initialize Git, checkout/create `master`, update the source infobase from storage when configured, and dump configuration files to `src/cf`.
 6. Initial dump must produce `src/cf/ConfigDumpInfo.xml`; later dumps use incremental `-update -force` when that file exists. Stop if `src/cf` is non-empty without `ConfigDumpInfo.xml`.
-7. Install `ai_rules_1c` using the current agent target, record its commit in the dependency lock, remove default upstream MCP client entries, install this workflow skill and fast skill, generate Kilo wrappers when applicable, and apply the ITL overlay to `USER-RULES.md`.
+7. Install `ai_rules_1c` using the current agent target, record its commit in the dependency lock, reconcile default upstream MCP client entries only when ready vibecoding1c replacements are available, install this workflow skill and fast skill, generate Kilo wrappers when applicable, and apply the ITL overlay to `USER-RULES.md`.
 8. Commit rules and workflow files when there are changes.
 
 ## Tool Actions
@@ -101,7 +101,7 @@ Goal: refresh the installed ITL workflow package without rerunning initializatio
 4. Copy only managed workflow files: `.agents/skills/1c-workflow*`, Kilo templates, `templates/`, `README.md`, `AGENT-INSTALL.md`, `DEVELOPER-GUIDE.ru.md`, `DEV-BRANCH-DEVELOPMENT.ru.md`, `VANESSA-TESTS-GUIDE.md`, and the compatibility stub `VANESSA-TESTS-GUIDE.ru.md`.
 5. Preserve local runtime/project state. Do not overwrite `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, or existing project/tools config.
 6. Record `workflowPackage.repo/ref/commit/source/updatedAt`, reapply `USER-RULES.md`, run `update-ai-rules` unless `-SkipAiRules` is explicit, and leave tracked changes for review.
-7. Do not update active `itldev/*` worktrees automatically; print follow-up commands for MCP refresh, branch merge or `/itl-refresh`, and branch-local Vanessa MCP reinstall when used.
+7. Do not update active `itldev/*` worktrees automatically; print whether MCP client config was reconciled or preserved as upstream fallback, plus follow-up commands for MCP setup/update, branch merge or `/itl-refresh`, and branch-local Vanessa MCP reinstall when used.
 
 ## UPDATE_AI_RULES
 
@@ -111,6 +111,6 @@ Goal: refresh upstream `ai_rules_1c` while preserving the ITL overlay.
 2. In `fresh`, checkout remote HEAD; in `locked`, checkout the pinned commit/ref and stop when missing.
 3. Run the upstream installer with `update` when `.ai-rules.json` exists, otherwise `init` with the configured agent target.
 4. Preserve upstream files marked `userModified`; use `-Force` only after explicit developer intent.
-5. Remove default upstream MCP client entries from ignored Codex/Kilo config while preserving vibecoding1c-managed and External MCP entries.
+5. Reconcile default upstream MCP client entries from ignored Codex/Kilo config only after writing ready vibecoding1c-managed replacements; if selection/state is missing or incomplete, preserve upstream entries and print `vibecoding1c-mcp-setup` as the recovery action.
 6. Reapply the managed ITL block in `USER-RULES.md` from `templates/USER-RULES.append.md`; normally do not append to `AGENTS.md` when it already references `USER-RULES.md`.
 7. Record the resolved `ai_rules_1c` commit in `.agent-1c/dependency-lock.json`.

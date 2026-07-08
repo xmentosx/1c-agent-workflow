@@ -68,7 +68,7 @@ Extension branches: set extension name/dump extension files
 Maintenance/recovery: update base without tests, update workflow/rules, close/list/switch branches
 ```
 
-`update-ai-rules` refreshes upstream `ai_rules_1c` managed files with that installer, removes default upstream MCP client entries so the vibecoding1c MCP helper remains the client-config owner, records the resolved commit in `.agent-1c/dependency-lock.json`, and reapplies the ITL overlay in `USER-RULES.md`. It does not normally append to `AGENTS.md` when upstream `AGENTS.md` already points to `USER-RULES.md`.
+`update-ai-rules` refreshes upstream `ai_rules_1c` managed files with that installer, reconciles default upstream MCP client entries only after ready vibecoding1c replacements are written, records the resolved commit in `.agent-1c/dependency-lock.json`, and reapplies the ITL overlay in `USER-RULES.md`. If vibecoding1c selection/state is incomplete, it preserves upstream MCP entries as the working fallback. It does not normally append to `AGENTS.md` when upstream `AGENTS.md` already points to `USER-RULES.md`.
 
 `update-workflow` refreshes the installed ITL workflow package in an already initialized project. It must run from the `master` worktree, copies only managed workflow files, preserves local runtime state, records `workflowPackage` in `.agent-1c/dependency-lock.json`, regenerates ignored `.kilo/commands/itl*.md` for the current worktree, runs `update-ai-rules` unless `-SkipAiRules` is passed, and prints follow-up commands for vibecoding1c MCP, Vanessa MCP, and active `itldev/*` worktrees. In Kilo master, it is exposed as `/itl-update-workflow`; it is not generated in `itldev/*` worktrees.
 
