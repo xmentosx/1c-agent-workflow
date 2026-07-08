@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "masterBranch": "master",
+  "baseConfigurationVersion": "PM5",
   "exportPath": "src/cf",
   "extensionsPath": "src/cfe",
   "artifactsPath": "build/result",

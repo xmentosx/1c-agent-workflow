@@ -1,9 +1,13 @@
 ---
 name: product-docs
-description: Use BookStack product documentation through the BookStack-product-docs-mcp server before changing product business logic, architecture, user workflows, terminology, permissions, reports, integrations, or acceptance tests. Treat BookStack as product context, verify against code/tests/current 1C metadata and available MCP evidence, cite relevant pages, and surface conflicts.
+description: Use BookStack product documentation through the BookStack-product-docs-mcp server for PM5 projects before changing product business logic, architecture, user workflows, terminology, permissions, reports, integrations, or acceptance tests. Treat BookStack as product context, verify against code/tests/current 1C metadata and available MCP evidence, cite relevant pages, and surface conflicts.
 ---
 
 # Product Docs
+
+## PM4/PM5 Guard
+
+Before using BookStack, inspect `.agent-1c/project.json` when it exists. If `baseConfigurationVersion` is `PM4`, do not use `BookStack-product-docs-mcp`; BookStack product docs cover PM5 only. Continue from the user request, code, tests, current 1C metadata, and available non-product MCP evidence, and explicitly state that PM5 product docs were skipped for a PM4 project.
 
 ## Workflow
 

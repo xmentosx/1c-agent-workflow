@@ -1616,6 +1616,11 @@ function Update-UserRules {
     $endMarker = "<!-- ITL-WORKFLOW-USER-RULES:END -->"
     $marker = "## 1C Project Lifecycle"
     $templateBlock = (Read-Utf8Text -Path $templatePath).Trim()
+    if (-not (Test-ProductDocsMcpAllowed)) {
+        $productDocsRule = 'Before changing product logic, architecture, workflows, terminology, permissions, reports, integrations, or acceptance tests, use `.agents/skills/product-docs/SKILL.md` and search `BookStack-product-docs-mcp`. BookStack is advisory, not authoritative; verify against code, tests, current 1C metadata, and available MCP evidence. Cite relevant page URLs/`updated_at`. On conflict, report `BookStack says`, `Code/MCP currently shows`, and `Decision`.'
+        $pm4Rule = 'For PM4 projects, PM5 product documentation MCP is disabled. Before changing product logic, architecture, workflows, terminology, permissions, reports, integrations, or acceptance tests, rely on the user request, code, tests, current 1C metadata, and available non-product MCP evidence; report product-intent uncertainty explicitly.'
+        $templateBlock = $templateBlock.Replace($productDocsRule, $pm4Rule)
+    }
     $block = ($startMarker + [Environment]::NewLine + $templateBlock + [Environment]::NewLine + $endMarker)
 
     if (Test-Path -LiteralPath $path) {

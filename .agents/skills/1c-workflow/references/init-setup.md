@@ -27,6 +27,7 @@ Use this as `.agent-1c/project.json`:
 {
   "schemaVersion": 1,
   "masterBranch": "master",
+  "baseConfigurationVersion": "PM5",
   "exportPath": "src/cf",
   "extensionsPath": "src/cfe",
   "artifactsPath": "build/result",
@@ -54,6 +55,7 @@ Use `.dev.env` for secrets, passwords, web publication values, local tool paths,
 Ask only for values the helper cannot collect or infer:
 
 - Project/source infobase kind and path/server/name.
+- Base configuration version: `PM4` or `PM5`. Default is `PM5`; store it in committed `.agent-1c/project.json` as `baseConfigurationVersion`.
 - Whether the source uses 1C configuration repository storage.
 - Repository path/user/password only when source storage is enabled.
 - 1C platform executable. First inspect standard `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` version folders and offer installed versions.

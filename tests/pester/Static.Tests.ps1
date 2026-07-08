@@ -1061,6 +1061,8 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match "bookstack-product-docs"
         $HelperText | Should -Match "BookStack-product-docs-mcp"
         $HelperText | Should -Match "Add-Vibecoding1cMcpVirtualServersToManifest"
+        $HelperText | Should -Match "Test-ProductDocsMcpAllowed"
+        $HelperText | Should -Match "Test-Vibecoding1cMcpLogicalServerAllowedForProject"
         $HelperText | Should -Not -Match "itl-{projectSlug}-{branchSlug}-vanessa"
         $HelperText | Should -Not -Match "localVanessa"
         foreach ($portMarker in @("18000", "18100", "18500", "19000")) {
@@ -1114,8 +1116,10 @@ Describe "1C agent workflow static checks" {
         $projectTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\project.json")
         $projectTemplate | Should -Match "vibecoding1cMcp"
         $projectTemplate | Should -Match "providerDefault"
+        $projectTemplate | Should -Match '"baseConfigurationVersion"\s*:\s*"PM5"'
         $projectTemplate | Should -Not -Match '"mcp"\s*:'
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "PATH_METADATA"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "BASE_CONFIGURATION_VERSION=PM5"
     }
 
     It "wires standalone MCP host tooling and registry schema" {
@@ -2972,6 +2976,49 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "gates BookStack product MCP by base configuration version" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-pm-gate-" + [guid]::NewGuid().ToString("N"))
+        $pm4Root = Join-Path $tempRoot "pm4"
+        $pm5Root = Join-Path $tempRoot "pm5"
+        $missingRoot = Join-Path $tempRoot "missing"
+        $oldBookStackEnabled = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_BOOKSTACK_ENABLED", "Process")
+        $oldBaseVersion = [Environment]::GetEnvironmentVariable("BASE_CONFIGURATION_VERSION", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path `
+                (Join-Path $pm4Root ".agent-1c"),
+                (Join-Path $pm5Root ".agent-1c"),
+                $missingRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $pm4Root ".agent-1c\project.json") -Encoding UTF8 -Value (@{ schemaVersion = 1; baseConfigurationVersion = "PM4" } | ConvertTo-Json)
+            Set-Content -LiteralPath (Join-Path $pm5Root ".agent-1c\project.json") -Encoding UTF8 -Value (@{ schemaVersion = 1; baseConfigurationVersion = "PM5" } | ConvertTo-Json)
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_BOOKSTACK_ENABLED", "true", "Process")
+            [Environment]::SetEnvironmentVariable("BASE_CONFIGURATION_VERSION", $null, "Process")
+
+            $pm4Ids = & {
+                . $HelperPath -ProjectRoot $pm4Root -Action help *> $null
+                @(Select-Vibecoding1cMcpManifestServers | ForEach-Object { [string]$_.id })
+            }
+            $pm5Ids = & {
+                . $HelperPath -ProjectRoot $pm5Root -Action help *> $null
+                @(Select-Vibecoding1cMcpManifestServers | ForEach-Object { [string]$_.id })
+            }
+            $missingIds = & {
+                . $HelperPath -ProjectRoot $missingRoot -Action help *> $null
+                @(Select-Vibecoding1cMcpManifestServers | ForEach-Object { [string]$_.id })
+            }
+
+            $pm4Ids | Should -Not -Contain "bookstack"
+            $pm5Ids | Should -Contain "bookstack"
+            $missingIds | Should -Contain "bookstack"
+        } finally {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_BOOKSTACK_ENABLED", $oldBookStackEnabled, "Process")
+            [Environment]::SetEnvironmentVariable("BASE_CONFIGURATION_VERSION", $oldBaseVersion, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "skips incomplete inherited vibecoding1c MCP selection without failing branch setup" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-incomplete-inherit-" + [guid]::NewGuid().ToString("N"))
         $mainRoot = Join-Path $tempRoot "main"
@@ -3244,6 +3291,110 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "removes PM5-only managed BookStack client config for PM4 projects" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-pm4-client-config-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $localHome = Join-Path $tempRoot "local-home"
+        $codexHomeConfig = Join-Path $tempRoot "codex-home\config.toml"
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
+        $oldBaseVersion = [Environment]::GetEnvironmentVariable("BASE_CONFIGURATION_VERSION", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path `
+                (Join-Path $projectRoot ".agent-1c\mcp"),
+                (Join-Path $projectRoot ".codex"),
+                (Join-Path $projectRoot ".kilo"),
+                (Split-Path -Parent $codexHomeConfig),
+                $localHome | Out-Null
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\project.json") -Encoding UTF8 -Value (@{ schemaVersion = 1; baseConfigurationVersion = "PM4" } | ConvertTo-Json)
+
+            $state = [ordered]@{
+                schemaVersion = 1
+                servers = @(
+                    [ordered]@{
+                        id = "docs"
+                        scope = "global"
+                        name = "itl-1c-docs"
+                        url = "http://127.0.0.1:18003/mcp"
+                        status = "running"
+                        family = "vibecoding1c"
+                        provider = "remote"
+                        configId = ""
+                    },
+                    [ordered]@{
+                        id = "bookstack"
+                        scope = "global"
+                        name = "bookstack-product-docs"
+                        url = "http://127.0.0.1:18009/mcp"
+                        status = "running"
+                        family = "vibecoding1c"
+                        provider = "remote"
+                        configId = ""
+                    }
+                )
+            }
+            Set-Content -LiteralPath (Join-Path $localHome "state.json") -Encoding UTF8 -Value (($state | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            $codexText = @'
+[mcp_servers."BookStack-product-docs-mcp"]
+url = "http://127.0.0.1:18009/mcp"
+managedBy = "vibecoding1c-mcp"
+family = "vibecoding1c"
+
+[mcp_servers."external-product-docs"]
+url = "http://127.0.0.1:19999/mcp"
+enabled = true
+'@
+            Set-Content -LiteralPath $codexHomeConfig -Encoding UTF8 -Value ($codexText + [Environment]::NewLine)
+
+            $kiloConfig = [ordered]@{
+                mcp = [ordered]@{
+                    "BookStack-product-docs-mcp" = [ordered]@{
+                        type = "remote"
+                        url = "http://127.0.0.1:18009/mcp"
+                        enabled = $true
+                        managedBy = "vibecoding1c-mcp"
+                        family = "vibecoding1c"
+                        logicalId = "bookstack"
+                    }
+                    "external-product-docs" = [ordered]@{
+                        type = "remote"
+                        url = "http://127.0.0.1:19999/mcp"
+                        enabled = $true
+                    }
+                }
+            }
+            Set-Content -LiteralPath (Join-Path $projectRoot ".kilo\kilo.json") -Encoding UTF8 -Value (($kiloConfig | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $localHome, "Process")
+            [Environment]::SetEnvironmentVariable("BASE_CONFIGURATION_VERSION", $null, "Process")
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                $script:TestCodexHomeConfigPath = $codexHomeConfig
+                function Get-Vibecoding1cMcpCodexHomeConfigPath {
+                    return $script:TestCodexHomeConfigPath
+                }
+                Write-Vibecoding1cMcpClientConfig *> $null
+            }
+
+            $updatedCodex = Get-Content -Encoding UTF8 -Raw $codexHomeConfig
+            $updatedKilo = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".kilo\kilo.json") | ConvertFrom-Json
+
+            $updatedCodex | Should -Not -Match "BookStack-product-docs-mcp"
+            $updatedCodex | Should -Match "1C-docs-mcp"
+            $updatedCodex | Should -Match "external-product-docs"
+            $updatedKilo.mcp.PSObject.Properties.Name | Should -Not -Contain "BookStack-product-docs-mcp"
+            $updatedKilo.mcp.PSObject.Properties.Name | Should -Contain "1C-docs-mcp"
+            $updatedKilo.mcp.PSObject.Properties.Name | Should -Contain "external-product-docs"
+        } finally {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
+            [Environment]::SetEnvironmentVariable("BASE_CONFIGURATION_VERSION", $oldBaseVersion, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "does not store concrete MCP license key values in tracked text files" {
         $tracked = @(& git -C $RepoRoot ls-files)
         $textExtensions = @(".ps1", ".md", ".json", ".jsonc", ".yml", ".yaml", ".example", ".gitignore", ".toml")
@@ -3331,6 +3482,8 @@ Describe "1C agent workflow static checks" {
         (Test-Path -LiteralPath $productDocsSkillPath -PathType Leaf) | Should -Be $true
         $productDocsSkillText = Get-Content -Encoding UTF8 -Raw $productDocsSkillPath
         $productDocsSkillText | Should -Match "BookStack-product-docs-mcp"
+        $productDocsSkillText | Should -Match "baseConfigurationVersion"
+        $productDocsSkillText | Should -Match "PM4"
         $productDocsSkillText | Should -Match "search_docs"
         $productDocsSkillText | Should -Match "read_page"
         $productDocsSkillText | Should -Match "source of product context and intended behavior"
@@ -5375,6 +5528,108 @@ url = "http://localhost:9999/mcp"
 
         $result.defaulted | Should -BeTrue
         $result.explicit | Should -BeFalse
+    }
+
+    It "normalizes and persists base configuration version init answers" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-base-configuration-version-" + [guid]::NewGuid().ToString("N"))
+        $envNames = @(
+            "PLATFORM_PATH",
+            "INFOBASE_KIND",
+            "SOURCE_USES_REPOSITORY",
+            "SOURCE_INFOBASE_PATH",
+            "SOURCE_SERVER_NAME",
+            "SOURCE_INFOBASE_NAME",
+            "IB_USER",
+            "IB_PASSWORD",
+            "REPOSITORY_PATH",
+            "REPOSITORY_USER",
+            "REPOSITORY_PASSWORD",
+            "WEB_PUBLISH_BY_DEFAULT",
+            "WEB_PUBLISH_AUTO",
+            "DEPENDENCY_MODE",
+            "VIBECODING1C_MCP_SETUP_DURING_INIT"
+        )
+        $savedEnv = @{}
+        foreach ($name in $envNames) {
+            $savedEnv[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+        }
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+
+                $baseAnswers = [pscustomobject]@{
+                    platformPath = "C:\Program Files\1cv8\8.3.99.1\bin\1cv8.exe"
+                    infoBaseKind = "file"
+                    sourceUsesRepository = $false
+                    sourceInfoBasePath = "C:\bases\source"
+                    dependencyMode = "fresh"
+                }
+                $defaulted = Normalize-InitAnswers -Answers $baseAnswers
+
+                $pm4Answers = [pscustomobject]@{
+                    platformPath = "C:\Program Files\1cv8\8.3.99.1\bin\1cv8.exe"
+                    baseConfigurationVersion = "pm4"
+                    infoBaseKind = "file"
+                    sourceUsesRepository = $false
+                    sourceInfoBasePath = "C:\bases\source"
+                    dependencyMode = "fresh"
+                }
+                $pm4 = Normalize-InitAnswers -Answers $pm4Answers
+
+                $pm5Answers = [pscustomobject]@{
+                    platformPath = "C:\Program Files\1cv8\8.3.99.1\bin\1cv8.exe"
+                    BASE_CONFIGURATION_VERSION = "PM5"
+                    infoBaseKind = "file"
+                    sourceUsesRepository = $false
+                    sourceInfoBasePath = "C:\bases\source"
+                    dependencyMode = "fresh"
+                }
+                $pm5 = Normalize-InitAnswers -Answers $pm5Answers
+
+                $invalidMessage = ""
+                try {
+                    Normalize-InitAnswers -Answers ([pscustomobject]@{
+                        platformPath = "C:\Program Files\1cv8\8.3.99.1\bin\1cv8.exe"
+                        baseConfigurationVersion = "PM6"
+                        infoBaseKind = "file"
+                        sourceUsesRepository = $false
+                        sourceInfoBasePath = "C:\bases\source"
+                        dependencyMode = "fresh"
+                    }) | Out-Null
+                } catch {
+                    $invalidMessage = $_.Exception.Message
+                }
+
+                Save-InitAnswers -Answers $pm4
+                Read-ProjectConfig
+
+                [pscustomobject]@{
+                    defaulted = $defaulted.baseConfigurationVersion
+                    pm4 = $pm4.baseConfigurationVersion
+                    pm5 = $pm5.baseConfigurationVersion
+                    invalidMessage = $invalidMessage
+                    persisted = [string](Get-ConfigValue -Path "baseConfigurationVersion" -Default "")
+                    dotenvText = Read-Utf8Text -Path (Join-Path $script:ProjectRoot ".dev.env")
+                }
+            }
+
+            $result.defaulted | Should -Be "PM5"
+            $result.pm4 | Should -Be "PM4"
+            $result.pm5 | Should -Be "PM5"
+            $result.invalidMessage | Should -Match "Use PM4 or PM5"
+            $result.persisted | Should -Be "PM4"
+            $result.dotenvText | Should -Not -Match "BASE_CONFIGURATION_VERSION"
+        } finally {
+            foreach ($name in $envNames) {
+                [Environment]::SetEnvironmentVariable($name, $savedEnv[$name], "Process")
+            }
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     It "writes run status on successful helper completion" {

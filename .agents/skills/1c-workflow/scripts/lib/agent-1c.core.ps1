@@ -260,6 +260,21 @@ function ConvertTo-DependencyMode {
     throw "Invalid dependency mode: $Value. Use fresh or locked."
 }
 
+function ConvertTo-BaseConfigurationVersion {
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) {
+        return "PM5"
+    }
+
+    $text = ([string]$Value).Trim().ToUpperInvariant()
+    if ($text -eq "PM4" -or $text -eq "PM5") {
+        return $text
+    }
+
+    throw "Invalid base configuration version: $Value. Use PM4 or PM5."
+}
+
 function ConvertTo-Agent1cHashtable {
     param([AllowNull()][object]$Object)
 
@@ -1339,6 +1354,7 @@ function New-DefaultProjectConfig {
     return [ordered]@{
         schemaVersion = 1
         masterBranch = "master"
+        baseConfigurationVersion = "PM5"
         exportPath = "src/cf"
         extensionsPath = "src/cfe"
         artifactsPath = "build/result"
@@ -1473,6 +1489,29 @@ function Get-DependencyMode {
     }
 
     return ConvertTo-DependencyMode -Value $value
+}
+
+function Get-BaseConfigurationVersion {
+    $value = Get-Setting -EnvName "BASE_CONFIGURATION_VERSION" -ConfigName "baseConfigurationVersion" -Default "PM5"
+    return ConvertTo-BaseConfigurationVersion -Value $value
+}
+
+function Test-ProductDocsMcpAllowed {
+    return ((Get-BaseConfigurationVersion) -eq "PM5")
+}
+
+function Set-ProjectBaseConfigurationVersion {
+    param([string]$Version)
+
+    $normalizedVersion = ConvertTo-BaseConfigurationVersion -Value $Version
+    $config = if (Test-Path -LiteralPath $script:ConfigPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        ConvertTo-Agent1cHashtable -Object (Read-Utf8Text -Path $script:ConfigPath | ConvertFrom-Json)
+    } else {
+        New-DefaultProjectConfig
+    }
+    $config["baseConfigurationVersion"] = $normalizedVersion
+    Write-Utf8Text -Path $script:ConfigPath -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    Read-ProjectConfig
 }
 
 function Get-ConfigValueFromObject {
@@ -2003,6 +2042,17 @@ function Read-InitInfoBaseKind {
     }
 }
 
+function Read-InitBaseConfigurationVersion {
+    while ($true) {
+        $answer = (Read-Host "Base configuration version: PM4 or PM5 [PM5]").Trim()
+        try {
+            return ConvertTo-BaseConfigurationVersion -Value $answer
+        } catch {
+            Write-Host "Enter PM4 or PM5."
+        }
+    }
+}
+
 function Read-InitDependencyMode {
     $useLatest = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0JjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMINGB0LLQtdC20LjQtSDQstC10YDRgdC40Lgg0LfQsNCy0LjRgdC40LzQvtGB0YLQtdC5INC/0YDQuCDQuNC90LjRhtC40LDQu9C40LfQsNGG0LjQuD8g0J7RgtCy0LXRgtGM0YLQtSDQvdC10YIsINGH0YLQvtCx0Ysg0LjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMIHBpbnMg0LjQtyAuYWdlbnQtMWMvZGVwZW5kZW5jeS1sb2NrLmpzb24u") -Default $true
     if ($useLatest) {
@@ -2071,11 +2121,13 @@ function Read-InitAnswersFromWizard {
     }
 
     $platformPath = Read-InitPlatformPath
+    $baseConfigurationVersion = Read-InitBaseConfigurationVersion
     $infoBaseKind = Read-InitInfoBaseKind
     $sourceUsesRepository = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0JjRgdGF0L7QtNC90LDRjyDQuNC90YTQvtGA0LzQsNGG0LjQvtC90L3QsNGPINCx0LDQt9CwINC/0L7QtNC60LvRjtGH0LXQvdCwINC6INGF0YDQsNC90LjQu9C40YnRgyDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggMUM/") -Default $true
 
     $answers = [ordered]@{
         platformPath = $platformPath
+        baseConfigurationVersion = $baseConfigurationVersion
         infoBaseKind = $infoBaseKind
         sourceUsesRepository = $sourceUsesRepository
         ibUser = ""
@@ -2113,6 +2165,7 @@ function Read-InitAnswersFromWizard {
     Write-Section (Get-Agent1cUtf8Text "0KHQstC+0LTQutCwINC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNC4")
     Write-Host ((Get-Agent1cUtf8Text "0JrQvtGA0LXQvdGMINC/0YDQvtC10LrRgtCwOiA=") + $script:ProjectRoot)
     Write-Host ((Get-Agent1cUtf8Text "0J/Qu9Cw0YLRhNC+0YDQvNCwOiA=") + $answers.platformPath)
+    Write-Host ("Base configuration version: " + $answers.baseConfigurationVersion)
     Write-Host ((Get-Agent1cUtf8Text "0KLQuNC/INC40YHRhdC+0LTQvdC+0Lkg0LHQsNC30Ys6IA==") + $answers.infoBaseKind)
     if ($infoBaseKind -eq "server") {
         Write-Host ((Get-Agent1cUtf8Text "0JjRgdGF0L7QtNC90YvQuSDRgdC10YDQstC10YA6IA==") + $answers.sourceServerName)
@@ -2141,6 +2194,7 @@ function Read-InitAnswersFromWizard {
 function Normalize-InitAnswers {
     param([object]$Answers)
 
+    $baseConfigurationVersion = ConvertTo-BaseConfigurationVersion -Value (Get-AnswerValue -Answers $Answers -Names @("baseConfigurationVersion", "BASE_CONFIGURATION_VERSION") -Default "PM5")
     $sourceUsesRepository = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("sourceUsesRepository", "SOURCE_USES_REPOSITORY") -Default $true) -Default $true
     $webPublishByDefault = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("webPublishByDefault", "WEB_PUBLISH_BY_DEFAULT") -Default $false) -Default $false
     $webPublishAuto = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("webPublishAuto", "WEB_PUBLISH_AUTO") -Default $false) -Default $false
@@ -2156,6 +2210,7 @@ function Normalize-InitAnswers {
 
     return [pscustomobject]@{
         platformPath = [string](Get-AnswerValue -Answers $Answers -Names @("platformPath", "PLATFORM_PATH"))
+        baseConfigurationVersion = $baseConfigurationVersion
         infoBaseKind = ([string](Get-AnswerValue -Answers $Answers -Names @("infoBaseKind", "INFOBASE_KIND") -Default "file")).Trim().ToLowerInvariant()
         sourceUsesRepository = $sourceUsesRepository
         sourceInfoBasePath = [string](Get-AnswerValue -Answers $Answers -Names @("sourceInfoBasePath", "SOURCE_INFOBASE_PATH") -Default "")
@@ -2218,6 +2273,7 @@ function Save-InitAnswers {
     }
 
     Set-DotEnvValues -Values $values
+    Set-ProjectBaseConfigurationVersion -Version $Answers.baseConfigurationVersion
     Set-DependencyLockMode -Mode $Answers.dependencyMode
     Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
     $script:InitVibecoding1cMcpSetupRequested = [bool]$Answers.vibecoding1cMcpSetupDuringInit

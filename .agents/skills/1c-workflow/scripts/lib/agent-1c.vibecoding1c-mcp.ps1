@@ -746,6 +746,38 @@ function Get-Vibecoding1cMcpClientNames {
     }
 }
 
+function Test-Vibecoding1cMcpLogicalServerAllowedForProject {
+    param([string]$ServerId)
+
+    if ($ServerId -eq "bookstack" -and -not (Test-ProductDocsMcpAllowed)) {
+        return $false
+    }
+    return $true
+}
+
+function Test-Vibecoding1cMcpServerAllowedForProject {
+    param([object]$Server)
+
+    $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
+    return (Test-Vibecoding1cMcpLogicalServerAllowedForProject -ServerId $id)
+}
+
+function Test-Vibecoding1cMcpEndpointAllowedForProject {
+    param([object]$Endpoint)
+
+    $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "id" -Default "")
+    return (Test-Vibecoding1cMcpLogicalServerAllowedForProject -ServerId $id)
+}
+
+function Select-Vibecoding1cMcpAllowedStaleIndexes {
+    param([object[]]$Values)
+
+    if (Test-ProductDocsMcpAllowed) {
+        return @($Values)
+    }
+    return @($Values | Where-Object { [string]$_ -ne "bookstack" })
+}
+
 function Write-Vibecoding1cMcpRemoteEndpointChoices {
     param(
         [object[]]$Candidates,
@@ -2412,6 +2444,9 @@ function Select-Vibecoding1cMcpManifestServers {
         if ($targetScopes -notcontains $scope) {
             continue
         }
+        if (-not (Test-Vibecoding1cMcpServerAllowedForProject -Server $server)) {
+            continue
+        }
         $servers += $server
     }
     return $servers
@@ -2713,6 +2748,9 @@ function Get-Vibecoding1cMcpCurrentEndpoints {
         if ([string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "family" -Default "") -ne "vibecoding1c") {
             continue
         }
+        if (-not (Test-Vibecoding1cMcpEndpointAllowedForProject -Endpoint $server)) {
+            continue
+        }
         $url = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "url" -Default "")
         if (-not $url) {
             continue
@@ -2761,6 +2799,9 @@ function Get-Vibecoding1cMcpCurrentStateServers {
     $servers = @()
     foreach ($server in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $state -Name "servers" -Default @())) {
         if ([string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "family" -Default "") -ne "vibecoding1c") {
+            continue
+        }
+        if (-not (Test-Vibecoding1cMcpEndpointAllowedForProject -Endpoint $server)) {
             continue
         }
         $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "scope" -Default "")
@@ -2889,7 +2930,7 @@ function Get-Vibecoding1cMcpStatusSummary {
         skipped = @($skipped)
         staleServers = @($staleServers)
         missingConfigId = @($missingConfigId)
-        staleIndexes = @(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $state -Name "staleIndexes" -Default @()))
+        staleIndexes = @(Select-Vibecoding1cMcpAllowedStaleIndexes -Values @(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $state -Name "staleIndexes" -Default @())))
     }
 }
 
@@ -3035,7 +3076,7 @@ function Select-Vibecoding1cMcpClientConfigEndpoints {
     param([object[]]$Endpoints)
 
     $selection = Read-Vibecoding1cMcpSelection
-    $selected = @($Endpoints | Where-Object { (Test-Vibecoding1cMcpEndpointMatchesSelection -Endpoint $_ -Selection $selection) -and (Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_) })
+    $selected = @($Endpoints | Where-Object { (Test-Vibecoding1cMcpEndpointAllowedForProject -Endpoint $_) -and (Test-Vibecoding1cMcpEndpointMatchesSelection -Endpoint $_ -Selection $selection) -and (Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_) })
     $byClientName = [ordered]@{}
     foreach ($endpoint in @($selected | Sort-Object @{ Expression = { Get-Vibecoding1cMcpEndpointClientName -Endpoint $_ } }, @{ Expression = { Get-Vibecoding1cMcpObjectValue -Object $_ -Name "name" -Default "" } })) {
         $clientName = Get-Vibecoding1cMcpEndpointClientName -Endpoint $endpoint
@@ -3072,6 +3113,89 @@ function Set-Vibecoding1cMcpManagedTextBlock {
         $text += [Environment]::NewLine
     }
     Write-Utf8Text -Path $Path -Value ($text + $block)
+}
+
+function Get-Vibecoding1cMcpTomlSectionValue {
+    param(
+        [string]$SectionText,
+        [string]$Name
+    )
+
+    $escapedName = [regex]::Escape($Name)
+    $match = [regex]::Match($SectionText, "(?im)^\s*$escapedName\s*=\s*[""']?(?<value>[^""'#\r\n]+)")
+    if ($match.Success) {
+        return $match.Groups["value"].Value.Trim()
+    }
+    return ""
+}
+
+function Test-Vibecoding1cMcpTomlSectionIsManaged {
+    param([string]$SectionText)
+
+    $managedBy = Get-Vibecoding1cMcpTomlSectionValue -SectionText $SectionText -Name "managedBy"
+    if ($managedBy -ne "vibecoding1c-mcp") {
+        return $false
+    }
+
+    $family = Get-Vibecoding1cMcpTomlSectionValue -SectionText $SectionText -Name "family"
+    return ([string]::IsNullOrWhiteSpace($family) -or $family -eq "vibecoding1c")
+}
+
+function Remove-Vibecoding1cMcpCodexManagedEntries {
+    param(
+        [string]$Path,
+        [string[]]$ClientNames
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return @()
+    }
+
+    $text = Read-Utf8Text -Path $Path
+    $removed = @()
+    foreach ($clientName in @($ClientNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+        $escaped = [regex]::Escape($clientName)
+        $patterns = @(
+            "(?ms)^\[mcp_servers\.`"$escaped`"\]\r?\n.*?(?=^\[|^# >>> vibecoding1c-mcp|\z)",
+            "(?ms)^\[mcp_servers\.$escaped\]\r?\n.*?(?=^\[|^# >>> vibecoding1c-mcp|\z)"
+        )
+        foreach ($pattern in $patterns) {
+            $matches = @([regex]::Matches($text, $pattern) | Sort-Object Index -Descending)
+            foreach ($match in $matches) {
+                if (-not (Test-Vibecoding1cMcpTomlSectionIsManaged -SectionText $match.Value)) {
+                    continue
+                }
+
+                $text = $text.Remove($match.Index, $match.Length)
+                if ($removed -notcontains $clientName) {
+                    $removed += $clientName
+                }
+            }
+        }
+    }
+
+    if ($removed.Count -gt 0) {
+        Write-Utf8Text -Path $Path -Value ($text.TrimEnd() + [Environment]::NewLine)
+    }
+    return @($removed)
+}
+
+function Remove-Vibecoding1cMcpDisallowedProductDocsClientConfig {
+    param([string[]]$CodexPaths)
+
+    if (Test-ProductDocsMcpAllowed) {
+        return
+    }
+
+    $clientName = Get-Vibecoding1cMcpAiRules1cClientName -ServerId "bookstack"
+    $removed = @()
+    foreach ($path in @($CodexPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+        $removed += @(Remove-Vibecoding1cMcpCodexManagedEntries -Path $path -ClientNames @($clientName))
+    }
+    $removed = @($removed | Select-Object -Unique)
+    if ($removed.Count -gt 0) {
+        Write-Host "Removed PM5-only vibecoding1c MCP client entries for PM4 project: $($removed -join ', ')."
+    }
 }
 
 function Write-Vibecoding1cMcpCodexConfig {
@@ -3158,6 +3282,7 @@ function Write-Vibecoding1cMcpClientConfig {
     $codexHomeConfig = Get-Vibecoding1cMcpCodexHomeConfigPath
     $codexProjectConfig = Get-Vibecoding1cMcpCodexProjectConfigPath
 
+    Remove-Vibecoding1cMcpDisallowedProductDocsClientConfig -CodexPaths @($codexHomeConfig, $codexProjectConfig)
     Write-Vibecoding1cMcpCodexConfig -Path $codexHomeConfig -BlockId "global" -Endpoints $endpointSet.globalEndpoints
     Write-Vibecoding1cMcpCodexConfig -Path $codexProjectConfig -BlockId "project" -Endpoints $endpointSet.localEndpoints
     Write-Vibecoding1cMcpKiloConfig -Endpoints $endpointSet.allEndpoints
@@ -3210,7 +3335,7 @@ function Show-Vibecoding1cMcpStatus {
         Write-Host "Embedding model: not configured"
     }
 
-    $stale = @(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $state -Name "staleIndexes" -Default @()))
+    $stale = @(Select-Vibecoding1cMcpAllowedStaleIndexes -Values @(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $state -Name "staleIndexes" -Default @())))
     if ($stale.Count -gt 0) {
         Write-Host "Stale indexes: $($stale -join ', ')"
         Write-Host "Reindex only after explicit RESET_DATABASE=true."
