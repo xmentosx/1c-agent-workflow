@@ -1719,6 +1719,12 @@ function Set-WebPublicationPolicy {
     Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
 }
 
+function Get-Agent1cUtf8Text {
+    param([Parameter(Mandatory = $true)][string]$Value)
+
+    return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Value))
+}
+
 function Read-WebPublicationValue {
     param(
         [string]$Prompt,
@@ -1736,7 +1742,7 @@ function Read-WebPublicationValue {
         if (-not $Required -or -not [string]::IsNullOrWhiteSpace($value)) {
             return $value.Trim()
         }
-        Write-Host "Value is required."
+        Write-Host (Get-Agent1cUtf8Text "0JfQvdCw0YfQtdC90LjQtSDQvtCx0Y/Qt9Cw0YLQtdC70YzQvdC+Lg==")
     }
 }
 
@@ -1747,13 +1753,13 @@ function Read-WebPublicationSettingsInteractively {
     )
 
     $settings = Get-EffectiveWebPublicationSettings
-    Write-Host "Automatic web publication uses an existing 1C webinst-compatible web server. ITL workflow does not install or configure the web server."
+    Write-Host (Get-Agent1cUtf8Text "0JDQstGC0L7QvNCw0YLQuNGH0LXRgdC60LDRjyDQstC10LEt0L/Rg9Cx0LvQuNC60LDRhtC40Y8g0LjRgdC/0L7Qu9GM0LfRg9C10YIg0YHRg9GJ0LXRgdGC0LLRg9GO0YnQuNC5IHdlYmluc3Qt0YHQvtCy0LzQtdGB0YLQuNC80YvQuSDQstC10LEt0YHQtdGA0LLQtdGAIDFDLiBJVEwgd29ya2Zsb3cg0L3QtSDRg9GB0YLQsNC90LDQstC70LjQstCw0LXRgiDQuCDQvdC1INC90LDRgdGC0YDQsNC40LLQsNC10YIg0LLQtdCxLdGB0LXRgNCy0LXRgC4=")
 
-    $webInstPath = Read-WebPublicationValue -Prompt "Full path to webinst.exe" -Default $settings.webInstPath -Required
-    $publicationRoot = Read-WebPublicationValue -Prompt "Publication root directory" -Default $settings.publicationRoot -Required
-    $publicationUrlBase = Read-WebPublicationValue -Prompt "Publication URL base" -Default $settings.publicationUrlBase -Required
-    $apacheKind = Read-WebPublicationValue -Prompt "webinst kind" -Default $settings.apacheKind -Required
-    $httpdConfPath = Read-WebPublicationValue -Prompt "Optional Apache/httpd config path, empty if not needed" -Default $settings.httpdConfPath
+    $webInstPath = Read-WebPublicationValue -Prompt (Get-Agent1cUtf8Text "0J/QvtC70L3Ri9C5INC/0YPRgtGMINC6IHdlYmluc3QuZXhl") -Default $settings.webInstPath -Required
+    $publicationRoot = Read-WebPublicationValue -Prompt (Get-Agent1cUtf8Text "0JrQsNGC0LDQu9C+0LMg0L/Rg9Cx0LvQuNC60LDRhtC40Lk=") -Default $settings.publicationRoot -Required
+    $publicationUrlBase = Read-WebPublicationValue -Prompt (Get-Agent1cUtf8Text "0JHQsNC30L7QstGL0LkgVVJMINC/0YPQsdC70LjQutCw0YbQuNC5") -Default $settings.publicationUrlBase -Required
+    $apacheKind = Read-WebPublicationValue -Prompt (Get-Agent1cUtf8Text "0KLQuNC/IHdlYmluc3Q=") -Default $settings.apacheKind -Required
+    $httpdConfPath = Read-WebPublicationValue -Prompt (Get-Agent1cUtf8Text "0J3QtdC+0LHRj9C30LDRgtC10LvRjNC90YvQuSDQv9GD0YLRjCDQuiDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggQXBhY2hlL2h0dHBkLCDQv9GD0YHRgtC+INC10YHQu9C4INC90LUg0L3Rg9C20LXQvQ==") -Default $settings.httpdConfPath
 
     $values = @{
         WEB_PUBLISH_BY_DEFAULT = $(if ($PublishByDefault) { "true" } else { "false" })
@@ -1814,14 +1820,14 @@ function Configure-WebPublication {
     }
 
     Write-Section "Configure web publication"
-    $publishByDefault = Read-InitYesNo -Prompt "Publish development branch infobases to a web server by default?" -Default (Get-WebPublishByDefault)
+    $publishByDefault = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0J/Rg9Cx0LvQuNC60L7QstCw0YLRjCDQuNC90YTQvtGA0LzQsNGG0LjQvtC90L3Ri9C1INCx0LDQt9GLINCy0LXRgtC+0Log0YDQsNC30YDQsNCx0L7RgtC60Lgg0L3QsCDQstC10LEt0YHQtdGA0LLQtdGA0LUg0L/QviDRg9C80L7Qu9GH0LDQvdC40Y4/") -Default (Get-WebPublishByDefault)
     if (-not $publishByDefault) {
         Set-WebPublicationPolicy -PublishByDefault $false -Auto $false
         Write-Host "Web publication disabled for new development branches."
         return
     }
 
-    $auto = Read-InitYesNo -Prompt "Attempt automatic web publication when a development branch is created?" -Default (Get-WebPublishAuto)
+    $auto = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0J/Ri9GC0LDRgtGM0YHRjyDQsNCy0YLQvtC80LDRgtC40YfQtdGB0LrQuCDQv9GD0LHQu9C40LrQvtCy0LDRgtGMINCx0LDQt9GDINC/0YDQuCDRgdC+0LfQtNCw0L3QuNC4INCy0LXRgtC60Lgg0YDQsNC30YDQsNCx0L7RgtC60Lg/") -Default (Get-WebPublishAuto)
     if (-not $auto) {
         Set-WebPublicationPolicy -PublishByDefault $true -Auto $false
         Write-Host "Web publication enabled; branch publication will be manual."
@@ -1831,7 +1837,7 @@ function Configure-WebPublication {
     $settings = Get-EffectiveWebPublicationSettings
     if ($settings.ready) {
         Write-Host "Detected usable web publication settings."
-        if (Read-InitYesNo -Prompt "Use detected settings for automatic publication?" -Default $true) {
+        if (Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0JjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMINC90LDQudC00LXQvdC90YvQtSDQvdCw0YHRgtGA0L7QudC60Lgg0LTQu9GPINCw0LLRgtC+0LzQsNGC0LjRh9C10YHQutC+0Lkg0L/Rg9Cx0LvQuNC60LDRhtC40Lg/") -Default $true) {
             Save-WebPublicationDetectedSettingsToDotEnv -PublishByDefault $true -Auto $true | Out-Null
             Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
             return
@@ -1958,7 +1964,7 @@ function Read-InitRequired {
         if (-not [string]::IsNullOrWhiteSpace($value)) {
             return $value
         }
-        Write-Host "Value is required."
+        Write-Host (Get-Agent1cUtf8Text "0JfQvdCw0YfQtdC90LjQtSDQvtCx0Y/Qt9Cw0YLQtdC70YzQvdC+Lg==")
     }
 }
 
@@ -1973,32 +1979,32 @@ function Read-InitYesNo {
         [bool]$Default = $false
     )
 
-    $suffix = if ($Default) { " [Y/n]" } else { " [y/N]" }
+    $suffix = if ($Default) { Get-Agent1cUtf8Text "IFvQlC/QvV0=" } else { Get-Agent1cUtf8Text "IFvQtC/QnV0=" }
     while ($true) {
         $answer = Read-Host ($Prompt + $suffix)
         try {
             return ConvertTo-YesNoBool -Value $answer -Default $Default
         } catch {
-            Write-Host "Answer yes or no."
+            Write-Host (Get-Agent1cUtf8Text "0J7RgtCy0LXRgtGM0YLQtSDQtNCwINC40LvQuCDQvdC10YIu")
         }
     }
 }
 
 function Read-InitInfoBaseKind {
     while ($true) {
-        $answer = (Read-Host "Source infobase kind: file or server [file]").Trim().ToLowerInvariant()
+        $answer = (Read-Host (Get-Agent1cUtf8Text "0KLQuNC/INC40YHRhdC+0LTQvdC+0Lkg0LjQvdGE0L7RgNC80LDRhtC40L7QvdC90L7QuSDQsdCw0LfRizogZmlsZSDQuNC70Lggc2VydmVyIFtmaWxlXQ==")).Trim().ToLowerInvariant()
         if (-not $answer) {
             return "file"
         }
         if ($answer -eq "file" -or $answer -eq "server") {
             return $answer
         }
-        Write-Host "Enter 'file' or 'server'."
+        Write-Host (Get-Agent1cUtf8Text "0JLQstC10LTQuNGC0LUgJ2ZpbGUnINC40LvQuCAnc2VydmVyJy4=")
     }
 }
 
 function Read-InitDependencyMode {
-    $useLatest = Read-InitYesNo -Prompt "Use latest dependency versions during initialization? Answer no to use .agent-1c/dependency-lock.json pins." -Default $true
+    $useLatest = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0JjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMINGB0LLQtdC20LjQtSDQstC10YDRgdC40Lgg0LfQsNCy0LjRgdC40LzQvtGB0YLQtdC5INC/0YDQuCDQuNC90LjRhtC40LDQu9C40LfQsNGG0LjQuD8g0J7RgtCy0LXRgtGM0YLQtSDQvdC10YIsINGH0YLQvtCx0Ysg0LjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMIHBpbnMg0LjQtyAuYWdlbnQtMWMvZGVwZW5kZW5jeS1sb2NrLmpzb24u") -Default $true
     if ($useLatest) {
         return "fresh"
     }
@@ -2008,13 +2014,13 @@ function Read-InitDependencyMode {
 function Read-InitPlatformPath {
     $platforms = @(Find-Installed1CPlatforms)
     if ($platforms.Count -gt 0) {
-        Write-Host "Installed 1C platform versions:"
+        Write-Host (Get-Agent1cUtf8Text "0J3QsNC50LTQtdC90L3Ri9C1INCy0LXRgNGB0LjQuCDQv9C70LDRgtGE0L7RgNC80YsgMUM6")
         for ($i = 0; $i -lt $platforms.Count; $i++) {
             Write-Host ("{0}. {1} - {2}" -f ($i + 1), $platforms[$i].version, $platforms[$i].exePath)
         }
 
         while ($true) {
-            $answer = Read-Host "Choose platform number or enter full path to 1cv8.exe"
+            $answer = Read-Host (Get-Agent1cUtf8Text "0JLRi9Cx0LXRgNC40YLQtSDQvdC+0LzQtdGAINC/0LvQsNGC0YTQvtGA0LzRiyDQuNC70Lgg0LLQstC10LTQuNGC0LUg0L/QvtC70L3Ri9C5INC/0YPRgtGMINC6IDFjdjguZXhl")
             $index = 0
             if ([int]::TryParse($answer, [ref]$index) -and $index -ge 1 -and $index -le $platforms.Count) {
                 return $platforms[$index - 1].exePath
@@ -2025,7 +2031,7 @@ function Read-InitPlatformPath {
         }
     }
 
-    return Read-InitRequired "Full path to 1cv8.exe"
+    return Read-InitRequired (Get-Agent1cUtf8Text "0J/QvtC70L3Ri9C5INC/0YPRgtGMINC6IDFjdjguZXhl")
 }
 
 function Get-AnswerValue {
@@ -2058,15 +2064,15 @@ function Read-InitAnswersFromWizard {
         throw "Interactive init wizard needs terminal input. Run this command from an interactive terminal or pass -InitMode json -InitAnswersPath <file>."
     }
 
-    Write-Section "Init wizard"
-    Write-Host "Project root: $script:ProjectRoot"
-    if (-not (Read-InitYesNo -Prompt "Initialize the 1C project in this folder?" -Default $true)) {
+    Write-Section (Get-Agent1cUtf8Text "0JzQsNGB0YLQtdGAINC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNC4")
+    Write-Host ((Get-Agent1cUtf8Text "0JrQvtGA0LXQvdGMINC/0YDQvtC10LrRgtCwOiA=") + $script:ProjectRoot)
+    if (-not (Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0JjQvdC40YbQuNCw0LvQuNC30LjRgNC+0LLQsNGC0YwgMUMg0L/RgNC+0LXQutGCINCyINGN0YLQvtC5INC/0LDQv9C60LU/") -Default $true)) {
         throw "Init canceled by developer."
     }
 
     $platformPath = Read-InitPlatformPath
     $infoBaseKind = Read-InitInfoBaseKind
-    $sourceUsesRepository = Read-InitYesNo -Prompt "Is the source infobase connected to 1C configuration repository?" -Default $true
+    $sourceUsesRepository = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0JjRgdGF0L7QtNC90LDRjyDQuNC90YTQvtGA0LzQsNGG0LjQvtC90L3QsNGPINCx0LDQt9CwINC/0L7QtNC60LvRjtGH0LXQvdCwINC6INGF0YDQsNC90LjQu9C40YnRgyDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggMUM/") -Default $true
 
     $answers = [ordered]@{
         platformPath = $platformPath
@@ -2082,50 +2088,50 @@ function Read-InitAnswersFromWizard {
     }
 
     if ($infoBaseKind -eq "server") {
-        $answers.sourceServerName = Read-InitRequired "1C server name"
-        $answers.sourceInfoBaseName = Read-InitRequired "Source infobase name"
+        $answers.sourceServerName = Read-InitRequired (Get-Agent1cUtf8Text "0JjQvNGPINGB0LXRgNCy0LXRgNCwIDFD")
+        $answers.sourceInfoBaseName = Read-InitRequired (Get-Agent1cUtf8Text "0JjQvNGPINC40YHRhdC+0LTQvdC+0Lkg0LjQvdGE0L7RgNC80LDRhtC40L7QvdC90L7QuSDQsdCw0LfRiw==")
     } else {
-        $answers.sourceInfoBasePath = Read-InitRequired "Source file infobase directory"
+        $answers.sourceInfoBasePath = Read-InitRequired (Get-Agent1cUtf8Text "0JrQsNGC0LDQu9C+0LMg0LjRgdGF0L7QtNC90L7QuSDRhNCw0LnQu9C+0LLQvtC5INC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30Ys=")
     }
 
-    $answers.ibUser = Read-InitOptional "Infobase user (empty if none)"
-    $answers.ibPassword = ConvertFrom-OptionalPasswordAnswer (Read-InitOptional "Infobase password (empty or '-' if none)")
+    $answers.ibUser = Read-InitOptional (Get-Agent1cUtf8Text "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30YsgKNC/0YPRgdGC0L4sINC10YHQu9C4INC90LUg0LjRgdC/0L7Qu9GM0LfRg9C10YLRgdGPKQ==")
+    $answers.ibPassword = ConvertFrom-OptionalPasswordAnswer (Read-InitOptional (Get-Agent1cUtf8Text "0J/QsNGA0L7Qu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30YsgKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk="))
 
     if ($sourceUsesRepository) {
-        $answers.repositoryPath = Read-InitRequired "Configuration repository path"
-        $answers.repositoryUser = Read-InitRequired "Configuration repository user"
-        $answers.repositoryPassword = ConvertFrom-OptionalPasswordAnswer (Read-InitOptional "Configuration repository password (empty or '-' if none)")
+        $answers.repositoryPath = Read-InitRequired (Get-Agent1cUtf8Text "0J/Rg9GC0Ywg0Log0YXRgNCw0L3QuNC70LjRidGDINC60L7QvdGE0LjQs9GD0YDQsNGG0LjQuA==")
+        $answers.repositoryUser = Read-InitRequired (Get-Agent1cUtf8Text "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40Lg=")
+        $answers.repositoryPassword = ConvertFrom-OptionalPasswordAnswer (Read-InitOptional (Get-Agent1cUtf8Text "0J/QsNGA0L7Qu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk="))
     }
 
-    $answers.webPublishByDefault = Read-InitYesNo -Prompt "Publish development branch infobases to a web server for web-client testing?" -Default $false
+    $answers.webPublishByDefault = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0J/Rg9Cx0LvQuNC60L7QstCw0YLRjCDQuNC90YTQvtGA0LzQsNGG0LjQvtC90L3Ri9C1INCx0LDQt9GLINCy0LXRgtC+0Log0YDQsNC30YDQsNCx0L7RgtC60Lgg0L3QsCDQstC10LEt0YHQtdGA0LLQtdGA0LUg0LTQu9GPINGC0LXRgdGC0LjRgNC+0LLQsNC90LjRjyDQstC10LEt0LrQu9C40LXQvdGC0LA/") -Default $false
     if ($answers.webPublishByDefault) {
-        $answers.webPublishAuto = Read-InitYesNo -Prompt "Attempt automatic web publication when a development branch is created?" -Default $false
+        $answers.webPublishAuto = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0J/Ri9GC0LDRgtGM0YHRjyDQsNCy0YLQvtC80LDRgtC40YfQtdGB0LrQuCDQv9GD0LHQu9C40LrQvtCy0LDRgtGMINCx0LDQt9GDINC/0YDQuCDRgdC+0LfQtNCw0L3QuNC4INCy0LXRgtC60Lgg0YDQsNC30YDQsNCx0L7RgtC60Lg/") -Default $false
     }
     $answers.dependencyMode = Read-InitDependencyMode
-    $answers.vibecoding1cMcpSetupDuringInit = Read-InitYesNo -Prompt "Configure vibecoding1c MCP now? Answer no to do it later through a normal agent request or helper action." -Default $false
+    $answers.vibecoding1cMcpSetupDuringInit = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0J3QsNGB0YLRgNC+0LjRgtGMIHZpYmVjb2RpbmcxYyBNQ1Ag0YHQtdC50YfQsNGBPyDQntGC0LLQtdGC0YzRgtC1INC90LXRgiwg0YfRgtC+0LHRiyDRgdC00LXQu9Cw0YLRjCDRjdGC0L4g0L/QvtC30LbQtSDQvtCx0YvRh9C90YvQvCDQt9Cw0L/RgNC+0YHQvtC8INCw0LPQtdC90YLRgyDQuNC70LggaGVscGVyIGFjdGlvbi4=") -Default $true
 
-    Write-Section "Init summary"
-    Write-Host "Project root: $script:ProjectRoot"
-    Write-Host "Platform: $($answers.platformPath)"
-    Write-Host "Source kind: $($answers.infoBaseKind)"
+    Write-Section (Get-Agent1cUtf8Text "0KHQstC+0LTQutCwINC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNC4")
+    Write-Host ((Get-Agent1cUtf8Text "0JrQvtGA0LXQvdGMINC/0YDQvtC10LrRgtCwOiA=") + $script:ProjectRoot)
+    Write-Host ((Get-Agent1cUtf8Text "0J/Qu9Cw0YLRhNC+0YDQvNCwOiA=") + $answers.platformPath)
+    Write-Host ((Get-Agent1cUtf8Text "0KLQuNC/INC40YHRhdC+0LTQvdC+0Lkg0LHQsNC30Ys6IA==") + $answers.infoBaseKind)
     if ($infoBaseKind -eq "server") {
-        Write-Host "Source server: $($answers.sourceServerName)"
-        Write-Host "Source infobase: $($answers.sourceInfoBaseName)"
+        Write-Host ((Get-Agent1cUtf8Text "0JjRgdGF0L7QtNC90YvQuSDRgdC10YDQstC10YA6IA==") + $answers.sourceServerName)
+        Write-Host ((Get-Agent1cUtf8Text "0JjRgdGF0L7QtNC90LDRjyDQsdCw0LfQsDog") + $answers.sourceInfoBaseName)
     } else {
-        Write-Host "Source infobase: $($answers.sourceInfoBasePath)"
+        Write-Host ((Get-Agent1cUtf8Text "0JjRgdGF0L7QtNC90LDRjyDQsdCw0LfQsDog") + $answers.sourceInfoBasePath)
     }
-    Write-Host "Infobase user: $($answers.ibUser)"
-    Write-Host "Source uses repository: $($answers.sourceUsesRepository)"
+    Write-Host ((Get-Agent1cUtf8Text "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINCx0LDQt9GLOiA=") + $answers.ibUser)
+    Write-Host ((Get-Agent1cUtf8Text "0JjRgdGF0L7QtNC90LDRjyDQsdCw0LfQsCDQuNGB0L/QvtC70YzQt9GD0LXRgiDRhdGA0LDQvdC40LvQuNGJ0LU6IA==") + $answers.sourceUsesRepository)
     if ($sourceUsesRepository) {
-        Write-Host "Repository path: $($answers.repositoryPath)"
-        Write-Host "Repository user: $($answers.repositoryUser)"
+        Write-Host ((Get-Agent1cUtf8Text "0J/Rg9GC0Ywg0Log0YXRgNCw0L3QuNC70LjRidGDOiA=") + $answers.repositoryPath)
+        Write-Host ((Get-Agent1cUtf8Text "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINGF0YDQsNC90LjQu9C40YnQsDog") + $answers.repositoryUser)
     }
-    Write-Host "Web publication by default: $($answers.webPublishByDefault)"
-    Write-Host "Automatic web publication: $($answers.webPublishAuto)"
-    Write-Host "Dependency mode: $($answers.dependencyMode)"
-    Write-Host "Configure vibecoding1c MCP now: $($answers.vibecoding1cMcpSetupDuringInit)"
-    Write-Host "Passwords: hidden"
-    if (-not (Read-InitYesNo -Prompt "Continue with these values?" -Default $true)) {
+    Write-Host ((Get-Agent1cUtf8Text "0JLQtdCxLdC/0YPQsdC70LjQutCw0YbQuNGPINC/0L4g0YPQvNC+0LvRh9Cw0L3QuNGOOiA=") + $answers.webPublishByDefault)
+    Write-Host ((Get-Agent1cUtf8Text "0JDQstGC0L7QvNCw0YLQuNGH0LXRgdC60LDRjyDQstC10LEt0L/Rg9Cx0LvQuNC60LDRhtC40Y86IA==") + $answers.webPublishAuto)
+    Write-Host ((Get-Agent1cUtf8Text "0KDQtdC20LjQvCDQt9Cw0LLQuNGB0LjQvNC+0YHRgtC10Lk6IA==") + $answers.dependencyMode)
+    Write-Host ((Get-Agent1cUtf8Text "0J3QsNGB0YLRgNC+0LjRgtGMIHZpYmVjb2RpbmcxYyBNQ1Ag0YHQtdC50YfQsNGBOiA=") + $answers.vibecoding1cMcpSetupDuringInit)
+    Write-Host (Get-Agent1cUtf8Text "0J/QsNGA0L7Qu9C4OiDRgdC60YDRi9GC0Ys=")
+    if (-not (Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0J/RgNC+0LTQvtC70LbQuNGC0Ywg0YEg0Y3RgtC40LzQuCDQt9C90LDRh9C10L3QuNGP0LzQuD8=") -Default $true)) {
         throw "Init canceled by developer."
     }
 
@@ -2141,7 +2147,7 @@ function Normalize-InitAnswers {
     if (-not $webPublishByDefault) {
         $webPublishAuto = $false
     }
-    $vibecoding1cMcpSetupDuringInit = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("vibecoding1cMcpSetupDuringInit", "VIBECODING1C_MCP_SETUP_DURING_INIT") -Default $false) -Default $false
+    $vibecoding1cMcpSetupDuringInit = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("vibecoding1cMcpSetupDuringInit", "VIBECODING1C_MCP_SETUP_DURING_INIT") -Default $true) -Default $true
     $dependencyModeValue = Get-AnswerValue -Answers $Answers -Names @("dependencyMode", "DEPENDENCY_MODE") -Default ""
     if (-not $dependencyModeValue) {
         $useLatestDependencies = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("useLatestDependencies", "USE_LATEST_DEPENDENCIES") -Default $true) -Default $true

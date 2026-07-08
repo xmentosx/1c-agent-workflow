@@ -2972,6 +2972,51 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "skips incomplete inherited vibecoding1c MCP selection without failing branch setup" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-incomplete-inherit-" + [guid]::NewGuid().ToString("N"))
+        $mainRoot = Join-Path $tempRoot "main"
+        $branchRoot = Join-Path $tempRoot "branch"
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot ".agent-1c\mcp"), $branchRoot | Out-Null
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", (Join-Path $tempRoot "local-home"), "Process")
+
+            $selection = [ordered]@{
+                schemaVersion = 1
+                family = "vibecoding1c"
+                defaultProvider = "remote"
+                remoteConfigId = ""
+                remoteHostId = ""
+                localScopeDefault = "project"
+                servers = @(
+                    [ordered]@{ id = "code"; family = "vibecoding1c"; provider = "remote"; configId = ""; hostId = ""; localScope = "project" },
+                    [ordered]@{ id = "graph"; family = "vibecoding1c"; provider = "remote"; configId = ""; hostId = ""; localScope = "project" }
+                )
+            }
+            Set-Content -LiteralPath (Join-Path $mainRoot ".agent-1c\mcp\vibecoding1c-selection.json") -Encoding UTF8 -Value (($selection | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            $result = & {
+                . $HelperPath -ProjectRoot $branchRoot -Action help -McpScope project *> $null
+                Invoke-DevBranchVibecoding1cMcpInheritance -MainProjectRoot $mainRoot *> $null
+                [pscustomobject]@{
+                    selectionExists = Test-Path -LiteralPath (Join-Path $branchRoot ".agent-1c\mcp\vibecoding1c-selection.json") -PathType Leaf
+                    codexExists = Test-Path -LiteralPath (Join-Path $branchRoot ".codex\config.toml") -PathType Leaf
+                    stateExists = Test-Path -LiteralPath (Join-Path $branchRoot ".agent-1c\mcp\state.json") -PathType Leaf
+                }
+            }
+
+            $result.selectionExists | Should -BeTrue
+            $result.codexExists | Should -BeFalse
+            $result.stateExists | Should -BeFalse
+        } finally {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "requires a host selection for duplicate remote endpoints and formats host details for selection" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-selection-host-details-" + [guid]::NewGuid().ToString("N"))
         $projectRoot = Join-Path $tempRoot "project"
@@ -5244,6 +5289,94 @@ url = "http://localhost:9999/mcp"
         $HelperText | Should -Match "Use the direct wizard only for manual debugging"
     }
 
+    It "uses Russian init wizard prompts and defaults vibecoding1c setup to yes" {
+        $russianPromptBase64 = @(
+            "0JjQvdC40YbQuNCw0LvQuNC30LjRgNC+0LLQsNGC0YwgMUMg0L/RgNC+0LXQutGCINCyINGN0YLQvtC5INC/0LDQv9C60LU/",
+            "0JLRi9Cx0LXRgNC40YLQtSDQvdC+0LzQtdGAINC/0LvQsNGC0YTQvtGA0LzRiyDQuNC70Lgg0LLQstC10LTQuNGC0LUg0L/QvtC70L3Ri9C5INC/0YPRgtGMINC6IDFjdjguZXhl",
+            "0J/QvtC70L3Ri9C5INC/0YPRgtGMINC6IDFjdjguZXhl",
+            "0KLQuNC/INC40YHRhdC+0LTQvdC+0Lkg0LjQvdGE0L7RgNC80LDRhtC40L7QvdC90L7QuSDQsdCw0LfRizogZmlsZSDQuNC70Lggc2VydmVyIFtmaWxlXQ==",
+            "0JjRgdGF0L7QtNC90LDRjyDQuNC90YTQvtGA0LzQsNGG0LjQvtC90L3QsNGPINCx0LDQt9CwINC/0L7QtNC60LvRjtGH0LXQvdCwINC6INGF0YDQsNC90LjQu9C40YnRgyDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggMUM/",
+            "0JjQvNGPINGB0LXRgNCy0LXRgNCwIDFD",
+            "0JjQvNGPINC40YHRhdC+0LTQvdC+0Lkg0LjQvdGE0L7RgNC80LDRhtC40L7QvdC90L7QuSDQsdCw0LfRiw==",
+            "0JrQsNGC0LDQu9C+0LMg0LjRgdGF0L7QtNC90L7QuSDRhNCw0LnQu9C+0LLQvtC5INC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30Ys=",
+            "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30YsgKNC/0YPRgdGC0L4sINC10YHQu9C4INC90LUg0LjRgdC/0L7Qu9GM0LfRg9C10YLRgdGPKQ==",
+            "0J/QsNGA0L7Qu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30YsgKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk=",
+            "0J/Rg9GC0Ywg0Log0YXRgNCw0L3QuNC70LjRidGDINC60L7QvdGE0LjQs9GD0YDQsNGG0LjQuA==",
+            "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40Lg=",
+            "0J/QsNGA0L7Qu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk=",
+            "0J/Rg9Cx0LvQuNC60L7QstCw0YLRjCDQuNC90YTQvtGA0LzQsNGG0LjQvtC90L3Ri9C1INCx0LDQt9GLINCy0LXRgtC+0Log0YDQsNC30YDQsNCx0L7RgtC60Lgg0L3QsCDQstC10LEt0YHQtdGA0LLQtdGA0LUg0LTQu9GPINGC0LXRgdGC0LjRgNC+0LLQsNC90LjRjyDQstC10LEt0LrQu9C40LXQvdGC0LA/",
+            "0J/Ri9GC0LDRgtGM0YHRjyDQsNCy0YLQvtC80LDRgtC40YfQtdGB0LrQuCDQv9GD0LHQu9C40LrQvtCy0LDRgtGMINCx0LDQt9GDINC/0YDQuCDRgdC+0LfQtNCw0L3QuNC4INCy0LXRgtC60Lgg0YDQsNC30YDQsNCx0L7RgtC60Lg/",
+            "0JjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMINGB0LLQtdC20LjQtSDQstC10YDRgdC40Lgg0LfQsNCy0LjRgdC40LzQvtGB0YLQtdC5INC/0YDQuCDQuNC90LjRhtC40LDQu9C40LfQsNGG0LjQuD8g0J7RgtCy0LXRgtGM0YLQtSDQvdC10YIsINGH0YLQvtCx0Ysg0LjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMIHBpbnMg0LjQtyAuYWdlbnQtMWMvZGVwZW5kZW5jeS1sb2NrLmpzb24u",
+            "0J3QsNGB0YLRgNC+0LjRgtGMIHZpYmVjb2RpbmcxYyBNQ1Ag0YHQtdC50YfQsNGBPyDQntGC0LLQtdGC0YzRgtC1INC90LXRgiwg0YfRgtC+0LHRiyDRgdC00LXQu9Cw0YLRjCDRjdGC0L4g0L/QvtC30LbQtSDQvtCx0YvRh9C90YvQvCDQt9Cw0L/RgNC+0YHQvtC8INCw0LPQtdC90YLRgyDQuNC70LggaGVscGVyIGFjdGlvbi4=",
+            "0J/RgNC+0LTQvtC70LbQuNGC0Ywg0YEg0Y3RgtC40LzQuCDQt9C90LDRh9C10L3QuNGP0LzQuD8=",
+            "0J/QvtC70L3Ri9C5INC/0YPRgtGMINC6IHdlYmluc3QuZXhl",
+            "0JrQsNGC0LDQu9C+0LMg0L/Rg9Cx0LvQuNC60LDRhtC40Lk=",
+            "0JHQsNC30L7QstGL0LkgVVJMINC/0YPQsdC70LjQutCw0YbQuNC5",
+            "0KLQuNC/IHdlYmluc3Q=",
+            "0J3QtdC+0LHRj9C30LDRgtC10LvRjNC90YvQuSDQv9GD0YLRjCDQuiDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggQXBhY2hlL2h0dHBkLCDQv9GD0YHRgtC+INC10YHQu9C4INC90LUg0L3Rg9C20LXQvQ=="
+        )
+
+        foreach ($promptBase64 in $russianPromptBase64) {
+            [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($promptBase64)) | Should -Not -BeNullOrEmpty
+            $HelperText | Should -Match ([regex]::Escape($promptBase64))
+        }
+
+        $oldPromptSnippets = @(
+            'Read-InitYesNo -Prompt "Initialize the 1C project in this folder?"',
+            'Read-Host "Choose platform number or enter full path to 1cv8.exe"',
+            'Read-InitRequired "Full path to 1cv8.exe"',
+            'Read-Host "Source infobase kind: file or server [file]"',
+            'Read-InitYesNo -Prompt "Is the source infobase connected to 1C configuration repository?"',
+            'Read-InitYesNo -Prompt "Configure vibecoding1c MCP now? Answer no to do it later through a normal agent request or helper action."',
+            'Read-InitYesNo -Prompt "Continue with these values?"',
+            'Read-WebPublicationValue -Prompt "Full path to webinst.exe"',
+            'Read-WebPublicationValue -Prompt "Publication root directory"',
+            'Read-WebPublicationValue -Prompt "Publication URL base"'
+        )
+        foreach ($snippet in $oldPromptSnippets) {
+            $HelperText | Should -Not -Match ([regex]::Escape($snippet))
+        }
+
+        $HelperText | Should -Match ([regex]::Escape("IFvQlC/QvV0="))
+        $HelperText | Should -Match ([regex]::Escape("IFvQtC/QnV0="))
+        $HelperText | Should -Match 'vibecoding1cMcpSetupDuringInit\s*=\s*Read-InitYesNo.*-Default\s+\$true'
+        $HelperText | Should -Match 'VIBECODING1C_MCP_SETUP_DURING_INIT"\)\s+-Default\s+\$true\)\s+-Default\s+\$true'
+        $HelperText | Should -Match 'Get-EnvValue\s+-Name\s+"VIBECODING1C_MCP_SETUP_DURING_INIT"\s+-Default\s+\$true\)\s+-Default\s+\$true'
+    }
+
+    It "normalizes a missing vibecoding1c init answer to true while preserving explicit false" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            $baseAnswers = [pscustomobject]@{
+                platformPath = "C:\Program Files\1cv8\8.3.99.1\bin\1cv8.exe"
+                infoBaseKind = "file"
+                sourceUsesRepository = $false
+                sourceInfoBasePath = "C:\bases\source"
+                dependencyMode = "fresh"
+            }
+            $defaulted = Normalize-InitAnswers -Answers $baseAnswers
+
+            $explicitAnswers = [pscustomobject]@{
+                platformPath = "C:\Program Files\1cv8\8.3.99.1\bin\1cv8.exe"
+                infoBaseKind = "file"
+                sourceUsesRepository = $false
+                sourceInfoBasePath = "C:\bases\source"
+                dependencyMode = "fresh"
+                VIBECODING1C_MCP_SETUP_DURING_INIT = "false"
+            }
+            $explicit = Normalize-InitAnswers -Answers $explicitAnswers
+
+            [pscustomobject]@{
+                defaulted = [bool]$defaulted.vibecoding1cMcpSetupDuringInit
+                explicit = [bool]$explicit.vibecoding1cMcpSetupDuringInit
+            }
+        }
+
+        $result.defaulted | Should -BeTrue
+        $result.explicit | Should -BeFalse
+    }
+
     It "writes run status on successful helper completion" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-status-success-" + [guid]::NewGuid().ToString("N"))
         $statusPath = Join-Path $tempRoot "status.json"
@@ -5799,6 +5932,124 @@ if (`$?) { exit 0 } else { exit 1 }
             ((& git -C $tempRoot branch --show-current).Trim()) | Should -Be "master"
         } finally {
             $env:APPDATA = $oldAppData
+            if (Test-Path -LiteralPath $worktreePath -PathType Container -ErrorAction SilentlyContinue) {
+                & git -C $tempRoot worktree remove --force $worktreePath *> $null
+            }
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $worktreeRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $worktreeRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "inherits complete vibecoding1c MCP selection into a sibling worktree" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-worktree-mcp-test-" + [guid]::NewGuid().ToString("N"))
+        $worktreeRoot = "$tempRoot-worktrees"
+        $worktreePath = Join-Path $worktreeRoot "mcp-branch"
+        $sourceBase = Join-Path $tempRoot "source-base"
+        $registryRoot = Join-Path $tempRoot "registry"
+        $oldAppData = $env:APPDATA
+        $oldRegistryPath = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", "Process")
+        $oldLocalHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $sourceBase, $registryRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8.1CD") -Value "stub" -Encoding ASCII
+            New-Item -ItemType Directory -Force -Path (Join-Path $sourceBase "1Cv8Log") | Out-Null
+            Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`nregistry/`n.agent-1c/mcp/`n" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
+            $templateTarget = Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Destination $templateTarget -Recurse
+            $devEnv = @(
+                "INFOBASE_KIND=file",
+                "SOURCE_USES_REPOSITORY=false",
+                "SOURCE_INFOBASE_PATH=$sourceBase",
+                "IB_USER=",
+                "IB_PASSWORD=",
+                "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip",
+                "WEB_PUBLISH_BY_DEFAULT=false",
+                "ROCTUP_MCP_AUTO_START=false",
+                "VANESSA_MCP_AUTO_START=false"
+            ) -join [Environment]::NewLine
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value $devEnv -Encoding UTF8
+
+            $registry = [ordered]@{
+                schemaVersion = 2
+                publishedAt = "2026-07-05T00:10:00Z"
+                hosts = @(
+                    [ordered]@{
+                        hostId = "host-a"
+                        baseUrl = "http://host-a"
+                        publishedAt = "2026-07-05T00:00:00Z"
+                        configurations = @([ordered]@{ configId = "trade"; title = "Trade"; configurationName = "Trade"; configurationVersion = "1.0" })
+                        servers = @(
+                            [ordered]@{ id = "code"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-code"; url = "http://host-a:18100/mcp"; health = "running"; configurationName = "Trade"; configurationVersion = "1.0"; embeddingModel = "intfloat/multilingual-e5-base"; indexedAt = "2026-07-05T00:00:00Z" },
+                            [ordered]@{ id = "graph"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-graph"; url = "http://host-a:18101/mcp"; health = "running"; configurationName = "Trade"; configurationVersion = "1.0"; embeddingModel = "intfloat/multilingual-e5-base"; indexedAt = "2026-07-05T00:00:00Z" }
+                        )
+                    }
+                )
+                configurations = @()
+                servers = @()
+            }
+            Set-Content -LiteralPath (Join-Path $registryRoot "registry.json") -Encoding UTF8 -Value (($registry | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\mcp") | Out-Null
+            $selection = [ordered]@{
+                schemaVersion = 1
+                family = "vibecoding1c"
+                defaultProvider = "remote"
+                remoteConfigId = "trade"
+                remoteHostId = "host-a"
+                localScopeDefault = "project"
+                servers = @(
+                    [ordered]@{ id = "code"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; hostId = "host-a"; localScope = "project" },
+                    [ordered]@{ id = "graph"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; hostId = "host-a"; localScope = "project" }
+                )
+            }
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\mcp\vibecoding1c-selection.json") -Encoding UTF8 -Value (($selection | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            & git -C $tempRoot init | Out-Null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add .gitignore README.md .agents
+            & git -C $tempRoot commit -m init | Out-Null
+            & git -C $tempRoot branch -M master
+
+            $env:APPDATA = Join-Path $tempRoot "appdata"
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $registryRoot, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", (Join-Path $tempRoot "local-home"), "Process")
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action new-dev-branch -DevBranchName "MCP Branch" -McpScope project *> $null
+            $LASTEXITCODE | Should -Be 0
+
+            $worktreeSelectionPath = Join-Path $worktreePath ".agent-1c\mcp\vibecoding1c-selection.json"
+            (Test-Path -LiteralPath $worktreeSelectionPath -PathType Leaf) | Should -Be $true
+            (Get-Content -Encoding UTF8 -Raw $worktreeSelectionPath) | Should -Match '"configId"\s*:\s*"trade"'
+
+            $projectStatePath = Join-Path $worktreePath ".agent-1c\mcp\state.json"
+            (Test-Path -LiteralPath $projectStatePath -PathType Leaf) | Should -Be $true
+            $projectState = Get-Content -Encoding UTF8 -Raw $projectStatePath | ConvertFrom-Json
+            $projectState.projectSlug | Should -Be "mcp-branch"
+            $projectState.branchSlug | Should -Be "mcp-branch"
+            (@($projectState.servers | Where-Object { $_.id -eq "code" }).Count) | Should -Be 1
+            ($projectState.servers | Where-Object { $_.id -eq "code" } | Select-Object -First 1).url | Should -Be "http://host-a:18100/mcp"
+
+            $codexText = Get-Content -Encoding UTF8 -Raw (Join-Path $worktreePath ".codex\config.toml")
+            $codexText | Should -Match ([regex]::Escape("# >>> vibecoding1c-mcp project"))
+            $codexText | Should -Match ([regex]::Escape('[mcp_servers."1c-code-metadata-mcp"]'))
+            $codexText | Should -Match "http://host-a:18100/mcp"
+
+            $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $worktreePath ".kilo\kilo.json") | ConvertFrom-Json
+            $kilo.mcp.'1c-code-metadata-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
+            $kilo.mcp.'1c-code-metadata-mcp'.url | Should -Be "http://host-a:18100/mcp"
+            $kilo.mcp.'1c-graph-metadata-mcp'.url | Should -Be "http://host-a:18101/mcp"
+        } finally {
+            $env:APPDATA = $oldAppData
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldLocalHome, "Process")
             if (Test-Path -LiteralPath $worktreePath -PathType Container -ErrorAction SilentlyContinue) {
                 & git -C $tempRoot worktree remove --force $worktreePath *> $null
             }

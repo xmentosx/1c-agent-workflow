@@ -882,6 +882,46 @@ function Test-Vibecoding1cMcpSelectionComplete {
     return [bool]$result.isComplete
 }
 
+function Test-Vibecoding1cMcpSelectionNeedsLocalDistribution {
+    param([object]$Selection)
+
+    foreach ($server in Select-Vibecoding1cMcpManifestServers) {
+        if ((Get-Vibecoding1cMcpSelectedProvider -Server $server -Selection $Selection) -eq "local") {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Copy-Vibecoding1cMcpSelectionFromMainWorktree {
+    param([string]$MainProjectRoot)
+
+    $targetPath = Get-Vibecoding1cMcpSelectionPath
+    if (Test-Path -LiteralPath $targetPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        return $true
+    }
+
+    if ([string]::IsNullOrWhiteSpace($MainProjectRoot)) {
+        return $false
+    }
+
+    $sourcePath = Join-Path $MainProjectRoot ".agent-1c\mcp\vibecoding1c-selection.json"
+    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+
+    $sourceFull = [System.IO.Path]::GetFullPath($sourcePath)
+    $targetFull = [System.IO.Path]::GetFullPath($targetPath)
+    if ($sourceFull -eq $targetFull) {
+        return $true
+    }
+
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
+    Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force
+    Write-Host "Inherited vibecoding1c MCP selection from main worktree: $sourcePath"
+    return $true
+}
+
 function Read-Vibecoding1cMcpRemoteHostChoice {
     param(
         [object[]]$Candidates,
@@ -2421,7 +2461,10 @@ function Rotate-Vibecoding1cMcpKeys {
 }
 
 function Start-Vibecoding1cMcp {
-    param([switch]$DistributionReady)
+    param(
+        [switch]$DistributionReady,
+        [bool]$AllowPrompt = (Test-InteractiveInputAvailable)
+    )
 
     Write-Section "Start vibecoding1c MCP"
 
@@ -2458,7 +2501,7 @@ function Start-Vibecoding1cMcp {
     foreach ($server in $selectedServers) {
         $provider = Get-Vibecoding1cMcpSelectedProvider -Server $server -Selection $selection
         if ($provider -eq "remote") {
-            $runtime = New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection -AllowPrompt
+            $runtime = New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection -AllowPrompt:$AllowPrompt
             if ($null -eq $runtime) {
                 continue
             }
@@ -2584,6 +2627,47 @@ function Update-Vibecoding1cMcp {
     }
 }
 
+function Invoke-DevBranchVibecoding1cMcpInheritance {
+    param([string]$MainProjectRoot)
+
+    try {
+        if (-not (Copy-Vibecoding1cMcpSelectionFromMainWorktree -MainProjectRoot $MainProjectRoot)) {
+            Write-Host "No vibecoding1c MCP selection found in main worktree; skipping automatic inheritance."
+            return
+        }
+
+        $selection = Read-Vibecoding1cMcpSelection
+        $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry
+        if (-not $selectionCompleteness.isComplete) {
+            Write-Warning "vibecoding1c MCP selection is incomplete; automatic inheritance was skipped."
+            foreach ($reason in $selectionCompleteness.reasons) {
+                Write-Host "  - $reason"
+            }
+            Write-Host "Run when ready:"
+            Write-Host "  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup"
+            return
+        }
+
+        $needsLocalDistribution = Test-Vibecoding1cMcpSelectionNeedsLocalDistribution -Selection $selection
+        if ($needsLocalDistribution) {
+            Ensure-Vibecoding1cMcpDistribution | Out-Null
+            if (Test-Path -LiteralPath (Join-Path (Get-Vibecoding1cMcpDistributionRoot) "config.env") -PathType Leaf -ErrorAction SilentlyContinue) {
+                Rotate-Vibecoding1cMcpKeys -DistributionReady
+            } else {
+                Write-Host "Distribution config.env not found; key rotation skipped."
+            }
+        } else {
+            Refresh-Vibecoding1cMcpRegistry
+        }
+
+        Start-Vibecoding1cMcp -DistributionReady:$needsLocalDistribution -AllowPrompt:$false
+    } catch {
+        Write-Warning "Automatic vibecoding1c MCP inheritance failed. $($_.Exception.Message)"
+        Write-Host "Run when ready:"
+        Write-Host "  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup"
+    }
+}
+
 function Setup-Vibecoding1cMcp {
     Write-Section "Setup vibecoding1c MCP"
 
@@ -2603,13 +2687,7 @@ function Setup-Vibecoding1cMcp {
         $selection = Read-Vibecoding1cMcpSelection
     }
 
-    $needsLocalDistribution = $false
-    foreach ($server in Select-Vibecoding1cMcpManifestServers) {
-        if ((Get-Vibecoding1cMcpSelectedProvider -Server $server -Selection $selection) -eq "local") {
-            $needsLocalDistribution = $true
-            break
-        }
-    }
+    $needsLocalDistribution = Test-Vibecoding1cMcpSelectionNeedsLocalDistribution -Selection $selection
 
     if ($needsLocalDistribution) {
         Ensure-Vibecoding1cMcpDistribution | Out-Null

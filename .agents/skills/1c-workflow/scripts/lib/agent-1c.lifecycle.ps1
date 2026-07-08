@@ -2636,7 +2636,7 @@ function Initialize-Project {
     Update-UserRules
     Sync-KiloItlCommandSurface
     Commit-IfChanged "chore: install 1C agent workflow"
-    if ($script:InitVibecoding1cMcpSetupRequested -or (ConvertTo-YesNoBool -Value (Get-EnvValue -Name "VIBECODING1C_MCP_SETUP_DURING_INIT" -Default $false) -Default $false)) {
+    if ($script:InitVibecoding1cMcpSetupRequested -or (ConvertTo-YesNoBool -Value (Get-EnvValue -Name "VIBECODING1C_MCP_SETUP_DURING_INIT" -Default $true) -Default $true)) {
         Setup-Vibecoding1cMcp
     } else {
         Write-Host "vibecoding1c MCP setup was deferred. Ask the agent to configure vibecoding1c MCP, or run -Action vibecoding1c-mcp-setup when needed."
@@ -2808,6 +2808,7 @@ function Initialize-DevBranchRuntime {
     $state = Read-DevBranchStateFile -Path $statePath
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     $state = Invoke-DevBranchDefaultMcpSetup -State $state
+    Invoke-DevBranchVibecoding1cMcpInheritance -MainProjectRoot $MainProjectRoot
     $state = Invoke-DevBranchPublicationCycle -State $state -PublicationEnabled $publicationEnabled -AttemptAuto $publicationAuto
     $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
     if ($publicationUrl) {
