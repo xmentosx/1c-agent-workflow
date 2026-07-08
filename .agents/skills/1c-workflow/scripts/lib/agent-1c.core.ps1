@@ -579,13 +579,26 @@ function Test-GitHasChanges {
     if ($LASTEXITCODE -ne 0) {
         throw "Cannot read Git status"
     }
-    $effectiveStatus = @($status | Where-Object { -not (Test-IgnorableLocalGitStatusLine -Line ([string]$_)) })
-    return [bool]($effectiveStatus | Select-Object -First 1)
+    return [bool]((Get-EffectiveGitStatusLines -StatusLines $status) | Select-Object -First 1)
+}
+
+function Get-EffectiveGitStatusLines {
+    param([string[]]$StatusLines = @())
+
+    return @($StatusLines | Where-Object {
+        $line = [string]$_
+        $line -and -not (Test-IgnorableLocalGitStatusLine -Line $line)
+    })
 }
 
 function Assert-CleanGit {
-    if (Test-GitHasChanges) {
-        throw "Git worktree is not clean. Commit, stash, or discard changes before this action."
+    $status = & git -C $script:ProjectRoot status --porcelain
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cannot read Git status"
+    }
+    $effectiveStatus = @(Get-EffectiveGitStatusLines -StatusLines $status)
+    if ($effectiveStatus.Count -gt 0) {
+        throw "Git worktree is not clean. Commit, stash, or discard changes before this action. Remaining Git status: $($effectiveStatus -join '; ')"
     }
 }
 

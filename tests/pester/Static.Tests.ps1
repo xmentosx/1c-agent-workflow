@@ -5311,6 +5311,111 @@ url = "http://localhost:9999/mcp"
         }
     }
 
+    It "leaves master clean after mocked initialization commits managed files" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-init-clean-" + [guid]::NewGuid().ToString("N"))
+        $envNames = @(
+            "INFOBASE_KIND",
+            "SOURCE_USES_REPOSITORY",
+            "SOURCE_INFOBASE_PATH",
+            "IB_USER",
+            "IB_PASSWORD",
+            "WEB_PUBLISH_BY_DEFAULT",
+            "WEB_PUBLISH_AUTO",
+            "DEPENDENCY_MODE",
+            "VIBECODING1C_MCP_SETUP_DURING_INIT"
+        )
+        $savedEnv = @{}
+        foreach ($name in $envNames) {
+            $savedEnv[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+        }
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates") -Destination (Join-Path $tempRoot "templates") -Recurse
+            $templateTarget = Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Destination $templateTarget -Recurse
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+
+                function Prepare-ConfiguredInitProjectSettings {
+                    Ensure-WorkflowProjectFiles
+                    Read-ProjectConfig
+                    Set-DotEnvValues -Values @{
+                        INFOBASE_KIND = "file"
+                        SOURCE_USES_REPOSITORY = "false"
+                        SOURCE_INFOBASE_PATH = (Join-Path $script:ProjectRoot "source-base")
+                        IB_USER = ""
+                        IB_PASSWORD = ""
+                        WEB_PUBLISH_BY_DEFAULT = "false"
+                        WEB_PUBLISH_AUTO = "false"
+                        DEPENDENCY_MODE = "fresh"
+                        VIBECODING1C_MCP_SETUP_DURING_INIT = "false"
+                    }
+                    Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+                    $script:InitVibecoding1cMcpSetupRequested = $false
+                }
+
+                function Check-Tools {
+                    param([switch]$StopOnMissing)
+                }
+
+                function Install-RoctupMcp {
+                }
+
+                function Update-BaseFromRepository {
+                    return $false
+                }
+
+                function Dump-ConfigToFiles {
+                    $exportPath = "src/cf"
+                    $absoluteExportPath = Resolve-ProjectPath $exportPath
+                    New-Item -ItemType Directory -Force -Path $absoluteExportPath | Out-Null
+                    Write-Utf8Text -Path (Join-Path $absoluteExportPath "ConfigDumpInfo.xml") -Value "<dump />`n"
+                    Write-Utf8Text -Path (Join-Path $absoluteExportPath "Configuration.xml") -Value "<configuration />`n"
+                    return [pscustomobject]@{
+                        exportPath = $exportPath
+                        absoluteExportPath = $absoluteExportPath
+                        incremental = $false
+                        logPath = ""
+                    }
+                }
+
+                function Install-AiRules1c {
+                    Write-Utf8Text -Path (Join-Path $script:ProjectRoot ".ai-rules.json") -Value "{`"schemaVersion`":1}`n"
+                    Write-Utf8Text -Path (Join-Path $script:ProjectRoot "AGENTS.md") -Value "Read USER-RULES.md for project-specific instructions.`n"
+                }
+
+                Initialize-Project *> $null
+
+                [pscustomobject]@{
+                    status = @(Get-EffectiveGitStatusLines -StatusLines (& git -C $script:ProjectRoot status --porcelain))
+                    trackedTemplates = @(& git -C $script:ProjectRoot ls-files -- templates)
+                    branch = ((& git -C $script:ProjectRoot branch --show-current) -join "").Trim()
+                    commitCount = [int](((& git -C $script:ProjectRoot rev-list --count HEAD) -join "").Trim())
+                }
+            }
+
+            @($result.status).Count | Should -Be 0
+            $result.trackedTemplates | Should -Contain "templates/project.json"
+            $result.trackedTemplates | Should -Contain "templates/tools.json"
+            $result.trackedTemplates | Should -Contain "templates/dependency-lock.json"
+            $result.trackedTemplates | Should -Contain "templates/gitignore.append"
+            $result.trackedTemplates | Should -Contain "templates/USER-RULES.append.md"
+            $result.trackedTemplates | Should -Contain "templates/AGENTS.append.md"
+            $result.branch | Should -Be "master"
+            $result.commitCount | Should -BeGreaterOrEqual 2
+        } finally {
+            foreach ($name in $envNames) {
+                [Environment]::SetEnvironmentVariable($name, $savedEnv[$name], "Process")
+            }
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "commits LF files when Git emits CRLF warnings under monitored logging" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-git-crlf-warning-" + [guid]::NewGuid().ToString("N"))
         $probePath = Join-Path $tempRoot "probe.ps1"

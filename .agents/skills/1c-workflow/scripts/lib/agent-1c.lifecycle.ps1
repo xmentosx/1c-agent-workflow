@@ -2589,6 +2589,20 @@ function Commit-BaselineDumpIfNeeded {
     throw "No Git changes to commit for: $($pathSpec -join ', '). Expected files from the 1C configuration dump. Git status for this path: $status"
 }
 
+function Assert-InitGitClean {
+    $status = & git -C $script:ProjectRoot status --porcelain
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cannot read Git status after initialization."
+    }
+
+    $effectiveStatus = @(Get-EffectiveGitStatusLines -StatusLines $status)
+    if ($effectiveStatus.Count -gt 0) {
+        throw "Initialization left Git changes in master. Review why init-project did not commit all managed files before creating a development branch. Remaining Git status: $($effectiveStatus -join '; ')"
+    }
+
+    Write-Host "Git worktree is clean after initialization."
+}
+
 function Initialize-Project {
     Write-Section "Initialize project"
     New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
@@ -2625,6 +2639,7 @@ function Initialize-Project {
     } else {
         Write-Host "vibecoding1c MCP setup was deferred. Ask the agent to configure vibecoding1c MCP, or run -Action vibecoding1c-mcp-setup when needed."
     }
+    Assert-InitGitClean
 }
 
 function Sync-Master {
