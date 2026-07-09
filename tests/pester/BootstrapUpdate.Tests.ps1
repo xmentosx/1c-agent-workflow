@@ -1,0 +1,1282 @@
+﻿Describe "1C workflow bootstrap and update checks" {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $RepoRoot = $context.RepoRoot
+        $HelperPath = $context.HelperPath
+        $HelperModulePaths = $context.HelperModulePaths
+        $LauncherPath = $context.LauncherPath
+        $InstallerPath = $context.InstallerPath
+        $McpHostPath = $context.McpHostPath
+        $McpHostDumpPath = $context.McpHostDumpPath
+        $HelperText = $context.HelperText
+        $LauncherText = $context.LauncherText
+        $McpHostText = $context.McpHostText
+    }
+    It "keeps initialization on the monitored helper wizard path" {
+        $text = (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")) + [Environment]::NewLine + (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\SKILL.md"))
+        $text | Should -Match "install-agent-1c-workflow\.ps1"
+        $text | Should -Match "one-step bootstrap"
+        $text | Should -Match ([regex]::Escape(".\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"))
+        $text | Should -Match "-Action\s+init-project"
+        $text | Should -Match "-InitMode\s+wizard"
+        $text | Should -Match ([regex]::Escape(".agent-1c/runs/<run>/status.json"))
+        $text | Should -Match "do not collect the (initialization )?questionnaire in chat"
+    }
+
+    It "documents the one-step bootstrap as the normal install path" {
+        $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
+        $installText | Should -Match ([regex]::Escape("install-agent-1c-workflow.ps1 -ProjectRoot <project>"))
+        $installText | Should -Match "Do not expand the normal bootstrap into manual copy commands"
+        $installText | Should -Match "## Manual Recovery Copy Steps"
+
+        $normalInstallText = $installText.Substring(0, $installText.IndexOf("## Manual Recovery Copy Steps"))
+        $normalInstallText | Should -Not -Match "Copy the common skills into the target project"
+        $normalInstallText | Should -Not -Match ([regex]::Escape('Create `.agent-1c/project.json`'))
+
+        foreach ($relativePath in @(
+            ".agents\skills\1c-workflow\SKILL.md",
+            ".agents\skills\1c-workflow\references\workflow.md",
+            ".agents\skills\1c-workflow\references\init-setup.md"
+        )) {
+            $text = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot $relativePath)
+            $text | Should -Match "install-agent-1c-workflow\.ps1"
+            $text | Should -Match "manual copy"
+        }
+    }
+
+    It "keeps Apache install out of helper API and auto-installs Vanessa during init" {
+        $HelperText | Should -Not -Match "InstallApacheIfMissing"
+        $HelperText | Should -Not -Match "install-apache"
+        $HelperText | Should -Match ([regex]::Escape('$InstallVanessaIfMissing'))
+        $HelperText | Should -Match "Prepare-ConfiguredInitProjectSettings"
+        $HelperText | Should -Match "New-ConfiguredInitAnswers"
+        $HelperText | Should -Match "InstallVanessaIfMissing"
+        $HelperText | Should -Match "installing it automatically"
+        $HelperText | Should -Not -Match "rerun init-project with -InitMode configured -InstallVanessaIfMissing"
+        $HelperText | Should -Match "configure-web-publication"
+        $HelperText | Should -Match "publish-dev-branch"
+
+        $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
+        $installText | Should -Match "Diagnostic Tool Checks"
+        $installText | Should -Match ([regex]::Escape('should not be expanded into `check-tools`, separate install actions, and a second init run'))
+        $installText | Should -Match "Vanessa Automation"
+        $installText | Should -Not -Match "init-project -InitMode configured -InstallVanessaIfMissing"
+        $installText | Should -Not -Match "InstallApacheIfMissing"
+        $installText | Should -Not -Match "install-apache"
+    }
+
+    It "documents monitored init as a foreground command, not a background direct wizard" {
+        $docPaths = @(
+            "AGENT-INSTALL.md",
+            ".agents\skills\1c-workflow\SKILL.md",
+            ".agents\skills\1c-workflow\references\workflow.md",
+            "AGENT-INSTALL.md"
+        ) | ForEach-Object { Join-Path $RepoRoot $_ }
+
+        foreach ($path in $docPaths) {
+            $text = Get-Content -Encoding UTF8 -Raw $path
+            $text | Should -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard"))
+            $text | Should -Match "foreground"
+            $text | Should -Match "background PowerShell"
+            $text | Should -Match "KeepWindowOnFailure"
+            $text | Should -Not -Match "(?m)^\s*powershell[^\r\n]*agent-1c\.ps1[^\r\n]*-Action\s+init-project\s+-InitMode\s+wizard"
+        }
+
+        $strictInitDocs = @(
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")),
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md"))
+        ) -join [Environment]::NewLine
+        $strictInitDocs | Should -Not -Match "Start-Process"
+        $strictInitDocs | Should -Not -Match "-NoExit"
+    }
+
+    It "keeps advanced wrappers out of beginner command menus" {
+        $advancedCommands = @(
+            "/itl-init-project",
+            "/itl-set-dev-branch-extension",
+            "/itl-dump-dev-branch-extension",
+            "/itl-vanessa-mcp",
+            "/itl-update-rules",
+            "/itl-vibecoding1c-mcp",
+            "/itl-update-base",
+            "/itl-verify",
+            "/itl-switch",
+            "/itl-close"
+        )
+
+        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
+        foreach ($command in $advancedCommands) {
+            $kiloTemplateText | Should -Not -Match ([regex]::Escape($command))
+        }
+
+        $readmeText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")
+        $readmeMenuStart = $readmeText.IndexOf("Slash-")
+        $readmeMenuStart | Should -BeGreaterThan -1
+        $readmeMenuEnd = $readmeText.IndexOf("## ", $readmeMenuStart + 1)
+        $readmeMenuEnd | Should -BeGreaterThan $readmeMenuStart
+        $readmeMenuText = $readmeText.Substring($readmeMenuStart, $readmeMenuEnd - $readmeMenuStart)
+        foreach ($command in $advancedCommands) {
+            $readmeMenuText | Should -Not -Match ([regex]::Escape($command))
+        }
+
+        $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
+        $installMenuMatch = [regex]::Match($installText, '(?s)In the `master` worktree, show only:(?<commands>.*?)Advanced/helper actions')
+        $installMenuMatch.Success | Should -Be $true
+        foreach ($command in $advancedCommands) {
+            $installMenuMatch.Groups["commands"].Value | Should -Not -Match ([regex]::Escape($command))
+        }
+
+        $workflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
+        $shortSurfaceMatch = [regex]::Match($workflowText, "(?s)master:\s*(?<commands>.*?)For Kilo Code")
+        $shortSurfaceMatch.Success | Should -Be $true
+        foreach ($command in $advancedCommands) {
+            $shortSurfaceMatch.Groups["commands"].Value | Should -Not -Match ([regex]::Escape($command))
+        }
+    }
+
+    It "documents the helper action catalog in advanced actions" {
+        $match = [regex]::Match($HelperText, '(?s)\[ValidateSet\((.*?)\)\]\s*\[string\]\$Action')
+        $match.Success | Should -Be $true
+        $quote = [string]([char]34)
+        $actionPattern = [regex]::Escape($quote) + "(.+?)" + [regex]::Escape($quote)
+        $allowedActions = @([regex]::Matches($match.Groups[1].Value, $actionPattern) | ForEach-Object { $_.Groups[1].Value })
+
+        $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
+        $advancedListMatch = [regex]::Match($advancedText, '(?s)Common internal actions:\s*```text(?<actions>.*?)```')
+        $advancedListMatch.Success | Should -Be $true
+        $advancedActions = @($advancedListMatch.Groups["actions"].Value -split "\r?\n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+
+        foreach ($action in ($allowedActions | Where-Object { $_ -ne "help" })) {
+            ($advancedActions -contains $action) | Should -Be $true
+        }
+
+        foreach ($action in $advancedActions) {
+            ($allowedActions -contains $action) | Should -Be $true
+        }
+
+        $advancedText | Should -Match "set-dev-branch-extension"
+        $advancedText | Should -Match "dump-dev-branch-extension"
+        $advancedText | Should -Match "install-vanessa-mcp"
+        $advancedText | Should -Not -Match ([regex]::Escape("/itl-set-dev-branch-extension"))
+        $advancedText | Should -Not -Match ([regex]::Escape("/itl-dump-dev-branch-extension"))
+        $advancedText | Should -Not -Match ([regex]::Escape("/itl-vanessa-mcp"))
+        $advancedText | Should -Match "beginner"
+    }
+
+    It "forbids manual init questionnaire fallback when terminal input is unavailable" {
+        $docTexts = @(
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")),
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\SKILL.md")),
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md"))
+        )
+
+        foreach ($text in $docTexts) {
+            $text | Should -Match "terminal input is unavailable"
+            $text | Should -Match "do not collect the (initialization )?questionnaire in chat"
+            $text | Should -Match "do not continue the lifecycle manually"
+        }
+
+        ($docTexts -join [Environment]::NewLine) | Should -Not -Match "recovering from helper failure"
+    }
+
+    It "keeps the ITL overlay in USER-RULES and AGENTS as a fallback bridge" {
+        $templatePath = Join-Path $RepoRoot "templates\AGENTS.append.md"
+        (Test-Path -LiteralPath $templatePath -PathType Leaf) | Should -Be $true
+
+        $templateText = Get-Content -Encoding UTF8 -Raw $templatePath
+        $templateText | Should -Match "## 1C Agent Workflow Bridge"
+        $templateText | Should -Match "USER-RULES.md"
+        $templateText | Should -Match "1c-workflow-fast"
+        $templateText | Should -Match "1c-workflow/SKILL.md"
+
+        $userRulesTemplatePath = Join-Path $RepoRoot "templates\USER-RULES.append.md"
+        (Test-Path -LiteralPath $userRulesTemplatePath -PathType Leaf) | Should -Be $true
+        $userRulesTemplateText = Get-Content -Encoding UTF8 -Raw $userRulesTemplatePath
+        $userRulesTemplateText | Should -Match "## 1C Project Lifecycle"
+        $userRulesTemplateText | Should -Match "update-ai-rules"
+        $userRulesTemplateText | Should -Match "TESTMANAGER -> TESTCLIENT"
+        $userRulesTemplateText | Should -Match ([regex]::Escape(".agent-1c/event-log-baselines/*.json"))
+        $userRulesTemplateText | Should -Match "standards and role library"
+        $userRulesTemplateText | Should -Match "content/skills"
+        $userRulesTemplateText | Should -Match ([regex]::Escape("/installmcp"))
+        $userRulesTemplateText | Should -Match "vibecoding1c MCP helper request"
+        $userRulesTemplateText | Should -Match "product-docs/SKILL.md"
+        $userRulesTemplateText | Should -Match "BookStack-product-docs-mcp"
+        $userRulesTemplateText | Should -Match "before answering, exploring, planning, proposing, or changing behavior"
+        $userRulesTemplateText | Should -Match "BookStack is advisory, not authoritative"
+        $userRulesTemplateText | Should -Match "code, tests, current 1C metadata"
+        $userRulesTemplateText | Should -Match "available MCP evidence"
+        $userRulesTemplateText | Should -Match "BookStack says"
+        $userRulesTemplateText | Should -Match "Code/MCP currently shows"
+        $userRulesTemplateText | Should -Match "Decision"
+        $userRulesTemplateText | Should -Not -Match ([regex]::Escape("/itl-vibecoding1c-mcp"))
+
+        $productDocsSkillPath = Join-Path $RepoRoot ".agents\skills\product-docs\SKILL.md"
+        (Test-Path -LiteralPath $productDocsSkillPath -PathType Leaf) | Should -Be $true
+        $productDocsSkillText = Get-Content -Encoding UTF8 -Raw $productDocsSkillPath
+        $productDocsSkillText | Should -Match "BookStack-product-docs-mcp"
+        $productDocsSkillText | Should -Match "before answering, exploring, planning, proposing, or changing"
+        $productDocsSkillText | Should -Match "baseConfigurationVersion"
+        $productDocsSkillText | Should -Match "PM4"
+        $productDocsSkillText | Should -Match "search_docs"
+        $productDocsSkillText | Should -Match "read_page"
+        $productDocsSkillText | Should -Match "source of product context and intended behavior"
+        $productDocsSkillText | Should -Not -Match "source of product behavior truth"
+        $productDocsSkillText | Should -Match "## Evidence Policy"
+        $productDocsSkillText | Should -Match "## Verification Workflow"
+        $productDocsSkillText | Should -Match "current code, tests, 1C metadata"
+        $productDocsSkillText | Should -Match "BookStack is advisory"
+        $productDocsSkillText | Should -Match "1c-code-metadata-mcp"
+        $productDocsSkillText | Should -Match "1C-docs-mcp"
+        $productDocsSkillText | Should -Match "Code/MCP evidence"
+
+        $productDocsOpenAiText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\product-docs\agents\openai.yaml")
+        $productDocsOpenAiText | Should -Match "Verify BookStack product context"
+        $productDocsOpenAiText | Should -Match "verify it against code/MCP evidence"
+        $productDocsOpenAiText | Should -Match "answering, exploring, planning, proposing"
+
+        $HelperText | Should -Match "function Update-AgentGuidanceBridge"
+        $HelperText | Should -Match "function Update-UserRules"
+        $HelperText | Should -Match "## 1C Agent Workflow Bridge"
+        $HelperText | Should -Match "Update-AgentGuidanceBridge"
+        $HelperText | Should -Match "Update-UserRules"
+        $HelperText | Should -Match ([regex]::Escape("templates\USER-RULES.append.md"))
+        $HelperText | Should -Match "AGENTS\.md already references USER-RULES\.md"
+
+        $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
+        $installText | Should -Match ([regex]::Escape("<project>/templates/"))
+        $installText | Should -Match "templates/USER-RULES.append.md"
+        $installText | Should -Match "fallback"
+        $installText | Should -Match "upstream-managed"
+        $installText | Should -Match "AGENTS\.md"
+        $installText | Should -Match "USER-RULES.md"
+    }
+
+    It "wires ai_rules_1c update through the helper and advanced docs" {
+        $HelperText | Should -Match ([regex]::Escape('"update-ai-rules"'))
+        $HelperText | Should -Match "function Update-AiRules1c"
+        $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cInstaller -Command "update"'))
+        $HelperText | Should -Match ([regex]::Escape('powershell -NoProfile -ExecutionPolicy Bypass -File $installScript @installArgs'))
+        $HelperText | Should -Match ([regex]::Escape('$effectiveCommand,'))
+        $HelperText | Should -Match ([regex]::Escape('"-Force"'))
+        $HelperText | Should -Match "Invoke-AiRules1cInstaller -Command `"update`""
+        $HelperText | Should -Match "function Remove-AiRules1cManagedMcpConfig"
+        $HelperText | Should -Match "function Invoke-AiRules1cManagedMcpConfigReconcile"
+        $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "ai_rules_1c $effectiveCommand"'))
+        $HelperText | Should -Match "function Get-AiRules1cManagedMcpServerIds"
+        $HelperText | Should -Match "1c-code-metadata-mcp"
+        $HelperText | Should -Match "1C-docs-mcp"
+        $HelperText | Should -Match "1c-data-mcp"
+
+        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-update-rules.md") -PathType Leaf) | Should -Be $false
+        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
+        $kiloTemplateText | Should -Not -Match "update-ai-rules"
+
+        $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
+        $workflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
+        $readmeText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")
+        $developerGuideText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "DEVELOPER-GUIDE.ru.md")
+        foreach ($text in @($advancedText, $workflowText, $readmeText, $developerGuideText)) {
+            $text | Should -Match "update-ai-rules"
+            $text | Should -Match "USER-RULES.md"
+            $text | Should -Match "MCP"
+        }
+    }
+
+    It "runs ai_rules_1c installer outside helper StrictMode" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ai-rules-strictmode-test-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $rulesRoot = Join-Path $tempRoot "ai_rules_1c"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot, $rulesRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Encoding UTF8 -Value '{"schemaVersion":1}'
+            Set-Content -LiteralPath (Join-Path $rulesRoot "install.ps1") -Encoding UTF8 -Value @'
+[CmdletBinding()]
+param(
+    [Parameter(Position = 0)]
+    [string]$Command,
+    [string]$ProjectRoot,
+    [string]$Source,
+    [switch]$AssumeYes,
+    [switch]$Force
+)
+
+$optional = [pscustomobject]@{}
+$null = $optional.userModified
+Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding ASCII -Value "$Command|$ProjectRoot|$Source|$($AssumeYes.IsPresent)"
+'@
+
+            & {
+                . $HelperPath -ProjectRoot (Join-Path $projectRoot ".") -Action help *> $null
+                function Sync-AiRules1cCheckout {
+                    return [pscustomobject]@{
+                        root = (Join-Path $rulesRoot ".")
+                        repo = "fixture"
+                        ref = "fixture"
+                    }
+                }
+                function Get-GitOutputAt {
+                    return "fixture-commit"
+                }
+
+                Invoke-AiRules1cInstaller -Command "update"
+            }
+
+            $result = Get-Content -Encoding ASCII -Raw (Join-Path $projectRoot "installer-ran.txt")
+            $result.Trim() | Should -Be ("update|{0}|{1}|True" -f (Get-Item -LiteralPath $projectRoot).FullName, (Get-Item -LiteralPath $rulesRoot).FullName)
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "does not assign to local home variables that collide with PowerShell HOME" {
+        $HelperText | Should -Not -Match '(?im)^\s*\$home\s*='
+    }
+
+    It "wires ITL workflow package update through the helper and advanced docs" {
+        $HelperText | Should -Match ([regex]::Escape('"update-workflow"'))
+        $HelperText | Should -Match "function Update-WorkflowPackage"
+        $HelperText | Should -Match "ITL_WORKFLOW_SOURCE_PATH"
+        $HelperText | Should -Match "workflowPackage"
+        $HelperText | Should -Match "Update-WorkflowPackageLockEntry"
+        $HelperText | Should -Match "install-agent-1c-workflow\.ps1"
+        $HelperText | Should -Match "Update-AgentGuidanceBridge"
+        $HelperText | Should -Match "Update-UserRules"
+        $HelperText | Should -Match "Assert-WorkflowPackageUpdateContext"
+        $HelperText | Should -Match "Assert-WorkflowTrackedGitClean"
+        $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "refresh-dev-branch MCP reconcile"'))
+        $HelperText | Should -Match "updatedAt"
+        $HelperText | Should -Match "VANESSA-TESTS-GUIDE\.md"
+        $HelperText | Should -Match "VANESSA-TESTS-GUIDE\.ru\.md"
+
+        $lockTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dependency-lock.json") | ConvertFrom-Json
+        $lockTemplate.dependencies.workflowPackage.repo | Should -Be "https://github.com/xmentosx/1c-agent-workflow.git"
+        $lockTemplate.dependencies.workflowPackage.ref | Should -Be "master"
+        $lockTemplate.dependencies.workflowPackage.PSObject.Properties.Name | Should -Contain "updatedAt"
+
+        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
+        $kiloTemplateText | Should -Match "update-workflow"
+        $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
+        $advancedText | Should -Match "update-workflow"
+        $advancedText | Should -Match ([regex]::Escape(".kilo/commands/itl*.md"))
+
+        $docPaths = @(
+            "README.md",
+            "AGENT-INSTALL.md",
+            "DEVELOPER-GUIDE.ru.md",
+            "DEV-BRANCH-DEVELOPMENT.ru.md",
+            ".agents\skills\1c-workflow\SKILL.md",
+            ".agents\skills\1c-workflow-fast\SKILL.md",
+            ".agents\skills\1c-workflow\references\workflow.md",
+            ".agents\skills\1c-workflow\references\advanced-actions.md",
+            "templates\USER-RULES.append.md"
+        )
+        foreach ($relativePath in $docPaths) {
+            $text = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot $relativePath)
+            $text | Should -Match "update-workflow"
+        }
+
+        $workflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
+        $workflowText | Should -Match "VANESSA-TESTS-GUIDE\.md"
+
+        $vanessaGuideText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "VANESSA-TESTS-GUIDE.md")
+        $vanessaGuideText | Should -Match "Agent reference"
+        $vanessaGuideText | Should -Match "Context Economy"
+        $vanessaGuideText | Should -Match "Do Not"
+        $vanessaGuideText | Should -Match "2-3"
+        $vanessaGuideText | Should -Match "smoke"
+        $vanessaGuideText | Should -Match "tests/features"
+        $featureMarker = -join ([char[]](0x0424, 0x0443, 0x043D, 0x043A, 0x0446, 0x0438, 0x043E, 0x043D, 0x0430, 0x043B, 0x003A))
+        $contextMarker = -join ([char[]](0x041A, 0x043E, 0x043D, 0x0442, 0x0435, 0x043A, 0x0441, 0x0442, 0x003A))
+        $scenarioMarker = -join ([char[]](0x0421, 0x0446, 0x0435, 0x043D, 0x0430, 0x0440, 0x0438, 0x0439, 0x003A))
+        foreach ($marker in @("#language: ru", $featureMarker, $contextMarker, $scenarioMarker)) {
+            $vanessaGuideText | Should -Match ([regex]::Escape($marker))
+        }
+        [math]::Ceiling(([System.Text.Encoding]::UTF8.GetByteCount($vanessaGuideText)) / 4) | Should -BeLessOrEqual 2400
+
+        $vanessaGuideStubText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "VANESSA-TESTS-GUIDE.ru.md")
+        $vanessaGuideStubText | Should -Match ([regex]::Escape('moved to `VANESSA-TESTS-GUIDE.md`'))
+        $vanessaGuideStubText | Should -Match "compatibility"
+        $vanessaGuideStubText | Should -Not -Match ([regex]::Escape($featureMarker))
+        [math]::Ceiling(([System.Text.Encoding]::UTF8.GetByteCount($vanessaGuideStubText)) / 4) | Should -BeLessOrEqual 120
+    }
+
+    It "does not append the AGENTS bridge when upstream AGENTS already loads USER-RULES" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-rules-bridge-test-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "templates") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\USER-RULES.append.md") -Destination (Join-Path $tempRoot "templates\USER-RULES.append.md")
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\AGENTS.append.md") -Destination (Join-Path $tempRoot "templates\AGENTS.append.md")
+            Set-Content -LiteralPath (Join-Path $tempRoot "AGENTS.md") -Encoding UTF8 -Value "# Agent Instructions`n`nRead USER-RULES.md for project-specific instructions."
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Update-AgentGuidanceBridge *> $null
+                Update-UserRules *> $null
+            }
+
+            $agentsText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "AGENTS.md")
+            $agentsText | Should -Match "USER-RULES.md"
+            $agentsText | Should -Not -Match "## 1C Agent Workflow Bridge"
+            $userRulesText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "USER-RULES.md")
+            $userRulesText | Should -Match "## 1C Project Lifecycle"
+            $userRulesText | Should -Match "ITL-WORKFLOW-USER-RULES:START"
+            $userRulesText | Should -Match "ITL-WORKFLOW-USER-RULES:END"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "updates workflow package files in a temp project while preserving local runtime state" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-update-workflow-test-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $stdoutPath = Join-Path $tempRoot "stdout.log"
+        $stderrPath = Join-Path $tempRoot "stderr.log"
+        $previousSourcePath = $env:ITL_WORKFLOW_SOURCE_PATH
+        $previousRepo = $env:ITL_WORKFLOW_REPO
+        $previousRef = $env:ITL_WORKFLOW_REF
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot | Out-Null
+            New-Item -ItemType Directory -Force -Path `
+                (Join-Path $projectRoot ".agents\skills\1c-workflow"),
+                (Join-Path $projectRoot ".agents\skills\1c-workflow-fast"),
+                (Join-Path $projectRoot ".kilo\commands"),
+                (Join-Path $projectRoot "templates"),
+                (Join-Path $projectRoot ".agent-1c\mcp"),
+                (Join-Path $projectRoot ".agent-1c\dev-branches"),
+                (Join-Path $projectRoot ".codex"),
+                (Join-Path $projectRoot ".kilo") | Out-Null
+
+            Set-Content -LiteralPath (Join-Path $projectRoot ".gitignore") -Encoding UTF8 -Value @"
+.dev.env
+.agent-1c/mcp/
+.agent-1c/dev-branches/
+.codex/config.toml
+.kilo/kilo.json
+.kilo/kilo.jsonc
+"@
+            Set-Content -LiteralPath (Join-Path $projectRoot "README.md") -Encoding UTF8 -Value "old readme"
+            Set-Content -LiteralPath (Join-Path $projectRoot "AGENT-INSTALL.md") -Encoding UTF8 -Value "old install"
+            Set-Content -LiteralPath (Join-Path $projectRoot "DEVELOPER-GUIDE.ru.md") -Encoding UTF8 -Value "old developer guide"
+            Set-Content -LiteralPath (Join-Path $projectRoot "DEV-BRANCH-DEVELOPMENT.ru.md") -Encoding UTF8 -Value "old branch guide"
+            Set-Content -LiteralPath (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.ru.md") -Encoding UTF8 -Value "old vanessa guide"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\stale.txt") -Encoding UTF8 -Value "stale"
+            New-Item -ItemType Directory -Force -Path (Join-Path $projectRoot ".agents\skills\1c-workflow\kilo-command-templates\master") | Out-Null
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-stale.md") -Encoding UTF8 -Value "stale command-shaped template"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow-fast\stale.txt") -Encoding UTF8 -Value "stale"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-old.md") -Encoding UTF8 -Value "stale command"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".kilo\commands\custom.md") -Encoding UTF8 -Value "custom command"
+            Set-Content -LiteralPath (Join-Path $projectRoot "templates\stale.txt") -Encoding UTF8 -Value "stale template"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"custom":"keep-project"}'
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\tools.json") -Encoding UTF8 -Value '{"custom":"keep-tools"}'
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{}}'
+            Set-Content -LiteralPath (Join-Path $projectRoot ".dev.env") -Encoding UTF8 -Value "SECRET=keep"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\mcp\state.json") -Encoding UTF8 -Value '{"state":"keep"}'
+            Set-Content -LiteralPath (Join-Path $projectRoot ".codex\config.toml") -Encoding UTF8 -Value '[mcp_servers.custom]'
+            Set-Content -LiteralPath (Join-Path $projectRoot ".kilo\kilo.json") -Encoding UTF8 -Value '{"custom":"keep"}'
+            Set-Content -LiteralPath (Join-Path $projectRoot "USER-RULES.md") -Encoding UTF8 -Value @"
+before
+
+## 1C Project Lifecycle
+
+old managed block
+
+## Local Rules
+
+local after
+"@
+
+            & git -C $projectRoot init *> $null
+            & git -C $projectRoot config user.email "test@example.com"
+            & git -C $projectRoot config user.name "Test User"
+            & git -C $projectRoot add .
+            & git -C $projectRoot commit -m init *> $null
+            & git -C $projectRoot branch -M master
+            Set-Content -LiteralPath (Join-Path $projectRoot "scratch.local") -Encoding UTF8 -Value "keep untracked"
+            $commitCountBefore = ((& git -C $projectRoot rev-list --count HEAD).Trim())
+
+            $env:ITL_WORKFLOW_SOURCE_PATH = $RepoRoot
+            $env:ITL_WORKFLOW_REPO = ""
+            $env:ITL_WORKFLOW_REF = ""
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $projectRoot -Action update-workflow -SkipAiRules > $stdoutPath 2> $stderrPath
+            $LASTEXITCODE | Should -Be 0
+
+            $stdout = Get-Content -Encoding UTF8 -Raw $stdoutPath
+            $stdout | Should -Match "ITL workflow package updated"
+            $stdout | Should -Match "No commit was created automatically"
+            $stdout | Should -Match "No active development branches were found"
+
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\stale.txt") -PathType Leaf) | Should -Be $false
+            @(Get-ChildItem -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md" -ErrorAction SilentlyContinue).Count | Should -Be 0
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow-fast\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\product-docs\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-roctup-1c-data\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot "install-agent-1c-workflow.ps1") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-status.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-new-config-branch.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-new-extension-branch.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-update-workflow.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-check.md") -PathType Leaf) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-old.md") -PathType Leaf) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\custom.md") -PathType Leaf) | Should -Be $true
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".gitignore")) | Should -Match ([regex]::Escape(".kilo/commands/itl*.md"))
+            @(& git -C $projectRoot ls-files -- ".kilo/commands/itl*.md").Count | Should -Be 0
+            @(& git -C $projectRoot ls-files -- ".kilo/commands/custom.md") | Should -Be @(".kilo/commands/custom.md")
+            (Test-Path -LiteralPath (Join-Path $projectRoot "templates\dependency-lock.json") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot "templates\stale.txt") -PathType Leaf) | Should -Be $false
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.md")) | Should -Match "Vanessa Automation"
+            $featureMarker = -join ([char[]](0x0424, 0x0443, 0x043D, 0x043A, 0x0446, 0x0438, 0x043E, 0x043D, 0x0430, 0x043B, 0x003A))
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.md")) | Should -Match ([regex]::Escape($featureMarker))
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.ru.md")) | Should -Match "moved to"
+
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".dev.env")) | Should -Match "SECRET=keep"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\project.json")) | Should -Match "keep-project"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\tools.json")) | Should -Match "keep-tools"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\mcp\state.json")) | Should -Match "keep"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".codex\config.toml")) | Should -Match "custom"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".kilo\kilo.json")) | Should -Match "keep"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "scratch.local")) | Should -Match "keep untracked"
+
+            $lock = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\dependency-lock.json") | ConvertFrom-Json
+            $lock.dependencies.workflowPackage.source | Should -Be "path"
+            $lock.dependencies.workflowPackage.commit | Should -Be ((& git -C $RepoRoot rev-parse HEAD).Trim())
+            $lock.dependencies.workflowPackage.ref | Should -Be "master"
+            $lock.dependencies.workflowPackage.updatedAt | Should -Not -BeNullOrEmpty
+
+            $userRulesText = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "USER-RULES.md")
+            $userRulesText | Should -Match "ITL-WORKFLOW-USER-RULES:START"
+            $userRulesText | Should -Match "ITL-WORKFLOW-USER-RULES:END"
+            $userRulesText | Should -Match "update-workflow"
+            $userRulesText | Should -Not -Match "old managed block"
+            $userRulesText | Should -Match "local after"
+
+            ((& git -C $projectRoot rev-list --count HEAD).Trim()) | Should -Be $commitCountBefore
+            ((& git -C $projectRoot branch --show-current).Trim()) | Should -Be "master"
+            (& git -C $projectRoot status --short) | Should -Not -BeNullOrEmpty
+        } finally {
+            $env:ITL_WORKFLOW_SOURCE_PATH = $previousSourcePath
+            $env:ITL_WORKFLOW_REPO = $previousRepo
+            $env:ITL_WORKFLOW_REF = $previousRef
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force
+            }
+        }
+    }
+
+    It "installs bootstrap package files into a temp project without runtime state when NoInit is used" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-package-smoke-" + [guid]::NewGuid().ToString("N"))
+        $stdoutPath = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-package-smoke-stdout-" + [guid]::NewGuid().ToString("N") + ".log")
+        $stderrPath = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-package-smoke-stderr-" + [guid]::NewGuid().ToString("N") + ".log")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $InstallerPath -ProjectRoot $tempRoot -NoInit > $stdoutPath 2> $stderrPath
+            $LASTEXITCODE | Should -Be 0
+            (Get-Content -Encoding UTF8 -Raw $stdoutPath) | Should -Match "Initialization skipped because -NoInit was specified"
+
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow-fast\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\product-docs\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\itl-roctup-1c-data\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md.template") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\event-log-exporter\EventLogExporter.xml") -PathType Leaf) | Should -Be $true
+            @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\auto-update") -File -Filter "*.epf").Count | Should -Be 2
+            (Test-Path -LiteralPath (Join-Path $tempRoot "templates\project.json") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "templates\tools.json") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "templates\dev.env.example") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "templates\gitignore.append") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "templates\USER-RULES.append.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "templates\AGENTS.append.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "install-agent-1c-workflow.ps1") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "AGENT-INSTALL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "README.md") -PathType Leaf) | Should -Be $true
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "templates\AGENTS.append.md")) | Should -Match "USER-RULES.md"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "templates\USER-RULES.append.md")) | Should -Match "1C Project Lifecycle"
+
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agent-1c") -ErrorAction SilentlyContinue) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".dev.env") -ErrorAction SilentlyContinue) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".codex") -ErrorAction SilentlyContinue) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo") -ErrorAction SilentlyContinue) | Should -Be $false
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            foreach ($path in @($stdoutPath, $stderrPath)) {
+                if (Test-Path -LiteralPath $path -ErrorAction SilentlyContinue) {
+                    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    }
+
+    It "closes the monitored window on failure unless debug keep-open is explicit" {
+        $LauncherText | Should -Match '\$KeepWindowOnFailure\s*=\s*\$false'
+        $LauncherText | Should -Match '"-keepwindowonfailure"'
+        $LauncherText | Should -Match 'if \(\$KeepWindowOnFailure\)'
+        $LauncherText | Should -Match '"-PauseOnFailure"'
+
+        $defaultArgsMatch = [regex]::Match($LauncherText, '(?s)\$monitoredArgs\s*=\s*@\((?<args>.*?)\)\s*\+\s*@\(\$AgentArgs\)')
+        $defaultArgsMatch.Success | Should -Be $true
+        $defaultArgsMatch.Groups["args"].Value | Should -Not -Match "PauseOnFailure"
+    }
+
+    It "suppresses PowerShell progress output in helper entrypoints" {
+        $HelperText | Should -Match '\$ProgressPreference\s*=\s*"SilentlyContinue"'
+        $LauncherText | Should -Match '\$ProgressPreference\s*=\s*"SilentlyContinue"'
+    }
+
+    It "documents init launcher timeout and preflight guardrails" {
+        $docPaths = @(
+            "AGENT-INSTALL.md",
+            ".agents\skills\1c-workflow\SKILL.md",
+            ".agents\skills\1c-workflow\references\workflow.md"
+        ) | ForEach-Object { Join-Path $RepoRoot $_ }
+
+        foreach ($path in $docPaths) {
+            $text = Get-Content -Encoding UTF8 -Raw $path
+            $text | Should -Match "Test-Path"
+            $text | Should -Match "CLIXML"
+            $text | Should -Match "positive long timeout"
+            $text | Should -Match "timeout: 0"
+        }
+
+        $combinedText = ($docPaths | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_ }) -join [Environment]::NewLine
+        $combinedText | Should -Match "launcher validates the helper path"
+        $combinedText | Should -Match "MaxWaitSeconds 3600"
+        $combinedText | Should -Match "InitMaxWaitSeconds 3600"
+        $combinedText | Should -Not -Match "(?i)(use|set)\s+`?timeout:\s*0"
+    }
+
+    It "documents long external shell timeout for ITL lifecycle commands" {
+        $instructionPaths = @(
+            ".agents\skills\1c-workflow-fast\SKILL.md",
+            ".agents\skills\1c-workflow\SKILL.md",
+            "templates\USER-RULES.append.md"
+        ) | ForEach-Object { Join-Path $RepoRoot $_ }
+
+        foreach ($path in $instructionPaths) {
+            $text = Get-Content -Encoding UTF8 -Raw $path
+            $text | Should -Match "timeout_ms\s*>=\s*1800000"
+            $text | Should -Match 'Do not use\s+`?120000 ms'
+            $text | Should -Match "1C Designer/Enterprise"
+            $text | Should -Match "LoadConfigFromFiles.*UpdateDBCfg"
+            $text | Should -Match "status.*help.*do not|status`/help.*do not"
+        }
+
+        $longTemplatePaths = @(
+            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-update-workflow.md.template"
+        ) | ForEach-Object { Join-Path $RepoRoot $_ }
+
+        foreach ($path in $longTemplatePaths) {
+            $text = Get-Content -Encoding UTF8 -Raw $path
+            $text | Should -Match "agent shell tool supports"
+            $text | Should -Match "timeout_ms\s*>=\s*1800000"
+            $text | Should -Match 'do not use\s+`?120000 ms'
+            $text | Should -Match "1C Designer/Enterprise"
+        }
+
+        $shortTemplatePaths = @(
+            ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\common\itl-status.md.template"
+        ) | ForEach-Object { Join-Path $RepoRoot $_ }
+
+        foreach ($path in $shortTemplatePaths) {
+            $text = Get-Content -Encoding UTF8 -Raw $path
+            $text | Should -Not -Match "timeout_ms\s*>=\s*1800000"
+        }
+
+        $HelperText | Should -Match "Long lifecycle actions may run 1C Designer/Enterprise"
+        $HelperText | Should -Match "agent shell timeout_ms must be >= 1800000"
+    }
+
+    It "keeps helper path validation inside the monitored launcher" {
+        $LauncherText | Should -Match "Helper script was not found"
+        $LauncherText | Should -Match ([regex]::Escape('Test-Path -LiteralPath $helperFull'))
+        $LauncherText | Should -Match '\$MaxWaitSeconds\s*=\s*3600'
+        (Get-Content -Encoding UTF8 -Raw $InstallerPath) | Should -Match '\$InitMaxWaitSeconds\s*=\s*3600'
+    }
+
+    It "warns clearly when source repository sync is disabled" {
+        $HelperText | Should -Match "WARNING: no repository update was performed; master dump uses current source infobase state"
+    }
+
+    It "warns when the interactive init wizard is run without monitoring" {
+        $HelperText | Should -Match "direct init-project wizard is not monitored"
+        $HelperText | Should -Match "scripts/run-agent-1c-window.ps1"
+        $HelperText | Should -Match "Use the direct wizard only for manual debugging"
+    }
+
+    It "uses Russian init wizard prompts and defaults vibecoding1c setup to yes" {
+        $russianPromptBase64 = @(
+            "0JjQvdC40YbQuNCw0LvQuNC30LjRgNC+0LLQsNGC0YwgMUMg0L/RgNC+0LXQutGCINCyINGN0YLQvtC5INC/0LDQv9C60LU/",
+            "0JLRi9Cx0LXRgNC40YLQtSDQvdC+0LzQtdGAINC/0LvQsNGC0YTQvtGA0LzRiyDQuNC70Lgg0LLQstC10LTQuNGC0LUg0L/QvtC70L3Ri9C5INC/0YPRgtGMINC6IDFjdjguZXhl",
+            "0J/QvtC70L3Ri9C5INC/0YPRgtGMINC6IDFjdjguZXhl",
+            "0KLQuNC/INC40YHRhdC+0LTQvdC+0Lkg0LjQvdGE0L7RgNC80LDRhtC40L7QvdC90L7QuSDQsdCw0LfRizogZmlsZSDQuNC70Lggc2VydmVyIFtmaWxlXQ==",
+            "0JjRgdGF0L7QtNC90LDRjyDQuNC90YTQvtGA0LzQsNGG0LjQvtC90L3QsNGPINCx0LDQt9CwINC/0L7QtNC60LvRjtGH0LXQvdCwINC6INGF0YDQsNC90LjQu9C40YnRgyDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggMUM/",
+            "0JjQvNGPINGB0LXRgNCy0LXRgNCwIDFD",
+            "0JjQvNGPINC40YHRhdC+0LTQvdC+0Lkg0LjQvdGE0L7RgNC80LDRhtC40L7QvdC90L7QuSDQsdCw0LfRiw==",
+            "0JrQsNGC0LDQu9C+0LMg0LjRgdGF0L7QtNC90L7QuSDRhNCw0LnQu9C+0LLQvtC5INC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30Ys=",
+            "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30YsgKNC/0YPRgdGC0L4sINC10YHQu9C4INC90LUg0LjRgdC/0L7Qu9GM0LfRg9C10YLRgdGPKQ==",
+            "0J/QsNGA0L7Qu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30YsgKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk=",
+            "0J/Rg9GC0Ywg0Log0YXRgNCw0L3QuNC70LjRidGDINC60L7QvdGE0LjQs9GD0YDQsNGG0LjQuA==",
+            "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40Lg=",
+            "0J/QsNGA0L7Qu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk=",
+            "0J/Rg9Cx0LvQuNC60L7QstCw0YLRjCDQuNC90YTQvtGA0LzQsNGG0LjQvtC90L3Ri9C1INCx0LDQt9GLINCy0LXRgtC+0Log0YDQsNC30YDQsNCx0L7RgtC60Lgg0L3QsCDQstC10LEt0YHQtdGA0LLQtdGA0LUg0LTQu9GPINGC0LXRgdGC0LjRgNC+0LLQsNC90LjRjyDQstC10LEt0LrQu9C40LXQvdGC0LA/",
+            "0J/Ri9GC0LDRgtGM0YHRjyDQsNCy0YLQvtC80LDRgtC40YfQtdGB0LrQuCDQv9GD0LHQu9C40LrQvtCy0LDRgtGMINCx0LDQt9GDINC/0YDQuCDRgdC+0LfQtNCw0L3QuNC4INCy0LXRgtC60Lgg0YDQsNC30YDQsNCx0L7RgtC60Lg/",
+            "0JjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMINGB0LLQtdC20LjQtSDQstC10YDRgdC40Lgg0LfQsNCy0LjRgdC40LzQvtGB0YLQtdC5INC/0YDQuCDQuNC90LjRhtC40LDQu9C40LfQsNGG0LjQuD8g0J7RgtCy0LXRgtGM0YLQtSDQvdC10YIsINGH0YLQvtCx0Ysg0LjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMIHBpbnMg0LjQtyAuYWdlbnQtMWMvZGVwZW5kZW5jeS1sb2NrLmpzb24u",
+            "0J3QsNGB0YLRgNC+0LjRgtGMIHZpYmVjb2RpbmcxYyBNQ1Ag0YHQtdC50YfQsNGBPyDQntGC0LLQtdGC0YzRgtC1INC90LXRgiwg0YfRgtC+0LHRiyDRgdC00LXQu9Cw0YLRjCDRjdGC0L4g0L/QvtC30LbQtSDQvtCx0YvRh9C90YvQvCDQt9Cw0L/RgNC+0YHQvtC8INCw0LPQtdC90YLRgyDQuNC70LggaGVscGVyIGFjdGlvbi4=",
+            "0J/RgNC+0LTQvtC70LbQuNGC0Ywg0YEg0Y3RgtC40LzQuCDQt9C90LDRh9C10L3QuNGP0LzQuD8g0J7RgtCy0LXRgtGM0YLQtSDQvdC10YIsINGH0YLQvtCx0Ysg0LfQsNC/0L7Qu9C90LjRgtGMINC/0LDRgNCw0LzQtdGC0YDRiyDQt9Cw0L3QvtCy0L4u",
+            "0JfQsNC/0L7Qu9C90LjRgtC1INC/0LDRgNCw0LzQtdGC0YDRiyDQt9Cw0L3QvtCy0L4u",
+            "0J/QvtC70L3Ri9C5INC/0YPRgtGMINC6IHdlYmluc3QuZXhl",
+            "0JrQsNGC0LDQu9C+0LMg0L/Rg9Cx0LvQuNC60LDRhtC40Lk=",
+            "0JHQsNC30L7QstGL0LkgVVJMINC/0YPQsdC70LjQutCw0YbQuNC5",
+            "0KLQuNC/IHdlYmluc3Q=",
+            "0J3QtdC+0LHRj9C30LDRgtC10LvRjNC90YvQuSDQv9GD0YLRjCDQuiDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggQXBhY2hlL2h0dHBkLCDQv9GD0YHRgtC+INC10YHQu9C4INC90LUg0L3Rg9C20LXQvQ=="
+        )
+
+        foreach ($promptBase64 in $russianPromptBase64) {
+            [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($promptBase64)) | Should -Not -BeNullOrEmpty
+            $HelperText | Should -Match ([regex]::Escape($promptBase64))
+        }
+
+        $oldPromptSnippets = @(
+            'Read-InitYesNo -Prompt "Initialize the 1C project in this folder?"',
+            'Read-Host "Choose platform number or enter full path to 1cv8.exe"',
+            'Read-InitRequired "Full path to 1cv8.exe"',
+            'Read-Host "Source infobase kind: file or server [file]"',
+            'Read-InitYesNo -Prompt "Is the source infobase connected to 1C configuration repository?"',
+            'Read-InitYesNo -Prompt "Configure vibecoding1c MCP now? Answer no to do it later through a normal agent request or helper action."',
+            'Read-InitYesNo -Prompt "Continue with these values?"',
+            'Read-WebPublicationValue -Prompt "Full path to webinst.exe"',
+            'Read-WebPublicationValue -Prompt "Publication root directory"',
+            'Read-WebPublicationValue -Prompt "Publication URL base"'
+        )
+        foreach ($snippet in $oldPromptSnippets) {
+            $HelperText | Should -Not -Match ([regex]::Escape($snippet))
+        }
+
+        $HelperText | Should -Match ([regex]::Escape("IFvQlC/QvV0="))
+        $HelperText | Should -Match ([regex]::Escape("IFvQtC/QnV0="))
+        $HelperText | Should -Match 'vibecoding1cMcpSetupDuringInit\s*=\s*Read-InitYesNo.*-Default\s+\$true'
+        $HelperText | Should -Match 'VIBECODING1C_MCP_SETUP_DURING_INIT"\)\s+-Default\s+\$true\)\s+-Default\s+\$true'
+        $HelperText | Should -Match 'Get-EnvValue\s+-Name\s+"VIBECODING1C_MCP_SETUP_DURING_INIT"\s+-Default\s+\$true\)\s+-Default\s+\$true'
+    }
+
+    It "restarts init wizard answers when the summary is rejected" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            $script:InitWizardRootConfirmations = 0
+            $script:InitWizardAnswerReads = 0
+            $script:InitWizardSummaryPaths = @()
+            $script:InitWizardAnswerConfirmations = 0
+
+            function Test-InteractiveInputAvailable {
+                return $true
+            }
+
+            function Confirm-InitWizardProjectRoot {
+                $script:InitWizardRootConfirmations++
+            }
+
+            function Read-InitWizardAnswersOnce {
+                $script:InitWizardAnswerReads++
+                return [pscustomobject]@{
+                    platformPath = "platform-$script:InitWizardAnswerReads"
+                    baseConfigurationVersion = "PM5"
+                    infoBaseKind = "file"
+                    sourceUsesRepository = $false
+                    sourceInfoBasePath = "C:\bases\source-$script:InitWizardAnswerReads"
+                    ibUser = ""
+                    ibPassword = ""
+                    repositoryPath = ""
+                    repositoryUser = ""
+                    repositoryPassword = ""
+                    webPublishByDefault = $false
+                    webPublishAuto = $false
+                    dependencyMode = "fresh"
+                    vibecoding1cMcpSetupDuringInit = $true
+                }
+            }
+
+            function Write-InitWizardAnswersSummary {
+                param([object]$Answers)
+
+                $script:InitWizardSummaryPaths += $Answers.platformPath
+            }
+
+            function Confirm-InitWizardAnswers {
+                $script:InitWizardAnswerConfirmations++
+                return ($script:InitWizardAnswerConfirmations -ge 2)
+            }
+
+            $answers = Read-InitAnswersFromWizard 6>$null
+            [pscustomobject]@{
+                rootConfirmations = $script:InitWizardRootConfirmations
+                answerReads = $script:InitWizardAnswerReads
+                summaryPaths = ($script:InitWizardSummaryPaths -join "|")
+                answerConfirmations = $script:InitWizardAnswerConfirmations
+                platformPath = $answers.platformPath
+                sourceInfoBasePath = $answers.sourceInfoBasePath
+            }
+        }
+
+        $result.rootConfirmations | Should -Be 1
+        $result.answerReads | Should -Be 2
+        $result.summaryPaths | Should -Be "platform-1|platform-2"
+        $result.answerConfirmations | Should -Be 2
+        $result.platformPath | Should -Be "platform-2"
+        $result.sourceInfoBasePath | Should -Be "C:\bases\source-2"
+    }
+
+    It "normalizes a missing vibecoding1c init answer to true while preserving explicit false" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            $baseAnswers = [pscustomobject]@{
+                platformPath = "C:\Program Files\1cv8\8.3.99.1\bin\1cv8.exe"
+                infoBaseKind = "file"
+                sourceUsesRepository = $false
+                sourceInfoBasePath = "C:\bases\source"
+                dependencyMode = "fresh"
+            }
+            $defaulted = Normalize-InitAnswers -Answers $baseAnswers
+
+            $explicitAnswers = [pscustomobject]@{
+                platformPath = "C:\Program Files\1cv8\8.3.99.1\bin\1cv8.exe"
+                infoBaseKind = "file"
+                sourceUsesRepository = $false
+                sourceInfoBasePath = "C:\bases\source"
+                dependencyMode = "fresh"
+                VIBECODING1C_MCP_SETUP_DURING_INIT = "false"
+            }
+            $explicit = Normalize-InitAnswers -Answers $explicitAnswers
+
+            [pscustomobject]@{
+                defaulted = [bool]$defaulted.vibecoding1cMcpSetupDuringInit
+                explicit = [bool]$explicit.vibecoding1cMcpSetupDuringInit
+            }
+        }
+
+        $result.defaulted | Should -BeTrue
+        $result.explicit | Should -BeFalse
+    }
+
+    It "normalizes and persists base configuration version init answers" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-base-configuration-version-" + [guid]::NewGuid().ToString("N"))
+        $envNames = @(
+            "PLATFORM_PATH",
+            "INFOBASE_KIND",
+            "SOURCE_USES_REPOSITORY",
+            "SOURCE_INFOBASE_PATH",
+            "SOURCE_SERVER_NAME",
+            "SOURCE_INFOBASE_NAME",
+            "IB_USER",
+            "IB_PASSWORD",
+            "REPOSITORY_PATH",
+            "REPOSITORY_USER",
+            "REPOSITORY_PASSWORD",
+            "WEB_PUBLISH_BY_DEFAULT",
+            "WEB_PUBLISH_AUTO",
+            "DEPENDENCY_MODE",
+            "VIBECODING1C_MCP_SETUP_DURING_INIT"
+        )
+        $savedEnv = @{}
+        foreach ($name in $envNames) {
+            $savedEnv[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+        }
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+
+                $baseAnswers = [pscustomobject]@{
+                    platformPath = "C:\Program Files\1cv8\8.3.99.1\bin\1cv8.exe"
+                    infoBaseKind = "file"
+                    sourceUsesRepository = $false
+                    sourceInfoBasePath = "C:\bases\source"
+                    dependencyMode = "fresh"
+                }
+                $defaulted = Normalize-InitAnswers -Answers $baseAnswers
+
+                $pm4Answers = [pscustomobject]@{
+                    platformPath = "C:\Program Files\1cv8\8.3.99.1\bin\1cv8.exe"
+                    baseConfigurationVersion = "pm4"
+                    infoBaseKind = "file"
+                    sourceUsesRepository = $false
+                    sourceInfoBasePath = "C:\bases\source"
+                    dependencyMode = "fresh"
+                }
+                $pm4 = Normalize-InitAnswers -Answers $pm4Answers
+
+                $pm5Answers = [pscustomobject]@{
+                    platformPath = "C:\Program Files\1cv8\8.3.99.1\bin\1cv8.exe"
+                    BASE_CONFIGURATION_VERSION = "PM5"
+                    infoBaseKind = "file"
+                    sourceUsesRepository = $false
+                    sourceInfoBasePath = "C:\bases\source"
+                    dependencyMode = "fresh"
+                }
+                $pm5 = Normalize-InitAnswers -Answers $pm5Answers
+
+                $invalidMessage = ""
+                try {
+                    Normalize-InitAnswers -Answers ([pscustomobject]@{
+                        platformPath = "C:\Program Files\1cv8\8.3.99.1\bin\1cv8.exe"
+                        baseConfigurationVersion = "PM6"
+                        infoBaseKind = "file"
+                        sourceUsesRepository = $false
+                        sourceInfoBasePath = "C:\bases\source"
+                        dependencyMode = "fresh"
+                    }) | Out-Null
+                } catch {
+                    $invalidMessage = $_.Exception.Message
+                }
+
+                Save-InitAnswers -Answers $pm4
+                Read-ProjectConfig
+
+                [pscustomobject]@{
+                    defaulted = $defaulted.baseConfigurationVersion
+                    pm4 = $pm4.baseConfigurationVersion
+                    pm5 = $pm5.baseConfigurationVersion
+                    invalidMessage = $invalidMessage
+                    persisted = [string](Get-ConfigValue -Path "baseConfigurationVersion" -Default "")
+                    dotenvText = Read-Utf8Text -Path (Join-Path $script:ProjectRoot ".dev.env")
+                }
+            }
+
+            $result.defaulted | Should -Be "PM5"
+            $result.pm4 | Should -Be "PM4"
+            $result.pm5 | Should -Be "PM5"
+            $result.invalidMessage | Should -Match "Use PM4 or PM5"
+            $result.persisted | Should -Be "PM4"
+            $result.dotenvText | Should -Not -Match "BASE_CONFIGURATION_VERSION"
+        } finally {
+            foreach ($name in $envNames) {
+                [Environment]::SetEnvironmentVariable($name, $savedEnv[$name], "Process")
+            }
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "writes run status on successful helper completion" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-status-success-" + [guid]::NewGuid().ToString("N"))
+        $statusPath = Join-Path $tempRoot "status.json"
+        $logPath = Join-Path $tempRoot "console.log"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action help -RunStatusPath $statusPath -RunLogPath $logPath *> $null
+            $LASTEXITCODE | Should -Be 0
+
+            (Test-Path -LiteralPath $statusPath -PathType Leaf) | Should -Be $true
+            $status = Get-Content -Encoding UTF8 -Raw $statusPath | ConvertFrom-Json
+            $status.status | Should -Be "succeeded"
+            $status.action | Should -Be "help"
+            $status.projectRoot | Should -Be ([System.IO.Path]::GetFullPath($tempRoot))
+            [int]$status.exitCode | Should -Be 0
+            $status.runLogPath | Should -Be ([System.IO.Path]::GetFullPath($logPath))
+            $status.errorMessage | Should -Be ""
+            $status.stage | Should -Not -BeNullOrEmpty
+            [int]$status.lastProcessId | Should -Be 0
+            [bool]$status.lastProcessTimedOut | Should -Be $false
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "preserves Cyrillic projectRoot in helper status JSON" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-status-РљРћР Рџ-" + [guid]::NewGuid().ToString("N"))
+        $statusPath = Join-Path $tempRoot "status.json"
+        $logPath = Join-Path $tempRoot "console.log"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action help -RunStatusPath $statusPath -RunLogPath $logPath *> $null
+            $LASTEXITCODE | Should -Be 0
+
+            $status = Get-Content -Encoding UTF8 -Raw $statusPath | ConvertFrom-Json
+            $status.status | Should -Be "succeeded"
+            $status.projectRoot | Should -Be ([System.IO.Path]::GetFullPath($tempRoot))
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "writes run status on failed helper completion" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-status-failure-" + [guid]::NewGuid().ToString("N"))
+        $statusPath = Join-Path $tempRoot "status.json"
+        $logPath = Join-Path $tempRoot "console.log"
+        $stdoutPath = Join-Path $tempRoot "stdout.log"
+        $stderrPath = Join-Path $tempRoot "stderr.log"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", $HelperPath,
+                "-ProjectRoot", $tempRoot,
+                "-Action", "validate",
+                "-RunStatusPath", $statusPath,
+                "-RunLogPath", $logPath
+            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+            $process.ExitCode | Should -Be 1
+
+            (Test-Path -LiteralPath $statusPath -PathType Leaf) | Should -Be $true
+            $status = Get-Content -Encoding UTF8 -Raw $statusPath | ConvertFrom-Json
+            $status.status | Should -Be "failed"
+            $status.action | Should -Be "validate"
+            $status.projectRoot | Should -Be ([System.IO.Path]::GetFullPath($tempRoot))
+            [int]$status.exitCode | Should -Be 1
+            $status.runLogPath | Should -Be ([System.IO.Path]::GetFullPath($logPath))
+            $status.errorMessage | Should -Not -BeNullOrEmpty
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "writes failed launcher status when helper exits without terminal status" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-launcher-РљРћР Рџ-" + [guid]::NewGuid().ToString("N"))
+        $fakeHelperPath = Join-Path $tempRoot "fake-helper.ps1"
+        $stdoutPath = Join-Path $tempRoot "stdout.log"
+        $stderrPath = Join-Path $tempRoot "stderr.log"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $fakeHelperPath -Encoding UTF8 -Value @'
+param(
+    [string]$ProjectRoot,
+    [string]$RunStatusPath,
+    [string]$RunLogPath,
+    [string]$Action,
+    [string]$InitMode
+)
+Write-Host "fake helper exits without status"
+exit 7
+'@
+
+            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", $LauncherPath,
+                "-ProjectRoot", $tempRoot,
+                "-HelperPath", $fakeHelperPath,
+                "-PollIntervalMilliseconds", "50",
+                "-StatusStartTimeoutSeconds", "1",
+                "-MaxWaitSeconds", "10",
+                "--",
+                "-Action", "init-project",
+                "-InitMode", "configured"
+            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+
+            $process.ExitCode | Should -Be 7
+            $runDir = Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\runs") -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            $status = Get-Content -Encoding UTF8 -Raw (Join-Path $runDir.FullName "status.json") | ConvertFrom-Json
+            $status.status | Should -Be "failed"
+            $status.projectRoot | Should -Be ([System.IO.Path]::GetFullPath($tempRoot))
+            [int]$status.exitCode | Should -Be 7
+            $status.stage | Should -Be "launcher.helper-exited"
+            $status.errorMessage | Should -Match "before writing a terminal status"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "times out launcher, writes failed status, and removes current-run Git index lock" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-launcher-timeout-" + [guid]::NewGuid().ToString("N"))
+        $fakeHelperPath = Join-Path $tempRoot "fake-helper.ps1"
+        $stdoutPath = Join-Path $tempRoot "stdout.log"
+        $stderrPath = Join-Path $tempRoot "stderr.log"
+        $lockPath = Join-Path $tempRoot ".git\index.lock"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $fakeHelperPath -Encoding UTF8 -Value @'
+param(
+    [string]$ProjectRoot,
+    [string]$RunStatusPath,
+    [string]$RunLogPath,
+    [string]$Action
+)
+& git -C $ProjectRoot init *> $null
+Set-Content -LiteralPath (Join-Path $ProjectRoot ".git\index.lock") -Encoding ASCII -Value "created-by-timeout-test"
+Start-Sleep -Seconds 20
+'@
+
+            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", $LauncherPath,
+                "-ProjectRoot", $tempRoot,
+                "-HelperPath", $fakeHelperPath,
+                "-PollIntervalMilliseconds", "50",
+                "-StatusStartTimeoutSeconds", "1",
+                "-MaxWaitSeconds", "5",
+                "--",
+                "-Action", "init-project"
+            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+
+            $process.ExitCode | Should -Be 124
+            $runDir = Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\runs") -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            $status = Get-Content -Encoding UTF8 -Raw (Join-Path $runDir.FullName "status.json") | ConvertFrom-Json
+            $status.status | Should -Be "failed"
+            [int]$status.exitCode | Should -Be 124
+            $status.stage | Should -Be "launcher.timeout"
+            $status.errorMessage | Should -Match "timed out after 5 seconds"
+            if ($status.errorMessage -match "Removed Git index lock") {
+                (Test-Path -LiteralPath $lockPath -PathType Leaf) | Should -Be $false
+            } else {
+                $status.errorMessage | Should -Match "git.exe is still running"
+                (Test-Path -LiteralPath $lockPath -PathType Leaf) | Should -Be $true
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "skips init baseline dump commit when the dump is already committed" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-baseline-dump-skip-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "<dump />"
+            & git -C $tempRoot add src/cf/ConfigDumpInfo.xml
+            & git -C $tempRoot commit -m "baseline dump" *> $null
+
+            $commitBefore = ((& git -C $tempRoot rev-parse HEAD).Trim())
+            $committed = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Commit-BaselineDumpIfNeeded -Message "sync: export 1C configuration from source infobase" -ExportPath "src/cf"
+            }
+
+            $committed | Should -Be $false
+            ((& git -C $tempRoot rev-parse HEAD).Trim()) | Should -Be $commitBefore
+            ((& git -C $tempRoot diff --cached --name-only) -join [Environment]::NewLine) | Should -Be ""
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "fails init baseline dump commit when no baseline dump is committed" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-baseline-dump-missing-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Other.xml") -Encoding UTF8 -Value "<other />"
+            & git -C $tempRoot add src/cf/Other.xml
+            & git -C $tempRoot commit -m "other dump file" *> $null
+
+            {
+                & {
+                    . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    Commit-BaselineDumpIfNeeded -Message "sync: export 1C configuration from source infobase" -ExportPath "src/cf"
+                }
+            } | Should -Throw "*Expected files from the 1C configuration dump*"
+
+            ((& git -C $tempRoot rev-list --count HEAD).Trim()) | Should -Be "1"
+            ((& git -C $tempRoot diff --cached --name-only) -join [Environment]::NewLine) | Should -Be ""
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "accepts empty 1C dump log when dump artifacts exist" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-empty-dump-log-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+
+                function Get-ExportPath {
+                    return "src/cf"
+                }
+
+                function Get-SourceUsesRepository {
+                    return $false
+                }
+
+                function Get-SourceInfoBasePath {
+                    return (Join-Path $script:ProjectRoot "source-base")
+                }
+
+                function Get-InfoBaseKind {
+                    return "file"
+                }
+
+                function Invoke-Designer {
+                    param(
+                        [string]$InfoBasePath,
+                        [string]$InfoBaseKind,
+                        [string[]]$DesignerArgs
+                    )
+
+                    $dumpIndex = [Array]::IndexOf($DesignerArgs, "/DumpConfigToFiles")
+                    if ($dumpIndex -lt 0 -or ($dumpIndex + 1) -ge $DesignerArgs.Count) {
+                        throw "Dump path was not passed to Invoke-Designer."
+                    }
+                    $dumpPath = [string]$DesignerArgs[$dumpIndex + 1]
+                    New-Item -ItemType Directory -Force -Path $dumpPath | Out-Null
+                    Write-Utf8Text -Path (Join-Path $dumpPath "ConfigDumpInfo.xml") -Value "<dump />`n"
+                    Write-Utf8Text -Path (Join-Path $dumpPath "Configuration.xml") -Value "<configuration />`n"
+                    $script:LastLogPath = Join-Path $script:ProjectRoot "empty-1c.log"
+                    Write-Utf8Text -Path $script:LastLogPath -Value ""
+                    return $script:LastLogPath
+                }
+
+                Dump-ConfigToFiles
+            }
+
+            $result.exportPath | Should -Be "src/cf"
+            (Get-Item -LiteralPath $result.logPath).Length | Should -Be 0
+            (Test-Path -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -PathType Leaf) | Should -Be $true
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
