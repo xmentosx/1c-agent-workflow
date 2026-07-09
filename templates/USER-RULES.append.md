@@ -16,7 +16,7 @@ Search hygiene: do not read ignored runtime folders such as `.agent-1c/runs/`, `
 
 Use the vibecoding1c MCP helper request for setup/status/update/selection and client config. Do not use upstream `/installmcp`, `/updatemcp`, or `/checkmcp`; ITL owns selected endpoints and removes duplicates. Vanessa MCP is separate authoring/debugging tooling; external entries are preserved. Do not paste keys into chat/tracked files or expose a Kilo slash command for vibecoding1c MCP.
 
-In `itldev/*`, prefer ROCTUP MCP for data. Use filtered `get_metadata` before `execute_query`; keep limits `<= 50` and `<= 100`. Never call `execute_code`, `restart_1c_session`, or `close_1c_session` unless requested.
+In `itldev/*`, prefer ROCTUP MCP for data. Start it only for a concrete data exploration operation with `start-roctup-mcp`, use filtered `get_metadata` before `execute_query`, keep limits `<= 50` and `<= 100`, then stop it with `stop-roctup-mcp`. Never call `execute_code`, `restart_1c_session`, or `close_1c_session` unless requested.
 
 For PM5 product logic, architecture, workflows, terminology, permissions, reports, integrations, or acceptance tests, use `.agents/skills/product-docs/SKILL.md` and search `BookStack-product-docs-mcp` before answering, exploring, planning, proposing, or changing behavior. BookStack is advisory, not authoritative; verify against code, tests, current 1C metadata, and available MCP evidence. Cite URLs/`updated_at`. On conflict, report `BookStack says`, `Code/MCP currently shows`, and `Decision`.
 

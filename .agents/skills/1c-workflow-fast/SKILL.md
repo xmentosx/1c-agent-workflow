@@ -49,7 +49,7 @@ Use direct `agent-1c.ps1` for branch creation only in non-interactive automation
 
 New branch commands run from `master` and create a sibling Git worktree by default. Report the printed worktree path and tell the developer to open a separate Codex/Kilo/IDE window there. Use `-UseCurrentWorktree` only when explicitly requested.
 
-New branch commands auto-start branch-local ROCTUP and Vanessa MCP and write ignored Codex/Kilo MCP client config. Report failures as non-blocking unless the helper exits with an error.
+New branch commands prepare branch-local ROCTUP and Vanessa MCP as stopped/ready; they do not start MCP or open the branch infobase. For data exploration, run `start-roctup-mcp`, use the MCP, then run `stop-roctup-mcp`. For Vanessa authoring/debugging, run `start-vanessa-mcp`, use the MCP, then run `stop-vanessa-mcp`.
 
 For `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`, and explicit `close-dev-branch`, do not ask for a branch name; the helper infers current `itldev/<name>`.
 

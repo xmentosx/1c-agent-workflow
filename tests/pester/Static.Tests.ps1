@@ -1288,7 +1288,7 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match "VAExtension"
 
         $devEnvTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")
-        foreach ($name in @("ROCTUP_MCP_ENABLED=true", "ROCTUP_MCP_AUTO_START=true", "ROCTUP_MCP_REQUIRED=false", "ROCTUP_MCP_INSTALL_ROOT=.agent-1c/tools/roctup-mcp-toolkit", "ROCTUP_MCP_PORT_RANGE=6003..6102", "VANESSA_MCP_AUTO_START=true")) {
+        foreach ($name in @("ROCTUP_MCP_ENABLED=true", "ROCTUP_MCP_AUTO_START=false", "ROCTUP_MCP_REQUIRED=false", "ROCTUP_MCP_INSTALL_ROOT=.agent-1c/tools/roctup-mcp-toolkit", "ROCTUP_MCP_PORT_RANGE=6003..6102", "VANESSA_MCP_AUTO_START=false")) {
             $devEnvTemplate | Should -Match ([regex]::Escape($name))
         }
 
@@ -6872,7 +6872,7 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
-    It "creates a sibling worktree branch by default without switching the main folder" {
+    It "creates a sibling worktree branch without starting branch MCP even when legacy auto-start is true" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-worktree-test-" + [guid]::NewGuid().ToString("N"))
         $worktreeRoot = "$tempRoot-worktrees"
         $worktreePath = Join-Path $worktreeRoot "fixture-branch"
@@ -6897,8 +6897,8 @@ if (`$?) { exit 0 } else { exit 1 }
                 "IB_PASSWORD=",
                 "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip",
                 "WEB_PUBLISH_BY_DEFAULT=false",
-                "ROCTUP_MCP_AUTO_START=false",
-                "VANESSA_MCP_AUTO_START=false"
+                "ROCTUP_MCP_AUTO_START=true",
+                "VANESSA_MCP_AUTO_START=true"
             ) -join [Environment]::NewLine
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value $devEnv -Encoding UTF8
 
@@ -6937,6 +6937,21 @@ if (`$?) { exit 0 } else { exit 1 }
             $state.publicationStatus | Should -Be "disabled"
             $state.publicationMode | Should -Be "none"
             $state.publicationUrl | Should -Be ""
+            $state.roctupMcpStatus | Should -Be "stopped"
+            [int]$state.roctupMcpPort | Should -Be 0
+            $state.roctupMcpPid | Should -Be ""
+            $state.roctupMcpUrl | Should -Be ""
+            $state.roctupMcpHealthUrl | Should -Be ""
+            $state.vanessaMcpStatus | Should -Be "stopped"
+            [int]$state.vanessaMcpPort | Should -Be 0
+            $state.vanessaMcpPid | Should -Be ""
+            $state.vanessaMcpUrl | Should -Be ""
+            $codexText = Get-Content -Encoding UTF8 -Raw (Join-Path $worktreePath ".codex\config.toml")
+            $codexText | Should -Not -Match "itl-.*-roctup"
+            $codexText | Should -Not -Match "VanessaAutomation-"
+            $kiloText = Get-Content -Encoding UTF8 -Raw (Join-Path $worktreePath ".kilo\kilo.json")
+            $kiloText | Should -Not -Match "itl-.*-roctup"
+            $kiloText | Should -Not -Match "VanessaAutomation-"
             $launcherText = Get-Content -Encoding UTF8 -Raw (Join-Path $env:APPDATA "1C\1CEStart\ibases.v8i")
             $launcherText | Should -Match "(?m)^\[Fixture Branch\]\r?$"
             $launcherText | Should -Match ("(?m)^Folder={0}\r?$" -f [regex]::Escape($expectedLauncherFolder))
@@ -6944,11 +6959,17 @@ if (`$?) { exit 0 } else { exit 1 }
 
             $statusOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action status 2>&1
             $LASTEXITCODE | Should -Be 0
-            ($statusOutput -join [Environment]::NewLine) | Should -Match "Active development worktrees: 1"
+            $statusText = $statusOutput -join [Environment]::NewLine
+            $statusText | Should -Match "Active development worktrees: 1"
+            $statusText | Should -Match "ROCTUP MCP: stopped"
+            $statusText | Should -Match "Vanessa MCP: stopped"
 
             $listOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action list-dev-branches 2>&1
             $LASTEXITCODE | Should -Be 0
-            ($listOutput -join [Environment]::NewLine) | Should -Match ([regex]::Escape([System.IO.Path]::GetFullPath($worktreePath)))
+            $listText = $listOutput -join [Environment]::NewLine
+            $listText | Should -Match ([regex]::Escape([System.IO.Path]::GetFullPath($worktreePath)))
+            $listText | Should -Match "ROCTUP MCP: stopped"
+            $listText | Should -Match "Vanessa MCP: stopped"
 
             $switchOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action switch-dev-branch -DevBranchName "Fixture Branch" 2>&1
             $LASTEXITCODE | Should -Be 0

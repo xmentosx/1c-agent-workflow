@@ -24,17 +24,17 @@ Actions:
 
 - `install-roctup-mcp`: download/cache the OS-specific release EPF and upstream skills under ignored `.agent-1c/tools/roctup-mcp-toolkit`.
 - `update-roctup-mcp`: refresh the cached EPF/skills and dependency lock in `fresh` mode.
-- `start-roctup-mcp`: start the current branch embedded server, allocate a branch-local port, and write Codex/Kilo client config.
+- `start-roctup-mcp`: start the current branch embedded server on demand, allocate a branch-local port, and write Codex/Kilo client config.
 - `roctup-mcp-status`: inspect port/PID/URL/log/error.
 - `stop-roctup-mcp`: stop only the current branch server.
 
 Rules:
 
-1. `new-dev-branch` and `new-extension-dev-branch` auto-start ROCTUP by default when `ROCTUP_MCP_ENABLED=true` and `ROCTUP_MCP_AUTO_START=true`.
+1. `new-dev-branch` and `new-extension-dev-branch` prepare ROCTUP as stopped/ready and do not open the branch infobase through MCP, even if legacy `.dev.env` values still set `ROCTUP_MCP_AUTO_START=true`.
 2. Ports come from `ROCTUP_MCP_PORT_RANGE` and are reserved through the shared ITL port registry plus active branch states.
 3. Branch client names are unique, for example `itl-<project>-<branch>-roctup`.
-4. Failures are non-blocking unless `ROCTUP_MCP_REQUIRED=true`; status/error are written to branch state.
-5. Agent data exploration should start with filtered `get_metadata`, then bounded `execute_query`. Do not call `execute_code`, `restart_1c_session`, or `close_1c_session` without explicit user request.
+4. Start ROCTUP only for a concrete data exploration operation, then stop it with `stop-roctup-mcp` after use so the branch infobase can be updated or manipulated.
+5. Start data exploration with filtered `get_metadata`, then bounded `execute_query`. Do not call `execute_code`, `restart_1c_session`, or `close_1c_session` without explicit user request.
 6. Do not load full ROCTUP references eagerly. Cached upstream ROCTUP skills are read only on demand from ignored `.agent-1c/tools/roctup-mcp-toolkit/skills`.
 
 ## vibecoding1c MCP
@@ -68,12 +68,12 @@ Do not use upstream `/installmcp`, `/updatemcp`, or `/checkmcp` as the normal MC
 
 ## Vanessa MCP
 
-Vanessa MCP is always branch-local and starts by default in new `itldev/*` worktrees. Run one server per worktree; do not run a shared Vanessa MCP from `master`.
+Vanessa MCP is always branch-local and starts on demand in `itldev/*` worktrees. New branches prepare the state but leave the server stopped; run one server per worktree only while authoring or debugging, and do not run a shared Vanessa MCP from `master`.
 
 Actions:
 
 - `install-vanessa-mcp`: install branch-local CFE tooling into the current branch infobase.
-- `start-vanessa-mcp`: start Vanessa `runMcp` on a branch-local port and write Codex/Kilo entries.
+- `start-vanessa-mcp`: install missing Vanessa MCP dependencies if needed, start Vanessa `runMcp` on a branch-local port, and write Codex/Kilo entries.
 - `vanessa-mcp-status`: inspect branch-local port/PID/URL.
 - `stop-vanessa-mcp`: stop only the current branch server.
 
@@ -86,6 +86,7 @@ Rules:
 5. Already running Kilo sessions may not reload MCP config automatically; if the server is not visible after start, reload or restart Kilo Code.
 6. Do not write Vanessa MCP into global Codex, VS Code, Cline, Roo, or Continue configs automatically.
 7. Do not generate Vanessa MCP as a visible Kilo slash command.
+8. Stop Vanessa MCP with `stop-vanessa-mcp` after the authoring/debugging operation; final verification remains `/itl-check`, not MCP.
 
 ## Legacy Branch Data MCP
 

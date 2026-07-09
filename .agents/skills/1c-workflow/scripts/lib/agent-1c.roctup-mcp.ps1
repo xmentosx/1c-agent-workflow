@@ -38,16 +38,8 @@ function Get-RoctupMcpEnabled {
     return (ConvertTo-YesNoBool -Value (Get-EnvValue -Name "ROCTUP_MCP_ENABLED" -Default "true") -Default $true)
 }
 
-function Get-RoctupMcpAutoStart {
-    return (ConvertTo-YesNoBool -Value (Get-EnvValue -Name "ROCTUP_MCP_AUTO_START" -Default "true") -Default $true)
-}
-
 function Get-RoctupMcpRequired {
     return (ConvertTo-YesNoBool -Value (Get-EnvValue -Name "ROCTUP_MCP_REQUIRED" -Default "false") -Default $false)
-}
-
-function Get-VanessaMcpAutoStart {
-    return (ConvertTo-YesNoBool -Value (Get-EnvValue -Name "VANESSA_MCP_AUTO_START" -Default "true") -Default $true)
 }
 
 function Get-RoctupMcpInstallRoot {
@@ -793,57 +785,45 @@ function Invoke-DevBranchDefaultMcpSetup {
     param([object]$State)
 
     $state = $State
-    if (Get-RoctupMcpAutoStart) {
+    Write-Section "Prepare branch-local MCP"
+    $roctupRuntime = Get-RoctupMcpRuntimeInfo -State $state
+    if ($roctupRuntime.processAlive) {
         try {
-            Write-Section "Auto-start ROCTUP MCP"
-            $state = Start-RoctupMcpForState -State $state -Quiet
-        } catch {
-            $message = $_.Exception.Message
-            Write-Warning "ROCTUP MCP auto-start failed. $message"
-            Update-DevBranchState -State $state -Updates @{
-                roctupMcpStatus = "failed"
-                roctupMcpError = $message
-                roctupMcpUpdatedAt = (Get-Date).ToString("o")
-            }
-            if (Get-RoctupMcpRequired) {
-                throw
-            }
-            $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
-        }
-    } else {
-        Update-DevBranchState -State $state -Updates @{
-            roctupMcpStatus = "skipped"
-            roctupMcpError = ""
-            roctupMcpUpdatedAt = (Get-Date).ToString("o")
-        }
-        $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
-    }
-
-    if (Get-VanessaMcpAutoStart) {
-        try {
-            Write-Section "Auto-start Vanessa MCP"
-            Start-VanessaMcp
+            Stop-RoctupMcpForState -State $state -Quiet | Out-Null
             $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
         } catch {
-            $message = $_.Exception.Message
-            Write-Warning "Vanessa MCP auto-start failed. $message"
-            Update-DevBranchState -State $state -Updates @{
-                vanessaMcpStatus = "failed"
-                vanessaMcpError = $message
-                vanessaMcpUpdatedAt = (Get-Date).ToString("o")
-            }
-            $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
+            Write-Warning "Could not stop existing ROCTUP MCP during branch preparation. $($_.Exception.Message)"
         }
-    } else {
-        Update-DevBranchState -State $state -Updates @{
-            vanessaMcpStatus = "skipped"
-            vanessaMcpError = ""
-            vanessaMcpUpdatedAt = (Get-Date).ToString("o")
-        }
-        $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
     }
+    $vanessaRuntime = Get-VanessaMcpRuntimeInfo -State $state
+    if ($vanessaRuntime.processAlive) {
+        try {
+            Stop-VanessaMcpForState -State $state -Quiet | Out-Null
+            $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
+        } catch {
+            Write-Warning "Could not stop existing Vanessa MCP during branch preparation. $($_.Exception.Message)"
+        }
+    }
+    Update-DevBranchState -State $state -Updates @{
+        roctupMcpPort = 0
+        roctupMcpUrl = ""
+        roctupMcpHealthUrl = ""
+        roctupMcpPid = ""
+        roctupMcpStatus = "stopped"
+        roctupMcpError = ""
+        roctupMcpUpdatedAt = (Get-Date).ToString("o")
+        vanessaMcpPort = 0
+        vanessaMcpUrl = ""
+        vanessaMcpPid = ""
+        vanessaMcpStatus = "stopped"
+        vanessaMcpError = ""
+        vanessaMcpUpdatedAt = (Get-Date).ToString("o")
+    }
+    $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
     Write-ItlBranchMcpClientConfig -State $state
+    Write-Host "ROCTUP MCP is ready for on-demand start with start-roctup-mcp."
+    Write-Host "Vanessa MCP is ready for on-demand start with start-vanessa-mcp."
     return (Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default ""))
 }
 
