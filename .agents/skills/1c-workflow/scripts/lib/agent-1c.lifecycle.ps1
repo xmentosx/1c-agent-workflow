@@ -1392,6 +1392,13 @@ function Sync-KiloItlCommandSurface {
     if (-not (Test-Path -LiteralPath $templateRoot -PathType Container -ErrorAction SilentlyContinue)) {
         throw "Workflow package Kilo command templates directory is missing: .agents\skills\1c-workflow\kilo-command-templates"
     }
+    $dormantCommandFiles = @(Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "itl*.md" -ErrorAction SilentlyContinue)
+    if ($dormantCommandFiles.Count -gt 0) {
+        $relative = @($dormantCommandFiles | ForEach-Object {
+            $_.FullName.Substring($templateRoot.Length + 1)
+        })
+        throw "Workflow package Kilo command source templates must use .md.template, not .md: $($relative -join ', ')"
+    }
 
     $surface = Get-KiloItlCommandSurface
     $targetDir = Join-Path $script:ProjectRoot ".kilo\commands"
@@ -1413,8 +1420,9 @@ function Sync-KiloItlCommandSurface {
         if (-not (Test-Path -LiteralPath $sourceDir -PathType Container -ErrorAction SilentlyContinue)) {
             throw "Workflow package Kilo command template set is missing: $sourceDir"
         }
-        foreach ($sourceFile in @(Get-ChildItem -LiteralPath $sourceDir -File -Filter "itl*.md" -ErrorAction Stop)) {
-            Copy-Item -LiteralPath $sourceFile.FullName -Destination (Join-Path $targetDir $sourceFile.Name) -Force
+        foreach ($sourceFile in @(Get-ChildItem -LiteralPath $sourceDir -File -Filter "itl*.md.template" -ErrorAction Stop)) {
+            $targetName = $sourceFile.Name.Substring(0, $sourceFile.Name.Length - ".template".Length)
+            Copy-Item -LiteralPath $sourceFile.FullName -Destination (Join-Path $targetDir $targetName) -Force
         }
     }
 

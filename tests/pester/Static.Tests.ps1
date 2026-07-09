@@ -750,18 +750,19 @@ Describe "1C agent workflow static checks" {
     It "has context-specific Kilo command templates for the public surface" {
         $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates"
         $expected = @{
-            common = @("itl.md", "itl-status.md")
-            master = @("itl-new-config-branch.md", "itl-new-extension-branch.md", "itl-update-workflow.md")
-            dev = @("itl-check.md", "itl-refresh.md", "itl-result.md")
+            common = @("itl.md.template", "itl-status.md.template")
+            master = @("itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-update-workflow.md.template")
+            dev = @("itl-check.md.template", "itl-refresh.md.template", "itl-result.md.template")
         }
 
         foreach ($setName in $expected.Keys) {
             $setPath = Join-Path $templateRoot $setName
             (Test-Path -LiteralPath $setPath -PathType Container) | Should -Be $true
-            $actual = @(Get-ChildItem -LiteralPath $setPath -File -Filter "itl*.md" | Sort-Object Name | Select-Object -ExpandProperty Name)
+            $actual = @(Get-ChildItem -LiteralPath $setPath -File -Filter "itl*.md.template" | Sort-Object Name | Select-Object -ExpandProperty Name)
             $actual | Should -Be @($expected[$setName] | Sort-Object)
         }
 
+        @(Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "itl*.md" -ErrorAction SilentlyContinue).Count | Should -Be 0
         @(Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "opsx*.md" -ErrorAction SilentlyContinue).Count | Should -Be 0
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands") -PathType Container) | Should -Be $true
         @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".kilo\commands") -File -Filter "itl*.md" -ErrorAction SilentlyContinue).Count | Should -Be 0
@@ -774,7 +775,7 @@ Describe "1C agent workflow static checks" {
         $actionPattern = [regex]::Escape($quote) + "(.+?)" + [regex]::Escape($quote)
         $allowedActions = @([regex]::Matches($match.Groups[1].Value, $actionPattern) | ForEach-Object { $_.Groups[1].Value })
 
-        $wrapperFiles = Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md"
+        $wrapperFiles = Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template"
         foreach ($file in $wrapperFiles) {
             $text = Get-Content -Encoding UTF8 -Raw $file.FullName
             $actionMatch = [regex]::Match($text, "-Action\s+(\S+)")
@@ -836,7 +837,7 @@ Describe "1C agent workflow static checks" {
     }
 
     It "keeps the common /itl wrapper as a structured helper panel" {
-        $wrapperPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md"
+        $wrapperPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md.template"
         $wrapperText = Get-Content -Encoding UTF8 -Raw $wrapperPath
 
         $wrapperText | Should -Match "-Action\s+help"
@@ -949,7 +950,7 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match "function Invoke-DevBranchCheck"
         $HelperText | Should -Match "function Verify-DevBranch"
 
-        $wrapperPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md"
+        $wrapperPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md.template"
         (Test-Path -LiteralPath $wrapperPath -PathType Leaf) | Should -Be $true
         $wrapperText = Get-Content -Encoding UTF8 -Raw $wrapperPath
         $wrapperText | Should -Match "-Action\s+check-dev-branch"
@@ -1150,7 +1151,7 @@ Describe "1C agent workflow static checks" {
             "/itl-close"
         )
 
-        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
+        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
         foreach ($command in $advancedCommands) {
             $kiloTemplateText | Should -Not -Match ([regex]::Escape($command))
         }
@@ -1375,7 +1376,7 @@ Describe "1C agent workflow static checks" {
 
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-vibecoding1c-mcp.md") -PathType Leaf) | Should -Be $false
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-mcp.md") -PathType Leaf) | Should -Be $false
-        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
+        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
         $kiloTemplateText | Should -Not -Match "/itl-vibecoding1c-mcp"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")) | Should -Match "vibecoding1c-mcp-setup"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")) | Should -Not -Match "/itl-vibecoding1c-mcp"
@@ -3779,7 +3780,7 @@ enabled = true
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_MCP_URL"
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-vanessa-mcp.md") -PathType Leaf) | Should -Be $false
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")) | Should -Match "reload or restart Kilo Code"
-        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
+        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
         $kiloTemplateText | Should -Not -Match "/itl-vanessa-mcp"
     }
 
@@ -3873,7 +3874,7 @@ enabled = true
         $HelperText | Should -Match "1c-data-mcp"
 
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-update-rules.md") -PathType Leaf) | Should -Be $false
-        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
+        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
         $kiloTemplateText | Should -Not -Match "update-ai-rules"
 
         $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
@@ -3961,7 +3962,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $lockTemplate.dependencies.workflowPackage.ref | Should -Be "master"
         $lockTemplate.dependencies.workflowPackage.PSObject.Properties.Name | Should -Contain "updatedAt"
 
-        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
+        $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
         $kiloTemplateText | Should -Match "update-workflow"
         $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
         $advancedText | Should -Match "update-workflow"
@@ -4373,6 +4374,8 @@ enabled = true
             Set-Content -LiteralPath (Join-Path $projectRoot "DEV-BRANCH-DEVELOPMENT.ru.md") -Encoding UTF8 -Value "old branch guide"
             Set-Content -LiteralPath (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.ru.md") -Encoding UTF8 -Value "old vanessa guide"
             Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\stale.txt") -Encoding UTF8 -Value "stale"
+            New-Item -ItemType Directory -Force -Path (Join-Path $projectRoot ".agents\skills\1c-workflow\kilo-command-templates\master") | Out-Null
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-stale.md") -Encoding UTF8 -Value "stale command-shaped template"
             Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow-fast\stale.txt") -Encoding UTF8 -Value "stale"
             Set-Content -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-old.md") -Encoding UTF8 -Value "stale command"
             Set-Content -LiteralPath (Join-Path $projectRoot ".kilo\commands\custom.md") -Encoding UTF8 -Value "custom command"
@@ -4418,6 +4421,7 @@ local after
 
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\stale.txt") -PathType Leaf) | Should -Be $false
+            @(Get-ChildItem -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md" -ErrorAction SilentlyContinue).Count | Should -Be 0
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow-fast\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\product-docs\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-roctup-1c-data\SKILL.md") -PathType Leaf) | Should -Be $true
@@ -4490,8 +4494,8 @@ local after
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow-fast\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\product-docs\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\itl-roctup-1c-data\SKILL.md") -PathType Leaf) | Should -Be $true
-            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md") -PathType Leaf) | Should -Be $true
-            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md.template") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\event-log-exporter\EventLogExporter.xml") -PathType Leaf) | Should -Be $true
             @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\auto-update") -File -Filter "*.epf").Count | Should -Be 2
             (Test-Path -LiteralPath (Join-Path $tempRoot "templates\project.json") -PathType Leaf) | Should -Be $true
@@ -5240,10 +5244,10 @@ url = "http://localhost:9999/mcp"
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1",
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
-            ".agents/skills/1c-workflow/kilo-command-templates/common/itl.md",
-            ".agents/skills/1c-workflow/kilo-command-templates/master/itl-new-config-branch.md",
-            ".agents/skills/1c-workflow/kilo-command-templates/master/itl-update-workflow.md",
-            ".agents/skills/1c-workflow/kilo-command-templates/dev/itl-result.md",
+            ".agents/skills/1c-workflow/kilo-command-templates/common/itl.md.template",
+            ".agents/skills/1c-workflow/kilo-command-templates/master/itl-new-config-branch.md.template",
+            ".agents/skills/1c-workflow/kilo-command-templates/master/itl-update-workflow.md.template",
+            ".agents/skills/1c-workflow/kilo-command-templates/dev/itl-result.md.template",
             "install-agent-1c-workflow.ps1",
             "scripts/test.ps1",
             "templates/AGENTS.append.md",
@@ -5746,12 +5750,12 @@ url = "http://localhost:9999/mcp"
         }
 
         $longTemplatePaths = @(
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md",
-            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-update-workflow.md"
+            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-update-workflow.md.template"
         ) | ForEach-Object { Join-Path $RepoRoot $_ }
 
         foreach ($path in $longTemplatePaths) {
@@ -5763,8 +5767,8 @@ url = "http://localhost:9999/mcp"
         }
 
         $shortTemplatePaths = @(
-            ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md",
-            ".agents\skills\1c-workflow\kilo-command-templates\common\itl-status.md"
+            ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\common\itl-status.md.template"
         ) | ForEach-Object { Join-Path $RepoRoot $_ }
 
         foreach ($path in $shortTemplatePaths) {
@@ -6785,8 +6789,8 @@ if (`$?) { exit 0 } else { exit 1 }
     }
 
     It "routes interactive branch creation through the monitored launcher" {
-        $configBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md")
-        $extensionBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md")
+        $configBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template")
+        $extensionBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template")
         $fastSkill = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md")
 
         foreach ($text in @($configBranchTemplate, $extensionBranchTemplate, $fastSkill)) {
