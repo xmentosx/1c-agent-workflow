@@ -56,6 +56,8 @@ Do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly by def
 
 Long lifecycle runs need `timeout_ms >= 1800000`; monitored init should use an outer timeout above 3600 seconds. Do not use `120000 ms`. They may run 1C Designer/Enterprise (`/LoadConfigFromFiles ... /UpdateDBCfg`). `status`/`help` do not need the long timeout.
 
+New branch creation with the default `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=manual-confirm` must use `scripts/run-agent-1c-window.ps1` so the unsafe-action protection confirmation is visible. Direct `agent-1c.ps1 -Action new-dev-branch` or `new-extension-dev-branch` is only for explicit non-interactive automation with `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip`.
+
 Ask setup questions only when the helper cannot collect them. Store secrets only in `.dev.env` or environment variables. Keep ITL overlay rules in `USER-RULES.md`; do not append to upstream-managed `AGENTS.md` when it already points there.
 
 Use sibling Git worktrees for new development branches by default and leave the main folder on `master`. Development branch changes must load only into the copied branch infobase, never directly into the source infobase. Stop on unexpected dirty Git state before worktree creation, legacy switching, copying bases, dumping config files, or running 1C Designer.

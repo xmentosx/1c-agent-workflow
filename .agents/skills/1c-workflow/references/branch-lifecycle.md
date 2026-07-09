@@ -14,6 +14,8 @@ Use this reference for creating, refreshing, switching, listing, or maintaining 
 
 Goal: create an isolated development branch worktree plus isolated copied infobase.
 
+Use the monitored launcher by default when `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=manual-confirm` so the unsafe-action protection confirmation is visible. Direct `agent-1c.ps1` branch creation is only for explicit non-interactive automation with `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip`.
+
 1. Check the current Git worktree is clean and the command is run from `master`.
 2. Sync/checkout `master` in the main worktree and pull `--ff-only` when a remote/upstream exists.
 3. Create `itldev/<safe-dev-branch-name>` in a sibling worktree unless explicit branch/worktree paths are supplied.

@@ -6478,6 +6478,7 @@ if (`$?) { exit 0 } else { exit 1 }
 
     It "declares manual unsafe action protection confirmation for development branches" {
         $HelperText | Should -Match "function Confirm-DevBranchUnsafeActionProtection"
+        $HelperText | Should -Match "function Assert-DevBranchUnsafeActionProtectionPromptAvailable"
         $HelperText | Should -Match "function Get-DevBranchUnsafeActionProtectionSetup"
         $HelperText | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP"
         $HelperText | Should -Match "manual-confirm"
@@ -6485,7 +6486,9 @@ if (`$?) { exit 0 } else { exit 1 }
         $HelperText | Should -Match "unsafeActionProtectionConfirmed"
         $HelperText | Should -Match "unsafeActionProtectionConfirmedAt"
         $HelperText | Should -Match "unsafeActionProtectionUser"
+        $HelperText | Should -Match "Test-InteractiveInputAvailable"
         $HelperText | Should -Match "Read-Host"
+        $HelperText | Should -Match ([regex]::Escape('$null -eq $answerValue'))
         $HelperText | Should -Match '\[System\.StringComparison\]::OrdinalIgnoreCase'
         $HelperText | Should -Match "Invoke-DesignerInteractive"
         $HelperText | Should -Match "Invoke-VisibleNativeProcessAndWait"
@@ -6493,11 +6496,92 @@ if (`$?) { exit 0 } else { exit 1 }
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")) | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP"
     }
 
+    It "routes interactive branch creation through the monitored launcher" {
+        $configBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md")
+        $extensionBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md")
+        $fastSkill = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md")
+
+        foreach ($text in @($configBranchTemplate, $extensionBranchTemplate, $fastSkill)) {
+            $text | Should -Match "run-agent-1c-window\.ps1"
+            $text | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip"
+        }
+
+        $configBranchTemplate | Should -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action new-dev-branch"))
+        $extensionBranchTemplate | Should -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action new-extension-dev-branch"))
+        $fastSkill | Should -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action new-dev-branch"))
+        $fastSkill | Should -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action new-extension-dev-branch"))
+    }
+
     It "keeps interactive Designer confirmation launch visible" {
         $match = [regex]::Match($HelperText, "(?s)function\s+Invoke-VisibleNativeProcessAndWait\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
         $match.Success | Should -Be $true
         $match.Groups["body"].Value | Should -Match "Start-Process"
         $match.Groups["body"].Value | Should -Not -Match "WindowStyle"
+    }
+
+    It "stops direct non-interactive manual unsafe action confirmation before creating a worktree" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-manual-confirm-test-" + [guid]::NewGuid().ToString("N"))
+        $worktreeRoot = "$tempRoot-worktrees"
+        $worktreePath = Join-Path $worktreeRoot "needs-confirmation"
+        $sourceBase = Join-Path $tempRoot "source-base"
+        $oldAppData = $env:APPDATA
+        $oldUnsafeSetup = [Environment]::GetEnvironmentVariable("DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP", "Process")
+        $oldPrefixedUnsafeSetup = [Environment]::GetEnvironmentVariable("AGENT_1C_DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP", "Process")
+
+        try {
+            [Environment]::SetEnvironmentVariable("DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP", $null, "Process")
+            [Environment]::SetEnvironmentVariable("AGENT_1C_DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP", $null, "Process")
+
+            New-Item -ItemType Directory -Force -Path $sourceBase | Out-Null
+            Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8.1CD") -Value "stub" -Encoding ASCII
+            New-Item -ItemType Directory -Force -Path (Join-Path $sourceBase "1Cv8Log") | Out-Null
+            Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`nappdata/`n" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
+            $devEnv = @(
+                "INFOBASE_KIND=file",
+                "SOURCE_USES_REPOSITORY=false",
+                "SOURCE_INFOBASE_PATH=$sourceBase",
+                "IB_USER=",
+                "IB_PASSWORD=",
+                "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=manual-confirm",
+                "WEB_PUBLISH_BY_DEFAULT=false",
+                "ROCTUP_MCP_AUTO_START=false",
+                "VANESSA_MCP_AUTO_START=false"
+            ) -join [Environment]::NewLine
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value $devEnv -Encoding UTF8
+
+            & git -C $tempRoot init | Out-Null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add .gitignore README.md
+            & git -C $tempRoot commit -m init | Out-Null
+            & git -C $tempRoot branch -M master
+
+            $env:APPDATA = Join-Path $tempRoot "appdata"
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action new-dev-branch -DevBranchName "Needs Confirmation" 2>&1
+            $LASTEXITCODE | Should -Not -Be 0
+            $outputText = $output -join [Environment]::NewLine
+            $outputText | Should -Match "run-agent-1c-window\.ps1"
+            $outputText | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip"
+
+            ((& git -C $tempRoot branch --list "itldev/needs-confirmation") -join "") | Should -Be ""
+            (Test-Path -LiteralPath $worktreePath -ErrorAction SilentlyContinue) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agent-1c\dev-branches\needs-confirmation.json") -PathType Leaf -ErrorAction SilentlyContinue) | Should -Be $false
+        } finally {
+            $env:APPDATA = $oldAppData
+            [Environment]::SetEnvironmentVariable("DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP", $oldUnsafeSetup, "Process")
+            [Environment]::SetEnvironmentVariable("AGENT_1C_DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP", $oldPrefixedUnsafeSetup, "Process")
+            if (Test-Path -LiteralPath $worktreePath -PathType Container -ErrorAction SilentlyContinue) {
+                & git -C $tempRoot worktree remove --force $worktreePath *> $null
+            }
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $worktreeRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $worktreeRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     It "creates a sibling worktree branch by default without switching the main folder" {

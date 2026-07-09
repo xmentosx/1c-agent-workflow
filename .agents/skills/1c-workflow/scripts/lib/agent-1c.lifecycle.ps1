@@ -2237,13 +2237,28 @@ function Register-DevBranchInLauncher {
     }
 }
 
+function Get-DevBranchUnsafeActionProtectionSetupRaw {
+    return (Get-Setting -EnvName "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP" -ConfigName "devBranchUnsafeActionProtectionSetup" -Default "manual-confirm").Trim().ToLowerInvariant()
+}
+
 function Get-DevBranchUnsafeActionProtectionSetup {
-    $value = (Get-Setting -EnvName "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP" -ConfigName "devBranchUnsafeActionProtectionSetup" -Default "manual-confirm").Trim().ToLowerInvariant()
+    $value = Get-DevBranchUnsafeActionProtectionSetupRaw
     if ($value -notin @("manual-confirm", "skip")) {
         throw "Unsupported DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP value: $value. Use manual-confirm or skip."
     }
 
     return $value
+}
+
+function Get-DevBranchUnsafeActionProtectionInteractiveRequiredMessage {
+    return "Подтверждение отключения защиты от опасных действий требует интерактивного ввода. Запустите создание ветки через .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action new-dev-branch -DevBranchName ""<имя-ветки>"" (для расширения используйте -Action new-extension-dev-branch) или явно задайте DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip, если защита уже отключена отдельно."
+}
+
+function Assert-DevBranchUnsafeActionProtectionPromptAvailable {
+    $mode = Get-DevBranchUnsafeActionProtectionSetupRaw
+    if ($mode -eq "manual-confirm" -and -not (Test-InteractiveInputAvailable)) {
+        throw (Get-DevBranchUnsafeActionProtectionInteractiveRequiredMessage)
+    }
 }
 
 function Confirm-DevBranchUnsafeActionProtection {
@@ -2305,7 +2320,11 @@ function Confirm-DevBranchUnsafeActionProtection {
         }
         Write-Host (Get-UnsafeActionProtectionMessage 7)
 
-        $answer = (Read-Host (Get-UnsafeActionProtectionMessage 8)).Trim()
+        $answerValue = Read-Host (Get-UnsafeActionProtectionMessage 8)
+        if ($null -eq $answerValue) {
+            throw (Get-DevBranchUnsafeActionProtectionInteractiveRequiredMessage)
+        }
+        $answer = ([string]$answerValue).Trim()
         if ([string]::Equals($answer, (Get-UnsafeActionProtectionMessage 9), [System.StringComparison]::OrdinalIgnoreCase)) {
             return [pscustomobject]@{
                 mode = $mode
@@ -3062,6 +3081,7 @@ function New-DevBranchCore {
 
     Assert-MasterWorktreeContext -Operation "new development branch"
     Assert-CleanGit
+    Assert-DevBranchUnsafeActionProtectionPromptAvailable
     Checkout-Master
 
     $mainProjectRoot = Get-MainWorktreePath

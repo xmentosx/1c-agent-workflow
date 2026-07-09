@@ -38,12 +38,14 @@ For long lifecycle actions (`new-dev-branch`, `new-extension-dev-branch`, `updat
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action <action>
 ```
 
-For actions that require a branch name:
+For actions that require a branch name and create a new branch, use the monitored launcher so the manual unsafe-action protection confirmation is visible:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-dev-branch -DevBranchName "<dev-branch-name>"
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action new-extension-dev-branch -DevBranchName "<dev-branch-name>"
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action new-dev-branch -DevBranchName "<dev-branch-name>"
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action new-extension-dev-branch -DevBranchName "<dev-branch-name>"
 ```
+
+Use direct `agent-1c.ps1` for branch creation only in non-interactive automation that explicitly sets `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip` after the unsafe-action protection is configured separately.
 
 New branch commands must run from `master` and create a sibling Git worktree by default. Report the printed worktree path and tell the developer to open a separate Codex/Kilo/IDE window there. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
 
