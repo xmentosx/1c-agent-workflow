@@ -1,38 +1,38 @@
 ---
 name: 1c-workflow-fast
-description: Run routine 1C Agent Workflow lifecycle commands through the PowerShell helper with minimal context loading. Use for status, ROCTUP/Vanessa branch MCP status or manual start/stop, vibecoding1c MCP setup/status, configuration or extension development branch creation from master, branch verification, refresh, and CF/CFE result export when the project is already installed.
+description: Run routine 1C Agent Workflow commands through the PowerShell helper with minimal context loading. Use for status, ROCTUP/Vanessa MCP status/start/stop, vibecoding1c MCP setup/status, config or extension branch creation from master, branch verification, refresh, and CF/CFE export in installed projects.
 ---
 
 # 1C Workflow Fast
 
 ## Purpose
 
-Use this skill for routine lifecycle commands when the project already contains the standard `1c-workflow` files. The fast path keeps agent work small: map the user request to one helper action, run the helper, and report the result.
+Use this skill for routine lifecycle commands when the project already has standard `1c-workflow` files. Map the request to one helper action, run it, and report the result.
 
-Do not open the full workflow references before normal lifecycle execution. Open detailed references only when the helper fails, reports missing setup values, or the user asks for an explanation.
+Do not open full workflow references before normal lifecycle execution. Open details only when the helper fails, reports missing setup values, or the user asks for explanation.
 
 ## Intent Map
 
 - show ITL status: `status`
-- inspect or manually control ROCTUP branch data MCP: `roctup-mcp-status`, `start-roctup-mcp`, `stop-roctup-mcp`, `install-roctup-mcp`, or `update-roctup-mcp`
-- inspect or manually control Vanessa branch MCP: `vanessa-mcp-status`, `start-vanessa-mcp`, `stop-vanessa-mcp`, or `install-vanessa-mcp`
-- setup or inspect vibecoding1c MCP servers: `vibecoding1c-mcp-setup` by default, `vibecoding1c-mcp-status` for status-only, `vibecoding1c-mcp-select` to choose remote/local or configId, `vibecoding1c-mcp-refresh-registry` to update remote endpoint discovery
+- inspect/control ROCTUP branch data MCP: `roctup-mcp-status`, `start-roctup-mcp`, `stop-roctup-mcp`, `install-roctup-mcp`, or `update-roctup-mcp`
+- inspect/control Vanessa branch MCP: `vanessa-mcp-status`, `start-vanessa-mcp`, `stop-vanessa-mcp`, or `install-vanessa-mcp`
+- setup/inspect vibecoding1c MCP: `vibecoding1c-mcp-setup` by default, `vibecoding1c-mcp-status`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`
 - update the installed ITL workflow package from `master`: `update-workflow`
 - create new configuration development branch worktree from `master`: `new-dev-branch`
 - create new extension development branch worktree from `master`: `new-extension-dev-branch`
-- check current branch after changes through update plus Vanessa tests: `check-dev-branch`
+- check current branch after changes: `check-dev-branch`
 - update current development branch infobase from branch files without tests, when explicitly requested: `update-dev-branch-base`
-- verify current branch through update plus Vanessa tests, when compatibility wording is used: `verify-dev-branch`
+- verify current branch when compatibility wording is used: `verify-dev-branch`
 - refresh current development branch from master/source: `refresh-dev-branch`
 - export CF or CFE result from current development branch: `export-dev-branch-result`
-- advanced only, when explicitly requested: mark current development branch closed and hide it from active lists with `close-dev-branch`
+- advanced only, when explicit: mark current development branch closed and hide it with `close-dev-branch`
 - show/open worktree paths: `status` first; use direct switch helper actions only for legacy recovery.
 
 ## Command Template
 
 Run commands from the project root:
 
-For long lifecycle actions (`new-dev-branch`, `new-extension-dev-branch`, `update-workflow`, `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`), if the shell tool supports `timeout_ms`, set `timeout_ms >= 1800000`. Do not use `120000 ms` or other short defaults because these actions may launch 1C Designer/Enterprise operations such as `/LoadConfigFromFiles ... /UpdateDBCfg` that can legitimately take longer than 2 minutes. `status` and `help` do not need this long timeout.
+Long actions (`new-dev-branch`, `new-extension-dev-branch`, `update-workflow`, `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`) need `timeout_ms >= 1800000` when supported. Do not use `120000 ms`; they may launch 1C Designer/Enterprise (`/LoadConfigFromFiles ... /UpdateDBCfg`). `status`/`help` do not need the long timeout.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action <action>
@@ -45,17 +45,17 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ru
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action new-extension-dev-branch -DevBranchName "<dev-branch-name>"
 ```
 
-Use direct `agent-1c.ps1` for branch creation only in non-interactive automation that explicitly sets `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip` after the unsafe-action protection is configured separately.
+Use direct `agent-1c.ps1` for branch creation only in non-interactive automation with `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip`.
 
-New branch commands must run from `master` and create a sibling Git worktree by default. Report the printed worktree path and tell the developer to open a separate Codex/Kilo/IDE window there. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
+New branch commands run from `master` and create a sibling Git worktree by default. Report the printed worktree path and tell the developer to open a separate Codex/Kilo/IDE window there. Use `-UseCurrentWorktree` only when explicitly requested.
 
-New branch commands auto-start branch-local ROCTUP and Vanessa MCP by default and write ignored Codex/Kilo MCP client config. Report failures as non-blocking unless the helper itself exits with an error.
+New branch commands auto-start branch-local ROCTUP and Vanessa MCP and write ignored Codex/Kilo MCP client config. Report failures as non-blocking unless the helper exits with an error.
 
-For `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`, and explicit advanced `close-dev-branch`, do not ask for a branch name. The helper infers it from the current `itldev/<name>` Git branch.
+For `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`, and explicit `close-dev-branch`, do not ask for a branch name; the helper infers current `itldev/<name>`.
 
-For the normal post-change check, do not call `/deploy-and-test` and do not run `update-dev-branch-base` first. Run `check-dev-branch` (`/itl-check` in a dev worktree); it updates the branch base partially and then runs Vanessa Automation through packet `StartFeaturePlayer` in `TESTMANAGER -> TESTCLIENT` mode with a branch-local test port. `verify-dev-branch` remains a compatibility alias for the same helper cycle. The helper also checks the local branch infobase event log against the branch baseline created during branch initialization; fresh non-baseline `Error` records fail verification. MCP is not the final verification runner. Foreign branch 1C test processes are warnings by default, not a reason to wait, unless there is a real port/infobase conflict or `VANESSA_TEST_FOREIGN_WAIT_MODE=wait` is set.
+Normal post-change check: do not call `/deploy-and-test` or run `update-dev-branch-base` first. Run `check-dev-branch` (`/itl-check`); it updates the branch base, runs Vanessa `StartFeaturePlayer` in `TESTMANAGER -> TESTCLIENT` mode, and checks the branch event-log baseline. Fresh non-baseline `Error` records fail. MCP is not final verification. Foreign branch 1C test processes are warnings unless there is a real conflict or `VANESSA_TEST_FOREIGN_WAIT_MODE=wait`.
 
-For result export and explicit advanced close, let the helper enforce `verificationPolicy`: default `warn` allows only explicit unverified override; `block` stops until `check-dev-branch` or `verify-dev-branch` is fresh passed.
+For result export and explicit advanced close, let the helper enforce `verificationPolicy`: `warn` needs explicit unverified override; `block` waits for fresh passed check/verify.
 
 ## Failure Handling
 
@@ -65,6 +65,6 @@ If the helper exits with an error:
 2. Report the concise error text.
 3. Report the latest log path when the helper prints one.
 4. Ask for only the missing value when the helper clearly identifies one.
-5. Use the full `1c-workflow` skill only for detailed recovery, unusual topology, or init questionnaire work.
+5. Use full `1c-workflow` only for detailed recovery, unusual topology, or init questionnaire work.
 
 For first-time project bootstrap, follow `AGENT-INSTALL.md`. This fast skill is optimized for regular branch operations after installation.

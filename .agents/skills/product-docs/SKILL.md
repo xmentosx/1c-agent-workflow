@@ -1,6 +1,6 @@
 ---
 name: product-docs
-description: Use BookStack product documentation through the BookStack-product-docs-mcp server for PM5 projects before changing product business logic, architecture, user workflows, terminology, permissions, reports, integrations, or acceptance tests. Treat BookStack as product context, verify against code/tests/current 1C metadata and available MCP evidence, cite relevant pages, and surface conflicts.
+description: Use BookStack product documentation through the BookStack-product-docs-mcp server for PM5 projects before answering, exploring, planning, proposing, or changing product business logic, architecture, user workflows, terminology, permissions, reports, integrations, or acceptance tests. Treat BookStack as product context, verify against code/tests/current 1C metadata and available MCP evidence, cite relevant pages, and surface conflicts.
 ---
 
 # Product Docs
@@ -11,13 +11,13 @@ Before using BookStack, inspect `.agent-1c/project.json` when it exists. If `bas
 
 ## Workflow
 
-Use the `BookStack-product-docs-mcp` MCP server as the source of product context and intended behavior when a task may depend on business rules, architecture, user-facing behavior, product terms, permissions, reports, integrations, or test scenarios.
+Use the `BookStack-product-docs-mcp` MCP server as the source of product context and intended behavior when answering, exploring, planning, proposing, or changing anything that may depend on business rules, architecture, user-facing behavior, product terms, permissions, reports, integrations, or test scenarios.
 
 1. Search first with `search_docs`. Use 2-4 focused queries: user-facing terms, 1C object names, report names, integration names, and Russian synonyms when relevant.
 2. Read only the relevant pages with `read_page`, preferring markdown. Keep the BookStack page URL and `updated_at` in your notes when available.
 3. Use `list_structure` only when search terms are unclear or when you need to locate the right shelf/book/chapter.
 4. In plans, code explanations, PR notes, and review findings, cite the BookStack page titles, URLs, and relevant `updated_at` values that influenced the decision.
-5. Before changing business logic, record a concise chain: `BookStack context`, `Code/MCP evidence`, `Decision`.
+5. Before changing business logic or recording an architectural/product decision, record a concise chain: `BookStack context`, `Code/MCP evidence`, `Decision`.
 
 ## Evidence Policy
 

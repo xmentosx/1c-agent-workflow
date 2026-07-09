@@ -961,6 +961,128 @@ function Copy-Vibecoding1cMcpSelectionFromMainWorktree {
     return $true
 }
 
+function Read-Vibecoding1cMcpSelectionFromPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+
+    try {
+        return (Read-Utf8Text -Path $Path | ConvertFrom-Json)
+    } catch {
+        return $null
+    }
+}
+
+function Test-Vibecoding1cMcpSelectionHasServerId {
+    param(
+        [object]$Selection,
+        [string]$ServerId
+    )
+
+    if ($null -eq $Selection -or [string]::IsNullOrWhiteSpace($ServerId)) {
+        return $false
+    }
+
+    return $null -ne (Get-Vibecoding1cMcpSelectionEntry -Selection $Selection -ServerId $ServerId)
+}
+
+function Invoke-Vibecoding1cMcpSetupSelectionInheritance {
+    $targetPath = Get-Vibecoding1cMcpSelectionPath
+    if (Test-Path -LiteralPath $targetPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        return
+    }
+
+    $currentBranch = ""
+    try {
+        $currentBranch = Get-CurrentBranch
+    } catch {
+        return
+    }
+    if ($currentBranch -notlike "itldev/*") {
+        return
+    }
+
+    $mainProjectRoot = Get-MainWorktreePath
+    if ([string]::IsNullOrWhiteSpace($mainProjectRoot) -or (Get-FullPathNormalized $mainProjectRoot) -eq (Get-FullPathNormalized $script:ProjectRoot)) {
+        return
+    }
+
+    if (Copy-Vibecoding1cMcpSelectionFromMainWorktree -MainProjectRoot $mainProjectRoot) {
+        $selection = Read-Vibecoding1cMcpSelection
+        $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry
+        if ($selectionCompleteness.isComplete) {
+            Write-Host "Inherited complete vibecoding1c MCP selection for development worktree setup."
+        }
+    }
+}
+
+function Test-Vibecoding1cMcpProjectClientConfigContainsName {
+    param([string]$ClientName)
+
+    if ([string]::IsNullOrWhiteSpace($ClientName)) {
+        return $false
+    }
+
+    $kiloPath = Get-Vibecoding1cMcpKiloConfigPath
+    if (Test-Path -LiteralPath $kiloPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        try {
+            $kilo = Read-Utf8Text -Path $kiloPath | ConvertFrom-Json
+            if ($kilo.mcp -and @($kilo.mcp.PSObject.Properties.Name) -contains $ClientName) {
+                return $true
+            }
+        } catch {
+        }
+    }
+
+    $codexProjectPath = Get-Vibecoding1cMcpCodexProjectConfigPath
+    if (Test-Path -LiteralPath $codexProjectPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        $text = Read-Utf8Text -Path $codexProjectPath
+        if ($text -match ('(?m)^\[mcp_servers\."' + [regex]::Escape($ClientName) + '"\]\s*$') -or
+            $text -match ('(?m)^\[mcp_servers\.' + [regex]::Escape($ClientName) + '\]\s*$')) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Write-Vibecoding1cMcpProductDocsClientConfigWarning {
+    if (-not (Test-ProductDocsMcpAllowed)) {
+        return
+    }
+
+    $currentBranch = ""
+    try {
+        $currentBranch = Get-CurrentBranch
+    } catch {
+        return
+    }
+    if ($currentBranch -notlike "itldev/*") {
+        return
+    }
+
+    $mainProjectRoot = Get-MainWorktreePath
+    if ([string]::IsNullOrWhiteSpace($mainProjectRoot) -or (Get-FullPathNormalized $mainProjectRoot) -eq (Get-FullPathNormalized $script:ProjectRoot)) {
+        return
+    }
+
+    $mainSelectionPath = Join-Path $mainProjectRoot ".agent-1c\mcp\vibecoding1c-selection.json"
+    $mainSelection = Read-Vibecoding1cMcpSelectionFromPath -Path $mainSelectionPath
+    if (-not (Test-Vibecoding1cMcpSelectionHasServerId -Selection $mainSelection -ServerId "bookstack")) {
+        return
+    }
+
+    $clientName = Get-Vibecoding1cMcpAiRules1cClientName -ServerId "bookstack"
+    if (Test-Vibecoding1cMcpProjectClientConfigContainsName -ClientName $clientName) {
+        return
+    }
+
+    Write-Host "WARNING: PM5 product documentation MCP is selected in the main worktree but is missing from this development worktree client config: $clientName."
+    Write-Host "Repair: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup"
+}
+
 function Read-Vibecoding1cMcpRemoteHostChoice {
     param(
         [object[]]$Candidates,
@@ -2776,6 +2898,7 @@ function Setup-Vibecoding1cMcp {
     Write-Section "Setup vibecoding1c MCP"
 
     Ensure-GitIgnore
+    Invoke-Vibecoding1cMcpSetupSelectionInheritance
     $selection = Read-Vibecoding1cMcpSelection
     $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry
     if ($Force -or -not $selectionCompleteness.isComplete) {
@@ -3414,6 +3537,7 @@ function Show-Vibecoding1cMcpStatus {
 
     $summary = Get-Vibecoding1cMcpStatusSummary
     Write-Vibecoding1cMcpSummaryLines -Summary $summary
+    Write-Vibecoding1cMcpProductDocsClientConfigWarning
 
     $endpoints = @(Get-Vibecoding1cMcpCurrentEndpoints -IncludeGlobal)
     if ($endpoints.Count -eq 0) {

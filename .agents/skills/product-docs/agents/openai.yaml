@@ -1,4 +1,4 @@
 interface:
   display_name: "Product Docs"
   short_description: "Verify BookStack product context"
-  default_prompt: "Use $product-docs to check BookStack context and verify it against code/MCP evidence before changing business logic."
+  default_prompt: "Use $product-docs to check BookStack context and verify it against code/MCP evidence before answering, exploring, planning, proposing, or changing PM5 product logic, architecture, workflows, terminology, permissions, reports, integrations, or acceptance tests."

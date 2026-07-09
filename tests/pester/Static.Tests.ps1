@@ -770,6 +770,72 @@ Describe "1C agent workflow static checks" {
         }
     }
 
+    It "requires Vanessa tests and fresh /itl-check before agent development completion" {
+        $userRulesText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\USER-RULES.append.md")
+
+        foreach ($marker in @(
+            "Development completion gate",
+            "src/cf",
+            "src/cfe",
+            "modules, forms, commands, metadata",
+            "tests/features",
+            "VANESSA-TESTS-GUIDE.md",
+            "/itl-check",
+            "fresh passed",
+            "/opsx-apply",
+            "quick-fix",
+            "develop code by this plan",
+            "execute development tasks",
+            "make this change",
+            "ready/done/implemented",
+            "final reply",
+            "Vanessa report path",
+            "Hybrid cadence",
+            "focused regression scenario",
+            "focused Vanessa scenario",
+            "pending verification",
+            "test-report.md"
+        )) {
+            $userRulesText | Should -Match ([regex]::Escape($marker))
+        }
+
+        $userRulesText | Should -Match "Do not answer.*tests are missing"
+        $userRulesText | Should -Match "Do not answer.*/itl-check.*did not run"
+        $userRulesText | Should -Match "Do not answer.*verification is not fresh passed"
+        $userRulesText | Should -Match "Large OpenSpec.*tasks\.md.*checkable slices"
+        $userRulesText | Should -Not -Match "opsx\*\.md"
+    }
+
+    It "documents the same development completion gate in dev-branch process docs" {
+        foreach ($relativePath in @(
+            "DEV-BRANCH-DEVELOPMENT.ru.md",
+            ".agents\skills\1c-workflow\references\dev-branch-development.md"
+        )) {
+            $text = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot $relativePath)
+
+            foreach ($marker in @(
+                "src/cf",
+                "src/cfe",
+                "tests/features",
+                "VANESSA-TESTS-GUIDE.md",
+                "/itl-check",
+                "fresh passed",
+                "/opsx-apply",
+                "quick-fix",
+                "hybrid cadence",
+                "focused Vanessa scenario",
+                "pending verification",
+                "test-report.md"
+            )) {
+                $text | Should -Match ([regex]::Escape($marker))
+            }
+
+            $text | Should -Match "quick-fix.*Vanessa regression test"
+            $text | Should -Match "OpenSpec.*hybrid cadence"
+            $text | Should -Match "2-4 Vanessa"
+        }
+    }
+
     It "documents OpenSpec slash commands at the matching branch development steps" {
         foreach ($relativePath in @(
             "DEV-BRANCH-DEVELOPMENT.ru.md",
@@ -3537,6 +3603,7 @@ enabled = true
         $userRulesTemplateText | Should -Match "vibecoding1c MCP helper request"
         $userRulesTemplateText | Should -Match "product-docs/SKILL.md"
         $userRulesTemplateText | Should -Match "BookStack-product-docs-mcp"
+        $userRulesTemplateText | Should -Match "before answering, exploring, planning, proposing, or changing behavior"
         $userRulesTemplateText | Should -Match "BookStack is advisory, not authoritative"
         $userRulesTemplateText | Should -Match "code, tests, current 1C metadata"
         $userRulesTemplateText | Should -Match "available MCP evidence"
@@ -3549,6 +3616,7 @@ enabled = true
         (Test-Path -LiteralPath $productDocsSkillPath -PathType Leaf) | Should -Be $true
         $productDocsSkillText = Get-Content -Encoding UTF8 -Raw $productDocsSkillPath
         $productDocsSkillText | Should -Match "BookStack-product-docs-mcp"
+        $productDocsSkillText | Should -Match "before answering, exploring, planning, proposing, or changing"
         $productDocsSkillText | Should -Match "baseConfigurationVersion"
         $productDocsSkillText | Should -Match "PM4"
         $productDocsSkillText | Should -Match "search_docs"
@@ -3566,6 +3634,7 @@ enabled = true
         $productDocsOpenAiText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\product-docs\agents\openai.yaml")
         $productDocsOpenAiText | Should -Match "Verify BookStack product context"
         $productDocsOpenAiText | Should -Match "verify it against code/MCP evidence"
+        $productDocsOpenAiText | Should -Match "answering, exploring, planning, proposing"
 
         $HelperText | Should -Match "function Update-AgentGuidanceBridge"
         $HelperText | Should -Match "function Update-UserRules"
@@ -6895,6 +6964,127 @@ if (`$?) { exit 0 } else { exit 1 }
             }
             if (Test-Path -LiteralPath $worktreeRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $worktreeRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "warns and repairs missing BookStack MCP client config in a PM5 development worktree" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-worktree-bookstack-mcp-test-" + [guid]::NewGuid().ToString("N"))
+        $mainRoot = Join-Path $tempRoot "main"
+        $worktreePath = Join-Path $tempRoot "branch1"
+        $registryRoot = Join-Path $tempRoot "registry"
+        $codexHomeConfig = Join-Path $tempRoot "codex-home\config.toml"
+        $oldRegistryPath = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", "Process")
+        $oldLocalHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
+        $oldBookStackEnabled = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_BOOKSTACK_ENABLED", "Process")
+        $oldBaseVersion = [Environment]::GetEnvironmentVariable("BASE_CONFIGURATION_VERSION", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $mainRoot, $registryRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Value ".agent-1c/mcp/`n.codex/config.toml`n.kilo/kilo.json`n" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $mainRoot "README.md") -Value "fixture" -Encoding ASCII
+            & git -C $mainRoot init | Out-Null
+            & git -C $mainRoot config user.email "test@example.com"
+            & git -C $mainRoot config user.name "Test User"
+            & git -C $mainRoot add .gitignore README.md
+            & git -C $mainRoot commit -m init | Out-Null
+            & git -C $mainRoot branch -M master
+            & git -C $mainRoot worktree add -b itldev/branch1 $worktreePath | Out-Null
+
+            New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot ".agent-1c\mcp"), (Join-Path $worktreePath ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $worktreePath ".agent-1c\project.json") -Encoding UTF8 -Value (@{ schemaVersion = 1; baseConfigurationVersion = "PM5" } | ConvertTo-Json)
+
+            $registryServers = @(
+                [ordered]@{ id = "docs"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-docs"; url = "http://host-a:18000/mcp"; health = "running" },
+                [ordered]@{ id = "templates"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-templates"; url = "http://host-a:18001/mcp"; health = "running" },
+                [ordered]@{ id = "syntax"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-syntax"; url = "http://host-a:18002/mcp"; health = "running" },
+                [ordered]@{ id = "codechecker"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-codechecker"; url = "http://host-a:18003/mcp"; health = "running" },
+                [ordered]@{ id = "ssl"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-ssl"; url = "http://host-a:18004/mcp"; health = "running" },
+                [ordered]@{ id = "bookstack"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "bookstack-product-docs"; url = "http://host-a:18005/mcp"; health = "running"; embeddingModel = "intfloat/multilingual-e5-base" },
+                [ordered]@{ id = "code"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-code"; url = "http://host-a:18100/mcp"; health = "running"; configurationName = "Trade"; configurationVersion = "1.0"; embeddingModel = "intfloat/multilingual-e5-base"; indexedAt = "2026-07-05T00:00:00Z" },
+                [ordered]@{ id = "graph"; scope = "project"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; name = "itl-trade-graph"; url = "http://host-a:18101/mcp"; health = "running"; configurationName = "Trade"; configurationVersion = "1.0"; embeddingModel = "intfloat/multilingual-e5-base"; indexedAt = "2026-07-05T00:00:00Z" }
+            )
+            $registry = [ordered]@{
+                schemaVersion = 2
+                publishedAt = "2026-07-05T00:10:00Z"
+                hosts = @(
+                    [ordered]@{
+                        hostId = "host-a"
+                        baseUrl = "http://host-a"
+                        publishedAt = "2026-07-05T00:00:00Z"
+                        configurations = @([ordered]@{ configId = "trade"; title = "Trade"; configurationName = "Trade"; configurationVersion = "1.0" })
+                        servers = $registryServers
+                    }
+                )
+                configurations = @()
+                servers = @()
+            }
+            Set-Content -LiteralPath (Join-Path $registryRoot "registry.json") -Encoding UTF8 -Value (($registry | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+
+            $selection = [ordered]@{
+                schemaVersion = 1
+                family = "vibecoding1c"
+                defaultProvider = "remote"
+                remoteConfigId = ""
+                remoteHostId = ""
+                localScopeDefault = "project"
+                servers = @(
+                    "docs",
+                    "templates",
+                    "syntax",
+                    "codechecker",
+                    "ssl",
+                    "bookstack"
+                ) | ForEach-Object {
+                    [ordered]@{ id = $_; family = "vibecoding1c"; provider = "remote"; configId = ""; hostId = "host-a"; localScope = "project" }
+                }
+            }
+            $selection.servers += [ordered]@{ id = "code"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; hostId = "host-a"; localScope = "project" }
+            $selection.servers += [ordered]@{ id = "graph"; family = "vibecoding1c"; provider = "remote"; configId = "trade"; hostId = "host-a"; localScope = "project" }
+            Set-Content -LiteralPath (Join-Path $mainRoot ".agent-1c\mcp\vibecoding1c-selection.json") -Encoding UTF8 -Value (($selection | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $registryRoot, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", (Join-Path $tempRoot "local-home"), "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_BOOKSTACK_ENABLED", "true", "Process")
+            [Environment]::SetEnvironmentVariable("BASE_CONFIGURATION_VERSION", $null, "Process")
+
+            $statusOutput = & {
+                . $HelperPath -ProjectRoot $worktreePath -Action help *> $null
+                $script:TestCodexHomeConfigPath = $codexHomeConfig
+                function Get-Vibecoding1cMcpCodexHomeConfigPath {
+                    return $script:TestCodexHomeConfigPath
+                }
+                Show-Vibecoding1cMcpStatus
+            } *>&1
+            $statusText = $statusOutput -join [Environment]::NewLine
+            $statusText | Should -Match "WARNING: PM5 product documentation MCP is selected in the main worktree"
+            $statusText | Should -Match "BookStack-product-docs-mcp"
+            $statusText | Should -Match "vibecoding1c-mcp-setup"
+
+            & {
+                . $HelperPath -ProjectRoot $worktreePath -Action help *> $null
+                $script:TestCodexHomeConfigPath = $codexHomeConfig
+                function Get-Vibecoding1cMcpCodexHomeConfigPath {
+                    return $script:TestCodexHomeConfigPath
+                }
+                Setup-Vibecoding1cMcp *> $null
+            }
+
+            (Test-Path -LiteralPath (Join-Path $worktreePath ".agent-1c\mcp\vibecoding1c-selection.json") -PathType Leaf) | Should -BeTrue
+            $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $worktreePath ".kilo\kilo.json") | ConvertFrom-Json
+            $kilo.mcp.'BookStack-product-docs-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
+            $kilo.mcp.'BookStack-product-docs-mcp'.url | Should -Be "http://host-a:18005/mcp"
+            (Get-Content -Encoding UTF8 -Raw $codexHomeConfig) | Should -Match ([regex]::Escape('[mcp_servers."BookStack-product-docs-mcp"]'))
+        } finally {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldLocalHome, "Process")
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_BOOKSTACK_ENABLED", $oldBookStackEnabled, "Process")
+            [Environment]::SetEnvironmentVariable("BASE_CONFIGURATION_VERSION", $oldBaseVersion, "Process")
+            if (Test-Path -LiteralPath $worktreePath -PathType Container -ErrorAction SilentlyContinue) {
+                & git -C $mainRoot worktree remove --force $worktreePath *> $null
+            }
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
