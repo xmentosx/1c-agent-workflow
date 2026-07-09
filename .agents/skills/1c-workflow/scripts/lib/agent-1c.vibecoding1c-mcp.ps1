@@ -563,6 +563,9 @@ function Get-Vibecoding1cMcpSelectedProvider {
     )
 
     $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
+    if ($id -eq "mantis") {
+        return "remote"
+    }
     if ($McpProvider -and ((-not $McpServerId) -or $McpServerId -eq $id)) {
         return $McpProvider
     }
@@ -730,6 +733,7 @@ function Get-Vibecoding1cMcpAiRules1cClientName {
         "graph" { return "1c-graph-metadata-mcp" }
         "data" { return "1c-data-mcp" }
         "bookstack" { return "BookStack-product-docs-mcp" }
+        "mantis" { return "itl-mantis-ticket-mcp" }
         default { return "" }
     }
 }
@@ -852,13 +856,16 @@ function Get-Vibecoding1cMcpSelectionCompleteness {
         }
 
         $scope = Get-Vibecoding1cMcpServerScope -Server $server
+        $provider = Get-Vibecoding1cMcpSelectedProvider -Server $server -Selection $Selection
         $entry = Get-Vibecoding1cMcpSelectionEntry -Selection $Selection -ServerId $id
         if ($null -eq $entry) {
-            $reasons += "$id/$scope has no per-server selection"
-            continue
+            $canUseDefaultRemoteGlobal = ($scope -eq "global" -and $provider -eq "remote" -and -not (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $server))
+            if (-not $canUseDefaultRemoteGlobal) {
+                $reasons += "$id/$scope has no per-server selection"
+                continue
+            }
         }
 
-        $provider = Get-Vibecoding1cMcpSelectedProvider -Server $server -Selection $Selection
         if ($provider -eq "local") {
             continue
         }
@@ -1275,11 +1282,17 @@ function Set-Vibecoding1cMcpSelection {
         } else {
             [string](Get-Vibecoding1cMcpObjectValue -Object $selectionHash -Name "defaultProvider" -Default "remote")
         }
-        if (-not $McpProvider -and (Test-InteractiveInputAvailable)) {
+        if ($id -eq "mantis") {
+            $provider = "remote"
+        }
+        if (-not $McpProvider -and $id -ne "mantis" -and (Test-InteractiveInputAvailable)) {
             $answer = (Read-Host "Provider for vibecoding1c MCP server '$id' [remote/local], default $provider").Trim().ToLowerInvariant()
             if ($answer -eq "remote" -or $answer -eq "local") {
                 $provider = $answer
             }
+        }
+        if ($id -eq "mantis") {
+            $provider = "remote"
         }
         $localScope = if ($McpLocalScope) {
             $McpLocalScope
@@ -1659,6 +1672,29 @@ function Get-Vibecoding1cMcpBookStackServerDefinition {
     }
 }
 
+function Get-Vibecoding1cMcpMantisTicketServerDefinition {
+    return [pscustomobject][ordered]@{
+        id = "mantis"
+        title = "Mantis ticket context"
+        scope = "global"
+        image = "itl/mantis-ticket-mcp:local"
+        internalPort = 8000
+        mcpNameTemplate = "itl-mantis-ticket-mcp"
+        containerNameTemplate = "itl-mantis-ticket-mcp"
+        env = @(
+            [ordered]@{ name = "MANTIS_BASE_URL"; from = "MANTIS_BASE_URL"; required = $true },
+            [ordered]@{ name = "MANTIS_API_TOKEN"; from = "MANTIS_API_TOKEN"; required = $true },
+            [ordered]@{ name = "MANTIS_ATTACHMENT_CACHE_PATH"; value = "/data/attachments"; required = $false },
+            [ordered]@{ name = "MANTIS_TIMEOUT_SECONDS"; from = "MANTIS_TIMEOUT_SECONDS"; default = "20"; required = $false },
+            [ordered]@{ name = "MANTIS_MAX_ATTACHMENT_BYTES"; from = "MANTIS_MAX_ATTACHMENT_BYTES"; default = "26214400"; required = $false },
+            [ordered]@{ name = "MANTIS_MAX_INLINE_TEXT_CHARS"; from = "MANTIS_MAX_INLINE_TEXT_CHARS"; default = "16000"; required = $false },
+            [ordered]@{ name = "MANTIS_OCR_ENABLED"; from = "MANTIS_OCR_ENABLED"; default = "true"; required = $false },
+            [ordered]@{ name = "MANTIS_OCR_LANGUAGES"; from = "MANTIS_OCR_LANGUAGES"; default = "rus,eng"; required = $false }
+        )
+        volumes = @()
+    }
+}
+
 function Test-Vibecoding1cMcpBookStackVirtualServerEnabled {
     $configured = [string](Get-EnvValue -Name "VIBECODING1C_MCP_BOOKSTACK_ENABLED" -Default (Get-ConfigValue -Path "vibecoding1cMcp.bookStackProductDocsEnabled" -Default ""))
     if ($configured -match '^(1|true|yes|on)$') {
@@ -1685,20 +1721,53 @@ function Test-Vibecoding1cMcpBookStackVirtualServerEnabled {
     return $false
 }
 
+function Test-Vibecoding1cMcpMantisTicketVirtualServerEnabled {
+    $configured = [string](Get-EnvValue -Name "VIBECODING1C_MCP_MANTIS_ENABLED" -Default (Get-ConfigValue -Path "vibecoding1cMcp.mantisTicketEnabled" -Default ""))
+    if ($configured -match '^(1|true|yes|on)$') {
+        return $true
+    }
+    if ($configured -match '^(0|false|no|off)$') {
+        return $false
+    }
+
+    $registryPath = Join-Path (Get-Vibecoding1cMcpRegistryRoot) "registry.json"
+    if (-not (Test-Path -LiteralPath $registryPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+
+    $registry = Read-Vibecoding1cMcpRegistry
+    foreach ($endpoint in Get-Vibecoding1cMcpRegistryServers -Registry $registry) {
+        if ([string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "family" -Default "") -ne "vibecoding1c") {
+            continue
+        }
+        if ([string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "id" -Default "") -eq "mantis") {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Add-Vibecoding1cMcpVirtualServersToManifest {
     param([object]$Manifest)
 
     $manifestHash = ConvertTo-Vibecoding1cMcpHashtable -Object $Manifest
     $servers = @(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $manifestHash -Name "servers" -Default @()))
     $hasBookStack = $false
+    $hasMantis = $false
     foreach ($server in $servers) {
-        if ([string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "id" -Default "") -eq "bookstack") {
+        $id = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "id" -Default "")
+        if ($id -eq "bookstack") {
             $hasBookStack = $true
-            break
+        }
+        if ($id -eq "mantis") {
+            $hasMantis = $true
         }
     }
     if ((-not $hasBookStack) -and (Test-Vibecoding1cMcpBookStackVirtualServerEnabled)) {
         $servers += Get-Vibecoding1cMcpBookStackServerDefinition
+    }
+    if ((-not $hasMantis) -and (Test-Vibecoding1cMcpMantisTicketVirtualServerEnabled)) {
+        $servers += Get-Vibecoding1cMcpMantisTicketServerDefinition
     }
     $manifestHash["servers"] = $servers
     return [pscustomobject]$manifestHash

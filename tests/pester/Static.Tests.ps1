@@ -1060,6 +1060,9 @@ Describe "1C agent workflow static checks" {
         $HelperText | Should -Match "itl-{projectSlug}-graph"
         $HelperText | Should -Match "bookstack-product-docs"
         $HelperText | Should -Match "BookStack-product-docs-mcp"
+        $HelperText | Should -Match "itl-mantis-ticket-mcp"
+        $HelperText | Should -Match "Get-Vibecoding1cMcpMantisTicketServerDefinition"
+        $HelperText | Should -Match "Test-Vibecoding1cMcpMantisTicketVirtualServerEnabled"
         $HelperText | Should -Match "Add-Vibecoding1cMcpVirtualServersToManifest"
         $HelperText | Should -Match "Test-ProductDocsMcpAllowed"
         $HelperText | Should -Match "Test-Vibecoding1cMcpLogicalServerAllowedForProject"
@@ -1130,6 +1133,10 @@ Describe "1C agent workflow static checks" {
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\Dockerfile") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\server.py") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\requirements.txt") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\Dockerfile") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\server.py") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\requirements.txt") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\test_server.py") -PathType Leaf) | Should -Be $true
         $bookStackRequirementsText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\requirements.txt")
         $bookStackRequirementsText | Should -Match "sentence-transformers"
         $bookStackServerText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\server.py")
@@ -1148,6 +1155,19 @@ Describe "1C agent workflow static checks" {
         $bookStackServerText | Should -Match "SentenceTransformer"
         $bookStackServerText | Should -Match "cache_folder=self.cache_dir"
         $bookStackServerText | Should -Match "normalize_embeddings=True"
+        $mantisRequirementsText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\requirements.txt")
+        $mantisRequirementsText | Should -Match "pytesseract"
+        $mantisRequirementsText | Should -Match "Pillow"
+        $mantisServerText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\server.py")
+        foreach ($toolName in @("read_ticket", "get_attachment", "health")) {
+            $mantisServerText | Should -Match "def $toolName"
+        }
+        $mantisServerText | Should -Match "OCR_NOTICE"
+        $mantisServerText | Should -Match "style_spans"
+        $mantisServerText | Should -Match "rendered_html_sanitized"
+        $mantisServerText | Should -Match "agent_context_markdown"
+        $mantisServerText | Should -Match "original_is_source_of_truth"
+        $mantisServerText | Should -Match "/api/rest/issues"
         $indexStatusStart = $bookStackServerText.IndexOf("    def index_status(self) -> Dict[str, Any]:")
         $indexStatusEnd = $bookStackServerText.IndexOf("    def index_page", $indexStatusStart)
         $indexStatusStart | Should -BeGreaterThan -1
@@ -1172,9 +1192,18 @@ Describe "1C agent workflow static checks" {
         $hostConfig.secrets.ONEC_AI_TOKEN | Should -Match "^<"
         $hostConfig.secrets.BOOKSTACK_TOKEN_ID | Should -Match "^<"
         $hostConfig.secrets.BOOKSTACK_TOKEN_SECRET | Should -Match "^<"
+        $hostConfig.secrets.MANTIS_API_TOKEN | Should -Match "^<"
         $hostConfig.bookStackProductDocsServer.baseUrl | Should -Match "^http"
         $hostConfig.bookStackProductDocsServer.reindexIntervalHours | Should -Be 24
+        $hostConfig.mantisTicketServer.baseUrl | Should -Match "^http"
+        $hostConfig.mantisTicketServer.attachmentCachePath | Should -Match "mantis-ticket"
+        $hostConfig.mantisTicketServer.maxAttachmentBytes | Should -Be 26214400
+        $hostConfig.mantisTicketServer.maxInlineTextChars | Should -Be 16000
+        $hostConfig.mantisTicketServer.ocr.enabled | Should -Be $true
+        $hostConfig.mantisTicketServer.ocr.languages | Should -Contain "rus"
+        $hostConfig.mantisTicketServer.ocr.languages | Should -Contain "eng"
         $hostConfig.enabledServers.global | Should -Contain "bookstack"
+        $hostConfig.enabledServers.global | Should -Contain "mantis"
         $hostConfig.helpSearchServer.platformVersion | Should -Match "8\.3\."
         $hostConfig.helpSearchServer.platformBinPath | Should -Match "1cv8"
         $hostConfig.sslSearchServer.bspVersion | Should -Match "3\."
@@ -1225,6 +1254,11 @@ Describe "1C agent workflow static checks" {
         $McpHostText | Should -Match "Ensure-ServerDockerImageAvailable"
         $McpHostText | Should -Match "BOOKSTACK_BASE_URL"
         $McpHostText | Should -Match "BookStack-product-docs-mcp"
+        $McpHostText | Should -Match "Get-MantisTicketServerDefinition"
+        $McpHostText | Should -Match "MANTIS_BASE_URL"
+        $McpHostText | Should -Match "MANTIS_API_TOKEN"
+        $McpHostText | Should -Match "MANTIS_OCR_LANGUAGES"
+        $McpHostText | Should -Match "itl-mantis-ticket-mcp"
         $McpHostText | Should -Match "sourcePath"
         $McpHostText | Should -Match "Ensure-HostEmbeddingModel"
         $McpHostText | Should -Match "Test-HostEmbeddingModelPresent"
@@ -1244,6 +1278,10 @@ Describe "1C agent workflow static checks" {
         $readmeText | Should -Match ([regex]::Escape("-Action status -ConfigPath .\host.config.json -ServerId bookstack"))
         $readmeText | Should -Match ([regex]::Escape("-Action stop -ConfigPath .\host.config.json -ServerId bookstack"))
         $readmeText | Should -Match ([regex]::Escape("-Action reindex -ConfigPath .\host.config.json -ServerId bookstack"))
+        $readmeText | Should -Match ([regex]::Escape("-Action setup -ConfigPath .\host.config.json -ServerId mantis"))
+        $readmeText | Should -Match ([regex]::Escape("-Action start -ConfigPath .\host.config.json -ServerId mantis"))
+        $readmeText | Should -Match ([regex]::Escape("-Action status -ConfigPath .\host.config.json -ServerId mantis"))
+        $readmeText | Should -Match ([regex]::Escape("-Action stop -ConfigPath .\host.config.json -ServerId mantis"))
         $readmeText | Should -Match "index_status"
         $readmeText | Should -Match "intfloat/multilingual-e5-base"
         $readmeText | Should -Match ([regex]::Escape("/app/model_cache"))
@@ -1255,6 +1293,10 @@ Describe "1C agent workflow static checks" {
         $runbookText | Should -Match ([regex]::Escape("-Action status -ConfigPath .\host.config.json -ServerId bookstack"))
         $runbookText | Should -Match ([regex]::Escape("-Action stop -ConfigPath .\host.config.json -ServerId bookstack"))
         $runbookText | Should -Match ([regex]::Escape("-Action reindex -ConfigPath .\host.config.json -ServerId bookstack"))
+        $runbookText | Should -Match ([regex]::Escape("-Action setup -ConfigPath .\host.config.json -ServerId mantis"))
+        $runbookText | Should -Match ([regex]::Escape("-Action start -ConfigPath .\host.config.json -ServerId mantis"))
+        $runbookText | Should -Match ([regex]::Escape("-Action status -ConfigPath .\host.config.json -ServerId mantis"))
+        $runbookText | Should -Match ([regex]::Escape("-Action stop -ConfigPath .\host.config.json -ServerId mantis"))
         $runbookText | Should -Match "index_status"
         $runbookText | Should -Match "intfloat/multilingual-e5-base"
         $runbookText | Should -Match ([regex]::Escape("/app/model_cache"))
@@ -1442,9 +1484,21 @@ Describe "1C agent workflow static checks" {
                 secrets = [ordered]@{
                     ("BOOKSTACK_TOKEN_" + "ID") = "fixture-id"
                     ("BOOKSTACK_TOKEN_" + "SECRET") = "fixture-secret"
+                    MANTIS_API_TOKEN = "fixture-mantis-token"
                 }
                 bookStackProductDocsServer = [ordered]@{
                     baseUrl = "http://bookstack.test"
+                }
+                mantisTicketServer = [ordered]@{
+                    baseUrl = "http://mantis.test"
+                    attachmentCachePath = (Join-Path $tempRoot "mantis-attachments")
+                    timeoutSeconds = 25
+                    maxAttachmentBytes = 12345
+                    maxInlineTextChars = 2345
+                    ocr = [ordered]@{
+                        enabled = $true
+                        languages = @("rus", "eng")
+                    }
                 }
                 enabledServers = [ordered]@{ global = @(); project = @("graph") }
                 configurations = @()
@@ -1475,6 +1529,19 @@ Describe "1C agent workflow static checks" {
                 $bookStackEnv["BOOKSTACK_EMBEDDING_API_BASE"] | Should -Be "http://host.docker.internal:19000/v1"
                 $bookStackEnv["BOOKSTACK_EMBEDDING_MODEL"] | Should -Be "fixture-embedding-model"
                 $bookStackEnv.Contains("EMBEDDING_MODEL") | Should -Be $false
+
+                $mantisServer = Get-MantisTicketServerDefinition
+                $mantisEnv = Resolve-ServerEnv -Config $hostConfig -Server $mantisServer
+                $mantisEnv["MANTIS_BASE_URL"] | Should -Be "http://mantis.test"
+                $mantisEnv["MANTIS_API_TOKEN"] | Should -Be "fixture-mantis-token"
+                $mantisEnv["MANTIS_TIMEOUT_SECONDS"] | Should -Be "25"
+                $mantisEnv["MANTIS_MAX_ATTACHMENT_BYTES"] | Should -Be "12345"
+                $mantisEnv["MANTIS_MAX_INLINE_TEXT_CHARS"] | Should -Be "2345"
+                $mantisEnv["MANTIS_OCR_ENABLED"] | Should -Be $true
+                $mantisEnv["MANTIS_OCR_LANGUAGES"] | Should -Be "rus,eng"
+                $mantisVolumes = @(Resolve-ServerVolumes -Config $hostConfig -Server $mantisServer)
+                @($mantisVolumes | Where-Object { $_.container -eq "/data/attachments" }).Count | Should -Be 1
+                (Test-Path -LiteralPath (Join-Path $tempRoot "mantis-attachments") -PathType Container) | Should -Be $true
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {

@@ -9,7 +9,8 @@
   "secrets": {
     "ONEC_AI_TOKEN": "<local-1c-assistant-token>",
     "BOOKSTACK_TOKEN_ID": "<bookstack-readonly-token-id>",
-    "BOOKSTACK_TOKEN_SECRET": "<bookstack-readonly-token-secret>"
+    "BOOKSTACK_TOKEN_SECRET": "<bookstack-readonly-token-secret>",
+    "MANTIS_API_TOKEN": "<mantis-readonly-api-token>"
   },
   "embedding": {
     "model": "intfloat/multilingual-e5-base"
@@ -32,6 +33,17 @@
     "maxIndexPages": null,
     "timeoutSeconds": 20
   },
+  "mantisTicketServer": {
+    "baseUrl": "http://mantis.itland.local",
+    "attachmentCachePath": "D:/ITL/MCP/vibecoding1c/mantis-ticket/attachments",
+    "timeoutSeconds": 20,
+    "maxAttachmentBytes": 26214400,
+    "maxInlineTextChars": 16000,
+    "ocr": {
+      "enabled": true,
+      "languages": [ "rus", "eng" ]
+    }
+  },
   "helpSearchServer": {
     "platformVersion": "8.3.24.1548",
     "platformBinPath": "C:/Program Files/1cv8/8.3.24.1548/bin"
@@ -44,7 +56,7 @@
     "projectStart": 18100
   },
   "enabledServers": {
-    "global": [ "docs", "templates", "syntax", "codechecker", "ssl", "bookstack" ],
+    "global": [ "docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis" ],
     "project": [ "code", "graph" ]
   },
   "configurations": [

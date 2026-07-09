@@ -529,8 +529,17 @@ function Test-BookStackProductDocsServer {
     return ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "bookstack")
 }
 
+function Test-MantisTicketServer {
+    param([object]$Server)
+    return ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "mantis")
+}
+
 function Get-BookStackProductDocsSourceRoot {
     return (Join-Path $PSScriptRoot "bookstack-product-docs-mcp")
+}
+
+function Get-MantisTicketSourceRoot {
+    return (Join-Path $PSScriptRoot "mantis-ticket-mcp")
 }
 
 function Ensure-ServerDockerImageAvailable {
@@ -545,6 +554,15 @@ function Ensure-ServerDockerImageAvailable {
         }
         Write-Host "Building BookStack product docs MCP image: $Image"
         Invoke-DockerCommandChecked -Arguments @("build", "-t", $Image, $sourceRoot) -TimeoutSec 900 -Description "docker build BookStack product docs MCP"
+        return
+    }
+    if (Test-MantisTicketServer -Server $Server) {
+        $sourceRoot = Get-MantisTicketSourceRoot
+        if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot "Dockerfile") -PathType Leaf)) {
+            throw "Mantis ticket MCP Dockerfile was not found: $sourceRoot"
+        }
+        Write-Host "Building Mantis ticket MCP image: $Image"
+        Invoke-DockerCommandChecked -Arguments @("build", "-t", $Image, $sourceRoot) -TimeoutSec 900 -Description "docker build Mantis ticket MCP"
         return
     }
     Ensure-DockerImageAvailable -Image $Image
@@ -592,19 +610,48 @@ function Get-BookStackProductDocsServerDefinition {
     }
 }
 
+function Get-MantisTicketServerDefinition {
+    return [pscustomobject][ordered]@{
+        id = "mantis"
+        title = "Mantis ticket context"
+        scope = "global"
+        image = "itl/mantis-ticket-mcp:local"
+        internalPort = 8000
+        mcpNameTemplate = "itl-mantis-ticket-mcp"
+        containerNameTemplate = "itl-mantis-ticket-mcp"
+        env = @(
+            [ordered]@{ name = "MANTIS_BASE_URL"; from = "MANTIS_BASE_URL"; required = $true },
+            [ordered]@{ name = "MANTIS_API_TOKEN"; from = "MANTIS_API_TOKEN"; required = $true },
+            [ordered]@{ name = "MANTIS_ATTACHMENT_CACHE_PATH"; value = "/data/attachments"; required = $false },
+            [ordered]@{ name = "MANTIS_TIMEOUT_SECONDS"; from = "MANTIS_TIMEOUT_SECONDS"; default = "20"; required = $false },
+            [ordered]@{ name = "MANTIS_MAX_ATTACHMENT_BYTES"; from = "MANTIS_MAX_ATTACHMENT_BYTES"; default = "26214400"; required = $false },
+            [ordered]@{ name = "MANTIS_MAX_INLINE_TEXT_CHARS"; from = "MANTIS_MAX_INLINE_TEXT_CHARS"; default = "16000"; required = $false },
+            [ordered]@{ name = "MANTIS_OCR_ENABLED"; from = "MANTIS_OCR_ENABLED"; default = "true"; required = $false },
+            [ordered]@{ name = "MANTIS_OCR_LANGUAGES"; from = "MANTIS_OCR_LANGUAGES"; default = "rus,eng"; required = $false }
+        )
+    }
+}
+
 function Add-HostVirtualServersToManifest {
     param([object]$Manifest)
     $manifestHash = Convert-ToHash -Object $Manifest
     $servers = @(As-Array (Get-ObjectValue -Object $manifestHash -Name "servers" -Default @()))
     $hasBookStack = $false
+    $hasMantis = $false
     foreach ($server in $servers) {
-        if ([string](Get-ObjectValue -Object $server -Name "id" -Default "") -eq "bookstack") {
+        $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
+        if ($id -eq "bookstack") {
             $hasBookStack = $true
-            break
+        }
+        if ($id -eq "mantis") {
+            $hasMantis = $true
         }
     }
     if (-not $hasBookStack) {
         $servers += Get-BookStackProductDocsServerDefinition
+    }
+    if (-not $hasMantis) {
+        $servers += Get-MantisTicketServerDefinition
     }
     $manifestHash["servers"] = $servers
     return [pscustomobject]$manifestHash
@@ -1441,10 +1488,13 @@ function Get-HostLocalValues {
     $code = Get-ObjectValue -Object $Config -Name "codeMetadataSearchServer" -Default $null
     $graph = Get-ObjectValue -Object $Config -Name "graphMetadataSearchServer" -Default $null
     $bookstack = Get-ObjectValue -Object $Config -Name "bookStackProductDocsServer" -Default $null
+    $mantis = Get-ObjectValue -Object $Config -Name "mantisTicketServer" -Default $null
     $platformBinPath = [string](Get-ObjectValue -Object $help -Name "platformBinPath" -Default "")
     $platformVersion = [string](Get-ObjectValue -Object $help -Name "platformVersion" -Default "")
     $bspVersion = [string](Get-ObjectValue -Object $ssl -Name "bspVersion" -Default "")
     $bookStackCachePath = [string](Get-ObjectValue -Object $bookstack -Name "cachePath" -Default (Join-Path (Get-StateRoot -Config $Config) "bookstack-product-docs"))
+    $mantisAttachmentCachePath = [string](Get-ObjectValue -Object $mantis -Name "attachmentCachePath" -Default (Join-Path (Join-Path (Get-StateRoot -Config $Config) "mantis-ticket") "attachments"))
+    $mantisOcr = Get-ObjectValue -Object $mantis -Name "ocr" -Default $null
     $defaultResetDatabase = "false"
     $codeResetDatabase = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $code -Name "resetDatabase" -Default $false) -Default $false)
     $graphResetDatabase = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $graph -Name "resetDatabase" -Default $false) -Default $false)
@@ -1455,6 +1505,7 @@ function Get-HostLocalValues {
         PATH_BASES = (Join-Path (Get-StateRoot -Config $Config) "bases")
         PATH_MODEL_CACHE = (Join-Path (Get-StateRoot -Config $Config) "model-cache")
         PATH_BOOKSTACK_CACHE = (Get-FullPath $bookStackCachePath)
+        PATH_MANTIS_ATTACHMENT_CACHE = (Get-FullPath $mantisAttachmentCachePath)
         PATH_1C_BIN = $(if ($platformBinPath) { Get-FullPath $platformBinPath } else { "" })
         PLATFORM_VERSION = $platformVersion
         HELP_PLATFORM_VERSION = $platformVersion
@@ -1472,6 +1523,12 @@ function Get-HostLocalValues {
         BOOKSTACK_INDEX_ON_STARTUP = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $bookstack -Name "indexOnStartup" -Default $true) -Default $true)
         BOOKSTACK_MAX_INDEX_PAGES = [string](Get-ObjectValue -Object $bookstack -Name "maxIndexPages" -Default "")
         BOOKSTACK_RESET_DATABASE = $bookStackResetDatabase
+        MANTIS_BASE_URL = [string](Get-ObjectValue -Object $mantis -Name "baseUrl" -Default "")
+        MANTIS_TIMEOUT_SECONDS = [string](Get-ObjectValue -Object $mantis -Name "timeoutSeconds" -Default "20")
+        MANTIS_MAX_ATTACHMENT_BYTES = [string](Get-ObjectValue -Object $mantis -Name "maxAttachmentBytes" -Default "26214400")
+        MANTIS_MAX_INLINE_TEXT_CHARS = [string](Get-ObjectValue -Object $mantis -Name "maxInlineTextChars" -Default "16000")
+        MANTIS_OCR_ENABLED = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $mantisOcr -Name "enabled" -Default $true) -Default $true)
+        MANTIS_OCR_LANGUAGES = ((As-Array (Get-ObjectValue -Object $mantisOcr -Name "languages" -Default @("rus", "eng"))) -join ",")
         PROJECT_NAME = $(if ($ConfigState) { $ConfigState.configId } else { [string](Get-ObjectValue -Object $Config -Name "hostId" -Default "vibecoding1c-mcp-host") })
     }
 }
@@ -1601,6 +1658,9 @@ function Get-HostDefaultVolumeEntries {
     }
     if ($id -eq "bookstack") {
         return @([ordered]@{ from = "PATH_BOOKSTACK_CACHE"; to = "/data"; required = $false })
+    }
+    if ($id -eq "mantis") {
+        return @([ordered]@{ from = "PATH_MANTIS_ATTACHMENT_CACHE"; to = "/data/attachments"; required = $false })
     }
     return @()
 }
@@ -1738,7 +1798,7 @@ function Resolve-ServerVolumes {
                     $serverId = [string](Get-ObjectValue -Object $Server -Name "id" -Default "<unknown>")
                     throw "Required volume path for '$from' on vibecoding1c MCP server '$serverId' was not found: $hostPath"
                 }
-                if ($from -eq "PATH_BASES" -or $from -eq "PATH_METADATA" -or $from -eq "PATH_MODEL_CACHE") {
+                if ($from -eq "PATH_BASES" -or $from -eq "PATH_METADATA" -or $from -eq "PATH_MODEL_CACHE" -or $from -eq "PATH_MANTIS_ATTACHMENT_CACHE") {
                     New-Item -ItemType Directory -Force -Path $hostPath | Out-Null
                 } else {
                     continue
@@ -1852,6 +1912,7 @@ function Get-AiRules1cMcpClientName {
         "code" { return "1c-code-metadata-mcp" }
         "graph" { return "1c-graph-metadata-mcp" }
         "bookstack" { return "BookStack-product-docs-mcp" }
+        "mantis" { return "itl-mantis-ticket-mcp" }
         default { return "" }
     }
 }

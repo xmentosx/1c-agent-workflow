@@ -32,6 +32,15 @@ Configure `bookStackProductDocsServer.baseUrl`, set read-only `BOOKSTACK_TOKEN_I
 The MCP publishes as `BookStack-product-docs-mcp` and exposes `search_docs`, `read_page`,
 `list_structure`, `index_status`, and `reindex_docs`.
 
+The `mantis` global server is built locally from `mantis-ticket-mcp/`.
+Configure `mantisTicketServer.baseUrl`, set read-only `MANTIS_API_TOKEN` in `secrets`,
+and keep `mantis` in `enabledServers.global`. The MCP publishes as
+`itl-mantis-ticket-mcp` and exposes `read_ticket`, `get_attachment`, and `health`.
+`read_ticket` returns comments, issue-level and comment-level attachments, sanitized
+rendered HTML, formatting spans, and prompt-ready markdown. Image originals are always
+represented as attachment resource handles; OCR text is only draft accompaniment and tells
+vision-capable agents to inspect the original image as the source of truth.
+
 For local CPU semantic search, keep the shared embedding setting:
 
 ```json
@@ -49,6 +58,12 @@ To set up and publish only the BookStack MCP without touching other configured s
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action setup -ConfigPath .\host.config.json -ServerId bookstack
+```
+
+To set up and publish only the Mantis ticket MCP:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action setup -ConfigPath .\host.config.json -ServerId mantis
 ```
 
 Use `dump-config` manually when a local `sourcePath` should be refreshed from a 1C infobase connected to configuration repository storage:
@@ -71,7 +86,7 @@ publish         Publish current host state to the registry repo.
 ```
 
 Use `-ConfigId <id>` with `start`, `refresh-config`, or `reindex` to limit config-specific work.
-Use `-ServerId <id>` with `setup`, `start`, `stop`, `status`, or `reindex` to manage one MCP server, for example `-ServerId bookstack`.
+Use `-ServerId <id>` with `setup`, `start`, `stop`, `status`, or `reindex` to manage one MCP server, for example `-ServerId bookstack` or `-ServerId mantis`.
 Use `-ConfigId <id>` with `dump-config` to update one local dump.
 Use `-DryRun` to validate generated paths and payloads without Docker/Git writes where possible.
 Run `publish` after `reindex` when remote clients should see updated registry freshness metadata.
@@ -87,6 +102,13 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action stop -ConfigPath .\host.config.json -ServerId bookstack
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action reindex -ConfigPath .\host.config.json -ServerId bookstack
 ```
+Mantis-only operations:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action start -ConfigPath .\host.config.json -ServerId mantis
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action status -ConfigPath .\host.config.json -ServerId mantis
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action stop -ConfigPath .\host.config.json -ServerId mantis
+```
 CPU embedding mode always sets `RESET_CACHE=false` because CPU model cache is mounted at `/app/model_cache` and must not be removed from inside a container.
 In CPU embedding mode the Graph server receives a non-secret placeholder `OPENAI_API_KEY` only to satisfy its startup OpenAI client initialization; set `CHAT_API_KEY`, `CHAT_API_BASE`, and `CHAT_MODEL` in `config.env` or `host.config.json` secrets when real Graph chat calls must use an LLM.
 Config-specific vector stores from `PATH_BASES` are isolated as `<stateRoot>/bases/<configId>/<serverId>/...` so multiple `code` containers do not share the same zvec lock.
@@ -99,7 +121,7 @@ The registry repo stores `registry.json` with:
 - `configurations[]`: `configId`, title/source, source fingerprint, report hash, indexed time
 - `servers[]`: server id/scope/provider/configId/name/url/health and freshness inputs
 
-The registry must not contain license keys, API tokens, infobase passwords, or local host paths that are not needed by clients.
+The registry must not contain license keys, API tokens, Mantis tokens, infobase passwords, or local host paths that are not needed by clients.
 
 ## Troubleshooting
 

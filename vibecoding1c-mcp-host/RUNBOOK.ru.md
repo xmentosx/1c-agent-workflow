@@ -15,7 +15,7 @@
 - запущены config-specific `code` и `graph` MCP servers для указанных конфигураций;
 - опубликован `registry.json` в GitLab registry repo.
 
-В GitLab попадает только endpoint/freshness metadata. Лицензионные ключи, API tokens, пароли ИБ и локальные пути хоста в registry попадать не должны.
+В GitLab попадает только endpoint/freshness metadata. Лицензионные ключи, API tokens, Mantis tokens, пароли ИБ и локальные пути хоста в registry попадать не должны.
 
 ## Репозитории
 
@@ -110,9 +110,12 @@ notepad .\host.config.json
 - `embedding`: endpoint и модель embedding-сервиса, которые увидят Docker containers.
 - `portRanges.globalStart`: первый порт для global MCP servers.
 - `portRanges.projectStart`: первый порт для config-specific MCP servers.
-- `enabledServers.global`: global servers, обычно `docs`, `templates`, `syntax`, `codechecker`, `ssl`.
+- `enabledServers.global`: global servers, обычно `docs`, `templates`, `syntax`, `codechecker`, `ssl`, `bookstack`, `mantis`.
 - `enabledServers.project`: project/config servers, обычно `code`, `graph`.
 - `configurations`: список конфигураций 1C, для которых нужно поднять `code`/`graph`.
+- `mantisTicketServer.baseUrl`: URL Mantis, доступный выделенной машине.
+- `mantisTicketServer.attachmentCachePath`: локальный cache оригиналов вложений Mantis.
+- `mantisTicketServer.ocr`: включение OCR и языки, по умолчанию `rus` и `eng`.
 
 Пример конфигурации из Git:
 
@@ -167,7 +170,7 @@ notepad .\host.config.json
 
 ## Секреты
 
-Рабочий `vibecoding1c-mcp-host/host.config.json` добавлен в `.gitignore`, потому что может содержать локальные пути, пароли ИБ/хранилища и `ONEC_AI_TOKEN`. Не коммитьте этот файл и не публикуйте его содержимое в registry repo.
+Рабочий `vibecoding1c-mcp-host/host.config.json` добавлен в `.gitignore`, потому что может содержать локальные пути, пароли ИБ/хранилища, `ONEC_AI_TOKEN`, BookStack tokens и `MANTIS_API_TOKEN`. Не коммитьте этот файл и не публикуйте его содержимое в registry repo.
 
 Лицензионные ключи и другие секреты держите только на выделенной машине:
 
@@ -195,6 +198,12 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action setup -ConfigPath .\host.config.json -ServerId bookstack
+```
+
+Чтобы настроить, запустить и опубликовать только Mantis ticket MCP:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action setup -ConfigPath .\host.config.json -ServerId mantis
 ```
 
 Для локального CPU semantic search достаточно оставить общий embedding model:
@@ -279,6 +288,12 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action status -ConfigPath .\host.config.json -ServerId bookstack
 ```
 
+Посмотреть состояние только Mantis ticket MCP:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action status -ConfigPath .\host.config.json -ServerId mantis
+```
+
 Запустить или обновить containers без публикации registry:
 
 ```powershell
@@ -291,6 +306,12 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action start -ConfigPath .\host.config.json -ServerId bookstack
 ```
 
+Запустить или обновить только Mantis ticket MCP без публикации registry:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action start -ConfigPath .\host.config.json -ServerId mantis
+```
+
 Остановить tracked containers:
 
 ```powershell
@@ -301,6 +322,12 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action stop -ConfigPath .\host.config.json -ServerId bookstack
+```
+
+Остановить только Mantis ticket MCP:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action stop -ConfigPath .\host.config.json -ServerId mantis
 ```
 
 Обновить локальную XML-выгрузку из ИБ, подключенной к 1C-хранилищу:
@@ -403,6 +430,7 @@ Developer-side helper пишет только ignored runtime/client config:
 
 - license keys;
 - API tokens;
+- Mantis tokens;
 - пароли ИБ или хранилища;
 - локальные пути, которые не нужны клиентам;
 - developer-specific client config.
