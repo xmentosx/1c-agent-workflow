@@ -87,7 +87,7 @@ Ask interactively in a human-friendly format:
 
 Required for initial project setup:
 
-- Current working directory is the project root. Show its absolute path and ask the developer to confirm initialization in this folder.
+- Current working directory is the project root. Do not ask the developer to confirm initialization in chat before starting the monitored wizard; the wizard owns interactive setup questions and visible confirmations. Print the absolute path only as execution context when useful.
 - Current agent target. Do not ask the developer to choose Codex/Kilo; use the agent surface that is running this bootstrap. If it cannot be detected, use `codex`.
 - Directory for development branch infobase copies: do not ask during normal initialization. Use `.agent-1c/infobases/dev-branches` inside the active branch worktree and ensure `.agent-1c/infobases/` is ignored by Git. Ask only if the developer explicitly wants a custom location.
 - Directory for development branch Git worktrees: do not ask during normal initialization. By default, create sibling worktrees under `<project-folder>-worktrees/<branch>`. Use `DEV_BRANCH_WORKTREE_ROOT` or `devBranchWorktreeRoot` only as an explicit override.

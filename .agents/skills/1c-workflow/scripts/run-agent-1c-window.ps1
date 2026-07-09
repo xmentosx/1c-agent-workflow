@@ -454,9 +454,22 @@ $commandText = @"
 `$OutputEncoding = `$utf8
 `$ProgressPreference = 'SilentlyContinue'
 `$ErrorActionPreference = 'Stop'
-$helperInvocation *>&1 | Tee-Object -FilePath $(ConvertTo-PowerShellLiteral $logPath)
-if (`$LASTEXITCODE -is [int]) { exit `$LASTEXITCODE }
-if (`$?) { exit 0 } else { exit 1 }
+`$agent1cExitCode = 1
+try {
+    $helperInvocation *>&1 | Tee-Object -FilePath $(ConvertTo-PowerShellLiteral $logPath)
+    `$agent1cPipelineSucceeded = `$?
+    if (`$LASTEXITCODE -is [int]) {
+        `$agent1cExitCode = [int]`$LASTEXITCODE
+    } elseif (`$agent1cPipelineSucceeded) {
+        `$agent1cExitCode = 0
+    } else {
+        `$agent1cExitCode = 1
+    }
+} catch {
+    [Console]::Error.WriteLine(`$_.Exception.Message)
+    `$agent1cExitCode = 1
+}
+[Environment]::Exit(`$agent1cExitCode)
 "@
 
 $argumentLine = Join-NativeCommandLineArguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $commandText)
