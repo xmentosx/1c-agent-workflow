@@ -23,6 +23,8 @@ This package is designed for both Codex and Kilo Code:
 
 - Common workflow skill: `.agents/skills/1c-workflow`.
 - Fast routine workflow skill: `.agents/skills/1c-workflow-fast`.
+- Product documentation skill: `.agents/skills/product-docs`.
+- Branch data exploration skill: `.agents/skills/itl-roctup-1c-data`.
 - Common project guidance: upstream `AGENTS.md` from `ai_rules_1c` plus detailed ITL overlay notes in `USER-RULES.md`.
 - Kilo slash command templates: `.agents/skills/1c-workflow/kilo-command-templates`.
 - Local Kilo command/runtime state: `.kilo/commands/itl*.md`, `.kilo/kilo.json`, and `.kilo/kilo.jsonc`, ignored by Git.
@@ -41,7 +43,7 @@ Default bootstrap command from the cloned workflow package:
 powershell -ExecutionPolicy Bypass -File <source>\install-agent-1c-workflow.ps1 -ProjectRoot <project>
 ```
 
-The bootstrap command copies `.agents/skills/1c-workflow*`, `templates/`, the root docs/guides, and `install-agent-1c-workflow.ps1`. It does not copy `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, or generated `.kilo/commands/`.
+The bootstrap command copies `.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `templates/`, the root docs/guides, and `install-agent-1c-workflow.ps1`. It does not copy `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, or generated `.kilo/commands/`.
 
 The bootstrap script then runs this monitored initialization command from the target project:
 
@@ -163,6 +165,8 @@ Use these steps only when `install-agent-1c-workflow.ps1` is unavailable or fail
 ```text
 <project>/.agents/skills/1c-workflow/
 <project>/.agents/skills/1c-workflow-fast/
+<project>/.agents/skills/product-docs/
+<project>/.agents/skills/itl-roctup-1c-data/
 ```
 
 2. Generate context-specific Kilo command wrappers into ignored local state:
@@ -265,7 +269,7 @@ For projects that already have this workflow installed, do not rerun `init-proje
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-workflow
 ```
 
-In Kilo Code, ask the agent to update the ITL workflow or run the helper action directly. The command runs only from the `master` worktree, updates managed files (`.agents/skills/1c-workflow*`, Kilo command templates, `templates/`, and workflow docs), regenerates ignored `.kilo/commands/itl*.md` for the current folder, preserves local runtime/project state, records `workflowPackage` in `.agent-1c/dependency-lock.json`, refreshes ROCTUP MCP cache, and runs `update-ai-rules` unless `-SkipAiRules` is passed.
+In Kilo Code, ask the agent to update the ITL workflow or run the helper action directly. The command runs only from the `master` worktree, updates managed files (`.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, Kilo command templates, `templates/`, and workflow docs), regenerates ignored `.kilo/commands/itl*.md` for the current folder, preserves local runtime/project state, records `workflowPackage` in `.agent-1c/dependency-lock.json`, refreshes ROCTUP MCP cache, and runs `update-ai-rules` unless `-SkipAiRules` is passed.
 
 Optional source overrides:
 

@@ -1209,6 +1209,8 @@ function Assert-WorkflowPackageSourceRoot {
         "AGENT-INSTALL.md",
         ".agents\skills\1c-workflow\scripts\agent-1c.ps1",
         ".agents\skills\1c-workflow-fast\SKILL.md",
+        ".agents\skills\product-docs\SKILL.md",
+        ".agents\skills\itl-roctup-1c-data\SKILL.md",
         "templates\USER-RULES.append.md"
     )) {
         $path = Join-Path $SourceRoot $relativePath
@@ -1580,6 +1582,8 @@ function Update-WorkflowPackage {
 
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow"
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow-fast"
+    Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\product-docs"
+    Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-roctup-1c-data"
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "templates"
     foreach ($relativePath in @("install-agent-1c-workflow.ps1", "README.md", "AGENT-INSTALL.md", "DEVELOPER-GUIDE.ru.md", "DEV-BRANCH-DEVELOPMENT.ru.md", "VANESSA-TESTS-GUIDE.md", "VANESSA-TESTS-GUIDE.ru.md")) {
         Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath

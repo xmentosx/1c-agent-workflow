@@ -18,6 +18,51 @@ Describe "1C agent workflow static checks" {
             (Get-Content -Encoding UTF8 -Raw $McpHostPath),
             (Get-Content -Encoding UTF8 -Raw $McpHostDumpPath)
         ) -join [Environment]::NewLine
+
+        function Invoke-TestPowerShellFile {
+            param(
+                [string]$FilePath,
+                [string[]]$Arguments = @()
+            )
+
+            $stdoutPath = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-test-powershell-stdout-" + [guid]::NewGuid().ToString("N") + ".log")
+            $stderrPath = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-test-powershell-stderr-" + [guid]::NewGuid().ToString("N") + ".log")
+
+            try {
+                $quoteArgument = {
+                    param([string]$Value)
+                    if ($Value -match '[\s"]') {
+                        return '"' + ($Value -replace '"', '\"') + '"'
+                    }
+                    return $Value
+                }
+                $argumentList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (& $quoteArgument $FilePath)) + @($Arguments | ForEach-Object { & $quoteArgument $_ })
+                $process = Start-Process -FilePath "powershell" `
+                    -ArgumentList $argumentList `
+                    -RedirectStandardOutput $stdoutPath `
+                    -RedirectStandardError $stderrPath `
+                    -Wait `
+                    -PassThru `
+                    -WindowStyle Hidden
+                $exitCode = $process.ExitCode
+                $stdout = @(if (Test-Path -LiteralPath $stdoutPath -PathType Leaf) { Get-Content -Encoding UTF8 -LiteralPath $stdoutPath })
+                $stderr = @(if (Test-Path -LiteralPath $stderrPath -PathType Leaf) { Get-Content -Encoding UTF8 -LiteralPath $stderrPath })
+                $combined = @($stdout) + @($stderr)
+
+                return [pscustomobject]@{
+                    exitCode = $exitCode
+                    stdout = @($stdout)
+                    stderr = @($stderr)
+                    combinedText = ($combined -join [Environment]::NewLine)
+                }
+            } finally {
+                foreach ($path in @($stdoutPath, $stderrPath)) {
+                    if (Test-Path -LiteralPath $path -ErrorAction SilentlyContinue) {
+                        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+        }
     }
 
     It "parses the PowerShell helper" {
@@ -498,7 +543,7 @@ Describe "1C agent workflow static checks" {
         }
     }
 
-    It "keeps always-on workflow guidance within token budgets" {
+    It "entrypoint token budgets stay within limits" {
         $budgets = @(
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 750; maxApproxTokens = 1500 },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 750; maxApproxTokens = 1500 },
@@ -515,7 +560,9 @@ Describe "1C agent workflow static checks" {
             $wordCount | Should -BeLessOrEqual $budget.maxWords
             $approxTokens | Should -BeLessOrEqual $budget.maxApproxTokens
         }
+    }
 
+    It "agent guidance references stay resolvable" {
         $workflowIndexText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
         foreach ($topic in @("init-setup.md", "mcp.md", "branch-lifecycle.md", "verification-result.md")) {
             $workflowIndexText | Should -Match ([regex]::Escape($topic))
@@ -526,6 +573,46 @@ Describe "1C agent workflow static checks" {
         $userRulesText | Should -Match "Search hygiene"
         $userRulesText | Should -Match ([regex]::Escape(".agent-1c/runs/"))
         $userRulesText | Should -Match ([regex]::Escape("build/test-results/"))
+
+        $installedSkillIds = @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data")
+        $skillReferences = [regex]::Matches($userRulesText, '\.agents/skills/([^/]+)/SKILL\.md') | ForEach-Object { $_.Groups[1].Value }
+        foreach ($skillId in $skillReferences) {
+            $installedSkillIds | Should -Contain $skillId
+        }
+    }
+
+    It "install contract stays consistent across installer update-workflow and docs" {
+        $installerText = Get-Content -Encoding UTF8 -Raw $InstallerPath
+        $lifecycleText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1")
+        $installDocText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
+        $initSetupText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\init-setup.md")
+        foreach ($skillPath in @(
+            ".agents\skills\1c-workflow",
+            ".agents\skills\1c-workflow-fast",
+            ".agents\skills\product-docs",
+            ".agents\skills\itl-roctup-1c-data"
+        )) {
+            $installerText | Should -Match ([regex]::Escape($skillPath))
+            $lifecycleText | Should -Match ([regex]::Escape($skillPath))
+            (Test-Path -LiteralPath (Join-Path $RepoRoot ($skillPath + "\SKILL.md")) -PathType Leaf) | Should -Be $true
+
+            $docsSkillPath = $skillPath -replace '\\', '/'
+            $installDocText | Should -Match ([regex]::Escape($docsSkillPath))
+            $initSetupText | Should -Match ([regex]::Escape($docsSkillPath))
+        }
+    }
+
+    It "human docs are summaries, not canonical procedures" {
+        $readmeText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")
+        $developerGuideText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "DEVELOPER-GUIDE.ru.md")
+
+        $readmeText | Should -Match ([regex]::Escape(".agents/skills/1c-workflow/references/"))
+        $developerGuideText | Should -Match ([regex]::Escape(".agents/skills/1c-workflow/references/"))
+
+        $readmeText | Should -Not -Match ([regex]::Escape("1. Run installer"))
+        $readmeText | Should -Not -Match ([regex]::Escape("Mantis token"))
+        $developerGuideText | Should -Not -Match ([regex]::Escape("script wizard"))
+        $developerGuideText | Should -Not -Match ([regex]::Escape("Refresh-DevBranch"))
     }
 
     It 'keeps Pester CI output under ignored build test-results path' {
@@ -595,7 +682,8 @@ Describe "1C agent workflow static checks" {
             "Set-DevBranchExtension",
             "Dump-DevBranchExtension"
         )) {
-            $HelperText | Should -Match "(?s)function $functionName.*Assert-DevelopmentBranchWorktreeContext"
+            $guardPattern = '(?s)function ' + [regex]::Escape($functionName) + '.*Assert-DevelopmentBranchWorktreeContext'
+            $HelperText | Should -Match $guardPattern
         }
     }
 
@@ -4215,6 +4303,9 @@ local after
 
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\stale.txt") -PathType Leaf) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow-fast\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\product-docs\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-roctup-1c-data\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot "install-agent-1c-workflow.ps1") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-status.md") -PathType Leaf) | Should -Be $true
@@ -4282,6 +4373,8 @@ local after
 
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow-fast\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\product-docs\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\itl-roctup-1c-data\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\event-log-exporter\EventLogExporter.xml") -PathType Leaf) | Should -Be $true
@@ -6573,7 +6666,7 @@ if (`$?) { exit 0 } else { exit 1 }
         $HelperText | Should -Match "Invoke-DesignerInteractive"
         $HelperText | Should -Match "Invoke-VisibleNativeProcessAndWait"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=manual-confirm"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")) | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\branch-lifecycle.md")) | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP"
     }
 
     It "routes interactive branch creation through the monitored launcher" {
@@ -6639,9 +6732,9 @@ if (`$?) { exit 0 } else { exit 1 }
             & git -C $tempRoot branch -M master
 
             $env:APPDATA = Join-Path $tempRoot "appdata"
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action new-dev-branch -DevBranchName "Needs Confirmation" 2>&1
-            $LASTEXITCODE | Should -Not -Be 0
-            $outputText = $output -join [Environment]::NewLine
+            $result = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "new-dev-branch", "-DevBranchName", "Needs Confirmation")
+            $result.exitCode | Should -Not -Be 0
+            $outputText = $result.combinedText
             $outputText | Should -Match "run-agent-1c-window\.ps1"
             $outputText | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip"
 
@@ -6747,9 +6840,9 @@ if (`$?) { exit 0 } else { exit 1 }
             ($switchOutput -join [Environment]::NewLine) | Should -Match ([regex]::Escape([System.IO.Path]::GetFullPath($worktreePath)))
             ((& git -C $tempRoot branch --show-current).Trim()) | Should -Be "master"
 
-            $duplicateOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action new-dev-branch -DevBranchName "Fixture Branch" 2>&1
-            $LASTEXITCODE | Should -Not -Be 0
-            ($duplicateOutput -join [Environment]::NewLine) | Should -Match "Development branch already exists: itldev/fixture-branch"
+            $duplicateResult = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "new-dev-branch", "-DevBranchName", "Fixture Branch")
+            $duplicateResult.exitCode | Should -Not -Be 0
+            $duplicateResult.combinedText | Should -Match "Development branch already exists: itldev/fixture-branch"
         } finally {
             $env:APPDATA = $oldAppData
             if (Test-Path -LiteralPath $worktreePath -PathType Container -ErrorAction SilentlyContinue) {
@@ -6805,9 +6898,9 @@ if (`$?) { exit 0 } else { exit 1 }
             Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value "{}" -Encoding ASCII
 
             $env:APPDATA = Join-Path $tempRoot "appdata"
-            $firstOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action new-dev-branch -DevBranchName "Partial Branch" 2>&1
-            $LASTEXITCODE | Should -Not -Be 0
-            ($firstOutput -join [Environment]::NewLine) | Should -Match "Unsupported DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP value"
+            $firstResult = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "new-dev-branch", "-DevBranchName", "Partial Branch")
+            $firstResult.exitCode | Should -Not -Be 0
+            $firstResult.combinedText | Should -Match "Unsupported DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP value"
 
             $statePath = Join-Path $worktreePath ".agent-1c\dev-branches\partial-branch.json"
             (Test-Path -LiteralPath $statePath -PathType Leaf) | Should -Be $true
@@ -6837,9 +6930,9 @@ if (`$?) { exit 0 } else { exit 1 }
                 Set-Content -LiteralPath $envPath -Value $fixedEnv -Encoding UTF8
             }
 
-            $resumeOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action new-dev-branch -DevBranchName "Partial Branch" 2>&1
-            $LASTEXITCODE | Should -Be 0
-            ($resumeOutput -join [Environment]::NewLine) | Should -Match "Resuming development branch initialization: itldev/partial-branch"
+            $resumeResult = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "new-dev-branch", "-DevBranchName", "Partial Branch")
+            $resumeResult.exitCode | Should -Be 0
+            $resumeResult.combinedText | Should -Match "Resuming development branch initialization: itldev/partial-branch"
 
             $resumedState = Get-Content -Encoding UTF8 -Raw $statePath | ConvertFrom-Json
             $resumedState.initializationStatus | Should -Be "ready"

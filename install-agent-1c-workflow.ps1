@@ -39,6 +39,8 @@ function Assert-SourcePackage {
         "AGENT-INSTALL.md",
         ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1",
         ".agents\skills\1c-workflow-fast\SKILL.md",
+        ".agents\skills\product-docs\SKILL.md",
+        ".agents\skills\itl-roctup-1c-data\SKILL.md",
         "templates\project.json",
         "templates\USER-RULES.append.md"
     )) {
@@ -145,6 +147,8 @@ Write-Host "Project: $projectRootFull"
 foreach ($relativePath in @(
     ".agents\skills\1c-workflow",
     ".agents\skills\1c-workflow-fast",
+    ".agents\skills\product-docs",
+    ".agents\skills\itl-roctup-1c-data",
     "templates"
 )) {
     Copy-ManagedDirectory -SourceRoot $sourceRootFull -TargetRoot $projectRootFull -RelativePath $relativePath
