@@ -6,6 +6,7 @@ param(
     [ValidateSet("wizard", "json", "configured")]
     [string]$InitMode = "wizard",
     [string]$InitAnswersPath = "",
+    [int]$InitMaxWaitSeconds = 3600,
     [switch]$KeepWindowOnFailure
 )
 
@@ -13,8 +14,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 $utf8 = New-Object System.Text.UTF8Encoding $false
+[Console]::InputEncoding = $utf8
 [Console]::OutputEncoding = $utf8
 $OutputEncoding = $utf8
+
+if ($InitMaxWaitSeconds -lt 0) {
+    throw "InitMaxWaitSeconds must be 0 or greater."
+}
 
 function Get-FullPathNormalized {
     param([string]$Path)
@@ -180,6 +186,7 @@ $launcherArgs = @()
 if ($KeepWindowOnFailure) {
     $launcherArgs += "-KeepWindowOnFailure"
 }
+$launcherArgs += @("-MaxWaitSeconds", [string]$InitMaxWaitSeconds)
 $launcherArgs += @("--") + $initArgs
 
 Write-Host "Starting monitored ITL initialization."

@@ -2,6 +2,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 $utf8 = New-Object System.Text.UTF8Encoding $false
+[Console]::InputEncoding = $utf8
 [Console]::OutputEncoding = $utf8
 $OutputEncoding = $utf8
 
@@ -9,8 +10,11 @@ $ProjectRoot = (Get-Location).Path
 $HelperPath = ""
 $PollIntervalMilliseconds = 1000
 $StatusStartTimeoutSeconds = 30
+$MaxWaitSeconds = 3600
 $KeepWindowOnFailure = $false
 $AgentArgs = @()
+$GitIndexLockPath = ""
+$GitIndexLockPreExisted = $false
 
 function Read-RequiredLauncherValue {
     param(
@@ -61,6 +65,12 @@ $rawArgs = @($args)
         "-statusstarttimeoutseconds" {
             $value = Read-RequiredLauncherValue -Values $rawArgs -Index $i -Name $arg
             $StatusStartTimeoutSeconds = [int]$value.value
+            $i = $value.index
+            continue
+        }
+        "-maxwaitseconds" {
+            $value = Read-RequiredLauncherValue -Values $rawArgs -Index $i -Name $arg
+            $MaxWaitSeconds = [int]$value.value
             $i = $value.index
             continue
         }
@@ -133,6 +143,203 @@ function Read-RunStatus {
     }
 }
 
+function Get-RunStatusProperty {
+    param(
+        [AllowNull()][object]$Status,
+        [string]$Name,
+        [AllowNull()][object]$Default = $null
+    )
+
+    if ($null -eq $Status) {
+        return $Default
+    }
+
+    $property = $Status.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $Default
+    }
+
+    if ($null -eq $property.Value) {
+        return $Default
+    }
+
+    return $property.Value
+}
+
+function ConvertTo-IntOrDefault {
+    param(
+        [AllowNull()][object]$Value,
+        [int]$Default = 0
+    )
+
+    if ($null -eq $Value) {
+        return $Default
+    }
+
+    $text = ([string]$Value).Trim()
+    if ($text -notmatch '^-?\d+$') {
+        return $Default
+    }
+
+    try {
+        return [int]$text
+    } catch {
+        return $Default
+    }
+}
+
+function Get-AgentAction {
+    for ($i = 0; $i -lt $AgentArgs.Count; $i++) {
+        if ([string]$AgentArgs[$i] -ieq "-Action" -and ($i + 1) -lt $AgentArgs.Count) {
+            return [string]$AgentArgs[$i + 1]
+        }
+    }
+
+    return ""
+}
+
+function Get-GitIndexLockPath {
+    $gitPath = Join-Path $projectRootFull ".git"
+    if (Test-Path -LiteralPath $gitPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        try {
+            $firstLine = [System.IO.File]::ReadLines($gitPath) | Select-Object -First 1
+            if ($firstLine -match '^gitdir:\s*(.+)$') {
+                $gitDir = $matches[1].Trim()
+                if (-not [System.IO.Path]::IsPathRooted($gitDir)) {
+                    $gitDir = [System.IO.Path]::GetFullPath((Join-Path $projectRootFull $gitDir))
+                }
+                return (Join-Path $gitDir "index.lock")
+            }
+        } catch {
+        }
+    }
+
+    return (Join-Path $gitPath "index.lock")
+}
+
+function Initialize-GitIndexLockTracking {
+    $script:GitIndexLockPath = Get-GitIndexLockPath
+    $script:GitIndexLockPreExisted = Test-Path -LiteralPath $script:GitIndexLockPath -PathType Leaf -ErrorAction SilentlyContinue
+}
+
+function Test-GitProcessRunning {
+    return [bool](Get-Process -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1)
+}
+
+function Invoke-LauncherGitIndexLockCleanup {
+    $lockPath = Get-GitIndexLockPath
+    if (-not $lockPath -or -not (Test-Path -LiteralPath $lockPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return ""
+    }
+
+    if ($script:GitIndexLockPreExisted) {
+        return "Git index lock was present before this launcher run and was left in place: $lockPath. Close active Git processes and remove it manually only if it is stale."
+    }
+
+    if (Test-GitProcessRunning) {
+        return "Git index lock remains because git.exe is still running: $lockPath. Wait for Git to finish, then remove it manually only if it is stale."
+    }
+
+    try {
+        Remove-Item -LiteralPath $lockPath -Force -ErrorAction Stop
+        return "Removed Git index lock created during this failed launcher run: $lockPath"
+    } catch {
+        return "Git index lock cleanup failed for '$lockPath': $($_.Exception.Message). Close active Git processes and remove it manually only if it is stale."
+    }
+}
+
+function Write-LauncherRunStatus {
+    param(
+        [ValidateSet("succeeded", "failed")]
+        [string]$Status,
+        [int]$ExitCode,
+        [string]$ErrorMessage,
+        [string]$Stage,
+        [string]$StageDetail,
+        [AllowNull()][object]$ExistingStatus = $null,
+        [int]$HelperProcessId = 0
+    )
+
+    $now = Get-Date
+    $startedAtText = [string](Get-RunStatusProperty -Status $ExistingStatus -Name "startedAt" -Default $startedAt.ToString("o"))
+    $action = [string](Get-RunStatusProperty -Status $ExistingStatus -Name "action" -Default (Get-AgentAction))
+    $lastLogPath = [string](Get-RunStatusProperty -Status $ExistingStatus -Name "lastLogPath" -Default "")
+    $lastProcessId = ConvertTo-IntOrDefault -Value (Get-RunStatusProperty -Status $ExistingStatus -Name "lastProcessId" -Default 0) -Default 0
+    $lastProcessTimedOut = [bool](Get-RunStatusProperty -Status $ExistingStatus -Name "lastProcessTimedOut" -Default $false)
+
+    $pidValue = ConvertTo-IntOrDefault -Value (Get-RunStatusProperty -Status $ExistingStatus -Name "pid" -Default $HelperProcessId) -Default $HelperProcessId
+    if ($pidValue -eq 0) {
+        $pidValue = $PID
+    }
+
+    $payload = [ordered]@{
+        schemaVersion = 1
+        status = $Status
+        action = $action
+        projectRoot = $projectRootFull
+        pid = $pidValue
+        startedAt = $startedAtText
+        updatedAt = $now.ToString("o")
+        finishedAt = $now.ToString("o")
+        exitCode = $ExitCode
+        lastLogPath = $lastLogPath
+        runLogPath = $logPath
+        errorMessage = $ErrorMessage
+        stage = $Stage
+        stageDetail = $StageDetail
+        lastProcessId = $lastProcessId
+        lastProcessTimedOut = $lastProcessTimedOut
+    }
+
+    [System.IO.File]::WriteAllText($statusPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), $utf8)
+}
+
+function Stop-ProcessIfRunning {
+    param([int]$ProcessId)
+
+    if ($ProcessId -le 0) {
+        return
+    }
+
+    try {
+        $target = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+        if ($null -ne $target -and -not $target.HasExited) {
+            Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+    }
+}
+
+function Fail-Launcher {
+    param(
+        [int]$ExitCode,
+        [string]$Message,
+        [string]$Stage,
+        [string]$StageDetail,
+        [AllowNull()][object]$ExistingStatus = $null,
+        [int]$HelperProcessId = 0
+    )
+
+    $cleanupMessage = Invoke-LauncherGitIndexLockCleanup
+    $fullMessage = $Message
+    if ($cleanupMessage) {
+        Write-Host $cleanupMessage
+        $fullMessage = "$fullMessage $cleanupMessage"
+    }
+
+    $effectiveExitCode = if ($ExitCode -ne 0) { $ExitCode } else { 1 }
+    Write-LauncherRunStatus `
+        -Status "failed" `
+        -ExitCode $effectiveExitCode `
+        -ErrorMessage $fullMessage `
+        -Stage $Stage `
+        -StageDetail $StageDetail `
+        -ExistingStatus $ExistingStatus `
+        -HelperProcessId $HelperProcessId
+    [Console]::Error.WriteLine($fullMessage)
+    exit $effectiveExitCode
+}
+
 if ($AgentArgs.Count -gt 0 -and $AgentArgs[0] -eq "--") {
     if ($AgentArgs.Count -eq 1) {
         $AgentArgs = @()
@@ -142,6 +349,9 @@ if ($AgentArgs.Count -gt 0 -and $AgentArgs[0] -eq "--") {
 }
 
 $projectRootFull = [System.IO.Path]::GetFullPath($ProjectRoot)
+if ($MaxWaitSeconds -lt 0) {
+    throw "MaxWaitSeconds must be 0 or greater."
+}
 if (-not $HelperPath) {
     $HelperPath = Join-Path $PSScriptRoot "agent-1c.ps1"
 }
@@ -157,6 +367,7 @@ $runDir = Join-Path $runsRoot $runId
 New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 $statusPath = Join-Path $runDir "status.json"
 $logPath = Join-Path $runDir "console.log"
+Initialize-GitIndexLockTracking
 
 $powershell = (Get-Command powershell -ErrorAction SilentlyContinue | Select-Object -First 1).Source
 if (-not $powershell) {
@@ -174,6 +385,11 @@ if ($KeepWindowOnFailure) {
 
 $helperInvocation = "& " + (ConvertTo-PowerShellLiteral $helperFull) + " " + ((@($monitoredArgs) | ForEach-Object { ConvertTo-PowerShellArgumentToken $_ }) -join " ")
 $commandText = @"
+`$utf8 = New-Object System.Text.UTF8Encoding `$false
+[Console]::InputEncoding = `$utf8
+[Console]::OutputEncoding = `$utf8
+`$OutputEncoding = `$utf8
+`$ProgressPreference = 'SilentlyContinue'
 `$ErrorActionPreference = 'Stop'
 $helperInvocation *>&1 | Tee-Object -FilePath $(ConvertTo-PowerShellLiteral $logPath)
 if (`$LASTEXITCODE -is [int]) { exit `$LASTEXITCODE }
@@ -219,16 +435,39 @@ while ($true) {
         exit 0
     }
 
+    $elapsedSeconds = ((Get-Date) - $startedAt).TotalSeconds
+    if ($MaxWaitSeconds -gt 0 -and $elapsedSeconds -ge $MaxWaitSeconds) {
+        $lastProcessId = ConvertTo-IntOrDefault -Value (Get-RunStatusProperty -Status $status -Name "lastProcessId" -Default 0) -Default 0
+        Stop-ProcessIfRunning -ProcessId $lastProcessId
+        Stop-ProcessIfRunning -ProcessId $process.Id
+        $message = "External ITL helper timed out after $MaxWaitSeconds seconds before writing a terminal status. Log: $logPath"
+        Fail-Launcher `
+            -ExitCode 124 `
+            -Message $message `
+            -Stage "launcher.timeout" `
+            -StageDetail $message `
+            -ExistingStatus $status `
+            -HelperProcessId $process.Id
+    }
+
     if ($process.HasExited) {
         Start-Sleep -Milliseconds 200
         $status = Read-RunStatus -Path $statusPath
         if ($null -ne $status -and @("succeeded", "failed") -contains ([string]$status.status)) {
             continue
         }
-        throw "External ITL helper exited with code $($process.ExitCode) before writing a terminal status. Log: $logPath"
+        $exitCode = ConvertTo-IntOrDefault -Value $process.ExitCode -Default 1
+        $message = "External ITL helper exited with code $($process.ExitCode) before writing a terminal status. Log: $logPath"
+        Fail-Launcher `
+            -ExitCode $exitCode `
+            -Message $message `
+            -Stage "launcher.helper-exited" `
+            -StageDetail $message `
+            -ExistingStatus $status `
+            -HelperProcessId $process.Id
     }
 
-    if (-not $reportedMissingStatus -and ((Get-Date) - $startedAt).TotalSeconds -ge $StatusStartTimeoutSeconds) {
+    if (-not $reportedMissingStatus -and $elapsedSeconds -ge $StatusStartTimeoutSeconds) {
         Write-Host "Waiting for helper status file: $statusPath"
         $reportedMissingStatus = $true
     }

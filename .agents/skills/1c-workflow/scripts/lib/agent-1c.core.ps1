@@ -106,9 +106,26 @@ function Write-RunStatus {
         lastLogPath = $(if ($script:LastLogPath) { [string]$script:LastLogPath } else { "" })
         runLogPath = $script:ResolvedRunLogPath
         errorMessage = $ErrorMessage
+        stage = $(if ($script:RunStage) { [string]$script:RunStage } else { "" })
+        stageDetail = $(if ($script:RunStageDetail) { [string]$script:RunStageDetail } else { "" })
+        lastProcessId = $script:LastProcessId
+        lastProcessTimedOut = $script:LastProcessTimedOut
     }
 
     Write-Utf8Text -Path $script:ResolvedRunStatusPath -Value (($payload | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+}
+
+function Set-RunStage {
+    param(
+        [string]$Stage,
+        [string]$Detail = ""
+    )
+
+    $script:RunStage = $Stage
+    $script:RunStageDetail = $Detail
+    if (-not [string]::IsNullOrWhiteSpace($RunStatusPath)) {
+        Write-RunStatus -Status "running"
+    }
 }
 
 function Import-DotEnv {
@@ -394,6 +411,77 @@ function ConvertTo-SafeName {
     return $safe
 }
 
+function Get-GitIndexLockPath {
+    param([string]$Root = $script:ProjectRoot)
+
+    $gitPath = Join-Path $Root ".git"
+    if (Test-Path -LiteralPath $gitPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        try {
+            $firstLine = [System.IO.File]::ReadLines($gitPath) | Select-Object -First 1
+            if ($firstLine -match '^gitdir:\s*(.+)$') {
+                $gitDir = $matches[1].Trim()
+                if (-not [System.IO.Path]::IsPathRooted($gitDir)) {
+                    $gitDir = [System.IO.Path]::GetFullPath((Join-Path $Root $gitDir))
+                }
+                return (Join-Path $gitDir "index.lock")
+            }
+        } catch {
+        }
+    }
+
+    return (Join-Path $gitPath "index.lock")
+}
+
+function Initialize-GitIndexLockTracking {
+    $script:GitIndexLockPath = Get-GitIndexLockPath
+    $script:GitIndexLockPreExisted = Test-Path -LiteralPath $script:GitIndexLockPath -PathType Leaf -ErrorAction SilentlyContinue
+}
+
+function Test-GitProcessRunning {
+    return [bool](Get-Process -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1)
+}
+
+function Invoke-GitIndexLockCleanupOnFailure {
+    $lockPath = if ($script:GitIndexLockPath) { $script:GitIndexLockPath } else { Get-GitIndexLockPath }
+    if (-not $lockPath -or -not (Test-Path -LiteralPath $lockPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return ""
+    }
+
+    if ($script:GitIndexLockPreExisted) {
+        return "Git index lock was present before this helper run and was left in place: $lockPath. Close active Git processes and remove it manually only if it is stale."
+    }
+
+    if (Test-GitProcessRunning) {
+        return "Git index lock remains because git.exe is still running: $lockPath. Wait for Git to finish, then remove it manually only if it is stale."
+    }
+
+    try {
+        Remove-Item -LiteralPath $lockPath -Force -ErrorAction Stop
+        return "Removed Git index lock created during this failed helper run: $lockPath"
+    } catch {
+        return "Git index lock cleanup failed for '$lockPath': $($_.Exception.Message). Close active Git processes and remove it manually only if it is stale."
+    }
+}
+
+function Test-GitIndexLockErrorOutput {
+    param([string[]]$Output = @())
+
+    foreach ($line in @($Output)) {
+        if ([string]$line -match '(?i)(index\.lock|Unable to create.*lock file)') {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Get-GitIndexLockRecoveryHint {
+    param([string]$Root = $script:ProjectRoot)
+
+    $lockPath = Get-GitIndexLockPath -Root $Root
+    return "Git index lock blocks this command: $lockPath. Close active Git processes and remove it manually only if it is stale."
+}
+
 function Invoke-GitCommand {
     param(
         [string]$Root,
@@ -442,7 +530,11 @@ function Invoke-GitCommand {
     }
 
     if ($exitCode -ne 0) {
-        throw "Git failed: git -C `"$Root`" $($Arguments -join ' ')"
+        $message = "Git failed: git -C `"$Root`" $($Arguments -join ' ')"
+        if (Test-GitIndexLockErrorOutput -Output $displayOutput) {
+            $message = "$message. $(Get-GitIndexLockRecoveryHint -Root $Root)"
+        }
+        throw $message
     }
 
     if ($PassThru) {

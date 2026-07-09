@@ -5377,6 +5377,8 @@ url = "http://localhost:9999/mcp"
 
         $combinedText = ($docPaths | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_ }) -join [Environment]::NewLine
         $combinedText | Should -Match "launcher validates the helper path"
+        $combinedText | Should -Match "MaxWaitSeconds 3600"
+        $combinedText | Should -Match "InitMaxWaitSeconds 3600"
         $combinedText | Should -Not -Match "(?i)(use|set)\s+`?timeout:\s*0"
     }
 
@@ -5430,6 +5432,8 @@ url = "http://localhost:9999/mcp"
     It "keeps helper path validation inside the monitored launcher" {
         $LauncherText | Should -Match "Helper script was not found"
         $LauncherText | Should -Match ([regex]::Escape('Test-Path -LiteralPath $helperFull'))
+        $LauncherText | Should -Match '\$MaxWaitSeconds\s*=\s*3600'
+        (Get-Content -Encoding UTF8 -Raw $InstallerPath) | Should -Match '\$InitMaxWaitSeconds\s*=\s*3600'
     }
 
     It "warns clearly when source repository sync is disabled" {
@@ -5650,6 +5654,29 @@ url = "http://localhost:9999/mcp"
             [int]$status.exitCode | Should -Be 0
             $status.runLogPath | Should -Be ([System.IO.Path]::GetFullPath($logPath))
             $status.errorMessage | Should -Be ""
+            $status.stage | Should -Not -BeNullOrEmpty
+            [int]$status.lastProcessId | Should -Be 0
+            [bool]$status.lastProcessTimedOut | Should -Be $false
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "preserves Cyrillic projectRoot in helper status JSON" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-status-КОРП-" + [guid]::NewGuid().ToString("N"))
+        $statusPath = Join-Path $tempRoot "status.json"
+        $logPath = Join-Path $tempRoot "console.log"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action help -RunStatusPath $statusPath -RunLogPath $logPath *> $null
+            $LASTEXITCODE | Should -Be 0
+
+            $status = Get-Content -Encoding UTF8 -Raw $statusPath | ConvertFrom-Json
+            $status.status | Should -Be "succeeded"
+            $status.projectRoot | Should -Be ([System.IO.Path]::GetFullPath($tempRoot))
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -5685,6 +5712,109 @@ url = "http://localhost:9999/mcp"
             [int]$status.exitCode | Should -Be 1
             $status.runLogPath | Should -Be ([System.IO.Path]::GetFullPath($logPath))
             $status.errorMessage | Should -Not -BeNullOrEmpty
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "writes failed launcher status when helper exits without terminal status" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-launcher-КОРП-" + [guid]::NewGuid().ToString("N"))
+        $fakeHelperPath = Join-Path $tempRoot "fake-helper.ps1"
+        $stdoutPath = Join-Path $tempRoot "stdout.log"
+        $stderrPath = Join-Path $tempRoot "stderr.log"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $fakeHelperPath -Encoding UTF8 -Value @'
+param(
+    [string]$ProjectRoot,
+    [string]$RunStatusPath,
+    [string]$RunLogPath,
+    [string]$Action,
+    [string]$InitMode
+)
+Write-Host "fake helper exits without status"
+exit 7
+'@
+
+            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", $LauncherPath,
+                "-ProjectRoot", $tempRoot,
+                "-HelperPath", $fakeHelperPath,
+                "-PollIntervalMilliseconds", "50",
+                "-StatusStartTimeoutSeconds", "1",
+                "-MaxWaitSeconds", "10",
+                "--",
+                "-Action", "init-project",
+                "-InitMode", "configured"
+            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+
+            $process.ExitCode | Should -Be 7
+            $runDir = Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\runs") -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            $status = Get-Content -Encoding UTF8 -Raw (Join-Path $runDir.FullName "status.json") | ConvertFrom-Json
+            $status.status | Should -Be "failed"
+            $status.projectRoot | Should -Be ([System.IO.Path]::GetFullPath($tempRoot))
+            [int]$status.exitCode | Should -Be 7
+            $status.stage | Should -Be "launcher.helper-exited"
+            $status.errorMessage | Should -Match "before writing a terminal status"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "times out launcher, writes failed status, and removes current-run Git index lock" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-launcher-timeout-" + [guid]::NewGuid().ToString("N"))
+        $fakeHelperPath = Join-Path $tempRoot "fake-helper.ps1"
+        $stdoutPath = Join-Path $tempRoot "stdout.log"
+        $stderrPath = Join-Path $tempRoot "stderr.log"
+        $lockPath = Join-Path $tempRoot ".git\index.lock"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $fakeHelperPath -Encoding UTF8 -Value @'
+param(
+    [string]$ProjectRoot,
+    [string]$RunStatusPath,
+    [string]$RunLogPath,
+    [string]$Action
+)
+& git -C $ProjectRoot init *> $null
+Set-Content -LiteralPath (Join-Path $ProjectRoot ".git\index.lock") -Encoding ASCII -Value "created-by-timeout-test"
+Start-Sleep -Seconds 20
+'@
+
+            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", $LauncherPath,
+                "-ProjectRoot", $tempRoot,
+                "-HelperPath", $fakeHelperPath,
+                "-PollIntervalMilliseconds", "50",
+                "-StatusStartTimeoutSeconds", "1",
+                "-MaxWaitSeconds", "5",
+                "--",
+                "-Action", "init-project"
+            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+
+            $process.ExitCode | Should -Be 124
+            $runDir = Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\runs") -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            $status = Get-Content -Encoding UTF8 -Raw (Join-Path $runDir.FullName "status.json") | ConvertFrom-Json
+            $status.status | Should -Be "failed"
+            [int]$status.exitCode | Should -Be 124
+            $status.stage | Should -Be "launcher.timeout"
+            $status.errorMessage | Should -Match "timed out after 5 seconds"
+            if ($status.errorMessage -match "Removed Git index lock") {
+                (Test-Path -LiteralPath $lockPath -PathType Leaf) | Should -Be $false
+            } else {
+                $status.errorMessage | Should -Match "git.exe is still running"
+                (Test-Path -LiteralPath $lockPath -PathType Leaf) | Should -Be $true
+            }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -5741,6 +5871,63 @@ url = "http://localhost:9999/mcp"
 
             ((& git -C $tempRoot rev-list --count HEAD).Trim()) | Should -Be "1"
             ((& git -C $tempRoot diff --cached --name-only) -join [Environment]::NewLine) | Should -Be ""
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "accepts empty 1C dump log when dump artifacts exist" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-empty-dump-log-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+
+                function Get-ExportPath {
+                    return "src/cf"
+                }
+
+                function Get-SourceUsesRepository {
+                    return $false
+                }
+
+                function Get-SourceInfoBasePath {
+                    return (Join-Path $script:ProjectRoot "source-base")
+                }
+
+                function Get-InfoBaseKind {
+                    return "file"
+                }
+
+                function Invoke-Designer {
+                    param(
+                        [string]$InfoBasePath,
+                        [string]$InfoBaseKind,
+                        [string[]]$DesignerArgs
+                    )
+
+                    $dumpIndex = [Array]::IndexOf($DesignerArgs, "/DumpConfigToFiles")
+                    if ($dumpIndex -lt 0 -or ($dumpIndex + 1) -ge $DesignerArgs.Count) {
+                        throw "Dump path was not passed to Invoke-Designer."
+                    }
+                    $dumpPath = [string]$DesignerArgs[$dumpIndex + 1]
+                    New-Item -ItemType Directory -Force -Path $dumpPath | Out-Null
+                    Write-Utf8Text -Path (Join-Path $dumpPath "ConfigDumpInfo.xml") -Value "<dump />`n"
+                    Write-Utf8Text -Path (Join-Path $dumpPath "Configuration.xml") -Value "<configuration />`n"
+                    $script:LastLogPath = Join-Path $script:ProjectRoot "empty-1c.log"
+                    Write-Utf8Text -Path $script:LastLogPath -Value ""
+                    return $script:LastLogPath
+                }
+
+                Dump-ConfigToFiles
+            }
+
+            $result.exportPath | Should -Be "src/cf"
+            (Get-Item -LiteralPath $result.logPath).Length | Should -Be 0
+            (Test-Path -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -PathType Leaf) | Should -Be $true
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -5811,11 +5998,13 @@ url = "http://localhost:9999/mcp"
                     New-Item -ItemType Directory -Force -Path $absoluteExportPath | Out-Null
                     Write-Utf8Text -Path (Join-Path $absoluteExportPath "ConfigDumpInfo.xml") -Value "<dump />`n"
                     Write-Utf8Text -Path (Join-Path $absoluteExportPath "Configuration.xml") -Value "<configuration />`n"
+                    $script:LastLogPath = Join-Path $script:ProjectRoot "empty-dump.log"
+                    Write-Utf8Text -Path $script:LastLogPath -Value ""
                     return [pscustomobject]@{
                         exportPath = $exportPath
                         absoluteExportPath = $absoluteExportPath
                         incremental = $false
-                        logPath = ""
+                        logPath = $script:LastLogPath
                     }
                 }
 
@@ -5831,6 +6020,7 @@ url = "http://localhost:9999/mcp"
                     trackedTemplates = @(& git -C $script:ProjectRoot ls-files -- templates)
                     branch = ((& git -C $script:ProjectRoot branch --show-current) -join "").Trim()
                     commitCount = [int](((& git -C $script:ProjectRoot rev-list --count HEAD) -join "").Trim())
+                    dumpLogPath = $script:LastLogPath
                 }
             }
 
@@ -5843,12 +6033,81 @@ url = "http://localhost:9999/mcp"
             $result.trackedTemplates | Should -Contain "templates/AGENTS.append.md"
             $result.branch | Should -Be "master"
             $result.commitCount | Should -BeGreaterOrEqual 2
+            (Get-Item -LiteralPath $result.dumpLogPath).Length | Should -Be 0
         } finally {
             foreach ($name in $envNames) {
                 [Environment]::SetEnvironmentVariable($name, $savedEnv[$name], "Process")
             }
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "cleans only current-run Git index locks conservatively" {
+        $currentRunRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lock-current-" + [guid]::NewGuid().ToString("N"))
+        $preExistingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lock-preexisting-" + [guid]::NewGuid().ToString("N"))
+        $runningGitRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lock-git-running-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $currentRunRoot, $preExistingRoot, $runningGitRoot | Out-Null
+
+            $currentRun = & {
+                . $HelperPath -ProjectRoot $currentRunRoot -Action help *> $null
+                & git -C $currentRunRoot init *> $null
+                $lockPath = Join-Path $currentRunRoot ".git\index.lock"
+                Set-Content -LiteralPath $lockPath -Encoding ASCII -Value "current"
+                function Test-GitProcessRunning {
+                    return $false
+                }
+                [pscustomobject]@{
+                    message = Invoke-GitIndexLockCleanupOnFailure
+                    exists = Test-Path -LiteralPath $lockPath -PathType Leaf
+                }
+            }
+            $currentRun.message | Should -Match "Removed Git index lock"
+            $currentRun.exists | Should -Be $false
+
+            & git -C $preExistingRoot init *> $null
+            $preExistingLockPath = Join-Path $preExistingRoot ".git\index.lock"
+            Set-Content -LiteralPath $preExistingLockPath -Encoding ASCII -Value "preexisting"
+            $preExisting = & {
+                . $HelperPath -ProjectRoot $preExistingRoot -Action help *> $null
+                [pscustomobject]@{
+                    message = Invoke-GitIndexLockCleanupOnFailure
+                    exists = Test-Path -LiteralPath $preExistingLockPath -PathType Leaf
+                }
+            }
+            $preExisting.message | Should -Match "present before this helper run"
+            $preExisting.exists | Should -Be $true
+
+            $runningGit = & {
+                . $HelperPath -ProjectRoot $runningGitRoot -Action help *> $null
+                & git -C $runningGitRoot init *> $null
+                $lockPath = Join-Path $runningGitRoot ".git\index.lock"
+                Set-Content -LiteralPath $lockPath -Encoding ASCII -Value "running"
+                function Test-GitProcessRunning {
+                    return $true
+                }
+                [pscustomobject]@{
+                    message = Invoke-GitIndexLockCleanupOnFailure
+                    exists = Test-Path -LiteralPath $lockPath -PathType Leaf
+                }
+            }
+            $runningGit.message | Should -Match "git.exe is still running"
+            $runningGit.exists | Should -Be $true
+
+            {
+                & {
+                    . $HelperPath -ProjectRoot $runningGitRoot -Action help *> $null
+                    Invoke-Git @("add", "--all")
+                }
+            } | Should -Throw "*Git index lock blocks this command*"
+        } finally {
+            foreach ($root in @($currentRunRoot, $preExistingRoot, $runningGitRoot)) {
+                if (Test-Path -LiteralPath $root -ErrorAction SilentlyContinue) {
+                    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+                }
             }
         }
     }

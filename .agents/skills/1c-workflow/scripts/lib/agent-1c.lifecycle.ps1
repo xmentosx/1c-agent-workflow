@@ -2617,36 +2617,48 @@ function Initialize-Project {
     if ($InitMode -eq "wizard" -and [string]::IsNullOrWhiteSpace($RunStatusPath)) {
         Write-Host "WARNING: direct init-project wizard is not monitored. Agent-run initialization must use scripts/run-agent-1c-window.ps1 so the agent waits for completion and reads status.json. Use the direct wizard only for manual debugging."
     }
+    Set-RunStage -Stage "init.prepare" -Detail "Preparing initialization settings"
     if ($InitMode -eq "wizard" -or $InitMode -eq "json") {
         Prepare-InitProjectSettings
     } else {
         Prepare-ConfiguredInitProjectSettings
     }
+    Set-RunStage -Stage "init.check-tools" -Detail "Checking required tools"
     Check-Tools -StopOnMissing
+    Set-RunStage -Stage "init.install-roctup-mcp" -Detail "Installing or updating ROCTUP MCP Toolkit"
     Install-RoctupMcp
     Get-DevBranchInfoBaseRoot | Out-Null
+    Set-RunStage -Stage "init.git" -Detail "Preparing Git repository and master branch"
     Ensure-GitRepository
     Ensure-GitIgnore
     Checkout-Master
 
     $sourceUsesRepository = Get-SourceUsesRepository
+    Set-RunStage -Stage "init.repository-update" -Detail "Updating source infobase from 1C repository"
     Update-BaseFromRepository
+    Set-RunStage -Stage "init.dump-config" -Detail "Dumping 1C configuration files"
     $dumpResult = Dump-ConfigToFiles
     $dumpMessage = if ($sourceUsesRepository) { "sync: export 1C configuration from repository" } else { "sync: export 1C configuration from source infobase" }
+    Set-RunStage -Stage "init.commit-dump" -Detail "Committing baseline 1C configuration dump"
     Commit-BaselineDumpIfNeeded -Message $dumpMessage -ExportPath $dumpResult.exportPath | Out-Null
     Assert-BaselineDumpCommitted -ExportPath $dumpResult.exportPath
 
+    Set-RunStage -Stage "init.install-ai-rules" -Detail "Installing or updating ai_rules_1c"
     Install-AiRules1c
+    Set-RunStage -Stage "init.guidance" -Detail "Updating agent guidance, USER-RULES, and Kilo commands"
     Update-AgentGuidanceBridge
     Update-UserRules
     Sync-KiloItlCommandSurface
     Commit-IfChanged "chore: install 1C agent workflow"
     if ($script:InitVibecoding1cMcpSetupRequested -or (ConvertTo-YesNoBool -Value (Get-EnvValue -Name "VIBECODING1C_MCP_SETUP_DURING_INIT" -Default $true) -Default $true)) {
+        Set-RunStage -Stage "init.vibecoding1c-mcp" -Detail "Setting up vibecoding1c MCP"
         Setup-Vibecoding1cMcp
     } else {
         Write-Host "vibecoding1c MCP setup was deferred. Ask the agent to configure vibecoding1c MCP, or run -Action vibecoding1c-mcp-setup when needed."
     }
+    Set-RunStage -Stage "init.final-git-clean" -Detail "Checking final Git worktree state"
     Assert-InitGitClean
+    Set-RunStage -Stage "init.complete" -Detail "Initialization completed"
 }
 
 function Sync-Master {

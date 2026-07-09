@@ -52,9 +52,9 @@ Installed projects must start with the foreground monitored launcher:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard
 ```
 
-Do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly by default. Do not run a separate `Test-Path` preflight, background PowerShell, or `timeout: 0`; raw probes may emit CLIXML. Do not collect the initialization questionnaire in chat when terminal input is unavailable and do not continue the lifecycle manually. The launcher validates the helper path, owns run status, and needs a positive long timeout. Use `-KeepWindowOnFailure` only for explicit manual debugging.
+Do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly by default. Do not run a separate `Test-Path` preflight, background PowerShell, or `timeout: 0`; raw probes may emit CLIXML. Do not collect the questionnaire in chat when terminal input is unavailable and do not continue the lifecycle manually. The launcher validates helper path, owns status, defaults to 60 minutes (`-MaxWaitSeconds 3600`; explicit `0` disables), and needs a positive long timeout above that. Use `-KeepWindowOnFailure` only for explicit manual debugging.
 
-Long lifecycle runs need `timeout_ms >= 1800000`; do not use `120000 ms`. They may run 1C Designer/Enterprise (`/LoadConfigFromFiles ... /UpdateDBCfg`). `status`/`help` do not need the long timeout.
+Long lifecycle runs need `timeout_ms >= 1800000`; monitored init should use an outer timeout above 3600 seconds. Do not use `120000 ms`. They may run 1C Designer/Enterprise (`/LoadConfigFromFiles ... /UpdateDBCfg`). `status`/`help` do not need the long timeout.
 
 Ask setup questions only when the helper cannot collect them. Store secrets only in `.dev.env` or environment variables. Keep ITL overlay rules in `USER-RULES.md`; do not append to upstream-managed `AGENTS.md` when it already points there.
 

@@ -53,9 +53,9 @@ The monitored launcher opens the wizard in an external PowerShell window and wri
 
 Agents must run this command in the foreground and wait for it to exit. Do not wrap it in a background PowerShell process, do not keep the launched PowerShell session open after the script exits, and do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly as the default agent path.
 
-Do not run a separate `Test-Path` preflight before this launcher. The launcher validates the helper path itself and reports a clear error if it is missing. Raw PowerShell probes can emit serialized `CLIXML` progress records such as module preparation messages; those records are not the result of the check. If the agent shell tool accepts a timeout, use a positive long timeout such as `1800000` ms for this interactive wizard; never use `timeout: 0` or an infinite timeout sentinel.
+Do not run a separate `Test-Path` preflight before this launcher. The launcher validates the helper path itself and reports a clear error if it is missing. Raw PowerShell probes can emit serialized `CLIXML` progress records such as module preparation messages; those records are not the result of the check. The launcher has a built-in 60 minute limit (`-MaxWaitSeconds 3600`, or `0` to disable explicitly); the bootstrap forwards `-InitMaxWaitSeconds 3600` by default. If the agent shell tool accepts a timeout, use a positive long timeout greater than the launcher limit, such as `3900000` ms, for this interactive wizard; never use `timeout: 0` or an infinite timeout sentinel.
 
-Use `run-agent-1c-window.ps1 -KeepWindowOnFailure -- -Action init-project -InitMode wizard` only for manual debugging when the developer explicitly wants the external window to stay open after a failure.
+Use `run-agent-1c-window.ps1 -KeepWindowOnFailure -- -Action init-project -InitMode wizard` only for manual debugging when the developer explicitly wants the external window to stay open after a failure. Use `-MaxWaitSeconds <seconds>` on that launcher, or `-InitMaxWaitSeconds <seconds>` on `install-agent-1c-workflow.ps1`, when a project needs a different monitored init limit.
 
 For non-interactive automation, write a JSON answers file and run:
 
@@ -321,7 +321,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ru
 
 The wizard opens in an external PowerShell window, writes `.agent-1c/runs/<run>/status.json` plus `console.log`, collects setup values, writes `.dev.env` and `.agent-1c/project.json`, and then performs:
 
-The agent must wait for the monitored launcher process to finish. A background launch that returns immediately makes the agent miss completion, and a persistent PowerShell session leaves a stale prompt open after the helper has already written its status.
+The agent must wait for the monitored launcher process to finish. A background launch that returns immediately makes the agent miss completion, and a persistent PowerShell session leaves a stale prompt open after the helper has already written its status. The launcher writes terminal `failed` status itself when the helper exits or times out without writing `succeeded`/`failed`.
 
 1. Required software check with install suggestions.
 2. Git initialization when `.git` is absent.

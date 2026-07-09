@@ -51,6 +51,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 $script:ConsoleOutputEncoding = New-Object System.Text.UTF8Encoding $false
+[Console]::InputEncoding = $script:ConsoleOutputEncoding
 [Console]::OutputEncoding = $script:ConsoleOutputEncoding
 $OutputEncoding = $script:ConsoleOutputEncoding
 
@@ -128,9 +129,13 @@ function Get-Agent1cReexecArguments {
 $script:LastLogPath = $null
 $script:LastProcessId = 0
 $script:LastProcessTimedOut = $false
+$script:RunStage = ""
+$script:RunStageDetail = ""
 $script:RunStartedAt = Get-Date
 $script:ResolvedRunStatusPath = ""
 $script:ResolvedRunLogPath = ""
+$script:GitIndexLockPath = ""
+$script:GitIndexLockPreExisted = $false
 $script:ProjectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
 $script:ConfigPath = [System.IO.Path]::GetFullPath($ConfigPath)
 $script:Config = $null
@@ -160,8 +165,10 @@ foreach ($moduleFile in $script:Agent1cModuleFiles) {
     . $modulePath
 }
 
+Initialize-GitIndexLockTracking
+
 try {
-    Write-RunStatus -Status "running"
+    Set-RunStage -Stage "start" -Detail "Starting helper"
     Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env")
     Read-ProjectConfig
 
@@ -218,6 +225,17 @@ try {
     Write-RunStatus -Status "succeeded" -ExitCode 0
 } catch {
     $errorMessage = $_.Exception.Message
+    try {
+        $cleanupMessage = Invoke-GitIndexLockCleanupOnFailure
+        if ($cleanupMessage) {
+            Write-Host $cleanupMessage
+            $errorMessage = "$errorMessage $cleanupMessage"
+        }
+    } catch {
+        $cleanupError = "Git index lock cleanup check failed: $($_.Exception.Message)"
+        [Console]::Error.WriteLine($cleanupError)
+        $errorMessage = "$errorMessage $cleanupError"
+    }
     try {
         Write-RunStatus -Status "failed" -ExitCode 1 -ErrorMessage $errorMessage
     } catch {
