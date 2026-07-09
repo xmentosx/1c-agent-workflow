@@ -1709,6 +1709,72 @@ function Save-DevBranchState {
     return $path
 }
 
+function Get-DevBranchInitializationStatus {
+    param([object]$State)
+
+    $status = Get-StateValue -State $State -Name "initializationStatus" -Default ""
+    if (-not $status) {
+        return "ready"
+    }
+    return ([string]$status).Trim().ToLowerInvariant()
+}
+
+function Test-DevBranchInitializationResumable {
+    param([object]$State)
+
+    $status = Get-DevBranchInitializationStatus -State $State
+    return (@("initializing", "infobase-copied", "repository-unbound", "launcher-registered", "failed") -contains $status)
+}
+
+function Set-DevBranchInitializationFields {
+    param(
+        [hashtable]$State,
+        [string]$Status,
+        [string]$ErrorMessage = ""
+    )
+
+    $State["initializationStatus"] = $Status
+    $State["initializationError"] = $ErrorMessage
+    $State["initializationUpdatedAt"] = (Get-Date).ToString("o")
+}
+
+function Save-DevBranchInitializationState {
+    param(
+        [string]$SafeDevBranchName,
+        [hashtable]$State,
+        [string]$Status,
+        [string]$ErrorMessage = "",
+        [string]$ProjectRootOverride = $script:ProjectRoot
+    )
+
+    Set-DevBranchInitializationFields -State $State -Status $Status -ErrorMessage $ErrorMessage
+    return (Save-DevBranchState -SafeDevBranchName $SafeDevBranchName -State $State -ProjectRootOverride $ProjectRootOverride)
+}
+
+function Write-DevBranchInitializationStatusLines {
+    param(
+        [object]$State,
+        [string]$Indent = ""
+    )
+
+    $status = Get-DevBranchInitializationStatus -State $State
+    if ($status -eq "ready") {
+        return
+    }
+
+    Write-Host "${Indent}Initialization status: $status"
+    $errorMessage = Get-StateValue -State $State -Name "initializationError" -Default ""
+    if ($errorMessage) {
+        Write-Host "${Indent}Initialization error: $errorMessage"
+    }
+    $worktreePath = Get-StateValue -State $State -Name "worktreePath" -Default (Get-StateValue -State $State -Name "stateProjectRoot" -Default "")
+    if ($worktreePath) {
+        Write-Host "${Indent}Recovery: rerun new-dev-branch for this branch from the master worktree. Worktree: $worktreePath"
+    } else {
+        Write-Host "${Indent}Recovery: rerun new-dev-branch for this branch from the master worktree."
+    }
+}
+
 function Update-DevBranchState {
     param(
         [object]$State,
@@ -2111,7 +2177,7 @@ function Register-DevBranchInLauncher {
         }
     }
 
-    $id = if ($target -and $target.values.ContainsKey("ID") -and $target.values["ID"]) { $target.values["ID"] } else { [guid]::NewGuid().ToString() }
+    $id = if ($target -and $target.values.ContainsKey("ID") -and $target.values["ID"]) { $target.values["ID"] } elseif ($ExistingLauncherId) { $ExistingLauncherId } else { [guid]::NewGuid().ToString() }
     $orderInList = if ($target -and $target.values.ContainsKey("OrderInList")) { $target.values["OrderInList"] } else { [string]((Get-LauncherMaxIntValue -Sections $sections -Key "OrderInList") + 16384) }
     $orderInTree = if ($target -and $target.values.ContainsKey("OrderInTree")) { $target.values["OrderInTree"] } else { [string]((Get-LauncherMaxIntValue -Sections $sections -Key "OrderInTree") + 256) }
 
@@ -2715,130 +2781,271 @@ function Initialize-DevBranchRuntime {
         $DevBranchInfoBasePath = Join-Path $rootPath $SafeDevBranchName
     }
 
-    if ($kind -eq "file") {
-        if (Test-Path -LiteralPath $DevBranchInfoBasePath) {
-            throw "Development branch infobase path already exists: $DevBranchInfoBasePath"
-        }
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $DevBranchInfoBasePath) | Out-Null
-        Copy-Item -LiteralPath $source -Destination $DevBranchInfoBasePath -Recurse
-    } else {
-        $copyScript = Get-ConfigValue -Path "serverBaseCopyScript" -Default ""
-        if (-not $copyScript) {
-            throw "serverBaseCopyScript is required for server infobase copies."
-        }
-        $copyScriptPath = Resolve-ProjectPath $copyScript
-        & powershell -ExecutionPolicy Bypass -File $copyScriptPath `
-            -ProjectRoot $script:ProjectRoot `
-            -DevBranchName $DevBranchName `
-            -SourceInfoBasePath $source `
-            -DevBranchInfoBasePath $DevBranchInfoBasePath
-        if ($LASTEXITCODE -ne 0) {
-            throw "Server infobase copy script failed with exit code $LASTEXITCODE"
-        }
-    }
-
-    $repositoryUnbound = $false
-    if ($sourceUsesRepository) {
-        Invoke-Designer `
-            -InfoBasePath $DevBranchInfoBasePath `
-            -InfoBaseKind $kind `
-            -DesignerArgs @("/ConfigurationRepositoryUnbindCfg", "-force") | Out-Null
-        $repositoryUnbound = $true
-    } else {
-        Write-Host "Source infobase is configured without repository connection. Skipping repository unbind for development branch copy."
-    }
-
-    $unsafeActionProtectionSetup = Confirm-DevBranchUnsafeActionProtection `
-        -InfoBaseKind $kind `
-        -InfoBasePath $DevBranchInfoBasePath `
-        -DevBranchName $DevBranchName
-
-    $launcherRegistration = Register-DevBranchInLauncher `
-        -InfoBaseKind $kind `
-        -InfoBasePath $DevBranchInfoBasePath `
-        -DevBranchName $DevBranchName `
-        -ProjectRootForFolder $MainProjectRoot
-
     $publishDefault = Get-WebPublishByDefault
     $publicationEnabled = ($PublishToWeb -or $publishDefault)
     $publicationAuto = ($PublishToWeb -or ($publishDefault -and (Get-WebPublishAuto)))
     $publicationStatus = if ($publicationEnabled) { "pending" } else { "disabled" }
     $publicationMode = if ($publicationAuto) { "auto" } elseif ($publicationEnabled) { "manual" } else { "none" }
 
-    $statePath = Save-DevBranchState -SafeDevBranchName $SafeDevBranchName -State @{
-        devBranchName = $DevBranchName
-        safeDevBranchName = $SafeDevBranchName
-        devBranchKind = $DevBranchKind
-        devBranch = $GitBranch
-        createdWithWorktree = $CreatedWithWorktree
-        worktreePath = $WorktreePath
-        mainWorktreePath = $MainProjectRoot
-        createdFromCommit = Get-CurrentCommit
-        lastConfigBaseUpdatedCommit = Get-CurrentCommit
-        infoBaseKind = $kind
-        devBranchInfoBasePath = $DevBranchInfoBasePath
-        sourceUsesRepository = $sourceUsesRepository
-        repositoryUnbound = $repositoryUnbound
-        launcherRegistered = $launcherRegistration.registered
-        launcherInfoBaseName = $launcherRegistration.name
-        launcherFolder = $launcherRegistration.folder
-        launcherInfoBaseId = $launcherRegistration.id
-        launcherListPath = $launcherRegistration.listPath
-        publicationUrl = ""
-        publicationName = ""
-        publicationDir = ""
-        publicationStatus = $publicationStatus
-        publicationMode = $publicationMode
-        publicationError = ""
-        publicationUpdatedAt = (Get-Date).ToString("o")
-        roctupMcpPort = 0
-        roctupMcpUrl = ""
-        roctupMcpHealthUrl = ""
-        roctupMcpPid = ""
-        roctupMcpStatus = "pending"
-        roctupMcpError = ""
-        roctupMcpLogPath = ""
-        roctupMcpEpfPath = ""
-        vanessaMcpPort = 0
-        vanessaMcpUrl = ""
-        vanessaMcpPid = ""
-        vanessaMcpStatus = "pending"
-        vanessaMcpError = ""
-        vanessaMcpLogPath = ""
-        unsafeActionProtectionSetupMode = $unsafeActionProtectionSetup.mode
-        unsafeActionProtectionConfirmed = $unsafeActionProtectionSetup.confirmed
-        unsafeActionProtectionConfirmedAt = $unsafeActionProtectionSetup.confirmedAt
-        unsafeActionProtectionUser = $unsafeActionProtectionSetup.user
-        createdAt = (Get-Date).ToString("o")
-        lastLogPath = $script:LastLogPath
-    }
-
-    Write-Host "Development branch: $GitBranch"
-    if ($CreatedWithWorktree) {
-        Write-Host "Development branch worktree: $WorktreePath"
-        Write-Host "Main project worktree: $MainProjectRoot"
-    }
-    Write-Host "Development branch infobase: $DevBranchInfoBasePath"
-    Write-Host "Development branch state: $statePath"
-    Write-Host "1C launcher infobase: $($launcherRegistration.name)"
-    Write-Host "1C launcher folder: $($launcherRegistration.folder)"
-    $state = Read-DevBranchStateFile -Path $statePath
-    Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
-    $state = Invoke-DevBranchDefaultMcpSetup -State $state
-    Invoke-DevBranchVibecoding1cMcpInheritance -MainProjectRoot $MainProjectRoot
-    $state = Invoke-DevBranchPublicationCycle -State $state -PublicationEnabled $publicationEnabled -AttemptAuto $publicationAuto
-    $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
-    if ($publicationUrl) {
-        Write-Host "Publication URL: $publicationUrl"
-    } else {
-        $publicationStatus = Get-StateValue -State $state -Name "publicationStatus" -Default ""
-        if ($publicationStatus) {
-            Write-Host "Publication status: $publicationStatus"
+    $statePath = Join-Path $script:ProjectRoot ".agent-1c\dev-branches\$SafeDevBranchName.json"
+    $existingState = $null
+    if (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue) {
+        $existingState = Read-DevBranchStateFile -Path $statePath
+        if (-not (Test-DevBranchInitializationResumable -State $existingState)) {
+            throw "Development branch initialization is not resumable for '$DevBranchName'. Status: $(Get-DevBranchInitializationStatus -State $existingState)."
         }
     }
-    $state = Initialize-DevBranchEventLogBaseline -State $state
-    Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
-    Sync-KiloItlCommandSurface
+
+    $stateHash = @{}
+    if ($null -ne $existingState) {
+        $existingHash = ConvertTo-Agent1cHashtable $existingState
+        foreach ($key in $existingHash.Keys) {
+            if (@("statePath", "stateProjectRoot") -contains $key) {
+                continue
+            }
+            $stateHash[$key] = $existingHash[$key]
+        }
+    }
+
+    $currentCommit = Get-CurrentCommit
+    $now = (Get-Date).ToString("o")
+    $stateHash["devBranchName"] = $DevBranchName
+    $stateHash["safeDevBranchName"] = $SafeDevBranchName
+    $stateHash["devBranchKind"] = $DevBranchKind
+    $stateHash["devBranch"] = $GitBranch
+    $stateHash["createdWithWorktree"] = $CreatedWithWorktree
+    $stateHash["worktreePath"] = $WorktreePath
+    $stateHash["mainWorktreePath"] = $MainProjectRoot
+    if (-not $stateHash.ContainsKey("createdFromCommit") -or -not $stateHash["createdFromCommit"]) {
+        $stateHash["createdFromCommit"] = $currentCommit
+    }
+    if (-not $stateHash.ContainsKey("lastConfigBaseUpdatedCommit") -or -not $stateHash["lastConfigBaseUpdatedCommit"]) {
+        $stateHash["lastConfigBaseUpdatedCommit"] = $currentCommit
+    }
+    $stateHash["infoBaseKind"] = $kind
+    $stateHash["devBranchInfoBasePath"] = $DevBranchInfoBasePath
+    $stateHash["sourceUsesRepository"] = $sourceUsesRepository
+    if (-not $stateHash.ContainsKey("repositoryUnbound")) {
+        $stateHash["repositoryUnbound"] = $false
+    }
+    if (-not $stateHash.ContainsKey("launcherRegistered")) {
+        $stateHash["launcherRegistered"] = $false
+    }
+    foreach ($default in @(
+        @{ name = "launcherInfoBaseName"; value = "" },
+        @{ name = "launcherFolder"; value = "" },
+        @{ name = "launcherInfoBaseId"; value = "" },
+        @{ name = "launcherListPath"; value = "" },
+        @{ name = "publicationUrl"; value = "" },
+        @{ name = "publicationName"; value = "" },
+        @{ name = "publicationDir"; value = "" },
+        @{ name = "publicationStatus"; value = $publicationStatus },
+        @{ name = "publicationMode"; value = $publicationMode },
+        @{ name = "publicationError"; value = "" },
+        @{ name = "publicationUpdatedAt"; value = $now },
+        @{ name = "roctupMcpPort"; value = 0 },
+        @{ name = "roctupMcpUrl"; value = "" },
+        @{ name = "roctupMcpHealthUrl"; value = "" },
+        @{ name = "roctupMcpPid"; value = "" },
+        @{ name = "roctupMcpStatus"; value = "pending" },
+        @{ name = "roctupMcpError"; value = "" },
+        @{ name = "roctupMcpLogPath"; value = "" },
+        @{ name = "roctupMcpEpfPath"; value = "" },
+        @{ name = "vanessaMcpPort"; value = 0 },
+        @{ name = "vanessaMcpUrl"; value = "" },
+        @{ name = "vanessaMcpPid"; value = "" },
+        @{ name = "vanessaMcpStatus"; value = "pending" },
+        @{ name = "vanessaMcpError"; value = "" },
+        @{ name = "vanessaMcpLogPath"; value = "" },
+        @{ name = "unsafeActionProtectionSetupMode"; value = "" },
+        @{ name = "unsafeActionProtectionConfirmed"; value = $false },
+        @{ name = "unsafeActionProtectionConfirmedAt"; value = "" },
+        @{ name = "unsafeActionProtectionUser"; value = "" },
+        @{ name = "createdAt"; value = $now },
+        @{ name = "lastLogPath"; value = "" }
+    )) {
+        if (-not $stateHash.ContainsKey($default.name)) {
+            $stateHash[$default.name] = $default.value
+        }
+    }
+
+    $currentStatus = if ($existingState) { Get-DevBranchInitializationStatus -State $existingState } else { "initializing" }
+    if ($currentStatus -eq "failed") {
+        $currentStatus = "initializing"
+    }
+    if ($currentStatus -eq "initializing") {
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "initializing"
+    }
+
+    try {
+        if ($kind -eq "file") {
+            if (Test-Path -LiteralPath $DevBranchInfoBasePath) {
+                if ($null -eq $existingState) {
+                    throw "Development branch infobase path already exists: $DevBranchInfoBasePath"
+                }
+                $mainDbFile = Join-Path $DevBranchInfoBasePath "1Cv8.1CD"
+                if (-not (Test-Path -LiteralPath $mainDbFile -PathType Leaf -ErrorAction SilentlyContinue)) {
+                    throw "Development branch infobase path already exists but does not look like a complete file infobase: $DevBranchInfoBasePath"
+                }
+                Write-Host "Using existing development branch infobase copy: $DevBranchInfoBasePath"
+            } else {
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $DevBranchInfoBasePath) | Out-Null
+                Copy-Item -LiteralPath $source -Destination $DevBranchInfoBasePath -Recurse
+            }
+        } else {
+            if (@("infobase-copied", "repository-unbound", "launcher-registered") -contains $currentStatus) {
+                Write-Host "Using existing development branch infobase copy: $DevBranchInfoBasePath"
+            } else {
+                $copyScript = Get-ConfigValue -Path "serverBaseCopyScript" -Default ""
+                if (-not $copyScript) {
+                    throw "serverBaseCopyScript is required for server infobase copies."
+                }
+                $copyScriptPath = Resolve-ProjectPath $copyScript
+                & powershell -ExecutionPolicy Bypass -File $copyScriptPath `
+                    -ProjectRoot $script:ProjectRoot `
+                    -DevBranchName $DevBranchName `
+                    -SourceInfoBasePath $source `
+                    -DevBranchInfoBasePath $DevBranchInfoBasePath
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Server infobase copy script failed with exit code $LASTEXITCODE"
+                }
+            }
+        }
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "infobase-copied"
+        $currentStatus = "infobase-copied"
+
+        $repositoryUnbound = ConvertTo-BoolSetting -Value $stateHash["repositoryUnbound"] -Default $false
+        if ($sourceUsesRepository -and -not $repositoryUnbound) {
+            Invoke-Designer `
+                -InfoBasePath $DevBranchInfoBasePath `
+                -InfoBaseKind $kind `
+                -DesignerArgs @("/ConfigurationRepositoryUnbindCfg", "-force") | Out-Null
+            $repositoryUnbound = $true
+        } elseif (-not $sourceUsesRepository) {
+            Write-Host "Source infobase is configured without repository connection. Skipping repository unbind for development branch copy."
+        }
+        $stateHash["repositoryUnbound"] = $repositoryUnbound
+        $stateHash["lastLogPath"] = $script:LastLogPath
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "repository-unbound"
+        $currentStatus = "repository-unbound"
+
+        $launcherRegistration = Register-DevBranchInLauncher `
+            -InfoBaseKind $kind `
+            -InfoBasePath $DevBranchInfoBasePath `
+            -DevBranchName $DevBranchName `
+            -ProjectRootForFolder $MainProjectRoot `
+            -ExistingLauncherId ([string]$stateHash["launcherInfoBaseId"])
+        $stateHash["launcherRegistered"] = $launcherRegistration.registered
+        $stateHash["launcherInfoBaseName"] = $launcherRegistration.name
+        $stateHash["launcherFolder"] = $launcherRegistration.folder
+        $stateHash["launcherInfoBaseId"] = $launcherRegistration.id
+        $stateHash["launcherListPath"] = $launcherRegistration.listPath
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "launcher-registered"
+        $currentStatus = "launcher-registered"
+
+        $unsafeActionProtectionSetup = Confirm-DevBranchUnsafeActionProtection `
+            -InfoBaseKind $kind `
+            -InfoBasePath $DevBranchInfoBasePath `
+            -DevBranchName $DevBranchName
+        $stateHash["unsafeActionProtectionSetupMode"] = $unsafeActionProtectionSetup.mode
+        $stateHash["unsafeActionProtectionConfirmed"] = $unsafeActionProtectionSetup.confirmed
+        $stateHash["unsafeActionProtectionConfirmedAt"] = $unsafeActionProtectionSetup.confirmedAt
+        $stateHash["unsafeActionProtectionUser"] = $unsafeActionProtectionSetup.user
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "launcher-registered"
+
+        Write-Host "Development branch: $GitBranch"
+        if ($CreatedWithWorktree) {
+            Write-Host "Development branch worktree: $WorktreePath"
+            Write-Host "Main project worktree: $MainProjectRoot"
+        }
+        Write-Host "Development branch infobase: $DevBranchInfoBasePath"
+        Write-Host "Development branch state: $statePath"
+        Write-Host "1C launcher infobase: $($launcherRegistration.name)"
+        Write-Host "1C launcher folder: $($launcherRegistration.folder)"
+
+        $state = Read-DevBranchStateFile -Path $statePath
+        Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
+        $state = Invoke-DevBranchDefaultMcpSetup -State $state
+        Invoke-DevBranchVibecoding1cMcpInheritance -MainProjectRoot $MainProjectRoot
+        $state = Invoke-DevBranchPublicationCycle -State $state -PublicationEnabled $publicationEnabled -AttemptAuto $publicationAuto
+        $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
+        if ($publicationUrl) {
+            Write-Host "Publication URL: $publicationUrl"
+        } else {
+            $savedPublicationStatus = Get-StateValue -State $state -Name "publicationStatus" -Default ""
+            if ($savedPublicationStatus) {
+                Write-Host "Publication status: $savedPublicationStatus"
+            }
+        }
+        $state = Initialize-DevBranchEventLogBaseline -State $state
+        $finalHash = @{}
+        $finalStateHash = ConvertTo-Agent1cHashtable $state
+        foreach ($key in $finalStateHash.Keys) {
+            if (@("statePath", "stateProjectRoot") -contains $key) {
+                continue
+            }
+            $finalHash[$key] = $finalStateHash[$key]
+        }
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $finalHash -Status "ready"
+        $state = Read-DevBranchStateFile -Path $statePath
+        Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
+        Sync-KiloItlCommandSurface
+    } catch {
+        $message = $_.Exception.Message
+        $statusForError = if ($currentStatus -and @("infobase-copied", "repository-unbound", "launcher-registered") -contains $currentStatus) { $currentStatus } else { "failed" }
+        $failureHash = $stateHash
+        if (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue) {
+            try {
+                $latestState = Read-DevBranchStateFile -Path $statePath
+                $latestHash = ConvertTo-Agent1cHashtable $latestState
+                $failureHash = @{}
+                foreach ($key in $latestHash.Keys) {
+                    if (@("statePath", "stateProjectRoot") -contains $key) {
+                        continue
+                    }
+                    $failureHash[$key] = $latestHash[$key]
+                }
+            } catch {
+                $failureHash = $stateHash
+            }
+        }
+        Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $failureHash -Status $statusForError -ErrorMessage $message | Out-Null
+        throw
+    }
+}
+
+function Get-ResumableDevBranchState {
+    param(
+        [string]$SafeDevBranchName,
+        [string]$GitBranch
+    )
+
+    $statePath = Find-DevBranchStateFile -SafeDevBranchName $SafeDevBranchName
+    if (-not $statePath) {
+        return $null
+    }
+
+    $state = Read-DevBranchStateFile -Path $statePath
+    if (-not (Test-DevBranchInitializationResumable -State $state)) {
+        return $null
+    }
+
+    $stateBranch = Get-StateValue -State $state -Name "devBranch" -Default ""
+    if ($stateBranch -and $stateBranch -ne $GitBranch) {
+        throw "Existing development branch state for '$SafeDevBranchName' belongs to '$stateBranch', not '$GitBranch'."
+    }
+
+    $worktree = Find-GitWorktreeByBranch -Branch $GitBranch
+    if ($null -eq $worktree -or -not $worktree.path) {
+        throw "Development branch already exists but no Git worktree was found for resumable initialization: $GitBranch"
+    }
+
+    $stateWorktreePath = Get-StateValue -State $state -Name "worktreePath" -Default (Get-StateValue -State $state -Name "stateProjectRoot" -Default "")
+    if ($stateWorktreePath -and ((Get-FullPathNormalized $stateWorktreePath) -ne (Get-FullPathNormalized $worktree.path))) {
+        throw "Existing development branch state points to a different worktree. State: $stateWorktreePath. Git worktree: $($worktree.path)."
+    }
+
+    return $state
 }
 
 function New-DevBranchCore {
@@ -2857,12 +3064,12 @@ function New-DevBranchCore {
     Assert-CleanGit
     Checkout-Master
 
-    if (Test-GitBranchExists -Branch $DevBranch) {
-        throw "Development branch already exists: $DevBranch"
-    }
-
     $mainProjectRoot = Get-MainWorktreePath
+    $branchExists = Test-GitBranchExists -Branch $DevBranch
     if ($UseCurrentWorktree) {
+        if ($branchExists) {
+            throw "Development branch already exists: $DevBranch"
+        }
         Invoke-Git @("checkout", "-b", $DevBranch)
         Initialize-DevBranchRuntime `
             -DevBranchKind $DevBranchKind `
@@ -2875,6 +3082,29 @@ function New-DevBranchCore {
     }
 
     $worktreePath = Resolve-DevBranchWorktreePath -SafeDevBranchName $safe
+    if ($branchExists) {
+        $resumeState = Get-ResumableDevBranchState -SafeDevBranchName $safe -GitBranch $DevBranch
+        if ($null -ne $resumeState) {
+            $resumeWorktreePath = Get-StateValue -State $resumeState -Name "worktreePath" -Default (Get-StateValue -State $resumeState -Name "stateProjectRoot" -Default "")
+            Write-Host "Resuming development branch initialization: $DevBranch"
+            Write-Host "Development branch worktree: $resumeWorktreePath"
+            Invoke-InProjectContext -Root $resumeWorktreePath -ScriptBlock {
+                Initialize-DevBranchRuntime `
+                    -DevBranchKind $DevBranchKind `
+                    -SafeDevBranchName $safe `
+                    -GitBranch $DevBranch `
+                    -MainProjectRoot $mainProjectRoot `
+                    -WorktreePath $resumeWorktreePath `
+                    -CreatedWithWorktree $true
+            }
+
+            Write-DevBranchWorktreeOpenMessage -MainProjectPath $mainProjectRoot -WorktreePath $resumeWorktreePath
+            Open-AgentWorktreeBestEffort -WorktreePath $resumeWorktreePath
+            return
+        }
+
+        throw "Development branch already exists: $DevBranch"
+    }
     if (Test-Path -LiteralPath $worktreePath -ErrorAction SilentlyContinue) {
         throw "Development branch worktree path already exists: $worktreePath"
     }
@@ -3076,6 +3306,7 @@ function Show-WorkflowStatus {
                 if ($worktreePath) {
                     Write-Host "    Worktree: $worktreePath"
                 }
+                Write-DevBranchInitializationStatusLines -State $state -Indent "    "
                 Write-VanessaTestStatusLines -State $state -Indent "    "
                 Write-RoctupMcpStatusLines -State $state -Indent "    "
                 Write-VanessaMcpStatusLines -State $state -Indent "    "
@@ -3094,6 +3325,7 @@ function Show-WorkflowStatus {
     if ($worktreePath) {
         Write-Host "Worktree: $worktreePath"
     }
+    Write-DevBranchInitializationStatusLines -State $state
     $mainWorktreePath = Get-StateValue -State $state -Name "mainWorktreePath" -Default ""
     if ($mainWorktreePath) {
         Write-Host "Main worktree: $mainWorktreePath"
@@ -3371,6 +3603,7 @@ function List-DevBranches {
         if ($worktreePath) {
             Write-Host "  Worktree: $worktreePath"
         }
+        Write-DevBranchInitializationStatusLines -State $state -Indent "  "
         $mainWorktreePath = Get-StateValue -State $state -Name "mainWorktreePath" -Default ""
         if ($mainWorktreePath) {
             Write-Host "  Main worktree: $mainWorktreePath"

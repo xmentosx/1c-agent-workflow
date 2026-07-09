@@ -6512,7 +6512,7 @@ if (`$?) { exit 0 } else { exit 1 }
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8.1CD") -Value "stub" -Encoding ASCII
             New-Item -ItemType Directory -Force -Path (Join-Path $sourceBase "1Cv8Log") | Out-Null
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
-            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`n" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`nappdata/`n" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
             $templateTarget = Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
@@ -6559,6 +6559,9 @@ if (`$?) { exit 0 } else { exit 1 }
             $state.launcherFolder | Should -Be $expectedLauncherFolder
             $state.unsafeActionProtectionSetupMode | Should -Be "skip"
             ([bool]$state.unsafeActionProtectionConfirmed) | Should -Be $false
+            $state.initializationStatus | Should -Be "ready"
+            $state.initializationError | Should -Be ""
+            $state.initializationUpdatedAt | Should -Not -BeNullOrEmpty
             $state.publicationStatus | Should -Be "disabled"
             $state.publicationMode | Should -Be "none"
             $state.publicationUrl | Should -Be ""
@@ -6579,6 +6582,107 @@ if (`$?) { exit 0 } else { exit 1 }
             $LASTEXITCODE | Should -Be 0
             ($switchOutput -join [Environment]::NewLine) | Should -Match ([regex]::Escape([System.IO.Path]::GetFullPath($worktreePath)))
             ((& git -C $tempRoot branch --show-current).Trim()) | Should -Be "master"
+
+            $duplicateOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action new-dev-branch -DevBranchName "Fixture Branch" 2>&1
+            $LASTEXITCODE | Should -Not -Be 0
+            ($duplicateOutput -join [Environment]::NewLine) | Should -Match "Development branch already exists: itldev/fixture-branch"
+        } finally {
+            $env:APPDATA = $oldAppData
+            if (Test-Path -LiteralPath $worktreePath -PathType Container -ErrorAction SilentlyContinue) {
+                & git -C $tempRoot worktree remove --force $worktreePath *> $null
+            }
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $worktreeRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $worktreeRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "resumes worktree branch initialization after launcher registration failure" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-worktree-resume-test-" + [guid]::NewGuid().ToString("N"))
+        $worktreeRoot = "$tempRoot-worktrees"
+        $worktreePath = Join-Path $worktreeRoot "partial-branch"
+        $sourceBase = Join-Path $tempRoot "source-base"
+        $oldAppData = $env:APPDATA
+
+        try {
+            New-Item -ItemType Directory -Force -Path $sourceBase | Out-Null
+            Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8.1CD") -Value "stub" -Encoding ASCII
+            New-Item -ItemType Directory -Force -Path (Join-Path $sourceBase "1Cv8Log") | Out-Null
+            Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`nappdata/`n" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
+            $templateTarget = Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Destination $templateTarget -Recurse
+            $devEnv = @(
+                "INFOBASE_KIND=file",
+                "SOURCE_USES_REPOSITORY=false",
+                "SOURCE_INFOBASE_PATH=$sourceBase",
+                "IB_USER=",
+                "IB_PASSWORD=",
+                "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=invalid",
+                "WEB_PUBLISH_BY_DEFAULT=false",
+                "ROCTUP_MCP_AUTO_START=false",
+                "VANESSA_MCP_AUTO_START=false"
+            ) -join [Environment]::NewLine
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value $devEnv -Encoding UTF8
+
+            & git -C $tempRoot init | Out-Null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add .gitignore README.md .agents
+            & git -C $tempRoot commit -m init | Out-Null
+            & git -C $tempRoot branch -M master
+
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".kilo") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value "{}" -Encoding ASCII
+
+            $env:APPDATA = Join-Path $tempRoot "appdata"
+            $firstOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action new-dev-branch -DevBranchName "Partial Branch" 2>&1
+            $LASTEXITCODE | Should -Not -Be 0
+            ($firstOutput -join [Environment]::NewLine) | Should -Match "Unsupported DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP value"
+
+            $statePath = Join-Path $worktreePath ".agent-1c\dev-branches\partial-branch.json"
+            (Test-Path -LiteralPath $statePath -PathType Leaf) | Should -Be $true
+            $state = Get-Content -Encoding UTF8 -Raw $statePath | ConvertFrom-Json
+            $state.initializationStatus | Should -Be "launcher-registered"
+            $state.initializationError | Should -Match "Unsupported DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP value"
+            $state.launcherInfoBaseName | Should -Be "Partial Branch"
+
+            $launcherPath = Join-Path $env:APPDATA "1C\1CEStart\ibases.v8i"
+            $launcherText = Get-Content -Encoding UTF8 -Raw $launcherPath
+            ([regex]::Matches($launcherText, "(?m)^\[Partial Branch\]\r?$")).Count | Should -Be 1
+
+            $statusOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action status 2>&1
+            $LASTEXITCODE | Should -Be 0
+            $statusText = $statusOutput -join [Environment]::NewLine
+            $statusText | Should -Match "Initialization status: launcher-registered"
+            $statusText | Should -Match "Recovery: rerun new-dev-branch"
+
+            $listOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action list-dev-branches 2>&1
+            $LASTEXITCODE | Should -Be 0
+            $listText = $listOutput -join [Environment]::NewLine
+            $listText | Should -Match "Initialization status: launcher-registered"
+            $listText | Should -Match ([regex]::Escape([System.IO.Path]::GetFullPath($worktreePath)))
+
+            foreach ($envPath in @((Join-Path $tempRoot ".dev.env"), (Join-Path $worktreePath ".dev.env"))) {
+                $fixedEnv = (Get-Content -Encoding UTF8 -Raw $envPath).Replace("DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=invalid", "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip")
+                Set-Content -LiteralPath $envPath -Value $fixedEnv -Encoding UTF8
+            }
+
+            $resumeOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action new-dev-branch -DevBranchName "Partial Branch" 2>&1
+            $LASTEXITCODE | Should -Be 0
+            ($resumeOutput -join [Environment]::NewLine) | Should -Match "Resuming development branch initialization: itldev/partial-branch"
+
+            $resumedState = Get-Content -Encoding UTF8 -Raw $statePath | ConvertFrom-Json
+            $resumedState.initializationStatus | Should -Be "ready"
+            $resumedState.initializationError | Should -Be ""
+            $resumedState.unsafeActionProtectionSetupMode | Should -Be "skip"
+            $launcherTextAfter = Get-Content -Encoding UTF8 -Raw $launcherPath
+            ([regex]::Matches($launcherTextAfter, "(?m)^\[Partial Branch\]\r?$")).Count | Should -Be 1
         } finally {
             $env:APPDATA = $oldAppData
             if (Test-Path -LiteralPath $worktreePath -PathType Container -ErrorAction SilentlyContinue) {
