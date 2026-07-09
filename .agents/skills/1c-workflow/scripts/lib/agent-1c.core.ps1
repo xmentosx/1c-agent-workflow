@@ -2201,17 +2201,15 @@ function Read-InitAnswersFromJson {
     return Read-Utf8Text -Path $resolvedPath | ConvertFrom-Json
 }
 
-function Read-InitAnswersFromWizard {
-    if (-not (Test-InteractiveInputAvailable)) {
-        throw "Interactive init wizard needs terminal input. Run this command from an interactive terminal or pass -InitMode json -InitAnswersPath <file>."
-    }
-
+function Confirm-InitWizardProjectRoot {
     Write-Section (Get-Agent1cUtf8Text "0JzQsNGB0YLQtdGAINC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNC4")
     Write-Host ((Get-Agent1cUtf8Text "0JrQvtGA0LXQvdGMINC/0YDQvtC10LrRgtCwOiA=") + $script:ProjectRoot)
     if (-not (Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0JjQvdC40YbQuNCw0LvQuNC30LjRgNC+0LLQsNGC0YwgMUMg0L/RgNC+0LXQutGCINCyINGN0YLQvtC5INC/0LDQv9C60LU/") -Default $true)) {
         throw "Init canceled by developer."
     }
+}
 
+function Read-InitWizardAnswersOnce {
     $platformPath = Read-InitPlatformPath
     $baseConfigurationVersion = Read-InitBaseConfigurationVersion
     $infoBaseKind = Read-InitInfoBaseKind
@@ -2254,12 +2252,19 @@ function Read-InitAnswersFromWizard {
     $answers.dependencyMode = Read-InitDependencyMode
     $answers.vibecoding1cMcpSetupDuringInit = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0J3QsNGB0YLRgNC+0LjRgtGMIHZpYmVjb2RpbmcxYyBNQ1Ag0YHQtdC50YfQsNGBPyDQntGC0LLQtdGC0YzRgtC1INC90LXRgiwg0YfRgtC+0LHRiyDRgdC00LXQu9Cw0YLRjCDRjdGC0L4g0L/QvtC30LbQtSDQvtCx0YvRh9C90YvQvCDQt9Cw0L/RgNC+0YHQvtC8INCw0LPQtdC90YLRgyDQuNC70LggaGVscGVyIGFjdGlvbi4=") -Default $true
 
+    return [pscustomobject]$answers
+}
+
+function Write-InitWizardAnswersSummary {
+    param([object]$Answers)
+
+    $answers = [pscustomobject]$Answers
     Write-Section (Get-Agent1cUtf8Text "0KHQstC+0LTQutCwINC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNC4")
     Write-Host ((Get-Agent1cUtf8Text "0JrQvtGA0LXQvdGMINC/0YDQvtC10LrRgtCwOiA=") + $script:ProjectRoot)
     Write-Host ((Get-Agent1cUtf8Text "0J/Qu9Cw0YLRhNC+0YDQvNCwOiA=") + $answers.platformPath)
     Write-Host ("Base configuration version: " + $answers.baseConfigurationVersion)
     Write-Host ((Get-Agent1cUtf8Text "0KLQuNC/INC40YHRhdC+0LTQvdC+0Lkg0LHQsNC30Ys6IA==") + $answers.infoBaseKind)
-    if ($infoBaseKind -eq "server") {
+    if ($answers.infoBaseKind -eq "server") {
         Write-Host ((Get-Agent1cUtf8Text "0JjRgdGF0L7QtNC90YvQuSDRgdC10YDQstC10YA6IA==") + $answers.sourceServerName)
         Write-Host ((Get-Agent1cUtf8Text "0JjRgdGF0L7QtNC90LDRjyDQsdCw0LfQsDog") + $answers.sourceInfoBaseName)
     } else {
@@ -2267,7 +2272,7 @@ function Read-InitAnswersFromWizard {
     }
     Write-Host ((Get-Agent1cUtf8Text "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINCx0LDQt9GLOiA=") + $answers.ibUser)
     Write-Host ((Get-Agent1cUtf8Text "0JjRgdGF0L7QtNC90LDRjyDQsdCw0LfQsCDQuNGB0L/QvtC70YzQt9GD0LXRgiDRhdGA0LDQvdC40LvQuNGJ0LU6IA==") + $answers.sourceUsesRepository)
-    if ($sourceUsesRepository) {
+    if ($answers.sourceUsesRepository) {
         Write-Host ((Get-Agent1cUtf8Text "0J/Rg9GC0Ywg0Log0YXRgNCw0L3QuNC70LjRidGDOiA=") + $answers.repositoryPath)
         Write-Host ((Get-Agent1cUtf8Text "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINGF0YDQsNC90LjQu9C40YnQsDog") + $answers.repositoryUser)
     }
@@ -2276,11 +2281,28 @@ function Read-InitAnswersFromWizard {
     Write-Host ((Get-Agent1cUtf8Text "0KDQtdC20LjQvCDQt9Cw0LLQuNGB0LjQvNC+0YHRgtC10Lk6IA==") + $answers.dependencyMode)
     Write-Host ((Get-Agent1cUtf8Text "0J3QsNGB0YLRgNC+0LjRgtGMIHZpYmVjb2RpbmcxYyBNQ1Ag0YHQtdC50YfQsNGBOiA=") + $answers.vibecoding1cMcpSetupDuringInit)
     Write-Host (Get-Agent1cUtf8Text "0J/QsNGA0L7Qu9C4OiDRgdC60YDRi9GC0Ys=")
-    if (-not (Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0J/RgNC+0LTQvtC70LbQuNGC0Ywg0YEg0Y3RgtC40LzQuCDQt9C90LDRh9C10L3QuNGP0LzQuD8=") -Default $true)) {
-        throw "Init canceled by developer."
+}
+
+function Confirm-InitWizardAnswers {
+    return (Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0J/RgNC+0LTQvtC70LbQuNGC0Ywg0YEg0Y3RgtC40LzQuCDQt9C90LDRh9C10L3QuNGP0LzQuD8g0J7RgtCy0LXRgtGM0YLQtSDQvdC10YIsINGH0YLQvtCx0Ysg0LfQsNC/0L7Qu9C90LjRgtGMINC/0LDRgNCw0LzQtdGC0YDRiyDQt9Cw0L3QvtCy0L4u") -Default $true)
+}
+
+function Read-InitAnswersFromWizard {
+    if (-not (Test-InteractiveInputAvailable)) {
+        throw "Interactive init wizard needs terminal input. Run this command from an interactive terminal or pass -InitMode json -InitAnswersPath <file>."
     }
 
-    return [pscustomobject]$answers
+    Confirm-InitWizardProjectRoot
+
+    while ($true) {
+        $answers = Read-InitWizardAnswersOnce
+        Write-InitWizardAnswersSummary -Answers $answers
+        if (Confirm-InitWizardAnswers) {
+            return [pscustomobject]$answers
+        }
+
+        Write-Host (Get-Agent1cUtf8Text "0JfQsNC/0L7Qu9C90LjRgtC1INC/0LDRgNCw0LzQtdGC0YDRiyDQt9Cw0L3QvtCy0L4u")
+    }
 }
 
 function Normalize-InitAnswers {

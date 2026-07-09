@@ -5465,7 +5465,8 @@ url = "http://localhost:9999/mcp"
             "0J/Ri9GC0LDRgtGM0YHRjyDQsNCy0YLQvtC80LDRgtC40YfQtdGB0LrQuCDQv9GD0LHQu9C40LrQvtCy0LDRgtGMINCx0LDQt9GDINC/0YDQuCDRgdC+0LfQtNCw0L3QuNC4INCy0LXRgtC60Lgg0YDQsNC30YDQsNCx0L7RgtC60Lg/",
             "0JjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMINGB0LLQtdC20LjQtSDQstC10YDRgdC40Lgg0LfQsNCy0LjRgdC40LzQvtGB0YLQtdC5INC/0YDQuCDQuNC90LjRhtC40LDQu9C40LfQsNGG0LjQuD8g0J7RgtCy0LXRgtGM0YLQtSDQvdC10YIsINGH0YLQvtCx0Ysg0LjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMIHBpbnMg0LjQtyAuYWdlbnQtMWMvZGVwZW5kZW5jeS1sb2NrLmpzb24u",
             "0J3QsNGB0YLRgNC+0LjRgtGMIHZpYmVjb2RpbmcxYyBNQ1Ag0YHQtdC50YfQsNGBPyDQntGC0LLQtdGC0YzRgtC1INC90LXRgiwg0YfRgtC+0LHRiyDRgdC00LXQu9Cw0YLRjCDRjdGC0L4g0L/QvtC30LbQtSDQvtCx0YvRh9C90YvQvCDQt9Cw0L/RgNC+0YHQvtC8INCw0LPQtdC90YLRgyDQuNC70LggaGVscGVyIGFjdGlvbi4=",
-            "0J/RgNC+0LTQvtC70LbQuNGC0Ywg0YEg0Y3RgtC40LzQuCDQt9C90LDRh9C10L3QuNGP0LzQuD8=",
+            "0J/RgNC+0LTQvtC70LbQuNGC0Ywg0YEg0Y3RgtC40LzQuCDQt9C90LDRh9C10L3QuNGP0LzQuD8g0J7RgtCy0LXRgtGM0YLQtSDQvdC10YIsINGH0YLQvtCx0Ysg0LfQsNC/0L7Qu9C90LjRgtGMINC/0LDRgNCw0LzQtdGC0YDRiyDQt9Cw0L3QvtCy0L4u",
+            "0JfQsNC/0L7Qu9C90LjRgtC1INC/0LDRgNCw0LzQtdGC0YDRiyDQt9Cw0L3QvtCy0L4u",
             "0J/QvtC70L3Ri9C5INC/0YPRgtGMINC6IHdlYmluc3QuZXhl",
             "0JrQsNGC0LDQu9C+0LMg0L/Rg9Cx0LvQuNC60LDRhtC40Lk=",
             "0JHQsNC30L7QstGL0LkgVVJMINC/0YPQsdC70LjQutCw0YbQuNC5",
@@ -5499,6 +5500,73 @@ url = "http://localhost:9999/mcp"
         $HelperText | Should -Match 'vibecoding1cMcpSetupDuringInit\s*=\s*Read-InitYesNo.*-Default\s+\$true'
         $HelperText | Should -Match 'VIBECODING1C_MCP_SETUP_DURING_INIT"\)\s+-Default\s+\$true\)\s+-Default\s+\$true'
         $HelperText | Should -Match 'Get-EnvValue\s+-Name\s+"VIBECODING1C_MCP_SETUP_DURING_INIT"\s+-Default\s+\$true\)\s+-Default\s+\$true'
+    }
+
+    It "restarts init wizard answers when the summary is rejected" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            $script:InitWizardRootConfirmations = 0
+            $script:InitWizardAnswerReads = 0
+            $script:InitWizardSummaryPaths = @()
+            $script:InitWizardAnswerConfirmations = 0
+
+            function Test-InteractiveInputAvailable {
+                return $true
+            }
+
+            function Confirm-InitWizardProjectRoot {
+                $script:InitWizardRootConfirmations++
+            }
+
+            function Read-InitWizardAnswersOnce {
+                $script:InitWizardAnswerReads++
+                return [pscustomobject]@{
+                    platformPath = "platform-$script:InitWizardAnswerReads"
+                    baseConfigurationVersion = "PM5"
+                    infoBaseKind = "file"
+                    sourceUsesRepository = $false
+                    sourceInfoBasePath = "C:\bases\source-$script:InitWizardAnswerReads"
+                    ibUser = ""
+                    ibPassword = ""
+                    repositoryPath = ""
+                    repositoryUser = ""
+                    repositoryPassword = ""
+                    webPublishByDefault = $false
+                    webPublishAuto = $false
+                    dependencyMode = "fresh"
+                    vibecoding1cMcpSetupDuringInit = $true
+                }
+            }
+
+            function Write-InitWizardAnswersSummary {
+                param([object]$Answers)
+
+                $script:InitWizardSummaryPaths += $Answers.platformPath
+            }
+
+            function Confirm-InitWizardAnswers {
+                $script:InitWizardAnswerConfirmations++
+                return ($script:InitWizardAnswerConfirmations -ge 2)
+            }
+
+            $answers = Read-InitAnswersFromWizard 6>$null
+            [pscustomobject]@{
+                rootConfirmations = $script:InitWizardRootConfirmations
+                answerReads = $script:InitWizardAnswerReads
+                summaryPaths = ($script:InitWizardSummaryPaths -join "|")
+                answerConfirmations = $script:InitWizardAnswerConfirmations
+                platformPath = $answers.platformPath
+                sourceInfoBasePath = $answers.sourceInfoBasePath
+            }
+        }
+
+        $result.rootConfirmations | Should -Be 1
+        $result.answerReads | Should -Be 2
+        $result.summaryPaths | Should -Be "platform-1|platform-2"
+        $result.answerConfirmations | Should -Be 2
+        $result.platformPath | Should -Be "platform-2"
+        $result.sourceInfoBasePath | Should -Be "C:\bases\source-2"
     }
 
     It "normalizes a missing vibecoding1c init answer to true while preserving explicit false" {
