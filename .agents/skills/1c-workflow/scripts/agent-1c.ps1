@@ -55,8 +55,71 @@ $script:ConsoleOutputEncoding = New-Object System.Text.UTF8Encoding $false
 [Console]::OutputEncoding = $script:ConsoleOutputEncoding
 $OutputEncoding = $script:ConsoleOutputEncoding
 
+function Normalize-Agent1cFullPathText {
+    param([string]$Path)
+
+    if ([string]::IsNullOrEmpty($Path)) {
+        return $Path
+    }
+
+    $root = [System.IO.Path]::GetPathRoot($Path)
+    $trimmed = $Path.TrimEnd("\", "/")
+    if ([string]::IsNullOrEmpty($trimmed)) {
+        return $Path
+    }
+
+    if ($root -and $trimmed -eq $root.TrimEnd("\", "/")) {
+        return $root
+    }
+    return $trimmed
+}
+
+function Resolve-Agent1cFullPath {
+    param([AllowNull()][string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    $full = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path))
+    if (Test-Path -LiteralPath $full -ErrorAction SilentlyContinue) {
+        try {
+            return (Normalize-Agent1cFullPathText -Path (Get-Item -LiteralPath $full -ErrorAction Stop).FullName)
+        } catch {
+        }
+    }
+
+    $segments = [System.Collections.Generic.List[string]]::new()
+    $current = $full
+    while (-not [string]::IsNullOrWhiteSpace($current)) {
+        if (Test-Path -LiteralPath $current -ErrorAction SilentlyContinue) {
+            try {
+                $resolved = (Get-Item -LiteralPath $current -ErrorAction Stop).FullName
+                for ($i = $segments.Count - 1; $i -ge 0; $i--) {
+                    $resolved = Join-Path $resolved $segments[$i]
+                }
+                return (Normalize-Agent1cFullPathText -Path $resolved)
+            } catch {
+            }
+        }
+
+        $parent = Split-Path -Parent $current
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current) {
+            break
+        }
+
+        $leaf = Split-Path -Leaf $current
+        if (-not [string]::IsNullOrEmpty($leaf)) {
+            $segments.Add($leaf) | Out-Null
+        }
+        $current = $parent
+    }
+
+    return (Normalize-Agent1cFullPathText -Path $full)
+}
+
 if (-not $ConfigPath) {
-    $ConfigPath = Join-Path $ProjectRoot ".agent-1c\project.json"
+    $ConfigPath = Join-Path (Resolve-Agent1cFullPath -Path $ProjectRoot) ".agent-1c\project.json"
 }
 
 function Add-Agent1cReexecArgument {
@@ -88,8 +151,8 @@ function Add-Agent1cReexecArgument {
 function Get-Agent1cReexecArguments {
     $arguments = [System.Collections.Generic.List[string]]::new()
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Action" -Value $Action
-    Add-Agent1cReexecArgument -Arguments $arguments -Name "ProjectRoot" -Value ([System.IO.Path]::GetFullPath($ProjectRoot))
-    Add-Agent1cReexecArgument -Arguments $arguments -Name "ConfigPath" -Value ([System.IO.Path]::GetFullPath($ConfigPath))
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "ProjectRoot" -Value (Resolve-Agent1cFullPath -Path $ProjectRoot)
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "ConfigPath" -Value (Resolve-Agent1cFullPath -Path $ConfigPath)
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranchName" -Value $DevBranchName
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranch" -Value $DevBranch
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranchInfoBasePath" -Value $DevBranchInfoBasePath
@@ -136,14 +199,14 @@ $script:ResolvedRunStatusPath = ""
 $script:ResolvedRunLogPath = ""
 $script:GitIndexLockPath = ""
 $script:GitIndexLockPreExisted = $false
-$script:ProjectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
-$script:ConfigPath = [System.IO.Path]::GetFullPath($ConfigPath)
+$script:ProjectRoot = Resolve-Agent1cFullPath -Path $ProjectRoot
+$script:ConfigPath = Resolve-Agent1cFullPath -Path $ConfigPath
 $script:Config = $null
 $script:ToolsManifest = $null
 $script:ToolsManifestLoaded = $false
 $script:InitVibecoding1cMcpSetupRequested = $false
 $script:DependencyLockPath = Join-Path $script:ProjectRoot ".agent-1c\dependency-lock.json"
-$script:Agent1cScriptPath = [System.IO.Path]::GetFullPath($PSCommandPath)
+$script:Agent1cScriptPath = Resolve-Agent1cFullPath -Path $PSCommandPath
 $script:Agent1cReexecArguments = Get-Agent1cReexecArguments
 
 $script:Agent1cScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }

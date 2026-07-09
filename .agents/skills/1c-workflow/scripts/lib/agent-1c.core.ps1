@@ -58,6 +58,69 @@ function New-TimestampedFilePath {
     return Join-Path $Directory $name
 }
 
+function Normalize-Agent1cFullPathText {
+    param([string]$Path)
+
+    if ([string]::IsNullOrEmpty($Path)) {
+        return $Path
+    }
+
+    $root = [System.IO.Path]::GetPathRoot($Path)
+    $trimmed = $Path.TrimEnd("\", "/")
+    if ([string]::IsNullOrEmpty($trimmed)) {
+        return $Path
+    }
+
+    if ($root -and $trimmed -eq $root.TrimEnd("\", "/")) {
+        return $root
+    }
+    return $trimmed
+}
+
+function Resolve-Agent1cFullPath {
+    param([AllowNull()][string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    $full = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path))
+    if (Test-Path -LiteralPath $full -ErrorAction SilentlyContinue) {
+        try {
+            return (Normalize-Agent1cFullPathText -Path (Get-Item -LiteralPath $full -ErrorAction Stop).FullName)
+        } catch {
+        }
+    }
+
+    $segments = [System.Collections.Generic.List[string]]::new()
+    $current = $full
+    while (-not [string]::IsNullOrWhiteSpace($current)) {
+        if (Test-Path -LiteralPath $current -ErrorAction SilentlyContinue) {
+            try {
+                $resolved = (Get-Item -LiteralPath $current -ErrorAction Stop).FullName
+                for ($i = $segments.Count - 1; $i -ge 0; $i--) {
+                    $resolved = Join-Path $resolved $segments[$i]
+                }
+                return (Normalize-Agent1cFullPathText -Path $resolved)
+            } catch {
+            }
+        }
+
+        $parent = Split-Path -Parent $current
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current) {
+            break
+        }
+
+        $leaf = Split-Path -Leaf $current
+        if (-not [string]::IsNullOrEmpty($leaf)) {
+            $segments.Add($leaf) | Out-Null
+        }
+        $current = $parent
+    }
+
+    return (Normalize-Agent1cFullPathText -Path $full)
+}
+
 function Resolve-RunFilePath {
     param([string]$Path)
 
@@ -65,9 +128,9 @@ function Resolve-RunFilePath {
         return ""
     }
     if ([System.IO.Path]::IsPathRooted($Path)) {
-        return [System.IO.Path]::GetFullPath($Path)
+        return (Resolve-Agent1cFullPath -Path $Path)
     }
-    return [System.IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path))
+    return (Resolve-Agent1cFullPath -Path (Join-Path $script:ProjectRoot $Path))
 }
 
 function Write-RunStatus {
@@ -327,17 +390,17 @@ function Require-Value {
 function Resolve-ProjectPath {
     param([string]$Path)
     if ([System.IO.Path]::IsPathRooted($Path)) {
-        return [System.IO.Path]::GetFullPath($Path)
+        return (Resolve-Agent1cFullPath -Path $Path)
     }
-    return [System.IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path))
+    return (Resolve-Agent1cFullPath -Path (Join-Path $script:ProjectRoot $Path))
 }
 
 function Set-ProjectContext {
     param([string]$Root)
 
-    $resolvedRoot = [System.IO.Path]::GetFullPath($Root)
+    $resolvedRoot = Resolve-Agent1cFullPath -Path $Root
     $script:ProjectRoot = $resolvedRoot
-    $script:ConfigPath = [System.IO.Path]::GetFullPath((Join-Path $resolvedRoot ".agent-1c\project.json"))
+    $script:ConfigPath = Resolve-Agent1cFullPath -Path (Join-Path $resolvedRoot ".agent-1c\project.json")
     $script:DependencyLockPath = Join-Path $resolvedRoot ".agent-1c\dependency-lock.json"
     Import-DotEnv -Path (Join-Path $resolvedRoot ".dev.env") -Overwrite
     Read-ProjectConfig
@@ -397,7 +460,7 @@ function Resolve-InfoBasePath {
         return $Path
     }
     if ([System.IO.Path]::IsPathRooted($Path)) {
-        return [System.IO.Path]::GetFullPath($Path)
+        return (Resolve-Agent1cFullPath -Path $Path)
     }
     return Resolve-ProjectPath $Path
 }
@@ -421,7 +484,7 @@ function Get-GitIndexLockPath {
             if ($firstLine -match '^gitdir:\s*(.+)$') {
                 $gitDir = $matches[1].Trim()
                 if (-not [System.IO.Path]::IsPathRooted($gitDir)) {
-                    $gitDir = [System.IO.Path]::GetFullPath((Join-Path $Root $gitDir))
+                    $gitDir = Resolve-Agent1cFullPath -Path (Join-Path $Root $gitDir)
                 }
                 return (Join-Path $gitDir "index.lock")
             }
@@ -489,7 +552,8 @@ function Invoke-GitCommand {
         [switch]$PassThru
     )
 
-    $gitArgs = @("-C", $Root) + @($Arguments)
+    $resolvedRoot = Resolve-Agent1cFullPath -Path $Root
+    $gitArgs = @("-C", $resolvedRoot) + @($Arguments)
     $exitCode = 1
     $previousErrorActionPreference = $ErrorActionPreference
     try {
@@ -530,9 +594,9 @@ function Invoke-GitCommand {
     }
 
     if ($exitCode -ne 0) {
-        $message = "Git failed: git -C `"$Root`" $($Arguments -join ' ')"
+        $message = "Git failed: git -C `"$resolvedRoot`" $($Arguments -join ' ')"
         if (Test-GitIndexLockErrorOutput -Output $displayOutput) {
-            $message = "$message. $(Get-GitIndexLockRecoveryHint -Root $Root)"
+            $message = "$message. $(Get-GitIndexLockRecoveryHint -Root $resolvedRoot)"
         }
         throw $message
     }
@@ -725,10 +789,7 @@ function Assert-CleanGit {
 function Get-FullPathNormalized {
     param([string]$Path)
 
-    if (-not $Path) {
-        return ""
-    }
-    return [System.IO.Path]::GetFullPath($Path).TrimEnd("\", "/")
+    return (Resolve-Agent1cFullPath -Path $Path)
 }
 
 function Get-GitWorktrees {

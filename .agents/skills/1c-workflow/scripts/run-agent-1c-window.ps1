@@ -33,6 +33,69 @@ function Read-RequiredLauncherValue {
     }
 }
 
+function Normalize-Agent1cFullPathText {
+    param([string]$Path)
+
+    if ([string]::IsNullOrEmpty($Path)) {
+        return $Path
+    }
+
+    $root = [System.IO.Path]::GetPathRoot($Path)
+    $trimmed = $Path.TrimEnd("\", "/")
+    if ([string]::IsNullOrEmpty($trimmed)) {
+        return $Path
+    }
+
+    if ($root -and $trimmed -eq $root.TrimEnd("\", "/")) {
+        return $root
+    }
+    return $trimmed
+}
+
+function Resolve-Agent1cFullPath {
+    param([AllowNull()][string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    $full = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path))
+    if (Test-Path -LiteralPath $full -ErrorAction SilentlyContinue) {
+        try {
+            return (Normalize-Agent1cFullPathText -Path (Get-Item -LiteralPath $full -ErrorAction Stop).FullName)
+        } catch {
+        }
+    }
+
+    $segments = [System.Collections.Generic.List[string]]::new()
+    $current = $full
+    while (-not [string]::IsNullOrWhiteSpace($current)) {
+        if (Test-Path -LiteralPath $current -ErrorAction SilentlyContinue) {
+            try {
+                $resolved = (Get-Item -LiteralPath $current -ErrorAction Stop).FullName
+                for ($i = $segments.Count - 1; $i -ge 0; $i--) {
+                    $resolved = Join-Path $resolved $segments[$i]
+                }
+                return (Normalize-Agent1cFullPathText -Path $resolved)
+            } catch {
+            }
+        }
+
+        $parent = Split-Path -Parent $current
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current) {
+            break
+        }
+
+        $leaf = Split-Path -Leaf $current
+        if (-not [string]::IsNullOrEmpty($leaf)) {
+            $segments.Add($leaf) | Out-Null
+        }
+        $current = $parent
+    }
+
+    return (Normalize-Agent1cFullPathText -Path $full)
+}
+
 $rawArgs = @($args)
 :parseArgs for ($i = 0; $i -lt $rawArgs.Count; $i++) {
     $arg = [string]$rawArgs[$i]
@@ -206,7 +269,7 @@ function Get-GitIndexLockPath {
             if ($firstLine -match '^gitdir:\s*(.+)$') {
                 $gitDir = $matches[1].Trim()
                 if (-not [System.IO.Path]::IsPathRooted($gitDir)) {
-                    $gitDir = [System.IO.Path]::GetFullPath((Join-Path $projectRootFull $gitDir))
+                    $gitDir = Resolve-Agent1cFullPath -Path (Join-Path $projectRootFull $gitDir)
                 }
                 return (Join-Path $gitDir "index.lock")
             }
@@ -348,14 +411,14 @@ if ($AgentArgs.Count -gt 0 -and $AgentArgs[0] -eq "--") {
     }
 }
 
-$projectRootFull = [System.IO.Path]::GetFullPath($ProjectRoot)
+$projectRootFull = Resolve-Agent1cFullPath -Path $ProjectRoot
 if ($MaxWaitSeconds -lt 0) {
     throw "MaxWaitSeconds must be 0 or greater."
 }
 if (-not $HelperPath) {
     $HelperPath = Join-Path $PSScriptRoot "agent-1c.ps1"
 }
-$helperFull = [System.IO.Path]::GetFullPath($HelperPath)
+$helperFull = Resolve-Agent1cFullPath -Path $HelperPath
 if (-not (Test-Path -LiteralPath $helperFull -PathType Leaf)) {
     throw "Helper script was not found: $helperFull"
 }

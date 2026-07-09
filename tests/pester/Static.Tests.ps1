@@ -63,6 +63,35 @@ Describe "1C agent workflow static checks" {
                 }
             }
         }
+
+        function Get-TestShortPath {
+            param([string]$Path)
+
+            $isWindowsVariable = Get-Variable -Name IsWindows -ErrorAction SilentlyContinue
+            $isWindowsHost = if ($null -ne $isWindowsVariable) { [bool]$isWindowsVariable.Value } else { $env:OS -eq "Windows_NT" }
+            if (-not $isWindowsHost) {
+                return ""
+            }
+            if (-not (Test-Path -LiteralPath $Path -ErrorAction SilentlyContinue)) {
+                return ""
+            }
+
+            $resolved = (Get-Item -LiteralPath $Path).FullName
+            $cmdPath = $resolved -replace '"', '""'
+            $output = @(cmd.exe /d /c "for %I in (`"$cmdPath`") do @echo %~sI" 2>$null)
+            if ($LASTEXITCODE -ne 0 -or -not $output) {
+                return ""
+            }
+
+            $shortPath = ([string]($output | Select-Object -First 1)).Trim()
+            if (-not $shortPath -or $shortPath -eq $resolved) {
+                return ""
+            }
+            if (-not (Test-Path -LiteralPath $shortPath -ErrorAction SilentlyContinue)) {
+                return ""
+            }
+            return $shortPath
+        }
     }
 
     It "parses the PowerShell helper" {
@@ -98,6 +127,92 @@ Describe "1C agent workflow static checks" {
         [System.Management.Automation.Language.Parser]::ParseFile($InstallerPath, [ref]$tokens, [ref]$errors) | Out-Null
 
         @($errors).Count | Should -Be 0
+    }
+
+    It "normalizes existing paths and not-yet-created children through the nearest existing ancestor" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-path-normalization-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $expectedRoot = (Get-Item -LiteralPath $tempRoot).FullName
+            $missingChild = Join-Path (Join-Path $tempRoot ".") "missing\child"
+            $expectedChild = Join-Path $expectedRoot "missing\child"
+
+            & {
+                . $HelperPath -ProjectRoot (Join-Path $tempRoot ".") -Action help *> $null
+
+                Resolve-Agent1cFullPath -Path (Join-Path $tempRoot ".") | Should -Be $expectedRoot
+                Resolve-Agent1cFullPath -Path $missingChild | Should -Be $expectedChild
+                Get-FullPathNormalized -Path ($expectedRoot + "\") | Should -Be $expectedRoot
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "normalizes Git -C roots before invoking git" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-git-root-normalization-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $expectedRoot = (Get-Item -LiteralPath $tempRoot).FullName
+
+            & {
+                . $HelperPath -ProjectRoot (Join-Path $tempRoot ".") -Action help *> $null
+                $script:CapturedGitArgs = @()
+                function git {
+                    param([Parameter(ValueFromRemainingArguments = $true)][object[]]$Arguments)
+                    $script:CapturedGitArgs = @($Arguments | ForEach-Object { [string]$_ })
+                    $global:LASTEXITCODE = 0
+                    return @()
+                }
+
+                Invoke-GitCommand -Root (Join-Path $tempRoot ".") -Arguments @("status")
+
+                $script:CapturedGitArgs[0] | Should -Be "-C"
+                $script:CapturedGitArgs[1] | Should -Be $expectedRoot
+                $script:CapturedGitArgs[2] | Should -Be "status"
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "accepts actual Windows 8.3 short paths when available" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl short path normalization " + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project folder"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot | Out-Null
+            $shortProjectRoot = Get-TestShortPath -Path $projectRoot
+            if (-not $shortProjectRoot) {
+                if (Get-Command Set-ItResult -ErrorAction SilentlyContinue) {
+                    Set-ItResult -Skipped -Because "Windows 8.3 short paths are not available for this test directory."
+                }
+                return
+            }
+
+            $statusPath = Join-Path $tempRoot "status.json"
+            $logPath = Join-Path $tempRoot "console.log"
+            $result = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
+                "-ProjectRoot", $shortProjectRoot,
+                "-Action", "help",
+                "-RunStatusPath", $statusPath,
+                "-RunLogPath", $logPath
+            )
+
+            $result.exitCode | Should -Be 0
+            $status = Get-Content -Encoding UTF8 -Raw -LiteralPath $statusPath | ConvertFrom-Json
+            $status.projectRoot | Should -Be (Get-Item -LiteralPath $projectRoot).FullName
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     It "parses the standalone MCP host installer" {
@@ -3793,14 +3908,14 @@ param(
 
 $optional = [pscustomobject]@{}
 $null = $optional.userModified
-Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding ASCII -Value "$Command|$Source|$($AssumeYes.IsPresent)"
+Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding ASCII -Value "$Command|$ProjectRoot|$Source|$($AssumeYes.IsPresent)"
 '@
 
             & {
-                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                . $HelperPath -ProjectRoot (Join-Path $projectRoot ".") -Action help *> $null
                 function Sync-AiRules1cCheckout {
                     return [pscustomobject]@{
-                        root = $rulesRoot
+                        root = (Join-Path $rulesRoot ".")
                         repo = "fixture"
                         ref = "fixture"
                     }
@@ -3813,7 +3928,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             }
 
             $result = Get-Content -Encoding ASCII -Raw (Join-Path $projectRoot "installer-ran.txt")
-            $result.Trim() | Should -Be "update|$rulesRoot|True"
+            $result.Trim() | Should -Be ("update|{0}|{1}|True" -f (Get-Item -LiteralPath $projectRoot).FullName, (Get-Item -LiteralPath $rulesRoot).FullName)
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

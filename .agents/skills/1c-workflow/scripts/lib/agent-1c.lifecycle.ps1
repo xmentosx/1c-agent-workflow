@@ -33,7 +33,7 @@ function Update-BaseFromRepository {
 function Assert-ExportPathInsideProject {
     param([string]$ExportPath)
     $resolved = Resolve-ProjectPath $ExportPath
-    $root = [System.IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd("\")
+    $root = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd("\")
     if (-not $resolved.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Export path must be inside project root: $resolved"
     }
@@ -768,7 +768,8 @@ function Sync-AiRules1cCheckout {
         }
     }
 
-    $rulesDir = Join-Path $env:TEMP "ai_rules_1c"
+    $tempRoot = Resolve-Agent1cFullPath -Path $env:TEMP
+    $rulesDir = Resolve-Agent1cFullPath -Path (Join-Path $tempRoot "ai_rules_1c")
 
     if (Test-Path -LiteralPath $rulesDir) {
         try {
@@ -778,7 +779,7 @@ function Sync-AiRules1cCheckout {
         }
     } else {
         try {
-            Invoke-GitAt -Root $env:TEMP -Arguments @("clone", $repo, $rulesDir)
+            Invoke-GitAt -Root $tempRoot -Arguments @("clone", $repo, $rulesDir)
         } catch {
             throw "Failed to clone ai_rules_1c from $repo"
         }
@@ -820,7 +821,7 @@ function Invoke-AiRules1cInstaller {
     )
 
     $checkout = Sync-AiRules1cCheckout
-    $rulesDir = [string]$checkout.root
+    $rulesDir = Resolve-Agent1cFullPath -Path ([string]$checkout.root)
     $installScript = Join-Path $rulesDir "install.ps1"
     if (-not (Test-Path -LiteralPath $installScript)) {
         throw "ai_rules_1c install.ps1 was not found: $installScript"
@@ -835,7 +836,7 @@ function Invoke-AiRules1cInstaller {
 
     $installArgs = @(
         $effectiveCommand,
-        "-ProjectRoot", $script:ProjectRoot,
+        "-ProjectRoot", (Resolve-Agent1cFullPath -Path $script:ProjectRoot),
         "-Source", $rulesDir,
         "-AssumeYes"
     )
@@ -845,7 +846,7 @@ function Invoke-AiRules1cInstaller {
         $installArgs += @("-Force")
     }
 
-    Push-Location $script:ProjectRoot
+    Push-Location (Resolve-Agent1cFullPath -Path $script:ProjectRoot)
     try {
         & powershell -NoProfile -ExecutionPolicy Bypass -File $installScript @installArgs
         if ($LASTEXITCODE -ne 0) {
@@ -1182,7 +1183,7 @@ function Get-WorkflowPackageRef {
 }
 
 function Get-WorkflowPackageTempRoot {
-    return (Join-Path (Join-Path $env:TEMP "1c-agent-workflow") "workflow-package")
+    return (Resolve-Agent1cFullPath -Path (Join-Path (Join-Path (Resolve-Agent1cFullPath -Path $env:TEMP) "1c-agent-workflow") "workflow-package"))
 }
 
 function Test-GitRefExistsAt {
@@ -1191,10 +1192,11 @@ function Test-GitRefExistsAt {
         [string]$Ref
     )
 
+    $resolvedRoot = Resolve-Agent1cFullPath -Path $Root
     $previousErrorActionPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = "Continue"
-        & git -C $Root show-ref --verify --quiet $Ref
+        & git -C $resolvedRoot show-ref --verify --quiet $Ref
         return ($LASTEXITCODE -eq 0)
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
@@ -1228,7 +1230,7 @@ function Resolve-WorkflowPackageSource {
     $root = ""
 
     if (-not [string]::IsNullOrWhiteSpace($overridePath)) {
-        $root = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($overridePath))
+        $root = Resolve-Agent1cFullPath -Path $overridePath
         if (-not (Test-Path -LiteralPath $root -PathType Container -ErrorAction SilentlyContinue)) {
             throw "ITL_WORKFLOW_SOURCE_PATH was not found: $root"
         }

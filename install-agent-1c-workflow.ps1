@@ -22,13 +22,73 @@ if ($InitMaxWaitSeconds -lt 0) {
     throw "InitMaxWaitSeconds must be 0 or greater."
 }
 
-function Get-FullPathNormalized {
+function Normalize-Agent1cFullPathText {
     param([string]$Path)
+
+    if ([string]::IsNullOrEmpty($Path)) {
+        return $Path
+    }
+
+    $root = [System.IO.Path]::GetPathRoot($Path)
+    $trimmed = $Path.TrimEnd("\", "/")
+    if ([string]::IsNullOrEmpty($trimmed)) {
+        return $Path
+    }
+
+    if ($root -and $trimmed -eq $root.TrimEnd("\", "/")) {
+        return $root
+    }
+    return $trimmed
+}
+
+function Resolve-Agent1cFullPath {
+    param([AllowNull()][string]$Path)
 
     if ([string]::IsNullOrWhiteSpace($Path)) {
         return ""
     }
-    return [System.IO.Path]::GetFullPath($Path).TrimEnd("\", "/")
+
+    $full = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Path))
+    if (Test-Path -LiteralPath $full -ErrorAction SilentlyContinue) {
+        try {
+            return (Normalize-Agent1cFullPathText -Path (Get-Item -LiteralPath $full -ErrorAction Stop).FullName)
+        } catch {
+        }
+    }
+
+    $segments = [System.Collections.Generic.List[string]]::new()
+    $current = $full
+    while (-not [string]::IsNullOrWhiteSpace($current)) {
+        if (Test-Path -LiteralPath $current -ErrorAction SilentlyContinue) {
+            try {
+                $resolved = (Get-Item -LiteralPath $current -ErrorAction Stop).FullName
+                for ($i = $segments.Count - 1; $i -ge 0; $i--) {
+                    $resolved = Join-Path $resolved $segments[$i]
+                }
+                return (Normalize-Agent1cFullPathText -Path $resolved)
+            } catch {
+            }
+        }
+
+        $parent = Split-Path -Parent $current
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current) {
+            break
+        }
+
+        $leaf = Split-Path -Leaf $current
+        if (-not [string]::IsNullOrEmpty($leaf)) {
+            $segments.Add($leaf) | Out-Null
+        }
+        $current = $parent
+    }
+
+    return (Normalize-Agent1cFullPathText -Path $full)
+}
+
+function Get-FullPathNormalized {
+    param([string]$Path)
+
+    return (Resolve-Agent1cFullPath -Path $Path)
 }
 
 function Assert-SourcePackage {
@@ -129,9 +189,9 @@ if ([string]::IsNullOrWhiteSpace($SourceRoot)) {
     $SourceRoot = $scriptRoot
 }
 
-$projectRootFull = [System.IO.Path]::GetFullPath($ProjectRoot)
-$sourceRootFull = [System.IO.Path]::GetFullPath($SourceRoot)
-$callerRoot = (Get-Location).Path
+$projectRootFull = Resolve-Agent1cFullPath -Path $ProjectRoot
+$sourceRootFull = Resolve-Agent1cFullPath -Path $SourceRoot
+$callerRoot = Resolve-Agent1cFullPath -Path (Get-Location).Path
 
 if (-not (Test-Path -LiteralPath $sourceRootFull -PathType Container -ErrorAction SilentlyContinue)) {
     throw "ITL workflow package source was not found: $sourceRootFull"
@@ -179,9 +239,9 @@ if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf -ErrorAction Silen
 $initArgs = @("-Action", "init-project", "-InitMode", $InitMode)
 if ($InitAnswersPath) {
     $answersFull = if ([System.IO.Path]::IsPathRooted($InitAnswersPath)) {
-        [System.IO.Path]::GetFullPath($InitAnswersPath)
+        Resolve-Agent1cFullPath -Path $InitAnswersPath
     } else {
-        [System.IO.Path]::GetFullPath((Join-Path $callerRoot $InitAnswersPath))
+        Resolve-Agent1cFullPath -Path (Join-Path $callerRoot $InitAnswersPath)
     }
     $initArgs += @("-InitAnswersPath", $answersFull)
 }
@@ -194,7 +254,7 @@ $launcherArgs += @("-MaxWaitSeconds", [string]$InitMaxWaitSeconds)
 $launcherArgs += @("--") + $initArgs
 
 Write-Host "Starting monitored ITL initialization."
-Push-Location $projectRootFull
+Push-Location (Resolve-Agent1cFullPath -Path $projectRootFull)
 try {
     & powershell -ExecutionPolicy Bypass -File $launcherPath @launcherArgs
     if ($LASTEXITCODE -is [int] -and $LASTEXITCODE -ne 0) {
