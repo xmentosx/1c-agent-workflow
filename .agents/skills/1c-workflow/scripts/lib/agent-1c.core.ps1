@@ -937,7 +937,7 @@ function Assert-BaselineDumpCommitted {
 
 function Ensure-GitIgnore {
     $gitignorePath = Join-Path $script:ProjectRoot ".gitignore"
-    $required = @(
+    $fallbackRequired = @(
         ".dev.env",
         "build/result/",
         "build/event-log/",
@@ -961,9 +961,17 @@ function Ensure-GitIgnore {
         "build/data-mcp-tools-loader/",
         "build/test-results/",
         ".codex/config.toml",
+        ".kilo/commands/itl*.md",
         ".kilo/kilo.json",
         ".kilo/kilo.jsonc"
     )
+
+    $templatePath = Join-Path $script:ProjectRoot "templates\gitignore.append"
+    if (Test-Path -LiteralPath $templatePath -PathType Leaf -ErrorAction SilentlyContinue) {
+        $required = @(Read-Utf8Lines -Path $templatePath | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    } else {
+        $required = $fallbackRequired
+    }
 
     if (Test-Path -LiteralPath $gitignorePath) {
         $current = Read-Utf8Lines -Path $gitignorePath

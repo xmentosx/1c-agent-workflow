@@ -4224,6 +4224,9 @@ local after
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-check.md") -PathType Leaf) | Should -Be $false
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-old.md") -PathType Leaf) | Should -Be $false
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\custom.md") -PathType Leaf) | Should -Be $true
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".gitignore")) | Should -Match ([regex]::Escape(".kilo/commands/itl*.md"))
+            @(& git -C $projectRoot ls-files -- ".kilo/commands/itl*.md").Count | Should -Be 0
+            @(& git -C $projectRoot ls-files -- ".kilo/commands/custom.md") | Should -Be @(".kilo/commands/custom.md")
             (Test-Path -LiteralPath (Join-Path $projectRoot "templates\dependency-lock.json") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot "templates\stale.txt") -PathType Leaf) | Should -Be $false
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.md")) | Should -Match "Vanessa Automation"
@@ -6222,6 +6225,9 @@ Start-Sleep -Seconds 20
                 [pscustomobject]@{
                     status = @(Get-EffectiveGitStatusLines -StatusLines (& git -C $script:ProjectRoot status --porcelain))
                     trackedTemplates = @(& git -C $script:ProjectRoot ls-files -- templates)
+                    trackedKiloItlCommands = @(& git -C $script:ProjectRoot ls-files -- ".kilo/commands/itl*.md")
+                    localKiloItlCommands = @(Get-ChildItem -LiteralPath (Join-Path $script:ProjectRoot ".kilo\commands") -File -Filter "itl*.md" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
+                    gitignoreText = Get-Content -Encoding UTF8 -Raw (Join-Path $script:ProjectRoot ".gitignore")
                     branch = ((& git -C $script:ProjectRoot branch --show-current) -join "").Trim()
                     commitCount = [int](((& git -C $script:ProjectRoot rev-list --count HEAD) -join "").Trim())
                     dumpLogPath = $script:LastLogPath
@@ -6235,6 +6241,11 @@ Start-Sleep -Seconds 20
             $result.trackedTemplates | Should -Contain "templates/gitignore.append"
             $result.trackedTemplates | Should -Contain "templates/USER-RULES.append.md"
             $result.trackedTemplates | Should -Contain "templates/AGENTS.append.md"
+            $result.gitignoreText | Should -Match ([regex]::Escape(".kilo/commands/itl*.md"))
+            @($result.trackedKiloItlCommands).Count | Should -Be 0
+            @($result.localKiloItlCommands) | Should -Contain "itl.md"
+            @($result.localKiloItlCommands) | Should -Contain "itl-status.md"
+            @($result.localKiloItlCommands) | Should -Contain "itl-new-config-branch.md"
             $result.branch | Should -Be "master"
             $result.commitCount | Should -BeGreaterOrEqual 2
             (Get-Item -LiteralPath $result.dumpLogPath).Length | Should -Be 0
