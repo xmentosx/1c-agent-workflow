@@ -5,46 +5,46 @@
     "workflowPackage": {
       "repo": "https://github.com/xmentosx/1c-agent-workflow.git",
       "ref": "master",
-      "commit": "",
-      "source": "",
-      "updatedAt": ""
+      "commit": "9c0658d747f8aed185ea6f00c417b62e462c1fe8",
+      "source": "template baseline",
+      "updatedAt": "2026-07-10T00:00:00Z"
     },
     "aiRules1c": {
       "repo": "https://github.com/comol/ai_rules_1c.git",
-      "ref": "",
-      "commit": ""
+      "ref": "main",
+      "commit": "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
     },
     "vanessaAutomation": {
-      "version": "",
-      "url": "",
-      "sha256": "",
-      "source": ""
+      "version": "1.2.043.28",
+      "url": "https://github.com/Pr-Mex/vanessa-automation/releases/download/1.2.043.28/vanessa-automation-single.1.2.043.28.zip",
+      "sha256": "cd0a017a8af69328f471f628ac1367a0e5148f790df9c28c318348b30f08f32a",
+      "source": "template baseline"
     },
     "vanessaMcp": {
       "clientMcp": {
-        "version": "",
-        "assetName": "",
-        "url": "",
-        "sha256": "",
-        "source": "",
-        "updatedAt": ""
+        "version": "v0.6.4",
+        "assetName": "client_mcp.cfe",
+        "url": "https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.4/client_mcp.cfe",
+        "sha256": "74d3cb7f97e3800860f5a1754eecf47178164d888f2299125d1b3118a4614ec1",
+        "source": "template baseline",
+        "updatedAt": "2026-07-10T00:00:00Z"
       },
       "vaExtension": {
-        "version": "",
-        "assetName": "",
-        "url": "",
-        "sha256": "",
-        "source": "",
-        "updatedAt": ""
+        "version": "1.2.043.28",
+        "assetName": "VAExtension.1.29.cfe",
+        "url": "https://github.com/Pr-Mex/vanessa-automation/releases/download/1.2.043.28/VAExtension.1.29.cfe",
+        "sha256": "fc557bb23371a37dbe22a7a7a83e28f6db75b57f87e8802028cf1f90c4e00605",
+        "source": "template baseline",
+        "updatedAt": "2026-07-10T00:00:00Z"
       }
     },
     "roctupMcpToolkit": {
-      "version": "",
-      "assetName": "",
-      "url": "",
-      "sha256": "",
-      "source": "",
-      "updatedAt": ""
+      "version": "v1.7.0",
+      "assetName": "MCP_Toolkit.epf",
+      "url": "https://github.com/ROCTUP/1c-mcp-toolkit/releases/download/v1.7.0/MCP_Toolkit.epf",
+      "sha256": "e9a0856224aea4f54763fe1fb6a21aa8e71efb9d14158adc4382e1b2276d829d",
+      "source": "template baseline",
+      "updatedAt": "2026-07-10T00:00:00Z"
     }
   }
 }

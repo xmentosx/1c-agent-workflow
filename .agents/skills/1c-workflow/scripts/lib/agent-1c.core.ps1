@@ -1580,46 +1580,46 @@ function New-DefaultDependencyLockManifest {
             workflowPackage = [ordered]@{
                 repo = "https://github.com/xmentosx/1c-agent-workflow.git"
                 ref = "master"
-                commit = ""
-                source = ""
-                updatedAt = ""
+                commit = "9c0658d747f8aed185ea6f00c417b62e462c1fe8"
+                source = "template baseline"
+                updatedAt = "2026-07-10T00:00:00Z"
             }
             aiRules1c = [ordered]@{
                 repo = "https://github.com/comol/ai_rules_1c.git"
-                ref = ""
-                commit = ""
+                ref = "main"
+                commit = "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
             }
             vanessaAutomation = [ordered]@{
-                version = ""
-                url = ""
-                sha256 = ""
-                source = ""
+                version = "1.2.043.28"
+                url = "https://github.com/Pr-Mex/vanessa-automation/releases/download/1.2.043.28/vanessa-automation-single.1.2.043.28.zip"
+                sha256 = "cd0a017a8af69328f471f628ac1367a0e5148f790df9c28c318348b30f08f32a"
+                source = "template baseline"
             }
             vanessaMcp = [ordered]@{
                 clientMcp = [ordered]@{
-                    version = ""
-                    assetName = ""
-                    url = ""
-                    sha256 = ""
-                    source = ""
-                    updatedAt = ""
+                    version = "v0.6.4"
+                    assetName = "client_mcp.cfe"
+                    url = "https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.4/client_mcp.cfe"
+                    sha256 = "74d3cb7f97e3800860f5a1754eecf47178164d888f2299125d1b3118a4614ec1"
+                    source = "template baseline"
+                    updatedAt = "2026-07-10T00:00:00Z"
                 }
                 vaExtension = [ordered]@{
-                    version = ""
-                    assetName = ""
-                    url = ""
-                    sha256 = ""
-                    source = ""
-                    updatedAt = ""
+                    version = "1.2.043.28"
+                    assetName = "VAExtension.1.29.cfe"
+                    url = "https://github.com/Pr-Mex/vanessa-automation/releases/download/1.2.043.28/VAExtension.1.29.cfe"
+                    sha256 = "fc557bb23371a37dbe22a7a7a83e28f6db75b57f87e8802028cf1f90c4e00605"
+                    source = "template baseline"
+                    updatedAt = "2026-07-10T00:00:00Z"
                 }
             }
             roctupMcpToolkit = [ordered]@{
-                version = ""
-                assetName = ""
-                url = ""
-                sha256 = ""
-                source = ""
-                updatedAt = ""
+                version = "v1.7.0"
+                assetName = "MCP_Toolkit.epf"
+                url = "https://github.com/ROCTUP/1c-mcp-toolkit/releases/download/v1.7.0/MCP_Toolkit.epf"
+                sha256 = "e9a0856224aea4f54763fe1fb6a21aa8e71efb9d14158adc4382e1b2276d829d"
+                source = "template baseline"
+                updatedAt = "2026-07-10T00:00:00Z"
             }
         }
     }
@@ -1751,6 +1751,157 @@ function Get-DependencyLockEntry {
 
     $manifest = Read-DependencyLockManifest
     return Get-ConfigValueFromObject -Object $manifest -Path "dependencies.$Name" -Default $null
+}
+
+function Get-GitHubApiHeaders {
+    $headers = @{
+        "User-Agent" = "1c-agent-workflow"
+        "Accept" = "application/vnd.github+json"
+    }
+
+    $token = [string](Get-EnvValue -Name "GITHUB_TOKEN" -Default "")
+    if (-not $token) {
+        $token = [string](Get-EnvValue -Name "GH_TOKEN" -Default "")
+    }
+    if ($token) {
+        $headers["Authorization"] = "Bearer $token"
+    }
+
+    return $headers
+}
+
+function Invoke-GitHubApiRestMethod {
+    param([string]$Uri)
+
+    return Invoke-RestMethod -Uri $Uri -Headers (Get-GitHubApiHeaders)
+}
+
+function Get-GitHubApiResponseHeader {
+    param(
+        [AllowNull()][object]$Headers,
+        [string]$Name
+    )
+
+    if ($null -eq $Headers) {
+        return ""
+    }
+    try {
+        $value = $Headers[$Name]
+        if ($value) {
+            return ([string]$value).Trim()
+        }
+    } catch {
+    }
+    return ""
+}
+
+function Get-GitHubApiFailureInfo {
+    param([AllowNull()][object]$ErrorRecord)
+
+    $exception = if ($null -ne $ErrorRecord) { $ErrorRecord.Exception } else { $null }
+    $response = if ($null -ne $exception -and $null -ne $exception.PSObject.Properties["Response"]) { $exception.Response } else { $null }
+    $statusCode = 0
+    $headers = $null
+    try {
+        if ($null -ne $response) {
+            $statusCode = [int]$response.StatusCode
+            $headers = $response.Headers
+        }
+    } catch {
+    }
+    if ($statusCode -eq 0 -and $null -ne $exception) {
+        try {
+            $statusCode = [int]$exception.Data["StatusCode"]
+        } catch {
+        }
+    }
+
+    $message = if ($null -ne $exception) { [string]$exception.Message } else { "" }
+    $remaining = Get-GitHubApiResponseHeader -Headers $headers -Name "X-RateLimit-Remaining"
+    $reset = Get-GitHubApiResponseHeader -Headers $headers -Name "X-RateLimit-Reset"
+    $rateLimited = ($statusCode -eq 429 -or ($statusCode -eq 403 -and ($remaining -eq "0" -or $message -match '(?i)rate limit')))
+
+    return [pscustomobject]@{
+        statusCode = $statusCode
+        remaining = $remaining
+        reset = $reset
+        rateLimited = $rateLimited
+        message = $message
+    }
+}
+
+function Get-DependencyLockRateLimitFallbackInfo {
+    param(
+        [string]$LockPath,
+        [string]$AssetNameLike = "",
+        [string]$DefaultFileName = ""
+    )
+
+    $manifest = Read-DependencyLockManifest
+    $entry = Get-ConfigValueFromObject -Object $manifest -Path "dependencies.$LockPath" -Default $null
+    $version = [string](Get-ConfigValueFromObject -Object $entry -Path "version" -Default "")
+    $url = [string](Get-ConfigValueFromObject -Object $entry -Path "url" -Default "")
+    $sha256 = [string](Get-ConfigValueFromObject -Object $entry -Path "sha256" -Default "")
+    $name = [string](Get-ConfigValueFromObject -Object $entry -Path "assetName" -Default "")
+    if (-not $name -and $url) {
+        $name = Split-Path -Leaf $url
+    }
+    if (-not $name) {
+        $name = $DefaultFileName
+    }
+    if (-not $version -or -not $url -or -not $sha256 -or ($AssetNameLike -and (-not $name -or $name -notlike $AssetNameLike))) {
+        return $null
+    }
+
+    return [pscustomobject]@{
+        url = $url
+        name = $name
+        version = $version
+        expectedSha256 = $sha256
+        source = "dependency-lock rate-limit fallback"
+    }
+}
+
+function Get-GitHubReleaseRateLimitFallbackInfo {
+    param(
+        [string]$Repository,
+        [string]$AssetNameLike,
+        [string]$DefaultFileName
+    )
+
+    $lockPath = switch ("$Repository|$AssetNameLike") {
+        "ROCTUP/1c-mcp-toolkit|MCP_Toolkit.epf" { "roctupMcpToolkit"; break }
+        "1c-neurofish/onec-client-mcp-devkit|client_mcp.cfe" { "vanessaMcp.clientMcp"; break }
+        "Pr-Mex/vanessa-automation|VAExtension*.cfe" { "vanessaMcp.vaExtension"; break }
+        default { "" }
+    }
+    if (-not $lockPath) {
+        return $null
+    }
+    return Get-DependencyLockRateLimitFallbackInfo -LockPath $lockPath -AssetNameLike $AssetNameLike -DefaultFileName $DefaultFileName
+}
+
+function Test-DependencyLockRateLimitFallbackSource {
+    param([string]$Source)
+    return $Source -eq "dependency-lock rate-limit fallback"
+}
+
+function Get-GitHubRateLimitRecoveryMessage {
+    param(
+        [string]$Operation,
+        [object]$FailureInfo
+    )
+
+    $resetSuffix = ""
+    $reset = [string](Get-ConfigValueFromObject -Object $FailureInfo -Path "reset" -Default "")
+    if ($reset) {
+        try {
+            $resetAt = [DateTimeOffset]::FromUnixTimeSeconds([int64]$reset).ToLocalTime().ToString("u")
+            $resetSuffix = " GitHub reports the limit resets at $resetAt."
+        } catch {
+        }
+    }
+    return "GitHub API rate limit reached while $Operation. Set GITHUB_TOKEN (or GH_TOKEN) in the process environment or .dev.env, or provide a complete compatible dependency lock.$resetSuffix"
 }
 
 function Update-DependencyLockEntry {

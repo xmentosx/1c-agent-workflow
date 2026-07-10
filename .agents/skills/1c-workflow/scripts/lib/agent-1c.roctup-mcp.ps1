@@ -137,6 +137,9 @@ function Get-RoctupMcpReleaseAssetInfo {
         if (-not $version -or -not $lockedAssetName -or -not $url -or -not $sha256) {
             throw "Dependency mode is locked, but roctupMcpToolkit.version, assetName, url, and sha256 must all be set in .agent-1c/dependency-lock.json."
         }
+        if ($lockedAssetName -ne $assetName) {
+            throw "Dependency lock ROCTUP asset '$lockedAssetName' is incompatible with this platform. Expected '$assetName'; provide a platform-specific roctupMcpToolkit lock entry."
+        }
         return [pscustomobject]@{
             url = $url
             name = $lockedAssetName
@@ -179,19 +182,21 @@ function Save-RoctupMcpArtifact {
         $expected = $expected.ToLowerInvariant()
         if ($hash -eq $expected) {
             Write-Host "ROCTUP MCP artifact hash matches dependency lock."
-        } elseif ((Get-DependencyMode) -eq "locked") {
-            throw "ROCTUP MCP artifact SHA256 mismatch in locked dependency mode. Expected $expected, got $hash."
+        } elseif ((Get-DependencyMode) -eq "locked" -or (Test-DependencyLockRateLimitFallbackSource -Source ([string]$AssetInfo.source))) {
+            throw "ROCTUP MCP artifact SHA256 mismatch. Expected $expected, got $hash."
         } else {
             Write-Host "[WARN] ROCTUP MCP artifact hash differs from expected metadata. Actual SHA256 is logged above."
         }
     }
 
-    Update-DependencyLockEntry -Name "roctupMcpToolkit" -Values @{
-        version = [string]$AssetInfo.version
-        assetName = [string]$AssetInfo.name
-        url = $source
-        sha256 = $hash
-        source = [string]$AssetInfo.source
+    if (-not (Test-DependencyLockRateLimitFallbackSource -Source ([string]$AssetInfo.source))) {
+        Update-DependencyLockEntry -Name "roctupMcpToolkit" -Values @{
+            version = [string]$AssetInfo.version
+            assetName = [string]$AssetInfo.name
+            url = $source
+            sha256 = $hash
+            source = [string]$AssetInfo.source
+        }
     }
 
     return [pscustomobject]@{
@@ -215,7 +220,7 @@ function Install-RoctupMcpSkillsDirectory {
     $escapedPath = [System.Uri]::EscapeDataString($RepoRelativePath).Replace("%2F", "/")
     $escapedRef = [System.Uri]::EscapeDataString($ref)
     $uri = "https://api.github.com/repos/ROCTUP/1c-mcp-toolkit/contents/$escapedPath`?ref=$escapedRef"
-    $items = @(Invoke-RestMethod -Uri $uri -Headers @{ "User-Agent" = "1c-agent-workflow" })
+    $items = @(Invoke-GitHubApiRestMethod -Uri $uri)
     foreach ($item in $items) {
         if ([string]$item.type -eq "dir") {
             $childTarget = if ($TargetRelativePath) { Join-Path $TargetRelativePath ([string]$item.name) } else { [string]$item.name }

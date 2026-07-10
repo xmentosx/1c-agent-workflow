@@ -113,7 +113,7 @@ function Get-VanessaAutomationDownloadInfo {
     }
 
     try {
-        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/Pr-Mex/vanessa-automation/releases/latest" -Headers @{ "User-Agent" = "1c-agent-workflow" }
+        $release = Invoke-GitHubApiRestMethod -Uri "https://api.github.com/repos/Pr-Mex/vanessa-automation/releases/latest"
         $asset = @($release.assets | Where-Object { $_.name -like "vanessa-automation-single*.zip" } | Select-Object -First 1)
         if ($asset.Count -gt 0) {
             return [pscustomobject]@{
@@ -124,6 +124,15 @@ function Get-VanessaAutomationDownloadInfo {
             }
         }
     } catch {
+        $failure = Get-GitHubApiFailureInfo -ErrorRecord $_
+        if ($failure.rateLimited) {
+            $fallback = Get-DependencyLockRateLimitFallbackInfo -LockPath "vanessaAutomation" -DefaultFileName "vanessa-automation-single.zip"
+            if ($fallback) {
+                Write-Warning "GitHub API rate limit reached; using the Vanessa Automation dependency-lock fallback."
+                return $fallback
+            }
+            throw (Get-GitHubRateLimitRecoveryMessage -Operation "resolving the latest Vanessa Automation release" -FailureInfo $failure)
+        }
         Write-Host "[WARN] Could not read Vanessa Automation latest release from GitHub API: $($_.Exception.Message)"
     }
 
@@ -162,18 +171,20 @@ function Save-VanessaAutomationArchive {
         $expected = $expected.ToLowerInvariant()
         if ($hash -eq $expected) {
             Write-Host "Vanessa Automation archive hash matches dependency lock."
-        } elseif ((Get-DependencyMode) -eq "locked") {
-            throw "Vanessa Automation archive SHA256 mismatch in locked dependency mode. Expected $expected, got $hash."
+        } elseif ((Get-DependencyMode) -eq "locked" -or (Test-DependencyLockRateLimitFallbackSource -Source ([string]$DownloadInfo.source))) {
+            throw "Vanessa Automation archive SHA256 mismatch. Expected $expected, got $hash."
         } else {
             Write-Host "[WARN] Vanessa Automation archive hash differs from expected metadata. Actual SHA256 is logged above."
         }
     }
 
-    Update-DependencyLockEntry -Name "vanessaAutomation" -Values @{
-        version = [string]$DownloadInfo.version
-        url = $source
-        sha256 = $hash
-        source = [string]$DownloadInfo.source
+    if (-not (Test-DependencyLockRateLimitFallbackSource -Source ([string]$DownloadInfo.source))) {
+        Update-DependencyLockEntry -Name "vanessaAutomation" -Values @{
+            version = [string]$DownloadInfo.version
+            url = $source
+            sha256 = $hash
+            source = [string]$DownloadInfo.source
+        }
     }
 
     return $archivePath
@@ -2218,7 +2229,7 @@ function Get-GitHubReleaseAssetInfo {
     $lastError = $null
     for ($attempt = 1; $attempt -le $RetryCount; $attempt++) {
         try {
-            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/latest" -Headers @{ "User-Agent" = "1c-agent-workflow" }
+            $release = Invoke-GitHubApiRestMethod -Uri "https://api.github.com/repos/$Repository/releases/latest"
             $asset = @($release.assets | Where-Object { $_.name -like $AssetNameLike } | Select-Object -First 1)
             if ($asset.Count -eq 0) {
                 throw "GitHub release $Repository/$($release.tag_name) does not contain asset matching '$AssetNameLike'."
@@ -2232,6 +2243,18 @@ function Get-GitHubReleaseAssetInfo {
             }
         } catch {
             $lastError = $_.Exception.Message
+            $failure = Get-GitHubApiFailureInfo -ErrorRecord $_
+            if ($failure.rateLimited) {
+                $fallback = Get-GitHubReleaseRateLimitFallbackInfo `
+                    -Repository $Repository `
+                    -AssetNameLike $AssetNameLike `
+                    -DefaultFileName $DefaultFileName
+                if ($fallback) {
+                    Write-Warning "GitHub API rate limit reached; using the dependency-lock fallback for $Repository/$AssetNameLike."
+                    return $fallback
+                }
+                throw (Get-GitHubRateLimitRecoveryMessage -Operation "resolving GitHub release asset $Repository/$AssetNameLike" -FailureInfo $failure)
+            }
             if ($attempt -lt $RetryCount) {
                 Write-Warning "Could not resolve GitHub release asset $Repository/$AssetNameLike (attempt $attempt of $RetryCount): $lastError"
                 Start-Sleep -Seconds $attempt
@@ -2471,6 +2494,10 @@ function Save-VanessaMcpArtifactSettingsToDotEnv {
 
 function Update-VanessaMcpArtifactLockEntry {
     param([object]$Artifact)
+
+    if (Test-DependencyLockRateLimitFallbackSource -Source ([string]$Artifact.source)) {
+        return
+    }
 
     $values = @{}
     $values[[string]$Artifact.key] = [ordered]@{

@@ -43,14 +43,14 @@
         }
 
         $dependencyLock = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dependency-lock.json") | ConvertFrom-Json
-        $dependencyLock.dependencies.roctupMcpToolkit.version | Should -Be ""
-        $dependencyLock.dependencies.roctupMcpToolkit.assetName | Should -Be ""
-        $dependencyLock.dependencies.roctupMcpToolkit.url | Should -Be ""
-        $dependencyLock.dependencies.roctupMcpToolkit.sha256 | Should -Be ""
-        $dependencyLock.dependencies.vanessaMcp.clientMcp.assetName | Should -Be ""
-        $dependencyLock.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be ""
-        $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be ""
-        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be ""
+        $dependencyLock.dependencies.roctupMcpToolkit.version | Should -Be "v1.7.0"
+        $dependencyLock.dependencies.roctupMcpToolkit.assetName | Should -Be "MCP_Toolkit.epf"
+        $dependencyLock.dependencies.roctupMcpToolkit.url | Should -Match "/releases/download/v1.7.0/MCP_Toolkit.epf$"
+        $dependencyLock.dependencies.roctupMcpToolkit.sha256 | Should -Be "e9a0856224aea4f54763fe1fb6a21aa8e71efb9d14158adc4382e1b2276d829d"
+        $dependencyLock.dependencies.vanessaMcp.clientMcp.assetName | Should -Be "client_mcp.cfe"
+        $dependencyLock.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "74d3cb7f97e3800860f5a1754eecf47178164d888f2299125d1b3118a4614ec1"
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.29.cfe"
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "fc557bb23371a37dbe22a7a7a83e28f6db75b57f87e8802028cf1f90c4e00605"
 
         $skillText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-roctup-1c-data\SKILL.md")
         $skillText | Should -Match "get_metadata"
