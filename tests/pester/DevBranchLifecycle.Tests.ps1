@@ -1103,7 +1103,7 @@
                 }
 
                 function Install-AiRules1c {
-                    Write-Utf8Text -Path (Join-Path $script:ProjectRoot ".ai-rules.json") -Value "{`"schemaVersion`":1}`n"
+                    Write-Utf8Text -Path (Join-Path $script:ProjectRoot ".ai-rules.json") -Value "{`"schemaVersion`":1,`"tools`":[`"kilocode`"],`"files`":{}}`n"
                     Write-Utf8Text -Path (Join-Path $script:ProjectRoot "AGENTS.md") -Value "Read USER-RULES.md for project-specific instructions.`n"
                 }
 

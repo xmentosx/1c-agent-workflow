@@ -293,12 +293,31 @@
             }
             Set-Content -LiteralPath (Join-Path $stateDir "branch3.json") -Encoding UTF8 -Value (($state | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
 
+            $openSpecDir = Join-Path $tempRoot ".kilocode\workflows"
+            New-Item -ItemType Directory -Force -Path $openSpecDir | Out-Null
+            $openSpecFiles = [ordered]@{}
+            foreach ($command in @("opsx-propose", "opsx-explore", "opsx-apply", "opsx-archive")) {
+                $relativePath = ".kilocode/workflows/$command.md"
+                $targetPath = Join-Path $tempRoot $relativePath
+                Set-Content -LiteralPath $targetPath -Encoding UTF8 -Value $command
+                $openSpecFiles[$relativePath] = [ordered]@{ source = "content/openspec-bundle/kilocode/$relativePath" }
+            }
+            $aiRulesManifest = [ordered]@{
+                tools = @("kilocode")
+                files = $openSpecFiles
+            }
+            Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value (($aiRulesManifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+
             $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action help 2>&1
             $LASTEXITCODE | Should -Be 0
             $text = ($output | Out-String)
 
             $text | Should -Match "Checkable changes: False"
             $text | Should -Match "Recommended next step: choose development mode: quick-fix, /opsx-explore, or /opsx-propose"
+            foreach ($command in @("/opsx-propose", "/opsx-explore", "/opsx-apply", "/opsx-archive")) {
+                $text | Should -Match ([regex]::Escape($command))
+            }
+            $text | Should -Not -Match "Kilo OpenSpec commands are unavailable"
             $text | Should -Not -Match "Recommended next step: /itl-check"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -343,6 +362,8 @@
 
             $text | Should -Match "Checkable changes: True"
             $text | Should -Match "Recommended next step: /itl-check"
+            $text | Should -Match "Kilo OpenSpec commands are unavailable"
+            $text | Should -Not -Match "  /opsx-propose  Start the normal OpenSpec flow"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

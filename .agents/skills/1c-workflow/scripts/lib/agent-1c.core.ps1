@@ -1536,7 +1536,7 @@ function New-DefaultProjectConfig {
         serverBaseCopyScript = ""
         aiRules = [ordered]@{
             repo = "https://github.com/comol/ai_rules_1c.git"
-            tools = ""
+            tools = @("codex", "kilocode")
         }
         vibecoding1cMcp = [ordered]@{
             registryRepo = "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git"
@@ -2563,32 +2563,48 @@ function Resolve-DevBranchWorktreePath {
     return [System.IO.Path]::GetFullPath((Join-Path (Get-DevBranchWorktreeRoot) $SafeDevBranchName))
 }
 
-function Get-AgentTargets {
-    $target = $AgentTarget
-    if (-not $target) {
-        $target = Get-Setting -EnvName "AGENT_TOOLS" -ConfigName "aiRules.tools" -Default "codex"
+function ConvertTo-AgentToolList {
+    param([AllowNull()][object]$Value)
+
+    $values = @()
+    if ($null -ne $Value) {
+        if (($Value -is [System.Collections.IEnumerable]) -and -not ($Value -is [string])) {
+            $values = @($Value)
+        } else {
+            $values = @($Value)
+        }
     }
 
     $items = @()
-    foreach ($part in ([string]$target).Split(",")) {
-        $normalized = $part.Trim().ToLowerInvariant()
-        if (-not $normalized) {
-            continue
-        }
-        if ($normalized -eq "both") {
-            $items += @("codex", "kilocode")
-        } elseif ($normalized -eq "kilo") {
-            $items += "kilocode"
-        } elseif ($normalized -eq "codex" -or $normalized -eq "kilocode") {
-            $items += $normalized
+    foreach ($value in $values) {
+        foreach ($part in ([string]$value).Split(",")) {
+            $normalized = $part.Trim().ToLowerInvariant()
+            if (-not $normalized) {
+                continue
+            }
+            switch ($normalized) {
+                "both" { $items += @("codex", "kilocode") }
+                "kilo" { $items += "kilocode" }
+                default { $items += $normalized }
+            }
         }
     }
 
+    return @($items | Select-Object -Unique)
+}
+
+function Get-AgentTargets {
+    $target = $AgentTarget
+    if ($null -eq $target -or ($target -is [string] -and [string]::IsNullOrWhiteSpace($target))) {
+        $target = Get-Setting -EnvName "AGENT_TOOLS" -ConfigName "aiRules.tools" -Default @("codex", "kilocode")
+    }
+
+    $items = @(ConvertTo-AgentToolList -Value $target)
     if ($items.Count -eq 0) {
-        $items = @("codex")
+        $items = @("codex", "kilocode")
     }
 
-    return $items | Select-Object -Unique
+    return $items
 }
 
 function Read-ToolsManifest {

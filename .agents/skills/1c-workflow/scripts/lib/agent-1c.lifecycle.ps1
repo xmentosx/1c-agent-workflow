@@ -739,15 +739,179 @@ function New-ResultManifest {
 }
 
 function Get-AiRules1cTools {
-    $lockedEntry = Get-DependencyLockEntry -Name "aiRules1c"
-    $tools = Get-ConfigValue -Path "aiRules.tools" -Default ""
-    if (-not $tools) {
-        $tools = Get-AgentTargets
-    } elseif ($tools -is [string]) {
-        $tools = @($tools.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    return @(Get-AgentTargets)
+}
+
+function Get-AiRules1cProjectManifest {
+    $manifestPath = Join-Path $script:ProjectRoot ".ai-rules.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        return $null
     }
 
-    return @($tools)
+    try {
+        return (Read-Utf8Text -Path $manifestPath | ConvertFrom-Json)
+    } catch {
+        throw "ai_rules_1c manifest cannot be read: $manifestPath. $($_.Exception.Message)"
+    }
+}
+
+function Get-AiRules1cManifestToolNames {
+    param([AllowNull()][object]$Manifest = (Get-AiRules1cProjectManifest))
+
+    if ($null -eq $Manifest -or $null -eq $Manifest.tools) {
+        return @()
+    }
+    return @($Manifest.tools | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } | Where-Object { $_ } | Select-Object -Unique)
+}
+
+function Get-AiRules1cManifestFileEntries {
+    param([AllowNull()][object]$Manifest = (Get-AiRules1cProjectManifest))
+
+    if ($null -eq $Manifest -or $null -eq $Manifest.files) {
+        return @()
+    }
+
+    return @($Manifest.files.PSObject.Properties | ForEach-Object {
+        [pscustomobject]@{
+            target = [string]$_.Name
+            source = [string]$_.Value.source
+        }
+    })
+}
+
+function Test-AiRules1cToolInstalled {
+    param([string]$Tool)
+
+    if ([string]::IsNullOrWhiteSpace($Tool)) {
+        return $false
+    }
+    return (@(Get-AiRules1cManifestToolNames) -contains $Tool.Trim().ToLowerInvariant())
+}
+
+function Assert-AiRules1cToolAdapters {
+    param(
+        [string]$RulesDir,
+        [string[]]$Tools
+    )
+
+    foreach ($tool in @($Tools | Select-Object -Unique)) {
+        if ($tool -notmatch '^[a-z0-9][a-z0-9-]*$') {
+            throw "Invalid ai_rules_1c tool id: '$tool'."
+        }
+        $adapterPath = Join-Path $RulesDir ("adapters\$tool.yaml")
+        if (-not (Test-Path -LiteralPath $adapterPath -PathType Leaf)) {
+            throw "ai_rules_1c adapter is not available for '$tool': adapters/$tool.yaml"
+        }
+    }
+}
+
+function Get-AiRules1cOpenSpecBundleValidation {
+    param(
+        [string]$RulesDir,
+        [string]$Tool,
+        [AllowNull()][object]$Manifest = (Get-AiRules1cProjectManifest)
+    )
+
+    $bundleDir = Join-Path $RulesDir ("content\openspec-bundle\$Tool")
+    if (-not (Test-Path -LiteralPath $bundleDir -PathType Container)) {
+        return [pscustomobject]@{
+            hasBundle = $false
+            isValid = $true
+            missing = @()
+        }
+    }
+
+    $bundleRoot = (Resolve-Path -LiteralPath $bundleDir).Path.TrimEnd('\', '/')
+    $bundleFiles = @(Get-ChildItem -LiteralPath $bundleDir -Recurse -File -ErrorAction Stop)
+    $entries = @(Get-AiRules1cManifestFileEntries -Manifest $Manifest)
+    $missing = @()
+    foreach ($bundleFile in $bundleFiles) {
+        $relative = $bundleFile.FullName.Substring($bundleRoot.Length + 1).Replace('\', '/')
+        $source = "content/openspec-bundle/$Tool/$relative"
+        $matches = @($entries | Where-Object { $_.source -eq $source })
+        if ($matches.Count -eq 0) {
+            $missing += $source
+            continue
+        }
+        foreach ($match in $matches) {
+            if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $match.target) -PathType Leaf)) {
+                $missing += $source
+                break
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        hasBundle = ($bundleFiles.Count -gt 0)
+        isValid = ($missing.Count -eq 0)
+        missing = @($missing | Select-Object -Unique)
+    }
+}
+
+function Assert-AiRules1cInstallation {
+    param(
+        [string]$RulesDir,
+        [string[]]$DesiredTools
+    )
+
+    $manifest = Get-AiRules1cProjectManifest
+    if ($null -eq $manifest) {
+        throw "ai_rules_1c installer completed without .ai-rules.json."
+    }
+
+    $installedTools = @(Get-AiRules1cManifestToolNames -Manifest $manifest)
+    $missingTools = @($DesiredTools | Where-Object { $installedTools -notcontains $_ })
+    if ($missingTools.Count -gt 0) {
+        throw "ai_rules_1c installer did not activate required tool(s): $($missingTools -join ', ')."
+    }
+
+    foreach ($tool in $DesiredTools) {
+        $bundle = Get-AiRules1cOpenSpecBundleValidation -RulesDir $RulesDir -Tool $tool -Manifest $manifest
+        if ($bundle.hasBundle -and -not $bundle.isValid) {
+            throw "ai_rules_1c OpenSpec bundle for '$tool' is incomplete: $($bundle.missing -join ', ')."
+        }
+    }
+
+    return $manifest
+}
+
+function Get-AiRules1cKiloOpenSpecStatus {
+    $requiredCommands = @("opsx-propose", "opsx-explore", "opsx-apply", "opsx-archive")
+    try {
+        $manifest = Get-AiRules1cProjectManifest
+    } catch {
+        return [pscustomobject]@{ isAvailable = $false; reason = $_.Exception.Message }
+    }
+
+    if ($null -eq $manifest) {
+        return [pscustomobject]@{ isAvailable = $false; reason = "ai_rules_1c manifest is missing." }
+    }
+    if (-not (Test-AiRules1cToolInstalled -Tool "kilocode")) {
+        return [pscustomobject]@{ isAvailable = $false; reason = "ai_rules_1c does not list kilocode as an installed tool." }
+    }
+
+    $entries = @(Get-AiRules1cManifestFileEntries -Manifest $manifest)
+    $missing = @()
+    foreach ($command in $requiredCommands) {
+        $matches = @($entries | Where-Object {
+            $_.source.Replace('\', '/') -match ("/" + [regex]::Escape($command) + "\.md$")
+        })
+        if ($matches.Count -eq 0) {
+            $missing += $command
+            continue
+        }
+        if (@($matches | Where-Object { -not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $_.target) -PathType Leaf) }).Count -gt 0) {
+            $missing += $command
+        }
+    }
+
+    if ($missing.Count -gt 0) {
+        return [pscustomobject]@{
+            isAvailable = $false
+            reason = "managed OpenSpec command artifact(s) are missing: $($missing -join ', ')."
+        }
+    }
+    return [pscustomobject]@{ isAvailable = $true; reason = "" }
 }
 
 function Sync-AiRules1cCheckout {
@@ -822,6 +986,8 @@ function Invoke-AiRules1cInstaller {
 
     $checkout = Sync-AiRules1cCheckout
     $rulesDir = Resolve-Agent1cFullPath -Path ([string]$checkout.root)
+    $desiredTools = @(Get-AiRules1cTools)
+    Assert-AiRules1cToolAdapters -RulesDir $rulesDir -Tools $desiredTools
     $installScript = Join-Path $rulesDir "install.ps1"
     if (-not (Test-Path -LiteralPath $installScript)) {
         throw "ai_rules_1c install.ps1 was not found: $installScript"
@@ -841,7 +1007,7 @@ function Invoke-AiRules1cInstaller {
         "-AssumeYes"
     )
     if ($effectiveCommand -eq "init") {
-        $installArgs += @("-Tools") + (Get-AiRules1cTools)
+        $installArgs += @("-Tools") + $desiredTools
     } elseif ($Force) {
         $installArgs += @("-Force")
     }
@@ -855,6 +1021,28 @@ function Invoke-AiRules1cInstaller {
     } finally {
         Pop-Location
     }
+
+    $installedTools = @(Get-AiRules1cManifestToolNames)
+    foreach ($tool in @($desiredTools | Where-Object { $installedTools -notcontains $_ })) {
+        $addArgs = @(
+            "add",
+            "-Tool", $tool,
+            "-ProjectRoot", (Resolve-Agent1cFullPath -Path $script:ProjectRoot),
+            "-Source", $rulesDir,
+            "-AssumeYes"
+        )
+        Push-Location (Resolve-Agent1cFullPath -Path $script:ProjectRoot)
+        try {
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $installScript @addArgs
+            if ($LASTEXITCODE -ne 0) {
+                throw "ai_rules_1c add $tool failed with exit code $LASTEXITCODE"
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+
+    Assert-AiRules1cInstallation -RulesDir $rulesDir -DesiredTools $desiredTools | Out-Null
 
     Invoke-AiRules1cManagedMcpConfigReconcile -Operation "ai_rules_1c $effectiveCommand" | Out-Null
 
@@ -1156,6 +1344,7 @@ function Update-AiRules1c {
     Invoke-AiRules1cInstaller -Command "update"
     Update-AgentGuidanceBridge
     Update-UserRules
+    Sync-KiloItlCommandSurface
 }
 
 function Get-WorkflowPackageDefaultRepo {
@@ -1388,6 +1577,11 @@ function Untrack-GeneratedKiloItlCommands {
 function Sync-KiloItlCommandSurface {
     param([string]$SourceRoot = $script:ProjectRoot)
 
+    if (-not (Test-AiRules1cToolInstalled -Tool "kilocode")) {
+        Write-Host "Skipping Kilo ITL command generation because ai_rules_1c kilocode is not installed."
+        return
+    }
+
     $templateRoot = Join-Path $SourceRoot ".agents\skills\1c-workflow\kilo-command-templates"
     if (-not (Test-Path -LiteralPath $templateRoot -PathType Container -ErrorAction SilentlyContinue)) {
         throw "Workflow package Kilo command templates directory is missing: .agents\skills\1c-workflow\kilo-command-templates"
@@ -1601,13 +1795,13 @@ function Update-WorkflowPackage {
 
     Update-WorkflowPackageLockEntry -Source $source
     Ensure-GitIgnore
-    Sync-KiloItlCommandSurface
     Update-AgentGuidanceBridge
     Update-UserRules
     Update-RoctupMcp
 
     if ($SkipAiRules) {
         Write-Host "Skipping ai_rules_1c update because -SkipAiRules was specified."
+        Sync-KiloItlCommandSurface
     } else {
         Update-AiRules1c
     }
@@ -3886,6 +4080,7 @@ function Show-Help {
         Write-Host ""
         Write-Host "Next step: create a configuration or extension branch, then open the printed worktree folder."
     } elseif ($surface -eq "dev") {
+        $openSpec = Get-AiRules1cKiloOpenSpecStatus
         $state = $null
         try {
             $state = Read-DevBranchState -Name ""
@@ -3927,7 +4122,11 @@ function Show-Help {
             if ($hasCheckableChanges -or (@("failed", "stale", "unknown") -contains $verification.effectiveStatus)) {
                 Write-Host "Recommended next step: /itl-check"
             } elseif (-not $verification.isFreshPassed) {
-                Write-Host "Recommended next step: choose development mode: quick-fix, /opsx-explore, or /opsx-propose"
+                if ($openSpec.isAvailable) {
+                    Write-Host "Recommended next step: choose development mode: quick-fix, /opsx-explore, or /opsx-propose"
+                } else {
+                    Write-Host "Recommended next step: choose quick-fix, or restore Kilo OpenSpec commands from master before starting an OpenSpec change."
+                }
             } elseif (-not (Get-StateValue -State $state -Name "lastResultPath" -Default "")) {
                 Write-Host "Recommended next step: /itl-result"
             } else {
@@ -3937,7 +4136,11 @@ function Show-Help {
 
         Write-Host ""
         Write-Host "Lifecycle:"
-        Write-Host "  optional /opsx-explore -> quick-fix or /opsx-propose -> /opsx-apply/work -> /itl-check -> /itl-result"
+        if ($openSpec.isAvailable) {
+            Write-Host "  optional /opsx-explore -> quick-fix or /opsx-propose -> /opsx-apply/work -> /itl-check -> /itl-result"
+        } else {
+            Write-Host "  quick-fix -> /itl-check -> /itl-result; restore Kilo OpenSpec commands before an OpenSpec change."
+        }
         Write-Host "  use /itl-refresh when master changes must be merged into this branch."
         Write-Host ""
         Write-Host "Visible slash commands in this folder:"
@@ -3948,10 +4151,15 @@ function Show-Help {
         Write-Host "  /itl-result"
         Write-Host ""
         Write-Host "OpenSpec:"
-        Write-Host "  /opsx-propose  Start the normal OpenSpec flow: proposal, design/tasks/test-plan/spec deltas; no code changes."
-        Write-Host "  /opsx-apply    Implement an approved OpenSpec change from tasks.md."
-        Write-Host "  /opsx-archive  Archive an accepted OpenSpec change."
-        Write-Host "  /opsx-explore  Optional: explore code or task boundaries before proposal when context is unclear."
+        if ($openSpec.isAvailable) {
+            Write-Host "  /opsx-propose  Start the normal OpenSpec flow: proposal, design/tasks/test-plan/spec deltas; no code changes."
+            Write-Host "  /opsx-apply    Implement an approved OpenSpec change from tasks.md."
+            Write-Host "  /opsx-archive  Archive an accepted OpenSpec change."
+            Write-Host "  /opsx-explore  Optional: explore code or task boundaries before proposal when context is unclear."
+        } else {
+            Write-Host "  Kilo OpenSpec commands are unavailable: $($openSpec.reason)"
+            Write-Host "  Recovery: in master run update-ai-rules or update-workflow, merge the update into this branch, then run /itl-refresh."
+        }
     } else {
         Write-Host ""
         Write-Host "Lifecycle:"

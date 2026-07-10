@@ -22,7 +22,7 @@
   "serverBaseCopyScript": "",
   "aiRules": {
     "repo": "https://github.com/comol/ai_rules_1c.git",
-    "tools": ""
+    "tools": ["codex", "kilocode"]
   },
   "vibecoding1cMcp": {
     "registryRepo": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git",

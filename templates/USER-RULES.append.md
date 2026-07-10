@@ -10,7 +10,7 @@ Use `DEV-BRANCH-DEVELOPMENT.ru.md` only inside `itldev/*`: quick-fix for small l
 
 Keep detailed ITL overlay rules in `USER-RULES.md`, not upstream-managed `AGENTS.md` when it already points there. Store secrets only in `.dev.env`; write `.dev.env` and `.agent-1c/*.json` as UTF-8.
 
-Treat upstream `ai_rules_1c` as a standards and role library loaded on demand. ITL owns lifecycle, branch context, MCP client config, final verification, and export. Do not load whole upstream `content/rules`, `content/skills`, `content/agents`, or `content/commands`; load only the needed file.
+Treat upstream `ai_rules_1c` as a standards, role, and OpenSpec command library loaded on demand. ITL owns lifecycle, branch context, MCP client config, final verification, and export; it does not generate or modify `/opsx-*`. Do not load whole upstream `content/rules`, `content/skills`, `content/agents`, or `content/commands`; load only the needed file.
 
 Search hygiene: do not read ignored runtime folders such as `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/infobases/`, `.agent-1c/tools/`, `build/test-results/`, `logs/`, `tmp/`, or `temp/` unless diagnosing a specific helper run, MCP state, log, or artifact.
 

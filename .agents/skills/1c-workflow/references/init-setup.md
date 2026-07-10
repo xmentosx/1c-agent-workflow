@@ -14,7 +14,7 @@ Create and maintain:
 - `.dev.env`: local secrets and machine-specific values; never commit it.
 - `.agents/skills/1c-workflow/`, `.agents/skills/1c-workflow-fast/`, `.agents/skills/product-docs/`, and `.agents/skills/itl-roctup-1c-data/`: shared skills installed with the workflow package.
 - `.agents/skills/1c-workflow/kilo-command-templates/`: tracked canonical Kilo templates.
-- `.kilo/commands/`: ignored context-specific generated Kilo slash wrappers.
+- `.kilo/commands/itl*.md`: ignored context-specific ITL Kilo wrappers. OpenSpec command files are managed by `ai_rules_1c` for each selected client.
 - `.codex/config.toml` and `.kilo/kilo.json*`: ignored local MCP client state.
 
 Never store passwords in committed files. Write workflow state and `.dev.env` as UTF-8 and preserve Cyrillic paths exactly.
@@ -44,7 +44,11 @@ Use this as `.agent-1c/project.json`:
   "dependencyMode": "fresh",
   "verificationPolicy": "warn",
   "devBranchInfoBaseRoot": ".agent-1c/infobases/dev-branches",
-  "devBranchWorktreeRoot": ""
+  "devBranchWorktreeRoot": "",
+  "aiRules": {
+    "repo": "https://github.com/comol/ai_rules_1c.git",
+    "tools": ["codex", "kilocode"]
+  }
 }
 ```
 
@@ -89,7 +93,7 @@ Goal: create baseline project state.
 4. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, `.agent-1c/dependency-lock.json`, and `.dev.env` if missing.
 5. Run tool checks, initialize Git, checkout/create `master`, update the source infobase from storage when configured, and dump configuration files to `src/cf`.
 6. Initial dump must produce `src/cf/ConfigDumpInfo.xml`; later dumps use incremental `-update -force` when that file exists. Stop if `src/cf` is non-empty without `ConfigDumpInfo.xml`.
-7. Install/cache ROCTUP MCP Toolkit, install `ai_rules_1c` using the current agent target, record resolved dependency pins in the dependency lock, reconcile default upstream MCP client entries only when ready vibecoding1c replacements are available, generate Kilo wrappers when applicable, and apply the ITL overlay to `USER-RULES.md`.
+7. Install/cache ROCTUP MCP Toolkit, install `ai_rules_1c` for every configured `aiRules.tools` client (Codex and Kilo by default), record resolved dependency pins in the dependency lock, reconcile default upstream MCP client entries only when ready vibecoding1c replacements are available, generate Kilo ITL wrappers when Kilo is installed, and apply the ITL overlay to `USER-RULES.md`.
 8. Commit rules and workflow files when there are changes.
 
 ## Tool Actions
@@ -120,7 +124,7 @@ Goal: refresh upstream `ai_rules_1c` while preserving the ITL overlay.
 
 1. Clone or update the configured `ai_rules_1c` repo under `%TEMP%\ai_rules_1c`.
 2. In `fresh`, checkout remote HEAD; in `locked`, checkout the pinned commit/ref and stop when missing.
-3. Run the upstream installer with `update` when `.ai-rules.json` exists, otherwise `init` with the configured agent target.
+3. Run the upstream installer with `update` when `.ai-rules.json` exists, otherwise `init` with configured clients. Afterward add each configured client absent from `.ai-rules.json`; do not remove additional installed clients automatically.
 4. Preserve upstream files marked `userModified`; use `-Force` only after explicit developer intent.
 5. Reconcile default upstream MCP client entries from ignored Codex/Kilo config only after writing ready vibecoding1c-managed replacements; if selection/state is missing or incomplete, preserve upstream entries and print `vibecoding1c-mcp-setup` as the recovery action.
 6. Reapply the managed ITL block in `USER-RULES.md` from `templates/USER-RULES.append.md`; normally do not append to `AGENTS.md` when it already references `USER-RULES.md`.

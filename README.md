@@ -52,6 +52,8 @@ VANESSA-TESTS-GUIDE.md
 - `.agents/skills/itl-roctup-1c-data` - skill для branch-local ROCTUP data exploration.
 - `.agents/skills/1c-workflow/kilo-command-templates` - шаблоны коротких slash-команд Kilo Code.
 - `.kilo/commands/itl*.md` - локально сгенерированная командная поверхность для текущей папки/worktree; игнорируется Git.
+- `aiRules.tools` в `.agent-1c/project.json` - набор upstream-клиентов; по умолчанию `codex` и `kilocode`. OpenSpec-команды для каждого клиента устанавливает `ai_rules_1c`, а ITL создаёт только `/itl*`.
+- `scripts/test-ai-rules-compatibility.ps1` - отдельная network compatibility-проверка актуальной `ai_rules_1c` для Codex и Kilo; она не входит в быстрый Pester-прогон.
 - `AGENT-INSTALL.md` - bootstrap-инструкция для агента.
 - `install-agent-1c-workflow.ps1` - one-step bootstrap script: копирует managed workflow-файлы в целевой проект и запускает monitored init wizard.
 - `VANESSA-TESTS-GUIDE.md` - compact agent rules for writing Russian Vanessa feature checks for the current change.

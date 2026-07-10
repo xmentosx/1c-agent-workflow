@@ -27,7 +27,7 @@ This package is designed for both Codex and Kilo Code:
 - Branch data exploration skill: `.agents/skills/itl-roctup-1c-data`.
 - Common project guidance: upstream `AGENTS.md` from `ai_rules_1c` plus detailed ITL overlay notes in `USER-RULES.md`.
 - Kilo slash command templates: `.agents/skills/1c-workflow/kilo-command-templates`.
-- Local Kilo command/runtime state: `.kilo/commands/itl*.md`, `.kilo/kilo.json`, and `.kilo/kilo.jsonc`, ignored by Git.
+- Local Kilo ITL command/runtime state: `.kilo/commands/itl*.md`, `.kilo/kilo.json`, and `.kilo/kilo.jsonc`, ignored by Git. OpenSpec files remain managed by `ai_rules_1c`.
 - Local MCP/client runtime state: `.agent-1c/mcp/` and `.codex/config.toml`, ignored by Git.
 - Codex usage: choose the skill via `/skills`, invoke `$1c-workflow` for detailed workflows or `$1c-workflow-fast` for routine helper-first commands, or use natural language that matches the skill description.
 
@@ -301,11 +301,17 @@ if (Test-Path $rulesDir) {
     git clone https://github.com/comol/ai_rules_1c.git $rulesDir
 }
 
-$tools = "codex" # use "kilocode" when this bootstrap is running from Kilo Code
+$tools = @("codex", "kilocode")
 & (Join-Path $rulesDir "install.ps1") -Command init -ProjectRoot (Get-Location).Path -Source $rulesDir -Tools $tools -AssumeYes
 ```
 
-If the installer asks which tools to configure, choose the current agent surface. If it cannot be detected, choose Codex.
+The workflow default installs rules for Codex and Kilo. Configure additional supported upstream clients through `aiRules.tools` in `.agent-1c/project.json`; normal updates add missing clients but never remove an existing client automatically.
+
+For an explicit fresh-upstream compatibility check in the workflow repository, run:
+
+```powershell
+.\scripts\test-ai-rules-compatibility.ps1
+```
 
 To refresh `ai_rules_1c` after initialization, run:
 

@@ -30,7 +30,6 @@ param(
     [string]$InitAnswersPath,
     [ValidateSet("", "fresh", "locked")]
     [string]$DependencyMode = "",
-    [ValidateSet("", "codex", "kilocode", "both")]
     [string]$AgentTarget = "",
     [switch]$PublishToWeb,
     [switch]$Force,

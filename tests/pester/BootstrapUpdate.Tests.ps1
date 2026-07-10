@@ -197,7 +197,7 @@
         $userRulesTemplateText | Should -Match "update-ai-rules"
         $userRulesTemplateText | Should -Match "TESTMANAGER -> TESTCLIENT"
         $userRulesTemplateText | Should -Match ([regex]::Escape(".agent-1c/event-log-baselines/*.json"))
-        $userRulesTemplateText | Should -Match "standards and role library"
+        $userRulesTemplateText | Should -Match "OpenSpec command library"
         $userRulesTemplateText | Should -Match "content/skills"
         $userRulesTemplateText | Should -Match ([regex]::Escape("/installmcp"))
         $userRulesTemplateText | Should -Match "vibecoding1c MCP helper request"
@@ -290,8 +290,10 @@
         $rulesRoot = Join-Path $tempRoot "ai_rules_1c"
 
         try {
-            New-Item -ItemType Directory -Force -Path $projectRoot, $rulesRoot | Out-Null
-            Set-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Encoding UTF8 -Value '{"schemaVersion":1}'
+            New-Item -ItemType Directory -Force -Path $projectRoot, $rulesRoot, (Join-Path $rulesRoot "adapters") | Out-Null
+            Set-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Encoding UTF8 -Value '{"schemaVersion":1,"tools":["codex","kilocode"],"files":{}}'
+            Set-Content -LiteralPath (Join-Path $rulesRoot "adapters\codex.yaml") -Encoding ASCII -Value "tool: codex"
+            Set-Content -LiteralPath (Join-Path $rulesRoot "adapters\kilocode.yaml") -Encoding ASCII -Value "tool: kilocode"
             Set-Content -LiteralPath (Join-Path $rulesRoot "install.ps1") -Encoding UTF8 -Value @'
 [CmdletBinding()]
 param(
@@ -476,6 +478,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             Set-Content -LiteralPath (Join-Path $projectRoot ".kilo\commands\custom.md") -Encoding UTF8 -Value "custom command"
             Set-Content -LiteralPath (Join-Path $projectRoot "templates\stale.txt") -Encoding UTF8 -Value "stale template"
             Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"custom":"keep-project"}'
+            Set-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Encoding UTF8 -Value '{"tools":["kilocode"],"files":{}}'
             Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\tools.json") -Encoding UTF8 -Value '{"custom":"keep-tools"}'
             Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{}}'
             Set-Content -LiteralPath (Join-Path $projectRoot ".dev.env") -Encoding UTF8 -Value "SECRET=keep"
