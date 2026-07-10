@@ -29,7 +29,7 @@ For Codex, prefer `$1c-workflow-fast` for routine installed-project actions. Use
 ## Topic References
 
 - `init-setup.md`: state files, `.agent-1c/project.json`, `.dev.env`, required init questions, monitored wizard, tool checks, web publication/Vanessa setup, `update-workflow`, and `update-ai-rules`.
-- `mcp.md`: ROCTUP branch data MCP, vibecoding1c MCP selection/setup/status/update, branch-local Vanessa MCP, External MCP preservation, and legacy branch Data MCP publication fallback.
+- `mcp.md`: ROCTUP branch data MCP, vibecoding1c MCP selection/setup/status/update, branch-local Vanessa UI MCP, External MCP preservation, and legacy branch Data MCP publication fallback.
 - `branch-lifecycle.md`: Git/worktree rules, new configuration or extension branches, extension bootstrap/dump, branch context activation, base update, refresh, list, switch, and advanced close.
 - `verification-result.md`: `/itl-check`, `verify-dev-branch`, Vanessa Automation `TESTMANAGER -> TESTCLIENT`, `VANESSA_TEST_FOREIGN_WAIT_MODE=warn`, event-log baselines, `/itl-result`, result manifests, and `verificationPolicy`.
 - `dev-branch-development.md`: develop inside an existing `itldev/*` worktree using quick-fix or OpenSpec.

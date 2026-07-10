@@ -2,21 +2,25 @@
 
 For routine installed-project lifecycle work, prefer Kilo `/itl-*` or `.agents/skills/1c-workflow-fast/SKILL.md`. Use `.agents/skills/1c-workflow/SKILL.md` for init, recovery, unusual topology, or explanation; it routes to `.agents/skills/1c-workflow/references/`.
 
-For long ITL lifecycle actions, including `new-dev-branch`, `update-workflow`, `check-dev-branch`, `refresh-dev-branch`, and `export-dev-branch-result`, if the shell supports `timeout_ms`, set `timeout_ms >= 1800000`. Do not use `120000 ms`; these may run 1C Designer/Enterprise (`/LoadConfigFromFiles ... /UpdateDBCfg`). `status`/`help` do not need it.
+For long ITL lifecycle actions, set `timeout_ms >= 1800000`: 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`. Do not use `120000 ms`. `status`/`help` do not need it.
 
-For Kilo `/itl`, paste helper help stdout verbatim; do not summarize/translate, merge OpenSpec, omit `Lifecycle:`/`Additional helper actions:`, or append "no lifecycle actions executed".
+For Kilo `/itl`, paste helper stdout verbatim; do not summarize, translate, merge OpenSpec, omit `Lifecycle:`/`Additional helper actions:`, or append "no lifecycle actions executed".
 
-Use `DEV-BRANCH-DEVELOPMENT.ru.md` only inside `itldev/*`: quick-fix for small local fixes, OpenSpec for business feature work or risk. Before creating or editing Vanessa feature files, read `VANESSA-TESTS-GUIDE.md`; skip it for routine lifecycle commands.
+Use `DEV-BRANCH-DEVELOPMENT.ru.md` only inside `itldev/*`; read `VANESSA-TESTS-GUIDE.md` before creating or editing Vanessa feature files.
 
-Keep detailed ITL overlay rules in `USER-RULES.md`, not upstream-managed `AGENTS.md` when it already points there. Store secrets only in `.dev.env`; write `.dev.env` and `.agent-1c/*.json` as UTF-8.
+Keep ITL overlay rules in `USER-RULES.md`. Store secrets only in `.dev.env`; write state as UTF-8.
 
-Treat upstream `ai_rules_1c` as a standards, role, and OpenSpec command library loaded on demand. ITL owns lifecycle, branch context, MCP client config, final verification, and export; it does not generate or modify `/opsx-*`. Do not load whole upstream `content/rules`, `content/skills`, `content/agents`, or `content/commands`; load only the needed file.
+Treat `ai_rules_1c` as an on-demand standards, role, and OpenSpec command library. ITL owns lifecycle, MCP config, verification, and export; do not generate `/opsx-*` or load whole upstream `content/skills` trees.
 
-Search hygiene: do not read ignored runtime folders such as `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/infobases/`, `.agent-1c/tools/`, `build/test-results/`, `logs/`, `tmp/`, or `temp/` unless diagnosing a specific helper run, MCP state, log, or artifact.
+Search hygiene: do not read ignored runtime folders such as `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/infobases/`, `build/test-results/`, or `logs/` unless diagnosing a specific run, MCP state, log, or artifact.
 
-Use the vibecoding1c MCP helper request for setup/status/update/selection and client config. Do not use upstream `/installmcp`, `/updatemcp`, or `/checkmcp`; ITL owns selected endpoints and removes duplicates. Vanessa MCP is separate authoring/debugging tooling; external entries are preserved. Do not paste keys into chat/tracked files or expose a Kilo slash command for vibecoding1c MCP.
+Use the vibecoding1c MCP helper request for setup/status/update/selection and client config; do not use upstream `/installmcp`, `/updatemcp`, or `/checkmcp`. ITL preserves external entries and keeps keys out of chat/tracked files.
 
-In `itldev/*`, prefer ROCTUP MCP for data. Start it only for a concrete data exploration operation with `start-roctup-mcp`, use filtered `get_metadata` before `execute_query`, keep limits `<= 50` and `<= 100`, then stop it with `stop-roctup-mcp`. Never call `execute_code`, `restart_1c_session`, or `close_1c_session` unless requested.
+In `itldev/*`, prefer ROCTUP MCP for concrete data exploration: filtered `get_metadata`, then `execute_query` with limits `<= 50`/`<= 100`; stop it afterward. Never call code/session-control tools unless requested.
+
+Use `.agents/skills/itl-vanessa-ui-mcp/SKILL.md` only for explicit user-mode inspection/reproduction/debugging, UI steps for a Vanessa Automation scenario, or a named dynamic gap after graph/code analysis. Do not start it merely for a form. Use status/start/stop; empty `VANESSA_MCP_PORT`/`URL` means stopped. Report its error/log and label any static fallback.
+
+`Vanessa Automation verification` is not UI MCP: `/itl-check` runs `StartFeaturePlayer` through `TESTMANAGER -> TESTCLIENT`, JUnit, and event-log checks. Never replace it with UI MCP or treat its failure as an `/itl-check` result.
 
 For PM5 product logic, architecture, workflows, terminology, permissions, reports, integrations, or acceptance tests, use `.agents/skills/product-docs/SKILL.md` and search `BookStack-product-docs-mcp` before answering, exploring, planning, proposing, or changing behavior. BookStack is advisory, not authoritative; verify against code, tests, current 1C metadata, and available MCP evidence. Cite URLs/`updated_at`. On conflict, report `BookStack says`, `Code/MCP currently shows`, and `Decision`.
 

@@ -101,6 +101,7 @@ function Assert-SourcePackage {
         ".agents\skills\1c-workflow-fast\SKILL.md",
         ".agents\skills\product-docs\SKILL.md",
         ".agents\skills\itl-roctup-1c-data\SKILL.md",
+        ".agents\skills\itl-vanessa-ui-mcp\SKILL.md",
         "templates\project.json",
         "templates\USER-RULES.append.md"
     )) {
@@ -209,6 +210,7 @@ foreach ($relativePath in @(
     ".agents\skills\1c-workflow-fast",
     ".agents\skills\product-docs",
     ".agents\skills\itl-roctup-1c-data",
+    ".agents\skills\itl-vanessa-ui-mcp",
     "templates"
 )) {
     Copy-ManagedDirectory -SourceRoot $sourceRootFull -TargetRoot $projectRootFull -RelativePath $relativePath

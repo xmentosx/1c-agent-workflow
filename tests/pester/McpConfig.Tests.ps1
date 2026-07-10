@@ -47,6 +47,10 @@
         $dependencyLock.dependencies.roctupMcpToolkit.assetName | Should -Be ""
         $dependencyLock.dependencies.roctupMcpToolkit.url | Should -Be ""
         $dependencyLock.dependencies.roctupMcpToolkit.sha256 | Should -Be ""
+        $dependencyLock.dependencies.vanessaMcp.clientMcp.assetName | Should -Be ""
+        $dependencyLock.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be ""
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be ""
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be ""
 
         $skillText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-roctup-1c-data\SKILL.md")
         $skillText | Should -Match "get_metadata"
@@ -1072,7 +1076,77 @@ enabled = true
         }
     }
 
-    It "wires branch-local Vanessa MCP actions and local artifacts" {
+    It "caches Vanessa UI MCP CFE artifacts, shares them with a worktree, and verifies locked hashes" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vanessa-ui-mcp-cache-test-" + [guid]::NewGuid().ToString("N"))
+        $masterRoot = Join-Path $tempRoot "master"
+        $branchRoot = Join-Path $tempRoot "branch"
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $masterRoot ".agent-1c"), (Join-Path $branchRoot ".agent-1c"), (Join-Path $tempRoot "fixtures") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $masterRoot ".agent-1c\project.json")
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $branchRoot ".agent-1c\project.json")
+            $clientSource = Join-Path $tempRoot "fixtures\client_mcp.cfe"
+            $extensionSource = Join-Path $tempRoot "fixtures\VAExtension.fixture.cfe"
+            Set-Content -LiteralPath $clientSource -Encoding UTF8 -Value "client fixture"
+            Set-Content -LiteralPath $extensionSource -Encoding UTF8 -Value "extension fixture"
+            $clientUri = ([System.Uri]$clientSource).AbsoluteUri
+            $extensionUri = ([System.Uri]$extensionSource).AbsoluteUri
+            Set-Content -LiteralPath (Join-Path $masterRoot ".dev.env") -Encoding UTF8 -Value @"
+DEPENDENCY_MODE=fresh
+VANESSA_MCP_CLIENT_CFE_URL=$clientUri
+VANESSA_MCP_VA_EXTENSION_CFE_URL=$extensionUri
+"@
+
+            $masterArtifacts = & {
+                . $HelperPath -ProjectRoot $masterRoot -Action help *> $null
+                @(Install-VanessaMcpArtifacts)
+            }
+            $masterArtifacts.Count | Should -Be 2
+            $masterClient = @($masterArtifacts | Where-Object { $_.key -eq "clientMcp" })[0]
+            $masterExtension = @($masterArtifacts | Where-Object { $_.key -eq "vaExtension" })[0]
+            $masterClient.path | Should -Not -BeNullOrEmpty
+            $masterExtension.path | Should -Not -BeNullOrEmpty
+            (Test-Path -LiteralPath $masterClient.path -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath $masterExtension.path -PathType Leaf) | Should -Be $true
+
+            $masterLock = Get-Content -Encoding UTF8 -Raw (Join-Path $masterRoot ".agent-1c\dependency-lock.json") | ConvertFrom-Json
+            $masterLock.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be $masterClient.sha256
+            $masterLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be $masterExtension.sha256
+            $masterLock.dependencies.vanessaMcp.clientMcp.assetName | Should -Be "client_mcp.cfe"
+
+            & {
+                . $HelperPath -ProjectRoot $masterRoot -Action help *> $null
+                Copy-DotEnvToWorktree -WorktreePath $branchRoot
+            }
+            Copy-Item -LiteralPath (Join-Path $masterRoot ".agent-1c\dependency-lock.json") -Destination (Join-Path $branchRoot ".agent-1c\dependency-lock.json")
+            $branchArtifacts = & {
+                . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
+                @(Install-VanessaMcpArtifacts)
+            }
+            (@($branchArtifacts | Where-Object { $_.key -eq "clientMcp" })[0].path) | Should -Be $masterClient.path
+            (@($branchArtifacts | Where-Object { $_.key -eq "vaExtension" })[0].path) | Should -Be $masterExtension.path
+
+            $lockedManifest = Get-Content -Encoding UTF8 -Raw (Join-Path $branchRoot ".agent-1c\dependency-lock.json") | ConvertFrom-Json
+            $lockedManifest.dependencies.vanessaMcp.clientMcp.version = "fixture"
+            $lockedManifest.dependencies.vanessaMcp.vaExtension.version = "fixture"
+            Set-Content -LiteralPath (Join-Path $branchRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value (($lockedManifest | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            Add-Content -LiteralPath (Join-Path $branchRoot ".dev.env") -Encoding UTF8 -Value "DEPENDENCY_MODE=locked"
+            Set-Content -LiteralPath $masterClient.path -Encoding UTF8 -Value "corrupted fixture"
+
+            {
+                & {
+                    . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
+                    Install-VanessaMcpArtifacts | Out-Null
+                }
+            } | Should -Throw "*SHA256 mismatch*"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "wires branch-local Vanessa UI MCP actions, cache, and local artifacts" {
         $actions = @("install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status")
         foreach ($action in $actions) {
             $HelperText | Should -Match ([regex]::Escape("`"$action`""))
@@ -1082,11 +1156,20 @@ enabled = true
         $HelperText | Should -Match "VANESSA_MCP_PORT_RANGE"
         $HelperText | Should -Match "client_mcp.cfe"
         $HelperText | Should -Match "VAExtension"
+        $HelperText | Should -Match "Install-VanessaMcpArtifacts"
+        $HelperText | Should -Match "Update-VanessaMcpArtifacts"
+        $HelperText | Should -Match "Get-VanessaMcpArtifactLockEntry"
+        $HelperText | Should -Match 'lockKey = "clientMcp"'
+        $HelperText | Should -Match 'lockKey = "vaExtension"'
+        $HelperText | Should -Match "VANESSA_MCP_CLIENT_CFE_PATH"
+        $HelperText | Should -Match "VANESSA_MCP_VA_EXTENSION_CFE_PATH"
         $HelperText | Should -Match "runMcp;mcpPort="
         $HelperText | Should -Match "Write-VanessaMcpKiloConfig"
         $HelperText | Should -Match "function Stop-VanessaMcpForState[\s\S]+Write-VanessaMcpClientConfig"
-        $HelperText | Should -Match 'managedBy = "vanessa-mcp"'
-        $HelperText | Should -Match 'family = "vanessa"'
+        $HelperText | Should -Match 'managedBy = "vanessa-ui-mcp"'
+        $HelperText | Should -Match 'family = "vanessa-ui"'
+        $HelperText | Should -Match "Vanessa UI MCP"
+        $HelperText | Should -Match "Vanessa Automation verification"
         $HelperText | Should -Match "reload or restart Kilo Code"
         $HelperText | Should -Match "StartFeaturePlayer"
 
@@ -1094,6 +1177,9 @@ enabled = true
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($mcpToolPath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($mcpToolPath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_MCP_URL"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_MCP_CLIENT_CFE_PATH"
+        (Test-Path -LiteralPath (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md") -PathType Leaf) | Should -Be $true
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md")) | Should -Match "Do \*\*not\*\* start Vanessa UI MCP merely because a request mentions a form"
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-vanessa-mcp.md") -PathType Leaf) | Should -Be $false
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")) | Should -Match "reload or restart Kilo Code"
         $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
@@ -1830,7 +1916,7 @@ url = "http://localhost:9999/mcp"
         }
     }
 
-    It "writes branch-local Vanessa MCP into Kilo config without deleting custom entries" {
+    It "writes branch-local Vanessa UI MCP into Kilo config without deleting custom entries" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vanessa-mcp-kilo-config-test-" + [guid]::NewGuid().ToString("N"))
 
         try {
@@ -1871,16 +1957,16 @@ url = "http://localhost:9999/mcp"
             $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
             $kilo.mcp.'custom-tool'.url | Should -Be "http://localhost:9999/mcp"
             $kilo.mcp.'custom-tool'.managedBy | Should -Be "external-mcp"
-            $kilo.mcp.'VanessaAutomation-demo'.url | Should -Be "http://localhost:9874/mcp"
-            $kilo.mcp.'VanessaAutomation-feature-demo'.type | Should -Be "remote"
-            $kilo.mcp.'VanessaAutomation-feature-demo'.url | Should -Be "http://localhost:9888/mcp"
-            $kilo.mcp.'VanessaAutomation-feature-demo'.enabled | Should -Be $true
-            $kilo.mcp.'VanessaAutomation-feature-demo'.timeout | Should -Be 120000
-            $kilo.mcp.'VanessaAutomation-feature-demo'.managedBy | Should -Be "vanessa-mcp"
-            $kilo.mcp.'VanessaAutomation-feature-demo'.family | Should -Be "vanessa"
-            $kilo.mcp.'VanessaAutomation-feature-demo'.scope | Should -Be "branch"
-            $kilo.mcp.'VanessaAutomation-feature-demo'.devBranchName | Should -Be "feature/demo"
-            $kilo.mcp.'VanessaAutomation-feature-demo'.safeDevBranchName | Should -Be "feature-demo"
+            $kilo.mcp.PSObject.Properties['VanessaAutomation-demo'] | Should -BeNullOrEmpty
+            $kilo.mcp.'VanessaUi-feature-demo'.type | Should -Be "remote"
+            $kilo.mcp.'VanessaUi-feature-demo'.url | Should -Be "http://localhost:9888/mcp"
+            $kilo.mcp.'VanessaUi-feature-demo'.enabled | Should -Be $true
+            $kilo.mcp.'VanessaUi-feature-demo'.timeout | Should -Be 120000
+            $kilo.mcp.'VanessaUi-feature-demo'.managedBy | Should -Be "vanessa-ui-mcp"
+            $kilo.mcp.'VanessaUi-feature-demo'.family | Should -Be "vanessa-ui"
+            $kilo.mcp.'VanessaUi-feature-demo'.scope | Should -Be "branch"
+            $kilo.mcp.'VanessaUi-feature-demo'.devBranchName | Should -Be "feature/demo"
+            $kilo.mcp.'VanessaUi-feature-demo'.safeDevBranchName | Should -Be "feature-demo"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

@@ -314,7 +314,7 @@ function Write-ItlAdditionalHelperActions {
     Write-Host "Additional helper actions:"
     Write-Host "  ROCTUP MCP: ask for branch-local install, update, start, status, or stop for data exploration."
     Write-Host "  vibecoding1c MCP: ask for setup, status, select, refresh-registry, or update."
-    Write-Host "  Vanessa MCP: ask for branch-local install, start, status, or stop for authoring/debugging."
+    Write-Host "  Vanessa UI MCP: ask for branch-local install, start, status, or stop only for runtime UI research, recording, or debugging."
     Write-Host "  Extension branches: ask to set extension name or dump extension files."
     Write-Host "  Maintenance/recovery: ask to update base without tests, update workflow/rules, close/list/switch branches."
     Write-Host "  Full helper action catalog: .agents/skills/1c-workflow/references/advanced-actions.md."
@@ -1402,6 +1402,7 @@ function Assert-WorkflowPackageSourceRoot {
         ".agents\skills\1c-workflow-fast\SKILL.md",
         ".agents\skills\product-docs\SKILL.md",
         ".agents\skills\itl-roctup-1c-data\SKILL.md",
+        ".agents\skills\itl-vanessa-ui-mcp\SKILL.md",
         "templates\USER-RULES.append.md"
     )) {
         $path = Join-Path $SourceRoot $relativePath
@@ -1719,7 +1720,7 @@ function Write-WorkflowUpdateFollowUp {
             Write-Host "    $name -> $worktreePath"
         }
         Write-Host "  In each branch worktree, use refresh-dev-branch or merge master, then rerun vibecoding1c MCP setup/status for that scope."
-        Write-Host "  If Vanessa MCP is used in a branch, run stop-vanessa-mcp, install-vanessa-mcp, then start-vanessa-mcp in that branch worktree."
+        Write-Host "  If Vanessa UI MCP is used in a branch, run stop-vanessa-mcp, install-vanessa-mcp, then start-vanessa-mcp in that branch worktree."
     } else {
         Write-Host "  No active development branches were found."
     }
@@ -1788,6 +1789,7 @@ function Update-WorkflowPackage {
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow-fast"
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\product-docs"
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-roctup-1c-data"
+    Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-vanessa-ui-mcp"
     Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "templates"
     foreach ($relativePath in @("install-agent-1c-workflow.ps1", "README.md", "AGENT-INSTALL.md", "DEVELOPER-GUIDE.ru.md", "DEV-BRANCH-DEVELOPMENT.ru.md", "VANESSA-TESTS-GUIDE.md", "VANESSA-TESTS-GUIDE.ru.md")) {
         Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
@@ -1798,6 +1800,7 @@ function Update-WorkflowPackage {
     Update-AgentGuidanceBridge
     Update-UserRules
     Update-RoctupMcp
+    Update-VanessaMcpArtifacts
 
     if ($SkipAiRules) {
         Write-Host "Skipping ai_rules_1c update because -SkipAiRules was specified."
@@ -2920,6 +2923,8 @@ function Initialize-Project {
     Check-Tools -StopOnMissing
     Set-RunStage -Stage "init.install-roctup-mcp" -Detail "Installing or updating ROCTUP MCP Toolkit"
     Install-RoctupMcp
+    Set-RunStage -Stage "init.cache-vanessa-ui-mcp" -Detail "Caching Vanessa UI MCP artifacts"
+    Install-VanessaMcpArtifacts | Out-Null
     Get-DevBranchInfoBaseRoot | Out-Null
     Set-RunStage -Stage "init.git" -Detail "Preparing Git repository and master branch"
     Ensure-GitRepository

@@ -46,7 +46,7 @@ verify helper action                       Совместимый alias для /
 
 `/itl` в ветке разработки показывает не просто список команд, а процессную панель: состояние ветки, рекомендуемый следующий шаг, путь разработки, видимые slash-команды и дополнительные helper-действия. В свежей чистой ветке с `verification missing` нормальный следующий шаг - выбрать режим разработки: quick-fix естественным языком, `/opsx-explore`, если нужно сначала изучить контекст, или `/opsx-propose` для полноценного изменения. `/itl-check` выполняется после появления проверяемых изменений или когда предыдущая проверка stale/failed/unknown.
 
-`vibecoding1c-mcp helper action` в worktree текущей `itldev/*` ветки подключает выбранные vibecoding1c MCP endpoints. Если для `code` или `graph` выбран local branch scope, helper поднимает отдельный vibecoding1c MCP для текущей ветки. vibecoding1c MCP соседних веток в client config не добавляются; Vanessa MCP управляется отдельно через `vanessa-mcp helper action`.
+`vibecoding1c-mcp helper action` в worktree текущей `itldev/*` ветки подключает выбранные vibecoding1c MCP endpoints. Если для `code` или `graph` выбран local branch scope, helper поднимает отдельный vibecoding1c MCP для текущей ветки. vibecoding1c MCP соседних веток в client config не добавляются; Vanessa UI MCP управляется отдельно через `vanessa-mcp helper action`.
 
 Если текущая ветка предназначена для разработки расширения, в начале работы задайте имя расширения:
 

@@ -20,6 +20,24 @@
       "sha256": "",
       "source": ""
     },
+    "vanessaMcp": {
+      "clientMcp": {
+        "version": "",
+        "assetName": "",
+        "url": "",
+        "sha256": "",
+        "source": "",
+        "updatedAt": ""
+      },
+      "vaExtension": {
+        "version": "",
+        "assetName": "",
+        "url": "",
+        "sha256": "",
+        "source": "",
+        "updatedAt": ""
+      }
+    },
     "roctupMcpToolkit": {
       "version": "",
       "assetName": "",

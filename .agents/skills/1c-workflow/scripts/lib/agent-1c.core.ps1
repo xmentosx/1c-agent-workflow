@@ -1595,6 +1595,24 @@ function New-DefaultDependencyLockManifest {
                 sha256 = ""
                 source = ""
             }
+            vanessaMcp = [ordered]@{
+                clientMcp = [ordered]@{
+                    version = ""
+                    assetName = ""
+                    url = ""
+                    sha256 = ""
+                    source = ""
+                    updatedAt = ""
+                }
+                vaExtension = [ordered]@{
+                    version = ""
+                    assetName = ""
+                    url = ""
+                    sha256 = ""
+                    source = ""
+                    updatedAt = ""
+                }
+            }
             roctupMcpToolkit = [ordered]@{
                 version = ""
                 assetName = ""

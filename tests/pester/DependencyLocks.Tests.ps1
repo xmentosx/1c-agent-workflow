@@ -22,7 +22,8 @@
             ".agents\skills\1c-workflow",
             ".agents\skills\1c-workflow-fast",
             ".agents\skills\product-docs",
-            ".agents\skills\itl-roctup-1c-data"
+            ".agents\skills\itl-roctup-1c-data",
+            ".agents\skills\itl-vanessa-ui-mcp"
         )) {
             $installerText | Should -Match ([regex]::Escape($skillPath))
             $lifecycleText | Should -Match ([regex]::Escape($skillPath))
@@ -79,6 +80,8 @@
         $lockTemplate.mode | Should -Be "fresh"
         $lockTemplate.dependencies.aiRules1c.repo | Should -Match "ai_rules_1c"
         $lockTemplate.dependencies.vanessaAutomation.PSObject.Properties.Name | Should -Contain "sha256"
+        $lockTemplate.dependencies.vanessaMcp.clientMcp.PSObject.Properties.Name | Should -Contain "sha256"
+        $lockTemplate.dependencies.vanessaMcp.vaExtension.PSObject.Properties.Name | Should -Contain "sha256"
         $lockTemplate.dependencies.PSObject.Properties.Name | Should -Not -Contain "apache"
 
         $HelperText | Should -Match "function Get-DependencyMode"

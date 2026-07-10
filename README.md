@@ -50,6 +50,7 @@ VANESSA-TESTS-GUIDE.md
 - `.agents/skills/1c-workflow-fast` - быстрый Skill для регулярных операций через PowerShell-helper без чтения полного workflow.
 - `.agents/skills/product-docs` - skill для PM5 product documentation MCP.
 - `.agents/skills/itl-roctup-1c-data` - skill для branch-local ROCTUP data exploration.
+- `.agents/skills/itl-vanessa-ui-mcp` - skill для branch-local runtime UI investigation, recording и debugging; не для прогона тестов.
 - `.agents/skills/1c-workflow/kilo-command-templates` - шаблоны коротких slash-команд Kilo Code.
 - `.kilo/commands/itl*.md` - локально сгенерированная командная поверхность для текущей папки/worktree; игнорируется Git.
 - `aiRules.tools` в `.agent-1c/project.json` - набор upstream-клиентов; по умолчанию `codex` и `kilocode`. OpenSpec-команды для каждого клиента устанавливает `ai_rules_1c`, а ITL создаёт только `/itl*`.

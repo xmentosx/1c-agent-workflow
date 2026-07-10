@@ -1,12 +1,12 @@
 # MCP Reference
 
-Use this reference for ROCTUP branch data MCP, vibecoding1c MCP, branch-local Vanessa MCP, External MCP preservation, and legacy branch Data MCP. Do not load it for ordinary lifecycle commands unless MCP is part of the request or helper failure.
+Use this reference for ROCTUP branch data MCP, vibecoding1c MCP, branch-local Vanessa UI MCP, External MCP preservation, and legacy branch Data MCP. Do not load it for ordinary lifecycle commands unless MCP is part of the request or helper failure.
 
 ## Families And Ownership
 
 - ROCTUP MCP Toolkit is the preferred branch-local data channel for `itldev/*` infobases and does not require web publication.
 - vibecoding1c MCP is managed by ITL helper actions and natural-language requests.
-- Vanessa MCP is separate branch-local tooling for authoring, form inspection, recording, and debugging.
+- Vanessa UI MCP is separate branch-local runtime tooling for user-mode inspection, recording, and debugging. It is not the Vanessa Automation verification runner.
 - External MCP entries are user-provided or future integrations. ITL must preserve entries not marked as `managedBy = vibecoding1c-mcp` with `family = vibecoding1c`.
 - Final verification never uses MCP. Use `/itl-check` through Vanessa Automation `TESTMANAGER -> TESTCLIENT`.
 
@@ -66,14 +66,14 @@ Rules:
 
 Do not use upstream `/installmcp`, `/updatemcp`, or `/checkmcp` as the normal MCP path in ITL projects. ITL owns MCP client config and removes default upstream endpoints after rules install/update only after ready vibecoding1c replacements have been written. If selection or state is incomplete, preserve upstream entries as a working fallback and run `vibecoding1c-mcp-setup` when ready.
 
-## Vanessa MCP
+## Vanessa UI MCP
 
-Vanessa MCP is always branch-local and starts on demand in `itldev/*` worktrees. New branches prepare the state but leave the server stopped; run one server per worktree only while authoring or debugging, and do not run a shared Vanessa MCP from `master`.
+Vanessa UI MCP is always branch-local and starts on demand in `itldev/*` worktrees. New branches prepare the state but leave the server stopped; run one server per worktree only for a named runtime UI question, and do not run a shared server from `master`. Static form structure, handlers, commands, bindings, and direct edits use graph/code MCP and sources instead.
 
 Actions:
 
-- `install-vanessa-mcp`: install branch-local CFE tooling into the current branch infobase.
-- `start-vanessa-mcp`: install missing Vanessa MCP dependencies if needed, start Vanessa `runMcp` on a branch-local port, and write Codex/Kilo entries.
+- `install-vanessa-mcp`: install cached branch-local UI MCP CFE tooling into the current branch infobase.
+- `start-vanessa-mcp`: install missing cached UI MCP dependencies if needed, start Vanessa `runMcp` on a branch-local port, and write Codex/Kilo entries.
 - `vanessa-mcp-status`: inspect branch-local port/PID/URL.
 - `stop-vanessa-mcp`: stop only the current branch server.
 
@@ -82,11 +82,11 @@ Rules:
 1. Actions must run from the active `itldev/*` worktree.
 2. Allocate ports through the shared ITL port registry plus branch state so neighboring branches, projects, and terminal-server users do not collide.
 3. Print client snippets with a branch-specific server name such as `VanessaAutomation-<safeBranchName>`.
-4. `start-vanessa-mcp` writes ignored `.codex/config.toml` and `.kilo/kilo.json` through the shared branch MCP config writer.
+4. `start-vanessa-mcp` writes ignored `.codex/config.toml` and `.kilo/kilo.json` through the shared branch MCP config writer. Empty `VANESSA_MCP_PORT` or `VANESSA_MCP_URL` means stopped/on-demand, not unconfigured.
 5. Already running Kilo sessions may not reload MCP config automatically; if the server is not visible after start, reload or restart Kilo Code.
-6. Do not write Vanessa MCP into global Codex, VS Code, Cline, Roo, or Continue configs automatically.
-7. Do not generate Vanessa MCP as a visible Kilo slash command.
-8. Stop Vanessa MCP with `stop-vanessa-mcp` after the authoring/debugging operation; final verification remains `/itl-check`, not MCP.
+6. Do not write Vanessa UI MCP into global Codex, VS Code, Cline, Roo, or Continue configs automatically.
+7. Do not generate Vanessa UI MCP as a visible Kilo slash command.
+8. Stop Vanessa UI MCP with `stop-vanessa-mcp` after the research, recording, or debugging operation. If start fails, report helper error and MCP log, then use only an explicitly labelled static fallback. Final verification remains `/itl-check` through Vanessa Automation `TESTMANAGER -> TESTCLIENT`, not MCP.
 
 ## Legacy Branch Data MCP
 

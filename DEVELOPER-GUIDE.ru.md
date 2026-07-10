@@ -35,7 +35,7 @@
 - `src/cfe` - выгрузки расширений в файлы, хранятся в Git.
 - `.agent-1c/project.json` - настройки проекта без секретов.
 - `.agent-1c/tools.json` - проверяемые инструменты и подсказки по установке, хранится в Git.
-- `.agent-1c/dependency-lock.json` - lock manifest для ITL workflow-пакета, `ai_rules_1c`, Vanessa Automation и скачиваемых архивов; хранится в Git.
+- `.agent-1c/dependency-lock.json` - lock manifest для ITL workflow-пакета, `ai_rules_1c`, Vanessa Automation, Vanessa UI MCP CFE и скачиваемых архивов; хранится в Git.
 - `.dev.env` - локальные настройки и секреты, не коммитится.
 - `.agent-1c/dev-branches/*.json` - локальное состояние веток разработки, не коммитится.
 - `<папка-проекта>-worktrees/<ветка>` - отдельные Git worktree для параллельных линий разработки, создаются рядом с основной папкой проекта.
@@ -48,7 +48,7 @@
 - `.codex/config.toml`, `.kilo/commands/itl*.md`, `.kilo/kilo.json`, `.kilo/kilo.jsonc` - локальные generated/client config, не коммитятся.
 - `ITL_PORT_REGISTRY_SCOPE` / `ITL_PORT_REGISTRY_HOME` в `.dev.env` - общий реестр helper-managed портов для проектов, worktree и пользователей терминального сервера.
 - `VANESSA_TEST_PORT` в `.dev.env` - branch-local порт запуска/подключения TestClient для `/itl-check`, управляется helper и передается в VAParams.
-- `VANESSA_MCP_PORT` и `VANESSA_MCP_URL` в `.dev.env` - активная MCP-точка текущей ветки, управляется helper.
+- `VANESSA_MCP_PORT` и `VANESSA_MCP_URL` в `.dev.env` - активная точка Vanessa UI MCP текущей ветки, управляется helper; пустые значения означают stopped/on-demand, а не отсутствие настройки.
 - `logs/1c` - логи запусков 1С, не коммитятся.
 
 ## 4. Создание ветки разработки
@@ -175,7 +175,7 @@ Helper выгружает `CF` или `CFE` в `build/result` и создает 
 - Не коммитьте `.dev.env`, пароли, `*.cf`, `*.dt`, логи и локальные базы.
 - Не коммитьте `.agent-1c/dev-branches/*.json`: это локальное runtime-состояние веток.
 - Не загружайте изменения ветки разработки напрямую в исходную базу.
-- Не используйте один Vanessa MCP или ROCTUP MCP на несколько веток разработки: у каждой `itldev/*` worktree должен быть свой сохраненный MCP порт, URL и копия базы. На терминальном сервере оставляйте machine-scope ITL port registry или задайте общий writable `ITL_PORT_REGISTRY_HOME`. MCP не является финальным verify-runner.
+- Не используйте один Vanessa UI MCP или ROCTUP MCP на несколько веток разработки: у каждой `itldev/*` worktree должен быть свой сохраненный MCP порт, URL и копия базы. На терминальном сервере оставляйте machine-scope ITL port registry или задайте общий writable `ITL_PORT_REGISTRY_HOME`. Vanessa UI MCP не является финальным verify-runner: `/itl-check` запускает отдельную Vanessa Automation verification.
 - Перед командами `ai_rules_1c`, которые работают с базой (`/update1cbase`, `/loadfrom1cbase`, `/getconfigfiles`), в ветке `itldev/*` должен быть активирован контекст ветки. Команды жизненного цикла делают это автоматически.
 - `/deploy-and-test` в ITL-ветке запускайте только по явной просьбе разработчика, потому что он делает полную загрузку файлов. Для обычной проверки используйте `/itl-check`; чужие Vanessa `TESTMANAGER`/`TESTCLIENT` процессы в другой worktree по умолчанию только показываются как диагностика и не блокируют запуск, если нет конфликта TestClient-порта или базы. Helper не завершает процессы другой worktree.
 - `/itl-result` следует `VERIFICATION_POLICY`: по умолчанию `warn` предупреждает при отсутствии свежей успешной проверки Vanessa и требует явное подтверждение; `block` запрещает продолжение до `/itl-check`.

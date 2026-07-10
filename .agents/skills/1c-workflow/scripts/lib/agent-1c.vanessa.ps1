@@ -267,7 +267,7 @@ function Ensure-VanessaAutomationForInit {
         return
     }
 
-    Write-Host "Vanessa Automation is required for development branch tests and branch-local Vanessa MCP; installing it automatically."
+    Write-Host "Vanessa Automation is required for development branch tests and branch-local Vanessa UI MCP; installing it automatically."
     Install-VanessaAutomation
 }
 
@@ -2024,7 +2024,7 @@ function Get-VanessaMcpPortRange {
     }
 
     if ($start -lt 1 -or $end -gt 65535 -or $start -gt $end) {
-        throw "Invalid Vanessa MCP port range: $start..$end"
+        throw "Invalid Vanessa UI MCP port range: $start..$end"
     }
 
     return [pscustomobject]@{
@@ -2170,7 +2170,7 @@ function Resolve-VanessaMcpPort {
         -ExplicitPort $VanessaMcpPort `
         -ReservedPorts $reserved `
         -State $State `
-        -Subject "Vanessa MCP port")
+        -Subject "Vanessa UI MCP port")
 }
 
 function Read-CurrentDevBranchStateForVanessaMcp {
@@ -2191,7 +2191,8 @@ function Get-GitHubReleaseAssetInfo {
         [string]$Repository,
         [string]$AssetNameLike,
         [string]$OverrideEnvName,
-        [string]$DefaultFileName
+        [string]$DefaultFileName,
+        [int]$RetryCount = 3
     )
 
     $override = Get-EnvValue -Name $OverrideEnvName -Default ""
@@ -2214,43 +2215,318 @@ function Get-GitHubReleaseAssetInfo {
     } catch {
     }
 
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/latest" -Headers @{ "User-Agent" = "1c-agent-workflow" }
-    $asset = @($release.assets | Where-Object { $_.name -like $AssetNameLike } | Select-Object -First 1)
-    if ($asset.Count -eq 0) {
-        throw "GitHub release $Repository/$($release.tag_name) does not contain asset matching '$AssetNameLike'."
+    $lastError = $null
+    for ($attempt = 1; $attempt -le $RetryCount; $attempt++) {
+        try {
+            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/latest" -Headers @{ "User-Agent" = "1c-agent-workflow" }
+            $asset = @($release.assets | Where-Object { $_.name -like $AssetNameLike } | Select-Object -First 1)
+            if ($asset.Count -eq 0) {
+                throw "GitHub release $Repository/$($release.tag_name) does not contain asset matching '$AssetNameLike'."
+            }
+
+            return [pscustomobject]@{
+                url = [string]$asset[0].browser_download_url
+                name = [string]$asset[0].name
+                version = [string]$release.tag_name
+                source = "GitHub releases $Repository"
+            }
+        } catch {
+            $lastError = $_.Exception.Message
+            if ($attempt -lt $RetryCount) {
+                Write-Warning "Could not resolve GitHub release asset $Repository/$AssetNameLike (attempt $attempt of $RetryCount): $lastError"
+                Start-Sleep -Seconds $attempt
+            }
+        }
+    }
+
+    throw "Could not resolve GitHub release asset $Repository/$AssetNameLike after $RetryCount attempts. $lastError"
+}
+
+function Get-VanessaMcpArtifactDefinitions {
+    return @(
+        [pscustomobject]@{
+            lockKey = "clientMcp"
+            repository = "1c-neurofish/onec-client-mcp-devkit"
+            assetNameLike = "client_mcp.cfe"
+            overrideEnvName = "VANESSA_MCP_CLIENT_CFE_URL"
+            defaultFileName = "client_mcp.cfe"
+            pathEnvName = "VANESSA_MCP_CLIENT_CFE_PATH"
+            versionEnvName = "VANESSA_MCP_CLIENT_CFE_VERSION"
+            sha256EnvName = "VANESSA_MCP_CLIENT_CFE_SHA256"
+        },
+        [pscustomobject]@{
+            lockKey = "vaExtension"
+            repository = "Pr-Mex/vanessa-automation"
+            assetNameLike = "VAExtension*.cfe"
+            overrideEnvName = "VANESSA_MCP_VA_EXTENSION_CFE_URL"
+            defaultFileName = "VAExtension.cfe"
+            pathEnvName = "VANESSA_MCP_VA_EXTENSION_CFE_PATH"
+            versionEnvName = "VANESSA_MCP_VA_EXTENSION_CFE_VERSION"
+            sha256EnvName = "VANESSA_MCP_VA_EXTENSION_CFE_SHA256"
+        }
+    )
+}
+
+function Resolve-VanessaMcpArtifactPath {
+    param([string]$Value)
+
+    if (-not $Value) {
+        return ""
+    }
+
+    $path = [Environment]::ExpandEnvironmentVariables((ConvertFrom-FileUri -Value $Value).Trim())
+    if (-not [System.IO.Path]::IsPathRooted($path)) {
+        $path = Resolve-ProjectPath $path
+    }
+    return (Resolve-Agent1cFullPath -Path $path)
+}
+
+function Get-VanessaMcpArtifactLockEntry {
+    param([object]$Definition)
+
+    $lock = Get-DependencyLockEntry -Name "vanessaMcp"
+    return Get-ConfigValueFromObject -Object $lock -Path ([string]$Definition.lockKey) -Default $null
+}
+
+function Find-VanessaMcpCachedArtifactPath {
+    param([object]$Definition)
+
+    $configured = Resolve-VanessaMcpArtifactPath -Value (Get-EnvValue -Name ([string]$Definition.pathEnvName) -Default "")
+    if ($configured -and (Test-Path -LiteralPath $configured -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $configured
+    }
+
+    $lockEntry = Get-VanessaMcpArtifactLockEntry -Definition $Definition
+    $assetName = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "assetName" -Default "")
+    $installRoot = Get-VanessaMcpInstallRoot
+    if ($assetName) {
+        $candidate = Join-Path $installRoot $assetName
+        if (Test-Path -LiteralPath $candidate -PathType Leaf -ErrorAction SilentlyContinue) {
+            return (Resolve-Agent1cFullPath -Path $candidate)
+        }
+    }
+
+    $candidates = @(Get-ChildItem -LiteralPath $installRoot -File -Filter ([string]$Definition.assetNameLike) -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+    if ($candidates.Count -gt 0) {
+        return $candidates[0].FullName
+    }
+
+    return ""
+}
+
+function Get-VanessaMcpCachedArtifactInfo {
+    param(
+        [object]$Definition,
+        [string]$Path
+    )
+
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+
+    $lockEntry = Get-VanessaMcpArtifactLockEntry -Definition $Definition
+    $expectedSha256 = [string](Get-EnvValue -Name ([string]$Definition.sha256EnvName) -Default "")
+    if (-not $expectedSha256) {
+        $expectedSha256 = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "sha256" -Default "")
+    }
+    $version = [string](Get-EnvValue -Name ([string]$Definition.versionEnvName) -Default "")
+    if (-not $version) {
+        $version = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "version" -Default "")
+    }
+    $source = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "source" -Default "existing cached artifact")
+    $url = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "url" -Default "")
+    $assetName = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "assetName" -Default (Split-Path -Leaf $Path))
+    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+
+    if ((Get-DependencyMode) -eq "locked") {
+        if (-not $version -or -not $assetName -or -not $url -or -not $expectedSha256) {
+            throw "Dependency mode is locked, but vanessaMcp.$($Definition.lockKey).version, assetName, url, and sha256 must all be set in .agent-1c/dependency-lock.json."
+        }
+    }
+    if ($expectedSha256 -and $hash -ne $expectedSha256.ToLowerInvariant()) {
+        throw "Vanessa UI MCP cached artifact SHA256 mismatch for $($Definition.lockKey). Expected $expectedSha256, got $hash. Artifact: $Path"
     }
 
     return [pscustomobject]@{
-        url = [string]$asset[0].browser_download_url
-        name = [string]$asset[0].name
-        version = [string]$release.tag_name
-        source = "GitHub releases $Repository"
+        key = [string]$Definition.lockKey
+        path = (Resolve-Agent1cFullPath -Path $Path)
+        assetName = $assetName
+        version = $version
+        url = $url
+        sha256 = $hash
+        source = $source
     }
 }
 
+function Get-VanessaMcpReleaseAssetInfo {
+    param([object]$Definition)
+
+    if ((Get-DependencyMode) -eq "locked") {
+        $locked = Get-VanessaMcpArtifactLockEntry -Definition $Definition
+        $version = [string](Get-ConfigValueFromObject -Object $locked -Path "version" -Default "")
+        $assetName = [string](Get-ConfigValueFromObject -Object $locked -Path "assetName" -Default "")
+        $url = [string](Get-ConfigValueFromObject -Object $locked -Path "url" -Default "")
+        $sha256 = [string](Get-ConfigValueFromObject -Object $locked -Path "sha256" -Default "")
+        if (-not $version -or -not $assetName -or -not $url -or -not $sha256) {
+            throw "Dependency mode is locked, but vanessaMcp.$($Definition.lockKey).version, assetName, url, and sha256 must all be set in .agent-1c/dependency-lock.json."
+        }
+        return [pscustomobject]@{
+            url = $url
+            name = $assetName
+            version = $version
+            expectedSha256 = $sha256
+            source = "dependency-lock"
+        }
+    }
+
+    $asset = Get-GitHubReleaseAssetInfo `
+        -Repository ([string]$Definition.repository) `
+        -AssetNameLike ([string]$Definition.assetNameLike) `
+        -OverrideEnvName ([string]$Definition.overrideEnvName) `
+        -DefaultFileName ([string]$Definition.defaultFileName)
+    $asset | Add-Member -NotePropertyName expectedSha256 -NotePropertyValue "" -Force
+    return $asset
+}
+
 function Save-VanessaMcpArtifact {
-    param([object]$AssetInfo)
+    param(
+        [object]$Definition,
+        [object]$AssetInfo
+    )
 
     $installRoot = Get-VanessaMcpInstallRoot
     New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
     $targetPath = Join-Path $installRoot ([string]$AssetInfo.name)
+    $temporaryPath = "$targetPath.partial"
     $source = [string]$AssetInfo.url
 
-    Write-Host "Vanessa MCP artifact source: $source"
+    Write-Host "Vanessa UI MCP artifact source: $source"
     $localSource = ConvertFrom-FileUri -Value $source
     if (Test-Path -LiteralPath $localSource -PathType Leaf -ErrorAction SilentlyContinue) {
         Copy-Item -LiteralPath $localSource -Destination $targetPath -Force
     } else {
-        Invoke-WebRequest -Uri $source -UseBasicParsing -OutFile $targetPath
+        $lastError = ""
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+                Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+                Invoke-WebRequest -Uri $source -UseBasicParsing -OutFile $temporaryPath
+                Move-Item -LiteralPath $temporaryPath -Destination $targetPath -Force
+                $lastError = ""
+                break
+            } catch {
+                $lastError = $_.Exception.Message
+                if ($attempt -lt 3) {
+                    Write-Warning "Could not download Vanessa UI MCP artifact (attempt $attempt of 3): $lastError"
+                    Start-Sleep -Seconds $attempt
+                }
+            }
+        }
+        if ($lastError) {
+            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+            throw "Could not download Vanessa UI MCP artifact from $source after 3 attempts. $lastError"
+        }
     }
 
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $targetPath).Hash.ToLowerInvariant()
-    Write-Host "Vanessa MCP artifact SHA256: $hash"
+    Write-Host "Vanessa UI MCP artifact SHA256: $hash"
+    $expected = [string](Get-ConfigValueFromObject -Object $AssetInfo -Path "expectedSha256" -Default "")
+    if ($expected -and $hash -ne $expected.ToLowerInvariant()) {
+        throw "Vanessa UI MCP artifact SHA256 mismatch for $($Definition.lockKey). Expected $expected, got $hash."
+    }
+
     return [pscustomobject]@{
+        key = [string]$Definition.lockKey
         path = $targetPath
+        assetName = [string]$AssetInfo.name
         version = [string]$AssetInfo.version
+        url = $source
         sha256 = $hash
         source = [string]$AssetInfo.source
+    }
+}
+
+function Save-VanessaMcpArtifactSettingsToDotEnv {
+    param([object[]]$Artifacts)
+
+    $definitions = @{}
+    foreach ($definition in Get-VanessaMcpArtifactDefinitions) {
+        $definitions[[string]$definition.lockKey] = $definition
+    }
+
+    $values = @{}
+    foreach ($artifact in @($Artifacts)) {
+        $definition = $definitions[[string]$artifact.key]
+        if ($null -eq $definition) {
+            continue
+        }
+        $values[[string]$definition.pathEnvName] = [string]$artifact.path
+        $values[[string]$definition.versionEnvName] = [string]$artifact.version
+        $values[[string]$definition.sha256EnvName] = [string]$artifact.sha256
+    }
+    if ($values.Count -gt 0) {
+        Set-DotEnvValues -Values $values
+        Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+    }
+}
+
+function Update-VanessaMcpArtifactLockEntry {
+    param([object]$Artifact)
+
+    $values = @{}
+    $values[[string]$Artifact.key] = [ordered]@{
+        version = [string]$Artifact.version
+        assetName = [string]$Artifact.assetName
+        url = [string]$Artifact.url
+        sha256 = [string]$Artifact.sha256
+        source = [string]$Artifact.source
+        updatedAt = (Get-Date).ToString("o")
+    }
+    Update-DependencyLockEntry -Name "vanessaMcp" -Values $values
+}
+
+function Install-VanessaMcpArtifact {
+    param(
+        [object]$Definition,
+        [switch]$ForceDownload
+    )
+
+    $cachedPath = Find-VanessaMcpCachedArtifactPath -Definition $Definition
+    if ($cachedPath -and -not $ForceDownload) {
+        return Get-VanessaMcpCachedArtifactInfo -Definition $Definition -Path $cachedPath
+    }
+
+    try {
+        $asset = Get-VanessaMcpReleaseAssetInfo -Definition $Definition
+        $artifact = Save-VanessaMcpArtifact -Definition $Definition -AssetInfo $asset
+        Update-VanessaMcpArtifactLockEntry -Artifact $artifact
+        return $artifact
+    } catch {
+        $message = $_.Exception.Message
+        if ($cachedPath) {
+            Write-Warning "Could not refresh Vanessa UI MCP artifact $($Definition.lockKey). Reusing verified cached artifact. $message"
+            return Get-VanessaMcpCachedArtifactInfo -Definition $Definition -Path $cachedPath
+        }
+        throw
+    }
+}
+
+function Install-VanessaMcpArtifacts {
+    param([switch]$ForceDownload)
+
+    $artifacts = @()
+    foreach ($definition in Get-VanessaMcpArtifactDefinitions) {
+        $artifacts += Install-VanessaMcpArtifact -Definition $definition -ForceDownload:$ForceDownload
+    }
+    Save-VanessaMcpArtifactSettingsToDotEnv -Artifacts $artifacts
+    return @($artifacts)
+}
+
+function Update-VanessaMcpArtifacts {
+    Write-Section "Update Vanessa UI MCP artifacts"
+
+    $artifacts = Install-VanessaMcpArtifacts -ForceDownload
+    foreach ($artifact in $artifacts) {
+        Write-Host "Vanessa UI MCP $($artifact.key) CFE: $($artifact.path)"
     }
 }
 
@@ -2275,7 +2551,7 @@ function Install-VanessaMcpExtensionCfe {
     )
 
     if (-not (Test-Path -LiteralPath $CfePath -PathType Leaf)) {
-        throw "Vanessa MCP CFE was not found: $CfePath"
+        throw "Vanessa UI MCP CFE was not found: $CfePath"
     }
 
     Write-Host "Installing 1C extension '$ExtensionName' from: $CfePath"
@@ -2288,12 +2564,12 @@ function Install-VanessaMcpExtensionCfe {
 }
 
 function Install-VanessaMcp {
-    Write-Section "Install Vanessa MCP"
+    Write-Section "Install Vanessa UI MCP"
 
     $state = Read-CurrentDevBranchStateForVanessaMcp -Operation "install-vanessa-mcp"
     $runtime = Get-VanessaMcpRuntimeInfo -State $state
     if ($runtime.processAlive) {
-        throw "Stop Vanessa MCP for this branch before reinstalling MCP extensions. PID: $($runtime.pid)"
+        throw "Stop Vanessa UI MCP for this branch before reinstalling MCP extensions. PID: $($runtime.pid)"
     }
 
     $vanessa = Get-VanessaAutomationState
@@ -2302,19 +2578,12 @@ function Install-VanessaMcp {
         Install-VanessaAutomation
     }
 
-    $clientAsset = Get-GitHubReleaseAssetInfo `
-        -Repository "1c-neurofish/onec-client-mcp-devkit" `
-        -AssetNameLike "client_mcp.cfe" `
-        -OverrideEnvName "VANESSA_MCP_CLIENT_CFE_URL" `
-        -DefaultFileName "client_mcp.cfe"
-    $vaExtensionAsset = Get-GitHubReleaseAssetInfo `
-        -Repository "Pr-Mex/vanessa-automation" `
-        -AssetNameLike "VAExtension*.cfe" `
-        -OverrideEnvName "VANESSA_MCP_VA_EXTENSION_CFE_URL" `
-        -DefaultFileName "VAExtension.cfe"
-
-    $clientArtifact = Save-VanessaMcpArtifact -AssetInfo $clientAsset
-    $vaExtensionArtifact = Save-VanessaMcpArtifact -AssetInfo $vaExtensionAsset
+    $artifactsByKey = @{}
+    foreach ($artifact in Install-VanessaMcpArtifacts) {
+        $artifactsByKey[[string]$artifact.key] = $artifact
+    }
+    $clientArtifact = $artifactsByKey["clientMcp"]
+    $vaExtensionArtifact = $artifactsByKey["vaExtension"]
 
     $clientLog = Install-VanessaMcpExtensionCfe -State $state -CfePath $clientArtifact.path -ExtensionName "client_mcp"
     $vaExtensionLog = Install-VanessaMcpExtensionCfe -State $state -CfePath $vaExtensionArtifact.path -ExtensionName "VAExtension"
@@ -2331,7 +2600,7 @@ function Install-VanessaMcp {
         vanessaMcpVaExtensionInstallLogPath = $vaExtensionLog
     }
 
-    Write-Host "Vanessa MCP extensions installed in development branch infobase."
+    Write-Host "Vanessa UI MCP extensions installed in development branch infobase."
     Write-Host "client_mcp CFE: $($clientArtifact.path)"
     Write-Host "VAExtension CFE: $($vaExtensionArtifact.path)"
     Write-Host "Last 1C log: $script:LastLogPath"
@@ -2348,7 +2617,7 @@ function Ensure-VanessaMcpInstalled {
         return $State
     }
 
-    Write-Host "Vanessa MCP dependencies are not installed for this branch; installing them now."
+    Write-Host "Vanessa UI MCP dependencies are not installed for this branch; installing them now."
     Install-VanessaMcp
     return Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
 }
@@ -2380,7 +2649,7 @@ function Write-VanessaMcpClientSnippets {
         return
     }
 
-    $serverName = "VanessaAutomation-$safeName"
+    $serverName = "VanessaUi-$safeName"
     Write-Host "MCP server name: $serverName"
     Write-Host "MCP streamable-http URL: $url"
     Write-Host "MCP client snippets:"
@@ -2426,14 +2695,22 @@ function Write-VanessaMcpKiloConfig {
         $mcp = ConvertTo-Vibecoding1cMcpHashtable -Object $config["mcp"]
     }
 
-    $serverName = "VanessaAutomation-$safeName"
+    foreach ($key in @($mcp.Keys)) {
+        $entry = $mcp[$key]
+        $managedBy = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "managedBy" -Default "")
+        if (@("vanessa-mcp", "vanessa-ui-mcp") -contains $managedBy) {
+            $mcp.Remove($key)
+        }
+    }
+
+    $serverName = "VanessaUi-$safeName"
     $mcp[$serverName] = [ordered]@{
         type = "remote"
         url = $url
         enabled = $true
         timeout = 120000
-        managedBy = "vanessa-mcp"
-        family = "vanessa"
+        managedBy = "vanessa-ui-mcp"
+        family = "vanessa-ui"
         scope = "branch"
         devBranchName = $devBranchName
         safeDevBranchName = $safeName
@@ -2441,7 +2718,7 @@ function Write-VanessaMcpKiloConfig {
 
     $config["mcp"] = $mcp
     Write-Vibecoding1cMcpJsonFile -Path $path -Value $config
-    Write-Host "Kilo Vanessa MCP config: $path"
+    Write-Host "Kilo Vanessa UI MCP config: $path"
     Write-Host "If Kilo Code does not show this MCP server immediately, reload or restart Kilo Code so it rereads .kilo/kilo.json."
 }
 
@@ -2466,28 +2743,28 @@ function Write-VanessaMcpStatusLines {
     $installedAt = Get-StateValue -State $State -Name "vanessaMcpInstalledAt" -Default ""
     $status = Get-StateValue -State $State -Name "vanessaMcpStatus" -Default ""
     if (-not $installedAt -and -not $status -and $runtime.port -le 0) {
-        Write-Host "${Indent}Vanessa MCP: not configured"
+        Write-Host "${Indent}Vanessa UI MCP: stopped (on-demand)"
         return
     }
 
-    Write-Host "${Indent}Vanessa MCP: $($runtime.status)"
+    Write-Host "${Indent}Vanessa UI MCP: $($runtime.status)"
     if ($runtime.port -gt 0) {
-        Write-Host "${Indent}Vanessa MCP port: $($runtime.port)"
-        Write-Host "${Indent}Vanessa MCP URL: $($runtime.url)"
+        Write-Host "${Indent}Vanessa UI MCP port: $($runtime.port)"
+        Write-Host "${Indent}Vanessa UI MCP URL: $($runtime.url)"
     }
     if ($runtime.pid -gt 0) {
-        Write-Host "${Indent}Vanessa MCP PID: $($runtime.pid)"
+        Write-Host "${Indent}Vanessa UI MCP PID: $($runtime.pid)"
     }
     $logPath = Get-StateValue -State $State -Name "vanessaMcpLogPath" -Default ""
     if ($logPath) {
-        Write-Host "${Indent}Vanessa MCP log: $logPath"
+        Write-Host "${Indent}Vanessa UI MCP log: $logPath"
     }
     if ($installedAt) {
-        Write-Host "${Indent}Vanessa MCP installed: $installedAt"
+        Write-Host "${Indent}Vanessa UI MCP installed: $installedAt"
     }
     $errorMessage = Get-StateValue -State $State -Name "vanessaMcpError" -Default ""
     if ($errorMessage) {
-        Write-Host "${Indent}Vanessa MCP error: $errorMessage"
+        Write-Host "${Indent}Vanessa UI MCP error: $errorMessage"
     }
 }
 
@@ -2507,7 +2784,7 @@ function Stop-VanessaMcpForState {
 
     if ($runtime.processAlive) {
         if (-not $Quiet) {
-            Write-Host "Stopping Vanessa MCP process: PID $($runtime.pid)"
+            Write-Host "Stopping Vanessa UI MCP process: PID $($runtime.pid)"
         }
         Stop-Process -Id $runtime.pid -Force -ErrorAction Stop
         Start-Sleep -Milliseconds 500
@@ -2523,13 +2800,13 @@ function Stop-VanessaMcpForState {
     $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
     Write-VanessaMcpClientConfig -State $state
     if (-not $Quiet) {
-        Write-Host "Vanessa MCP is not running for this branch."
+        Write-Host "Vanessa UI MCP is not running for this branch."
     }
     return $false
 }
 
 function Start-VanessaMcp {
-    Write-Section "Start Vanessa MCP"
+    Write-Section "Start Vanessa UI MCP"
 
     $state = Read-CurrentDevBranchStateForVanessaMcp -Operation "start-vanessa-mcp"
     $runtime = Get-VanessaMcpRuntimeInfo -State $state
@@ -2542,16 +2819,26 @@ function Start-VanessaMcp {
         }
         $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
         Write-VanessaMcpClientConfig -State $state
-        Write-Host "Vanessa MCP process is already running for this branch."
+        Write-Host "Vanessa UI MCP process is already running for this branch."
         Write-VanessaMcpStatusLines -State $state
         Write-VanessaMcpClientSnippets -State $state
         return
     }
 
-    $state = Ensure-VanessaMcpInstalled -State $state
+    try {
+        $state = Ensure-VanessaMcpInstalled -State $state
+    } catch {
+        $message = $_.Exception.Message
+        Update-DevBranchState -State $state -Updates @{
+            vanessaMcpStatus = "failed"
+            vanessaMcpError = $message
+            vanessaMcpUpdatedAt = (Get-Date).ToString("o")
+        }
+        throw $message
+    }
     $vanessa = Get-VanessaAutomationState
     if (-not $vanessa.ready) {
-        throw "Vanessa Automation is not installed. Run install-vanessa-automation first."
+        throw "Vanessa Automation verification runtime is not installed. Run install-vanessa-automation first."
     }
 
     $port = Resolve-VanessaMcpPort -State $state
@@ -2587,7 +2874,7 @@ function Start-VanessaMcp {
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
     if (-not (Wait-VanessaMcpPort -Port $port -TimeoutSeconds 30)) {
-        $message = "Vanessa MCP process was started, but port $port did not become reachable within 30 seconds. PID: $($result.process.Id). Log: $($result.logPath)"
+        $message = "Vanessa UI MCP process was started, but port $port did not become reachable within 30 seconds. PID: $($result.process.Id). Log: $($result.logPath)"
         Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $state) -Status "failed" -ProcessId $result.process.Id
         Update-DevBranchState -State $state -Updates @{
             vanessaMcpStatus = "failed"
@@ -2604,21 +2891,21 @@ function Start-VanessaMcp {
     }
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
-    Write-Host "Vanessa MCP started."
+    Write-Host "Vanessa UI MCP started."
     Write-VanessaMcpClientConfig -State $state
     Write-VanessaMcpStatusLines -State $state
     Write-VanessaMcpClientSnippets -State $state
 }
 
 function Stop-VanessaMcp {
-    Write-Section "Stop Vanessa MCP"
+    Write-Section "Stop Vanessa UI MCP"
 
     $state = Read-CurrentDevBranchStateForVanessaMcp -Operation "stop-vanessa-mcp"
     Stop-VanessaMcpForState -State $state | Out-Null
 }
 
 function Show-VanessaMcpStatus {
-    Write-Section "Vanessa MCP status"
+    Write-Section "Vanessa UI MCP status"
 
     $state = Read-CurrentDevBranchStateForVanessaMcp -Operation "vanessa-mcp-status"
     Write-VanessaMcpStatusLines -State $state

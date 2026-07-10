@@ -1619,14 +1619,14 @@ if (`$?) { exit 0 } else { exit 1 }
             $statusText = $statusOutput -join [Environment]::NewLine
             $statusText | Should -Match "Active development worktrees: 1"
             $statusText | Should -Match "ROCTUP MCP: stopped"
-            $statusText | Should -Match "Vanessa MCP: stopped"
+            $statusText | Should -Match "Vanessa UI MCP: stopped"
 
             $listOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action list-dev-branches 2>&1
             $LASTEXITCODE | Should -Be 0
             $listText = $listOutput -join [Environment]::NewLine
             $listText | Should -Match ([regex]::Escape([System.IO.Path]::GetFullPath($worktreePath)))
             $listText | Should -Match "ROCTUP MCP: stopped"
-            $listText | Should -Match "Vanessa MCP: stopped"
+            $listText | Should -Match "Vanessa UI MCP: stopped"
 
             $switchOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action switch-dev-branch -DevBranchName "Fixture Branch" 2>&1
             $LASTEXITCODE | Should -Be 0

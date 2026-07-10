@@ -669,8 +669,8 @@ function Get-ItlBranchMcpEndpointEntries {
     $vanessaRuntime = Get-VanessaMcpRuntimeInfo -State $State
     if ($vanessaRuntime.status -eq "running" -and $vanessaRuntime.url) {
         $entries += [pscustomobject]@{
-            name = "VanessaAutomation-$safeName"
-            family = "vanessa"
+            name = "VanessaUi-$safeName"
+            family = "vanessa-ui"
             url = $vanessaRuntime.url
             timeout = 120000
             devBranchName = $devBranchName
@@ -741,7 +741,7 @@ function Write-ItlBranchMcpKiloConfig {
     foreach ($key in @($mcp.Keys)) {
         $entry = $mcp[$key]
         $managedBy = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "managedBy" -Default "")
-        if (@("itl-branch-mcp", "vanessa-mcp") -contains $managedBy) {
+        if (@("itl-branch-mcp", "vanessa-mcp", "vanessa-ui-mcp") -contains $managedBy) {
             $mcp.Remove($key)
         }
     }
@@ -801,7 +801,7 @@ function Invoke-DevBranchDefaultMcpSetup {
             Stop-VanessaMcpForState -State $state -Quiet | Out-Null
             $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
         } catch {
-            Write-Warning "Could not stop existing Vanessa MCP during branch preparation. $($_.Exception.Message)"
+            Write-Warning "Could not stop existing Vanessa UI MCP during branch preparation. $($_.Exception.Message)"
         }
     }
     Update-DevBranchState -State $state -Updates @{
@@ -823,7 +823,7 @@ function Invoke-DevBranchDefaultMcpSetup {
 
     Write-ItlBranchMcpClientConfig -State $state
     Write-Host "ROCTUP MCP is ready for on-demand start with start-roctup-mcp."
-    Write-Host "Vanessa MCP is ready for on-demand start with start-vanessa-mcp."
+    Write-Host "Vanessa UI MCP is ready for on-demand start with start-vanessa-mcp."
     return (Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default ""))
 }
 
@@ -863,14 +863,14 @@ function Invoke-DevBranchMcpRestartAfterInfobaseLoad {
 
     $vanessaRuntime = Get-VanessaMcpRuntimeInfo -State $state
     if ($vanessaRuntime.processAlive) {
-        Write-Host "Restarting Vanessa MCP after $Reason."
+        Write-Host "Restarting Vanessa UI MCP after $Reason."
         Stop-VanessaMcpForState -State $state -Quiet | Out-Null
         try {
             Start-VanessaMcp
             $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
         } catch {
             $message = $_.Exception.Message
-            Write-Warning "Vanessa MCP restart failed. $message"
+            Write-Warning "Vanessa UI MCP restart failed. $message"
             Update-DevBranchState -State $state -Updates @{
                 vanessaMcpStatus = "failed"
                 vanessaMcpError = $message
@@ -915,7 +915,7 @@ function Assert-DevBranchToolArtifactExportGuard {
     if ($ContentKind -eq "extension") {
         $extensionName = Require-DevBranchExtensionName -State $State
         if ($forbiddenNames -contains $extensionName) {
-            throw "Refusing to export tool extension '$extensionName'. Vanessa MCP extensions client_mcp and VAExtension are runtime tooling, not product artifacts."
+            throw "Refusing to export tool extension '$extensionName'. Vanessa UI MCP extensions client_mcp and VAExtension are runtime tooling, not product artifacts."
         }
     }
 

@@ -13,12 +13,12 @@ The goal of ITL feature tests is to verify the behavior currently being changed.
    - `UI`: form, command, or visible user behavior.
 3. Search existing steps and local `Libraries`/`@exportscenarios` before inventing new steps.
 4. Write 2-3 small scenarios: the main successful path and one meaningful boundary or negative case. More than 4 scenarios needs explicit justification.
-5. Run the final ITL check flow. Vanessa MCP is only for authoring, step search, recording, and debugging.
+5. Run the final ITL check flow. Vanessa UI MCP is only for runtime UI research, authoring support, step search, recording, and debugging; it is not the test runner.
 
 ## Context Economy
 
 - Do not read large external smoke suites before every task; use them only as pattern references.
-- Do not paste full catalogs of known steps into the prompt. Search for the specific step by meaning or through Vanessa MCP.
+- Do not paste full catalogs of known steps into the prompt. Search for the specific step by meaning or, when runtime UI evidence is needed, through Vanessa UI MCP.
 - Prefer data/object/register checks over long UI sequences when they prove the same behavior.
 - Reuse an existing library step when it already expresses the business action.
 - Keep each scenario short: setup, action, 1-3 observable assertions, cleanup if needed.
@@ -193,4 +193,4 @@ Use UI checks only for forms, commands, or visible behavior. Prefer form element
 - Do not go through menus and forms when server code and assertions can prove the result.
 - Do not copy large scenarios from external repositories.
 - Do not create more than 4 feature checks without explaining why in `test-plan.md`.
-- Do not replace the final ITL check flow with Vanessa MCP, a headless EPF launch, or `/deploy-and-test`.
+- Do not replace the final ITL check flow with Vanessa UI MCP, a headless EPF launch, or `/deploy-and-test`.

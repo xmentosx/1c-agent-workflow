@@ -116,7 +116,7 @@
         $userRulesText | Should -Match ([regex]::Escape(".agent-1c/runs/"))
         $userRulesText | Should -Match ([regex]::Escape("build/test-results/"))
 
-        $installedSkillIds = @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data")
+        $installedSkillIds = @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")
         $skillReferences = [regex]::Matches($userRulesText, '\.agents/skills/([^/]+)/SKILL\.md') | ForEach-Object { $_.Groups[1].Value }
         foreach ($skillId in $skillReferences) {
             $installedSkillIds | Should -Contain $skillId
@@ -233,7 +233,7 @@
 
     It "keeps additional helper actions grouped without adding visible slash commands" {
         $HelperText | Should -Match "Additional helper actions:"
-        foreach ($group in @("ROCTUP MCP", "vibecoding1c MCP", "Vanessa MCP", "Extension branches", "Maintenance/recovery")) {
+        foreach ($group in @("ROCTUP MCP", "vibecoding1c MCP", "Vanessa UI MCP", "Extension branches", "Maintenance/recovery")) {
             $HelperText | Should -Match ([regex]::Escape($group))
         }
 
