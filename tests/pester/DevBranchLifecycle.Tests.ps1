@@ -150,13 +150,15 @@
                     param(
                         [string]$InfoBasePath,
                         [string]$InfoBaseKind,
-                        [string[]]$EnterpriseArgs
+                        [string[]]$EnterpriseArgs,
+                        [int]$TimeoutSeconds
                     )
                     $script:LastLogPath = "C:\logs\enterprise-auto-update.log"
                     $script:EnterpriseCalls += [pscustomobject]@{
                         infoBasePath = $InfoBasePath
                         infoBaseKind = $InfoBaseKind
                         enterpriseArgs = @($EnterpriseArgs)
+                        timeoutSeconds = $TimeoutSeconds
                     }
                 }
 
@@ -189,6 +191,7 @@
             $enterpriseCalls.calls[0].enterpriseArgs | Should -Contain "/Execute"
             $enterpriseCalls.calls[0].enterpriseArgs[1] | Should -Be (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.mainEpf)
             $enterpriseCalls.calls[0].enterpriseArgs[1] | Should -Not -Be (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.deferredEpf)
+            $enterpriseCalls.calls[0].timeoutSeconds | Should -Be 900
             $enterpriseCalls.updates["lastEnterpriseAutoUpdateLogPath"] | Should -Be "C:\logs\enterprise-auto-update.log"
             Test-Path -LiteralPath (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.mainEpf) -PathType Leaf | Should -Be $true
             Test-Path -LiteralPath (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.deferredEpf) -PathType Leaf | Should -Be $true
@@ -337,6 +340,106 @@
                 Remove-Item -LiteralPath $tempParent -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
+    }
+
+    It "validates and applies a local dev branch auto-update timeout" {
+        $oldTimeout = $env:DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS
+        try {
+            $env:DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS = "60"
+            $value = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                Get-DevBranchAutoUpdateTimeoutSeconds
+            }
+            $value | Should -Be 60
+
+            $env:DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS = "0"
+            {
+                & {
+                    . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                    Get-DevBranchAutoUpdateTimeoutSeconds
+                }
+            } | Should -Throw "*must be a positive integer*"
+        } finally {
+            $env:DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS = $oldTimeout
+        }
+    }
+
+    It "uses a full files load when the root Configuration.xml changed" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            $script:CapturedDesignerArgs = @()
+            function Get-ConfigLoadChangeSet {
+                return [pscustomobject]@{
+                    files = @("Configuration.xml")
+                    baseCommit = "base"
+                    currentCommit = "head"
+                    absoluteExportPath = "C:\project\src\cf"
+                }
+            }
+            function New-ConfigLoadListFile { return "C:\logs\changed-files.txt" }
+            function Invoke-Designer {
+                param(
+                    [string]$InfoBasePath,
+                    [string]$InfoBaseKind,
+                    [string[]]$DesignerArgs
+                )
+                $script:CapturedDesignerArgs = @($DesignerArgs)
+            }
+
+            $loadResult = Load-ConfigFromFiles `
+                -InfoBasePath "C:\base" `
+                -InfoBaseKind "file" `
+                -State ([pscustomobject]@{}) `
+                -ExportPath "src/cf" 6>$null
+
+            [pscustomobject]@{
+                args = @($script:CapturedDesignerArgs)
+                listFile = $loadResult.listFile
+            }
+        }
+
+        $result.args | Should -Contain "/LoadConfigFromFiles"
+        $result.args | Should -Not -Contain "-listFile"
+        $result.args | Should -Contain "/UpdateDBCfg"
+        $result.listFile | Should -Be "C:\logs\changed-files.txt"
+    }
+
+    It "keeps partial files load for non-root configuration changes" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            $script:CapturedDesignerArgs = @()
+            function Get-ConfigLoadChangeSet {
+                return [pscustomobject]@{
+                    files = @("CommonModules\WorkflowE2E.xml")
+                    baseCommit = "base"
+                    currentCommit = "head"
+                    absoluteExportPath = "C:\project\src\cf"
+                }
+            }
+            function New-ConfigLoadListFile { return "C:\logs\changed-files.txt" }
+            function Invoke-Designer {
+                param(
+                    [string]$InfoBasePath,
+                    [string]$InfoBaseKind,
+                    [string[]]$DesignerArgs
+                )
+                $script:CapturedDesignerArgs = @($DesignerArgs)
+            }
+
+            Load-ConfigFromFiles `
+                -InfoBasePath "C:\base" `
+                -InfoBaseKind "file" `
+                -State ([pscustomobject]@{}) `
+                -ExportPath "src/cf" 6>$null | Out-Null
+
+            @($script:CapturedDesignerArgs)
+        }
+
+        $result | Should -Contain "-listFile"
+        $result | Should -Contain "C:\logs\changed-files.txt"
+        $result | Should -Contain "/UpdateDBCfg"
     }
 
     It "reports detailed diagnostics when Git path collection fails" {
@@ -1439,6 +1542,147 @@ if (`$?) { exit 0 } else { exit 1 }
         $HelperText | Should -Match "Invoke-VisibleNativeProcessAndWait"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=manual-confirm"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\branch-lifecycle.md")) | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP"
+    }
+
+    It "stops a lingering native process after result artifacts are complete" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-native-completion-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $markerPath = Join-Path $tempRoot "complete.txt"
+            $elapsed = [System.Diagnostics.Stopwatch]::StartNew()
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $powershellPath = (Get-Command powershell.exe).Source
+                Invoke-NativeProcessAndWaitResult `
+                    -FilePath $powershellPath `
+                    -Arguments @("-NoProfile", "-Command", "Set-Content -LiteralPath '$markerPath' -Value ready; Start-Sleep -Seconds 10") `
+                    -TimeoutSeconds 30 `
+                    -CompletionProbe { Test-Path -LiteralPath $markerPath -PathType Leaf } `
+                    -CompletionGraceSeconds 0
+            }
+            $elapsed.Stop()
+            $result.completedByProbe | Should -BeTrue
+            $result.timedOut | Should -BeFalse
+            $result.exitCode | Should -Be 0
+            $elapsed.Elapsed.TotalSeconds | Should -BeLessThan 5
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "cleans Vanessa test processes before reading the event log" {
+        $vanessaPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1"
+        $text = Get-Content -LiteralPath $vanessaPath -Raw -Encoding UTF8
+        $successStart = $text.IndexOf('$verification = Get-VanessaVerificationStatus')
+        $successStart | Should -BeGreaterThan -1
+        $successBlock = $text.Substring($successStart)
+        $cleanupIndex = $successBlock.IndexOf('Stop-OwnVanessaTestProcessesAndAssert -State $state')
+        $eventLogIndex = $successBlock.IndexOf('Test-DevBranchEventLogAfterVanessa')
+        $cleanupIndex | Should -BeGreaterThan -1
+        $eventLogIndex | Should -BeGreaterThan -1
+        $cleanupIndex | Should -BeLessThan $eventLogIndex
+    }
+
+    It "stops only current-branch Vanessa test processes and exposes release cleanup action" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-process-cleanup-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $stopped = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $ibPath = Join-Path $tempRoot ".agent-1c\infobases\dev-branches\current-branch"
+                $state = [pscustomobject]@{
+                    safeDevBranchName = "current-branch"
+                    devBranchInfoBasePath = $ibPath
+                    worktreePath = $tempRoot
+                }
+                $script:StoppedIds = @()
+                $script:ProcessFixture = @(
+                    [pscustomobject]@{ processId = 1001; name = "1cv8c.exe"; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48051 /F `"$ibPath`""; workingSetMb = 10 },
+                    [pscustomobject]@{ processId = 1002; name = "1cv8c.exe"; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48052 /F `"D:\worktrees\foreign\base`""; workingSetMb = 10 }
+                )
+                function Get-OneCProcessInfo {
+                    return @($script:ProcessFixture | Where-Object { $script:StoppedIds -notcontains $_.processId })
+                }
+                function Stop-Process {
+                    param([int]$Id, [switch]$Force, [object]$ErrorAction)
+                    $script:StoppedIds += $Id
+                }
+                function Start-Sleep {}
+
+                Stop-OwnVanessaTestProcessesAndAssert -State $state 6>$null
+                @($script:StoppedIds)
+            }
+
+            $stopped | Should -Contain 1001
+            $stopped | Should -Not -Contain 1002
+            $HelperText | Should -Match '"stop-dev-branch-test-clients" \{ Stop-DevBranchTestClients \}'
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "provides monitored unsafe action protection recovery for an existing branch" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help -InfoBaseUser "itl_e2e" *> $null
+
+            $script:SavedDotEnv = @{}
+            $script:CapturedConfirmation = $null
+            $script:CapturedUpdates = @{}
+            function Read-DevBranchState {
+                return [pscustomobject]@{
+                    devBranch = "itldev/workflow-release-e2e"
+                    devBranchName = "workflow-release-e2e"
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = "C:\bases\workflow-release-e2e"
+                }
+            }
+            function Assert-DevelopmentBranchWorktreeContext {}
+            function Set-DotEnvValues { param([hashtable]$Values) $script:SavedDotEnv = $Values }
+            function Import-DotEnv {}
+            function Sync-DevBranchContextToDotEnv {}
+            function Confirm-DevBranchUnsafeActionProtection {
+                param(
+                    [string]$InfoBaseKind,
+                    [string]$InfoBasePath,
+                    [string]$DevBranchName,
+                    [string]$SetupModeOverride
+                )
+                $script:CapturedConfirmation = [pscustomobject]@{
+                    infoBaseKind = $InfoBaseKind
+                    infoBasePath = $InfoBasePath
+                    devBranchName = $DevBranchName
+                    setupModeOverride = $SetupModeOverride
+                }
+                return [pscustomobject]@{
+                    mode = "manual-confirm"
+                    confirmed = $true
+                    confirmedAt = "2026-07-11T20:00:00+03:00"
+                    user = "itl_e2e"
+                }
+            }
+            function Update-DevBranchState {
+                param([object]$State, [hashtable]$Updates)
+                $script:CapturedUpdates = $Updates
+            }
+
+            Configure-DevBranchUnsafeActionProtection 6>$null
+            [pscustomobject]@{
+                savedDotEnv = $script:SavedDotEnv
+                confirmation = $script:CapturedConfirmation
+                updates = $script:CapturedUpdates
+            }
+        }
+
+        $result.savedDotEnv.IB_USER | Should -Be "itl_e2e"
+        $result.confirmation.setupModeOverride | Should -Be "manual-confirm"
+        $result.confirmation.infoBasePath | Should -Be "C:\bases\workflow-release-e2e"
+        $result.updates.unsafeActionProtectionConfirmed | Should -BeTrue
+        $result.updates.unsafeActionProtectionUser | Should -Be "itl_e2e"
+        $HelperText | Should -Match '"configure-dev-branch-unsafe-action-protection" \{ Configure-DevBranchUnsafeActionProtection \}'
+        (Get-Content -Raw -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")) | Should -Match "configure-dev-branch-unsafe-action-protection"
     }
 
     It "routes interactive branch creation through the monitored launcher" {

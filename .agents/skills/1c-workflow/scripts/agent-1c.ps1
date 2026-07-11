@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status", "install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "run-dev-branch-tests", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
+    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status", "install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "run-dev-branch-tests", "stop-dev-branch-test-clients", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -9,6 +9,7 @@ param(
     [string]$DevBranch,
     [string]$DevBranchInfoBasePath,
     [string]$DevBranchWorktreePath,
+    [string]$InfoBaseUser = "",
     [string]$ExtensionName,
     [string]$VanessaFeaturePath,
     [string]$VanessaFilterTags,
@@ -156,6 +157,7 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranch" -Value $DevBranch
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranchInfoBasePath" -Value $DevBranchInfoBasePath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranchWorktreePath" -Value $DevBranchWorktreePath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "InfoBaseUser" -Value $InfoBaseUser
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ExtensionName" -Value $ExtensionName
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaFeaturePath" -Value $VanessaFeaturePath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaFilterTags" -Value $VanessaFilterTags
@@ -217,7 +219,8 @@ $script:Agent1cModuleFiles = @(
     "agent-1c.vibecoding1c-mcp.ps1",
     "agent-1c.data-mcp.ps1",
     "agent-1c.roctup-mcp.ps1",
-    "agent-1c.lifecycle.ps1"
+    "agent-1c.lifecycle.ps1",
+    "agent-1c.ai-rules-migration.ps1"
 )
 foreach ($moduleFile in $script:Agent1cModuleFiles) {
     $modulePath = Join-Path $script:Agent1cLibRoot $moduleFile
@@ -267,12 +270,14 @@ try {
         "update-ai-rules" { Update-AiRules1c }
         "status" { Show-WorkflowStatus }
         "run-dev-branch-tests" { Run-DevBranchTests }
+        "stop-dev-branch-test-clients" { Stop-DevBranchTestClients }
         "check-dev-branch" { Check-DevBranch }
         "verify-dev-branch" { Verify-DevBranch }
         "init-project" { Initialize-Project }
         "sync-master" { Sync-Master }
         "new-dev-branch" { New-DevBranch }
         "new-extension-dev-branch" { New-ExtensionDevBranch }
+        "configure-dev-branch-unsafe-action-protection" { Configure-DevBranchUnsafeActionProtection }
         "set-dev-branch-extension" { Set-DevBranchExtension }
         "dump-dev-branch-extension" { Dump-DevBranchExtension }
         "activate-dev-branch-context" { Activate-DevBranchContext }

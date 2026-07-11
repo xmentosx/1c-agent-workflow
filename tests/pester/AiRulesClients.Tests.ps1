@@ -155,4 +155,68 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
         $text | Should -Match "Assert-OpenSpecBundle"
         $text | Should -Match "git clone"
     }
+
+    It "pins a configured aiRules tag in fresh mode" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-pin-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $sourceRoot = Join-Path $tempRoot "source"
+        $cacheRoot = Join-Path $tempRoot "cache"
+        $savedTemp = $env:TEMP
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $projectRoot ".agent-1c"), $sourceRoot, $cacheRoot | Out-Null
+            & git -C $sourceRoot init *> $null
+            & git -C $sourceRoot config user.email "test@example.invalid"
+            & git -C $sourceRoot config user.name "ITL Test"
+            Set-Content -LiteralPath (Join-Path $sourceRoot "README.md") -Encoding ASCII -Value "tagged"
+            & git -C $sourceRoot add .
+            & git -C $sourceRoot commit -m "tagged" *> $null
+            & git -C $sourceRoot tag "v1.0.0"
+            $tagCommit = (& git -C $sourceRoot rev-parse "v1.0.0^{commit}").Trim()
+
+            $config = [ordered]@{
+                dependencyMode = "fresh"
+                aiRules = [ordered]@{ repo = $sourceRoot; ref = "v1.0.0"; tools = @("kilocode") }
+            }
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\project.json") -Encoding UTF8 -Value ($config | ConvertTo-Json -Depth 6)
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{}}'
+            $env:TEMP = $cacheRoot
+
+            $first = & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                Sync-AiRules1cCheckout
+            }
+            $first.ref | Should -Be "v1.0.0"
+            $first.commit | Should -Be $tagCommit
+
+            Set-Content -LiteralPath (Join-Path $sourceRoot "README.md") -Encoding ASCII -Value "new main"
+            & git -C $sourceRoot add .
+            & git -C $sourceRoot commit -m "new main" *> $null
+            $second = & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                Sync-AiRules1cCheckout
+            }
+            $second.commit | Should -Be $tagCommit
+            $second.commit | Should -Not -Be (& git -C $sourceRoot rev-parse HEAD).Trim()
+        } finally {
+            $env:TEMP = $savedTemp
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "rejects controlled fork main when aiRules.ref is absent" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-fork-main-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"dependencyMode":"fresh","aiRules":{"repo":"https://github.com/xmentosx/itl_ai_rules_1c.git","tools":["kilocode"]}}'
+            $script:pinError = ""
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                try { Sync-AiRules1cCheckout | Out-Null } catch { $script:pinError = $_.Exception.Message }
+            }
+            $script:pinError | Should -Match "requires an immutable configured tag"
+        } finally {
+            Remove-Variable -Name pinError -Scope Script -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }

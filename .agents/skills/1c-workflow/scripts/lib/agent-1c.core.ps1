@@ -1535,7 +1535,8 @@ function New-DefaultProjectConfig {
         devBranchWorktreeRoot = ""
         serverBaseCopyScript = ""
         aiRules = [ordered]@{
-            repo = "https://github.com/comol/ai_rules_1c.git"
+            repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
+            ref = "itl-main-a421cf44-r1"
             tools = @("codex", "kilocode")
         }
         vibecoding1cMcp = [ordered]@{
@@ -1585,9 +1586,15 @@ function New-DefaultDependencyLockManifest {
                 updatedAt = "2026-07-10T00:00:00Z"
             }
             aiRules1c = [ordered]@{
-                repo = "https://github.com/comol/ai_rules_1c.git"
-                ref = "main"
-                commit = "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
+                repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
+                ref = "itl-main-a421cf44-r1"
+                commit = "dc9a767f0cb77418bcae3c52521594b183c1b879"
+                upstreamRepo = "https://github.com/comol/ai_rules_1c.git"
+                upstreamRef = "refs/heads/main"
+                upstreamCommit = "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
+                downstreamRevision = 1
+                compatibilityStatus = "passed"
+                compatibilityCheckedAt = "2026-07-11T21:44:38.2037246Z"
             }
             vanessaAutomation = [ordered]@{
                 version = "1.2.043.28"
@@ -3120,7 +3127,9 @@ function Invoke-NativeProcessAndWaitResult {
         [string]$FilePath,
         [string[]]$Arguments,
         [int]$TimeoutSeconds = 0,
-        [scriptblock]$OnTimeout = $null
+        [scriptblock]$OnTimeout = $null,
+        [scriptblock]$CompletionProbe = $null,
+        [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10
     )
 
     $argumentLine = Join-NativeCommandLineArguments -Arguments $Arguments
@@ -3137,8 +3146,47 @@ function Invoke-NativeProcessAndWaitResult {
 
     $script:LastProcessId = $process.Id
     $script:LastProcessTimedOut = $false
+    $completedByProbe = $false
     if ($TimeoutSeconds -gt 0) {
-        $finished = $process.WaitForExit($TimeoutSeconds * 1000)
+        if ($null -ne $CompletionProbe) {
+            $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+            $probeObservedAt = $null
+            $finished = $process.HasExited
+            while (-not $finished -and [DateTime]::UtcNow -lt $deadline) {
+                $probeComplete = $false
+                try {
+                    $probeComplete = [bool](& $CompletionProbe)
+                } catch {
+                    $probeComplete = $false
+                }
+                if ($probeComplete) {
+                    if ($null -eq $probeObservedAt) {
+                        $probeObservedAt = [DateTime]::UtcNow
+                    }
+                    if (([DateTime]::UtcNow - $probeObservedAt).TotalSeconds -ge $CompletionGraceSeconds) {
+                        $completedByProbe = $true
+                        Write-Host "Process result artifacts are complete; stopping lingering process PID $($process.Id)."
+                        try {
+                            if (-not $process.HasExited) {
+                                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                            }
+                        } catch {
+                        }
+                        try {
+                            $process.WaitForExit(10000) | Out-Null
+                        } catch {
+                        }
+                        $finished = $true
+                        break
+                    }
+                } else {
+                    $probeObservedAt = $null
+                }
+                $finished = $process.WaitForExit(250)
+            }
+        } else {
+            $finished = $process.WaitForExit($TimeoutSeconds * 1000)
+        }
         if (-not $finished) {
             $script:LastProcessTimedOut = $true
             if ($null -ne $OnTimeout) {
@@ -3162,8 +3210,9 @@ function Invoke-NativeProcessAndWaitResult {
     $process.Refresh()
     return [pscustomobject]@{
         processId = $process.Id
-        exitCode = $(if ($script:LastProcessTimedOut) { -1 } else { $process.ExitCode })
+        exitCode = $(if ($script:LastProcessTimedOut) { -1 } elseif ($completedByProbe) { 0 } else { $process.ExitCode })
         timedOut = $script:LastProcessTimedOut
+        completedByProbe = $completedByProbe
     }
 }
 
@@ -3338,6 +3387,8 @@ function Invoke-Enterprise {
         [int]$VanessaTestPort = 0,
         [int]$TimeoutSeconds = 0,
         [scriptblock]$OnTimeout = $null,
+        [scriptblock]$CompletionProbe = $null,
+        [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
     )
@@ -3370,7 +3421,13 @@ function Invoke-Enterprise {
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
 
-    $result = Invoke-NativeProcessAndWaitResult -FilePath $platformPath -Arguments $args -TimeoutSeconds $TimeoutSeconds -OnTimeout $OnTimeout
+    $result = Invoke-NativeProcessAndWaitResult `
+        -FilePath $platformPath `
+        -Arguments $args `
+        -TimeoutSeconds $TimeoutSeconds `
+        -OnTimeout $OnTimeout `
+        -CompletionProbe $CompletionProbe `
+        -CompletionGraceSeconds $CompletionGraceSeconds
     if ($result.timedOut) {
         throw "1C Enterprise timed out after $TimeoutSeconds seconds. PID: $($result.processId). Log: $logPath"
     }

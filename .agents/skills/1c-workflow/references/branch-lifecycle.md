@@ -31,6 +31,8 @@ Use the monitored launcher by default when `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_
 11. Report branch, worktree path, copied infobase path, launcher folder/name, stopped/ready ROCTUP/Vanessa UI MCP status, and publication URL if any.
 12. Print the Russian instruction that the current folder stayed on `master`, the new worktree path, and the developer should open a separate Codex/Kilo/IDE window there. If Kilo still shows a cached command picker, tell the developer to run `/reload` in the new worktree.
 
+If branch creation used `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip` before protection was actually disabled, recover from the branch worktree through the monitored `configure-dev-branch-unsafe-action-protection` helper action. It reopens the normal visible Designer confirmation flow and can record an empty-password local user through `-InfoBaseUser`; do not recreate the branch or mark protection confirmed without the developer's explicit UI action and confirmation.
+
 For extension branches, do not ask for `extensionName` and do not create the extension during branch creation. The extension is created later in the copied branch infobase.
 
 ## Extension Helpers
@@ -48,7 +50,9 @@ Rules:
 
 `activate-dev-branch-context` writes the current branch infobase values into `.dev.env` so upstream `ai_rules_1c` commands such as `/update1cbase`, `/loadfrom1cbase`, and `/getconfigfiles` target the copied branch infobase.
 
-`update-dev-branch-base` loads only changed branch files into the copied branch infobase. After a real file load, ITL launches Enterprise user mode through the bundled auto-update EPF to apply update handlers and answer the legal-copy prompt non-interactively, then restarts already-running ROCTUP/Vanessa UI MCP processes so they see the updated infobase. No-op updates do not launch Enterprise or restart MCP.
+`update-dev-branch-base` loads only changed branch files into the copied branch infobase. When the root `Configuration.xml` changed, it deliberately falls back to a full files load because 1C Designer does not reliably accept that root object through `-listFile`; the changed-file list is still saved as evidence. After a real file load, ITL launches Enterprise user mode through the bundled auto-update EPF to apply update handlers and answer the legal-copy prompt non-interactively, then restarts already-running ROCTUP/Vanessa UI MCP processes so they see the updated infobase. The auto-update process has a finite 900-second default timeout; use local `DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS` only when a project needs a different positive limit. A timeout fails the lifecycle and stops only the helper-owned Enterprise process. No-op updates do not launch Enterprise or restart MCP.
+
+After every successful or failed Vanessa verification, stop branch-owned `TESTMANAGER`/`TESTCLIENT` processes and fail the verification if cleanup cannot be proved. Use the advanced `stop-dev-branch-test-clients` recovery action for leftovers from older runs; it matches the current branch infobase/worktree and must not stop foreign worktrees.
 
 Development branch changes must never be loaded directly into the source infobase connected to 1C configuration repository storage.
 

@@ -365,6 +365,19 @@ function New-ConfigLoadListFile {
     return $listFilePath
 }
 
+function Test-ConfigLoadRequiresFullLoad {
+    param([string[]]$Files)
+
+    foreach ($file in @($Files)) {
+        $normalized = ([string]$file).Replace("/", "\")
+        if ($normalized -ieq "Configuration.xml") {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function New-LoadStateUpdates {
     param(
         [object]$LoadResult,
@@ -462,15 +475,32 @@ function Ensure-DevBranchAutoUpdateEpfs {
     return (Join-Path $installRoot (Get-DevBranchAutoUpdateMainEpfName))
 }
 
+function Get-DevBranchAutoUpdateTimeoutSeconds {
+    $rawValue = Get-Setting `
+        -EnvName "DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS" `
+        -ConfigName "devBranchAutoUpdateTimeoutSeconds" `
+        -Default "900"
+
+    $value = 0
+    if (-not [int]::TryParse(([string]$rawValue).Trim(), [ref]$value) -or $value -le 0) {
+        throw "DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS must be a positive integer. Current value: $rawValue"
+    }
+
+    return $value
+}
+
 function Invoke-DevBranchEnterpriseAutoUpdate {
     param([object]$State)
 
     $epfPath = Ensure-DevBranchAutoUpdateEpfs
+    $timeoutSeconds = Get-DevBranchAutoUpdateTimeoutSeconds
     Write-Host "Running development branch Enterprise auto-update: $epfPath"
+    Write-Host "Development branch Enterprise auto-update timeout: $timeoutSeconds seconds"
     Invoke-Enterprise `
         -InfoBasePath $State.devBranchInfoBasePath `
         -InfoBaseKind $State.infoBaseKind `
-        -EnterpriseArgs @("/Execute", $epfPath) | Out-Null
+        -EnterpriseArgs @("/Execute", $epfPath) `
+        -TimeoutSeconds $timeoutSeconds | Out-Null
 
     return [pscustomobject]@{
         epfPath = $epfPath
@@ -602,14 +632,21 @@ function Load-ConfigFromFiles {
     }
 
     $listFilePath = New-ConfigLoadListFile -State $State -Files $changeSet.files
-    Write-Host "Partial config load file count: $($changeSet.files.Count)"
-    Write-Host "Partial config load list: $listFilePath"
-
     $designerArgs = @("/LoadConfigFromFiles", $changeSet.absoluteExportPath)
     if ($ExtensionName) {
         $designerArgs += @("-Extension", $ExtensionName)
     }
-    $designerArgs += @("-listFile", $listFilePath, "-Format", "Hierarchical", "/UpdateDBCfg")
+
+    if (Test-ConfigLoadRequiresFullLoad -Files $changeSet.files) {
+        Write-Host "Root Configuration.xml changed; using full config load because 1C Designer does not reliably accept it through -listFile."
+        Write-Host "Changed config file count: $($changeSet.files.Count)"
+        Write-Host "Changed config file list: $listFilePath"
+    } else {
+        Write-Host "Partial config load file count: $($changeSet.files.Count)"
+        Write-Host "Partial config load list: $listFilePath"
+        $designerArgs += @("-listFile", $listFilePath)
+    }
+    $designerArgs += @("-Format", "Hierarchical", "/UpdateDBCfg")
 
     Invoke-Designer `
         -InfoBasePath $InfoBasePath `
@@ -914,13 +951,41 @@ function Get-AiRules1cKiloOpenSpecStatus {
     return [pscustomobject]@{ isAvailable = $true; reason = "" }
 }
 
+function Get-AiRules1cRepositoryIdentity {
+    param([string]$Repo)
+
+    if ([string]::IsNullOrWhiteSpace($Repo)) {
+        return ""
+    }
+    $identity = $Repo.Trim().Replace('\', '/').TrimEnd('/').ToLowerInvariant()
+    if ($identity.EndsWith('.git')) {
+        $identity = $identity.Substring(0, $identity.Length - 4)
+    }
+    return $identity
+}
+
+function Test-AiRules1cForkRepository {
+    param([string]$Repo)
+    return (Get-AiRules1cRepositoryIdentity -Repo $Repo) -eq "https://github.com/xmentosx/itl_ai_rules_1c"
+}
+
 function Sync-AiRules1cCheckout {
+    param(
+        [string]$RepoOverride = "",
+        [string]$RefOverride = "",
+        [string]$CommitOverride = ""
+    )
+
     $lockedEntry = Get-DependencyLockEntry -Name "aiRules1c"
-    $repo = Get-ConfigValue -Path "aiRules.repo" -Default "https://github.com/comol/ai_rules_1c.git"
+    $repo = $(if ($RepoOverride) { $RepoOverride } else { Get-ConfigValue -Path "aiRules.repo" -Default "https://github.com/xmentosx/itl_ai_rules_1c.git" })
+    $configuredRef = $(if ($RefOverride) { $RefOverride } else { [string](Get-ConfigValue -Path "aiRules.ref" -Default "") })
     $dependencyMode = Get-DependencyMode
     $lockedRef = ""
     $lockedCommit = ""
-    if ($dependencyMode -eq "locked") {
+    if ($CommitOverride) {
+        $lockedCommit = $CommitOverride
+    }
+    if ($dependencyMode -eq "locked" -and -not $RepoOverride) {
         $lockedRepo = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "repo" -Default "")
         $lockedRef = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "ref" -Default "")
         $lockedCommit = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "commit" -Default "")
@@ -930,6 +995,19 @@ function Sync-AiRules1cCheckout {
         if (-not $lockedRef -and -not $lockedCommit) {
             throw "Dependency mode is locked, but aiRules1c.ref and aiRules1c.commit are empty in .agent-1c/dependency-lock.json."
         }
+    } elseif ($configuredRef -and -not $CommitOverride) {
+        $baselineRepo = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "repo" -Default "")
+        $baselineRef = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "ref" -Default "")
+        if ((Get-AiRules1cRepositoryIdentity -Repo $baselineRepo) -eq (Get-AiRules1cRepositoryIdentity -Repo $repo) -and $baselineRef -eq $configuredRef) {
+            $lockedCommit = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "commit" -Default "")
+        }
+    }
+    if ($RefOverride) {
+        $lockedRef = $RefOverride
+    }
+
+    if ((Test-AiRules1cForkRepository -Repo $repo) -and -not ($configuredRef -or $lockedRef)) {
+        throw "The controlled ai_rules_1c fork requires an immutable configured tag in aiRules.ref; fork main is not allowed."
     }
 
     $tempRoot = Resolve-Agent1cFullPath -Path $env:TEMP
@@ -937,6 +1015,10 @@ function Sync-AiRules1cCheckout {
 
     if (Test-Path -LiteralPath $rulesDir) {
         try {
+            $currentOrigin = (Get-GitOutputAt -Root $rulesDir -Arguments @("remote", "get-url", "origin")).Trim()
+            if ((Get-AiRules1cRepositoryIdentity -Repo $currentOrigin) -ne (Get-AiRules1cRepositoryIdentity -Repo $repo)) {
+                Invoke-GitAt -Root $rulesDir -Arguments @("remote", "set-url", "origin", $repo)
+            }
             Invoke-GitAt -Root $rulesDir -Arguments @("fetch", "--all", "--tags", "--prune")
         } catch {
             throw "Failed to update ai_rules_1c in $rulesDir"
@@ -950,7 +1032,26 @@ function Sync-AiRules1cCheckout {
     }
 
     $resolvedRef = ""
-    if ($dependencyMode -eq "locked") {
+    $effectiveTagRef = $(if ($configuredRef) { $configuredRef } elseif (Test-AiRules1cForkRepository -Repo $repo) { $lockedRef } else { "" })
+    if ($effectiveTagRef) {
+        if ((Test-AiRules1cForkRepository -Repo $repo) -and $effectiveTagRef -notlike "itl-*") {
+            throw "Controlled fork ref must be an immutable ITL tag matching 'itl-*': $effectiveTagRef"
+        }
+        $tagRef = "refs/tags/$effectiveTagRef"
+        if (-not (Test-GitRefExistsAt -Root $rulesDir -Ref $tagRef)) {
+            throw "Configured ai_rules_1c ref is not an available tag: $effectiveTagRef"
+        }
+        $tagCommit = (Get-GitOutputAt -Root $rulesDir -Arguments @("rev-parse", "$tagRef^{commit}")).Trim()
+        if ($lockedCommit -and $tagCommit -ne $lockedCommit) {
+            throw "ai_rules_1c tag/commit mismatch for '$effectiveTagRef': tag=$tagCommit lock=$lockedCommit"
+        }
+        try {
+            Invoke-GitAt -Root $rulesDir -Arguments @("checkout", "--detach", $tagCommit)
+        } catch {
+            throw "Failed to checkout pinned ai_rules_1c tag '$effectiveTagRef' in $rulesDir"
+        }
+        $resolvedRef = $effectiveTagRef
+    } elseif ($dependencyMode -eq "locked" -or $lockedCommit) {
         $checkoutTarget = $(if ($lockedCommit) { $lockedCommit } else { $lockedRef })
         try {
             Invoke-GitAt -Root $rulesDir -Arguments @("checkout", "--detach", $checkoutTarget)
@@ -975,6 +1076,7 @@ function Sync-AiRules1cCheckout {
         root = $rulesDir
         repo = $repo
         ref = $resolvedRef
+        commit = (Get-GitOutputAt -Root $rulesDir -Arguments @("rev-parse", "HEAD")).Trim()
     }
 }
 
@@ -1815,9 +1917,16 @@ function Update-WorkflowPackage {
 
     if ($SkipAiRules) {
         Write-Host "Skipping ai_rules_1c update because -SkipAiRules was specified."
+        $migrationPlan = Get-AiRulesMigrationPlan
+        if ($migrationPlan.status -eq "eligible") {
+            Write-Host "ai_rules_1c migration remains pending because -SkipAiRules was specified: $($migrationPlan.target.ref)"
+        }
         Sync-KiloItlCommandSurface
     } else {
-        Update-AiRules1c
+        $migration = Invoke-AiRulesBaselineMigration
+        if (-not $migration.migrated -and -not $migration.suppressRegularUpdate) {
+            Update-AiRules1c
+        }
     }
 
     Write-Host "ITL workflow package updated from $($source.source): $($source.root)"
@@ -2505,7 +2614,9 @@ function Confirm-DevBranchUnsafeActionProtection {
     param(
         [string]$InfoBaseKind,
         [string]$InfoBasePath,
-        [string]$DevBranchName
+        [string]$DevBranchName,
+        [ValidateSet("", "manual-confirm", "skip")]
+        [string]$SetupModeOverride = ""
     )
 
     function Get-UnsafeActionProtectionMessage {
@@ -2536,7 +2647,7 @@ function Confirm-DevBranchUnsafeActionProtection {
         return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($messages[$Index]))
     }
 
-    $mode = Get-DevBranchUnsafeActionProtectionSetup
+    $mode = if ($SetupModeOverride) { $SetupModeOverride } else { Get-DevBranchUnsafeActionProtectionSetup }
     $user = [string](Get-EnvValue -Name "IB_USER")
     if ($mode -eq "skip") {
         Write-Host (Get-UnsafeActionProtectionMessage 0)
@@ -2593,6 +2704,35 @@ function Confirm-DevBranchUnsafeActionProtection {
             -User $user `
             -Password (Get-EnvValue -Name "IB_PASSWORD") | Out-Null
     }
+}
+
+function Configure-DevBranchUnsafeActionProtection {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "configure-dev-branch-unsafe-action-protection"
+
+    if ($InfoBaseUser) {
+        Set-DotEnvValues -Values @{ IB_USER = $InfoBaseUser }
+        Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+    }
+    Sync-DevBranchContextToDotEnv -State $state
+
+    $result = Confirm-DevBranchUnsafeActionProtection `
+        -InfoBaseKind $state.infoBaseKind `
+        -InfoBasePath $state.devBranchInfoBasePath `
+        -DevBranchName $state.devBranchName `
+        -SetupModeOverride "manual-confirm"
+
+    Update-DevBranchState -State $state -Updates @{
+        unsafeActionProtectionSetupMode = $result.mode
+        unsafeActionProtectionConfirmed = $result.confirmed
+        unsafeActionProtectionConfirmedAt = $result.confirmedAt
+        unsafeActionProtectionUser = $result.user
+    }
+
+    Write-Host "Development branch unsafe action protection setup confirmed."
+    Write-Host "Branch: $($state.devBranch)"
+    Write-Host "Infobase: $($state.devBranchInfoBasePath)"
+    Write-Host "Infobase user: $($result.user)"
 }
 
 function Publish-DevBranchToWeb {
@@ -3545,6 +3685,7 @@ function Show-WorkflowStatus {
     Write-Host "Git commit: $currentCommit"
     Write-Host "Git worktree: $(if ($dirty) { 'dirty' } else { 'clean' })"
     Write-WorkflowPackageStatusLines
+    Write-AiRules1cStatusLines
 
     if ($currentBranch -notlike "itldev/*") {
         Write-Vibecoding1cMcpStatusLines

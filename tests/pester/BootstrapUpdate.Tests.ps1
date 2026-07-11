@@ -345,6 +345,8 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Match "ITL_WORKFLOW_SOURCE_PATH"
         $HelperText | Should -Match "workflowPackage"
         $HelperText | Should -Match "Update-WorkflowPackageLockEntry"
+        $HelperText | Should -Match "Invoke-AiRulesBaselineMigration"
+        $HelperText | Should -Match "migration remains pending"
         $HelperText | Should -Match "install-agent-1c-workflow\.ps1"
         $HelperText | Should -Match "Update-AgentGuidanceBridge"
         $HelperText | Should -Match "Update-UserRules"

@@ -46,7 +46,8 @@ Use this as `.agent-1c/project.json`:
   "devBranchInfoBaseRoot": ".agent-1c/infobases/dev-branches",
   "devBranchWorktreeRoot": "",
   "aiRules": {
-    "repo": "https://github.com/comol/ai_rules_1c.git",
+    "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
+    "ref": "itl-main-a421cf44-r1",
     "tools": ["codex", "kilocode"]
   }
 }
