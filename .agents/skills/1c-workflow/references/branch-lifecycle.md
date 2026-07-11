@@ -31,6 +31,8 @@ Use the monitored launcher by default when `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_
 11. Report branch, worktree path, copied infobase path, launcher folder/name, stopped/ready ROCTUP/Vanessa UI MCP status, and publication URL if any.
 12. Print the Russian instruction that the current folder stayed on `master`, the new worktree path, and the developer should open a separate Codex/Kilo/IDE window there. If Kilo still shows a cached command picker, tell the developer to run `/reload` in the new worktree.
 
+If branch creation used `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip` before protection was actually disabled, recover from the branch worktree through the monitored `configure-dev-branch-unsafe-action-protection` helper action. It reopens the normal visible Designer confirmation flow and can record an empty-password local user through `-InfoBaseUser`; do not recreate the branch or mark protection confirmed without the developer's explicit UI action and confirmation.
+
 For extension branches, do not ask for `extensionName` and do not create the extension during branch creation. The extension is created later in the copied branch infobase.
 
 ## Extension Helpers

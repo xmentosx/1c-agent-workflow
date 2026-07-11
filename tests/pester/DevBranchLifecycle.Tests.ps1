@@ -1544,6 +1544,67 @@ if (`$?) { exit 0 } else { exit 1 }
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\branch-lifecycle.md")) | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP"
     }
 
+    It "provides monitored unsafe action protection recovery for an existing branch" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help -InfoBaseUser "itl_e2e" *> $null
+
+            $script:SavedDotEnv = @{}
+            $script:CapturedConfirmation = $null
+            $script:CapturedUpdates = @{}
+            function Read-DevBranchState {
+                return [pscustomobject]@{
+                    devBranch = "itldev/workflow-release-e2e"
+                    devBranchName = "workflow-release-e2e"
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = "C:\bases\workflow-release-e2e"
+                }
+            }
+            function Assert-DevelopmentBranchWorktreeContext {}
+            function Set-DotEnvValues { param([hashtable]$Values) $script:SavedDotEnv = $Values }
+            function Import-DotEnv {}
+            function Sync-DevBranchContextToDotEnv {}
+            function Confirm-DevBranchUnsafeActionProtection {
+                param(
+                    [string]$InfoBaseKind,
+                    [string]$InfoBasePath,
+                    [string]$DevBranchName,
+                    [string]$SetupModeOverride
+                )
+                $script:CapturedConfirmation = [pscustomobject]@{
+                    infoBaseKind = $InfoBaseKind
+                    infoBasePath = $InfoBasePath
+                    devBranchName = $DevBranchName
+                    setupModeOverride = $SetupModeOverride
+                }
+                return [pscustomobject]@{
+                    mode = "manual-confirm"
+                    confirmed = $true
+                    confirmedAt = "2026-07-11T20:00:00+03:00"
+                    user = "itl_e2e"
+                }
+            }
+            function Update-DevBranchState {
+                param([object]$State, [hashtable]$Updates)
+                $script:CapturedUpdates = $Updates
+            }
+
+            Configure-DevBranchUnsafeActionProtection 6>$null
+            [pscustomobject]@{
+                savedDotEnv = $script:SavedDotEnv
+                confirmation = $script:CapturedConfirmation
+                updates = $script:CapturedUpdates
+            }
+        }
+
+        $result.savedDotEnv.IB_USER | Should -Be "itl_e2e"
+        $result.confirmation.setupModeOverride | Should -Be "manual-confirm"
+        $result.confirmation.infoBasePath | Should -Be "C:\bases\workflow-release-e2e"
+        $result.updates.unsafeActionProtectionConfirmed | Should -BeTrue
+        $result.updates.unsafeActionProtectionUser | Should -Be "itl_e2e"
+        $HelperText | Should -Match '"configure-dev-branch-unsafe-action-protection" \{ Configure-DevBranchUnsafeActionProtection \}'
+        (Get-Content -Raw -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")) | Should -Match "configure-dev-branch-unsafe-action-protection"
+    }
+
     It "routes interactive branch creation through the monitored launcher" {
         $configBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template")
         $extensionBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template")

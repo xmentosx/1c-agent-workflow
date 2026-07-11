@@ -2614,7 +2614,9 @@ function Confirm-DevBranchUnsafeActionProtection {
     param(
         [string]$InfoBaseKind,
         [string]$InfoBasePath,
-        [string]$DevBranchName
+        [string]$DevBranchName,
+        [ValidateSet("", "manual-confirm", "skip")]
+        [string]$SetupModeOverride = ""
     )
 
     function Get-UnsafeActionProtectionMessage {
@@ -2645,7 +2647,7 @@ function Confirm-DevBranchUnsafeActionProtection {
         return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($messages[$Index]))
     }
 
-    $mode = Get-DevBranchUnsafeActionProtectionSetup
+    $mode = if ($SetupModeOverride) { $SetupModeOverride } else { Get-DevBranchUnsafeActionProtectionSetup }
     $user = [string](Get-EnvValue -Name "IB_USER")
     if ($mode -eq "skip") {
         Write-Host (Get-UnsafeActionProtectionMessage 0)
@@ -2702,6 +2704,35 @@ function Confirm-DevBranchUnsafeActionProtection {
             -User $user `
             -Password (Get-EnvValue -Name "IB_PASSWORD") | Out-Null
     }
+}
+
+function Configure-DevBranchUnsafeActionProtection {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "configure-dev-branch-unsafe-action-protection"
+
+    if ($InfoBaseUser) {
+        Set-DotEnvValues -Values @{ IB_USER = $InfoBaseUser }
+        Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+    }
+    Sync-DevBranchContextToDotEnv -State $state
+
+    $result = Confirm-DevBranchUnsafeActionProtection `
+        -InfoBaseKind $state.infoBaseKind `
+        -InfoBasePath $state.devBranchInfoBasePath `
+        -DevBranchName $state.devBranchName `
+        -SetupModeOverride "manual-confirm"
+
+    Update-DevBranchState -State $state -Updates @{
+        unsafeActionProtectionSetupMode = $result.mode
+        unsafeActionProtectionConfirmed = $result.confirmed
+        unsafeActionProtectionConfirmedAt = $result.confirmedAt
+        unsafeActionProtectionUser = $result.user
+    }
+
+    Write-Host "Development branch unsafe action protection setup confirmed."
+    Write-Host "Branch: $($state.devBranch)"
+    Write-Host "Infobase: $($state.devBranchInfoBasePath)"
+    Write-Host "Infobase user: $($result.user)"
 }
 
 function Publish-DevBranchToWeb {

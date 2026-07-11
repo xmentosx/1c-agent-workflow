@@ -44,6 +44,7 @@ update-ai-rules
 sync-master
 new-dev-branch
 new-extension-dev-branch
+configure-dev-branch-unsafe-action-protection
 set-dev-branch-extension
 dump-dev-branch-extension
 activate-dev-branch-context
@@ -61,6 +62,8 @@ status
 ```
 
 Extension helper actions and branch-local MCP actions are advanced/helper commands. Keep `set-dev-branch-extension`, `dump-dev-branch-extension`, ROCTUP MCP actions, and Vanessa UI MCP actions available through helper actions or natural-language requests, but do not generate them as visible Kilo slash commands. New development branches prepare ROCTUP and Vanessa UI MCP as stopped/ready. Start Vanessa UI MCP only for a named runtime UI question, recording, or debugging operation; stop it afterwards, and reload or restart Kilo Code if a manually started server is not visible.
+
+`configure-dev-branch-unsafe-action-protection` is an interactive recovery action for an existing development worktree when branch creation used `skip` before protection was actually disabled. Run it through `run-agent-1c-window.ps1`, optionally passing `-InfoBaseUser <name>` for an empty-password local user. It forces the normal visible Designer confirmation flow and records confirmation in branch state; it never disables protection automatically.
 
 ROCTUP MCP actions (`install-roctup-mcp`, `update-roctup-mcp`, `start-roctup-mcp`, `stop-roctup-mcp`, `roctup-mcp-status`) manage the ignored EPF/skills cache and the branch-local embedded data MCP. ROCTUP is the preferred data channel for branch infobases and does not need web publication; start it for focused data exploration and stop it after use.
 
