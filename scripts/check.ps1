@@ -213,8 +213,10 @@ try {
     if ($Mode -eq "Release") {
         $e2eReportPath = Join-Path $outputRoot "release-e2e-summary.json"
         $e2eScript = Join-Path $repoRoot "scripts\invoke-release-e2e.ps1"
+        $releaseHelperPath = Join-Path $repoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
         Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments @(
             "-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)),
+            "-HelperPath", $releaseHelperPath,
             "-OutputPath", $e2eReportPath
         ) -TimeoutSeconds 14400 -LogName "release-e2e"
         Add-StageResult -Name "release-e2e" -Status "passed" -Detail $e2eReportPath

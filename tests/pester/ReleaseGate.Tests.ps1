@@ -24,6 +24,8 @@ Describe "Release gate scripts" {
         $text | Should -Match 'Release mode requires -E2EProjectRoot'
         $text | Should -Match 'compatibilityStatus'
         $text | Should -Match 'release-e2e-summary.json'
+        $text | Should -Match '\$releaseHelperPath'
+        $text | Should -Match '"-HelperPath", \$releaseHelperPath'
         $runnerText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") -Raw -Encoding UTF8
         $runnerText | Should -Match 'SOURCE_INFOBASE_PATH must be a disposable snapshot inside the stand'
         (Get-Content -LiteralPath (Join-Path $RepoRoot "docs\release-checklist.md") -Raw -Encoding UTF8) | Should -Match 'source-snapshot'

@@ -33,7 +33,9 @@ From a clean workflow checkout and a clean fork checkout at the annotated
 ```
 
 The command runs the complete static gate, fork gate and compatibility check,
-then executes the E2E branch check and export. Success requires a verification
+then executes the E2E branch check and export using the helper from the clean
+workflow checkout being released, not a possibly stale helper copy in the
+stand. Success requires a verification
 timestamp from the current run, `Verification fresh passed: True`, a CF/CFE
 manifest without override, matching artifact SHA256, and successful Vanessa UI
 MCP/ROCTUP MCP cleanup.
