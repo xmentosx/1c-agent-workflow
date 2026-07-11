@@ -150,13 +150,15 @@
                     param(
                         [string]$InfoBasePath,
                         [string]$InfoBaseKind,
-                        [string[]]$EnterpriseArgs
+                        [string[]]$EnterpriseArgs,
+                        [int]$TimeoutSeconds
                     )
                     $script:LastLogPath = "C:\logs\enterprise-auto-update.log"
                     $script:EnterpriseCalls += [pscustomobject]@{
                         infoBasePath = $InfoBasePath
                         infoBaseKind = $InfoBaseKind
                         enterpriseArgs = @($EnterpriseArgs)
+                        timeoutSeconds = $TimeoutSeconds
                     }
                 }
 
@@ -189,6 +191,7 @@
             $enterpriseCalls.calls[0].enterpriseArgs | Should -Contain "/Execute"
             $enterpriseCalls.calls[0].enterpriseArgs[1] | Should -Be (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.mainEpf)
             $enterpriseCalls.calls[0].enterpriseArgs[1] | Should -Not -Be (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.deferredEpf)
+            $enterpriseCalls.calls[0].timeoutSeconds | Should -Be 900
             $enterpriseCalls.updates["lastEnterpriseAutoUpdateLogPath"] | Should -Be "C:\logs\enterprise-auto-update.log"
             Test-Path -LiteralPath (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.mainEpf) -PathType Leaf | Should -Be $true
             Test-Path -LiteralPath (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.deferredEpf) -PathType Leaf | Should -Be $true
@@ -336,6 +339,28 @@
             if (Test-Path -LiteralPath $tempParent -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempParent -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "validates and applies a local dev branch auto-update timeout" {
+        $oldTimeout = $env:DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS
+        try {
+            $env:DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS = "60"
+            $value = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                Get-DevBranchAutoUpdateTimeoutSeconds
+            }
+            $value | Should -Be 60
+
+            $env:DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS = "0"
+            {
+                & {
+                    . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                    Get-DevBranchAutoUpdateTimeoutSeconds
+                }
+            } | Should -Throw "*must be a positive integer*"
+        } finally {
+            $env:DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS = $oldTimeout
         }
     }
 

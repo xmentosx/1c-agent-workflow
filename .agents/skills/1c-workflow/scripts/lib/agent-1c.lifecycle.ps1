@@ -475,15 +475,32 @@ function Ensure-DevBranchAutoUpdateEpfs {
     return (Join-Path $installRoot (Get-DevBranchAutoUpdateMainEpfName))
 }
 
+function Get-DevBranchAutoUpdateTimeoutSeconds {
+    $rawValue = Get-Setting `
+        -EnvName "DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS" `
+        -ConfigName "devBranchAutoUpdateTimeoutSeconds" `
+        -Default "900"
+
+    $value = 0
+    if (-not [int]::TryParse(([string]$rawValue).Trim(), [ref]$value) -or $value -le 0) {
+        throw "DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS must be a positive integer. Current value: $rawValue"
+    }
+
+    return $value
+}
+
 function Invoke-DevBranchEnterpriseAutoUpdate {
     param([object]$State)
 
     $epfPath = Ensure-DevBranchAutoUpdateEpfs
+    $timeoutSeconds = Get-DevBranchAutoUpdateTimeoutSeconds
     Write-Host "Running development branch Enterprise auto-update: $epfPath"
+    Write-Host "Development branch Enterprise auto-update timeout: $timeoutSeconds seconds"
     Invoke-Enterprise `
         -InfoBasePath $State.devBranchInfoBasePath `
         -InfoBaseKind $State.infoBaseKind `
-        -EnterpriseArgs @("/Execute", $epfPath) | Out-Null
+        -EnterpriseArgs @("/Execute", $epfPath) `
+        -TimeoutSeconds $timeoutSeconds | Out-Null
 
     return [pscustomobject]@{
         epfPath = $epfPath
