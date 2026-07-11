@@ -10,15 +10,15 @@
       "updatedAt": "2026-07-10T00:00:00Z"
     },
     "aiRules1c": {
-      "repo": "https://github.com/comol/ai_rules_1c.git",
-      "ref": "main",
-      "commit": "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826",
+      "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
+      "ref": "itl-main-a421cf44-r1",
+      "commit": "dc9a767f0cb77418bcae3c52521594b183c1b879",
       "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
-      "upstreamRef": "",
-      "upstreamCommit": "",
-      "downstreamRevision": 0,
-      "compatibilityStatus": "legacy-baseline",
-      "compatibilityCheckedAt": ""
+      "upstreamRef": "refs/heads/main",
+      "upstreamCommit": "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826",
+      "downstreamRevision": 1,
+      "compatibilityStatus": "passed",
+      "compatibilityCheckedAt": "2026-07-11T21:44:38.2037246Z"
     },
     "vanessaAutomation": {
       "version": "1.2.043.28",

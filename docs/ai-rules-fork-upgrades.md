@@ -2,21 +2,29 @@
 
 ## Current state
 
-Until upstream publishes a release tag, the workflow template remains on the
-legacy upstream repository and `aiRules.ref` is empty. Migration code is dormant
-in this state. `upstream/main` is not accepted as a fork release base.
+The workflow template is pinned to the controlled fork release
+`itl-main-a421cf44-r1` at commit
+`dc9a767f0cb77418bcae3c52521594b183c1b879`. Its upstream provenance is the
+explicit snapshot `refs/heads/main` at
+`a421cf44eb1f5859cf2a2b74884f8fbcaefc4826`. The moving `upstream/main` name is
+never consumed by projects.
 
 ## Fork release intake
 
-In `D:\Git\itl_ai_rules_1c`, create the upgrade branch only from a real tag:
+Prefer a real upstream tag. If upstream continues to publish only `main`, pass
+the full 40-character SHA of its current remote tip explicitly:
 
 ```powershell
-.\scripts\new-upstream-upgrade.ps1 -UpstreamTag <upstream-tag>
+git ls-remote upstream refs/heads/main
+.\scripts\new-upstream-upgrade.ps1 `
+  -UpstreamCommit <40-character-sha> -UpstreamBranch main
 ```
 
 Review the generated intake report, classify every downstream patch as `keep`,
 `drop`, or `rewrite`, adapt the official installer, and run the fork Full gate.
-After review, publish an immutable tag with `publish-fork-release.ps1`.
+After review, preview with `publish-fork-release.ps1 -WhatIf`, then publish once
+with `-Push`. A full SHA is resolved only during intake; projects use only the
+resulting immutable annotated `itl-*` tag and exact fork commit.
 
 ## Workflow activation
 
@@ -49,4 +57,3 @@ review. `-SkipAiRules` leaves an eligible migration explicitly pending.
 
 Legacy global `~/.codex/prompts` are reported by the fork migration but are not
 automatically deleted because they are shared user-scope files.
-

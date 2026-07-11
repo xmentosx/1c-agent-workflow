@@ -2,9 +2,9 @@
 
 ## One-time dedicated stand setup
 
-1. Create `D:\Git\itl-workflow-e2e` and copy a safe non-production file
+1. Create `D:\Git\itl-workflow-e2e-pm5` and copy a safe non-production file
    infobase into the ignored local directory
-   `D:\Git\itl-workflow-e2e\.agent-1c\infobases\source-snapshot`.
+   `D:\Git\itl-workflow-e2e-pm5\.agent-1c\infobases\source-snapshot`.
 2. Initialize the project with the normal ITL wizard, but point
    `SOURCE_INFOBASE_PATH` only at that in-stand snapshot. Never point the
    dedicated stand at an external source or production infobase: even a
@@ -29,7 +29,7 @@ From a clean workflow checkout and a clean fork checkout at the annotated
 ```powershell
 .\scripts\check.ps1 -Mode Release `
   -AiRulesSource D:\Git\itl_ai_rules_1c `
-  -E2EProjectRoot D:\Git\itl-workflow-e2e
+  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
 The command runs the complete static gate, fork gate and compatibility check,

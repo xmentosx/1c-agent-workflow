@@ -33,7 +33,7 @@ annotated `itl-*` tag, совпадающем с tag и commit в workflow templ
 ```powershell
 .\scripts\check.ps1 -Mode Release `
   -AiRulesSource D:\Git\itl_ai_rules_1c `
-  -E2EProjectRoot D:\Git\itl-workflow-e2e
+  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
 Стенд настраивается локальным `.agent-1c/release-e2e.json` по примеру

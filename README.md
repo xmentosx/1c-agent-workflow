@@ -53,7 +53,7 @@ VANESSA-TESTS-GUIDE.md
 - `.agents/skills/itl-vanessa-ui-mcp` - skill для branch-local runtime UI investigation, recording и debugging; не для прогона тестов.
 - `.agents/skills/1c-workflow/kilo-command-templates` - шаблоны коротких slash-команд Kilo Code.
 - `.kilo/commands/itl*.md` - локально сгенерированная командная поверхность для текущей папки/worktree; игнорируется Git.
-- `aiRules.repo`, `aiRules.ref` и `aiRules.tools` в `.agent-1c/project.json` - источник, immutable tag и клиенты правил. До первого fork release `ref` пуст и действует legacy upstream; после активации fork `fresh` не сдвигает pinned tag. OpenSpec-команды устанавливает `ai_rules_1c`, а ITL создаёт только `/itl*`.
+- `aiRules.repo`, `aiRules.ref` и `aiRules.tools` в `.agent-1c/project.json` - источник, immutable tag и клиенты правил. Шаблон закреплён на проверенном fork tag; `fresh` не сдвигает его автоматически. Legacy upstream-проекты мигрируют транзакционно при `update-workflow`, если не содержат пользовательских изменений. OpenSpec-команды устанавливает `ai_rules_1c`, а ITL создаёт только `/itl*`.
 - `scripts/check.ps1` - канонический локальный quality gate; `Full` запускается по умолчанию, `Fast` используется для короткого цикла разработки.
 - `scripts/test-ai-rules-compatibility.ps1` - network compatibility-проверка актуальной `ai_rules_1c` для Codex и Kilo; входит в `scripts/check.ps1 -Mode Full`.
 - `docs/local-quality-gate.md` - режимы локальной проверки, offline-поведение и подготовка совместной проверки с fork.

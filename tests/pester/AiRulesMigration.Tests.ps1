@@ -21,17 +21,17 @@ BeforeAll {
         $targetConfig = [ordered]@{
             aiRules = [ordered]@{
                 repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-                ref = $(if ($ConfigureTarget) { "itl-v2.0.0-r1" } else { "" })
+                ref = $(if ($ConfigureTarget) { "itl-main-a421cf44-r1" } else { "" })
                 tools = @("codex", "kilocode")
             }
         }
         $targetEntry = [ordered]@{
             repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            ref = "itl-v2.0.0-r1"
-            commit = "2222222222222222222222222222222222222222"
+            ref = "itl-main-a421cf44-r1"
+            commit = "dc9a767f0cb77418bcae3c52521594b183c1b879"
             upstreamRepo = "https://github.com/comol/ai_rules_1c.git"
-            upstreamRef = "v2.0.0"
-            upstreamCommit = "1111111111111111111111111111111111111111"
+            upstreamRef = "refs/heads/main"
+            upstreamCommit = "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
             downstreamRevision = 1
             compatibilityStatus = $(if ($ConfigureTarget) { "passed" } else { "legacy-baseline" })
             compatibilityCheckedAt = "2026-07-11T00:00:00Z"
@@ -44,7 +44,7 @@ BeforeAll {
                 aiRules1c = [ordered]@{
                     repo = $CurrentRepo
                     ref = $(if ($CurrentRef) { $CurrentRef } else { "main" })
-                    commit = "1111111111111111111111111111111111111111"
+                    commit = "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
                 }
             }
         }
@@ -111,9 +111,9 @@ Describe "ai_rules_1c transactional migration" {
             $config = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $lock = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $config.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            $config.aiRules.ref | Should -Be "itl-v2.0.0-r1"
-            $lock.dependencies.aiRules1c.commit | Should -Be "2222222222222222222222222222222222222222"
-            $lock.dependencies.aiRules1c.upstreamRef | Should -Be "v2.0.0"
+            $config.aiRules.ref | Should -Be "itl-main-a421cf44-r1"
+            $lock.dependencies.aiRules1c.commit | Should -Be "dc9a767f0cb77418bcae3c52521594b183c1b879"
+            $lock.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
             Test-Path -LiteralPath (Join-Path $result.snapshotRoot "migration-report.json") | Should -BeTrue
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -150,4 +150,3 @@ Describe "ai_rules_1c transactional migration" {
         }
     }
 }
-

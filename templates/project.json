@@ -21,8 +21,8 @@
   "devBranchWorktreeRoot": "",
   "serverBaseCopyScript": "",
   "aiRules": {
-    "repo": "https://github.com/comol/ai_rules_1c.git",
-    "ref": "",
+    "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
+    "ref": "itl-main-a421cf44-r1",
     "tools": ["codex", "kilocode"]
   },
   "vibecoding1cMcp": {

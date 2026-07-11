@@ -977,7 +977,7 @@ function Sync-AiRules1cCheckout {
     )
 
     $lockedEntry = Get-DependencyLockEntry -Name "aiRules1c"
-    $repo = $(if ($RepoOverride) { $RepoOverride } else { Get-ConfigValue -Path "aiRules.repo" -Default "https://github.com/comol/ai_rules_1c.git" })
+    $repo = $(if ($RepoOverride) { $RepoOverride } else { Get-ConfigValue -Path "aiRules.repo" -Default "https://github.com/xmentosx/itl_ai_rules_1c.git" })
     $configuredRef = $(if ($RefOverride) { $RefOverride } else { [string](Get-ConfigValue -Path "aiRules.ref" -Default "") })
     $dependencyMode = Get-DependencyMode
     $lockedRef = ""

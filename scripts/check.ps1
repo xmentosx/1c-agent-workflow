@@ -95,7 +95,7 @@ function Resolve-AiRulesSource {
     if (-not [string]::IsNullOrWhiteSpace($env:ITL_AI_RULES_SOURCE_PATH)) {
         return $env:ITL_AI_RULES_SOURCE_PATH
     }
-    return "https://github.com/comol/ai_rules_1c.git"
+    return "https://github.com/xmentosx/itl_ai_rules_1c.git"
 }
 
 function Get-LocalForkRelease {
