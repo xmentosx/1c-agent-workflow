@@ -136,13 +136,13 @@
         $developerGuideText | Should -Not -Match ([regex]::Escape("Refresh-DevBranch"))
     }
 
-    It 'keeps Pester CI output under ignored build test-results path' {
-        $ciText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.github\workflows\ci.yml')
+    It 'keeps the local gate output under ignored build test-results path' {
+        $checkText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot 'scripts\check.ps1')
         $testScriptText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot 'scripts\test.ps1')
-        $ciText | Should -Match ([regex]::Escape('build\test-results\pester\testResults.xml'))
-        $ciText | Should -Match ([regex]::Escape('.\scripts\test.ps1'))
-        $ciText | Should -Match '-CI'
-        $ciText | Should -Match '-OutputFile'
+        Test-Path -LiteralPath (Join-Path $RepoRoot '.github\workflows\ci.yml') | Should -BeFalse
+        $checkText | Should -Match ([regex]::Escape('build\test-results\local'))
+        $checkText | Should -Match 'New-PesterConfiguration'
+        $checkText | Should -Match 'TestResult\.OutputPath'
         $testScriptText | Should -Match 'New-PesterConfiguration'
         $testScriptText | Should -Match 'TestResult\.OutputPath'
 
