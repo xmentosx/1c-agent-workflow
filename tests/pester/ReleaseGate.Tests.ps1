@@ -73,6 +73,8 @@ Describe "Release E2E orchestration" {
             Set-Content -LiteralPath $helperPath -Encoding UTF8 -Value @'
 [CmdletBinding()]
 param([string]$ProjectRoot, [string]$Action, [string]$DevBranchName)
+$actionLogPath = Join-Path $ProjectRoot ".agent-1c\release-e2e-actions.log"
+Add-Content -LiteralPath $actionLogPath -Encoding UTF8 -Value $Action
 $statePath = Join-Path $ProjectRoot ".agent-1c\dev-branches\workflow-release-e2e.json"
 $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
 switch ($Action) {
@@ -94,6 +96,7 @@ switch ($Action) {
         $state | Add-Member -NotePropertyName lastResultPath -NotePropertyValue $artifact -Force
         Set-Content -LiteralPath $statePath -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 8)
     }
+    "stop-dev-branch-test-clients" { }
     "stop-vanessa-mcp" { }
     "stop-roctup-mcp" { }
     default { throw "unexpected action: $Action" }
@@ -108,6 +111,8 @@ switch ($Action) {
             $summary.sourceSnapshotPath | Should -Be $sourceSnapshot
             $summary.artifactSha256 | Should -Not -BeNullOrEmpty
             $summary.cleanupFailures.Count | Should -Be 0
+            $actions = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\release-e2e-actions.log") -Encoding UTF8
+            $actions | Should -Contain "stop-dev-branch-test-clients"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

@@ -1535,6 +1535,15 @@ function Run-DevBranchTests {
         }
     }
 
+    try {
+        Stop-OwnVanessaTestProcessesAndAssert -State $state
+    } catch {
+        $verification = [pscustomobject]@{
+            status = "failed"
+            reason = "$($verification.reason) Vanessa process cleanup: $($_.Exception.Message)"
+        }
+    }
+
     Update-DevBranchState -State $state -Updates @{
         lastVanessaTestAt = (Get-Date).ToString("o")
         lastVanessaStartedAt = $runStartedAt.ToString("o")
@@ -2182,6 +2191,42 @@ function Resolve-VanessaMcpPort {
         -ReservedPorts $reserved `
         -State $State `
         -Subject "Vanessa UI MCP port")
+}
+
+function Get-OwnVanessaTestProcesses {
+    param([object]$State)
+
+    return @(Get-OneCProcessInfo | Where-Object {
+        (Test-OneCVanessaTestProcess -ProcessInfo $_) -and
+        (Test-OneCProcessBelongsToState -ProcessInfo $_ -State $State)
+    })
+}
+
+function Stop-OwnVanessaTestProcessesAndAssert {
+    param([object]$State)
+
+    $ownProcesses = @(Get-OwnVanessaTestProcesses -State $State)
+    foreach ($processInfo in $ownProcesses) {
+        Write-Host "Stopping own Vanessa TESTMANAGER/TESTCLIENT process: $(Format-OneCProcessInfo -ProcessInfo $processInfo)"
+        Stop-Process -Id $processInfo.processId -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($ownProcesses.Count -gt 0) {
+        Start-Sleep -Milliseconds 300
+    }
+    $remaining = @(Get-OwnVanessaTestProcesses -State $State)
+    if ($remaining.Count -gt 0) {
+        $details = ($remaining | ForEach-Object { Format-OneCProcessInfo -ProcessInfo $_ }) -join [Environment]::NewLine
+        throw "Branch-local Vanessa TESTMANAGER/TESTCLIENT cleanup failed:$([Environment]::NewLine)$details"
+    }
+
+    Write-Host "Branch-local Vanessa test process cleanup passed. Stopped: $($ownProcesses.Count)"
+}
+
+function Stop-DevBranchTestClients {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "stop-dev-branch-test-clients"
+    Stop-OwnVanessaTestProcessesAndAssert -State $state
 }
 
 function Read-CurrentDevBranchStateForVanessaMcp {

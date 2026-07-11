@@ -52,6 +52,8 @@ Rules:
 
 `update-dev-branch-base` loads only changed branch files into the copied branch infobase. When the root `Configuration.xml` changed, it deliberately falls back to a full files load because 1C Designer does not reliably accept that root object through `-listFile`; the changed-file list is still saved as evidence. After a real file load, ITL launches Enterprise user mode through the bundled auto-update EPF to apply update handlers and answer the legal-copy prompt non-interactively, then restarts already-running ROCTUP/Vanessa UI MCP processes so they see the updated infobase. The auto-update process has a finite 900-second default timeout; use local `DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS` only when a project needs a different positive limit. A timeout fails the lifecycle and stops only the helper-owned Enterprise process. No-op updates do not launch Enterprise or restart MCP.
 
+After every successful or failed Vanessa verification, stop branch-owned `TESTMANAGER`/`TESTCLIENT` processes and fail the verification if cleanup cannot be proved. Use the advanced `stop-dev-branch-test-clients` recovery action for leftovers from older runs; it matches the current branch infobase/worktree and must not stop foreign worktrees.
+
 Development branch changes must never be loaded directly into the source infobase connected to 1C configuration repository storage.
 
 ## STATUS / LIST / SWITCH

@@ -1544,6 +1544,46 @@ if (`$?) { exit 0 } else { exit 1 }
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\branch-lifecycle.md")) | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP"
     }
 
+    It "stops only current-branch Vanessa test processes and exposes release cleanup action" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-process-cleanup-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $stopped = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $ibPath = Join-Path $tempRoot ".agent-1c\infobases\dev-branches\current-branch"
+                $state = [pscustomobject]@{
+                    safeDevBranchName = "current-branch"
+                    devBranchInfoBasePath = $ibPath
+                    worktreePath = $tempRoot
+                }
+                $script:StoppedIds = @()
+                $script:ProcessFixture = @(
+                    [pscustomobject]@{ processId = 1001; name = "1cv8c.exe"; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48051 /F `"$ibPath`""; workingSetMb = 10 },
+                    [pscustomobject]@{ processId = 1002; name = "1cv8c.exe"; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48052 /F `"D:\worktrees\foreign\base`""; workingSetMb = 10 }
+                )
+                function Get-OneCProcessInfo {
+                    return @($script:ProcessFixture | Where-Object { $script:StoppedIds -notcontains $_.processId })
+                }
+                function Stop-Process {
+                    param([int]$Id, [switch]$Force, [object]$ErrorAction)
+                    $script:StoppedIds += $Id
+                }
+                function Start-Sleep {}
+
+                Stop-OwnVanessaTestProcessesAndAssert -State $state 6>$null
+                @($script:StoppedIds)
+            }
+
+            $stopped | Should -Contain 1001
+            $stopped | Should -Not -Contain 1002
+            $HelperText | Should -Match '"stop-dev-branch-test-clients" \{ Stop-DevBranchTestClients \}'
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "provides monitored unsafe action protection recovery for an existing branch" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help -InfoBaseUser "itl_e2e" *> $null

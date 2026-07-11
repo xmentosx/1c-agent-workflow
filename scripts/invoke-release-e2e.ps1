@@ -180,7 +180,7 @@ try {
 } catch {
     $failure = $_.Exception.Message
 } finally {
-    foreach ($action in @("stop-vanessa-mcp", "stop-roctup-mcp")) {
+    foreach ($action in @("stop-dev-branch-test-clients", "stop-vanessa-mcp", "stop-roctup-mcp")) {
         try {
             $cleanup = Invoke-E2EHelper -Action $action -TimeoutSeconds 180 -AllowFailure
             if ($cleanup.exitCode -ne 0) { $cleanupFailures += "$action exit=$($cleanup.exitCode)" }
