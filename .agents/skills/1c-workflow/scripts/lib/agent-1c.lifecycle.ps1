@@ -365,6 +365,19 @@ function New-ConfigLoadListFile {
     return $listFilePath
 }
 
+function Test-ConfigLoadRequiresFullLoad {
+    param([string[]]$Files)
+
+    foreach ($file in @($Files)) {
+        $normalized = ([string]$file).Replace("/", "\")
+        if ($normalized -ieq "Configuration.xml") {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function New-LoadStateUpdates {
     param(
         [object]$LoadResult,
@@ -602,14 +615,21 @@ function Load-ConfigFromFiles {
     }
 
     $listFilePath = New-ConfigLoadListFile -State $State -Files $changeSet.files
-    Write-Host "Partial config load file count: $($changeSet.files.Count)"
-    Write-Host "Partial config load list: $listFilePath"
-
     $designerArgs = @("/LoadConfigFromFiles", $changeSet.absoluteExportPath)
     if ($ExtensionName) {
         $designerArgs += @("-Extension", $ExtensionName)
     }
-    $designerArgs += @("-listFile", $listFilePath, "-Format", "Hierarchical", "/UpdateDBCfg")
+
+    if (Test-ConfigLoadRequiresFullLoad -Files $changeSet.files) {
+        Write-Host "Root Configuration.xml changed; using full config load because 1C Designer does not reliably accept it through -listFile."
+        Write-Host "Changed config file count: $($changeSet.files.Count)"
+        Write-Host "Changed config file list: $listFilePath"
+    } else {
+        Write-Host "Partial config load file count: $($changeSet.files.Count)"
+        Write-Host "Partial config load list: $listFilePath"
+        $designerArgs += @("-listFile", $listFilePath)
+    }
+    $designerArgs += @("-Format", "Hierarchical", "/UpdateDBCfg")
 
     Invoke-Designer `
         -InfoBasePath $InfoBasePath `

@@ -339,6 +339,84 @@
         }
     }
 
+    It "uses a full files load when the root Configuration.xml changed" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            $script:CapturedDesignerArgs = @()
+            function Get-ConfigLoadChangeSet {
+                return [pscustomobject]@{
+                    files = @("Configuration.xml")
+                    baseCommit = "base"
+                    currentCommit = "head"
+                    absoluteExportPath = "C:\project\src\cf"
+                }
+            }
+            function New-ConfigLoadListFile { return "C:\logs\changed-files.txt" }
+            function Invoke-Designer {
+                param(
+                    [string]$InfoBasePath,
+                    [string]$InfoBaseKind,
+                    [string[]]$DesignerArgs
+                )
+                $script:CapturedDesignerArgs = @($DesignerArgs)
+            }
+
+            $loadResult = Load-ConfigFromFiles `
+                -InfoBasePath "C:\base" `
+                -InfoBaseKind "file" `
+                -State ([pscustomobject]@{}) `
+                -ExportPath "src/cf" 6>$null
+
+            [pscustomobject]@{
+                args = @($script:CapturedDesignerArgs)
+                listFile = $loadResult.listFile
+            }
+        }
+
+        $result.args | Should -Contain "/LoadConfigFromFiles"
+        $result.args | Should -Not -Contain "-listFile"
+        $result.args | Should -Contain "/UpdateDBCfg"
+        $result.listFile | Should -Be "C:\logs\changed-files.txt"
+    }
+
+    It "keeps partial files load for non-root configuration changes" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            $script:CapturedDesignerArgs = @()
+            function Get-ConfigLoadChangeSet {
+                return [pscustomobject]@{
+                    files = @("CommonModules\WorkflowE2E.xml")
+                    baseCommit = "base"
+                    currentCommit = "head"
+                    absoluteExportPath = "C:\project\src\cf"
+                }
+            }
+            function New-ConfigLoadListFile { return "C:\logs\changed-files.txt" }
+            function Invoke-Designer {
+                param(
+                    [string]$InfoBasePath,
+                    [string]$InfoBaseKind,
+                    [string[]]$DesignerArgs
+                )
+                $script:CapturedDesignerArgs = @($DesignerArgs)
+            }
+
+            Load-ConfigFromFiles `
+                -InfoBasePath "C:\base" `
+                -InfoBaseKind "file" `
+                -State ([pscustomobject]@{}) `
+                -ExportPath "src/cf" 6>$null | Out-Null
+
+            @($script:CapturedDesignerArgs)
+        }
+
+        $result | Should -Contain "-listFile"
+        $result | Should -Contain "C:\logs\changed-files.txt"
+        $result | Should -Contain "/UpdateDBCfg"
+    }
+
     It "reports detailed diagnostics when Git path collection fails" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-git-path-failure-" + [guid]::NewGuid().ToString("N"))
 
