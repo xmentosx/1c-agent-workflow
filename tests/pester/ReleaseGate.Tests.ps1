@@ -24,6 +24,9 @@ Describe "Release gate scripts" {
         $text | Should -Match 'Release mode requires -E2EProjectRoot'
         $text | Should -Match 'compatibilityStatus'
         $text | Should -Match 'release-e2e-summary.json'
+        $runnerText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") -Raw -Encoding UTF8
+        $runnerText | Should -Match 'SOURCE_INFOBASE_PATH must be a disposable snapshot inside the stand'
+        (Get-Content -LiteralPath (Join-Path $RepoRoot "docs\release-checklist.md") -Raw -Encoding UTF8) | Should -Match 'source-snapshot'
     }
 }
 
@@ -54,7 +57,10 @@ Describe "Release E2E orchestration" {
             }
             $worktreeExit | Should -Be 0
 
-            New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot ".agent-1c"), (Join-Path $worktreeRoot ".agent-1c\dev-branches") | Out-Null
+            $sourceSnapshot = Join-Path $mainRoot ".agent-1c\infobases\source-snapshot"
+            New-Item -ItemType Directory -Force -Path $sourceSnapshot, (Join-Path $worktreeRoot ".agent-1c\dev-branches") | Out-Null
+            Set-Content -LiteralPath (Join-Path $sourceSnapshot "1Cv8.1CD") -Encoding ASCII -Value "fixture infobase"
+            Set-Content -LiteralPath (Join-Path $mainRoot ".dev.env") -Encoding UTF8 -Value "SOURCE_INFOBASE_PATH=$sourceSnapshot"
             $config = [ordered]@{ schemaVersion = 1; devBranchName = "workflow-release-e2e"; worktreePath = $worktreeRoot }
             Set-Content -LiteralPath (Join-Path $mainRoot ".agent-1c\release-e2e.json") -Encoding UTF8 -Value ($config | ConvertTo-Json)
             $state = [ordered]@{
@@ -99,6 +105,7 @@ switch ($Action) {
             $LASTEXITCODE | Should -Be 0
             $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $summary.status | Should -Be "passed"
+            $summary.sourceSnapshotPath | Should -Be $sourceSnapshot
             $summary.artifactSha256 | Should -Not -BeNullOrEmpty
             $summary.cleanupFailures.Count | Should -Be 0
         } finally {

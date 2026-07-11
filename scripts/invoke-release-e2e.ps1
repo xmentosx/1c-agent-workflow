@@ -20,6 +20,40 @@ $worktreePath = [System.IO.Path]::GetFullPath([string]$config.worktreePath)
 if (-not $devBranchName -or -not (Test-Path -LiteralPath $worktreePath -PathType Container)) {
     throw "release-e2e.json must contain an existing worktreePath and devBranchName."
 }
+
+function Get-E2EDotEnvValue {
+    param([string]$Name)
+
+    $dotEnvPath = Join-Path $ProjectRoot ".dev.env"
+    if (-not (Test-Path -LiteralPath $dotEnvPath -PathType Leaf)) {
+        throw "Dedicated E2E stand .dev.env is missing: $dotEnvPath"
+    }
+
+    foreach ($line in Get-Content -LiteralPath $dotEnvPath -Encoding UTF8) {
+        if ($line -match "^$([regex]::Escape($Name))=(.*)$") {
+            return ([string]$Matches[1]).Trim().Trim('"')
+        }
+    }
+
+    return ""
+}
+
+$sourceSnapshotValue = Get-E2EDotEnvValue -Name "SOURCE_INFOBASE_PATH"
+if (-not $sourceSnapshotValue) {
+    throw "Dedicated E2E stand must define SOURCE_INFOBASE_PATH for its disposable source snapshot."
+}
+$sourceSnapshotPath = if ([System.IO.Path]::IsPathRooted($sourceSnapshotValue)) {
+    [System.IO.Path]::GetFullPath($sourceSnapshotValue)
+} else {
+    [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot $sourceSnapshotValue))
+}
+$projectPrefix = $ProjectRoot.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+if (-not $sourceSnapshotPath.StartsWith($projectPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Dedicated E2E stand SOURCE_INFOBASE_PATH must be a disposable snapshot inside the stand: $sourceSnapshotPath"
+}
+if (-not (Test-Path -LiteralPath (Join-Path $sourceSnapshotPath "1Cv8.1CD") -PathType Leaf)) {
+    throw "Dedicated E2E source snapshot does not contain 1Cv8.1CD: $sourceSnapshotPath"
+}
 if (-not $HelperPath) {
     $HelperPath = Join-Path $worktreePath ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
 }
@@ -164,6 +198,7 @@ try {
         startedAt = $startedAt.ToString("o")
         finishedAt = [DateTime]::UtcNow.ToString("o")
         projectRoot = $ProjectRoot
+        sourceSnapshotPath = $sourceSnapshotPath
         worktreePath = $worktreePath
         devBranchName = $devBranchName
         verifiedAt = $verifiedAt
@@ -183,4 +218,3 @@ if ($failure) {
     exit 1
 }
 Write-Host "Release E2E passed. Summary: $OutputPath"
-

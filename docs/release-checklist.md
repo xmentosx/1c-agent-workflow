@@ -2,17 +2,24 @@
 
 ## One-time dedicated stand setup
 
-1. Create `D:\Git\itl-workflow-e2e` from a safe non-production source infobase.
-2. Initialize it with the normal ITL wizard; never point it at a production or
-   source infobase that cannot be discarded.
-3. Create a dedicated `itldev/workflow-release-e2e` worktree and database copy.
-4. Add and commit a deterministic fixture change plus its Vanessa scenario.
-5. Copy `templates/release-e2e.example.json` to the ignored local file
+1. Create `D:\Git\itl-workflow-e2e` and copy a safe non-production file
+   infobase into the ignored local directory
+   `D:\Git\itl-workflow-e2e\.agent-1c\infobases\source-snapshot`.
+2. Initialize the project with the normal ITL wizard, but point
+   `SOURCE_INFOBASE_PATH` only at that in-stand snapshot. Never point the
+   dedicated stand at an external source or production infobase: even a
+   read-only Designer dump can update the file container and its event log.
+3. Verify that the original source repository remains clean after init.
+4. Create a dedicated `itldev/workflow-release-e2e` worktree and database copy.
+5. Add and commit a deterministic fixture change plus its Vanessa scenario.
+6. Copy `templates/release-e2e.example.json` to the ignored local file
    `.agent-1c/release-e2e.json` and record the actual worktree path.
-6. Run `/itl-check` once manually to prove the stand itself is healthy.
+7. Run `/itl-check` once manually to prove the stand itself is healthy.
 
 The fixture branch remains dedicated to workflow releases. Reset its disposable
-database from the safe source whenever state may have leaked between runs.
+database from the in-stand source snapshot whenever state may have leaked
+between runs. Replace that snapshot explicitly when a new baseline is intended;
+do not repoint the stand at the original external infobase.
 
 ## Each fork/workflow release
 
@@ -44,4 +51,3 @@ unpinned template is a release failure.
 - Never repair an already published fork tag. Publish the next `rN` revision.
 - Roll back a workflow baseline by restoring the previous fork tag and exact
   commit in both templates, then rerun the entire Release gate.
-
