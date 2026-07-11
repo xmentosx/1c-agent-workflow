@@ -1515,6 +1515,14 @@ function Run-DevBranchTests {
     $runFinishedAt = Get-Date
     $verification = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
     try {
+        Stop-OwnVanessaTestProcessesAndAssert -State $state
+    } catch {
+        $verification = [pscustomobject]@{
+            status = "failed"
+            reason = "$($verification.reason) Vanessa process cleanup: $($_.Exception.Message)"
+        }
+    }
+    try {
         $eventLogVerification = Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory
     } catch {
         $eventLogVerification = [pscustomobject]@{
@@ -1537,15 +1545,6 @@ function Run-DevBranchTests {
         $verification = [pscustomobject]@{
             status = "passed"
             reason = "$($verification.reason) Event log: $($eventLogVerification.reason)"
-        }
-    }
-
-    try {
-        Stop-OwnVanessaTestProcessesAndAssert -State $state
-    } catch {
-        $verification = [pscustomobject]@{
-            status = "failed"
-            reason = "$($verification.reason) Vanessa process cleanup: $($_.Exception.Message)"
         }
     }
 

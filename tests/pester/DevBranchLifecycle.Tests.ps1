@@ -1571,6 +1571,19 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
+    It "cleans Vanessa test processes before reading the event log" {
+        $vanessaPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1"
+        $text = Get-Content -LiteralPath $vanessaPath -Raw -Encoding UTF8
+        $successStart = $text.IndexOf('$verification = Get-VanessaVerificationStatus')
+        $successStart | Should -BeGreaterThan -1
+        $successBlock = $text.Substring($successStart)
+        $cleanupIndex = $successBlock.IndexOf('Stop-OwnVanessaTestProcessesAndAssert -State $state')
+        $eventLogIndex = $successBlock.IndexOf('Test-DevBranchEventLogAfterVanessa')
+        $cleanupIndex | Should -BeGreaterThan -1
+        $eventLogIndex | Should -BeGreaterThan -1
+        $cleanupIndex | Should -BeLessThan $eventLogIndex
+    }
+
     It "stops only current-branch Vanessa test processes and exposes release cleanup action" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-process-cleanup-" + [guid]::NewGuid().ToString("N"))
         try {
