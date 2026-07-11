@@ -1544,6 +1544,33 @@ if (`$?) { exit 0 } else { exit 1 }
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\branch-lifecycle.md")) | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP"
     }
 
+    It "stops a lingering native process after result artifacts are complete" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-native-completion-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $markerPath = Join-Path $tempRoot "complete.txt"
+            $elapsed = [System.Diagnostics.Stopwatch]::StartNew()
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $powershellPath = (Get-Command powershell.exe).Source
+                Invoke-NativeProcessAndWaitResult `
+                    -FilePath $powershellPath `
+                    -Arguments @("-NoProfile", "-Command", "Set-Content -LiteralPath '$markerPath' -Value ready; Start-Sleep -Seconds 10") `
+                    -TimeoutSeconds 30 `
+                    -CompletionProbe { Test-Path -LiteralPath $markerPath -PathType Leaf } `
+                    -CompletionGraceSeconds 0
+            }
+            $elapsed.Stop()
+            $result.completedByProbe | Should -BeTrue
+            $result.timedOut | Should -BeFalse
+            $result.exitCode | Should -Be 0
+            $elapsed.Elapsed.TotalSeconds | Should -BeLessThan 5
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "stops only current-branch Vanessa test processes and exposes release cleanup action" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-process-cleanup-" + [guid]::NewGuid().ToString("N"))
         try {

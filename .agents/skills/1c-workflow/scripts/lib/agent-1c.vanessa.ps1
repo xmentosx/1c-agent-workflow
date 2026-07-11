@@ -1454,6 +1454,11 @@ function Run-DevBranchTests {
             -EnterpriseArgs $enterpriseArgs `
             -TestClientPort $testPort `
             -TimeoutSeconds $timeoutSeconds `
+            -CompletionProbe {
+                $probeStatus = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
+                return ($probeStatus.status -in @("passed", "failed"))
+            } `
+            -CompletionGraceSeconds 10 `
             -OnTimeout {
                 Write-Host "[WARN] Vanessa verify exceeded timeout; stopping own TESTMANAGER/TESTCLIENT processes."
                 Stop-OwnHungVanessaTestClients -State $state -TestPort $testPort
