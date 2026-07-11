@@ -1536,6 +1536,7 @@ function New-DefaultProjectConfig {
         serverBaseCopyScript = ""
         aiRules = [ordered]@{
             repo = "https://github.com/comol/ai_rules_1c.git"
+            ref = ""
             tools = @("codex", "kilocode")
         }
         vibecoding1cMcp = [ordered]@{
@@ -1588,6 +1589,12 @@ function New-DefaultDependencyLockManifest {
                 repo = "https://github.com/comol/ai_rules_1c.git"
                 ref = "main"
                 commit = "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
+                upstreamRepo = "https://github.com/comol/ai_rules_1c.git"
+                upstreamRef = ""
+                upstreamCommit = ""
+                downstreamRevision = 0
+                compatibilityStatus = "legacy-baseline"
+                compatibilityCheckedAt = ""
             }
             vanessaAutomation = [ordered]@{
                 version = "1.2.043.28"

@@ -24,6 +24,8 @@ $startedAt = [DateTime]::UtcNow
 $stages = New-Object System.Collections.Generic.List[object]
 $pesterResult = $null
 $failure = $null
+$aiRulesRelease = $null
+$e2eReportPath = ""
 
 function Add-StageResult {
     param(
@@ -96,11 +98,59 @@ function Resolve-AiRulesSource {
     return "https://github.com/comol/ai_rules_1c.git"
 }
 
+function Get-LocalForkRelease {
+    param([string]$SourceRoot)
+
+    if (-not (Test-Path -LiteralPath (Join-Path $SourceRoot ".git"))) {
+        throw "Release requires a local Git checkout of the controlled ai_rules fork."
+    }
+    if (@(& git -C $SourceRoot status --porcelain).Count -gt 0) {
+        throw "Controlled fork checkout must be clean for Release."
+    }
+    $origin = (& git -C $SourceRoot remote get-url origin).Trim()
+    if ($origin.Replace('\', '/').TrimEnd('/').ToLowerInvariant() -notmatch 'github\.com/xmentosx/itl_ai_rules_1c(?:\.git)?$') {
+        throw "Release aiRules source is not the controlled fork: $origin"
+    }
+    $commit = (& git -C $SourceRoot rev-parse HEAD).Trim()
+    $tags = @(& git -C $SourceRoot tag --points-at HEAD --list "itl-*")
+    if ($tags.Count -ne 1) {
+        throw "Release fork HEAD must have exactly one immutable itl-* tag; found $($tags.Count)."
+    }
+    $tag = [string]$tags[0]
+    if ((& git -C $SourceRoot cat-file -t "refs/tags/$tag").Trim() -ne "tag") {
+        throw "Release fork tag must be annotated: $tag"
+    }
+
+    $projectTemplate = Get-Content -LiteralPath (Join-Path $repoRoot "templates\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+    $lockTemplate = Get-Content -LiteralPath (Join-Path $repoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+    $entry = $lockTemplate.dependencies.aiRules1c
+    if ([string]$projectTemplate.aiRules.ref -ne $tag -or [string]$entry.ref -ne $tag -or [string]$entry.commit -ne $commit) {
+        throw "Workflow templates do not pin the checked fork tag and commit: $tag@$commit"
+    }
+    if ([string]$entry.compatibilityStatus -ne "passed" -or -not [string]$entry.upstreamRef -or -not [string]$entry.upstreamCommit) {
+        throw "Workflow aiRules lock lacks passed compatibility and upstream provenance."
+    }
+    return [ordered]@{
+        repo = $origin
+        tag = $tag
+        commit = $commit
+        upstreamRef = [string]$entry.upstreamRef
+        upstreamCommit = [string]$entry.upstreamCommit
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 Push-Location $repoRoot
 try {
     if ($Mode -eq "Release") {
-        throw "Release gate is intentionally unavailable until a verified immutable fork tag and the dedicated 1C E2E stand are integrated."
+        if ($Offline) { throw "Release mode cannot run with -Offline." }
+        if ([string]::IsNullOrWhiteSpace($E2EProjectRoot)) { throw "Release mode requires -E2EProjectRoot for the dedicated stand." }
+        if (@(& git status --porcelain).Count -gt 0) { throw "ITL worktree must be clean for Release." }
+        $releaseSource = Resolve-AiRulesSource
+        if (-not (Test-Path -LiteralPath $releaseSource -PathType Container)) {
+            throw "Release requires -AiRulesSource (or ITL_AI_RULES_SOURCE_PATH) pointing to a local controlled fork checkout."
+        }
+        $aiRulesRelease = Get-LocalForkRelease -SourceRoot ([System.IO.Path]::GetFullPath($releaseSource))
     }
 
     $trackedBefore = @(& git status --porcelain --untracked-files=no)
@@ -118,6 +168,8 @@ try {
             ".\tests\pester\HostTooling.Tests.ps1",
             ".\tests\pester\DependencyLocks.Tests.ps1",
             ".\tests\pester\AiRulesClients.Tests.ps1",
+            ".\tests\pester\AiRulesMigration.Tests.ps1",
+            ".\tests\pester\ReleaseGate.Tests.ps1",
             ".\tests\pester\LocalQualityGate.Tests.ps1"
         )
     } else {
@@ -134,7 +186,7 @@ try {
     }
     Add-StageResult -Name "pester" -Status "passed" -Detail "$($pesterResult.PassedCount) passed"
 
-    if ($Mode -eq "Full") {
+    if ($Mode -in @("Full", "Release")) {
         $helperPath = Join-Path $repoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
         Invoke-PowerShellChild -ScriptPath $helperPath -Arguments @("-Action", "help") -TimeoutSeconds 60 -LogName "helper-help"
         Add-StageResult -Name "helper-help" -Status "passed"
@@ -156,6 +208,16 @@ try {
             Invoke-PowerShellChild -ScriptPath $compatibilityPath -Arguments @("-AiRulesSource", $resolvedAiRulesSource) -TimeoutSeconds 600 -LogName "ai-rules-compatibility"
             Add-StageResult -Name "ai-rules-compatibility" -Status "passed" -Detail $resolvedAiRulesSource
         }
+    }
+
+    if ($Mode -eq "Release") {
+        $e2eReportPath = Join-Path $outputRoot "release-e2e-summary.json"
+        $e2eScript = Join-Path $repoRoot "scripts\invoke-release-e2e.ps1"
+        Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments @(
+            "-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)),
+            "-OutputPath", $e2eReportPath
+        ) -TimeoutSeconds 14400 -LogName "release-e2e"
+        Add-StageResult -Name "release-e2e" -Status "passed" -Detail $e2eReportPath
     }
 
     & git diff --check HEAD -- .
@@ -183,6 +245,8 @@ try {
         commit = [string]$commit
         worktreeClean = (-not $dirty)
         offline = [bool]$Offline
+        aiRulesRelease = $aiRulesRelease
+        e2eReportPath = $e2eReportPath
         tests = [ordered]@{
             passed = $(if ($pesterResult) { [int]$pesterResult.PassedCount } else { 0 })
             failed = $(if ($pesterResult) { [int]$pesterResult.FailedCount } else { 0 })

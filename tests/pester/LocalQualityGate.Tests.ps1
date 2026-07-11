@@ -1,5 +1,7 @@
 BeforeAll {
     . (Join-Path $PSScriptRoot "TestSupport.ps1")
+    $context = Initialize-WorkflowPesterContext
+    $RepoRoot = $context.RepoRoot
 }
 
 Describe "Local quality gate contract" {
@@ -19,7 +21,8 @@ Describe "Local quality gate contract" {
         $text | Should -Match '\[ValidateSet\("Fast", "Full", "Release"\)\]'
         $text | Should -Match '\[string\]\$Mode = "Full"'
         $text | Should -Match 'ITL_AI_RULES_SOURCE_PATH'
-        $text | Should -Match 'Release gate is intentionally unavailable'
+        $text | Should -Match 'Get-LocalForkRelease'
+        $text | Should -Match 'invoke-release-e2e\.ps1'
     }
 
     It "does not install repository-managed git hooks" {

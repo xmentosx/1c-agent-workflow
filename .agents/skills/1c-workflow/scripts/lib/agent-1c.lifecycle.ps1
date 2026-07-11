@@ -914,13 +914,41 @@ function Get-AiRules1cKiloOpenSpecStatus {
     return [pscustomobject]@{ isAvailable = $true; reason = "" }
 }
 
+function Get-AiRules1cRepositoryIdentity {
+    param([string]$Repo)
+
+    if ([string]::IsNullOrWhiteSpace($Repo)) {
+        return ""
+    }
+    $identity = $Repo.Trim().Replace('\', '/').TrimEnd('/').ToLowerInvariant()
+    if ($identity.EndsWith('.git')) {
+        $identity = $identity.Substring(0, $identity.Length - 4)
+    }
+    return $identity
+}
+
+function Test-AiRules1cForkRepository {
+    param([string]$Repo)
+    return (Get-AiRules1cRepositoryIdentity -Repo $Repo) -eq "https://github.com/xmentosx/itl_ai_rules_1c"
+}
+
 function Sync-AiRules1cCheckout {
+    param(
+        [string]$RepoOverride = "",
+        [string]$RefOverride = "",
+        [string]$CommitOverride = ""
+    )
+
     $lockedEntry = Get-DependencyLockEntry -Name "aiRules1c"
-    $repo = Get-ConfigValue -Path "aiRules.repo" -Default "https://github.com/comol/ai_rules_1c.git"
+    $repo = $(if ($RepoOverride) { $RepoOverride } else { Get-ConfigValue -Path "aiRules.repo" -Default "https://github.com/comol/ai_rules_1c.git" })
+    $configuredRef = $(if ($RefOverride) { $RefOverride } else { [string](Get-ConfigValue -Path "aiRules.ref" -Default "") })
     $dependencyMode = Get-DependencyMode
     $lockedRef = ""
     $lockedCommit = ""
-    if ($dependencyMode -eq "locked") {
+    if ($CommitOverride) {
+        $lockedCommit = $CommitOverride
+    }
+    if ($dependencyMode -eq "locked" -and -not $RepoOverride) {
         $lockedRepo = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "repo" -Default "")
         $lockedRef = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "ref" -Default "")
         $lockedCommit = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "commit" -Default "")
@@ -930,6 +958,19 @@ function Sync-AiRules1cCheckout {
         if (-not $lockedRef -and -not $lockedCommit) {
             throw "Dependency mode is locked, but aiRules1c.ref and aiRules1c.commit are empty in .agent-1c/dependency-lock.json."
         }
+    } elseif ($configuredRef -and -not $CommitOverride) {
+        $baselineRepo = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "repo" -Default "")
+        $baselineRef = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "ref" -Default "")
+        if ((Get-AiRules1cRepositoryIdentity -Repo $baselineRepo) -eq (Get-AiRules1cRepositoryIdentity -Repo $repo) -and $baselineRef -eq $configuredRef) {
+            $lockedCommit = [string](Get-ConfigValueFromObject -Object $lockedEntry -Path "commit" -Default "")
+        }
+    }
+    if ($RefOverride) {
+        $lockedRef = $RefOverride
+    }
+
+    if ((Test-AiRules1cForkRepository -Repo $repo) -and -not ($configuredRef -or $lockedRef)) {
+        throw "The controlled ai_rules_1c fork requires an immutable configured tag in aiRules.ref; fork main is not allowed."
     }
 
     $tempRoot = Resolve-Agent1cFullPath -Path $env:TEMP
@@ -937,6 +978,10 @@ function Sync-AiRules1cCheckout {
 
     if (Test-Path -LiteralPath $rulesDir) {
         try {
+            $currentOrigin = (Get-GitOutputAt -Root $rulesDir -Arguments @("remote", "get-url", "origin")).Trim()
+            if ((Get-AiRules1cRepositoryIdentity -Repo $currentOrigin) -ne (Get-AiRules1cRepositoryIdentity -Repo $repo)) {
+                Invoke-GitAt -Root $rulesDir -Arguments @("remote", "set-url", "origin", $repo)
+            }
             Invoke-GitAt -Root $rulesDir -Arguments @("fetch", "--all", "--tags", "--prune")
         } catch {
             throw "Failed to update ai_rules_1c in $rulesDir"
@@ -950,7 +995,26 @@ function Sync-AiRules1cCheckout {
     }
 
     $resolvedRef = ""
-    if ($dependencyMode -eq "locked") {
+    $effectiveTagRef = $(if ($configuredRef) { $configuredRef } elseif (Test-AiRules1cForkRepository -Repo $repo) { $lockedRef } else { "" })
+    if ($effectiveTagRef) {
+        if ((Test-AiRules1cForkRepository -Repo $repo) -and $effectiveTagRef -notlike "itl-*") {
+            throw "Controlled fork ref must be an immutable ITL tag matching 'itl-*': $effectiveTagRef"
+        }
+        $tagRef = "refs/tags/$effectiveTagRef"
+        if (-not (Test-GitRefExistsAt -Root $rulesDir -Ref $tagRef)) {
+            throw "Configured ai_rules_1c ref is not an available tag: $effectiveTagRef"
+        }
+        $tagCommit = (Get-GitOutputAt -Root $rulesDir -Arguments @("rev-parse", "$tagRef^{commit}")).Trim()
+        if ($lockedCommit -and $tagCommit -ne $lockedCommit) {
+            throw "ai_rules_1c tag/commit mismatch for '$effectiveTagRef': tag=$tagCommit lock=$lockedCommit"
+        }
+        try {
+            Invoke-GitAt -Root $rulesDir -Arguments @("checkout", "--detach", $tagCommit)
+        } catch {
+            throw "Failed to checkout pinned ai_rules_1c tag '$effectiveTagRef' in $rulesDir"
+        }
+        $resolvedRef = $effectiveTagRef
+    } elseif ($dependencyMode -eq "locked" -or $lockedCommit) {
         $checkoutTarget = $(if ($lockedCommit) { $lockedCommit } else { $lockedRef })
         try {
             Invoke-GitAt -Root $rulesDir -Arguments @("checkout", "--detach", $checkoutTarget)
@@ -975,6 +1039,7 @@ function Sync-AiRules1cCheckout {
         root = $rulesDir
         repo = $repo
         ref = $resolvedRef
+        commit = (Get-GitOutputAt -Root $rulesDir -Arguments @("rev-parse", "HEAD")).Trim()
     }
 }
 
@@ -1815,9 +1880,16 @@ function Update-WorkflowPackage {
 
     if ($SkipAiRules) {
         Write-Host "Skipping ai_rules_1c update because -SkipAiRules was specified."
+        $migrationPlan = Get-AiRulesMigrationPlan
+        if ($migrationPlan.status -eq "eligible") {
+            Write-Host "ai_rules_1c migration remains pending because -SkipAiRules was specified: $($migrationPlan.target.ref)"
+        }
         Sync-KiloItlCommandSurface
     } else {
-        Update-AiRules1c
+        $migration = Invoke-AiRulesBaselineMigration
+        if (-not $migration.migrated -and -not $migration.suppressRegularUpdate) {
+            Update-AiRules1c
+        }
     }
 
     Write-Host "ITL workflow package updated from $($source.source): $($source.root)"
@@ -3545,6 +3617,7 @@ function Show-WorkflowStatus {
     Write-Host "Git commit: $currentCommit"
     Write-Host "Git worktree: $(if ($dirty) { 'dirty' } else { 'clean' })"
     Write-WorkflowPackageStatusLines
+    Write-AiRules1cStatusLines
 
     if ($currentBranch -notlike "itldev/*") {
         Write-Vibecoding1cMcpStatusLines

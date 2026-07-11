@@ -22,6 +22,7 @@
   "serverBaseCopyScript": "",
   "aiRules": {
     "repo": "https://github.com/comol/ai_rules_1c.git",
+    "ref": "",
     "tools": ["codex", "kilocode"]
   },
   "vibecoding1cMcp": {
