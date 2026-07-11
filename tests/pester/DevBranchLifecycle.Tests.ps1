@@ -1534,6 +1534,7 @@ if (`$?) { exit 0 } else { exit 1 }
         $worktreeRoot = "$tempRoot-worktrees"
         $worktreePath = Join-Path $worktreeRoot "fixture-branch"
         $sourceBase = Join-Path $tempRoot "source-base"
+        $projectName = Split-Path -Leaf $tempRoot
         $oldAppData = $env:APPDATA
 
         try {
@@ -1541,8 +1542,9 @@ if (`$?) { exit 0 } else { exit 1 }
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8.1CD") -Value "stub" -Encoding ASCII
             New-Item -ItemType Directory -Force -Path (Join-Path $sourceBase "1Cv8Log") | Out-Null
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
-            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`nappdata/`n" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`nappdata/`n.kilo/commands/itl*.md`n" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Value '{"tools":["kilocode"],"files":{}}' -Encoding UTF8
             $templateTarget = Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Destination $templateTarget -Recurse
@@ -1562,7 +1564,7 @@ if (`$?) { exit 0 } else { exit 1 }
             & git -C $tempRoot init | Out-Null
             & git -C $tempRoot config user.email "test@example.com"
             & git -C $tempRoot config user.name "Test User"
-            & git -C $tempRoot add .gitignore README.md .agents
+            & git -C $tempRoot add .gitignore README.md .ai-rules.json .agents
             & git -C $tempRoot commit -m init | Out-Null
             & git -C $tempRoot branch -M master
 
@@ -1584,7 +1586,8 @@ if (`$?) { exit 0 } else { exit 1 }
             $state.worktreePath | Should -Be ([System.IO.Path]::GetFullPath($worktreePath))
             $state.mainWorktreePath | Should -Be ([System.IO.Path]::GetFullPath($tempRoot))
             $expectedLauncherFolder = "/ITL/" + (Split-Path -Leaf $tempRoot)
-            $state.launcherInfoBaseName | Should -Be "Fixture Branch"
+            $expectedLauncherName = "$projectName - Fixture Branch"
+            $state.launcherInfoBaseName | Should -Be $expectedLauncherName
             $state.launcherFolder | Should -Be $expectedLauncherFolder
             $state.unsafeActionProtectionSetupMode | Should -Be "skip"
             ([bool]$state.unsafeActionProtectionConfirmed) | Should -Be $false
@@ -1609,8 +1612,13 @@ if (`$?) { exit 0 } else { exit 1 }
             $kiloText = Get-Content -Encoding UTF8 -Raw (Join-Path $worktreePath ".kilo\kilo.json")
             $kiloText | Should -Not -Match "itl-.*-roctup"
             $kiloText | Should -Not -Match "VanessaAutomation-"
+            $branchKiloCommands = @(Get-ChildItem -LiteralPath (Join-Path $worktreePath ".kilo\commands") -File -Filter "itl*.md" | Select-Object -ExpandProperty Name | Sort-Object)
+            $branchKiloCommands | Should -Be @("itl.md", "itl-check.md", "itl-refresh.md", "itl-result.md", "itl-status.md")
+            $branchKiloCommands | Should -Not -Contain "itl-new-config-branch.md"
+            $branchKiloCommands | Should -Not -Contain "itl-new-extension-branch.md"
+            $branchKiloCommands | Should -Not -Contain "itl-update-workflow.md"
             $launcherText = Get-Content -Encoding UTF8 -Raw (Join-Path $env:APPDATA "1C\1CEStart\ibases.v8i")
-            $launcherText | Should -Match "(?m)^\[Fixture Branch\]\r?$"
+            $launcherText | Should -Match ("(?m)^\[{0}\]\r?$" -f [regex]::Escape($expectedLauncherName))
             $launcherText | Should -Match ("(?m)^Folder={0}\r?$" -f [regex]::Escape($expectedLauncherFolder))
             $launcherText | Should -Not -Match "(?m)^Folder=/ITL/fixture-branch\r?$"
 
@@ -1655,6 +1663,7 @@ if (`$?) { exit 0 } else { exit 1 }
         $worktreeRoot = "$tempRoot-worktrees"
         $worktreePath = Join-Path $worktreeRoot "partial-branch"
         $sourceBase = Join-Path $tempRoot "source-base"
+        $projectName = Split-Path -Leaf $tempRoot
         $oldAppData = $env:APPDATA
 
         try {
@@ -1700,11 +1709,12 @@ if (`$?) { exit 0 } else { exit 1 }
             $state = Get-Content -Encoding UTF8 -Raw $statePath | ConvertFrom-Json
             $state.initializationStatus | Should -Be "launcher-registered"
             $state.initializationError | Should -Match "Unsupported DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP value"
-            $state.launcherInfoBaseName | Should -Be "Partial Branch"
+            $expectedLauncherName = "$projectName - Partial Branch"
+            $state.launcherInfoBaseName | Should -Be $expectedLauncherName
 
             $launcherPath = Join-Path $env:APPDATA "1C\1CEStart\ibases.v8i"
             $launcherText = Get-Content -Encoding UTF8 -Raw $launcherPath
-            ([regex]::Matches($launcherText, "(?m)^\[Partial Branch\]\r?$")).Count | Should -Be 1
+            ([regex]::Matches($launcherText, ("(?m)^\[{0}\]\r?$" -f [regex]::Escape($expectedLauncherName)))).Count | Should -Be 1
 
             $statusOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action status 2>&1
             $LASTEXITCODE | Should -Be 0
@@ -1732,7 +1742,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $resumedState.initializationError | Should -Be ""
             $resumedState.unsafeActionProtectionSetupMode | Should -Be "skip"
             $launcherTextAfter = Get-Content -Encoding UTF8 -Raw $launcherPath
-            ([regex]::Matches($launcherTextAfter, "(?m)^\[Partial Branch\]\r?$")).Count | Should -Be 1
+            ([regex]::Matches($launcherTextAfter, ("(?m)^\[{0}\]\r?$" -f [regex]::Escape($expectedLauncherName)))).Count | Should -Be 1
         } finally {
             $env:APPDATA = $oldAppData
             if (Test-Path -LiteralPath $worktreePath -PathType Container -ErrorAction SilentlyContinue) {

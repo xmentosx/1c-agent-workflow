@@ -633,6 +633,66 @@
         }
     }
 
+    It "ignores legacy Vanessa entries from external vibecoding1c manifests and endpoints" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-legacy-vanessa-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $distributionRoot = Join-Path $tempRoot "distribution"
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $projectRoot, $distributionRoot | Out-Null
+            $servers = @(
+                [ordered]@{ id = "docs"; scope = "global" },
+                [ordered]@{ id = "templates"; scope = "global" },
+                [ordered]@{ id = "syntax"; scope = "global" },
+                [ordered]@{ id = "codechecker"; scope = "global" },
+                [ordered]@{ id = "ssl"; scope = "global" },
+                [ordered]@{ id = "code"; scope = "project" },
+                [ordered]@{ id = "graph"; scope = "project" },
+                [ordered]@{ id = "vanessa"; scope = "branch"; title = "Branch Vanessa Automation MCP" }
+            )
+            $manifest = [ordered]@{ schemaVersion = 1; package = "vibecoding1c"; servers = $servers }
+            Set-Content -LiteralPath (Join-Path $distributionRoot "vibecoding1c-mcp.manifest.json") -Encoding UTF8 -Value (($manifest | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", (Join-Path $tempRoot "local-home"), "Process")
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help -McpDistributionPath $distributionRoot -McpScope all *> $null
+
+                $selectedIds = @(Select-Vibecoding1cMcpManifestServers | ForEach-Object { [string]$_.id })
+                $selectedIds | Should -Not -Contain "vanessa"
+                $selectedIds.Count | Should -Be 7
+
+                $selectionPath = Get-Vibecoding1cMcpSelectionPath
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $selectionPath) | Out-Null
+                $selection = [ordered]@{
+                    schemaVersion = 1
+                    family = "vibecoding1c"
+                    defaultProvider = "local"
+                    remoteConfigId = ""
+                    remoteHostId = ""
+                    localScopeDefault = "project"
+                    servers = @($selectedIds | ForEach-Object {
+                        [ordered]@{ id = $_; family = "vibecoding1c"; provider = "local"; configId = ""; hostId = ""; localScope = "project" }
+                    })
+                }
+                Set-Content -LiteralPath $selectionPath -Encoding UTF8 -Value (($selection | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+
+                $complete = Get-Vibecoding1cMcpSelectionCompleteness -Selection (Read-Vibecoding1cMcpSelection)
+                $complete.isComplete | Should -Be $true
+                ($complete.reasons -join [Environment]::NewLine) | Should -Not -Match "vanessa/branch"
+
+                $legacyEndpoint = [pscustomobject]@{ id = "vanessa"; scope = "branch"; family = "vibecoding1c"; provider = "remote"; name = "legacy-vanessa"; url = "http://localhost:9874/mcp"; health = "running" }
+                (Test-Vibecoding1cMcpEndpointAllowedForProject -Endpoint $legacyEndpoint) | Should -Be $false
+                @(Select-Vibecoding1cMcpClientConfigEndpoints -Endpoints @($legacyEndpoint)).Count | Should -Be 0
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "gates BookStack product MCP by base configuration version" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-pm-gate-" + [guid]::NewGuid().ToString("N"))
         $pm4Root = Join-Path $tempRoot "pm4"

@@ -753,6 +753,9 @@ function Get-Vibecoding1cMcpClientNames {
 function Test-Vibecoding1cMcpLogicalServerAllowedForProject {
     param([string]$ServerId)
 
+    if ($ServerId -eq "vanessa") {
+        return $false
+    }
     if ($ServerId -eq "bookstack" -and -not (Test-ProductDocsMcpAllowed)) {
         return $false
     }

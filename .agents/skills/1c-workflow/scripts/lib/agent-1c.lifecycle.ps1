@@ -1611,14 +1611,25 @@ function Sync-KiloItlCommandSurface {
         $sourceDirs += (Join-Path $templateRoot $surface)
     }
 
+    $expectedCommandNames = @()
     foreach ($sourceDir in $sourceDirs) {
         if (-not (Test-Path -LiteralPath $sourceDir -PathType Container -ErrorAction SilentlyContinue)) {
             throw "Workflow package Kilo command template set is missing: $sourceDir"
         }
         foreach ($sourceFile in @(Get-ChildItem -LiteralPath $sourceDir -File -Filter "itl*.md.template" -ErrorAction Stop)) {
             $targetName = $sourceFile.Name.Substring(0, $sourceFile.Name.Length - ".template".Length)
+            $expectedCommandNames += $targetName
             Copy-Item -LiteralPath $sourceFile.FullName -Destination (Join-Path $targetDir $targetName) -Force
         }
+    }
+
+    $expectedCommandNames = @($expectedCommandNames | Sort-Object -Unique)
+    $actualCommandNames = @(Get-ChildItem -LiteralPath $targetDir -File -Filter "itl*.md" -ErrorAction Stop | Select-Object -ExpandProperty Name | Sort-Object -Unique)
+    $surfaceDifference = @(Compare-Object -ReferenceObject $expectedCommandNames -DifferenceObject $actualCommandNames)
+    if ($surfaceDifference.Count -gt 0) {
+        $expectedText = if ($expectedCommandNames.Count -gt 0) { $expectedCommandNames -join ", " } else { "<none>" }
+        $actualText = if ($actualCommandNames.Count -gt 0) { $actualCommandNames -join ", " } else { "<none>" }
+        throw "Kilo ITL command surface verification failed for '$surface'. Expected: $expectedText. Actual: $actualText."
     }
 
     Write-Host "Generated Kilo ITL command surface: $surface (.kilo\commands\itl*.md)"
@@ -2158,6 +2169,7 @@ function Write-DevBranchWorktreeOpenMessage {
     Write-Host ""
     Write-Host "Чтобы продолжить работу агентом с этой линией разработки, откройте отдельное окно Codex/Kilo/IDE в этой папке."
     Write-Host "Могу попробовать открыть новое окно агента для этой папки автоматически."
+    Write-Host "Если Kilo показывает устаревший список slash-команд в новом worktree, выполните /reload."
 }
 
 function Clear-DevBranchContext {
@@ -2267,8 +2279,25 @@ function Get-LauncherListPath {
 function Get-LauncherProjectFolder {
     param([string]$ProjectRootForFolder = $script:ProjectRoot)
 
-    $projectName = Split-Path -Leaf $ProjectRootForFolder
-    return "/ITL/" + (ConvertTo-LauncherLabel -Value $projectName)
+    return "/ITL/" + (Get-LauncherProjectName -ProjectRootForName $ProjectRootForFolder)
+}
+
+function Get-LauncherProjectName {
+    param([string]$ProjectRootForName = $script:ProjectRoot)
+
+    $projectName = Split-Path -Leaf $ProjectRootForName
+    return (ConvertTo-LauncherLabel -Value $projectName)
+}
+
+function Get-LauncherInfoBaseName {
+    param(
+        [string]$DevBranchName,
+        [string]$ProjectRootForName = $script:ProjectRoot
+    )
+
+    $projectName = Get-LauncherProjectName -ProjectRootForName $ProjectRootForName
+    $branchName = ConvertTo-LauncherLabel -Value $DevBranchName
+    return "$projectName - $branchName"
 }
 
 function New-LauncherConnectString {
@@ -2360,7 +2389,7 @@ function Register-DevBranchInLauncher {
     }
 
     $sections = @(Get-LauncherSections -Lines $lines)
-    $displayName = ConvertTo-LauncherLabel -Value $DevBranchName
+    $displayName = Get-LauncherInfoBaseName -DevBranchName $DevBranchName -ProjectRootForName $ProjectRootForFolder
     $folder = Get-LauncherProjectFolder -ProjectRootForFolder $ProjectRootForFolder
     $connect = New-LauncherConnectString -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
 

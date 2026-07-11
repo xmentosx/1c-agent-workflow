@@ -134,6 +134,11 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
             (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo\commands\itl.md") -PathType Leaf) | Should -BeTrue
             (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo\commands\itl-status.md") -PathType Leaf) | Should -BeTrue
             (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo\commands\custom.md") -PathType Leaf) | Should -BeTrue
+            $masterKiloCommands = @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".kilo\commands") -File -Filter "itl*.md" | Select-Object -ExpandProperty Name | Sort-Object)
+            $masterKiloCommands | Should -Be @("itl.md", "itl-new-config-branch.md", "itl-new-extension-branch.md", "itl-status.md", "itl-update-workflow.md")
+            $masterKiloCommands | Should -Not -Contain "itl-check.md"
+            $masterKiloCommands | Should -Not -Contain "itl-refresh.md"
+            $masterKiloCommands | Should -Not -Contain "itl-result.md"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
