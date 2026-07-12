@@ -409,6 +409,25 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         [math]::Ceiling(([System.Text.Encoding]::UTF8.GetByteCount($vanessaGuideStubText)) / 4) | Should -BeLessOrEqual 120
     }
 
+    It "documents immutable configured ai_rules updates instead of moving upstream main" {
+        $installText = Get-Content -LiteralPath (Join-Path $RepoRoot "AGENT-INSTALL.md") -Raw -Encoding UTF8
+        $initSetupText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\init-setup.md") -Raw -Encoding UTF8
+        $advancedText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md") -Raw -Encoding UTF8
+
+        foreach ($text in @($installText, $initSetupText, $advancedText)) {
+            $text | Should -Match "configured"
+            $text | Should -Match "immutable"
+            $text | Should -Match "controlled fork"
+        }
+        $installText | Should -Match 'fresh mode.*does not advance'
+        $initSetupText | Should -Match 'both `fresh` and `locked` checkout that immutable tag'
+        $initSetupText | Should -Match 'legacy/custom repository without `aiRules\.ref`'
+        $installText | Should -Not -Match 'git clone https://github\.com/comol/ai_rules_1c\.git'
+        $installText | Should -Not -Match 'git -C \$rulesDir pull --ff-only'
+        $initSetupText | Should -Not -Match 'In `fresh`, checkout remote HEAD'
+        $advancedText | Should -Not -Match 'refreshes upstream `ai_rules_1c`'
+    }
+
     It "does not append the AGENTS bridge when upstream AGENTS already loads USER-RULES" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-rules-bridge-test-" + [guid]::NewGuid().ToString("N"))
 
