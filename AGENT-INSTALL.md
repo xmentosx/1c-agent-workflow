@@ -96,7 +96,7 @@ Required for initial project setup:
 - 1C platform version/path. Before asking for a manual path, scan installed versions under existing standard folders such as `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8`. Either folder may be absent; treat missing folders as normal and skip them without error. If versions are found, ask the developer to choose one of them and store the selected `...\bin\1cv8.exe` path. Do not offer the common root `C:\Program Files\1cv8` as a platform version. Ask for a custom full path only when no installed version is found or the developer chooses manual input.
 - Base configuration version. Ask whether the project uses `PM4` or `PM5`; default is `PM5`. Store the answer in committed `.agent-1c/project.json` as `baseConfigurationVersion`. `BASE_CONFIGURATION_VERSION` is only a local/process override.
 - Web-client testing. Ask whether new development branch infobases should be web-published by default. Store `WEB_PUBLISH_BY_DEFAULT=true|false` in local `.dev.env`, not in committed `project.json`. If the answer is yes, ask whether to attempt automatic publication during branch creation and store `WEB_PUBLISH_AUTO=true|false`. Automatic publication uses an already prepared `webinst`-compatible web contour; the helper may detect or ask for `WEBINST_PATH`, `APACHE_KIND`, `WEB_PUBLICATION_ROOT`, `WEB_PUBLICATION_URL_BASE`, and optional `APACHE_HTTPD_CONF_PATH`, but it must never install Apache or any web server.
-- Dependency mode. Ask one choice during initialization: use fresh dependency versions or locked versions from `.agent-1c/dependency-lock.json`. The default is fresh. Store `DEPENDENCY_MODE=fresh|locked` in `.dev.env` and mirror the choice in the dependency lock manifest. In fresh mode, the helper resolves the latest available dependencies and records the `ai_rules_1c` commit plus Vanessa Automation, Vanessa UI MCP CFE, and ROCTUP MCP Toolkit URL/SHA256 metadata. Set optional `GITHUB_TOKEN` (or compatible `GH_TOKEN`) in the process environment or ignored `.dev.env` to authenticate these API requests; `GITHUB_TOKEN` takes precedence. Without a token, the helper uses anonymous API access and, only after a GitHub rate-limit 403/429, uses a complete compatible dependency-lock entry as a SHA256-verified direct-download fallback. The packaged baseline covers Windows x64 ROCTUP only; Linux and Windows x86 require a project-specific lock or a successful fresh resolve. In locked mode, the helper must use only pinned lock values and must stop if a required pin or hash is missing or mismatched.
+- Dependency mode. Ask one choice during initialization: use fresh dependency versions or locked versions from `.agent-1c/dependency-lock.json`. The default is fresh. Store `DEPENDENCY_MODE=fresh|locked` in `.dev.env` and mirror the choice in the dependency lock manifest. In fresh mode, the helper resolves current Vanessa Automation, Vanessa UI MCP CFE, and ROCTUP MCP Toolkit assets and records their URL/SHA256 metadata. A configured immutable `aiRules.ref` does not advance in fresh mode: both fresh and locked install that tag and verify its recorded commit; controlled fork `main` is forbidden. Set optional `GITHUB_TOKEN` (or compatible `GH_TOKEN`) in the process environment or ignored `.dev.env` to authenticate GitHub API requests; `GITHUB_TOKEN` takes precedence. Without a token, the helper uses anonymous API access and, only after a GitHub rate-limit 403/429, uses a complete compatible dependency-lock entry as a SHA256-verified direct-download fallback. The packaged baseline covers Windows x64 ROCTUP only; Linux and Windows x86 require a project-specific lock or a successful fresh resolve. In locked mode, the helper must use only pinned lock values and must stop if a required pin or hash is missing or mismatched.
 - Vanessa Automation verification. It is required for executable development branch tests and provides the EPF used by branch-local Vanessa UI MCP. If `VANESSA_AUTOMATION_EPF` is missing or invalid, the helper installs it automatically inside the same init run; do not ask whether it is needed. Store downloaded files under `.agent-1c/tools/vanessa-automation` and local paths in `.dev.env`. Standard `/itl-check` uses `StartFeaturePlayer` through `TESTMANAGER -> TESTCLIENT` with branch-local `VANESSA_TEST_PORT` as the TestClient launch/connect port in VAParams, not MCP. `verify-dev-branch helper alias` remains a compatibility alias. It also checks the local branch infobase event log against `.agent-1c/event-log-baselines/<branch>.json`; fresh non-baseline `Error` records fail verification. Foreign branch Vanessa processes are warnings by default; set `VANESSA_TEST_FOREIGN_WAIT_MODE=wait` only for conservative serialized local runs.
 - ROCTUP MCP Toolkit. Install/cache the OS-specific `MCP_Toolkit*.epf` automatically during init/update under ignored `.agent-1c/tools/roctup-mcp-toolkit`. New `itldev/*` branches prepare ROCTUP as stopped/ready without web publication; explicit `start-roctup-mcp` writes branch-local Codex/Kilo MCP client entries, and `stop-roctup-mcp` removes them after use. Helper-managed local ports are reserved through the ITL port registry (`ITL_PORT_REGISTRY_SCOPE`, `ITL_PORT_REGISTRY_HOME`) so projects, worktrees, and terminal-server users do not collide.
 - vibecoding1c MCP. Do not ask developers to choose ports, models, or keys during initialization. Ask only whether vibecoding1c MCP should be configured now or later through a normal agent request; the default answer is yes. The default setup applies saved selection and opens selection first only when it is missing or incomplete; use `vibecoding1c-mcp-select` or `vibecoding1c-mcp-setup -Force` for an explicit reselect. Remote LAN vibecoding1c MCP is the default and is discovered from `VIBECODING1C_MCP_REGISTRY_REPO` (default `http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git`); config-specific remote vibecoding1c MCP always requires an explicit per-server `configId` selection, even when the registry has one configuration. The `code` and `graph` selections do not inherit `configId` or `hostId` from each other. Developers can override each server to local. Local vibecoding1c MCP still clones or fast-forwards the private GitLab distribution from `VIBECODING1C_MCP_DISTRIBUTION_REPO` (default `http://gitlabserv01.itland.local/root/MCP-vibecoding1c.git`) into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c\distribution`, rotates license keys into `%LOCALAPPDATA%\ITL\MCP\vibecoding1c`, allocates ports from the local registry, writes ignored Codex/Kilo config for the current scope, reconciles default upstream `ai_rules_1c` MCP client entries after rules install/update only when ready vibecoding1c replacements are available, and keeps project/branch vibecoding1c MCP out of neighboring worktrees. New development worktrees inherit a complete `master` selection and rematerialize ready `remote` and `local + project` endpoints in the worktree context without copying raw state. Use `VIBECODING1C_MCP_REGISTRY_PATH` and `VIBECODING1C_MCP_DISTRIBUTION_PATH` only as explicit manual checkout overrides.
@@ -185,7 +185,7 @@ Use these steps only when `install-agent-1c-workflow.ps1` is unavailable or fail
 
 4. Create `.agent-1c/project.json` from `templates/project.json` when missing. Use the default `devBranchInfoBaseRoot` unless the developer explicitly requested a custom location.
 
-5. Create `.agent-1c/dependency-lock.json` from `templates/dependency-lock.json` when missing. Keep it committed when the team wants reproducible bootstrap pins; fresh mode updates it with resolved workflow package revision, dependency revisions, URLs, and hashes.
+5. Create `.agent-1c/dependency-lock.json` from `templates/dependency-lock.json` when missing. The template deliberately has no installed workflow commit. Root bootstrap passes its source checkout origin/ref/full commit into init, which records the files actually copied; a non-Git source records `source=path` with an empty commit. Keep the resulting lock committed when the team wants reproducible bootstrap pins; fresh mode updates it with resolved dependency revisions, URLs, and hashes.
 
 6. Create `.agent-1c/tools.json` from `templates/tools.json` when missing. Keep it committed so the team can adjust required software checks and install suggestions.
 
@@ -261,7 +261,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 
 Dedicated vibecoding1c MCP hosts are prepared without the agent through `vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1`. The host can read configuration XML files from a Git `sourceRepo` or a local `sourcePath` and can publish shared BookStack and Mantis MCP endpoints. Local `sourcePath` folders can be refreshed manually with `-Action dump-config`, which updates the source infobase from 1C configuration repository storage and then runs incremental `/DumpConfigToFiles` when `ConfigDumpInfo.xml` exists. The host publishes only `registry.json` endpoint/freshness metadata to GitLab; secrets, local paths, infobase credentials, `ONEC_AI_TOKEN`, BookStack tokens, and `MANTIS_API_TOKEN` stay in ignored `vibecoding1c-mcp-host/host.config.json`, the host-local distribution `config.env`, or local environment.
 
-The current workflow intentionally uses the latest available ITL workflow package, `ai_rules_1c`, Vanessa Automation, and ROCTUP MCP Toolkit by default. It records the resolved workflow package commit, resolved `ai_rules_1c` commit, Vanessa URL/version/SHA256, ROCTUP asset URL/version/SHA256, and downloaded archive hashes in `.agent-1c/dependency-lock.json`. For reproducible bootstrap, choose `DEPENDENCY_MODE=locked`; the helper will use only pinned values and stop when a required pin or hash is missing or mismatched.
+The current workflow refreshes the ITL workflow package, Vanessa Automation, and ROCTUP MCP Toolkit in fresh mode. The configured immutable `aiRules.ref` remains pinned and is verified against its dependency-lock commit. The helper records the resolved workflow package and `ai_rules_1c` commits, Vanessa URL/version/SHA256, ROCTUP asset URL/version/SHA256, and downloaded archive hashes in `.agent-1c/dependency-lock.json`. For reproducible bootstrap, choose `DEPENDENCY_MODE=locked`; the helper will use only pinned values and stop when a required pin or hash is missing or mismatched.
 
 ## Update Existing ITL Workflow
 
@@ -285,31 +285,13 @@ After the update, review and commit tracked changes in `master`. Active `itldev/
 
 ## Install ai_rules_1c
 
-After the first source infobase sync and configuration dump, install project rules from:
+After the first source infobase sync and configuration dump, let the ITL helper install project rules from `aiRules.repo` and immutable `aiRules.ref` in `.agent-1c/project.json`. The standard ITL path never clones or pulls a moving upstream branch directly. It checks the configured tag against `.agent-1c/dependency-lock.json` and runs that source's official installer.
 
-```text
-https://github.com/comol/ai_rules_1c
-```
-
-Follow that repository's `AGENT-INSTALL.md`. It supports per-project installation and can install for Codex and Kilo Code.
-
-If using the PowerShell installer directly from the project root:
-
-```powershell
-$rulesDir = Join-Path $env:TEMP "ai_rules_1c"
-if (Test-Path $rulesDir) {
-    git -C $rulesDir pull --ff-only
-} else {
-    git clone https://github.com/comol/ai_rules_1c.git $rulesDir
-}
-
-$tools = @("codex", "kilocode")
-& (Join-Path $rulesDir "install.ps1") -Command init -ProjectRoot (Get-Location).Path -Source $rulesDir -Tools $tools -AssumeYes
-```
+For normal initialization, use only the monitored root bootstrap. For an already initialized project, use `update-ai-rules` below. Direct installer invocation is a non-standard recovery path for an explicitly configured custom repository; select and verify an immutable ref/commit first instead of following remote HEAD.
 
 The workflow default installs rules for Codex and Kilo. Configure additional supported upstream clients through `aiRules.tools` in `.agent-1c/project.json`; normal updates add missing clients but never remove an existing client automatically.
 
-For an explicit fresh-upstream compatibility check in the workflow repository, run:
+For an explicit configured-source compatibility check in the workflow repository, run:
 
 ```powershell
 .\scripts\test-ai-rules-compatibility.ps1
@@ -321,7 +303,7 @@ To refresh `ai_rules_1c` after initialization, run:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-ai-rules
 ```
 
-In Kilo Code, ask the agent to update ITL rules. The helper runs the upstream updater, reconciles default upstream MCP client entries from ignored Codex/Kilo config only after ready vibecoding1c replacements are written, records the resolved commit in `.agent-1c/dependency-lock.json`, reapplies the managed `USER-RULES.md` ITL block from `templates/USER-RULES.append.md`, and avoids modifying upstream-managed `AGENTS.md` when it already points to `USER-RULES.md`. If vibecoding1c selection/state is missing or incomplete, upstream MCP entries are preserved and the helper prints `vibecoding1c-mcp-setup`.
+In Kilo Code, ask the agent to update ITL rules. The helper runs the configured source installer, reconciles its default MCP client entries from ignored Codex/Kilo config only after ready vibecoding1c replacements are written, records the resolved commit in `.agent-1c/dependency-lock.json`, reapplies the managed `USER-RULES.md` ITL block from `templates/USER-RULES.append.md`, and avoids modifying source-managed `AGENTS.md` when it already points to `USER-RULES.md`. If vibecoding1c selection/state is missing or incomplete, source MCP entries are preserved and the helper prints `vibecoding1c-mcp-setup`.
 
 ## Run Initial Lifecycle
 

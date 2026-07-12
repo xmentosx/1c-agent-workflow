@@ -1803,6 +1803,28 @@ function Update-WorkflowPackageLockEntry {
     Write-DependencyLockManifest -Manifest $manifest
 }
 
+function Apply-BootstrapWorkflowPackageProvenance {
+    $values = @($BootstrapWorkflowRepo, $BootstrapWorkflowRef, $BootstrapWorkflowCommit, $BootstrapWorkflowSource)
+    if (@($values | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -eq 0) {
+        return $false
+    }
+    if ($BootstrapWorkflowSource -ne "path") {
+        throw "Bootstrap workflow provenance source must be 'path'."
+    }
+    if ($BootstrapWorkflowCommit -and $BootstrapWorkflowCommit -notmatch '^[0-9a-fA-F]{40}$') {
+        throw "Bootstrap workflow provenance commit must be a full 40-character Git SHA: $BootstrapWorkflowCommit"
+    }
+
+    Update-WorkflowPackageLockEntry -Source ([pscustomobject]@{
+        repo = [string]$BootstrapWorkflowRepo
+        ref = [string]$BootstrapWorkflowRef
+        commit = ([string]$BootstrapWorkflowCommit).ToLowerInvariant()
+        source = [string]$BootstrapWorkflowSource
+    })
+    Write-Host "Recorded bootstrap workflow package provenance: $(if ($BootstrapWorkflowCommit) { $BootstrapWorkflowCommit } else { '<non-Git source>' })"
+    return $true
+}
+
 function Get-WorkflowActiveDevBranchStates {
     $states = @()
     foreach ($file in Get-DevBranchStateFiles) {
@@ -3090,6 +3112,7 @@ function Initialize-Project {
     } else {
         Prepare-ConfiguredInitProjectSettings
     }
+    Apply-BootstrapWorkflowPackageProvenance | Out-Null
     Set-RunStage -Stage "init.check-tools" -Detail "Checking required tools"
     Check-Tools -StopOnMissing
     Set-RunStage -Stage "init.install-roctup-mcp" -Detail "Installing or updating ROCTUP MCP Toolkit"

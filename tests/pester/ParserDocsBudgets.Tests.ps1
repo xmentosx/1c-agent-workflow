@@ -85,6 +85,47 @@
         }
     }
 
+    It "keeps every installed ITL skill discoverable through valid frontmatter" {
+        $skillRoot = Join-Path $RepoRoot ".agents\skills"
+        $expectedSkillIds = @(
+            "1c-workflow",
+            "1c-workflow-fast",
+            "itl-roctup-1c-data",
+            "itl-vanessa-ui-mcp",
+            "product-docs"
+        ) | Sort-Object
+        $actualSkillIds = @(Get-ChildItem -LiteralPath $skillRoot -Directory | Select-Object -ExpandProperty Name | Sort-Object)
+        $actualSkillIds | Should -Be $expectedSkillIds
+
+        foreach ($skillId in $expectedSkillIds) {
+            $skillPath = Join-Path (Join-Path $skillRoot $skillId) "SKILL.md"
+            $text = Get-Content -LiteralPath $skillPath -Raw -Encoding UTF8
+            $frontmatterMatch = [regex]::Match($text, '\A---\r?\n(?<yaml>.*?)\r?\n---(?:\r?\n|\z)', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+            $frontmatterMatch.Success | Should -BeTrue
+
+            $yaml = $frontmatterMatch.Groups['yaml'].Value
+            $nameMatch = [regex]::Match($yaml, '(?m)^name:\s*["'']?(?<value>[^\r\n"'']+)["'']?\s*$')
+            $nameMatch.Success | Should -BeTrue
+            $name = $nameMatch.Groups['value'].Value.Trim()
+            $name | Should -Be $skillId
+            $name | Should -Match '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+            $name.Length | Should -BeLessOrEqual 64
+
+            $descriptionMatch = [regex]::Match(
+                $yaml,
+                '(?ms)^description:\s*(?:(?:>|\|)[+-]?\s*\r?\n(?<folded>(?:[ \t]+[^\r\n]*(?:\r?\n|\z))+)|["'']?(?<inline>[^\r\n"'']+)["'']?\s*$)'
+            )
+            $descriptionMatch.Success | Should -BeTrue
+            $description = if ($descriptionMatch.Groups['folded'].Success) {
+                ($descriptionMatch.Groups['folded'].Value -split '\r?\n' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join ' '
+            } else {
+                $descriptionMatch.Groups['inline'].Value.Trim()
+            }
+            $description | Should -Not -BeNullOrEmpty
+            $description.Length | Should -BeLessOrEqual 1024
+        }
+    }
+
     It "entrypoint token budgets stay within limits" {
         $budgets = @(
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 750; maxApproxTokens = 1500 },

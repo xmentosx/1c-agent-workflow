@@ -1,6 +1,6 @@
 # Initialization And Setup Reference
 
-Use this reference for first-time bootstrap, tool readiness, workflow refresh, and upstream rules refresh. Routine installed-project actions should use `1c-workflow-fast` or the helper directly.
+Use this reference for first-time bootstrap, tool readiness, workflow refresh, and configured rules refresh. Routine installed-project actions should use `1c-workflow-fast` or the helper directly.
 
 ## State Files
 
@@ -81,7 +81,7 @@ Goal: create baseline project state.
    powershell -ExecutionPolicy Bypass -File <source>\install-agent-1c-workflow.ps1 -ProjectRoot <project>
    ```
 
-   The bootstrap script copies only managed workflow files (`.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, `templates/`, root docs/guides, and `install-agent-1c-workflow.ps1`) and then starts the monitored launcher. Do not expand normal initialization into manual copy steps.
+   The bootstrap script copies only managed workflow files (`.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, `templates/`, root docs/guides, and `install-agent-1c-workflow.ps1`) and then starts the monitored launcher. It passes the source checkout origin/ref/full commit into init so `workflowPackage` records the files actually copied; a non-Git source is recorded as `source=path` with an empty commit. Do not expand normal initialization into manual copy steps.
 
 1. In an already installed project, start with the monitored foreground launcher:
 
@@ -122,12 +122,13 @@ Goal: refresh the installed ITL workflow package without rerunning initializatio
 
 ## UPDATE_AI_RULES
 
-Goal: refresh upstream `ai_rules_1c` while preserving the ITL overlay.
+Goal: refresh the configured `ai_rules_1c` source while preserving the ITL overlay.
 
 1. Clone or update the configured `ai_rules_1c` repo under `%TEMP%\ai_rules_1c`.
-2. In `fresh`, checkout remote HEAD; in `locked`, checkout the pinned commit/ref and stop when missing.
-3. Run the upstream installer with `update` when `.ai-rules.json` exists, otherwise `init` with configured clients. Afterward add each configured client absent from `.ai-rules.json`; do not remove additional installed clients automatically.
-4. Preserve upstream files marked `userModified`; use `-Force` only after explicit developer intent.
-5. Reconcile default upstream MCP client entries from ignored Codex/Kilo config only after writing ready vibecoding1c-managed replacements; if selection/state is missing or incomplete, preserve upstream entries and print `vibecoding1c-mcp-setup` as the recovery action.
-6. Reapply the managed ITL block in `USER-RULES.md` from `templates/USER-RULES.append.md`; normally do not append to `AGENTS.md` when it already references `USER-RULES.md`.
-7. Record the resolved `ai_rules_1c` commit in `.agent-1c/dependency-lock.json`.
+2. When `aiRules.ref` is configured, both `fresh` and `locked` checkout that immutable tag. The controlled fork accepts only `itl-*`; verify that the tag resolves to the commit recorded in the dependency lock, and never consume fork `main`.
+3. In `locked`, use the lock repo/ref/commit and stop when required values are missing or disagree. Remote HEAD is allowed only for an explicitly configured legacy/custom repository without `aiRules.ref`; it is never the standard ITL path.
+4. Run the configured source installer with `update` when `.ai-rules.json` exists, otherwise `init` with configured clients. Afterward add each configured client absent from `.ai-rules.json`; do not remove additional installed clients automatically.
+5. Preserve configured-source files marked `userModified`; use `-Force` only after explicit developer intent.
+6. Reconcile default configured-source MCP client entries from ignored Codex/Kilo config only after writing ready vibecoding1c-managed replacements; if selection/state is missing or incomplete, preserve those entries and print `vibecoding1c-mcp-setup` as the recovery action.
+7. Reapply the managed ITL block in `USER-RULES.md` from `templates/USER-RULES.append.md`; normally do not append to `AGENTS.md` when it already references `USER-RULES.md`.
+8. Record the resolved `ai_rules_1c` commit in `.agent-1c/dependency-lock.json`.
