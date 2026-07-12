@@ -144,6 +144,11 @@ function Write-RunStatus {
     if ([string]::IsNullOrWhiteSpace($RunStatusPath)) {
         return
     }
+    if ($Status -eq "succeeded" -and $Action -eq "init-project") {
+        if ($script:RunStage -ne "init.complete" -or $null -eq $ExitCode -or [int]$ExitCode -ne 0) {
+            throw "init-project success status requires stage init.complete and exitCode 0."
+        }
+    }
 
     $script:ResolvedRunStatusPath = Resolve-RunFilePath -Path $RunStatusPath
     if ($RunLogPath) {
@@ -162,6 +167,7 @@ function Write-RunStatus {
         action = $Action
         projectRoot = $script:ProjectRoot
         pid = $PID
+        launcherPid = $script:LauncherPid
         startedAt = $script:RunStartedAt.ToString("o")
         updatedAt = $now.ToString("o")
         finishedAt = $finishedAt
@@ -173,6 +179,9 @@ function Write-RunStatus {
         stageDetail = $(if ($script:RunStageDetail) { [string]$script:RunStageDetail } else { "" })
         lastProcessId = $script:LastProcessId
         lastProcessTimedOut = $script:LastProcessTimedOut
+        gitIndexLockPreExisted = [bool]$script:GitIndexLockPreExisted
+        resumedFrom = $script:ResumedFrom
+        recoveryReason = $script:RecoveryReason
     }
 
     Write-Utf8Text -Path $script:ResolvedRunStatusPath -Value (($payload | ConvertTo-Json -Depth 5) + [Environment]::NewLine)

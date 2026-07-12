@@ -12,6 +12,51 @@
         $HelperText = $context.HelperText
         $LauncherText = $context.LauncherText
         $McpHostText = $context.McpHostText
+        $ResumeFakeHelperText = @'
+param(
+    [string]$ProjectRoot,
+    [string]$RunStatusPath,
+    [string]$RunLogPath,
+    [string]$Action,
+    [string]$InitMode,
+    [string]$ResumeRunStatusPath,
+    [string]$RecoveryReason,
+    [int]$LauncherPid
+)
+$utf8 = New-Object System.Text.UTF8Encoding $false
+$now = Get-Date
+$capture = [ordered]@{
+    initMode = $InitMode
+    resumeRunStatusPath = $ResumeRunStatusPath
+    recoveryReason = $RecoveryReason
+    launcherPid = $LauncherPid
+}
+[System.IO.File]::WriteAllText((Join-Path $ProjectRoot "resume-capture.json"), (($capture | ConvertTo-Json) + [Environment]::NewLine), $utf8)
+$status = [ordered]@{
+    schemaVersion = 1
+    status = "succeeded"
+    action = $Action
+    projectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
+    pid = $PID
+    launcherPid = $LauncherPid
+    startedAt = $now.AddSeconds(-1).ToString("o")
+    updatedAt = $now.ToString("o")
+    finishedAt = $now.ToString("o")
+    exitCode = 0
+    lastLogPath = ""
+    runLogPath = $RunLogPath
+    errorMessage = ""
+    stage = "init.complete"
+    stageDetail = "Initialization completed"
+    lastProcessId = 0
+    lastProcessTimedOut = $false
+    gitIndexLockPreExisted = $false
+    resumedFrom = $ResumeRunStatusPath
+    recoveryReason = $RecoveryReason
+}
+[System.IO.File]::WriteAllText($RunStatusPath, (($status | ConvertTo-Json -Depth 6) + [Environment]::NewLine), $utf8)
+exit 0
+'@
     }
     It "keeps initialization on the monitored helper wizard path" {
         $text = (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")) + [Environment]::NewLine + (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\SKILL.md"))
@@ -22,6 +67,9 @@
         $text | Should -Match "-InitMode\s+wizard"
         $text | Should -Match ([regex]::Escape(".agent-1c/runs/<run>/status.json"))
         $text | Should -Match "do not collect the (initialization )?questionnaire in chat"
+        $HelperText | Should -Match 'ValidateSet\("configured", "wizard", "json", "resume"\)'
+        $HelperText | Should -Match "ResumeRunStatusPath"
+        $LauncherText | Should -Match 'Get-AgentAction\) -ne "init-project"'
     }
 
     It "documents the one-step bootstrap as the normal install path" {
@@ -64,6 +112,8 @@
         $installText | Should -Not -Match "init-project -InitMode configured -InstallVanessaIfMissing"
         $installText | Should -Not -Match "InstallApacheIfMissing"
         $installText | Should -Not -Match "install-apache"
+        $installText | Should -Match "WEB_PUBLISH_BY_DEFAULT=false"
+        $installText | Should -Match "empty .*INFOBASE_PUBLISH_URL.* is expected"
     }
 
     It "documents monitored init as a foreground command, not a background direct wizard" {
@@ -857,13 +907,22 @@ exit 0
             $text | Should -Match "CLIXML"
             $text | Should -Match "positive long timeout"
             $text | Should -Match "timeout: 0"
+            $text | Should -Match "timeout_ms\s*>=\s*3900000"
+            $text | Should -Match "repeat the same"
         }
 
         $combinedText = ($docPaths | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_ }) -join [Environment]::NewLine
         $combinedText | Should -Match "launcher validates the helper path"
         $combinedText | Should -Match "MaxWaitSeconds 3600"
         $combinedText | Should -Match "InitMaxWaitSeconds 3600"
+        $combinedText | Should -Match "launcher\.orphaned|orphaned"
+        $combinedText | Should -Match "Do not delete.*lock|Never delete.*lock"
+        $combinedText | Should -Match "edit.*status"
         $combinedText | Should -Not -Match "(?i)(use|set)\s+`?timeout:\s*0"
+
+        $sourceAgentsText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENTS.md")
+        $sourceAgentsText | Should -Match "timeout_ms\s*>=\s*3900000"
+        $sourceAgentsText | Should -Match "repeat the same bootstrap command"
     }
 
     It "documents long external shell timeout for ITL lifecycle commands" {
@@ -1209,6 +1268,35 @@ exit 0
             $status.stage | Should -Not -BeNullOrEmpty
             [int]$status.lastProcessId | Should -Be 0
             [bool]$status.lastProcessTimedOut | Should -Be $false
+            [int]$status.launcherPid | Should -Be 0
+            [bool]$status.gitIndexLockPreExisted | Should -Be $false
+            [string]$status.resumedFrom | Should -Be ""
+            [string]$status.recoveryReason | Should -Be ""
+            $bytes = [System.IO.File]::ReadAllBytes($statusPath)
+            ($bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) | Should -Be $false
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "rejects init success before the completion stage" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-status-incomplete-success-" + [guid]::NewGuid().ToString("N"))
+        $statusPath = Join-Path $tempRoot "status.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            {
+                & {
+                    . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    $Action = "init-project"
+                    $RunStatusPath = $statusPath
+                    $script:RunStage = "init.commit-dump"
+                    Write-RunStatus -Status "succeeded" -ExitCode 0
+                }
+            } | Should -Throw "*requires stage init.complete and exitCode 0*"
+            (Test-Path -LiteralPath $statusPath -PathType Leaf) | Should -Be $false
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -1367,6 +1455,246 @@ Start-Sleep -Seconds 20
                 $status.errorMessage | Should -Match "git.exe is still running"
                 (Test-Path -LiteralPath $lockPath -PathType Leaf) | Should -Be $true
             }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "marks an invalid init success orphaned and automatically resumes it" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-resume-КОРП-" + [guid]::NewGuid().ToString("N"))
+        $fakeHelperPath = Join-Path $tempRoot "fake-resume-helper.ps1"
+        $oldRunDir = Join-Path $tempRoot ".agent-1c\runs\20260101-000000-old"
+        $oldStatusPath = Join-Path $oldRunDir "status.json"
+        $lockPath = Join-Path $tempRoot ".git\index.lock"
+        $stdoutPath = Join-Path $tempRoot "stdout.log"
+        $stderrPath = Join-Path $tempRoot "stderr.log"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $oldRunDir | Out-Null
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value "{}"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "VIBECODING1C_MCP_SETUP_DURING_INIT=false"
+            Set-Content -LiteralPath $fakeHelperPath -Encoding UTF8 -Value $ResumeFakeHelperText
+            Set-Content -LiteralPath $lockPath -Encoding ASCII -Value "interrupted-run"
+            $now = Get-Date
+            $oldStatus = [ordered]@{
+                schemaVersion = 1
+                status = "succeeded"
+                action = "init-project"
+                projectRoot = [System.IO.Path]::GetFullPath($tempRoot)
+                pid = 999999
+                launcherPid = 999998
+                startedAt = $now.AddMinutes(-2).ToString("o")
+                updatedAt = $now.AddMinutes(-1).ToString("o")
+                finishedAt = $now.ToString("o")
+                exitCode = $null
+                stage = "init.commit-dump"
+                stageDetail = "Committing baseline 1C configuration dump"
+                lastProcessId = 0
+                lastProcessTimedOut = $false
+                gitIndexLockPreExisted = $false
+            }
+            [System.IO.File]::WriteAllText($oldStatusPath, (($oldStatus | ConvertTo-Json) + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding $false))
+
+            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $LauncherPath,
+                "-ProjectRoot", $tempRoot, "-HelperPath", $fakeHelperPath,
+                "-PollIntervalMilliseconds", "50", "-MaxWaitSeconds", "10", "--",
+                "-Action", "init-project", "-InitMode", "wizard"
+            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+
+            $process.ExitCode | Should -Be 0
+            $oldFinal = Get-Content -Encoding UTF8 -Raw $oldStatusPath | ConvertFrom-Json
+            $oldFinal.status | Should -Be "failed"
+            $oldFinal.stage | Should -Be "launcher.orphaned"
+            $oldFinal.resumeStage | Should -Be "init.commit-dump"
+            [int]$oldFinal.exitCode | Should -Be 125
+            (Test-Path -LiteralPath $lockPath -PathType Leaf) | Should -Be $false
+
+            $capture = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "resume-capture.json") | ConvertFrom-Json
+            $capture.initMode | Should -Be "resume"
+            $capture.resumeRunStatusPath | Should -Be ([System.IO.Path]::GetFullPath($oldStatusPath))
+            $capture.recoveryReason | Should -Match "marked orphaned"
+            [int]$capture.launcherPid | Should -BeGreaterThan 0
+
+            $newRun = Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\runs") -Directory | Where-Object { $_.FullName -ne $oldRunDir } | Select-Object -First 1
+            $newStatus = Get-Content -Encoding UTF8 -Raw (Join-Path $newRun.FullName "status.json") | ConvertFrom-Json
+            $newStatus.status | Should -Be "succeeded"
+            $newStatus.stage | Should -Be "init.complete"
+            [int]$newStatus.exitCode | Should -Be 0
+            $newStatus.projectRoot | Should -Be ([System.IO.Path]::GetFullPath($tempRoot))
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "preserves an orphan lock when old status has no ownership field" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-resume-old-status-" + [guid]::NewGuid().ToString("N"))
+        $fakeHelperPath = Join-Path $tempRoot "fake-resume-helper.ps1"
+        $oldRunDir = Join-Path $tempRoot ".agent-1c\runs\20260101-000000-old"
+        $oldStatusPath = Join-Path $oldRunDir "status.json"
+        $lockPath = Join-Path $tempRoot ".git\index.lock"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $oldRunDir | Out-Null
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value "{}"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "VIBECODING1C_MCP_SETUP_DURING_INIT=false"
+            Set-Content -LiteralPath $fakeHelperPath -Encoding UTF8 -Value $ResumeFakeHelperText
+            Set-Content -LiteralPath $lockPath -Encoding ASCII -Value "unknown-owner"
+            $now = Get-Date
+            $oldStatus = [ordered]@{
+                schemaVersion = 1
+                status = "running"
+                action = "init-project"
+                projectRoot = [System.IO.Path]::GetFullPath($tempRoot)
+                pid = 999999
+                startedAt = $now.AddMinutes(-2).ToString("o")
+                updatedAt = $now.AddMinutes(-1).ToString("o")
+                finishedAt = $null
+                exitCode = $null
+                stage = "init.commit-dump"
+                lastProcessId = 0
+            }
+            Set-Content -LiteralPath $oldStatusPath -Encoding UTF8 -Value ($oldStatus | ConvertTo-Json)
+
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $LauncherPath -ProjectRoot $tempRoot -HelperPath $fakeHelperPath -PollIntervalMilliseconds 50 -MaxWaitSeconds 10 -- -Action init-project -InitMode wizard *> $null
+            $LASTEXITCODE | Should -Be 0
+            (Test-Path -LiteralPath $lockPath -PathType Leaf) | Should -Be $true
+            $oldFinal = Get-Content -Encoding UTF8 -Raw $oldStatusPath | ConvertFrom-Json
+            $oldFinal.errorMessage | Should -Match "ownership is unknown"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "refuses automatic recovery while the recorded helper is still alive" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-resume-live-helper-" + [guid]::NewGuid().ToString("N"))
+        $oldRunDir = Join-Path $tempRoot ".agent-1c\runs\20260101-000000-old"
+        $oldStatusPath = Join-Path $oldRunDir "status.json"
+        $stdoutPath = Join-Path $tempRoot "stdout.log"
+        $stderrPath = Join-Path $tempRoot "stderr.log"
+        $sleeper = $null
+
+        try {
+            New-Item -ItemType Directory -Force -Path $oldRunDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value "{}"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "VIBECODING1C_MCP_SETUP_DURING_INIT=false"
+            $sleeper = Start-Process -FilePath "powershell" -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 30") -PassThru -WindowStyle Hidden
+            $now = Get-Date
+            $oldStatus = [ordered]@{
+                schemaVersion = 1
+                status = "running"
+                action = "init-project"
+                projectRoot = [System.IO.Path]::GetFullPath($tempRoot)
+                pid = $sleeper.Id
+                startedAt = $now.AddSeconds(-5).ToString("o")
+                updatedAt = $now.ToString("o")
+                finishedAt = $null
+                exitCode = $null
+                stage = "init.dump-config"
+                lastProcessId = 0
+                gitIndexLockPreExisted = $false
+            }
+            Set-Content -LiteralPath $oldStatusPath -Encoding UTF8 -Value ($oldStatus | ConvertTo-Json)
+
+            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $LauncherPath,
+                "-ProjectRoot", $tempRoot, "-MaxWaitSeconds", "10", "--",
+                "-Action", "init-project", "-InitMode", "wizard"
+            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+            $process.ExitCode | Should -Not -Be 0
+            (Get-Content -LiteralPath $stderrPath -Raw) | Should -Match "already running"
+            @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\runs") -Directory).Count | Should -Be 1
+            (Get-Content -Encoding UTF8 -Raw $oldStatusPath | ConvertFrom-Json).status | Should -Be "running"
+        } finally {
+            if ($null -ne $sleeper) {
+                Stop-Process -Id $sleeper.Id -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "repeats pre-dump work but skips a dump proven complete by commit stage" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-resume-stage-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "<dump />"
+
+            $results = @{}
+            foreach ($resumeStage in @("init.dump-config", "init.commit-dump")) {
+                $statusPath = Join-Path $tempRoot ("$($resumeStage.Replace('.', '-')).json")
+                $status = [ordered]@{
+                    schemaVersion = 1
+                    status = "failed"
+                    action = "init-project"
+                    projectRoot = [System.IO.Path]::GetFullPath($tempRoot)
+                    stage = "launcher.orphaned"
+                    resumeStage = $resumeStage
+                }
+                Set-Content -LiteralPath $statusPath -Encoding UTF8 -Value ($status | ConvertTo-Json)
+
+                $results[$resumeStage] = & {
+                    param($Helper, $Root, $ResumeStatus)
+                    . $Helper -ProjectRoot $Root -Action help *> $null
+                    $InitMode = "resume"
+                    $ResumeRunStatusPath = $ResumeStatus
+                    $RunStatusPath = ""
+                    $calls = [System.Collections.Generic.List[string]]::new()
+
+                    function Write-Section { param([string]$Text) }
+                    function Set-RunStage { param([string]$Stage, [string]$Detail = "") }
+                    function Prepare-ConfiguredInitProjectSettings { $calls.Add("prepare") | Out-Null }
+                    function Apply-BootstrapWorkflowPackageProvenance { return $null }
+                    function Check-Tools { param([switch]$StopOnMissing); $calls.Add("check-tools") | Out-Null }
+                    function Install-RoctupMcp { $calls.Add("install-roctup") | Out-Null }
+                    function Install-VanessaMcpArtifacts { $calls.Add("cache-vanessa") | Out-Null; return $null }
+                    function Get-DevBranchInfoBaseRoot { return ".agent-1c/infobases/dev-branches" }
+                    function Ensure-GitRepository { $calls.Add("ensure-git") | Out-Null }
+                    function Ensure-GitIgnore { }
+                    function Checkout-Master { }
+                    function Get-SourceUsesRepository { return $true }
+                    function Update-BaseFromRepository { $calls.Add("repository-update") | Out-Null }
+                    function Dump-ConfigToFiles {
+                        $calls.Add("dump") | Out-Null
+                        return [pscustomobject]@{ exportPath = "src/cf"; absoluteExportPath = (Join-Path $Root "src\cf"); incremental = $true; logPath = "" }
+                    }
+                    function Commit-BaselineDumpIfNeeded { param([string]$Message, [string]$ExportPath); $calls.Add("commit-dump") | Out-Null; return $false }
+                    function Assert-BaselineDumpCommitted { param([string]$ExportPath) }
+                    function Test-InitAiRulesReady { return $true }
+                    function Install-AiRules1c { $calls.Add("install-ai-rules") | Out-Null }
+                    function Update-AgentGuidanceBridge { }
+                    function Update-UserRules { }
+                    function Sync-KiloItlCommandSurface { }
+                    function Commit-IfChanged { param([string]$Message); return $false }
+                    function Get-EnvValue { param([string]$Name, [object]$Default); return $false }
+                    function ConvertTo-YesNoBool { param([object]$Value, [bool]$Default); return $false }
+                    function Setup-Vibecoding1cMcp { $calls.Add("setup-vibecoding") | Out-Null }
+                    function Assert-InitGitClean { $calls.Add("git-clean") | Out-Null }
+
+                    Initialize-Project
+                    return @($calls)
+                } $HelperPath $tempRoot $statusPath
+            }
+
+            $results["init.dump-config"] | Should -Contain "check-tools"
+            $results["init.dump-config"] | Should -Contain "repository-update"
+            $results["init.dump-config"] | Should -Contain "dump"
+            $results["init.commit-dump"] | Should -Not -Contain "check-tools"
+            $results["init.commit-dump"] | Should -Not -Contain "repository-update"
+            $results["init.commit-dump"] | Should -Not -Contain "dump"
+            $results["init.commit-dump"] | Should -Contain "commit-dump"
+            $results["init.commit-dump"] | Should -Not -Contain "install-ai-rules"
+            $results["init.commit-dump"] | Should -Contain "git-clean"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

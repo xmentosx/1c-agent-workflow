@@ -3,9 +3,10 @@ param(
     [string]$ProjectRoot = (Get-Location).Path,
     [string]$SourceRoot = $PSScriptRoot,
     [switch]$NoInit,
-    [ValidateSet("wizard", "json", "configured")]
+    [ValidateSet("wizard", "json", "configured", "resume")]
     [string]$InitMode = "wizard",
     [string]$InitAnswersPath = "",
+    [string]$ResumeRunStatusPath = "",
     [int]$InitMaxWaitSeconds = 3600,
     [switch]$KeepWindowOnFailure
 )
@@ -310,6 +311,14 @@ if ($InitAnswersPath) {
         Resolve-Agent1cFullPath -Path (Join-Path $callerRoot $InitAnswersPath)
     }
     $initArgs += @("-InitAnswersPath", $answersFull)
+}
+if ($ResumeRunStatusPath) {
+    $resumeStatusFull = if ([System.IO.Path]::IsPathRooted($ResumeRunStatusPath)) {
+        Resolve-Agent1cFullPath -Path $ResumeRunStatusPath
+    } else {
+        Resolve-Agent1cFullPath -Path (Join-Path $projectRootFull $ResumeRunStatusPath)
+    }
+    $initArgs += @("-ResumeRunStatusPath", $resumeStatusFull)
 }
 
 $launcherArgs = @()

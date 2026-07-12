@@ -3099,6 +3099,106 @@ function Assert-InitGitClean {
     Write-Host "Git worktree is clean after initialization."
 }
 
+function Get-InitResumeStatus {
+    if ([string]::IsNullOrWhiteSpace($ResumeRunStatusPath)) {
+        throw "InitMode resume requires ResumeRunStatusPath from the monitored launcher."
+    }
+
+    $path = Resolve-RunFilePath -Path $ResumeRunStatusPath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Resume run status was not found: $path"
+    }
+
+    try {
+        $status = Read-Utf8Text -Path $path | ConvertFrom-Json
+    } catch {
+        throw "Resume run status cannot be read: $path. $($_.Exception.Message)"
+    }
+    if ([string]$status.action -ne "init-project") {
+        throw "Resume run status is not an init-project run: $path"
+    }
+
+    $recordedRoot = Resolve-Agent1cFullPath -Path ([string]$status.projectRoot)
+    if ($recordedRoot -ne $script:ProjectRoot) {
+        throw "Resume run project root mismatch: status='$recordedRoot' current='$script:ProjectRoot'."
+    }
+    return $status
+}
+
+function Get-InitResumeStage {
+    param([object]$Status)
+
+    $resumeStageProperty = $Status.PSObject.Properties["resumeStage"]
+    if ($null -ne $resumeStageProperty -and -not [string]::IsNullOrWhiteSpace([string]$resumeStageProperty.Value)) {
+        return [string]$resumeStageProperty.Value
+    }
+    return [string]$Status.stage
+}
+
+function Test-InitStageAtLeast {
+    param(
+        [string]$Stage,
+        [string]$Expected
+    )
+
+    $stages = @(
+        "init.prepare",
+        "init.check-tools",
+        "init.install-roctup-mcp",
+        "init.cache-vanessa-ui-mcp",
+        "init.git",
+        "init.repository-update",
+        "init.dump-config",
+        "init.commit-dump",
+        "init.install-ai-rules",
+        "init.guidance",
+        "init.vibecoding1c-mcp",
+        "init.final-git-clean",
+        "init.complete"
+    )
+    $actualIndex = [array]::IndexOf($stages, $Stage)
+    $expectedIndex = [array]::IndexOf($stages, $Expected)
+    return ($actualIndex -ge 0 -and $expectedIndex -ge 0 -and $actualIndex -ge $expectedIndex)
+}
+
+function Test-InitDumpArtifactsReady {
+    param([string]$ExportPath = (Get-ExportPath))
+
+    try {
+        $absoluteExportPath = Assert-ExportPathInsideProject $ExportPath
+        $dumpInfoPath = Join-Path $absoluteExportPath "ConfigDumpInfo.xml"
+        if (-not (Test-Path -LiteralPath $dumpInfoPath -PathType Leaf)) {
+            return $false
+        }
+        return (@(Get-ChildItem -LiteralPath $absoluteExportPath -Force).Count -gt 0)
+    } catch {
+        return $false
+    }
+}
+
+function Test-InitAiRulesReady {
+    try {
+        $manifest = Get-AiRules1cProjectManifest
+        if ($null -eq $manifest) {
+            return $false
+        }
+        $installedTools = @(Get-AiRules1cManifestToolNames -Manifest $manifest)
+        foreach ($tool in @(Get-AiRules1cTools)) {
+            if ($installedTools -notcontains $tool) {
+                return $false
+            }
+        }
+        $configuredRef = [string](Get-ConfigValue -Path "aiRules.ref" -Default "")
+        if ($configuredRef -and [string]$manifest.version -ne $configuredRef) {
+            return $false
+        }
+        $lockEntry = Get-DependencyLockEntry -Name "aiRules1c"
+        return (-not [string]::IsNullOrWhiteSpace([string](Get-ConfigValueFromObject -Object $lockEntry -Path "commit" -Default "")))
+    } catch {
+        return $false
+    }
+}
+
 function Initialize-Project {
     Write-Section "Initialize project"
     New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
@@ -3106,6 +3206,14 @@ function Initialize-Project {
     if ($InitMode -eq "wizard" -and [string]::IsNullOrWhiteSpace($RunStatusPath)) {
         Write-Host "WARNING: direct init-project wizard is not monitored. Agent-run initialization must use scripts/run-agent-1c-window.ps1 so the agent waits for completion and reads status.json. Use the direct wizard only for manual debugging."
     }
+    $resumeStatus = $null
+    $resumeStage = ""
+    if ($InitMode -eq "resume") {
+        $resumeStatus = Get-InitResumeStatus
+        $resumeStage = Get-InitResumeStage -Status $resumeStatus
+        Write-Host "Resuming interrupted initialization from stage: $resumeStage"
+    }
+
     Set-RunStage -Stage "init.prepare" -Detail "Preparing initialization settings"
     if ($InitMode -eq "wizard" -or $InitMode -eq "json") {
         Prepare-InitProjectSettings
@@ -3113,38 +3221,60 @@ function Initialize-Project {
         Prepare-ConfiguredInitProjectSettings
     }
     Apply-BootstrapWorkflowPackageProvenance | Out-Null
-    Set-RunStage -Stage "init.check-tools" -Detail "Checking required tools"
-    Check-Tools -StopOnMissing
-    Set-RunStage -Stage "init.install-roctup-mcp" -Detail "Installing or updating ROCTUP MCP Toolkit"
-    Install-RoctupMcp
-    Set-RunStage -Stage "init.cache-vanessa-ui-mcp" -Detail "Caching Vanessa UI MCP artifacts"
-    Install-VanessaMcpArtifacts | Out-Null
-    Get-DevBranchInfoBaseRoot | Out-Null
+    $dumpWasCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.commit-dump") -and (Test-InitDumpArtifactsReady))
+    if (-not $dumpWasCompleted) {
+        Set-RunStage -Stage "init.check-tools" -Detail "Checking required tools"
+        Check-Tools -StopOnMissing
+        Set-RunStage -Stage "init.install-roctup-mcp" -Detail "Installing or updating ROCTUP MCP Toolkit"
+        Install-RoctupMcp
+        Set-RunStage -Stage "init.cache-vanessa-ui-mcp" -Detail "Caching Vanessa UI MCP artifacts"
+        Install-VanessaMcpArtifacts | Out-Null
+        Get-DevBranchInfoBaseRoot | Out-Null
+    } else {
+        Write-Host "Resume validated the completed configuration dump; tool installation and 1C dump will not be repeated."
+    }
     Set-RunStage -Stage "init.git" -Detail "Preparing Git repository and master branch"
     Ensure-GitRepository
     Ensure-GitIgnore
     Checkout-Master
 
     $sourceUsesRepository = Get-SourceUsesRepository
-    Set-RunStage -Stage "init.repository-update" -Detail "Updating source infobase from 1C repository"
-    Update-BaseFromRepository
-    Set-RunStage -Stage "init.dump-config" -Detail "Dumping 1C configuration files"
-    $dumpResult = Dump-ConfigToFiles
+    if (-not $dumpWasCompleted) {
+        Set-RunStage -Stage "init.repository-update" -Detail "Updating source infobase from 1C repository"
+        Update-BaseFromRepository
+        Set-RunStage -Stage "init.dump-config" -Detail "Dumping 1C configuration files"
+        $dumpResult = Dump-ConfigToFiles
+    } else {
+        $dumpResult = [pscustomobject]@{
+            exportPath = Get-ExportPath
+            absoluteExportPath = Assert-ExportPathInsideProject (Get-ExportPath)
+            incremental = $true
+            logPath = ""
+        }
+    }
     $dumpMessage = if ($sourceUsesRepository) { "sync: export 1C configuration from repository" } else { "sync: export 1C configuration from source infobase" }
     Set-RunStage -Stage "init.commit-dump" -Detail "Committing baseline 1C configuration dump"
     Commit-BaselineDumpIfNeeded -Message $dumpMessage -ExportPath $dumpResult.exportPath | Out-Null
     Assert-BaselineDumpCommitted -ExportPath $dumpResult.exportPath
 
     Set-RunStage -Stage "init.install-ai-rules" -Detail "Installing or updating ai_rules_1c"
-    Install-AiRules1c
+    if ($InitMode -eq "resume" -and (Test-InitAiRulesReady)) {
+        Write-Host "Resume validated the installed ai_rules_1c tools and dependency lock; installation will not be repeated."
+    } else {
+        Install-AiRules1c
+    }
     Set-RunStage -Stage "init.guidance" -Detail "Updating agent guidance, USER-RULES, and Kilo commands"
     Update-AgentGuidanceBridge
     Update-UserRules
     Sync-KiloItlCommandSurface
     Commit-IfChanged "chore: install 1C agent workflow"
-    if ($script:InitVibecoding1cMcpSetupRequested -or (ConvertTo-YesNoBool -Value (Get-EnvValue -Name "VIBECODING1C_MCP_SETUP_DURING_INIT" -Default $true) -Default $true)) {
+    $vibecodingRequested = $script:InitVibecoding1cMcpSetupRequested -or (ConvertTo-YesNoBool -Value (Get-EnvValue -Name "VIBECODING1C_MCP_SETUP_DURING_INIT" -Default $true) -Default $true)
+    $vibecodingAlreadyCompleted = $InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.final-git-clean")
+    if ($vibecodingRequested -and -not $vibecodingAlreadyCompleted) {
         Set-RunStage -Stage "init.vibecoding1c-mcp" -Detail "Setting up vibecoding1c MCP"
         Setup-Vibecoding1cMcp
+    } elseif ($vibecodingAlreadyCompleted) {
+        Write-Host "Resume confirmed that vibecoding1c MCP setup completed in the interrupted run."
     } else {
         Write-Host "vibecoding1c MCP setup was deferred. Ask the agent to configure vibecoding1c MCP, or run -Action vibecoding1c-mcp-setup when needed."
     }

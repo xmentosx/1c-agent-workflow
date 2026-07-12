@@ -26,9 +26,12 @@ param(
     [string]$McpHostId = "",
     [ValidateSet("", "project", "branch")]
     [string]$McpLocalScope = "",
-    [ValidateSet("configured", "wizard", "json")]
+    [ValidateSet("configured", "wizard", "json", "resume")]
     [string]$InitMode = "configured",
     [string]$InitAnswersPath,
+    [string]$ResumeRunStatusPath = "",
+    [string]$RecoveryReason = "",
+    [int]$LauncherPid = 0,
     [ValidateSet("", "fresh", "locked")]
     [string]$DependencyMode = "",
     [string]$BootstrapWorkflowRepo = "",
@@ -178,6 +181,9 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "McpLocalScope" -Value $McpLocalScope
     Add-Agent1cReexecArgument -Arguments $arguments -Name "InitMode" -Value $InitMode
     Add-Agent1cReexecArgument -Arguments $arguments -Name "InitAnswersPath" -Value $InitAnswersPath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "ResumeRunStatusPath" -Value $ResumeRunStatusPath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "RecoveryReason" -Value $RecoveryReason
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "LauncherPid" -Value $(if ($LauncherPid -gt 0) { $LauncherPid } else { $null })
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DependencyMode" -Value $DependencyMode
     Add-Agent1cReexecArgument -Arguments $arguments -Name "AgentTarget" -Value $AgentTarget
     Add-Agent1cReexecArgument -Arguments $arguments -Name "PublishToWeb" -Value $PublishToWeb
@@ -209,6 +215,9 @@ $script:ResolvedRunStatusPath = ""
 $script:ResolvedRunLogPath = ""
 $script:GitIndexLockPath = ""
 $script:GitIndexLockPreExisted = $false
+$script:LauncherPid = $LauncherPid
+$script:ResumedFrom = $(if ($ResumeRunStatusPath) { Resolve-Agent1cFullPath -Path $ResumeRunStatusPath } else { "" })
+$script:RecoveryReason = $RecoveryReason
 $script:ProjectRoot = Resolve-Agent1cFullPath -Path $ProjectRoot
 $script:ConfigPath = Resolve-Agent1cFullPath -Path $ConfigPath
 $script:Config = $null

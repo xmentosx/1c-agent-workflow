@@ -261,6 +261,238 @@ function Get-AgentAction {
     return ""
 }
 
+function Get-AgentArgumentValue {
+    param(
+        [string]$Name,
+        [string]$Default = ""
+    )
+
+    for ($i = 0; $i -lt $script:AgentArgs.Count; $i++) {
+        if ([string]$script:AgentArgs[$i] -ieq "-$Name" -and ($i + 1) -lt $script:AgentArgs.Count) {
+            return [string]$script:AgentArgs[$i + 1]
+        }
+    }
+    return $Default
+}
+
+function Set-AgentArgumentValue {
+    param(
+        [string]$Name,
+        [string]$Value
+    )
+
+    $updated = [System.Collections.Generic.List[string]]::new()
+    $replaced = $false
+    for ($i = 0; $i -lt $script:AgentArgs.Count; $i++) {
+        $item = [string]$script:AgentArgs[$i]
+        if ($item -ieq "-$Name") {
+            if (-not $replaced) {
+                $updated.Add("-$Name") | Out-Null
+                $updated.Add($Value) | Out-Null
+                $replaced = $true
+            }
+            if (($i + 1) -lt $script:AgentArgs.Count) {
+                $i++
+            }
+            continue
+        }
+        $updated.Add($item) | Out-Null
+    }
+    if (-not $replaced) {
+        $updated.Add("-$Name") | Out-Null
+        $updated.Add($Value) | Out-Null
+    }
+    $script:AgentArgs = [string[]]$updated.ToArray()
+}
+
+function Test-RecordedProcessRunning {
+    param([int]$ProcessId)
+
+    if ($ProcessId -le 0) {
+        return $false
+    }
+    try {
+        $process = Get-Process -Id $ProcessId -ErrorAction Stop
+        return ($null -ne $process -and -not $process.HasExited)
+    } catch {
+        return $false
+    }
+}
+
+function Test-ProjectGitProcessRunning {
+    try {
+        $rootNeedle = $projectRootFull.Replace('/', '\').TrimEnd('\').ToLowerInvariant()
+        $hasUninspectableGit = $false
+        foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name = 'git.exe'" -ErrorAction Stop)) {
+            $commandLine = [string]$process.CommandLine
+            if ([string]::IsNullOrWhiteSpace($commandLine)) {
+                $hasUninspectableGit = $true
+                continue
+            }
+            if ($commandLine -and $commandLine.Replace('/', '\').ToLowerInvariant().Contains($rootNeedle)) {
+                return $true
+            }
+        }
+        return $hasUninspectableGit
+    } catch {
+        return [bool](Get-Process -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1)
+    }
+}
+
+function Test-RunTimestampOrder {
+    param([object]$Status)
+
+    $started = [DateTimeOffset]::MinValue
+    $updated = [DateTimeOffset]::MinValue
+    $finished = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse([string](Get-RunStatusProperty -Status $Status -Name "startedAt" -Default ""), [ref]$started)) {
+        return $false
+    }
+    if (-not [DateTimeOffset]::TryParse([string](Get-RunStatusProperty -Status $Status -Name "updatedAt" -Default ""), [ref]$updated)) {
+        return $false
+    }
+    if (-not [DateTimeOffset]::TryParse([string](Get-RunStatusProperty -Status $Status -Name "finishedAt" -Default ""), [ref]$finished)) {
+        return $false
+    }
+    return ($started -le $updated -and $updated -le $finished)
+}
+
+function Test-InitRunSucceededValid {
+    param([object]$Status)
+
+    if ([string](Get-RunStatusProperty -Status $Status -Name "status" -Default "") -ne "succeeded") {
+        return $false
+    }
+    if ((ConvertTo-IntOrDefault -Value (Get-RunStatusProperty -Status $Status -Name "exitCode" -Default -1) -Default -1) -ne 0) {
+        return $false
+    }
+    if ([string](Get-RunStatusProperty -Status $Status -Name "stage" -Default "") -ne "init.complete") {
+        return $false
+    }
+    $recordedRoot = Resolve-Agent1cFullPath -Path ([string](Get-RunStatusProperty -Status $Status -Name "projectRoot" -Default ""))
+    if ($recordedRoot -ne $projectRootFull) {
+        return $false
+    }
+    return (Test-RunTimestampOrder -Status $Status)
+}
+
+function Get-LatestInitRunRecord {
+    foreach ($directory in @(Get-ChildItem -LiteralPath $runsRoot -Directory -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) {
+        $candidatePath = Join-Path $directory.FullName "status.json"
+        $candidate = Read-RunStatus -Path $candidatePath
+        if ($null -ne $candidate -and [string](Get-RunStatusProperty -Status $candidate -Name "action" -Default "") -eq "init-project") {
+            return [pscustomobject]@{
+                path = $candidatePath
+                status = $candidate
+            }
+        }
+    }
+    return $null
+}
+
+function Set-ObjectProperty {
+    param(
+        [object]$Object,
+        [string]$Name,
+        [AllowNull()][object]$Value
+    )
+
+    $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
+}
+
+function Invoke-OrphanedRunGitIndexLockCleanup {
+    param([object]$Status)
+
+    $lockPath = Get-GitIndexLockPath
+    if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return ""
+    }
+    $preExistingProperty = $Status.PSObject.Properties["gitIndexLockPreExisted"]
+    if ($null -eq $preExistingProperty) {
+        return "Git index lock ownership is unknown for the interrupted run and it was left in place: $lockPath"
+    }
+    if ([bool]$preExistingProperty.Value) {
+        return "Git index lock existed before the interrupted run and it was left in place: $lockPath"
+    }
+    $helperPid = ConvertTo-IntOrDefault -Value (Get-RunStatusProperty -Status $Status -Name "pid" -Default 0) -Default 0
+    $lastProcessId = ConvertTo-IntOrDefault -Value (Get-RunStatusProperty -Status $Status -Name "lastProcessId" -Default 0) -Default 0
+    if ((Test-RecordedProcessRunning -ProcessId $helperPid) -or (Test-RecordedProcessRunning -ProcessId $lastProcessId) -or (Test-ProjectGitProcessRunning)) {
+        return "Git index lock remains because a process related to the interrupted run may still be active: $lockPath"
+    }
+    try {
+        Remove-Item -LiteralPath $lockPath -Force -ErrorAction Stop
+        return "Removed Git index lock owned by the interrupted initialization run: $lockPath"
+    } catch {
+        return "Git index lock cleanup failed for '$lockPath': $($_.Exception.Message)"
+    }
+}
+
+function Close-InitRunAsOrphaned {
+    param(
+        [string]$Path,
+        [object]$Status,
+        [string]$Reason
+    )
+
+    $now = Get-Date
+    $resumeStage = [string](Get-RunStatusProperty -Status $Status -Name "resumeStage" -Default (Get-RunStatusProperty -Status $Status -Name "stage" -Default "init.prepare"))
+    $cleanupMessage = Invoke-OrphanedRunGitIndexLockCleanup -Status $Status
+    $message = $Reason
+    if ($cleanupMessage) {
+        $message = "$message $cleanupMessage"
+    }
+    Set-ObjectProperty -Object $Status -Name "schemaVersion" -Value 1
+    Set-ObjectProperty -Object $Status -Name "status" -Value "failed"
+    Set-ObjectProperty -Object $Status -Name "projectRoot" -Value $projectRootFull
+    Set-ObjectProperty -Object $Status -Name "launcherPid" -Value $PID
+    Set-ObjectProperty -Object $Status -Name "updatedAt" -Value $now.ToString("o")
+    Set-ObjectProperty -Object $Status -Name "finishedAt" -Value $now.ToString("o")
+    Set-ObjectProperty -Object $Status -Name "exitCode" -Value 125
+    Set-ObjectProperty -Object $Status -Name "errorMessage" -Value $message
+    Set-ObjectProperty -Object $Status -Name "stage" -Value "launcher.orphaned"
+    Set-ObjectProperty -Object $Status -Name "stageDetail" -Value $Reason
+    Set-ObjectProperty -Object $Status -Name "resumeStage" -Value $resumeStage
+    Set-ObjectProperty -Object $Status -Name "recoveryReason" -Value $Reason
+    [System.IO.File]::WriteAllText($Path, (($Status | ConvertTo-Json -Depth 8) + [Environment]::NewLine), $utf8)
+    return $message
+}
+
+function Enable-InterruptedInitRecovery {
+    if ((Get-AgentAction) -ne "init-project") {
+        return
+    }
+
+    $latest = Get-LatestInitRunRecord
+    if ($null -eq $latest -or (Test-InitRunSucceededValid -Status $latest.status)) {
+        return
+    }
+
+    $statusName = [string](Get-RunStatusProperty -Status $latest.status -Name "status" -Default "")
+    $stage = [string](Get-RunStatusProperty -Status $latest.status -Name "stage" -Default "")
+    $recoverable = $statusName -eq "running" -or $statusName -eq "succeeded" -or ($statusName -eq "failed" -and ($stage -like "init.*" -or $stage -like "launcher.*"))
+    if (-not $recoverable) {
+        return
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $projectRootFull ".agent-1c\project.json") -PathType Leaf) -or -not (Test-Path -LiteralPath (Join-Path $projectRootFull ".dev.env") -PathType Leaf)) {
+        Write-Host "Interrupted init has no complete saved settings; the wizard will start again."
+        return
+    }
+    if ($statusName -eq "running") {
+        $helperPid = ConvertTo-IntOrDefault -Value (Get-RunStatusProperty -Status $latest.status -Name "pid" -Default 0) -Default 0
+        $lastProcessId = ConvertTo-IntOrDefault -Value (Get-RunStatusProperty -Status $latest.status -Name "lastProcessId" -Default 0) -Default 0
+        if ((Test-RecordedProcessRunning -ProcessId $helperPid) -or (Test-RecordedProcessRunning -ProcessId $lastProcessId)) {
+            throw "Initialization is already running for '$projectRootFull'. Wait for the active helper before starting another bootstrap."
+        }
+    }
+
+    $reason = "The previous monitored initialization did not produce a valid terminal success and was marked orphaned."
+    $message = Close-InitRunAsOrphaned -Path $latest.path -Status $latest.status -Reason $reason
+    Write-Host $message
+    Set-AgentArgumentValue -Name "InitMode" -Value "resume"
+    Set-AgentArgumentValue -Name "ResumeRunStatusPath" -Value $latest.path
+    Set-AgentArgumentValue -Name "RecoveryReason" -Value $reason
+}
+
 function Get-GitIndexLockPath {
     $gitPath = Join-Path $projectRootFull ".git"
     if (Test-Path -LiteralPath $gitPath -PathType Leaf -ErrorAction SilentlyContinue) {
@@ -329,6 +561,10 @@ function Write-LauncherRunStatus {
     $lastLogPath = [string](Get-RunStatusProperty -Status $ExistingStatus -Name "lastLogPath" -Default "")
     $lastProcessId = ConvertTo-IntOrDefault -Value (Get-RunStatusProperty -Status $ExistingStatus -Name "lastProcessId" -Default 0) -Default 0
     $lastProcessTimedOut = [bool](Get-RunStatusProperty -Status $ExistingStatus -Name "lastProcessTimedOut" -Default $false)
+    $resumeStage = [string](Get-RunStatusProperty -Status $ExistingStatus -Name "resumeStage" -Default (Get-RunStatusProperty -Status $ExistingStatus -Name "stage" -Default ""))
+    $resumedFrom = [string](Get-RunStatusProperty -Status $ExistingStatus -Name "resumedFrom" -Default (Get-AgentArgumentValue -Name "ResumeRunStatusPath"))
+    $recoveryReason = [string](Get-RunStatusProperty -Status $ExistingStatus -Name "recoveryReason" -Default (Get-AgentArgumentValue -Name "RecoveryReason"))
+    $gitIndexLockPreExisted = [bool](Get-RunStatusProperty -Status $ExistingStatus -Name "gitIndexLockPreExisted" -Default $script:GitIndexLockPreExisted)
 
     $pidValue = ConvertTo-IntOrDefault -Value (Get-RunStatusProperty -Status $ExistingStatus -Name "pid" -Default $HelperProcessId) -Default $HelperProcessId
     if ($pidValue -eq 0) {
@@ -341,6 +577,7 @@ function Write-LauncherRunStatus {
         action = $action
         projectRoot = $projectRootFull
         pid = $pidValue
+        launcherPid = $PID
         startedAt = $startedAtText
         updatedAt = $now.ToString("o")
         finishedAt = $now.ToString("o")
@@ -352,6 +589,10 @@ function Write-LauncherRunStatus {
         stageDetail = $StageDetail
         lastProcessId = $lastProcessId
         lastProcessTimedOut = $lastProcessTimedOut
+        gitIndexLockPreExisted = $gitIndexLockPreExisted
+        resumedFrom = $resumedFrom
+        recoveryReason = $recoveryReason
+        resumeStage = $resumeStage
     }
 
     [System.IO.File]::WriteAllText($statusPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), $utf8)
@@ -425,6 +666,8 @@ if (-not (Test-Path -LiteralPath $helperFull -PathType Leaf)) {
 
 $runsRoot = Join-Path $projectRootFull ".agent-1c\runs"
 New-Item -ItemType Directory -Force -Path $runsRoot | Out-Null
+Enable-InterruptedInitRecovery
+Set-AgentArgumentValue -Name "LauncherPid" -Value ([string]$PID)
 $runId = "{0}-{1}-{2}" -f (Get-Date -Format "yyyyMMdd-HHmmss-fff"), $PID, ([guid]::NewGuid().ToString("N").Substring(0, 8))
 $runDir = Join-Path $runsRoot $runId
 New-Item -ItemType Directory -Force -Path $runDir | Out-Null

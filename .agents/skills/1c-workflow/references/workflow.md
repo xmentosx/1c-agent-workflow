@@ -61,7 +61,7 @@ Installed project launcher:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard
 ```
 
-Do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly by default, run `Test-Path` preflight, use background PowerShell, or set `timeout: 0`; raw probes may emit CLIXML. Do not collect the questionnaire in chat when terminal input is unavailable, and do not continue the lifecycle manually. The launcher owns `.agent-1c/runs/<run>/status.json`, defaults to 60 minutes (`-MaxWaitSeconds 3600`; explicit `0` disables), needs a positive long timeout, and keeps `-KeepWindowOnFailure` for manual debugging.
+Do not call the wizard helper directly, run `Test-Path` preflight, use background PowerShell, or set `timeout: 0`; probes may emit CLIXML. If terminal input is unavailable, do not collect the questionnaire in chat. Launcher owns `.agent-1c/runs/<run>/status.json`, `-MaxWaitSeconds 3600`, positive long timeout, and debug-only `-KeepWindowOnFailure`. Use `timeout_ms >= 3900000`; after interruption repeat the same command. It rejects live duplicates; do not continue the lifecycle manually or edit Git/status during orphan resume.
 
 ## Always-On Safety Notes
 

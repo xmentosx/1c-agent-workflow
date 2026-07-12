@@ -90,12 +90,13 @@ Goal: create baseline project state.
    ```
 
 2. The launcher opens the wizard in an external PowerShell window, writes `.agent-1c/runs/<run>/status.json` and `console.log`, validates the helper path itself, and lets the agent detect completion. Do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly by default, do not run a separate `Test-Path` preflight, do not wrap it in background PowerShell, and do not set `timeout: 0`. The launcher has a default 60 minute limit (`-MaxWaitSeconds 3600`; `0` disables only when explicit), while the bootstrap forwards `-InitMaxWaitSeconds 3600` by default. Use a positive long outer timeout greater than the launcher limit. Use `-KeepWindowOnFailure` only for explicit manual debugging.
-3. If terminal input is unavailable, do not collect the initialization questionnaire in chat and do not continue the lifecycle manually. Use the monitored wizard command, or JSON mode only when explicitly requested or an answers file already exists.
-4. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, `.agent-1c/dependency-lock.json`, and `.dev.env` if missing.
-5. Run tool checks, initialize Git, checkout/create `master`, update the source infobase from storage when configured, and dump configuration files to `src/cf`.
-6. Initial dump must produce `src/cf/ConfigDumpInfo.xml`; later dumps use incremental `-update -force` when that file exists. Stop if `src/cf` is non-empty without `ConfigDumpInfo.xml`.
-7. Install/cache ROCTUP MCP Toolkit and Vanessa UI MCP CFE artifacts, install `ai_rules_1c` for every configured `aiRules.tools` client (Codex and Kilo by default), record resolved dependency pins in the dependency lock, reconcile default upstream MCP client entries only when ready vibecoding1c replacements are available, generate Kilo ITL wrappers when Kilo is installed, and apply the ITL overlay to `USER-RULES.md`.
-8. Commit rules and workflow files when there are changes.
+3. Use `timeout_ms >= 3900000`. If the outer shell interrupts init, repeat the same bootstrap command: the launcher rejects a live duplicate, marks a dead/invalid run `launcher.orphaned`, and resumes saved settings. Never delete `index.lock`, commit or continue lifecycle steps, or edit `status.json` manually. `init.commit-dump` proves the dump returned successfully, so resume validates and commits it without rerunning 1C; earlier stages repeat the dump path.
+4. If terminal input is unavailable, do not collect the initialization questionnaire in chat and do not continue the lifecycle manually. Use the monitored wizard command, or JSON mode only when explicitly requested or an answers file already exists.
+5. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, `.agent-1c/dependency-lock.json`, and `.dev.env` if missing.
+6. Run tool checks, initialize Git, checkout/create `master`, update the source infobase from storage when configured, and dump configuration files to `src/cf`.
+7. Initial dump must produce `src/cf/ConfigDumpInfo.xml`; later dumps use incremental `-update -force` when that file exists. Stop if `src/cf` is non-empty without `ConfigDumpInfo.xml`.
+8. Install/cache ROCTUP MCP Toolkit and Vanessa UI MCP CFE artifacts, install `ai_rules_1c` for every configured `aiRules.tools` client (Codex and Kilo by default), record resolved dependency pins in the dependency lock, reconcile default upstream MCP client entries only when ready vibecoding1c replacements are available, generate Kilo ITL wrappers when Kilo is installed, and apply the ITL overlay to `USER-RULES.md`.
+9. Commit rules and workflow files when there are changes.
 
 ## Tool Actions
 

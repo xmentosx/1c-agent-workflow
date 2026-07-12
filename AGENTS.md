@@ -15,6 +15,7 @@ These instructions govern development of the `1c-agent-workflow` source reposito
 - Fix shared package code, templates, docs, and tests rather than patching an example project.
 - Preserve unrelated user changes and keep the dirty-state guards strict.
 - Prefer script-owned prompts, sequencing, recovery, and state transitions. Do not duplicate helper-owned flows in agent prose.
+- Run monitored bootstrap in the foreground with `timeout_ms >= 3900000`. If the shell interrupts it, repeat the same bootstrap command; never delete `index.lock`, finish lifecycle steps manually, or edit `status.json`.
 - Keep secrets and runtime state out of Git: `.dev.env`, local infobases, downloaded tools, run state, logs, and client MCP config stay ignored.
 - Keep entrypoint instructions compact and route detail to the relevant reference. Do not load or duplicate the full lifecycle when a targeted helper or reference is sufficient.
 
