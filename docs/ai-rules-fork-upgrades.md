@@ -3,8 +3,8 @@
 ## Current state
 
 The workflow template is pinned to the controlled fork release
-`itl-main-a421cf44-r1` at commit
-`dc9a767f0cb77418bcae3c52521594b183c1b879`. Its upstream provenance is the
+`itl-main-a421cf44-r2` at commit
+`bcb662c1eb682c1eae94cef8ad56cec0983f41d5`. Its upstream provenance is the
 explicit snapshot `refs/heads/main` at
 `a421cf44eb1f5859cf2a2b74884f8fbcaefc4826`. The moving `upstream/main` name is
 never consumed by projects.
@@ -39,14 +39,20 @@ dependencies continue to follow the normal fresh/locked policy.
 
 ## Existing projects
 
-`update-workflow` automatically migrates only a standard legacy project when:
+`update-workflow` supports two automatic transitions:
 
-- its repository is `comol/ai_rules_1c`;
-- the legacy commit is recorded;
+1. a standard legacy `comol/ai_rules_1c` project to the verified fork baseline;
+2. an earlier controlled fork `itl-*` revision to a strictly newer verified
+   downstream revision (currently `r1` to `r2`).
+
+Both transitions require:
+
+- the installed commit and manifest are recorded;
 - `.ai-rules.json` exists and has no `userModified` entries;
 - clients are limited to Codex/Kilo;
 - the target workflow template contains verified fork provenance;
-- the legacy commit is an ancestor of the target upstream baseline;
+- the installed upstream provenance is an ancestor of the target upstream
+  baseline (fork release commits are never compared to one another);
 - the candidate has project-local shared skills and no user-scope Codex paths.
 
 The candidate is installed in a temporary project first. Before applying it,
@@ -57,3 +63,10 @@ review. `-SkipAiRules` leaves an eligible migration explicitly pending.
 
 Legacy global `~/.codex/prompts` are reported by the fork migration but are not
 automatically deleted because they are shared user-scope files.
+
+For a controlled-fork transition, the project repo and lock repo must both
+match the controlled fork, the current ref must be `itl-*`, and the target
+`downstreamRevision` must be greater than the installed revision. A custom repo,
+missing provenance, or any manifest `userModified` entry produces a recovery
+status instead of an automatic migration. Active `itldev/*` branches are not
+silently advanced by this mechanism.

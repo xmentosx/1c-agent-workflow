@@ -55,11 +55,18 @@ function Get-AiRulesMigrationPlan {
 
     $currentRepo = [string](Get-ConfigValue -Path "aiRules.repo" -Default "https://github.com/comol/ai_rules_1c.git")
     $currentRef = [string](Get-ConfigValue -Path "aiRules.ref" -Default "")
-    if ((Get-AiRules1cRepositoryIdentity -Repo $currentRepo) -eq (Get-AiRules1cRepositoryIdentity -Repo $target.repo) -and $currentRef -eq $target.ref) {
+    $currentIdentity = Get-AiRules1cRepositoryIdentity -Repo $currentRepo
+    $targetIdentity = Get-AiRules1cRepositoryIdentity -Repo $target.repo
+    $currentEntry = Get-DependencyLockEntry -Name "aiRules1c"
+    $currentCommit = [string](Get-ConfigValueFromObject -Object $currentEntry -Path "commit" -Default "")
+    $currentRevision = [int](Get-ConfigValueFromObject -Object $currentEntry -Path "downstreamRevision" -Default 0)
+    if ($currentIdentity -eq $targetIdentity -and $currentRef -eq $target.ref -and $currentCommit -eq $target.commit -and $currentRevision -eq $target.downstreamRevision) {
         return [pscustomobject]@{ status = "current"; eligible = $false; suppressRegularUpdate = $false; reason = "project already uses the workflow fork baseline"; target = $target }
     }
 
-    if ((Get-AiRules1cRepositoryIdentity -Repo $currentRepo) -ne "https://github.com/comol/ai_rules_1c") {
+    $isLegacyUpstream = $currentIdentity -eq "https://github.com/comol/ai_rules_1c"
+    $isControlledFork = $currentIdentity -eq $targetIdentity
+    if (-not $isLegacyUpstream -and -not $isControlledFork) {
         return [pscustomobject]@{ status = "custom"; eligible = $false; suppressRegularUpdate = $false; reason = "custom aiRules repository is preserved"; target = $target }
     }
 
@@ -77,10 +84,37 @@ function Get-AiRulesMigrationPlan {
         return [pscustomobject]@{ status = "unsupported-tools"; eligible = $false; suppressRegularUpdate = $true; reason = "unsupported migration tools: $($unsupported -join ', ')"; target = $target }
     }
 
-    $legacyEntry = Get-DependencyLockEntry -Name "aiRules1c"
-    $legacyCommit = [string](Get-ConfigValueFromObject -Object $legacyEntry -Path "commit" -Default "")
-    if (-not $legacyCommit) {
+    if (-not $currentCommit) {
         return [pscustomobject]@{ status = "legacy-commit-missing"; eligible = $false; suppressRegularUpdate = $true; reason = "legacy aiRules commit is not recorded"; target = $target }
+    }
+
+    if ($isControlledFork) {
+        if ($currentRef -notlike "itl-*") {
+            return [pscustomobject]@{ status = "controlled-ref-invalid"; eligible = $false; suppressRegularUpdate = $true; reason = "controlled fork project does not use an immutable itl-* ref"; target = $target }
+        }
+        $lockRepo = [string](Get-ConfigValueFromObject -Object $currentEntry -Path "repo" -Default "")
+        if ((Get-AiRules1cRepositoryIdentity -Repo $lockRepo) -ne $targetIdentity) {
+            return [pscustomobject]@{ status = "controlled-lock-mismatch"; eligible = $false; suppressRegularUpdate = $true; reason = "controlled fork lock repository does not match project configuration"; target = $target }
+        }
+        if ($target.downstreamRevision -le $currentRevision) {
+            return [pscustomobject]@{ status = "not-newer"; eligible = $false; suppressRegularUpdate = $true; reason = "target downstream revision is not newer than the installed controlled fork"; target = $target }
+        }
+        $currentUpstreamCommit = [string](Get-ConfigValueFromObject -Object $currentEntry -Path "upstreamCommit" -Default "")
+        if (-not $currentUpstreamCommit) {
+            return [pscustomobject]@{ status = "controlled-provenance-missing"; eligible = $false; suppressRegularUpdate = $true; reason = "installed controlled fork does not record upstreamCommit"; target = $target }
+        }
+        return [pscustomobject]@{
+            status = "eligible"
+            eligible = $true
+            suppressRegularUpdate = $true
+            reason = "verified controlled fork revision can migrate to a newer verified revision"
+            sourceKind = "controlled-fork"
+            target = $target
+            fromCommit = $currentCommit
+            comparisonCommit = $currentUpstreamCommit
+            fromDownstreamRevision = $currentRevision
+            tools = @($tools)
+        }
     }
 
     return [pscustomobject]@{
@@ -88,8 +122,10 @@ function Get-AiRulesMigrationPlan {
         eligible = $true
         suppressRegularUpdate = $true
         reason = "standard legacy upstream project can migrate to verified fork baseline"
+        sourceKind = "legacy-upstream"
         target = $target
-        legacyCommit = $legacyCommit
+        fromCommit = $currentCommit
+        comparisonCommit = $currentCommit
         tools = @($tools)
     }
 }
@@ -119,9 +155,9 @@ function Invoke-AiRulesMigrationCandidatePreflight {
     if (-not $target.upstreamCommit) {
         throw "Fork baseline does not record upstreamCommit."
     }
-    & git -C $checkout.root merge-base --is-ancestor $Plan.legacyCommit $target.upstreamCommit
+    & git -C $checkout.root merge-base --is-ancestor $Plan.comparisonCommit $target.upstreamCommit
     if ($LASTEXITCODE -ne 0) {
-        throw "Legacy aiRules commit is not an ancestor of the fork upstream baseline: $($Plan.legacyCommit)"
+        throw "Installed aiRules upstream provenance is not an ancestor of the target upstream baseline: $($Plan.comparisonCommit)"
     }
 
     $preflightRoot = Join-Path (Resolve-Agent1cFullPath -Path $env:TEMP) ("itl-ai-rules-preflight-" + [guid]::NewGuid().ToString("N"))
@@ -129,7 +165,8 @@ function Invoke-AiRulesMigrationCandidatePreflight {
         New-Item -ItemType Directory -Force -Path $preflightRoot | Out-Null
         $installScript = Join-Path $checkout.root "install.ps1"
         & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $installScript init `
-            -ProjectRoot $preflightRoot -Source $checkout.root -Tools ($Plan.tools -join ",") -NonInteractive -AssumeYes
+            -ProjectRoot $preflightRoot -Source $checkout.root -Tools ($Plan.tools -join ",") -NonInteractive -AssumeYes 2>&1 |
+            ForEach-Object { Write-Host $_ }
         if ($LASTEXITCODE -ne 0) {
             throw "Fork candidate preflight installer failed with exit code $LASTEXITCODE"
         }
@@ -238,7 +275,11 @@ function Invoke-AiRulesBaselineMigration {
         return [pscustomobject]@{ migrated = $false; suppressRegularUpdate = [bool]$plan.suppressRegularUpdate; status = $plan.status; reason = $plan.reason }
     }
 
-    $candidate = Invoke-AiRulesMigrationCandidatePreflight -Plan $plan
+    $preflightOutput = @(Invoke-AiRulesMigrationCandidatePreflight -Plan $plan)
+    $candidate = @($preflightOutput | Where-Object { $_ -and $_.PSObject.Properties.Name -contains "root" }) | Select-Object -Last 1
+    if ($null -eq $candidate) {
+        throw "ai_rules_1c migration preflight did not return a candidate checkout."
+    }
     $legacyPrompts = @(Get-LegacyCodexPromptPaths -RulesRoot ([string]$candidate.root))
     $snapshot = New-AiRulesMigrationSnapshot
     try {
@@ -248,7 +289,10 @@ function Invoke-AiRulesBaselineMigration {
             schemaVersion = 1
             status = "passed"
             migratedAt = (Get-Date).ToString("o")
-            fromCommit = $plan.legacyCommit
+            sourceKind = $plan.sourceKind
+            fromCommit = $plan.fromCommit
+            fromUpstreamCommit = $plan.comparisonCommit
+            fromDownstreamRevision = $(if ($plan.sourceKind -eq "controlled-fork") { $plan.fromDownstreamRevision } else { $null })
             forkRepo = $plan.target.repo
             forkRef = $plan.target.ref
             forkCommit = $plan.target.commit

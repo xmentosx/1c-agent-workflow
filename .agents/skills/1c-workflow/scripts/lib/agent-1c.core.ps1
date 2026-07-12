@@ -1536,7 +1536,7 @@ function New-DefaultProjectConfig {
         serverBaseCopyScript = ""
         aiRules = [ordered]@{
             repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            ref = "itl-main-a421cf44-r1"
+            ref = "itl-main-a421cf44-r2"
             tools = @("codex", "kilocode")
         }
         vibecoding1cMcp = [ordered]@{
@@ -1587,14 +1587,14 @@ function New-DefaultDependencyLockManifest {
             }
             aiRules1c = [ordered]@{
                 repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-                ref = "itl-main-a421cf44-r1"
-                commit = "dc9a767f0cb77418bcae3c52521594b183c1b879"
+                ref = "itl-main-a421cf44-r2"
+                commit = "bcb662c1eb682c1eae94cef8ad56cec0983f41d5"
                 upstreamRepo = "https://github.com/comol/ai_rules_1c.git"
                 upstreamRef = "refs/heads/main"
                 upstreamCommit = "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
-                downstreamRevision = 1
+                downstreamRevision = 2
                 compatibilityStatus = "passed"
-                compatibilityCheckedAt = "2026-07-11T21:44:38.2037246Z"
+                compatibilityCheckedAt = "2026-07-11T23:59:45Z"
             }
             vanessaAutomation = [ordered]@{
                 version = "1.2.043.28"

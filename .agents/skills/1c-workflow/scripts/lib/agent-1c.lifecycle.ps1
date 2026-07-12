@@ -864,15 +864,17 @@ function Get-AiRules1cOpenSpecBundleValidation {
     $missing = @()
     foreach ($bundleFile in $bundleFiles) {
         $relative = $bundleFile.FullName.Substring($bundleRoot.Length + 1).Replace('\', '/')
-        $source = "content/openspec-bundle/$Tool/$relative"
-        $matches = @($entries | Where-Object { $_.source -eq $source })
+        # Protocol 1.1 can merge identical Codex/Kilo bundle destinations into
+        # one manifest entry whose source belongs to either owner. Destination
+        # inventory, not source-string identity, proves the bundle is present.
+        $matches = @($entries | Where-Object { $_.target -eq $relative })
         if ($matches.Count -eq 0) {
-            $missing += $source
+            $missing += $relative
             continue
         }
         foreach ($match in $matches) {
             if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $match.target) -PathType Leaf)) {
-                $missing += $source
+                $missing += $relative
                 break
             }
         }
