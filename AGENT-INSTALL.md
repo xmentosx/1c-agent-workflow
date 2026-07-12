@@ -185,7 +185,7 @@ Use these steps only when `install-agent-1c-workflow.ps1` is unavailable or fail
 
 4. Create `.agent-1c/project.json` from `templates/project.json` when missing. Use the default `devBranchInfoBaseRoot` unless the developer explicitly requested a custom location.
 
-5. Create `.agent-1c/dependency-lock.json` from `templates/dependency-lock.json` when missing. Keep it committed when the team wants reproducible bootstrap pins; fresh mode updates it with resolved workflow package revision, dependency revisions, URLs, and hashes.
+5. Create `.agent-1c/dependency-lock.json` from `templates/dependency-lock.json` when missing. The template deliberately has no installed workflow commit. Root bootstrap passes its source checkout origin/ref/full commit into init, which records the files actually copied; a non-Git source records `source=path` with an empty commit. Keep the resulting lock committed when the team wants reproducible bootstrap pins; fresh mode updates it with resolved dependency revisions, URLs, and hashes.
 
 6. Create `.agent-1c/tools.json` from `templates/tools.json` when missing. Keep it committed so the team can adjust required software checks and install suggestions.
 

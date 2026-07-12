@@ -345,6 +345,8 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Match "ITL_WORKFLOW_SOURCE_PATH"
         $HelperText | Should -Match "workflowPackage"
         $HelperText | Should -Match "Update-WorkflowPackageLockEntry"
+        $HelperText | Should -Match "Apply-BootstrapWorkflowPackageProvenance"
+        $HelperText.IndexOf("Apply-BootstrapWorkflowPackageProvenance | Out-Null") | Should -BeLessThan $HelperText.IndexOf('Set-RunStage -Stage "init.check-tools"')
         $HelperText | Should -Match "Invoke-AiRulesBaselineMigration"
         $HelperText | Should -Match "migration remains pending"
         $HelperText | Should -Match "install-agent-1c-workflow\.ps1"
@@ -360,7 +362,18 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $lockTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dependency-lock.json") | ConvertFrom-Json
         $lockTemplate.dependencies.workflowPackage.repo | Should -Be "https://github.com/xmentosx/1c-agent-workflow.git"
         $lockTemplate.dependencies.workflowPackage.ref | Should -Be "master"
+        $lockTemplate.dependencies.workflowPackage.commit | Should -Be ""
+        $lockTemplate.dependencies.workflowPackage.source | Should -Be "template default"
+        $lockTemplate.dependencies.workflowPackage.updatedAt | Should -Be ""
         $lockTemplate.dependencies.workflowPackage.PSObject.Properties.Name | Should -Contain "updatedAt"
+
+        $installContractText = Get-Content -LiteralPath (Join-Path $RepoRoot "AGENT-INSTALL.md") -Raw -Encoding UTF8
+        $initSetupContractText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\init-setup.md") -Raw -Encoding UTF8
+        foreach ($text in @($installContractText, $initSetupContractText)) {
+            $text | Should -Match "source checkout origin/ref/full commit"
+            $text | Should -Match "non-Git source"
+            $text | Should -Match "empty commit"
+        }
 
         $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
         $kiloTemplateText | Should -Match "update-workflow"
@@ -426,6 +439,78 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $installText | Should -Not -Match 'git -C \$rulesDir pull --ff-only'
         $initSetupText | Should -Not -Match 'In `fresh`, checkout remote HEAD'
         $advancedText | Should -Not -Match 'refreshes upstream `ai_rules_1c`'
+    }
+
+    It "applies exact bootstrap workflow provenance without replacing other lock entries" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-bootstrap-provenance-" + [guid]::NewGuid().ToString("N"))
+        $lockPath = Join-Path $tempRoot ".agent-1c\dependency-lock.json"
+        $commit = "0123456789abcdef0123456789abcdef01234567"
+        try {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
+            Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{"workflowPackage":{"repo":"old","ref":"old","commit":"","source":"template default","updatedAt":""},"keepMe":{"value":"preserved"}}}'
+
+            $applied = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help `
+                    -BootstrapWorkflowRepo "https://example.invalid/itl-workflow.git" `
+                    -BootstrapWorkflowRef "master" `
+                    -BootstrapWorkflowCommit $commit `
+                    -BootstrapWorkflowSource "path" *> $null
+                Apply-BootstrapWorkflowPackageProvenance
+            }
+
+            $applied | Should -BeTrue
+            $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $lock.dependencies.workflowPackage.repo | Should -Be "https://example.invalid/itl-workflow.git"
+            $lock.dependencies.workflowPackage.ref | Should -Be "master"
+            $lock.dependencies.workflowPackage.commit | Should -Be $commit
+            $lock.dependencies.workflowPackage.source | Should -Be "path"
+            $lock.dependencies.workflowPackage.updatedAt | Should -Not -BeNullOrEmpty
+            $lock.dependencies.keepMe.value | Should -Be "preserved"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "does not invent or overwrite bootstrap provenance when no bootstrap arguments are supplied" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-bootstrap-provenance-none-" + [guid]::NewGuid().ToString("N"))
+        $lockPath = Join-Path $tempRoot ".agent-1c\dependency-lock.json"
+        try {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
+            Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{"workflowPackage":{"repo":"existing","ref":"v1","commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source":"git","updatedAt":"old"}}}'
+            $before = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8
+
+            $applied = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Apply-BootstrapWorkflowPackageProvenance
+            }
+
+            $applied | Should -BeFalse
+            (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $before
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "rejects invalid bootstrap provenance before initialization tool checks" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-bootstrap-provenance-invalid-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $errorText = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help `
+                    -BootstrapWorkflowCommit "short-sha" `
+                    -BootstrapWorkflowSource "path" *> $null
+                try {
+                    Apply-BootstrapWorkflowPackageProvenance | Out-Null
+                    return ""
+                } catch {
+                    return $_.Exception.Message
+                }
+            }
+            $errorText | Should -Match "full 40-character Git SHA"
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -PathType Leaf) | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "does not append the AGENTS bridge when upstream AGENTS already loads USER-RULES" {
@@ -647,6 +732,95 @@ local after
                     Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
                 }
             }
+        }
+    }
+
+    It "passes branch tag detached and non-Git workflow provenance through the monitored launcher" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-bootstrap-source-provenance-" + [guid]::NewGuid().ToString("N"))
+        $sourceRoot = Join-Path $tempRoot "source"
+        $originUrl = "https://example.invalid/itl-workflow.git"
+
+        function Invoke-ProvenanceBootstrapFixture {
+            param([string]$TargetRoot)
+
+            New-Item -ItemType Directory -Force -Path $TargetRoot | Out-Null
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $InstallerPath `
+                -ProjectRoot $TargetRoot `
+                -SourceRoot $sourceRoot `
+                -InitMode configured `
+                -InitMaxWaitSeconds 10 *> $null
+            $LASTEXITCODE | Should -Be 0 | Out-Null
+            return (Get-Content -LiteralPath (Join-Path $TargetRoot "bootstrap-args.json") -Raw -Encoding UTF8 | ConvertFrom-Json)
+        }
+
+        function Get-ProvenanceArgumentValue {
+            param(
+                [object[]]$Arguments,
+                [string]$Name
+            )
+
+            $flatArguments = if ($Arguments.Count -eq 1 -and $Arguments[0] -is [array]) { @($Arguments[0]) } else { @($Arguments) }
+            $index = [array]::IndexOf($flatArguments, $Name)
+            $index | Should -BeGreaterOrEqual 0 -Because ("launcher args were: " + ($flatArguments -join " | "))
+            return [string]$flatArguments[$index + 1]
+        }
+
+        try {
+            New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents") -Destination $sourceRoot -Recurse -Force
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates") -Destination $sourceRoot -Recurse -Force
+            foreach ($name in @("install-agent-1c-workflow.ps1", "README.md", "AGENT-INSTALL.md", "DEVELOPER-GUIDE.ru.md", "DEV-BRANCH-DEVELOPMENT.ru.md", "VANESSA-TESTS-GUIDE.md", "VANESSA-TESTS-GUIDE.ru.md")) {
+                Copy-Item -LiteralPath (Join-Path $RepoRoot $name) -Destination (Join-Path $sourceRoot $name) -Force
+            }
+            $fakeLauncherPath = Join-Path $sourceRoot ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"
+            Set-Content -LiteralPath $fakeLauncherPath -Encoding UTF8 -Value @'
+$utf8 = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText(
+    (Join-Path (Get-Location).Path "bootstrap-args.json"),
+    ((@($args) | ConvertTo-Json -Depth 3) + [Environment]::NewLine),
+    $utf8
+)
+exit 0
+'@
+
+            & git -C $sourceRoot init *> $null
+            & git -C $sourceRoot config user.email "test@example.invalid"
+            & git -C $sourceRoot config user.name "ITL Test"
+            & git -C $sourceRoot add .
+            & git -C $sourceRoot commit -m "fixture" *> $null
+            & git -C $sourceRoot branch -M master
+            & git -C $sourceRoot remote add origin $originUrl
+            $commit = (& git -C $sourceRoot rev-parse HEAD).Trim()
+
+            $branchArgs = @(Invoke-ProvenanceBootstrapFixture -TargetRoot (Join-Path $tempRoot "branch-target"))
+            (Get-ProvenanceArgumentValue -Arguments $branchArgs -Name "-BootstrapWorkflowRepo") | Should -Be $originUrl
+            (Get-ProvenanceArgumentValue -Arguments $branchArgs -Name "-BootstrapWorkflowRef") | Should -Be "master"
+            (Get-ProvenanceArgumentValue -Arguments $branchArgs -Name "-BootstrapWorkflowCommit") | Should -Be $commit
+            (Get-ProvenanceArgumentValue -Arguments $branchArgs -Name "-BootstrapWorkflowSource") | Should -Be "path"
+
+            & git -C $sourceRoot tag "workflow-v1"
+            & git -C $sourceRoot checkout --detach --quiet HEAD 2>$null | Out-Null
+            $LASTEXITCODE | Should -Be 0
+            $tagArgs = @(Invoke-ProvenanceBootstrapFixture -TargetRoot (Join-Path $tempRoot "tag-target"))
+            (Get-ProvenanceArgumentValue -Arguments $tagArgs -Name "-BootstrapWorkflowRef") | Should -Be "workflow-v1"
+            (Get-ProvenanceArgumentValue -Arguments $tagArgs -Name "-BootstrapWorkflowCommit") | Should -Be $commit
+
+            & git -C $sourceRoot tag -d "workflow-v1" *> $null
+            $detachedArgs = @(Invoke-ProvenanceBootstrapFixture -TargetRoot (Join-Path $tempRoot "detached-target"))
+            (Get-ProvenanceArgumentValue -Arguments $detachedArgs -Name "-BootstrapWorkflowRef") | Should -Be $commit
+            (Get-ProvenanceArgumentValue -Arguments $detachedArgs -Name "-BootstrapWorkflowCommit") | Should -Be $commit
+
+            $sourceGitPath = Join-Path $sourceRoot ".git"
+            $sourceGitPath.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
+            Remove-Item -LiteralPath $sourceGitPath -Recurse -Force
+            $nonGitArgs = @(Invoke-ProvenanceBootstrapFixture -TargetRoot (Join-Path $tempRoot "nongit-target"))
+            $nonGitFlatArgs = if ($nonGitArgs.Count -eq 1 -and $nonGitArgs[0] -is [array]) { @($nonGitArgs[0]) } else { @($nonGitArgs) }
+            $nonGitFlatArgs | Should -Not -Contain "-BootstrapWorkflowRepo"
+            $nonGitFlatArgs | Should -Not -Contain "-BootstrapWorkflowRef"
+            $nonGitFlatArgs | Should -Not -Contain "-BootstrapWorkflowCommit"
+            (Get-ProvenanceArgumentValue -Arguments $nonGitArgs -Name "-BootstrapWorkflowSource") | Should -Be "path"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 

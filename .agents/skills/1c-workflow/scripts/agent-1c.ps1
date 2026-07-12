@@ -31,6 +31,11 @@ param(
     [string]$InitAnswersPath,
     [ValidateSet("", "fresh", "locked")]
     [string]$DependencyMode = "",
+    [string]$BootstrapWorkflowRepo = "",
+    [string]$BootstrapWorkflowRef = "",
+    [string]$BootstrapWorkflowCommit = "",
+    [ValidateSet("", "path")]
+    [string]$BootstrapWorkflowSource = "",
     [string]$AgentTarget = "",
     [switch]$PublishToWeb,
     [switch]$Force,
@@ -187,6 +192,10 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "RunLogPath" -Value $RunLogPath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "PauseOnFailure" -Value $PauseOnFailure
     Add-Agent1cReexecArgument -Arguments $arguments -Name "LifecyclePhase" -Value $LifecyclePhase
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "BootstrapWorkflowRepo" -Value $BootstrapWorkflowRepo
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "BootstrapWorkflowRef" -Value $BootstrapWorkflowRef
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "BootstrapWorkflowCommit" -Value $BootstrapWorkflowCommit
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "BootstrapWorkflowSource" -Value $BootstrapWorkflowSource
     return [string[]]$arguments.ToArray()
 }
 

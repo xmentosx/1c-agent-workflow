@@ -5,9 +5,9 @@
     "workflowPackage": {
       "repo": "https://github.com/xmentosx/1c-agent-workflow.git",
       "ref": "master",
-      "commit": "9c0658d747f8aed185ea6f00c417b62e462c1fe8",
-      "source": "template baseline",
-      "updatedAt": "2026-07-10T00:00:00Z"
+      "commit": "",
+      "source": "template default",
+      "updatedAt": ""
     },
     "aiRules1c": {
       "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",

@@ -81,7 +81,7 @@ Goal: create baseline project state.
    powershell -ExecutionPolicy Bypass -File <source>\install-agent-1c-workflow.ps1 -ProjectRoot <project>
    ```
 
-   The bootstrap script copies only managed workflow files (`.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, `templates/`, root docs/guides, and `install-agent-1c-workflow.ps1`) and then starts the monitored launcher. Do not expand normal initialization into manual copy steps.
+   The bootstrap script copies only managed workflow files (`.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, `templates/`, root docs/guides, and `install-agent-1c-workflow.ps1`) and then starts the monitored launcher. It passes the source checkout origin/ref/full commit into init so `workflowPackage` records the files actually copied; a non-Git source is recorded as `source=path` with an empty commit. Do not expand normal initialization into manual copy steps.
 
 1. In an already installed project, start with the monitored foreground launcher:
 

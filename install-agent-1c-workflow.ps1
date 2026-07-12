@@ -91,6 +91,58 @@ function Get-FullPathNormalized {
     return (Resolve-Agent1cFullPath -Path $Path)
 }
 
+function Invoke-BootstrapGitCapture {
+    param(
+        [string]$Root,
+        [string[]]$Arguments
+    )
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = @(& git -C $Root @Arguments 2>$null)
+        if ($LASTEXITCODE -ne 0) {
+            return @()
+        }
+        return @($output | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
+function Resolve-BootstrapWorkflowPackageProvenance {
+    param([string]$Root)
+
+    $result = [ordered]@{
+        repo = ""
+        ref = ""
+        commit = ""
+        source = "path"
+    }
+    $commit = @(Invoke-BootstrapGitCapture -Root $Root -Arguments @("rev-parse", "HEAD") | Select-Object -First 1)
+    if ($commit.Count -eq 0) {
+        return [pscustomobject]$result
+    }
+    $commitText = [string]$commit[0]
+    if ($commitText -notmatch '^[0-9a-fA-F]{40}$') {
+        throw "Workflow package source returned an invalid Git commit: $commitText"
+    }
+
+    $origin = @(Invoke-BootstrapGitCapture -Root $Root -Arguments @("remote", "get-url", "origin") | Select-Object -First 1)
+    if ($origin.Count -gt 0) {
+        $result.repo = [string]$origin[0]
+    }
+    $branch = @(Invoke-BootstrapGitCapture -Root $Root -Arguments @("symbolic-ref", "--quiet", "--short", "HEAD") | Select-Object -First 1)
+    if ($branch.Count -gt 0) {
+        $result.ref = [string]$branch[0]
+    } else {
+        $tags = @(Invoke-BootstrapGitCapture -Root $Root -Arguments @("tag", "--points-at", "HEAD"))
+        $result.ref = $(if ($tags.Count -eq 1) { [string]$tags[0] } else { $commitText })
+    }
+    $result.commit = $commitText.ToLowerInvariant()
+    return [pscustomobject]$result
+}
+
 function Assert-SourcePackage {
     param([string]$Root)
 
@@ -233,12 +285,24 @@ if ($NoInit) {
     exit 0
 }
 
+$workflowProvenance = Resolve-BootstrapWorkflowPackageProvenance -Root $sourceRootFull
+
 $launcherPath = Join-Path $projectRootFull ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"
 if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf -ErrorAction SilentlyContinue)) {
     throw "Installed monitored launcher was not found: $launcherPath"
 }
 
 $initArgs = @("-Action", "init-project", "-InitMode", $InitMode)
+foreach ($provenanceArgument in @(
+    @{ name = "-BootstrapWorkflowRepo"; value = [string]$workflowProvenance.repo },
+    @{ name = "-BootstrapWorkflowRef"; value = [string]$workflowProvenance.ref },
+    @{ name = "-BootstrapWorkflowCommit"; value = [string]$workflowProvenance.commit },
+    @{ name = "-BootstrapWorkflowSource"; value = [string]$workflowProvenance.source }
+)) {
+    if (-not [string]::IsNullOrWhiteSpace($provenanceArgument.value)) {
+        $initArgs += @($provenanceArgument.name, $provenanceArgument.value)
+    }
+}
 if ($InitAnswersPath) {
     $answersFull = if ([System.IO.Path]::IsPathRooted($InitAnswersPath)) {
         Resolve-Agent1cFullPath -Path $InitAnswersPath
