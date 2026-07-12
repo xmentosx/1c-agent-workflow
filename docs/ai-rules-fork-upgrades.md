@@ -68,5 +68,6 @@ For a controlled-fork transition, the project repo and lock repo must both
 match the controlled fork, the current ref must be `itl-*`, and the target
 `downstreamRevision` must be greater than the installed revision. A custom repo,
 missing provenance, or any manifest `userModified` entry produces a recovery
-status instead of an automatic migration. Active `itldev/*` branches are not
+status plus `.agent-1c/runs/.../recovery-report.json` instead of an automatic
+migration or regular ai_rules update. Active `itldev/*` branches are not
 silently advanced by this mechanism.
