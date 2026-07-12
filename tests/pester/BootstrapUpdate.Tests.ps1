@@ -573,6 +573,8 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
 "@
             Set-Content -LiteralPath (Join-Path $projectRoot "README.md") -Encoding UTF8 -Value "old readme"
             Set-Content -LiteralPath (Join-Path $projectRoot "AGENT-INSTALL.md") -Encoding UTF8 -Value "old install"
+            Set-Content -LiteralPath (Join-Path $projectRoot "AGENTS.md") -Encoding UTF8 -Value "# Installed project agents`r`n`r`nRead USER-RULES.md for project-specific instructions."
+            $installedAgentsText = Get-Content -LiteralPath (Join-Path $projectRoot "AGENTS.md") -Raw -Encoding UTF8
             Set-Content -LiteralPath (Join-Path $projectRoot "DEVELOPER-GUIDE.ru.md") -Encoding UTF8 -Value "old developer guide"
             Set-Content -LiteralPath (Join-Path $projectRoot "DEV-BRANCH-DEVELOPMENT.ru.md") -Encoding UTF8 -Value "old branch guide"
             Set-Content -LiteralPath (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.ru.md") -Encoding UTF8 -Value "old vanessa guide"
@@ -648,6 +650,7 @@ local after
             $featureMarker = -join ([char[]](0x0424, 0x0443, 0x043D, 0x043A, 0x0446, 0x0438, 0x043E, 0x043D, 0x0430, 0x043B, 0x003A))
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.md")) | Should -Match ([regex]::Escape($featureMarker))
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.ru.md")) | Should -Match "moved to"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "AGENTS.md")) | Should -Be $installedAgentsText
 
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".dev.env")) | Should -Match "SECRET=keep"
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\project.json")) | Should -Match "keep-project"
@@ -716,6 +719,7 @@ local after
             (Test-Path -LiteralPath (Join-Path $tempRoot "install-agent-1c-workflow.ps1") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot "AGENT-INSTALL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot "README.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "AGENTS.md") -PathType Leaf) | Should -Be $false
             (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "templates\AGENTS.append.md")) | Should -Match "USER-RULES.md"
             (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "templates\USER-RULES.append.md")) | Should -Match "1C Project Lifecycle"
 

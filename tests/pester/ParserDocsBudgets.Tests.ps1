@@ -128,6 +128,7 @@
 
     It "entrypoint token budgets stay within limits" {
         $budgets = @(
+            @{ path = "AGENTS.md"; maxWords = 600; maxApproxTokens = 1000 },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 750; maxApproxTokens = 1500 },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 750; maxApproxTokens = 1500 },
             @{ path = "templates\USER-RULES.append.md"; maxWords = 750; maxApproxTokens = 1500 },
@@ -142,6 +143,27 @@
 
             $wordCount | Should -BeLessOrEqual $budget.maxWords
             $approxTokens | Should -BeLessOrEqual $budget.maxApproxTokens
+        }
+    }
+
+    It "keeps root AGENTS source-only and routes maintainers to canonical contracts" {
+        $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "AGENTS.md") -Raw -Encoding UTF8
+        $agentsText | Should -Match "source repository"
+        $agentsText | Should -Match "not installed-project guidance"
+        $agentsText | Should -Match ([regex]::Escape('Never add this root `AGENTS.md` to bootstrap or `update-workflow` managed-copy lists'))
+        $agentsText | Should -Match "ITL owns project bootstrap and lifecycle"
+        $agentsText | Should -Match ([regex]::Escape('controlled `ai_rules_1c` fork owns'))
+        $agentsText | Should -Match ([regex]::Escape("scripts/check.ps1 -Mode Fast"))
+        $agentsText | Should -Match ([regex]::Escape("scripts/check.ps1 -Mode Full"))
+        $agentsText | Should -Match ([regex]::Escape('fresh passed `/itl-check`'))
+        foreach ($relativePath in @(
+            ".agents/skills/1c-workflow/SKILL.md",
+            "AGENT-INSTALL.md",
+            "docs/ai-rules-fork-upgrades.md",
+            "docs/local-quality-gate.md",
+            "docs/release-checklist.md"
+        )) {
+            Test-Path -LiteralPath (Join-Path $RepoRoot $relativePath) -PathType Leaf | Should -BeTrue
         }
     }
 
