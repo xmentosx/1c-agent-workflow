@@ -18,7 +18,7 @@
 - [x] Real disposable controlled-fork migration `r1 → r2`: snapshot created, manifest upgraded to 1.1, Codex added, `.kilocode` removed, ITL skills preserved, exact r2 lock written, global prompts unchanged.
 - [x] Migration rollback unit test restores config, lock, manifest, `.agents`, `.codex`, `.kilo`, and `.kilocode` scope after failure.
 - [x] Custom/user-modified migration blocks suppress regular updates and persist a recovery report under ignored `.agent-1c/runs/`.
-- [x] ITL Full gate with local controlled fork checkout: 197/197 tests, fork Full and compatibility stages passed.
-- [x] ITL Release gate on `D:\Git\itl-workflow-e2e-pm5`: 197/197 Pester tests; fresh verification at commit `958f3264f8ebe80a4f5b508987b69696c10492bc`; CF SHA256 `7dd1b72713b0847c79352ae6a3379c4ec5147a0556bd96edd63f103309836f34`; no cleanup failures; stand remained clean and no 1C client processes remained.
+- [x] ITL Full gate with local controlled fork checkout: 198/198 tests, fork Full and compatibility stages passed.
+- [x] ITL Release gate on `D:\Git\itl-workflow-e2e-pm5`: 198/198 Pester tests; fresh verification at commit `958f3264f8ebe80a4f5b508987b69696c10492bc`; CF SHA256 `7dd1b72713b0847c79352ae6a3379c4ec5147a0556bd96edd63f103309836f34`; no cleanup failures; stand remained clean and no 1C client processes remained.
 
 The published tag is immutable. Any defect after qualification is released as `r3`; rollback in ITL is a new commit returning the template pin to `r1`.
