@@ -98,7 +98,7 @@ Describe "ai_rules_1c migration planning" {
             $modifiedPlan = & { . $HelperPath -ProjectRoot $modifiedRoot -Action help *> $null; Get-AiRulesMigrationPlan }
             $controlledModifiedPlan = & { . $HelperPath -ProjectRoot $controlledModifiedRoot -Action help *> $null; Get-AiRulesMigrationPlan }
             $customPlan.status | Should -Be "custom"
-            $customPlan.suppressRegularUpdate | Should -BeFalse
+            $customPlan.suppressRegularUpdate | Should -BeTrue
             $modifiedPlan.status | Should -Be "user-modified"
             $modifiedPlan.suppressRegularUpdate | Should -BeTrue
             $controlledModifiedPlan.status | Should -Be "user-modified"
@@ -146,6 +146,28 @@ Describe "ai_rules_1c migration planning" {
 }
 
 Describe "ai_rules_1c transactional migration" {
+    It "leaves custom repositories untouched and writes a recovery report" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-recovery-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-AiRulesMigrationFixture -Root $tempRoot -CurrentRepo "https://example.invalid/custom-rules.git" -CurrentRef "custom-v1"
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Invoke-AiRulesBaselineMigration
+            }
+            $result.migrated | Should -BeFalse
+            $result.suppressRegularUpdate | Should -BeTrue
+            $result.status | Should -Be "custom"
+            Test-Path -LiteralPath $result.recoveryReportPath -PathType Leaf | Should -BeTrue
+            $report = Get-Content -LiteralPath $result.recoveryReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $report.status | Should -Be "blocked"
+            $report.migrationStatus | Should -Be "custom"
+            $report.current.repo | Should -Be "https://example.invalid/custom-rules.git"
+            $report.target.ref | Should -Be "itl-main-a421cf44-r2"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "writes fork config and provenance after an eligible migration" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-pass-" + [guid]::NewGuid().ToString("N"))
         try {

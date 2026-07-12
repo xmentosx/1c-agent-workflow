@@ -148,8 +148,8 @@
 
         $gitignoreText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.gitignore')
         $templateIgnoreText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot 'templates\gitignore.append')
-        $gitignoreText | Should -Match '(?m)^testResults\.xml$'
-        $templateIgnoreText | Should -Match '(?m)^testResults\.xml$'
+        $gitignoreText | Should -Match '(?m)^testResults\.xml\r?$'
+        $templateIgnoreText | Should -Match '(?m)^testResults\.xml\r?$'
         $templateIgnoreText | Should -Match 'build/test-results/'
     }
 

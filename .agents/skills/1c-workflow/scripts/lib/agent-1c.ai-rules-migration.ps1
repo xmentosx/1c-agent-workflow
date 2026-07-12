@@ -67,7 +67,7 @@ function Get-AiRulesMigrationPlan {
     $isLegacyUpstream = $currentIdentity -eq "https://github.com/comol/ai_rules_1c"
     $isControlledFork = $currentIdentity -eq $targetIdentity
     if (-not $isLegacyUpstream -and -not $isControlledFork) {
-        return [pscustomobject]@{ status = "custom"; eligible = $false; suppressRegularUpdate = $false; reason = "custom aiRules repository is preserved"; target = $target }
+        return [pscustomobject]@{ status = "custom"; eligible = $false; suppressRegularUpdate = $true; reason = "custom aiRules repository is preserved without automatic update"; target = $target }
     }
 
     $manifestPath = Join-Path $script:ProjectRoot ".ai-rules.json"
@@ -266,13 +266,54 @@ function Set-AiRulesMigrationTarget {
     Read-ProjectConfig
 }
 
+function New-AiRulesMigrationRecoveryReport {
+    param([object]$Plan)
+
+    $runRoot = Join-Path $script:ProjectRoot (".agent-1c\runs\ai-rules-migration-recovery-" + (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
+    New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
+    $currentEntry = Get-DependencyLockEntry -Name "aiRules1c"
+    $recommendedAction = switch ([string]$Plan.status) {
+        "custom" { "Review and pin the custom repository manually; ITL will not replace or update it automatically." }
+        "user-modified" { "Back up and review userModified managed files, resolve them explicitly, then retry update-workflow." }
+        default { "Review the recorded current and target provenance, repair the blocking condition, then retry update-workflow." }
+    }
+    $report = [ordered]@{
+        schemaVersion = 1
+        status = "blocked"
+        migrationStatus = [string]$Plan.status
+        reason = [string]$Plan.reason
+        recordedAt = (Get-Date).ToString("o")
+        current = [ordered]@{
+            repo = [string](Get-ConfigValue -Path "aiRules.repo" -Default "")
+            ref = [string](Get-ConfigValue -Path "aiRules.ref" -Default "")
+            commit = [string](Get-ConfigValueFromObject -Object $currentEntry -Path "commit" -Default "")
+            upstreamCommit = [string](Get-ConfigValueFromObject -Object $currentEntry -Path "upstreamCommit" -Default "")
+            downstreamRevision = [int](Get-ConfigValueFromObject -Object $currentEntry -Path "downstreamRevision" -Default 0)
+        }
+        target = [ordered]@{
+            repo = [string]$Plan.target.repo
+            ref = [string]$Plan.target.ref
+            commit = [string]$Plan.target.commit
+            upstreamCommit = [string]$Plan.target.upstreamCommit
+            downstreamRevision = [int]$Plan.target.downstreamRevision
+        }
+        recommendedAction = $recommendedAction
+    }
+    $path = Join-Path $runRoot "recovery-report.json"
+    Write-Utf8Text -Path $path -Value (($report | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    Write-Host "ai_rules_1c recovery report: $path"
+    return $path
+}
+
 function Invoke-AiRulesBaselineMigration {
     $plan = Get-AiRulesMigrationPlan
     if (-not $plan.eligible) {
+        $recoveryReportPath = ""
         if ($plan.status -notin @("dormant", "current")) {
             Write-Host "ai_rules_1c baseline migration not applied: $($plan.reason)"
+            $recoveryReportPath = New-AiRulesMigrationRecoveryReport -Plan $plan
         }
-        return [pscustomobject]@{ migrated = $false; suppressRegularUpdate = [bool]$plan.suppressRegularUpdate; status = $plan.status; reason = $plan.reason }
+        return [pscustomobject]@{ migrated = $false; suppressRegularUpdate = [bool]$plan.suppressRegularUpdate; status = $plan.status; reason = $plan.reason; recoveryReportPath = $recoveryReportPath }
     }
 
     $preflightOutput = @(Invoke-AiRulesMigrationCandidatePreflight -Plan $plan)
