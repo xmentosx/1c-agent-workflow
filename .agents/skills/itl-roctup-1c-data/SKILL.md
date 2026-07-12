@@ -1,3 +1,8 @@
+---
+name: itl-roctup-1c-data
+description: Use for read-only, token-bounded data exploration in the current itldev/* branch through branch-local ROCTUP/1c-mcp-toolkit. Prefer metadata-first queries and use the legacy web Branch Data MCP only when ROCTUP is unavailable or explicitly required.
+---
+
 # ITL ROCTUP 1C Data Skill
 
 Use this skill when the agent needs to inspect data in the current `itldev/*` branch infobase through ROCTUP/1c-mcp-toolkit.
