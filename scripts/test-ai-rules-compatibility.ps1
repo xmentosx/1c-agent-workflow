@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$AiRulesSource = "https://github.com/xmentosx/itl_ai_rules_1c.git",
+    [string]$AiRulesRef = "itl-main-a421cf44-r2",
     [string]$WorkingDirectory = "",
     [switch]$KeepArtifacts
 )
@@ -18,6 +19,8 @@ function Get-ManifestEntries {
         [pscustomobject]@{
             target = [string]$_.Name
             source = [string]$_.Value.source
+            owners = @($_.Value.owners)
+            scope = [string]$_.Value.scope
         }
     })
 }
@@ -40,14 +43,13 @@ function Assert-OpenSpecBundle {
     $missing = @()
     foreach ($file in @(Get-ChildItem -LiteralPath $bundleRoot -Recurse -File)) {
         $relative = $file.FullName.Substring($basePath.Length + 1).Replace('\', '/')
-        $source = "content/openspec-bundle/$Tool/$relative"
-        $matches = @($entries | Where-Object { $_.source -eq $source })
+        $matches = @($entries | Where-Object { $_.target -eq $relative })
         if ($matches.Count -eq 0) {
-            $missing += $source
+            $missing += $relative
             continue
         }
         if (@($matches | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ProjectRoot $_.target) -PathType Leaf) }).Count -gt 0) {
-            $missing += $source
+            $missing += $relative
         }
     }
 
@@ -56,45 +58,30 @@ function Assert-OpenSpecBundle {
     }
 }
 
-function Save-CodexPromptSnapshot {
-    param(
-        [string]$RulesRoot,
-        [string]$SnapshotRoot
-    )
+function Get-CodexPromptSnapshot {
+    param([string]$RulesRoot)
 
     $commandsRoot = Join-Path $RulesRoot "content\commands"
     $promptsRoot = Join-Path ([Environment]::GetFolderPath('UserProfile')) ".codex\prompts"
-    $records = @()
+    $records = [ordered]@{}
     if (-not (Test-Path -LiteralPath $commandsRoot -PathType Container)) {
         return $records
     }
 
-    New-Item -ItemType Directory -Force -Path $SnapshotRoot | Out-Null
     foreach ($command in @(Get-ChildItem -LiteralPath $commandsRoot -File -Filter "*.md")) {
         $targetPath = Join-Path $promptsRoot $command.Name
-        $snapshotPath = Join-Path $SnapshotRoot $command.Name
-        $exists = Test-Path -LiteralPath $targetPath -PathType Leaf
-        if ($exists) {
-            Copy-Item -LiteralPath $targetPath -Destination $snapshotPath -Force
-        }
-        $records += [pscustomobject]@{
-            targetPath = $targetPath
-            snapshotPath = $snapshotPath
-            existed = $exists
-        }
+        $records[$targetPath] = if (Test-Path -LiteralPath $targetPath -PathType Leaf) {
+            (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash
+        } else { "<missing>" }
     }
     return $records
 }
 
-function Restore-CodexPromptSnapshot {
-    param([object[]]$Records)
-
-    foreach ($record in @($Records)) {
-        if ($record.existed) {
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $record.targetPath) | Out-Null
-            Copy-Item -LiteralPath $record.snapshotPath -Destination $record.targetPath -Force
-        } elseif (Test-Path -LiteralPath $record.targetPath -PathType Leaf) {
-            Remove-Item -LiteralPath $record.targetPath -Force
+function Assert-CodexPromptSnapshotUnchanged {
+    param([System.Collections.IDictionary]$Before, [System.Collections.IDictionary]$After)
+    foreach ($path in @($Before.Keys)) {
+        if (-not $After.Contains($path) -or $After[$path] -ne $Before[$path]) {
+            throw "Compatibility check changed user-scope Codex prompt: $path"
         }
     }
 }
@@ -104,7 +91,7 @@ $workRoot = if ($WorkingDirectory) {
 } else {
     Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-compat-" + [guid]::NewGuid().ToString("N"))
 }
-$codexPromptSnapshot = @()
+$codexPromptBefore = [ordered]@{}
 
 try {
     New-Item -ItemType Directory -Force -Path $workRoot | Out-Null
@@ -113,7 +100,7 @@ try {
         $rulesRoot = (Resolve-Path -LiteralPath $AiRulesSource).Path
     } else {
         $rulesRoot = Join-Path $workRoot "ai_rules_1c"
-        & git clone --depth 1 $AiRulesSource $rulesRoot
+        & git clone --depth 1 --branch $AiRulesRef --single-branch $AiRulesSource $rulesRoot
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to clone ai_rules_1c from $AiRulesSource"
         }
@@ -124,9 +111,7 @@ try {
         throw "ai_rules_1c install.ps1 was not found: $installScript"
     }
 
-    # The upstream Codex adapter writes command prompts to the user profile.
-    # Preserve those files so this project-scoped compatibility check leaves no user-scope changes.
-    $codexPromptSnapshot = @(Save-CodexPromptSnapshot -RulesRoot $rulesRoot -SnapshotRoot (Join-Path $workRoot "codex-prompts-snapshot"))
+    $codexPromptBefore = Get-CodexPromptSnapshot -RulesRoot $rulesRoot
 
     $projectRoot = Join-Path $workRoot "project"
     New-Item -ItemType Directory -Force -Path $projectRoot | Out-Null
@@ -149,6 +134,9 @@ try {
 
     $manifestPath = Join-Path $projectRoot ".ai-rules.json"
     $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([string]$manifest.protocol -ne "1.1") {
+        throw "ai_rules_1c manifest protocol must be 1.1; actual: $($manifest.protocol)"
+    }
     foreach ($tool in @("codex", "kilocode")) {
         if (@($manifest.tools) -notcontains $tool) {
             throw "ai_rules_1c manifest does not list required tool: $tool"
@@ -156,11 +144,29 @@ try {
         Assert-OpenSpecBundle -RulesRoot $rulesRoot -ProjectRoot $projectRoot -Manifest $manifest -Tool $tool
     }
 
+    foreach ($required in @("doctor", "1c-metadata-manage", "openspec-propose")) {
+        $skillPath = Join-Path $projectRoot ".agents\skills\$required\SKILL.md"
+        if (-not (Test-Path -LiteralPath $skillPath -PathType Leaf)) { throw "Shared skill is missing: $skillPath" }
+    }
+    foreach ($forbidden in @(".codex\skills", ".kilo\skills", ".kilocode", ".kilo\commands\doctor.md")) {
+        if (Test-Path -LiteralPath (Join-Path $projectRoot $forbidden)) { throw "Legacy or duplicate layout exists: $forbidden" }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\opsx-propose.md") -PathType Leaf)) {
+        throw "Kilo OpenSpec command is missing."
+    }
+    foreach ($target in @(".agents/skills/doctor/SKILL.md", ".agents/skills/1c-metadata-manage/SKILL.md", ".agents/skills/openspec-propose/SKILL.md")) {
+        $entry = @(Get-ManifestEntries -Manifest $manifest | Where-Object { $_.target -eq $target }) | Select-Object -First 1
+        if ($null -eq $entry -or $entry.scope -ne "project" -or @($entry.owners | Sort-Object) -join "," -ne "codex,kilocode") {
+            throw "Shared manifest ownership is invalid: $target"
+        }
+    }
+    $agentsPath = Join-Path $projectRoot "AGENTS.md"
+    if ((Get-Item -LiteralPath $agentsPath).Length -gt 32768) { throw "Rendered AGENTS.md exceeds 32 KiB." }
+    $codexPromptAfter = Get-CodexPromptSnapshot -RulesRoot $rulesRoot
+    Assert-CodexPromptSnapshotUnchanged -Before $codexPromptBefore -After $codexPromptAfter
+
     Write-Host "ai_rules_1c compatibility passed for codex and kilocode."
 } finally {
-    if ($codexPromptSnapshot.Count -gt 0) {
-        Restore-CodexPromptSnapshot -Records $codexPromptSnapshot
-    }
     if (-not $KeepArtifacts -and (Test-Path -LiteralPath $workRoot -ErrorAction SilentlyContinue)) {
         Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue
     } elseif ($KeepArtifacts) {

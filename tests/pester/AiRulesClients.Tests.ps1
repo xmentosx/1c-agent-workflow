@@ -154,6 +154,45 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
         $text | Should -Match "codex,kilocode"
         $text | Should -Match "Assert-OpenSpecBundle"
         $text | Should -Match "git clone"
+        $text | Should -Match "protocol must be 1.1"
+        $text | Should -Match "Compatibility check changed user-scope Codex prompt"
+    }
+
+    It "validates shared OpenSpec destinations independently of the winning source owner" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-shared-openspec-" + [guid]::NewGuid().ToString("N"))
+        $rulesRoot = Join-Path $tempRoot "rules"
+        try {
+            New-Item -ItemType Directory -Force -Path `
+                (Join-Path $tempRoot ".agent-1c"), `
+                (Join-Path $rulesRoot "content\openspec-bundle\codex\.agents\skills\openspec-propose"), `
+                (Join-Path $rulesRoot "content\openspec-bundle\kilocode\.agents\skills\openspec-propose"), `
+                (Join-Path $rulesRoot "content\openspec-bundle\kilocode\.kilo\commands"), `
+                (Join-Path $tempRoot ".agents\skills\openspec-propose"), `
+                (Join-Path $tempRoot ".kilo\commands") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex","kilocode"]}}'
+            foreach ($path in @(
+                (Join-Path $rulesRoot "content\openspec-bundle\codex\.agents\skills\openspec-propose\SKILL.md"),
+                (Join-Path $rulesRoot "content\openspec-bundle\kilocode\.agents\skills\openspec-propose\SKILL.md"),
+                (Join-Path $tempRoot ".agents\skills\openspec-propose\SKILL.md")
+            )) { Set-Content -LiteralPath $path -Encoding ASCII -Value "fixture" }
+            Set-Content -LiteralPath (Join-Path $rulesRoot "content\openspec-bundle\kilocode\.kilo\commands\opsx-propose.md") -Encoding ASCII -Value "fixture"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\commands\opsx-propose.md") -Encoding ASCII -Value "fixture"
+            $manifest = [pscustomobject]@{ files = [pscustomobject]@{
+                ".agents/skills/openspec-propose/SKILL.md" = [pscustomobject]@{ source = "content/openspec-bundle/kilocode/.agents/skills/openspec-propose/SKILL.md" }
+                ".kilo/commands/opsx-propose.md" = [pscustomobject]@{ source = "content/openspec-bundle/kilocode/.kilo/commands/opsx-propose.md" }
+            } }
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                [pscustomobject]@{
+                    codex = Get-AiRules1cOpenSpecBundleValidation -RulesDir $rulesRoot -Tool "codex" -Manifest $manifest
+                    kilo = Get-AiRules1cOpenSpecBundleValidation -RulesDir $rulesRoot -Tool "kilocode" -Manifest $manifest
+                }
+            }
+            $result.codex.isValid | Should -BeTrue
+            $result.kilo.isValid | Should -BeTrue
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "pins a configured aiRules tag in fresh mode" {
