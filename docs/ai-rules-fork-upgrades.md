@@ -3,8 +3,8 @@
 ## Current state
 
 The workflow template is pinned to the controlled fork release
-`itl-main-a421cf44-r3` at commit
-`316da894069d0ad7ac6874fe6faf46028ab69d6a`. Its upstream provenance is the
+`itl-main-a421cf44-r4` at commit
+`6396b1538339ce1ff025cd6f2a24ccb8ff742e1e`. Its upstream provenance is the
 explicit snapshot `refs/heads/main` at
 `a421cf44eb1f5859cf2a2b74884f8fbcaefc4826`. The moving `upstream/main` name is
 never consumed by projects.

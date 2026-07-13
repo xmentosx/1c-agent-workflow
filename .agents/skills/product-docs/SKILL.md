@@ -1,6 +1,6 @@
 ---
 name: product-docs
-description: Use BookStack product documentation through the BookStack-product-docs-mcp server for PM5 projects before answering, exploring, planning, proposing, or changing product business logic, technical or implementation architecture, internal subsystem design, technical decisions and constraints, user workflows, terminology, permissions, reports, integrations, or acceptance tests. Search BookStack before broad repository traversal, then verify against code/tests/current 1C metadata and available MCP evidence, cite relevant pages, and surface conflicts.
+description: Use BookStack product documentation through the BookStack-product-docs-mcp server for PM5 projects before answering, researching, planning, proposing, applying, or changing product business logic, technical or implementation architecture, internal subsystem design, technical decisions and constraints, user workflows, terminology, permissions, reports, integrations, acceptance tests, and OpenSpec explore/propose/apply tasks. Search BookStack before broad repository traversal, then verify against code/tests/current 1C metadata and available MCP evidence, cite relevant pages, and surface conflicts.
 ---
 
 # Product Docs
@@ -11,7 +11,7 @@ Before using BookStack, inspect `.agent-1c/project.json` when it exists. If `bas
 
 ## Workflow
 
-Use the `BookStack-product-docs-mcp` MCP server as the source of product context and intended behavior when answering, exploring, planning, proposing, or changing anything that may depend on business rules, technical or implementation architecture, the internal design of a subsystem, adopted technical decisions and their constraints or rationale, user-facing behavior, product terms, permissions, reports, integrations, or test scenarios.
+Use the `BookStack-product-docs-mcp` MCP server as the source of product context and intended behavior when answering, researching, planning, proposing, applying, or changing anything that may depend on business rules, technical or implementation architecture, the internal design of a subsystem, adopted technical decisions and their constraints or rationale, user-facing behavior, product terms, permissions, reports, integrations, test scenarios, or any OpenSpec explore/propose/apply phase.
 
 1. Search first with `search_docs`, before a broad repository traversal. Use 2-4 focused queries: user-facing terms, subsystem/architecture terms, 1C object names, report names, integration names, and Russian synonyms when relevant. A question such as "как устроена архитектура редактора планов" is a mandatory BookStack-first case.
 2. Read only the relevant pages with `read_page`, preferring markdown. Keep the BookStack page URL and `updated_at` in your notes when available.

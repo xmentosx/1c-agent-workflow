@@ -26,6 +26,7 @@ Describe "Release gate scripts" {
         $text | Should -Match 'release-e2e-summary.json'
         $text | Should -Match '\$releaseHelperPath'
         $text | Should -Match '"-HelperPath", \$releaseHelperPath'
+        $text | Should -Match '"-AiRulesSource", \$resolvedAiRulesSource'
         $runnerText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") -Raw -Encoding UTF8
         $runnerText | Should -Match 'SOURCE_INFOBASE_PATH must be a disposable snapshot inside the stand'
         (Get-Content -LiteralPath (Join-Path $RepoRoot "docs\release-checklist.md") -Raw -Encoding UTF8) | Should -Match 'source-snapshot'
@@ -33,14 +34,15 @@ Describe "Release gate scripts" {
 }
 
 Describe "Release E2E orchestration" {
-    It "runs a root Configuration partial roundtrip, fresh verification, export, hash validation, and MCP cleanup" {
+    It "runs config and extension roundtrips, fresh verification, export, hash validation, and MCP cleanup" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-e2e-test-" + [guid]::NewGuid().ToString("N"))
         $mainRoot = Join-Path $tempRoot "main"
         $worktreeRoot = Join-Path $tempRoot "worktree"
         $helperPath = Join-Path $tempRoot "fake-helper.ps1"
+        $aiRulesRoot = Join-Path $tempRoot "ai-rules"
         $summaryPath = Join-Path $tempRoot "release-summary.json"
         try {
-            New-Item -ItemType Directory -Force -Path $mainRoot | Out-Null
+            New-Item -ItemType Directory -Force -Path $mainRoot, $aiRulesRoot | Out-Null
             & git -C $mainRoot init *> $null
             & git -C $mainRoot config user.email "test@example.invalid"
             & git -C $mainRoot config user.name "ITL Test"
@@ -84,7 +86,7 @@ Describe "Release E2E orchestration" {
             Set-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\dev-branches\workflow-release-e2e.json") -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 6)
             Set-Content -LiteralPath $helperPath -Encoding UTF8 -Value @'
 [CmdletBinding()]
-param([string]$ProjectRoot, [string]$Action, [string]$DevBranchName, [ValidateSet("Auto", "Partial", "Full")][string]$ConfigLoadMode = "Auto")
+param([string]$ProjectRoot, [string]$Action, [string]$DevBranchName, [string]$ExtensionName, [string]$ReleaseAiRulesSource, [ValidateSet("Auto", "Partial", "Full")][string]$ConfigLoadMode = "Auto")
 $actionLogPath = Join-Path $ProjectRoot ".agent-1c\release-e2e-actions.log"
 Add-Content -LiteralPath $actionLogPath -Encoding UTF8 -Value $Action
 $statePath = Join-Path $ProjectRoot ".agent-1c\dev-branches\workflow-release-e2e.json"
@@ -115,6 +117,19 @@ switch ($Action) {
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $evidencePath) | Out-Null
         Set-Content -LiteralPath $evidencePath -Encoding UTF8 -Value ($evidence | ConvertTo-Json -Depth 5)
     }
+    "release-e2e-extension-smoke" {
+        $evidence = [ordered]@{
+            schemaVersion = 1
+            extensionName = $ExtensionName
+            emptyInitialized = $true
+            cfeCreated = $true
+            cfeInitialized = $true
+            databaseRestored = $true
+        }
+        $evidencePath = Join-Path $ProjectRoot "build\test-results\release-e2e\extension-smoke.json"
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $evidencePath) | Out-Null
+        Set-Content -LiteralPath $evidencePath -Encoding UTF8 -Value ($evidence | ConvertTo-Json -Depth 5)
+    }
     "status" { Write-Host "Verification fresh passed: True" }
     "export-dev-branch-result" {
         $resultRoot = Join-Path $ProjectRoot "build\result"
@@ -135,7 +150,7 @@ switch ($Action) {
 '@
 
             & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
-                -ProjectRoot $mainRoot -HelperPath $helperPath -OutputPath $summaryPath
+                -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $summaryPath
             $LASTEXITCODE | Should -Be 0
             $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $summary.status | Should -Be "passed"
@@ -145,9 +160,15 @@ switch ($Action) {
             $summary.fixtureCommit | Should -Be (& git -C $worktreeRoot rev-parse HEAD).Trim()
             $summary.expectedComment | Should -Match '^ITL release E2E partial root roundtrip '
             $summary.roundtripParentConfigurationsPresent | Should -BeTrue
+            $summary.extensionEmptyInitialized | Should -BeTrue
+            $summary.extensionCfeCreated | Should -BeTrue
+            $summary.extensionCfeInitialized | Should -BeTrue
+            $summary.extensionDatabaseRestored | Should -BeTrue
+            $summary.extensionSmokeName | Should -Match '^ITLReleaseSmoke\d{14}$'
             $summary.cleanupFailures.Count | Should -Be 0
             $actions = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\release-e2e-actions.log") -Encoding UTF8
             $actions | Should -Contain "release-e2e-config-roundtrip"
+            $actions | Should -Contain "release-e2e-extension-smoke"
             $actions | Should -Contain "stop-dev-branch-test-clients"
             @(& git -C $worktreeRoot status --porcelain).Count | Should -Be 0
         } finally {

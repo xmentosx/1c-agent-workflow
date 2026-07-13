@@ -19,4 +19,4 @@ Required response format:
 <paste the exact helper stdout here, unchanged>
 ```
 
-Do not summarize, translate, split into your own sections, reorder, omit, or merge helper sections. Preserve the helper's `Lifecycle:`, `Visible slash commands in this folder:`, `OpenSpec:`, and `Additional helper actions:` sections exactly as printed. Do not add a separate "Lifecycle-действия не выполнялись" / "no lifecycle actions executed" note. Do not execute a lifecycle action unless the developer clearly chooses one.
+Do not summarize, translate, split into your own sections, reorder, omit, or merge helper sections. Preserve the helper's `Lifecycle:`, `ITL commands valid in this context:`, `Inherited by Kilo from primary checkout; invalid in this context:`, `OpenSpec:`, and `Additional helper actions:` sections exactly as printed. Do not add a separate "Lifecycle-действия не выполнялись" / "no lifecycle actions executed" note. Do not execute a lifecycle action unless the developer clearly chooses one.

@@ -930,7 +930,7 @@ function Assert-DevBranchToolArtifactExportGuard {
     if ($ResultPath) {
         $pathsToCheck += $ResultPath
     }
-    $extensionExportPath = Get-StateValue -State $State -Name "extensionExportPath" -Default ""
+    $extensionExportPath = Get-StateValue -State $State -Name "extensionDumpPath" -Default (Get-StateValue -State $State -Name "extensionExportPath" -Default "")
     if ($extensionExportPath) {
         $pathsToCheck += (Resolve-ProjectPath $extensionExportPath)
     }

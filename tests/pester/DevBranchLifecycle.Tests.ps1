@@ -737,13 +737,12 @@
             $match.Success | Should -Be $true
             $body = $match.Groups["body"].Value
             $mergeIndex = $body.IndexOf('Invoke-Git @("merge", (Get-MasterBranch))')
-            $guardIndex = $body.IndexOf('Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit -AdditionalArguments @("-LifecyclePhase", "post-merge")')
             $phaseRestartIndex = $body.IndexOf('Restart-Agent1cAfterDevBranchMerge -Operation')
             $loadIndex = $body.IndexOf('Load-ConfigFromFiles')
 
             $mergeIndex | Should -BeGreaterOrEqual 0
-            $guardIndex | Should -BeGreaterThan $mergeIndex
-            $phaseRestartIndex | Should -BeGreaterThan $guardIndex
+            $body | Should -Not -Match "Restart-Agent1cIfWorkflowHelperChangedSince"
+            $phaseRestartIndex | Should -BeGreaterThan $mergeIndex
             $loadIndex | Should -BeGreaterThan $phaseRestartIndex
         }
     }
@@ -2594,6 +2593,80 @@ if (`$?) { exit 0 } else { exit 1 }
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "separates local dev commands from Kilo primary-checkout inheritance" {
+        $mainRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-kilo-primary-" + [guid]::NewGuid().ToString("N"))
+        $worktreeRoot = $mainRoot + "-worktree"
+        try {
+            New-Item -ItemType Directory -Force -Path $mainRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".kilo/"
+            & git -C $mainRoot init | Out-Null
+            & git -C $mainRoot config user.email "test@example.com"
+            & git -C $mainRoot config user.name "Test User"
+            & git -C $mainRoot add .gitignore
+            & git -C $mainRoot commit -m init | Out-Null
+            & git -C $mainRoot branch -M master
+            & git -C $mainRoot worktree add -b itldev/branch1 $worktreeRoot | Out-Null
+
+            New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot ".kilo\commands"), (Join-Path $worktreeRoot ".kilo\commands") | Out-Null
+            Set-Content -LiteralPath (Join-Path $mainRoot ".kilo\commands\itl.md") -Encoding ASCII -Value "common"
+            Set-Content -LiteralPath (Join-Path $mainRoot ".kilo\commands\itl-update-workflow.md") -Encoding ASCII -Value "master"
+            Set-Content -LiteralPath (Join-Path $worktreeRoot ".kilo\commands\itl.md") -Encoding ASCII -Value "common"
+            Set-Content -LiteralPath (Join-Path $worktreeRoot ".kilo\commands\itl-check.md") -Encoding ASCII -Value "dev"
+
+            $result = & {
+                . $HelperPath -ProjectRoot $worktreeRoot -Action help *> $null
+                @(Get-KiloInheritedPrimaryItlCommands)
+            }
+            $result | Should -Be @("/itl-update-workflow")
+
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $worktreeRoot -Action help 2>&1
+            ($output -join [Environment]::NewLine) | Should -Match "ITL commands valid in this context"
+            ($output -join [Environment]::NewLine) | Should -Match "Inherited by Kilo from primary checkout; invalid in this context"
+        } finally {
+            $previousPreference = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                & git -C $mainRoot worktree remove --force --force $worktreeRoot *> $null
+                & git -C $mainRoot worktree prune *> $null
+            } finally {
+                $ErrorActionPreference = $previousPreference
+            }
+            Remove-Item -LiteralPath $mainRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $worktreeRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "rejects every master-only action from itldev before changing tracked state" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-master-action-guard-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "sentinel.txt") -Encoding ASCII -Value "unchanged"
+            & git -C $tempRoot init | Out-Null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add sentinel.txt
+            & git -C $tempRoot commit -m init | Out-Null
+            & git -C $tempRoot branch -M master
+            & git -C $tempRoot checkout -b itldev/current | Out-Null
+            $beforeCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+
+            foreach ($case in @(
+                @{ action = "update-workflow"; extra = @() },
+                @{ action = "new-dev-branch"; extra = @("-DevBranchName", "other") },
+                @{ action = "new-extension-dev-branch"; extra = @("-DevBranchName", "other-extension") }
+            )) {
+                $result = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments (@("-ProjectRoot", $tempRoot, "-Action", $case.action) + $case.extra)
+                $result.exitCode | Should -Not -Be 0
+                $result.combinedText | Should -Match "master"
+                ((& git -C $tempRoot rev-parse HEAD) -join "").Trim() | Should -Be $beforeCommit
+                @(& git -C $tempRoot status --porcelain) | Should -BeNullOrEmpty
+                (Get-Content -LiteralPath (Join-Path $tempRoot "sentinel.txt") -Raw -Encoding ASCII).Trim() | Should -Be "unchanged"
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }

@@ -216,6 +216,7 @@ try {
         $releaseHelperPath = Join-Path $repoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
         Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments @(
             "-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)),
+            "-AiRulesSource", $resolvedAiRulesSource,
             "-HelperPath", $releaseHelperPath,
             "-OutputPath", $e2eReportPath
         ) -TimeoutSeconds 14400 -LogName "release-e2e"

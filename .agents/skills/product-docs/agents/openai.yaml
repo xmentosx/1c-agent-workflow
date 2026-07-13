@@ -1,4 +1,4 @@
 interface:
   display_name: "Product Docs"
   short_description: "Route PM5 product and technical architecture through BookStack"
-  default_prompt: "Use $product-docs to search BookStack before broad repository traversal, including for PM5 technical or implementation architecture, internal subsystem design, technical decisions and constraints, then verify it against code/MCP evidence before answering, exploring, planning, proposing, or changing behavior."
+  default_prompt: "Use $product-docs to search BookStack before broad repository traversal, including for PM5 architecture and OpenSpec explore/propose/apply tasks, then verify it against code/MCP evidence before answering, researching, planning, proposing, applying, or changing behavior."

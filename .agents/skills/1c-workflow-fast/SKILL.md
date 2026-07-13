@@ -20,6 +20,7 @@ Do not open full workflow references before normal lifecycle execution. Open det
 - update the installed ITL workflow package from `master`: `update-workflow`
 - create new configuration development branch worktree from `master`: `new-dev-branch`
 - create new extension development branch worktree from `master`: `new-extension-dev-branch`
+- initialize the extension after branch creation: `init-dev-branch-extension` with `-ExtensionInitMode Empty|Cfe`, `-ExtensionName`, and optional `-ExtensionSourcePath`
 - check current branch after changes: `check-dev-branch`
 - update current development branch infobase from branch files without tests, when explicitly requested: `update-dev-branch-base`
 - verify current branch when compatibility wording is used: `verify-dev-branch`
@@ -32,7 +33,7 @@ Do not open full workflow references before normal lifecycle execution. Open det
 
 Run commands from the project root:
 
-Long actions (`new-dev-branch`, `new-extension-dev-branch`, `update-workflow`, `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`) need `timeout_ms >= 1800000` when supported. Do not use `120000 ms`; they may launch 1C Designer/Enterprise (`/LoadConfigFromFiles ... /UpdateDBCfg`). `status`/`help` do not need the long timeout.
+Long actions (`new-dev-branch`, `new-extension-dev-branch`, `init-dev-branch-extension`, `update-workflow`, `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`) need `timeout_ms >= 1800000` when supported. Do not use `120000 ms`; they may launch 1C Designer/Enterprise (`/LoadConfigFromFiles ... /UpdateDBCfg`). `status`/`help` do not need the long timeout.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action <action>

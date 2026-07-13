@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
+    [Parameter(Mandatory = $true)][string]$AiRulesSource,
     [string]$HelperPath = "",
     [string]$OutputPath = ""
 )
@@ -10,6 +11,10 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $ProjectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
+$AiRulesSource = [System.IO.Path]::GetFullPath($AiRulesSource)
+if (-not (Test-Path -LiteralPath $AiRulesSource -PathType Container)) {
+    throw "Release ai_rules source is missing: $AiRulesSource"
+}
 $configPath = Join-Path $ProjectRoot ".agent-1c\release-e2e.json"
 if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
     throw "Dedicated E2E stand config is missing: $configPath. Start from templates/release-e2e.example.json."
@@ -79,6 +84,9 @@ $fixtureCommit = ""
 $expectedComment = ""
 $roundtripEvidencePath = ""
 $roundtripEvidence = $null
+$extensionSmokeEvidencePath = ""
+$extensionSmokeEvidence = $null
+$extensionSmokeName = "ITLReleaseSmoke" + [DateTime]::UtcNow.ToString("yyyyMMddHHmmss")
 
 function ConvertTo-NativeArgument {
     param([string]$Value)
@@ -257,6 +265,23 @@ try {
         throw "Release E2E roundtrip evidence does not prove Comment and ParentConfigurations.bin preservation."
     }
 
+    Invoke-E2EHelper -Action "release-e2e-extension-smoke" -TimeoutSeconds 7200 -AdditionalArguments @(
+        "-ExtensionName", $extensionSmokeName,
+        "-ReleaseAiRulesSource", $AiRulesSource
+    ) | Out-Null
+    $extensionSmokeEvidencePath = Join-Path $worktreePath "build\test-results\release-e2e\extension-smoke.json"
+    if (-not (Test-Path -LiteralPath $extensionSmokeEvidencePath -PathType Leaf)) {
+        throw "Release E2E extension smoke evidence was not created: $extensionSmokeEvidencePath"
+    }
+    $extensionSmokeEvidence = Get-Content -LiteralPath $extensionSmokeEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not [bool]$extensionSmokeEvidence.emptyInitialized -or
+        -not [bool]$extensionSmokeEvidence.cfeCreated -or
+        -not [bool]$extensionSmokeEvidence.cfeInitialized -or
+        -not [bool]$extensionSmokeEvidence.databaseRestored -or
+        [string]$extensionSmokeEvidence.extensionName -ne $extensionSmokeName) {
+        throw "Release E2E extension evidence does not prove Empty creation, CFE load, and database restoration."
+    }
+
     $statusResult = Invoke-E2EHelper -Action "status" -TimeoutSeconds 120
     $statusText = Get-Content -LiteralPath $statusResult.stdoutPath -Raw -Encoding UTF8
     if ($statusText -notmatch '(?im)^Verification fresh passed:\s*True\s*$') {
@@ -324,6 +349,12 @@ try {
         configLoadMode = "partial"
         roundtripEvidencePath = $roundtripEvidencePath
         roundtripParentConfigurationsPresent = $(if ($roundtripEvidence) { [bool]$roundtripEvidence.parentConfigurationsPresentInDump } else { $false })
+        extensionSmokeEvidencePath = $extensionSmokeEvidencePath
+        extensionSmokeName = $extensionSmokeName
+        extensionEmptyInitialized = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.emptyInitialized } else { $false })
+        extensionCfeCreated = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.cfeCreated } else { $false })
+        extensionCfeInitialized = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.cfeInitialized } else { $false })
+        extensionDatabaseRestored = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.databaseRestored } else { $false })
         artifactPath = $artifactPath
         artifactSha256 = $artifactSha256
         resultManifestPath = $resultManifestPath

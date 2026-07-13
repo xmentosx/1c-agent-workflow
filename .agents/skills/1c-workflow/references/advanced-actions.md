@@ -45,6 +45,7 @@ sync-master
 new-dev-branch
 new-extension-dev-branch
 configure-dev-branch-unsafe-action-protection
+init-dev-branch-extension
 set-dev-branch-extension
 dump-dev-branch-extension
 activate-dev-branch-context
@@ -61,15 +62,18 @@ switch-dev-branch
 list-dev-branches
 status
 release-e2e-config-roundtrip
+release-e2e-extension-smoke
 ```
 
-Extension helper actions and branch-local MCP actions are advanced/helper commands. Keep `set-dev-branch-extension`, `dump-dev-branch-extension`, ROCTUP MCP actions, and Vanessa UI MCP actions available through helper actions or natural-language requests, but do not generate them as visible Kilo slash commands. New development branches prepare ROCTUP and Vanessa UI MCP as stopped/ready. Start Vanessa UI MCP only for a named runtime UI question, recording, or debugging operation; stop it afterwards, and reload or restart Kilo Code if a manually started server is not visible.
+Extension helper actions and branch-local MCP actions are advanced/helper commands. After `new-extension-dev-branch`, `init-dev-branch-extension` is the mandatory explicit next step; keep it and the recovery-only `set-dev-branch-extension`/`dump-dev-branch-extension` actions available through helper actions or natural-language requests, but do not generate them as visible Kilo slash commands. `set-dev-branch-extension` records context only and never creates an extension. New development branches prepare ROCTUP and Vanessa UI MCP as stopped/ready. Start Vanessa UI MCP only for a named runtime UI question, recording, or debugging operation; stop it afterwards, and reload or restart Kilo Code if a manually started server is not visible.
 
 `configure-dev-branch-unsafe-action-protection` is an interactive recovery action for an existing development worktree when branch creation used `skip` before protection was actually disabled. Run it through `run-agent-1c-window.ps1`, optionally passing `-InfoBaseUser <name>` for an empty-password local user. It forces the normal visible Designer confirmation flow and records confirmation in branch state; it never disables protection automatically.
 
 `stop-dev-branch-test-clients` stops only Vanessa `TESTMANAGER`/`TESTCLIENT` processes whose command line belongs to the current development branch infobase/worktree, then fails if any remain. Successful Vanessa verification performs the same cleanup automatically. It never stops foreign worktree test processes.
 
 `release-e2e-config-roundtrip` is reserved for `scripts/invoke-release-e2e.ps1`. It dumps the dedicated branch infobase into ignored local state, writes evidence under ignored `build/test-results`, and proves that a root `Configuration.xml` `Comment` loaded in strict `Partial` mode roundtrips while `Ext/ParentConfigurations.bin` is present. Do not expose it as a slash command or use it for ordinary project work.
+
+`release-e2e-extension-smoke` is also reserved for the Release runner. It uses the public extension initialization lifecycle to create an Empty extension, produce and reload a CFE, validate both normalized dumps, and restore the disposable infobase and worktree from a snapshot. It is not a project command and must not have a slash wrapper.
 
 ROCTUP MCP actions (`install-roctup-mcp`, `update-roctup-mcp`, `start-roctup-mcp`, `stop-roctup-mcp`, `roctup-mcp-status`) manage the ignored EPF/skills cache and the branch-local embedded data MCP. ROCTUP is the preferred data channel for branch infobases and does not need web publication; start it for focused data exploration and stop it after use.
 
@@ -81,12 +85,12 @@ In the short `/itl` panel, show advanced/helper actions only as grouped addition
 ROCTUP MCP: branch-local install/update/start/status/stop
 vibecoding1c MCP: setup/status/select/refresh-registry/update
 Vanessa UI MCP: branch-local install/start/status/stop
-Extension branches: set extension name/dump extension files
+Extension branches: initialize extension; set/dump are recovery actions
 Maintenance/recovery: update base without tests, update workflow/rules, close/list/switch branches
 ```
 
-`update-ai-rules` refreshes files from the configured `ai_rules_1c` source with that source's installer. A configured immutable `aiRules.ref` remains pinned in both `fresh` and `locked`; the controlled fork never consumes `main`. The helper reconciles configured-source MCP client entries only after ready vibecoding1c replacements are written, records the resolved commit in `.agent-1c/dependency-lock.json`, and reapplies the ITL overlay in `USER-RULES.md`. If vibecoding1c selection/state is incomplete, it preserves those MCP entries as the working fallback. It does not normally append to `AGENTS.md` when the configured `AGENTS.md` already points to `USER-RULES.md`.
+`update-ai-rules` refreshes files from the configured `ai_rules_1c` source with `-McpMode delegated`. A configured immutable `aiRules.ref` remains pinned in both `fresh` and `locked`; the controlled fork never consumes `main`. The installer leaves client MCP files byte-for-byte unchanged, then ITL performs the only transactional MCP reconcile after ready vibecoding1c replacements are available. It records the resolved commit in `.agent-1c/dependency-lock.json` and reapplies the ITL overlay in `USER-RULES.md`. If selection/state is incomplete, existing MCP entries are preserved. It does not normally append to `AGENTS.md` when the configured `AGENTS.md` already points to `USER-RULES.md`.
 
-`update-workflow` refreshes the installed ITL workflow package in an already initialized project. It must run from the `master` worktree, copies only managed workflow files including `install-agent-1c-workflow.ps1`, preserves local runtime state, records `workflowPackage` in `.agent-1c/dependency-lock.json`, regenerates ignored `.kilo/commands/itl*.md` for the current worktree, refreshes ROCTUP MCP and Vanessa UI MCP CFE caches, runs `update-ai-rules` unless `-SkipAiRules` is passed, and prints follow-up commands for vibecoding1c MCP, Vanessa UI MCP, and active `itldev/*` worktrees. In Kilo master, it is exposed as `/itl-update-workflow`; it is not generated in `itldev/*` worktrees.
+`update-workflow` refreshes the installed ITL workflow package in an already initialized project. It must run from the `master` worktree. The pre-copy phase checks master/clean state, copies only managed workflow files (never root `AGENTS.md`), records `workflowPackage`, then always starts the installed helper in a fresh PowerShell process with internal `post-copy`; only that new process updates rules, MCP, generated commands, and final checks. Generated `.kilo/commands/itl*.md` stay local and ignored. Projects whose old updater predates this re-exec contract need a one-time double run: the first installs it, the second guarantees all post-copy work runs on it. Later updates need one run. Kilo v7 may still display primary-checkout master commands in linked worktrees; `/itl` lists them separately as inherited and invalid, while direct master actions fail before mutation.
 
 For normal developer work, prefer the short `/itl-*` commands documented in the README and developer guide.

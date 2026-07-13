@@ -48,19 +48,19 @@ verify helper action                       Совместимый alias для /
 
 `vibecoding1c-mcp helper action` в worktree текущей `itldev/*` ветки подключает выбранные vibecoding1c MCP endpoints. Если для `code` или `graph` выбран local branch scope, helper поднимает отдельный vibecoding1c MCP для текущей ветки. vibecoding1c MCP соседних веток в client config не добавляются; Vanessa UI MCP управляется отдельно через `vanessa-mcp helper action`.
 
-Если текущая ветка предназначена для разработки расширения, в начале работы задайте имя расширения:
+После создания extension-ветки выполните отдельную обязательную инициализацию. Для пустого расширения:
 
 ```text
-set-dev-branch-extension helper action <имя-расширения>
+init-dev-branch-extension -ExtensionInitMode Empty -ExtensionName <имя-расширения>
 ```
 
-После создания расширения в копии базы ветки выгрузите его в файлы:
+Для готового CFE:
 
 ```text
-dump-dev-branch-extension helper action
+init-dev-branch-extension -ExtensionInitMode Cfe -ExtensionName <имя-расширения> -ExtensionSourcePath <файл.cfe>
 ```
 
-Дальше `/itl-check` обновляет расширение в базе ветки из `src/cfe/<имя-расширения>` и запускает Vanessa Automation, а `/itl-result` выгружает `CFE`. Если нужно только обновить базу без тестов, используйте `update-base helper action`.
+Helper создаёт snapshot базы, загружает расширение через Designer с `-Extension`, выгружает нормализованные исходники строго в `src/cfe/<имя-расширения>` и откатывает базу при ошибке. CFE не распаковывается; Designer Agent и `AgentMode` не используются. `set-dev-branch-extension` только записывает recovery-контекст для расширения, созданного вручную, а `dump-dev-branch-extension` остаётся recovery-выгрузкой. Дальше `/update1cbase` — обычный цикл разработки, `/itl-check` — обязательная проверка, `/itl-result` — выгрузка `CFE`.
 
 Команды жизненного цикла автоматически активируют контекст базы ветки разработки для `ai_rules_1c`.
 

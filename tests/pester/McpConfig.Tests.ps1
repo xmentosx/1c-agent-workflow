@@ -88,6 +88,10 @@
         $HelperText | Should -Match "Test-Vibecoding1cMcpMantisTicketVirtualServerEnabled"
         $HelperText | Should -Match "Add-Vibecoding1cMcpVirtualServersToManifest"
         $HelperText | Should -Match "Test-ProductDocsMcpAllowed"
+        $HelperText | Should -Match "Product docs allowed for project"
+        $HelperText | Should -Match "Product docs selected in MCP manifest"
+        $HelperText | Should -Match "Product docs effective client config: Codex="
+        $HelperText | Should -Match "Product docs endpoint reachable \(bounded probe\)"
         $HelperText | Should -Match "Test-Vibecoding1cMcpLogicalServerAllowedForProject"
         $HelperText | Should -Not -Match "itl-{projectSlug}-{branchSlug}-vanessa"
         $HelperText | Should -Not -Match "localVanessa"
@@ -1293,6 +1297,12 @@ enabled = true
       "enabled": true,
       "managedBy": "ai_rules_1c"
     },
+    "onec-syntax-checker-mcp": {
+      "type": "remote",
+      "url": "http://localhost:8001/mcp",
+      "enabled": true,
+      "managedBy": "ai_rules_1c"
+    },
     "1c-ssl-mcp": {
       "type": "remote",
       "url": "http://localhost:8007/mcp",
@@ -1350,6 +1360,7 @@ enabled = true
             $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
             $kilo.mcp.PSObject.Properties["1c-code-metadata-mcp"] | Should -BeNullOrEmpty
             $kilo.mcp.PSObject.Properties["1C-docs-mcp"] | Should -BeNullOrEmpty
+            $kilo.mcp.PSObject.Properties["onec-syntax-checker-mcp"] | Should -BeNullOrEmpty
             $kilo.mcp.'1c-ssl-mcp'.managedBy | Should -Be "external-mcp"
             $kilo.mcp.'itl-demo-code'.managedBy | Should -Be "vibecoding1c-mcp"
             $kilo.mcp.'1c-graph-metadata-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
@@ -1447,7 +1458,7 @@ managedBy = "external-mcp"
         }
     }
 
-    It "preserves non-Data MCP entries but prunes managed Data MCP when publication is disabled" {
+    It "preserves all MCP entries when transactional replacement state is not ready" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-rules-mcp-reconcile-missing-" + [guid]::NewGuid().ToString("N"))
         $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
 
@@ -1486,7 +1497,7 @@ managedBy = "external-mcp"
 
             $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
             $kilo.mcp.'1C-docs-mcp'.url | Should -Be "http://localhost:8003/mcp"
-            $kilo.mcp.PSObject.Properties.Name | Should -Not -Contain "1c-data-mcp"
+            $kilo.mcp.PSObject.Properties.Name | Should -Contain "1c-data-mcp"
             $kilo.mcp.'custom-tool'.managedBy | Should -Be "external-mcp"
         } finally {
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
@@ -1544,6 +1555,7 @@ enabled = true
       "url": "http://localhost:8003/mcp",
       "enabled": true
     }
+
   }
 }
 "@ -Encoding UTF8
@@ -1574,6 +1586,40 @@ enabled = true
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "restores every client config byte when stale pruning fails inside the transaction" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-rules-mcp-prune-rollback-" + [guid]::NewGuid().ToString("N"))
+        $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
+        try {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", (Join-Path $tempRoot "local-home"), "Process")
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".codex"), (Join-Path $tempRoot ".kilo") | Out-Null
+            $codexPath = Join-Path $tempRoot ".codex\config.toml"
+            $kiloPath = Join-Path $tempRoot ".kilo\kilo.json"
+            [System.IO.File]::WriteAllBytes($codexPath, [byte[]](0xEF, 0xBB, 0xBF, 0x23, 0x20, 0x78, 0x0D, 0x0A))
+            [System.IO.File]::WriteAllBytes($kiloPath, [System.Text.Encoding]::UTF8.GetBytes('{"mcp":{"custom":{"url":"http://custom"}}}'))
+            $codexBefore = (Get-FileHash -Algorithm SHA256 -LiteralPath $codexPath).Hash
+            $kiloBefore = (Get-FileHash -Algorithm SHA256 -LiteralPath $kiloPath).Hash
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-Vibecoding1cMcpSelectionCompleteness { [pscustomobject]@{ isComplete = $true; reasons = @() } }
+                function Get-Vibecoding1cMcpReadyClientConfigNames { @("1C-docs-mcp") }
+                function Write-Vibecoding1cMcpClientConfig { Set-Content -LiteralPath $kiloPath -Encoding UTF8 -Value '{"mcp":{}}' }
+                function Remove-AiRules1cManagedMcpConfig { @() }
+                function Remove-StaleAiRules1cDataMcpConfig {
+                    Set-Content -LiteralPath $codexPath -Encoding UTF8 -Value "changed"
+                    throw "simulated stale prune failure"
+                }
+                Invoke-AiRules1cManagedMcpConfigReconcile -Operation "test-prune-rollback" *> $null
+            }
+
+            (Get-FileHash -Algorithm SHA256 -LiteralPath $codexPath).Hash | Should -Be $codexBefore
+            (Get-FileHash -Algorithm SHA256 -LiteralPath $kiloPath).Hash | Should -Be $kiloBefore
+        } finally {
+            [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 

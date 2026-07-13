@@ -59,6 +59,8 @@ param(
     [string[]]$Tools,
     [string]$ProjectRoot,
     [string]$Source,
+    [ValidateSet("delegated")]
+    [string]$McpMode,
     [switch]$AssumeYes,
     [switch]$Force
 )
@@ -77,7 +79,7 @@ $manifest = [ordered]@{
     files = [ordered]@{}
 }
 Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value (($manifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
-Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encoding ASCII -Value "$Command|$Tool|$($Tools -join ',')"
+Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encoding ASCII -Value "$Command|$Tool|$($Tools -join ',')|$McpMode"
 '@
 
             $result = & {
@@ -104,7 +106,7 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
                 }
             }
 
-            @($result.calls) | Should -Be @("update||", "add|kilocode|")
+            @($result.calls) | Should -Be @("update|||delegated", "add|kilocode||delegated")
             @($result.tools) | Should -Be @("codex", "kilocode")
             $result.unknownError | Should -Match "adapter is not available"
         } finally {

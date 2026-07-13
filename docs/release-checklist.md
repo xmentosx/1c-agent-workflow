@@ -42,6 +42,16 @@ state, and compares the `Comment` plus the presence of
 `Ext/ParentConfigurations.bin`. This is a real partial-load roundtrip; automatic
 full fallback is deliberately disabled for this release assertion.
 
+The same disposable branch infobase then runs the extension lifecycle smoke.
+Its scaffold and validation tools are loaded from the exact clean/tagged
+`-AiRulesSource` checkout already qualified by the fork and compatibility gates,
+not from a potentially stale installed copy in the stand.
+The helper creates an Empty extension from `cfe-init.ps1`, dumps a non-empty CFE,
+restores the pre-smoke `.dt` snapshot, initializes the same extension from that
+CFE, validates the normalized `src/cfe/<ExtensionName>` dump, and restores the
+database and worktree again. The extension name and proof of both modes are
+recorded in `extension-smoke.json` and the combined release summary.
+
 The check and export use the helper from the clean workflow checkout being
 released, not a possibly stale helper copy in the stand. Success also requires
 a verification timestamp from the current run,
@@ -53,7 +63,8 @@ Keep `build/test-results/local/check-summary.json` and the nested E2E summary as
 release evidence. A failed cleanup, stale Vanessa result, unverified override,
 missing `ParentConfigurations.bin`, non-partial load, extra list-file entry,
 roundtrip mismatch, missing manifest, hash mismatch, dirty worktree, dynamic
-fork branch or unpinned template is a release failure.
+fork branch, failed extension database restore or unpinned template is a release
+failure.
 
 ## Reset and rollback
 

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status", "install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "run-dev-branch-tests", "stop-dev-branch-test-clients", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-config-roundtrip")]
+    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status", "install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "run-dev-branch-tests", "stop-dev-branch-test-clients", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -11,6 +11,10 @@ param(
     [string]$DevBranchWorktreePath,
     [string]$InfoBaseUser = "",
     [string]$ExtensionName,
+    [ValidateSet("", "Empty", "Cfe")]
+    [string]$ExtensionInitMode = "",
+    [string]$ExtensionSourcePath = "",
+    [string]$ReleaseAiRulesSource = "",
     [string]$VanessaFeaturePath,
     [string]$VanessaFilterTags,
     [int]$VanessaTestPort = 0,
@@ -53,7 +57,7 @@ param(
     [string]$RunStatusPath,
     [string]$RunLogPath,
     [switch]$PauseOnFailure,
-    [ValidateSet("", "post-merge")]
+    [ValidateSet("", "pre-copy", "post-copy", "post-merge")]
     [string]$LifecyclePhase = ""
 )
 
@@ -169,6 +173,8 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranchWorktreePath" -Value $DevBranchWorktreePath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "InfoBaseUser" -Value $InfoBaseUser
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ExtensionName" -Value $ExtensionName
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "ExtensionInitMode" -Value $ExtensionInitMode
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "ExtensionSourcePath" -Value $ExtensionSourcePath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaFeaturePath" -Value $VanessaFeaturePath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaFilterTags" -Value $VanessaFilterTags
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaTestPort" -Value $(if ($VanessaTestPort -ne 0) { $VanessaTestPort } else { $null })
@@ -299,6 +305,7 @@ try {
         "new-dev-branch" { New-DevBranch }
         "new-extension-dev-branch" { New-ExtensionDevBranch }
         "configure-dev-branch-unsafe-action-protection" { Configure-DevBranchUnsafeActionProtection }
+        "init-dev-branch-extension" { Init-DevBranchExtension }
         "set-dev-branch-extension" { Set-DevBranchExtension }
         "dump-dev-branch-extension" { Dump-DevBranchExtension }
         "activate-dev-branch-context" { Activate-DevBranchContext }
@@ -310,6 +317,7 @@ try {
         "switch-dev-branch" { Switch-DevBranch }
         "list-dev-branches" { List-DevBranches }
         "release-e2e-config-roundtrip" { Invoke-ReleaseE2EConfigRoundtrip }
+        "release-e2e-extension-smoke" { Invoke-ReleaseE2EExtensionSmoke }
     }
     Write-RunStatus -Status "succeeded" -ExitCode 0
 } catch {

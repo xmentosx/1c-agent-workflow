@@ -1051,6 +1051,86 @@ function Test-Vibecoding1cMcpProjectClientConfigContainsName {
     return $false
 }
 
+function Test-Vibecoding1cMcpCodexConfigContainsName {
+    param(
+        [string]$Path,
+        [string]$ClientName
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+    $text = Read-Utf8Text -Path $Path
+    return ($text -match ('(?m)^\[mcp_servers\."' + [regex]::Escape($ClientName) + '"\]\s*$') -or
+        $text -match ('(?m)^\[mcp_servers\.' + [regex]::Escape($ClientName) + '\]\s*$'))
+}
+
+function Get-Vibecoding1cMcpProductDocsStatus {
+    $allowed = Test-ProductDocsMcpAllowed
+    $selection = Read-Vibecoding1cMcpSelection
+    $selected = Test-Vibecoding1cMcpSelectionHasServerId -Selection $selection -ServerId "bookstack"
+    $clientName = Get-Vibecoding1cMcpAiRules1cClientName -ServerId "bookstack"
+
+    $codexConfigured = ((Test-Vibecoding1cMcpCodexConfigContainsName -Path (Get-Vibecoding1cMcpCodexHomeConfigPath) -ClientName $clientName) -or
+        (Test-Vibecoding1cMcpCodexConfigContainsName -Path (Get-Vibecoding1cMcpCodexProjectConfigPath) -ClientName $clientName))
+    $kiloConfigured = $false
+    $kiloPath = Get-Vibecoding1cMcpKiloConfigPath
+    if (Test-Path -LiteralPath $kiloPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        try {
+            $kilo = Read-Utf8Text -Path $kiloPath | ConvertFrom-Json
+            $kiloConfigured = ($kilo.mcp -and @($kilo.mcp.PSObject.Properties.Name) -contains $clientName)
+        } catch {
+            $kiloConfigured = $false
+        }
+    }
+
+    $endpoint = @(Get-Vibecoding1cMcpCurrentEndpoints -IncludeGlobal | Where-Object {
+        [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "id" -Default "") -eq "bookstack"
+    } | Select-Object -First 1)
+    $reachable = $false
+    $probe = "endpoint missing"
+    if ($endpoint.Count -gt 0) {
+        $url = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint[0] -Name "url" -Default "")
+        $probe = $url
+        try {
+            $uri = [System.Uri]$url
+            $port = if ($uri.IsDefaultPort) { if ($uri.Scheme -eq "https") { 443 } else { 80 } } else { $uri.Port }
+            $client = New-Object System.Net.Sockets.TcpClient
+            try {
+                $async = $client.BeginConnect($uri.Host, $port, $null, $null)
+                $reachable = $async.AsyncWaitHandle.WaitOne(500, $false)
+                if ($reachable) {
+                    $client.EndConnect($async)
+                }
+            } finally {
+                $client.Close()
+            }
+        } catch {
+            $reachable = $false
+            $probe = "$url ($($_.Exception.Message))"
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        allowed = $allowed
+        selected = $selected
+        codexConfigured = $codexConfigured
+        kiloConfigured = $kiloConfigured
+        reachable = $reachable
+        probe = $probe
+    }
+}
+
+function Write-Vibecoding1cMcpProductDocsStatusLines {
+    param([string]$Indent = "")
+
+    $status = Get-Vibecoding1cMcpProductDocsStatus
+    Write-Host "${Indent}Product docs allowed for project: $($status.allowed)"
+    Write-Host "${Indent}Product docs selected in MCP manifest: $($status.selected)"
+    Write-Host "${Indent}Product docs effective client config: Codex=$($status.codexConfigured); Kilo=$($status.kiloConfigured)"
+    Write-Host "${Indent}Product docs endpoint reachable (bounded probe): $($status.reachable); $($status.probe)"
+}
+
 function Write-Vibecoding1cMcpProductDocsClientConfigWarning {
     if (-not (Test-ProductDocsMcpAllowed)) {
         return
@@ -3540,6 +3620,7 @@ function Show-Vibecoding1cMcpStatus {
 
     $summary = Get-Vibecoding1cMcpStatusSummary
     Write-Vibecoding1cMcpSummaryLines -Summary $summary
+    Write-Vibecoding1cMcpProductDocsStatusLines
     Write-Vibecoding1cMcpProductDocsClientConfigWarning
 
     $endpoints = @(Get-Vibecoding1cMcpCurrentEndpoints -IncludeGlobal)
@@ -3598,4 +3679,5 @@ function Write-Vibecoding1cMcpStatusLines {
     }
 
     Write-Vibecoding1cMcpSummaryLines -Summary (Get-Vibecoding1cMcpStatusSummary) -Indent $Indent
+    Write-Vibecoding1cMcpProductDocsStatusLines -Indent $Indent
 }

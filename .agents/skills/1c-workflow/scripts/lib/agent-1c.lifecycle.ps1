@@ -34,7 +34,9 @@ function Assert-ExportPathInsideProject {
     param([string]$ExportPath)
     $resolved = Resolve-ProjectPath $ExportPath
     $root = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd("\")
-    if (-not $resolved.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $rootPrefix = $root + [System.IO.Path]::DirectorySeparatorChar
+    if (-not [string]::Equals($resolved, $root, [System.StringComparison]::OrdinalIgnoreCase) -and
+        -not $resolved.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Export path must be inside project root: $resolved"
     }
     return $resolved
@@ -101,7 +103,10 @@ function Get-DevBranchExtensionExportPath {
 
     $extensionName = Require-DevBranchExtensionName -State $State
     $safeExtensionName = Get-StateValue -State $State -Name "safeExtensionName" -Default (ConvertTo-SafeName $extensionName)
-    $path = Get-StateValue -State $State -Name "extensionExportPath" -Default ""
+    $path = Get-StateValue -State $State -Name "extensionDumpPath" -Default ""
+    if (-not $path) {
+        $path = Get-StateValue -State $State -Name "extensionExportPath" -Default ""
+    }
     if (-not $path) {
         $path = Get-ExtensionExportPath -SafeExtensionName $safeExtensionName
     }
@@ -274,11 +279,26 @@ function Invoke-Agent1cFreshProcess {
         [string[]]$AdditionalArguments = @()
     )
 
+    $reexecArguments = [System.Collections.Generic.List[string]]::new()
+    foreach ($argument in @($script:Agent1cReexecArguments)) {
+        $reexecArguments.Add([string]$argument) | Out-Null
+    }
+    if (@($AdditionalArguments) -contains "-LifecyclePhase") {
+        for ($index = $reexecArguments.Count - 1; $index -ge 0; $index--) {
+            if ($reexecArguments[$index] -eq "-LifecyclePhase") {
+                $reexecArguments.RemoveAt($index)
+                if ($index -lt $reexecArguments.Count) {
+                    $reexecArguments.RemoveAt($index)
+                }
+            }
+        }
+    }
+
     $arguments = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File", $script:Agent1cScriptPath
-    ) + @($script:Agent1cReexecArguments) + @($AdditionalArguments)
+    ) + @($reexecArguments.ToArray()) + @($AdditionalArguments)
 
     & powershell @arguments
     $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 }
@@ -315,7 +335,7 @@ function Write-ItlAdditionalHelperActions {
     Write-Host "  ROCTUP MCP: ask for branch-local install, update, start, status, or stop for data exploration."
     Write-Host "  vibecoding1c MCP: ask for setup, status, select, refresh-registry, or update."
     Write-Host "  Vanessa UI MCP: ask for branch-local install, start, status, or stop only for runtime UI research, recording, or debugging."
-    Write-Host "  Extension branches: ask to set extension name or dump extension files."
+    Write-Host "  Extension branches: after branch creation run init-dev-branch-extension; set/dump remain recovery actions."
     Write-Host "  Maintenance/recovery: ask to update base without tests, update workflow/rules, close/list/switch branches."
     Write-Host "  Full helper action catalog: .agents/skills/1c-workflow/references/advanced-actions.md."
 }
@@ -1272,6 +1292,7 @@ function Invoke-AiRules1cInstaller {
         $effectiveCommand,
         "-ProjectRoot", (Resolve-Agent1cFullPath -Path $script:ProjectRoot),
         "-Source", $rulesDir,
+        "-McpMode", "delegated",
         "-AssumeYes"
     )
     if ($effectiveCommand -eq "init") {
@@ -1297,6 +1318,7 @@ function Invoke-AiRules1cInstaller {
             "-Tool", $tool,
             "-ProjectRoot", (Resolve-Agent1cFullPath -Path $script:ProjectRoot),
             "-Source", $rulesDir,
+            "-McpMode", "delegated",
             "-AssumeYes"
         )
         Push-Location (Resolve-Agent1cFullPath -Path $script:ProjectRoot)
@@ -1431,7 +1453,13 @@ function Remove-AiRules1cKiloMcpEntries {
 
     $mcp = ConvertTo-Vibecoding1cMcpHashtable -Object $config["mcp"]
     $removed = @()
-    foreach ($serverId in $ServerIds) {
+    $kiloServerIds = @($ServerIds)
+    foreach ($serverId in @($ServerIds)) {
+        if ($serverId -match '^(?i)1c(?<suffix>.*)$') {
+            $kiloServerIds += ("onec" + $Matches["suffix"])
+        }
+    }
+    foreach ($serverId in @($kiloServerIds | Select-Object -Unique)) {
         if (-not $mcp.Contains($serverId)) {
             continue
         }
@@ -1494,7 +1522,7 @@ function New-AiRules1cMcpConfigSnapshot {
         $exists = Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue
         $snapshot[$path] = [pscustomobject]@{
             exists = $exists
-            text = $(if ($exists) { Read-Utf8Text -Path $path } else { "" })
+            bytes = $(if ($exists) { [System.IO.File]::ReadAllBytes($path) } else { [byte[]]@() })
         }
     }
     return $snapshot
@@ -1506,7 +1534,11 @@ function Restore-AiRules1cMcpConfigSnapshot {
     foreach ($path in @($Snapshot.Keys)) {
         $entry = $Snapshot[$path]
         if ([bool]$entry.exists) {
-            Write-Utf8Text -Path $path -Value ([string]$entry.text)
+            $parent = Split-Path -Parent $path
+            if ($parent) {
+                New-Item -ItemType Directory -Force -Path $parent | Out-Null
+            }
+            [System.IO.File]::WriteAllBytes($path, [byte[]]$entry.bytes)
         } elseif (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) {
             Remove-Item -LiteralPath $path -Force
         }
@@ -1610,7 +1642,6 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
     param([string]$Operation = "MCP reconcile")
 
     $managedServerIds = @(Get-AiRules1cManagedMcpServerIds)
-    $pruned = @(Remove-StaleAiRules1cDataMcpConfig)
     $selection = Read-Vibecoding1cMcpSelection
     $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection
     if (-not $selectionCompleteness.isComplete) {
@@ -1619,7 +1650,7 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
             reconciled = $false
             preserved = $true
             replacements = @()
-            pruned = @($pruned)
+            pruned = @()
         }
     }
 
@@ -1631,7 +1662,7 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
             reconciled = $false
             preserved = $true
             replacements = @()
-            pruned = @($pruned)
+            pruned = @()
         }
     }
 
@@ -1642,7 +1673,7 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
             reconciled = $false
             preserved = $true
             replacements = @()
-            pruned = @($pruned)
+            pruned = @()
         }
     }
 
@@ -1650,6 +1681,7 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
     try {
         Write-Vibecoding1cMcpClientConfig
         $removed = @(Remove-AiRules1cManagedMcpConfig -ServerIds $replacementServerIds)
+        $pruned = @(Remove-StaleAiRules1cDataMcpConfig)
         $withoutReplacement = @($managedServerIds | Where-Object { $replacementServerIds -notcontains $_ })
         Write-Host "Reconciled ai_rules_1c MCP client entries with ITL vibecoding1c MCP config: $($replacementServerIds -join ', ')."
         if ($withoutReplacement.Count -gt 0) {
@@ -1667,14 +1699,14 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
         try {
             Restore-AiRules1cMcpConfigSnapshot -Snapshot $snapshot
         } catch {
-            Write-Host "WARNING: failed to restore MCP client config snapshot after $Operation failure: $($_.Exception.Message)"
+            throw "$Operation failed: $errorMessage MCP client config rollback also failed: $($_.Exception.Message)"
         }
         Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons @("failed to write replacement client config: $errorMessage")
         return [pscustomobject]@{
             reconciled = $false
             preserved = $true
             replacements = @()
-            pruned = @($pruned)
+            pruned = @()
         }
     }
 }
@@ -1911,6 +1943,39 @@ function Get-KiloItlCommandSurface {
         return "dev"
     }
     return "unknown"
+}
+
+function Get-KiloInheritedPrimaryItlCommands {
+    if ((Get-KiloItlCommandSurface) -ne "dev") {
+        return @()
+    }
+
+    try {
+        $primaryRoot = Resolve-Agent1cFullPath -Path (Get-MainWorktreePath)
+        $currentRoot = Resolve-Agent1cFullPath -Path $script:ProjectRoot
+    } catch {
+        return @()
+    }
+    if ([string]::Equals($primaryRoot, $currentRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return @()
+    }
+
+    $primaryDir = Join-Path $primaryRoot ".kilo\commands"
+    if (-not (Test-Path -LiteralPath $primaryDir -PathType Container -ErrorAction SilentlyContinue)) {
+        return @()
+    }
+    $localDir = Join-Path $currentRoot ".kilo\commands"
+    $localNames = @()
+    if (Test-Path -LiteralPath $localDir -PathType Container -ErrorAction SilentlyContinue) {
+        $localNames = @(Get-ChildItem -LiteralPath $localDir -File -Filter "itl*.md" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
+    }
+
+    return @(
+        Get-ChildItem -LiteralPath $primaryDir -File -Filter "itl*.md" -ErrorAction SilentlyContinue |
+            Where-Object { $localNames -notcontains $_.Name } |
+            ForEach-Object { "/$([System.IO.Path]::GetFileNameWithoutExtension($_.Name))" } |
+            Sort-Object -Unique
+    )
 }
 
 function Untrack-GeneratedKiloItlCommands {
@@ -2166,22 +2231,32 @@ function Assert-WorkflowPackageUpdateContext {
 
 function Update-WorkflowPackage {
     Write-Section "Update ITL workflow package"
-    Assert-WorkflowPackageUpdateContext
-
-    $source = Resolve-WorkflowPackageSource
-    Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
-
-    Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow"
-    Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow-fast"
-    Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\product-docs"
-    Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-roctup-1c-data"
-    Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-vanessa-ui-mcp"
-    Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "templates"
-    foreach ($relativePath in @("install-agent-1c-workflow.ps1", "README.md", "AGENT-INSTALL.md", "DEVELOPER-GUIDE.ru.md", "DEV-BRANCH-DEVELOPMENT.ru.md", "VANESSA-TESTS-GUIDE.md", "VANESSA-TESTS-GUIDE.ru.md")) {
-        Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
+    if ($LifecyclePhase -notin @("", "pre-copy", "post-copy")) {
+        throw "update-workflow does not support LifecyclePhase '$LifecyclePhase'."
     }
 
-    Update-WorkflowPackageLockEntry -Source $source
+    if ($LifecyclePhase -ne "post-copy") {
+        Assert-WorkflowPackageUpdateContext
+
+        $source = Resolve-WorkflowPackageSource
+        Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
+
+        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow"
+        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow-fast"
+        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\product-docs"
+        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-roctup-1c-data"
+        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-vanessa-ui-mcp"
+        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "templates"
+        foreach ($relativePath in @("install-agent-1c-workflow.ps1", "README.md", "AGENT-INSTALL.md", "DEVELOPER-GUIDE.ru.md", "DEV-BRANCH-DEVELOPMENT.ru.md", "VANESSA-TESTS-GUIDE.md", "VANESSA-TESTS-GUIDE.ru.md")) {
+            Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
+        }
+
+        Update-WorkflowPackageLockEntry -Source $source
+        Write-Host "Workflow package files copied. Restarting the installed helper in a fresh PowerShell process for post-copy processing."
+        Invoke-Agent1cFreshProcess -AdditionalArguments @("-LifecyclePhase", "post-copy")
+    }
+
+    Assert-MasterWorktreeContext -Operation "update-workflow post-copy"
     Ensure-GitIgnore
     Update-AgentGuidanceBridge
     Update-UserRules
@@ -2202,9 +2277,12 @@ function Update-WorkflowPackage {
         }
     }
 
-    Write-Host "ITL workflow package updated from $($source.source): $($source.root)"
-    if ($source.commit) {
-        Write-Host "Workflow package commit: $($source.commit)"
+    $workflowLock = ConvertTo-Agent1cHashtable -Object (Read-DependencyLockManifest)
+    $workflowDependencies = ConvertTo-Agent1cHashtable -Object $workflowLock["dependencies"]
+    $workflowEntry = ConvertTo-Agent1cHashtable -Object $workflowDependencies["workflowPackage"]
+    Write-Host "ITL workflow package post-copy processing completed from $($workflowEntry['source'])."
+    if ($workflowEntry["commit"]) {
+        Write-Host "Workflow package commit: $($workflowEntry['commit'])"
     }
     Write-Host "No commit was created automatically."
     Write-WorkflowUpdateFollowUp
@@ -4010,13 +4088,311 @@ function New-DevBranch {
 
 function New-ExtensionDevBranch {
     New-DevBranchCore -DevBranchKind "extension"
+    Write-Host "Mandatory next step (run in the new extension worktree):"
+    Write-Host '  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-dev-branch-extension -ExtensionInitMode Empty -ExtensionName "<ExtensionName>"'
+    Write-Host '  For an existing CFE, use -ExtensionInitMode Cfe -ExtensionName "<ExtensionName>" -ExtensionSourcePath "<file.cfe>".'
+}
+
+function Assert-ExtensionInitName {
+    param([string]$Name)
+
+    Require-Value "ExtensionName" $Name | Out-Null
+    if ($Name -notmatch '^[\p{L}_][\p{L}\p{Nd}_]*$') {
+        throw "ExtensionName must be a valid 1C identifier and a single path segment: $Name"
+    }
+    return $Name
+}
+
+function Get-ExtensionInitDumpPath {
+    param([string]$Name)
+
+    Assert-ExtensionInitName -Name $Name | Out-Null
+    return "src/cfe/$Name"
+}
+
+function Get-ExtensionLifecycleToolPaths {
+    $override = Get-Variable -Name ExtensionLifecycleToolRootOverride -Scope Script -ErrorAction SilentlyContinue
+    $toolRoot = if ($null -ne $override -and -not [string]::IsNullOrWhiteSpace([string]$override.Value)) {
+        [System.IO.Path]::GetFullPath([string]$override.Value)
+    } else {
+        Join-Path $script:ProjectRoot ".agents\skills\1c-metadata-manage\tools\1c-cfe-manage\scripts"
+    }
+    $initPath = Join-Path $toolRoot "cfe-init.ps1"
+    $validatePath = Join-Path $toolRoot "cfe-validate.ps1"
+    if (-not (Test-Path -LiteralPath $initPath -PathType Leaf) -or -not (Test-Path -LiteralPath $validatePath -PathType Leaf)) {
+        throw "Extension lifecycle tools are missing. Run update-ai-rules, then retry init-dev-branch-extension. Expected: $initPath and $validatePath"
+    }
+    return [pscustomobject]@{
+        init = $initPath
+        validate = $validatePath
+    }
+}
+
+function Invoke-ExtensionLifecycleTool {
+    param(
+        [string]$ScriptPath,
+        [string[]]$Arguments
+    )
+
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Extension lifecycle tool failed with exit code ${LASTEXITCODE}: $ScriptPath"
+    }
+}
+
+function Test-DevBranchExtensionExists {
+    param(
+        [object]$State,
+        [string]$Name,
+        [string]$StagingPath
+    )
+
+    $listPath = Join-Path $StagingPath "existing-extension-list.txt"
+    try {
+        Invoke-Designer `
+            -InfoBasePath $State.devBranchInfoBasePath `
+            -InfoBaseKind $State.infoBaseKind `
+            -DesignerArgs @("/DumpDBCfgList", $listPath, "-Extension", $Name) | Out-Null
+        return ((Test-Path -LiteralPath $listPath -PathType Leaf) -and (Get-Item -LiteralPath $listPath).Length -gt 0)
+    } catch {
+        $message = $_.Exception.Message
+        $logText = ""
+        if ($script:LastLogPath -and (Test-Path -LiteralPath $script:LastLogPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+            try { $logText = Read-Utf8Text -Path $script:LastLogPath } catch { $logText = "" }
+        }
+        $combined = "$message`n$logText"
+        if ($combined -match '(?is)(extension|\u0440\u0430\u0441\u0448\u0438\u0440\u0435\u043d)[^\r\n]*(not found|\u043d\u0435\s+\u043d\u0430\u0439\u0434\u0435\u043d|\u043d\u0435\s+\u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0442|\u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432)') {
+            return $false
+        }
+        throw
+    }
+}
+
+function Assert-NormalizedExtensionDump {
+    param(
+        [string]$Path,
+        [string]$Name
+    )
+
+    $configurationFiles = @(Get-ChildItem -LiteralPath $Path -Recurse -File -Filter "Configuration.xml" -ErrorAction Stop)
+    $dumpInfoFiles = @(Get-ChildItem -LiteralPath $Path -Recurse -File -Filter "ConfigDumpInfo.xml" -ErrorAction Stop)
+    $rootConfiguration = Join-Path $Path "Configuration.xml"
+    $rootDumpInfo = Join-Path $Path "ConfigDumpInfo.xml"
+    if ($configurationFiles.Count -ne 1 -or -not (Test-Path -LiteralPath $rootConfiguration -PathType Leaf)) {
+        throw "Extension dump must contain exactly one root Configuration.xml: $Path"
+    }
+    if ($dumpInfoFiles.Count -ne 1 -or -not (Test-Path -LiteralPath $rootDumpInfo -PathType Leaf)) {
+        throw "Extension dump must contain exactly one root ConfigDumpInfo.xml: $Path"
+    }
+    foreach ($directory in @(Get-ChildItem -LiteralPath $Path -Recurse -Directory -ErrorAction Stop)) {
+        $relative = $directory.FullName.Substring($Path.TrimEnd("\").Length).TrimStart("\", "/")
+        if ($relative -match '(?i)(^|[\\/])src[\\/]cfe([\\/]|$)') {
+            throw "Nested src/cfe was found inside extension dump: $($directory.FullName)"
+        }
+    }
+
+    try {
+        $xml = New-Object System.Xml.XmlDocument
+        $xml.PreserveWhitespace = $true
+        $xml.Load($rootConfiguration)
+        $nameNode = $xml.SelectSingleNode("//*[local-name()='Configuration']/*[local-name()='Properties']/*[local-name()='Name']")
+    } catch {
+        throw "Extension Configuration.xml is not valid Unicode XML: $($_.Exception.Message)"
+    }
+    if ($null -eq $nameNode -or $nameNode.InnerText.Trim() -ne $Name) {
+        $actual = if ($null -eq $nameNode) { "<missing>" } else { $nameNode.InnerText.Trim() }
+        throw "Extension name in Configuration.xml does not match ExtensionName. Expected '$Name', actual '$actual'."
+    }
+}
+
+function Restore-ExtensionInitMcpRuntime {
+    param(
+        [object]$State,
+        [bool]$RoctupWasRunning,
+        [bool]$VanessaWasRunning
+    )
+
+    $currentState = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
+    if ($RoctupWasRunning) {
+        $currentState = Start-RoctupMcpForState -State $currentState -Quiet
+    }
+    if ($VanessaWasRunning) {
+        Start-VanessaMcp
+        $currentState = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
+    }
+    Write-ItlBranchMcpClientConfig -State $currentState
+}
+
+function Init-DevBranchExtension {
+    Write-Section "Initialize development branch extension"
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "init-dev-branch-extension"
+    Assert-DevBranchKind -State $state -Expected "extension"
+    if ($ExtensionInitMode -notin @("Empty", "Cfe")) {
+        throw "ExtensionInitMode must be Empty or Cfe."
+    }
+    Assert-ExtensionInitName -Name $ExtensionName | Out-Null
+
+    $existingStateName = Get-StateValue -State $state -Name "extensionName" -Default ""
+    $initializedAt = Get-StateValue -State $state -Name "extensionInitializedAt" -Default ""
+    if ($existingStateName -or $initializedAt) {
+        throw "Extension state already exists for this branch ('$existingStateName'). init-dev-branch-extension never overwrites it; use set-dev-branch-extension only for recovery of a manually created extension."
+    }
+
+    $dumpPath = Get-ExtensionInitDumpPath -Name $ExtensionName
+    $absoluteDumpPath = Assert-ExportPathInsideProject -ExportPath $dumpPath
+    $expectedDumpPath = Resolve-Agent1cFullPath -Path (Join-Path $script:ProjectRoot ("src\cfe\" + $ExtensionName))
+    if (-not [string]::Equals($absoluteDumpPath, $expectedDumpPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Extension dump path must resolve exactly to src/cfe/$ExtensionName. Actual: $absoluteDumpPath"
+    }
+    $targetExisted = Test-Path -LiteralPath $absoluteDumpPath -PathType Container -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $absoluteDumpPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        throw "Extension dump target is a file: $absoluteDumpPath"
+    }
+    if ($targetExisted -and @(Get-ChildItem -LiteralPath $absoluteDumpPath -Force -ErrorAction Stop).Count -gt 0) {
+        throw "Extension dump target is not empty; refusing to overwrite it: $absoluteDumpPath"
+    }
+
+    $sourceCfe = ""
+    if ($ExtensionInitMode -eq "Cfe") {
+        Require-Value "ExtensionSourcePath" $ExtensionSourcePath | Out-Null
+        $sourceCfe = Resolve-Agent1cFullPath -Path $ExtensionSourcePath
+        if (-not (Test-Path -LiteralPath $sourceCfe -PathType Leaf) -or [System.IO.Path]::GetExtension($sourceCfe) -ine ".cfe") {
+            throw "ExtensionSourcePath must be an existing .cfe file: $ExtensionSourcePath"
+        }
+        if ((Get-Item -LiteralPath $sourceCfe).Length -le 0) {
+            throw "ExtensionSourcePath is empty: $sourceCfe"
+        }
+    }
+
+    $tools = Get-ExtensionLifecycleToolPaths
+    $stagingRoot = Assert-ExportPathInsideProject -ExportPath (".agent-1c/extension-init/" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
+    $snapshotDir = Assert-ExportPathInsideProject -ExportPath ".agent-1c/snapshots"
+    $snapshotPath = Join-Path $snapshotDir ("extension-init-{0}-{1}.dt" -f (ConvertTo-SafeName $ExtensionName), (Get-Date -Format "yyyyMMdd-HHmmss"))
+    $snapshotCreated = $false
+    $roctupWasRunning = $false
+    $vanessaWasRunning = $false
+
+    try {
+        if (Test-DevBranchExtensionExists -State $state -Name $ExtensionName -StagingPath $stagingRoot) {
+            throw "Extension '$ExtensionName' already exists in the development branch infobase; refusing to overwrite it."
+        }
+
+        $roctupWasRunning = [bool](Get-RoctupMcpRuntimeInfo -State $state).processAlive
+        $vanessaWasRunning = [bool](Get-VanessaMcpRuntimeInfo -State $state).processAlive
+        Stop-OwnVanessaTestProcessesAndAssert -State $state
+        Stop-RoctupMcpForState -State $state -Quiet | Out-Null
+        $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
+        Stop-VanessaMcpForState -State $state -Quiet | Out-Null
+        $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
+
+        New-Item -ItemType Directory -Force -Path $snapshotDir | Out-Null
+        Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @("/DumpIB", $snapshotPath) | Out-Null
+        if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) {
+            throw "1C snapshot was not created: $snapshotPath"
+        }
+        $snapshotCreated = $true
+
+        if ($ExtensionInitMode -eq "Empty") {
+            $scaffoldPath = Join-Path $stagingRoot "scaffold"
+            Invoke-ExtensionLifecycleTool -ScriptPath $tools.init -Arguments @(
+                "-Name", $ExtensionName,
+                "-OutputDir", $scaffoldPath,
+                "-Purpose", "Customization",
+                "-NamePrefix", ($ExtensionName + "_"),
+                "-ConfigPath", (Assert-ExportPathInsideProject -ExportPath (Get-ExportPath)),
+                "-NoRole"
+            )
+            Invoke-ExtensionLifecycleTool -ScriptPath $tools.validate -Arguments @("-ExtensionPath", $scaffoldPath)
+            Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @(
+                "/LoadConfigFromFiles", $scaffoldPath, "-Extension", $ExtensionName, "-Format", "Hierarchical", "/UpdateDBCfg"
+            ) | Out-Null
+        } else {
+            Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @(
+                "/LoadCfg", $sourceCfe, "-Extension", $ExtensionName, "/UpdateDBCfg"
+            ) | Out-Null
+        }
+
+        New-Item -ItemType Directory -Force -Path $absoluteDumpPath | Out-Null
+        Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @(
+            "/DumpConfigToFiles", $absoluteDumpPath, "-Extension", $ExtensionName, "-Format", "Hierarchical"
+        ) | Out-Null
+        Assert-NormalizedExtensionDump -Path $absoluteDumpPath -Name $ExtensionName
+        Invoke-ExtensionLifecycleTool -ScriptPath $tools.validate -Arguments @("-ExtensionPath", $absoluteDumpPath)
+
+        Restore-ExtensionInitMcpRuntime -State $state -RoctupWasRunning $roctupWasRunning -VanessaWasRunning $vanessaWasRunning
+        $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
+        $now = (Get-Date).ToString("o")
+        $updates = @{
+            extensionName = $ExtensionName
+            safeExtensionName = ConvertTo-SafeName $ExtensionName
+            extensionInitMode = $ExtensionInitMode
+            extensionDumpPath = $dumpPath
+            extensionExportPath = $dumpPath
+            extensionInitializedAt = $now
+            lastExtensionDumpAt = $now
+            lastExtensionDumpPath = $dumpPath
+            lastExtensionBaseUpdateAt = $now
+            lastExtensionBaseUpdatedCommit = Get-CurrentCommit
+            lastLoadedCommit = Get-CurrentCommit
+            lastLogPath = $script:LastLogPath
+        }
+        Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Extension was initialized in the development branch infobase." -Force
+        Update-DevBranchState -State $state -Updates $updates
+        $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
+        Sync-DevBranchContextToDotEnv -State $state
+
+        Write-Host "Extension initialized: $ExtensionName ($ExtensionInitMode)"
+        Write-Host "Normalized extension dump: $dumpPath"
+        Write-Host "Run /itl-check before reporting the development task complete."
+    } catch {
+        $originalError = $_.Exception.Message
+        $rollbackError = ""
+        if ($snapshotCreated) {
+            try {
+                Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @("/RestoreIB", $snapshotPath) | Out-Null
+            } catch {
+                $rollbackError = $_.Exception.Message
+            }
+        }
+        try {
+            if (Test-Path -LiteralPath $absoluteDumpPath -PathType Container -ErrorAction SilentlyContinue) {
+                if ($targetExisted) {
+                    foreach ($child in @(Get-ChildItem -LiteralPath $absoluteDumpPath -Force -ErrorAction SilentlyContinue)) {
+                        Remove-Item -LiteralPath $child.FullName -Recurse -Force
+                    }
+                } else {
+                    Remove-Item -LiteralPath $absoluteDumpPath -Recurse -Force
+                }
+            }
+        } catch {
+            Write-Warning "Could not remove partial extension dump: $($_.Exception.Message)"
+        }
+        try {
+            Restore-ExtensionInitMcpRuntime -State $state -RoctupWasRunning $roctupWasRunning -VanessaWasRunning $vanessaWasRunning
+        } catch {
+            Write-Warning "Could not restore branch MCP runtime after extension initialization failure: $($_.Exception.Message)"
+        }
+        if ($rollbackError) {
+            throw "Extension initialization failed: $originalError Rollback also failed: $rollbackError Snapshot retained: $snapshotPath"
+        }
+        if ($snapshotCreated) {
+            throw "Extension initialization failed and the infobase snapshot was restored: $originalError"
+        }
+        throw "Extension initialization failed before a snapshot was created: $originalError"
+    } finally {
+        if (Test-Path -LiteralPath $stagingRoot -PathType Container -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $stagingRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Set-DevBranchExtension {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "set-dev-branch-extension"
     Assert-DevBranchKind -State $state -Expected "extension"
-    Require-Value "ExtensionName" $ExtensionName | Out-Null
+    Assert-ExtensionInitName -Name $ExtensionName | Out-Null
 
     $existing = Get-StateValue -State $state -Name "extensionName" -Default ""
     if ($existing -and $existing -ne $ExtensionName -and -not $Force) {
@@ -4024,10 +4400,11 @@ function Set-DevBranchExtension {
     }
 
     $safeExtensionName = ConvertTo-SafeName $ExtensionName
-    $extensionExportPath = Get-ExtensionExportPath -SafeExtensionName $safeExtensionName
+    $extensionExportPath = Get-ExtensionInitDumpPath -Name $ExtensionName
     $updates = @{
         extensionName = $ExtensionName
         safeExtensionName = $safeExtensionName
+        extensionDumpPath = $extensionExportPath
         extensionExportPath = $extensionExportPath
     }
     Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Extension settings changed." -Force
@@ -4037,6 +4414,7 @@ function Set-DevBranchExtension {
 
     Write-Host "Development branch extension: $ExtensionName"
     Write-Host "Extension files path: $extensionExportPath"
+    Write-Host "Recovery context recorded. set-dev-branch-extension does not create or load an extension in the infobase."
 }
 
 function Write-BaseUpdateResult {
@@ -4095,9 +4473,7 @@ function Refresh-DevBranch {
         if ((Get-CurrentBranch) -ne $state.devBranch) {
             Invoke-Git @("checkout", $state.devBranch)
         }
-        $beforeMergeCommit = Get-CurrentCommit
         Invoke-Git @("merge", (Get-MasterBranch))
-        Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit -AdditionalArguments @("-LifecyclePhase", "post-merge")
         Restart-Agent1cAfterDevBranchMerge -Operation "refresh-dev-branch"
     }
 
@@ -4123,6 +4499,8 @@ function Dump-DevBranchExtension {
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "dump-dev-branch-extension"
     $dumpResult = Dump-ExtensionToFiles -State $state
     $updates = @{
+        extensionDumpPath = $dumpResult.exportPath
+        extensionExportPath = $dumpResult.exportPath
         lastExtensionDumpAt = (Get-Date).ToString("o")
         lastExtensionDumpPath = $dumpResult.exportPath
         lastLogPath = $dumpResult.logPath
@@ -4208,6 +4586,182 @@ function Invoke-ReleaseE2EConfigRoundtrip {
     }
 }
 
+function Invoke-ReleaseE2EExtensionSmoke {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "release-e2e-extension-smoke"
+    Assert-DevBranchKind -State $state -Expected "configuration"
+    Assert-CleanGit
+    Assert-ExtensionInitName -Name $ExtensionName | Out-Null
+    Require-Value "ReleaseAiRulesSource" $ReleaseAiRulesSource | Out-Null
+    $releaseAiRulesRoot = Resolve-Agent1cFullPath -Path $ReleaseAiRulesSource
+    $releaseToolRoot = Join-Path $releaseAiRulesRoot "content\skills\1c-metadata-manage\tools\1c-cfe-manage\scripts"
+    foreach ($requiredTool in @("cfe-init.ps1", "cfe-validate.ps1")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $releaseToolRoot $requiredTool) -PathType Leaf)) {
+            throw "Release ai_rules source does not contain $requiredTool at the expected r4 path: $releaseToolRoot"
+        }
+    }
+    $previousToolOverrideVariable = Get-Variable -Name ExtensionLifecycleToolRootOverride -Scope Script -ErrorAction SilentlyContinue
+    $hadToolOverride = $null -ne $previousToolOverrideVariable
+    $previousToolOverride = if ($hadToolOverride) { [string]$previousToolOverrideVariable.Value } else { "" }
+    $script:ExtensionLifecycleToolRootOverride = $releaseToolRoot
+
+    $statePath = [string](Get-StateValue -State $state -Name "statePath" -Default "")
+    if (-not $statePath -or -not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
+        throw "Release extension smoke requires a persisted development branch state file."
+    }
+    $dotEnvPath = Join-Path $script:ProjectRoot ".dev.env"
+    $originalStateBytes = [System.IO.File]::ReadAllBytes($statePath)
+    $dotEnvExisted = Test-Path -LiteralPath $dotEnvPath -PathType Leaf
+    $originalDotEnvBytes = if ($dotEnvExisted) { [System.IO.File]::ReadAllBytes($dotEnvPath) } else { $null }
+    $originalStatus = @(& git -C $script:ProjectRoot status --porcelain)
+    if ($originalStatus.Count -gt 0) {
+        throw "Release extension smoke requires a clean worktree."
+    }
+
+    $smokeRoot = Assert-ExportPathInsideProject -ExportPath (".agent-1c/release-e2e-extension/" + [guid]::NewGuid().ToString("N"))
+    $snapshotDir = Assert-ExportPathInsideProject -ExportPath ".agent-1c/snapshots"
+    $snapshotPath = Join-Path $snapshotDir ("release-e2e-extension-{0}-{1}.dt" -f (ConvertTo-SafeName $ExtensionName), (Get-Date -Format "yyyyMMdd-HHmmss"))
+    $cfePath = Join-Path $smokeRoot ($ExtensionName + ".cfe")
+    $dumpPath = Assert-ExportPathInsideProject -ExportPath (Get-ExtensionInitDumpPath -Name $ExtensionName)
+    $evidencePath = Resolve-ProjectPath "build/test-results/release-e2e/extension-smoke.json"
+    $snapshotCreated = $false
+    $databaseRestored = $false
+    $roctupWasRunning = [bool](Get-RoctupMcpRuntimeInfo -State $state).processAlive
+    $vanessaWasRunning = [bool](Get-VanessaMcpRuntimeInfo -State $state).processAlive
+    $failure = $null
+    $rollbackFailure = $null
+    $emptyDumpSha256 = ""
+    $cfeSha256 = ""
+    $cfeDumpSha256 = ""
+
+    function Restore-ReleaseE2EExtensionLocalState {
+        if (Test-Path -LiteralPath $dumpPath -PathType Container -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $dumpPath -Recurse -Force
+        }
+        [System.IO.File]::WriteAllBytes($statePath, $originalStateBytes)
+        if ($dotEnvExisted) {
+            [System.IO.File]::WriteAllBytes($dotEnvPath, $originalDotEnvBytes)
+        } elseif (Test-Path -LiteralPath $dotEnvPath -PathType Leaf -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $dotEnvPath -Force
+        }
+    }
+
+    function Enable-ReleaseE2EExtensionState {
+        Restore-ReleaseE2EExtensionLocalState
+        $currentState = Read-DevBranchState -Name $DevBranchName
+        Update-DevBranchState -State $currentState -Updates @{ devBranchKind = "extension" }
+    }
+
+    try {
+        New-Item -ItemType Directory -Force -Path $smokeRoot, $snapshotDir | Out-Null
+        Stop-OwnVanessaTestProcessesAndAssert -State $state
+        Stop-RoctupMcpForState -State $state -Quiet | Out-Null
+        $state = Read-DevBranchState -Name $DevBranchName
+        Stop-VanessaMcpForState -State $state -Quiet | Out-Null
+        $state = Read-DevBranchState -Name $DevBranchName
+
+        Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @("/DumpIB", $snapshotPath) | Out-Null
+        if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) {
+            throw "Release extension smoke snapshot was not created: $snapshotPath"
+        }
+        $snapshotCreated = $true
+
+        Enable-ReleaseE2EExtensionState
+        $script:ExtensionInitMode = "Empty"
+        $script:ExtensionSourcePath = ""
+        Init-DevBranchExtension
+        $emptyState = Read-DevBranchState -Name $DevBranchName
+        if ([string](Get-StateValue -State $emptyState -Name "extensionInitMode" -Default "") -ne "Empty") {
+            throw "Release extension smoke did not record Empty initialization."
+        }
+        Assert-NormalizedExtensionDump -Path $dumpPath -Name $ExtensionName
+        $emptyDumpSha256 = (Get-FileHash -LiteralPath (Join-Path $dumpPath "Configuration.xml") -Algorithm SHA256).Hash.ToLowerInvariant()
+
+        Invoke-Designer -InfoBasePath $emptyState.devBranchInfoBasePath -InfoBaseKind $emptyState.infoBaseKind -DesignerArgs @(
+            "/DumpCfg", $cfePath, "-Extension", $ExtensionName
+        ) | Out-Null
+        if (-not (Test-Path -LiteralPath $cfePath -PathType Leaf) -or (Get-Item -LiteralPath $cfePath).Length -le 0) {
+            throw "Release extension smoke did not create a non-empty CFE: $cfePath"
+        }
+        $cfeSha256 = (Get-FileHash -LiteralPath $cfePath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+        Invoke-Designer -InfoBasePath $emptyState.devBranchInfoBasePath -InfoBaseKind $emptyState.infoBaseKind -DesignerArgs @("/RestoreIB", $snapshotPath) | Out-Null
+        $databaseRestored = $true
+        Enable-ReleaseE2EExtensionState
+        $databaseRestored = $false
+        $script:ExtensionInitMode = "Cfe"
+        $script:ExtensionSourcePath = $cfePath
+        Init-DevBranchExtension
+        $cfeState = Read-DevBranchState -Name $DevBranchName
+        if ([string](Get-StateValue -State $cfeState -Name "extensionInitMode" -Default "") -ne "Cfe") {
+            throw "Release extension smoke did not record Cfe initialization."
+        }
+        Assert-NormalizedExtensionDump -Path $dumpPath -Name $ExtensionName
+        $cfeDumpSha256 = (Get-FileHash -LiteralPath (Join-Path $dumpPath "Configuration.xml") -Algorithm SHA256).Hash.ToLowerInvariant()
+
+        Invoke-Designer -InfoBasePath $cfeState.devBranchInfoBasePath -InfoBaseKind $cfeState.infoBaseKind -DesignerArgs @("/RestoreIB", $snapshotPath) | Out-Null
+        $databaseRestored = $true
+        Restore-ReleaseE2EExtensionLocalState
+
+        if (@(& git -C $script:ProjectRoot status --porcelain).Count -ne 0) {
+            throw "Release extension smoke left the worktree dirty."
+        }
+        $evidence = [ordered]@{
+            schemaVersion = 1
+            checkedAt = [DateTime]::UtcNow.ToString("o")
+            devBranchName = $DevBranchName
+            extensionName = $ExtensionName
+            emptyInitialized = $true
+            cfeCreated = $true
+            cfeInitialized = $true
+            databaseRestored = $true
+            emptyDumpConfigurationSha256 = $emptyDumpSha256
+            cfeSha256 = $cfeSha256
+            cfeDumpConfigurationSha256 = $cfeDumpSha256
+        }
+        Write-Utf8Text -Path $evidencePath -Value (($evidence | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
+        Write-Host "Release E2E extension Empty/CFE smoke passed: $evidencePath"
+    } catch {
+        $failure = $_.Exception.Message
+    } finally {
+        if ($snapshotCreated -and -not $databaseRestored) {
+            try {
+                $rollbackState = Read-DevBranchState -Name $DevBranchName
+                Invoke-Designer -InfoBasePath $rollbackState.devBranchInfoBasePath -InfoBaseKind $rollbackState.infoBaseKind -DesignerArgs @("/RestoreIB", $snapshotPath) | Out-Null
+                $databaseRestored = $true
+            } catch {
+                $rollbackFailure = $_.Exception.Message
+            }
+        }
+        try { Restore-ReleaseE2EExtensionLocalState } catch {
+            if (-not $rollbackFailure) { $rollbackFailure = $_.Exception.Message }
+        }
+        try {
+            Restore-ExtensionInitMcpRuntime -State (Read-DevBranchState -Name $DevBranchName) -RoctupWasRunning $roctupWasRunning -VanessaWasRunning $vanessaWasRunning
+        } catch {
+            if (-not $rollbackFailure) { $rollbackFailure = $_.Exception.Message }
+        }
+        if (Test-Path -LiteralPath $smokeRoot -PathType Container -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if ($hadToolOverride) {
+            $script:ExtensionLifecycleToolRootOverride = $previousToolOverride
+        } else {
+            Remove-Variable -Name ExtensionLifecycleToolRootOverride -Scope Script -ErrorAction SilentlyContinue
+        }
+    }
+
+    if ($failure) {
+        if ($rollbackFailure) {
+            throw "Release extension smoke failed: $failure Rollback also failed: $rollbackFailure Snapshot retained: $snapshotPath"
+        }
+        throw "Release extension smoke failed and the disposable infobase was restored: $failure"
+    }
+    if ($rollbackFailure) {
+        throw "Release extension smoke passed but cleanup failed: $rollbackFailure Snapshot retained: $snapshotPath"
+    }
+}
+
 function Show-WorkflowStatus {
     Write-Section "ITL status"
     Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 1800000."
@@ -4283,7 +4837,8 @@ function Show-WorkflowStatus {
     Write-Host "Type: $kind"
     if ($kind -eq "extension") {
         Write-Host "Extension: $(Get-StateValue -State $state -Name 'extensionName' -Default '<not set>')"
-        Write-Host "Extension files: $(Get-StateValue -State $state -Name 'extensionExportPath' -Default '<not set>')"
+        $extensionFiles = Get-StateValue -State $state -Name "extensionDumpPath" -Default (Get-StateValue -State $state -Name "extensionExportPath" -Default "<not set>")
+        Write-Host "Extension files: $extensionFiles"
     }
     Write-Host "Infobase: $($state.devBranchInfoBasePath)"
     $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
@@ -4414,9 +4969,7 @@ function Close-DevBranch {
         if ((Get-CurrentBranch) -ne $state.devBranch) {
             Invoke-Git @("checkout", $state.devBranch)
         }
-        $beforeMergeCommit = Get-CurrentCommit
         Invoke-Git @("merge", (Get-MasterBranch))
-        Restart-Agent1cIfWorkflowHelperChangedSince -BeforeCommit $beforeMergeCommit -AdditionalArguments @("-LifecyclePhase", "post-merge")
         Restart-Agent1cAfterDevBranchMerge -Operation "close-dev-branch"
     }
 
@@ -4771,7 +5324,7 @@ function Show-Help {
         Write-Host "Lifecycle:"
         Write-Host "  master -> create branch -> open worktree -> work -> check -> result"
         Write-Host ""
-        Write-Host "Visible slash commands in this folder:"
+        Write-Host "ITL commands valid in this context:"
         Write-Host "  /itl"
         Write-Host "  /itl-status"
         Write-Host "  /itl-new-config-branch <name>"
@@ -4863,12 +5416,20 @@ function Show-Help {
         }
         Write-Host "  use /itl-refresh when master changes must be merged into this branch."
         Write-Host ""
-        Write-Host "Visible slash commands in this folder:"
+        Write-Host "ITL commands valid in this context:"
         Write-Host "  /itl"
         Write-Host "  /itl-status"
         Write-Host "  /itl-check"
         Write-Host "  /itl-refresh"
         Write-Host "  /itl-result"
+        $inheritedPrimaryCommands = @(Get-KiloInheritedPrimaryItlCommands)
+        if ($inheritedPrimaryCommands.Count -gt 0) {
+            Write-Host ""
+            Write-Host "Inherited by Kilo from primary checkout; invalid in this context:"
+            foreach ($command in $inheritedPrimaryCommands) {
+                Write-Host "  $command"
+            }
+        }
         Write-Host ""
         Write-Host "OpenSpec:"
         if ($openSpec.isAvailable) {
@@ -4885,7 +5446,7 @@ function Show-Help {
         Write-Host "Lifecycle:"
         Write-Host "  Open the master worktree to create branches, or open an itldev/* worktree to check/result work."
         Write-Host ""
-        Write-Host "Visible slash commands in this folder:"
+        Write-Host "ITL commands valid in this context:"
         Write-Host "  /itl"
         Write-Host "  /itl-status"
         Write-Host ""

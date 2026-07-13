@@ -47,6 +47,139 @@ function Test-AiRulesManifestHasUserChanges {
     return $false
 }
 
+function Test-AiRulesMcpSnapshotMatchesCurrent {
+    param([object]$Snapshot)
+
+    foreach ($path in @($Snapshot.Keys)) {
+        $entry = $Snapshot[$path]
+        $exists = Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue
+        if ($exists -ne [bool]$entry.exists) {
+            return $false
+        }
+        if ($exists) {
+            $current = [System.IO.File]::ReadAllBytes($path)
+            if ([Convert]::ToBase64String($current) -ne [Convert]::ToBase64String([byte[]]$entry.bytes)) {
+                return $false
+            }
+        }
+    }
+    return $true
+}
+
+function Test-AiRulesMcpSnapshotHasUnknownEntries {
+    param(
+        [object]$Snapshot,
+        [string[]]$Paths,
+        [string[]]$KnownServerIds
+    )
+
+    $known = @($KnownServerIds | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+    foreach ($serverId in @($known)) {
+        if ($serverId -match '^(?i)1c(?<suffix>.*)$') {
+            $known += ("onec" + $Matches["suffix"])
+        }
+    }
+    $known = @($known | Select-Object -Unique)
+
+    foreach ($path in @($Paths | Select-Object -Unique)) {
+        if (-not $Snapshot.Contains($path) -or -not [bool]$Snapshot[$path].exists) {
+            continue
+        }
+        $text = [System.Text.Encoding]::UTF8.GetString([byte[]]$Snapshot[$path].bytes)
+        if ($path -like "*.toml") {
+            foreach ($match in [regex]::Matches($text, '(?m)^\[mcp_servers\.(?:"(?<quoted>[^"]+)"|(?<bare>[^\]\s]+))\]\s*$')) {
+                $serverId = if ($match.Groups["quoted"].Success) { $match.Groups["quoted"].Value } else { $match.Groups["bare"].Value }
+                if ($known -contains $serverId -or (Test-TextIndexInsideVibecoding1cMcpManagedBlock -Text $text -Index $match.Index)) {
+                    continue
+                }
+                return $true
+            }
+            continue
+        }
+
+        if ($path -like "*.json") {
+            try {
+                $config = $text | ConvertFrom-Json
+            } catch {
+                return $true
+            }
+            if ($config.mcp) {
+                foreach ($property in @($config.mcp.PSObject.Properties)) {
+                    $managedBy = [string](Get-ConfigValueFromObject -Object $property.Value -Path "managedBy" -Default "")
+                    if ($known -contains $property.Name -or $managedBy -eq "vibecoding1c-mcp") {
+                        continue
+                    }
+                    return $true
+                }
+            }
+        }
+    }
+    return $false
+}
+
+function Clear-StaleAiRulesMcpUserModifiedIfWorkflowOwned {
+    $manifestPath = Join-Path $script:ProjectRoot ".ai-rules.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        return $false
+    }
+    $manifest = Read-Utf8Text -Path $manifestPath | ConvertFrom-Json
+    if ($null -eq $manifest.files) {
+        return $false
+    }
+
+    $mcpFileNames = @(".codex/config.toml", ".kilo/kilo.json")
+    $candidates = @($manifest.files.PSObject.Properties | Where-Object {
+        $normalized = $_.Name -replace '\\', '/'
+        $mcpFileNames -contains $normalized -and [bool](Get-ConfigValueFromObject -Object $_.Value -Path "userModified" -Default $false)
+    })
+    if ($candidates.Count -eq 0) {
+        return $false
+    }
+
+    $selection = Read-Vibecoding1cMcpSelection
+    $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection
+    if (-not $selectionCompleteness.isComplete) {
+        return $false
+    }
+    try {
+        $managedServerIds = @(Get-AiRules1cManagedMcpServerIds)
+        $readyClientNames = @(Get-Vibecoding1cMcpReadyClientConfigNames)
+        $replacementServerIds = @($readyClientNames | Where-Object { $managedServerIds -contains $_ } | Select-Object -Unique)
+        if ($replacementServerIds.Count -eq 0) {
+            return $false
+        }
+    } catch {
+        return $false
+    }
+
+    $snapshot = New-AiRules1cMcpConfigSnapshot -Paths (Get-AiRules1cMcpClientConfigPaths)
+    $candidatePaths = @($candidates | ForEach-Object {
+        Join-Path $script:ProjectRoot (($_.Name -replace '/', '\').TrimStart('\'))
+    })
+    if (Test-AiRulesMcpSnapshotHasUnknownEntries -Snapshot $snapshot -Paths $candidatePaths -KnownServerIds (@($managedServerIds) + @($readyClientNames))) {
+        return $false
+    }
+    $matchesWorkflowState = $false
+    try {
+        Write-Vibecoding1cMcpClientConfig
+        Remove-AiRules1cManagedMcpConfig -ServerIds $replacementServerIds | Out-Null
+        Remove-StaleAiRules1cDataMcpConfig | Out-Null
+        $matchesWorkflowState = Test-AiRulesMcpSnapshotMatchesCurrent -Snapshot $snapshot
+    } finally {
+        Restore-AiRules1cMcpConfigSnapshot -Snapshot $snapshot
+    }
+    if (-not $matchesWorkflowState) {
+        return $false
+    }
+
+    foreach ($candidate in $candidates) {
+        $candidate.Value | Add-Member -NotePropertyName userModified -NotePropertyValue $false -Force
+    }
+    Write-Utf8Text -Path $manifestPath -Value (($manifest | ConvertTo-Json -Depth 30) + [Environment]::NewLine)
+    Write-Host "Cleared stale ai_rules_1c MCP userModified markers because client config already matches computed ITL ownership state."
+    return $true
+}
+
 function Get-AiRulesMigrationPlan {
     $target = Get-AiRulesBaselineTarget
     if (-not $target.isConfigured) {
@@ -74,6 +207,7 @@ function Get-AiRulesMigrationPlan {
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
         return [pscustomobject]@{ status = "manifest-missing"; eligible = $false; suppressRegularUpdate = $true; reason = "legacy ai_rules_1c manifest is missing"; target = $target }
     }
+    Clear-StaleAiRulesMcpUserModifiedIfWorkflowOwned | Out-Null
     if (Test-AiRulesManifestHasUserChanges) {
         return [pscustomobject]@{ status = "user-modified"; eligible = $false; suppressRegularUpdate = $true; reason = "legacy ai_rules_1c manifest contains userModified files"; target = $target }
     }

@@ -253,13 +253,14 @@ exit 0
         $userRulesTemplateText | Should -Match "vibecoding1c MCP helper request"
         $userRulesTemplateText | Should -Match "product-docs/SKILL.md"
         $userRulesTemplateText | Should -Match "BookStack-product-docs-mcp"
-        $userRulesTemplateText | Should -Match "before answering, exploring, planning, proposing, or changing behavior"
+        $userRulesTemplateText | Should -Match "before answering, researching, planning, proposing, applying, or changing behavior"
         $userRulesTemplateText | Should -Match "technical or implementation architecture"
         $userRulesTemplateText | Should -Match "internal subsystem design"
         $userRulesTemplateText | Should -Match "before a broad repository traversal"
-        $userRulesTemplateText | Should -Match "plan editor architecture"
+        $userRulesTemplateText | Should -Match "OpenSpec explore/propose/apply"
+        $userRulesTemplateText | Should -Match ([regex]::Escape('skill("product-docs")'))
+        $userRulesTemplateText | Should -Match "native skill activation"
         $userRulesTemplateText | Should -Match "If BookStack is unavailable"
-        $userRulesTemplateText | Should -Match "BookStack is advisory, not authoritative"
         $userRulesTemplateText | Should -Match "code, tests, current 1C metadata"
         $userRulesTemplateText | Should -Match "available MCP evidence"
         $userRulesTemplateText | Should -Match "BookStack says"
@@ -271,7 +272,8 @@ exit 0
         (Test-Path -LiteralPath $productDocsSkillPath -PathType Leaf) | Should -Be $true
         $productDocsSkillText = Get-Content -Encoding UTF8 -Raw $productDocsSkillPath
         $productDocsSkillText | Should -Match "BookStack-product-docs-mcp"
-        $productDocsSkillText | Should -Match "before answering, exploring, planning, proposing, or changing"
+        $productDocsSkillText | Should -Match "before answering, researching, planning, proposing, applying, or changing"
+        $productDocsSkillText | Should -Match "OpenSpec explore/propose/apply"
         $productDocsSkillText | Should -Match "baseConfigurationVersion"
         $productDocsSkillText | Should -Match "PM4"
         $productDocsSkillText | Should -Match "search_docs"
@@ -294,7 +296,7 @@ exit 0
         $productDocsOpenAiText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\product-docs\agents\openai.yaml")
         $productDocsOpenAiText | Should -Match "technical architecture through BookStack"
         $productDocsOpenAiText | Should -Match "verify it against code/MCP evidence"
-        $productDocsOpenAiText | Should -Match "answering, exploring, planning, proposing"
+        $productDocsOpenAiText | Should -Match "answering, researching, planning, proposing, applying"
 
         $HelperText | Should -Match "function Update-AgentGuidanceBridge"
         $HelperText | Should -Match "function Update-UserRules"
@@ -335,7 +337,8 @@ exit 0
             $result.pm4 | Should -Match "technical or implementation architecture"
             $result.pm4 | Should -Not -Match "BookStack-product-docs-mcp"
             $result.pm5 | Should -Match "BookStack-product-docs-mcp"
-            $result.pm5 | Should -Match "plan editor architecture"
+            $result.pm5 | Should -Match "OpenSpec explore/propose/apply"
+            $result.pm5 | Should -Match ([regex]::Escape('skill("product-docs")'))
             ([regex]::Matches($result.pm5, 'ITL-WORKFLOW-USER-RULES:START')).Count | Should -Be 1
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -390,13 +393,15 @@ param(
     [string]$Command,
     [string]$ProjectRoot,
     [string]$Source,
+    [ValidateSet("delegated")]
+    [string]$McpMode,
     [switch]$AssumeYes,
     [switch]$Force
 )
 
 $optional = [pscustomobject]@{}
 $null = $optional.userModified
-Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding ASCII -Value "$Command|$ProjectRoot|$Source|$($AssumeYes.IsPresent)"
+Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding ASCII -Value "$Command|$ProjectRoot|$Source|$McpMode|$($AssumeYes.IsPresent)"
 '@
 
             & {
@@ -416,7 +421,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             }
 
             $result = Get-Content -Encoding ASCII -Raw (Join-Path $projectRoot "installer-ran.txt")
-            $result.Trim() | Should -Be ("update|{0}|{1}|True" -f (Get-Item -LiteralPath $projectRoot).FullName, (Get-Item -LiteralPath $rulesRoot).FullName)
+            $result.Trim() | Should -Be ("update|{0}|{1}|delegated|True" -f (Get-Item -LiteralPath $projectRoot).FullName, (Get-Item -LiteralPath $rulesRoot).FullName)
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -707,10 +712,11 @@ local after
             $env:ITL_WORKFLOW_REPO = ""
             $env:ITL_WORKFLOW_REF = ""
             & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $projectRoot -Action update-workflow -SkipAiRules > $stdoutPath 2> $stderrPath
-            $LASTEXITCODE | Should -Be 0
+            $diagnostic = ((Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue) + [Environment]::NewLine + (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue))
+            $LASTEXITCODE | Should -Be 0 -Because $diagnostic
 
             $stdout = Get-Content -Encoding UTF8 -Raw $stdoutPath
-            $stdout | Should -Match "ITL workflow package updated"
+            $stdout | Should -Match "ITL workflow package post-copy processing completed"
             $stdout | Should -Match "No commit was created automatically"
             $stdout | Should -Match "No active development branches were found"
 
@@ -962,6 +968,58 @@ exit 0
         $sourceAgentsText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENTS.md")
         $sourceAgentsText | Should -Match "timeout_ms\s*>=\s*3900000"
         $sourceAgentsText | Should -Match "repeat the same bootstrap command"
+    }
+
+    It "splits workflow update into pre-copy reexec and post-copy new-code processing" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-workflow-reexec-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:copyCalls = 0
+                $script:postCalls = 0
+                $script:reexecArgs = @()
+                function Assert-WorkflowPackageUpdateContext {}
+                function Resolve-WorkflowPackageSource { [pscustomobject]@{ root = "C:\source"; repo = "repo"; ref = "ref"; commit = "commit"; source = "path" } }
+                function Assert-WorkflowSourceOutsideProject {}
+                function Copy-WorkflowManagedDirectory { $script:copyCalls++ }
+                function Copy-WorkflowManagedFile { $script:copyCalls++ }
+                function Update-WorkflowPackageLockEntry {}
+                function Invoke-Agent1cFreshProcess { param([string[]]$AdditionalArguments); $script:reexecArgs = $AdditionalArguments; throw "reexec-stop" }
+
+                $LifecyclePhase = "pre-copy"
+                $preError = ""
+                try { Update-WorkflowPackage *> $null } catch { $preError = $_.Exception.Message }
+                $preCopyCalls = $script:copyCalls
+
+                function Assert-MasterWorktreeContext {}
+                function Ensure-GitIgnore { $script:postCalls++ }
+                function Update-AgentGuidanceBridge { $script:postCalls++ }
+                function Update-UserRules { $script:postCalls++ }
+                function Update-RoctupMcp { $script:postCalls++ }
+                function Update-VanessaMcpArtifacts { $script:postCalls++ }
+                function Invoke-AiRulesBaselineMigration { [pscustomobject]@{ migrated = $true; suppressRegularUpdate = $true } }
+                function Write-WorkflowUpdateFollowUp { $script:postCalls++ }
+                function Read-DependencyLockManifest { @{ dependencies = @{ workflowPackage = @{ source = "path"; commit = "commit" } } } }
+                $LifecyclePhase = "post-copy"
+                Update-WorkflowPackage *> $null
+
+                [pscustomobject]@{
+                    preError = $preError
+                    preCopyCalls = $preCopyCalls
+                    finalCopyCalls = $script:copyCalls
+                    reexecArgs = @($script:reexecArgs)
+                    postCalls = $script:postCalls
+                }
+            }
+            $result.preError | Should -Be "reexec-stop"
+            $result.preCopyCalls | Should -BeGreaterThan 5
+            $result.finalCopyCalls | Should -Be $result.preCopyCalls
+            $result.reexecArgs | Should -Be @("-LifecyclePhase", "post-copy")
+            $result.postCalls | Should -BeGreaterThan 4
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "documents long external shell timeout for ITL lifecycle commands" {

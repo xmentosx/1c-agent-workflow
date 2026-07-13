@@ -41,14 +41,16 @@ For extension branches, do not ask for `extensionName` and do not create the ext
 
 ## Extension Helpers
 
-`set-dev-branch-extension` creates or records the extension in the branch infobase and activates the correct extension context. `dump-dev-branch-extension` dumps it into `src/cfe/<extensionName>`.
+After `new-extension-dev-branch`, run `init-dev-branch-extension -ExtensionInitMode Empty|Cfe -ExtensionName <name> [-ExtensionSourcePath <file.cfe>]` from the new worktree. `Empty` uses the installed `cfe-init.ps1` scaffold and Designer `/LoadConfigFromFiles ... -Extension`; `Cfe` loads the binary directly with `/LoadCfg ... -Extension`. Neither mode uses Designer Agent, `AgentMode`, `/Extension`, or CFE unpacking. The helper snapshots the copied infobase, rolls back on failure, dumps normalized sources only to `src/cfe/<ExtensionName>`, validates them, and records state only after full success.
+
+`set-dev-branch-extension` only records recovery context for an extension created manually; it never creates or loads an extension. `dump-dev-branch-extension` is the matching recovery dump action. `/update1cbase` is the subsequent development loop after initialization.
 
 Rules:
 
 - Find branch state from `DevBranchName` or current branch.
 - If the state belongs to another worktree, report `worktreePath` and tell the developer to open that folder.
 - For legacy branches, require a clean Git worktree and checkout the saved branch.
-- For extension branches without an extension name, clear infobase-bound values and tell the developer to run `set-dev-branch-extension` before `/update1cbase`.
+- For a new extension branch without initialized extension state, tell the developer to run `init-dev-branch-extension`. Use `set-dev-branch-extension` only for a manually created legacy extension.
 
 ## Branch Context And Base Update
 

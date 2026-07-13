@@ -54,21 +54,21 @@ verify helper action                       Совместимый alias для /
 
 `/itl-update-workflow` и `update-workflow helper action` запускаются только из `master` worktree. Обновляйте ITL workflow-пакет в `master`, коммитьте изменения, затем подтягивайте их в текущую ветку через merge свежего `master` или `/itl-refresh`. После реальной загрузки базы lifecycle перезапускает уже работающие ROCTUP/Vanessa UI MCP; helper actions для ROCTUP, Vanessa UI и vibecoding1c MCP остаются для диагностики и восстановления.
 
-Команды `set-dev-branch-extension helper action` и `dump-dev-branch-extension helper action` являются helper-командами для extension-веток. Они доступны напрямую, но могут не показываться в коротком beginner-меню `/itl`.
+`init-dev-branch-extension` — обязательный отдельный шаг после создания extension-ветки. `set-dev-branch-extension` и `dump-dev-branch-extension` остаются recovery-командами и могут не показываться в коротком beginner-меню `/itl`; `set` только записывает контекст и не создаёт расширение.
 
-Если текущая ветка предназначена для разработки расширения, в начале работы задайте имя расширения:
-
-```text
-set-dev-branch-extension helper action <имя-расширения>
-```
-
-После создания расширения в копии базы ветки выгрузите его в файлы:
+Для пустого расширения:
 
 ```text
-dump-dev-branch-extension helper action
+init-dev-branch-extension -ExtensionInitMode Empty -ExtensionName <имя-расширения>
 ```
 
-Дальше `/itl-check` обновляет расширение в базе ветки из `src/cfe/<имя-расширения>` и запускает Vanessa Automation, а `/itl-result` выгружает `CFE`. Если нужно только обновить базу без тестов, используйте `update-base helper action`.
+Для готового CFE:
+
+```text
+init-dev-branch-extension -ExtensionInitMode Cfe -ExtensionName <имя-расширения> -ExtensionSourcePath <файл.cfe>
+```
+
+Helper создаёт snapshot базы, загружает расширение через Designer с `-Extension`, выгружает нормализованные исходники строго в `src/cfe/<имя-расширения>` и откатывает базу при ошибке. CFE не распаковывается; Designer Agent и `AgentMode` не используются. Дальше `/update1cbase` — обычный цикл разработки, `/itl-check` — обязательная проверка, `/itl-result` — выгрузка `CFE`.
 
 Команды жизненного цикла автоматически активируют контекст базы ветки разработки для `ai_rules_1c`.
 

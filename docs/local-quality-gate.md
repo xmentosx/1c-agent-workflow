@@ -39,7 +39,9 @@ annotated `itl-*` tag, совпадающем с tag и commit в workflow templ
 Стенд настраивается локальным `.agent-1c/release-e2e.json` по примеру
 `templates/release-e2e.example.json`. Release повторно запускает проверку
 ветки, требует fresh passed `/itl-check`, экспортирует CF/CFE, сверяет SHA256 и
-останавливает Vanessa UI MCP и ROCTUP MCP.
+останавливает Vanessa UI MCP и ROCTUP MCP. Дополнительно он создаёт Empty-
+расширение, выгружает и повторно загружает его CFE, после чего восстанавливает
+одноразовую базу и рабочее дерево из snapshot.
 
 Git hooks автоматически не устанавливаются. GitHub Actions сейчас не является
 частью гарантий проекта; локальная команда выше — единственный канонический gate.

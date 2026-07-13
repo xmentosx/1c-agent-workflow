@@ -1545,7 +1545,7 @@ function New-DefaultProjectConfig {
         serverBaseCopyScript = ""
         aiRules = [ordered]@{
             repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            ref = "itl-main-a421cf44-r3"
+            ref = "itl-main-a421cf44-r4"
             tools = @("codex", "kilocode")
         }
         vibecoding1cMcp = [ordered]@{
@@ -1596,12 +1596,12 @@ function New-DefaultDependencyLockManifest {
             }
             aiRules1c = [ordered]@{
                 repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-                ref = "itl-main-a421cf44-r3"
-                commit = "316da894069d0ad7ac6874fe6faf46028ab69d6a"
+                ref = "itl-main-a421cf44-r4"
+                commit = "6396b1538339ce1ff025cd6f2a24ccb8ff742e1e"
                 upstreamRepo = "https://github.com/comol/ai_rules_1c.git"
                 upstreamRef = "refs/heads/main"
                 upstreamCommit = "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
-                downstreamRevision = 3
+                downstreamRevision = 4
                 compatibilityStatus = "passed"
                 compatibilityCheckedAt = "2026-07-13T10:18:00Z"
             }

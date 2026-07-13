@@ -24,18 +24,18 @@ BeforeAll {
         $targetConfig = [ordered]@{
             aiRules = [ordered]@{
                 repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-                ref = $(if ($ConfigureTarget) { "itl-main-a421cf44-r3" } else { "" })
+                ref = $(if ($ConfigureTarget) { "itl-main-a421cf44-r4" } else { "" })
                 tools = @("codex", "kilocode")
             }
         }
         $targetEntry = [ordered]@{
             repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            ref = "itl-main-a421cf44-r3"
-            commit = "316da894069d0ad7ac6874fe6faf46028ab69d6a"
+            ref = "itl-main-a421cf44-r4"
+            commit = "6396b1538339ce1ff025cd6f2a24ccb8ff742e1e"
             upstreamRepo = "https://github.com/comol/ai_rules_1c.git"
             upstreamRef = "refs/heads/main"
             upstreamCommit = "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
-            downstreamRevision = 3
+            downstreamRevision = 4
             compatibilityStatus = $(if ($ConfigureTarget) { "passed" } else { "legacy-baseline" })
             compatibilityCheckedAt = "2026-07-11T00:00:00Z"
         }
@@ -107,22 +107,22 @@ Describe "ai_rules_1c migration planning" {
         }
     }
 
-    It "plans a controlled fork r2 to r3 migration by downstream revision and upstream provenance" {
+    It "plans a controlled fork r3 to r4 migration by downstream revision and upstream provenance" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-controlled-" + [guid]::NewGuid().ToString("N"))
         try {
             New-AiRulesMigrationFixture -Root $tempRoot `
                 -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" `
-                -CurrentRef "itl-main-a421cf44-r2" `
-                -CurrentCommit "bcb662c1eb682c1eae94cef8ad56cec0983f41d5" `
+                -CurrentRef "itl-main-a421cf44-r3" `
+                -CurrentCommit "316da894069d0ad7ac6874fe6faf46028ab69d6a" `
                 -CurrentUpstreamCommit "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826" `
                 -CurrentDownstreamRevision 2
             $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "eligible"
             $plan.sourceKind | Should -Be "controlled-fork"
-            $plan.fromCommit | Should -Be "bcb662c1eb682c1eae94cef8ad56cec0983f41d5"
+            $plan.fromCommit | Should -Be "316da894069d0ad7ac6874fe6faf46028ab69d6a"
             $plan.comparisonCommit | Should -Be "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
             $plan.fromDownstreamRevision | Should -Be 2
-            $plan.target.downstreamRevision | Should -Be 3
+            $plan.target.downstreamRevision | Should -Be 4
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -133,14 +133,80 @@ Describe "ai_rules_1c migration planning" {
         try {
             New-AiRulesMigrationFixture -Root $tempRoot `
                 -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" `
-                -CurrentRef "itl-main-a421cf44-r3" `
-                -CurrentCommit "316da894069d0ad7ac6874fe6faf46028ab69d6a" `
+                -CurrentRef "itl-main-a421cf44-r4" `
+                -CurrentCommit "6396b1538339ce1ff025cd6f2a24ccb8ff742e1e" `
                 -CurrentUpstreamCommit "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826" `
-                -CurrentDownstreamRevision 3
+                -CurrentDownstreamRevision 4
             $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "current"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "clears only stale workflow-owned MCP userModified markers" {
+        $matchingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-mcp-match-" + [guid]::NewGuid().ToString("N"))
+        $changedRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-mcp-changed-" + [guid]::NewGuid().ToString("N"))
+        try {
+            foreach ($root in @($matchingRoot, $changedRoot)) {
+                New-AiRulesMigrationFixture -Root $root
+                $manifestPath = Join-Path $root ".ai-rules.json"
+                $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $manifest.files | Add-Member -NotePropertyName ".codex/config.toml" -NotePropertyValue ([pscustomobject]@{ source = "mcp"; installedHash = "old"; userModified = $true })
+                Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
+            }
+
+            $matchingPlan = & {
+                . $HelperPath -ProjectRoot $matchingRoot -Action help *> $null
+                function Get-Vibecoding1cMcpSelectionCompleteness { [pscustomobject]@{ isComplete = $true; reasons = @() } }
+                function Get-Vibecoding1cMcpReadyClientConfigNames { @("1C-docs-mcp") }
+                function New-AiRules1cMcpConfigSnapshot { [ordered]@{} }
+                function Write-Vibecoding1cMcpClientConfig {}
+                function Remove-AiRules1cManagedMcpConfig {}
+                function Remove-StaleAiRules1cDataMcpConfig {}
+                function Test-AiRulesMcpSnapshotMatchesCurrent { return $true }
+                function Test-AiRulesMcpSnapshotHasUnknownEntries { return $false }
+                function Restore-AiRules1cMcpConfigSnapshot {}
+                Get-AiRulesMigrationPlan
+            }
+            $matchingPlan.status | Should -Be "eligible"
+            $matchingManifest = Get-Content -LiteralPath (Join-Path $matchingRoot ".ai-rules.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $matchingManifest.files.'.codex/config.toml'.userModified | Should -BeFalse
+
+            $changedPlan = & {
+                . $HelperPath -ProjectRoot $changedRoot -Action help *> $null
+                function Get-Vibecoding1cMcpSelectionCompleteness { [pscustomobject]@{ isComplete = $true; reasons = @() } }
+                function Get-Vibecoding1cMcpReadyClientConfigNames { @("1C-docs-mcp") }
+                function New-AiRules1cMcpConfigSnapshot { [ordered]@{} }
+                function Write-Vibecoding1cMcpClientConfig {}
+                function Remove-AiRules1cManagedMcpConfig {}
+                function Remove-StaleAiRules1cDataMcpConfig {}
+                function Test-AiRulesMcpSnapshotMatchesCurrent { return $false }
+                function Test-AiRulesMcpSnapshotHasUnknownEntries { return $false }
+                function Restore-AiRules1cMcpConfigSnapshot {}
+                Get-AiRulesMigrationPlan
+            }
+            $changedPlan.status | Should -Be "user-modified"
+            $changedManifest = Get-Content -LiteralPath (Join-Path $changedRoot ".ai-rules.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $changedManifest.files.'.codex/config.toml'.userModified | Should -BeTrue
+
+            $unknownPlan = & {
+                . $HelperPath -ProjectRoot $matchingRoot -Action help *> $null
+                $manifestPath = Join-Path $script:ProjectRoot ".ai-rules.json"
+                $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $manifest.files.'.codex/config.toml'.userModified = $true
+                Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
+                function Get-Vibecoding1cMcpSelectionCompleteness { [pscustomobject]@{ isComplete = $true; reasons = @() } }
+                function Get-Vibecoding1cMcpReadyClientConfigNames { @("1C-docs-mcp") }
+                function New-AiRules1cMcpConfigSnapshot { [ordered]@{} }
+                function Test-AiRulesMcpSnapshotHasUnknownEntries { return $true }
+                Get-AiRulesMigrationPlan
+            }
+            $unknownPlan.status | Should -Be "user-modified"
+            $unknownManifest = Get-Content -LiteralPath (Join-Path $matchingRoot ".ai-rules.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $unknownManifest.files.'.codex/config.toml'.userModified | Should -BeTrue
+        } finally {
+            Remove-Item -LiteralPath $matchingRoot, $changedRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }
@@ -162,7 +228,7 @@ Describe "ai_rules_1c transactional migration" {
             $report.status | Should -Be "blocked"
             $report.migrationStatus | Should -Be "custom"
             $report.current.repo | Should -Be "https://example.invalid/custom-rules.git"
-            $report.target.ref | Should -Be "itl-main-a421cf44-r3"
+            $report.target.ref | Should -Be "itl-main-a421cf44-r4"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -182,8 +248,8 @@ Describe "ai_rules_1c transactional migration" {
             $config = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $lock = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $config.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            $config.aiRules.ref | Should -Be "itl-main-a421cf44-r3"
-            $lock.dependencies.aiRules1c.commit | Should -Be "316da894069d0ad7ac6874fe6faf46028ab69d6a"
+            $config.aiRules.ref | Should -Be "itl-main-a421cf44-r4"
+            $lock.dependencies.aiRules1c.commit | Should -Be "6396b1538339ce1ff025cd6f2a24ccb8ff742e1e"
             $lock.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
             Test-Path -LiteralPath (Join-Path $result.snapshotRoot "migration-report.json") | Should -BeTrue
         } finally {
