@@ -1447,7 +1447,7 @@ managedBy = "external-mcp"
         }
     }
 
-    It "preserves upstream ai_rules_1c MCP entries when vibecoding1c selection or state is missing" {
+    It "preserves non-Data MCP entries but prunes managed Data MCP when publication is disabled" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-rules-mcp-reconcile-missing-" + [guid]::NewGuid().ToString("N"))
         $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
 
@@ -1486,10 +1486,40 @@ managedBy = "external-mcp"
 
             $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
             $kilo.mcp.'1C-docs-mcp'.url | Should -Be "http://localhost:8003/mcp"
-            $kilo.mcp.'1c-data-mcp'.url | Should -Be "http://localhost:8008/mcp"
+            $kilo.mcp.PSObject.Properties.Name | Should -Not -Contain "1c-data-mcp"
             $kilo.mcp.'custom-tool'.managedBy | Should -Be "external-mcp"
         } finally {
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "preserves explicitly external Data MCP even when it uses the legacy placeholder" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-rules-external-data-mcp-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".kilo") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Encoding UTF8 -Value @'
+{
+  "mcp": {
+    "1c-data-mcp": {
+      "type": "remote",
+      "url": "{INFOBASE_PUBLISH_URL}/hs/mcp",
+      "enabled": true,
+      "managedBy": "external-mcp",
+      "family": "external"
+    }
+  }
+}
+'@
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Remove-StaleAiRules1cDataMcpConfig *> $null
+            }
+            $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
+            $kilo.mcp.'1c-data-mcp'.managedBy | Should -Be "external-mcp"
+        } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -2055,6 +2085,10 @@ url = "http://localhost:9999/mcp"
                         toolsXmlPath = "C:\fake\tools.xml"
                     }
                 }
+                function Ensure-DevBranchEnterpriseNormalized {
+                    param([object]$State, [string]$Reason)
+                    return $State
+                }
                 function Install-DataMcpExtension {
                     param([object]$State, [string]$CfePath)
                     $script:DataMcpCfePath = $CfePath
@@ -2116,6 +2150,10 @@ url = "http://localhost:9999/mcp"
 
                 function Ensure-DataMcpPackage {
                     throw "MCP_1C_Distr.zip was not found"
+                }
+                function Ensure-DevBranchEnterpriseNormalized {
+                    param([object]$State, [string]$Reason)
+                    return $State
                 }
                 function Write-Vibecoding1cMcpClientConfig {
                     $localEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -ne "global" })

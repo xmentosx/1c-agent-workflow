@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$AiRulesSource = "https://github.com/xmentosx/itl_ai_rules_1c.git",
-    [string]$AiRulesRef = "itl-main-a421cf44-r2",
+    [string]$AiRulesRef = "itl-main-a421cf44-r3",
     [string]$WorkingDirectory = "",
     [switch]$KeepArtifacts
 )

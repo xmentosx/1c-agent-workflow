@@ -365,17 +365,92 @@ function New-ConfigLoadListFile {
     return $listFilePath
 }
 
-function Test-ConfigLoadRequiresFullLoad {
-    param([string[]]$Files)
+function Invoke-ConfigLoadWithFallback {
+    param(
+        [string]$InfoBasePath,
+        [string]$InfoBaseKind,
+        [object]$State,
+        [string]$AbsoluteExportPath,
+        [string]$ListFilePath,
+        [int]$FileCount,
+        [string]$ExtensionName = "",
+        [ValidateSet("Auto", "Partial", "Full")]
+        [string]$Mode = "Auto"
+    )
 
-    foreach ($file in @($Files)) {
-        $normalized = ([string]$file).Replace("/", "\")
-        if ($normalized -ieq "Configuration.xml") {
-            return $true
+    $baseArgs = @("/LoadConfigFromFiles", $AbsoluteExportPath)
+    if ($ExtensionName) {
+        $baseArgs += @("-Extension", $ExtensionName)
+    }
+
+    if ($Mode -eq "Full") {
+        Write-Host "Full config load requested explicitly. Changed file count: $FileCount"
+        Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+            -DesignerArgs ($baseArgs + @("-Format", "Hierarchical", "/UpdateDBCfg")) | Out-Null
+        return [pscustomobject]@{
+            loadModeUsed = "full"
+            partialLogPath = ""
+            fullFallbackLogPath = $script:LastLogPath
+            lastLogPath = $script:LastLogPath
+            configLoadStatus = "passed"
+            partialError = ""
+            fullFallbackError = ""
         }
     }
 
-    return $false
+    Write-Host "Partial config load file count: $FileCount"
+    Write-Host "Partial config load list: $ListFilePath"
+    $partialArgs = $baseArgs + @("-listFile", $ListFilePath, "-Format", "Hierarchical", "/UpdateDBCfg")
+    $script:LastNativeProcessStarted = $false
+    try {
+        Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -DesignerArgs $partialArgs | Out-Null
+        return [pscustomobject]@{
+            loadModeUsed = "partial"
+            partialLogPath = $script:LastLogPath
+            fullFallbackLogPath = ""
+            lastLogPath = $script:LastLogPath
+            configLoadStatus = "passed"
+            partialError = ""
+            fullFallbackError = ""
+        }
+    } catch {
+        $partialException = $_
+        $partialLogPath = $script:LastLogPath
+        if ($Mode -eq "Partial" -or -not $script:LastNativeProcessStarted) {
+            throw
+        }
+
+        Write-Warning "Partial config load failed after Designer received -listFile. Running one full-load fallback in the same branch infobase. No infobase snapshot is available."
+        Write-Warning "Partial load log: $partialLogPath"
+        try {
+            Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+                -DesignerArgs ($baseArgs + @("-Format", "Hierarchical", "/UpdateDBCfg")) | Out-Null
+            return [pscustomobject]@{
+                loadModeUsed = "full-fallback"
+                partialLogPath = $partialLogPath
+                fullFallbackLogPath = $script:LastLogPath
+                lastLogPath = $script:LastLogPath
+                configLoadStatus = "fallback-succeeded"
+                partialError = $partialException.Exception.Message
+                fullFallbackError = ""
+            }
+        } catch {
+            $fullException = $_
+            $fullLogPath = $script:LastLogPath
+            if ($State) {
+                Update-DevBranchState -State $State -Updates @{
+                    configLoadStatus = "fallback-failed"
+                    lastConfigLoadMode = "full-fallback"
+                    lastConfigPartialLogPath = $partialLogPath
+                    lastConfigFullFallbackLogPath = $fullLogPath
+                    lastConfigPartialError = $partialException.Exception.Message
+                    lastConfigFullFallbackError = $fullException.Exception.Message
+                    lastLogPath = $fullLogPath
+                }
+            }
+            throw "Partial and full fallback config loads both failed. Partial: $($partialException.Exception.Message) (log: $partialLogPath). Full fallback: $($fullException.Exception.Message) (log: $fullLogPath). The branch infobase may be in an intermediate state; the safe recovery is to recreate its copy."
+        }
+    }
 }
 
 function New-LoadStateUpdates {
@@ -402,6 +477,14 @@ function New-LoadStateUpdates {
 
     if ($LoadResult.lastLogPath) {
         $updates["lastLogPath"] = $LoadResult.lastLogPath
+    }
+    if ($LoadResult.loaded) {
+        $updates["configLoadStatus"] = $LoadResult.configLoadStatus
+        $updates["lastConfigLoadMode"] = $LoadResult.loadModeUsed
+        $updates["lastConfigPartialLogPath"] = $LoadResult.partialLogPath
+        $updates["lastConfigFullFallbackLogPath"] = $LoadResult.fullFallbackLogPath
+        $updates["lastConfigPartialError"] = $LoadResult.partialError
+        $updates["lastConfigFullFallbackError"] = $LoadResult.fullFallbackError
     }
 
     return $updates
@@ -520,13 +603,88 @@ function Invoke-DevBranchEnterpriseAutoUpdateIfLoaded {
         return
     }
 
-    $autoUpdateResult = Invoke-DevBranchEnterpriseAutoUpdate -State $State
-    $Updates["lastEnterpriseAutoUpdateAt"] = $autoUpdateResult.updatedAt
-    $Updates["lastEnterpriseAutoUpdateLogPath"] = $autoUpdateResult.logPath
-    $Updates["lastEnterpriseAutoUpdateEpfPath"] = $autoUpdateResult.epfPath
-    if ($autoUpdateResult.logPath) {
-        $Updates["lastLogPath"] = $autoUpdateResult.logPath
+    Ensure-DevBranchEnterpriseNormalized -State $State -Reason "config-load" -Updates $Updates | Out-Null
+}
+
+function Assert-EnterpriseNormalizationTargetsBranchCopy {
+    param([object]$State)
+
+    $branchPath = [string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
+    $sourcePath = [string](Get-SourceInfoBasePath)
+    if (-not $branchPath) {
+        throw "Development branch infobase path is missing; Enterprise normalization cannot run."
     }
+
+    $same = $false
+    if ((Get-StateValue -State $State -Name "infoBaseKind" -Default "file") -eq "file") {
+        $same = (Resolve-Agent1cFullPath -Path $branchPath) -ieq (Resolve-Agent1cFullPath -Path $sourcePath)
+    } else {
+        $same = $branchPath.Trim() -ieq $sourcePath.Trim()
+    }
+    if ($same) {
+        throw "Refusing Enterprise normalization because the target is the source infobase. Only a copied development branch infobase is allowed."
+    }
+}
+
+function Ensure-DevBranchEnterpriseNormalized {
+    param(
+        [object]$State,
+        [ValidateSet("branch-copy", "config-load", "legacy-preflight")]
+        [string]$Reason = "legacy-preflight",
+        [hashtable]$Updates = $null
+    )
+
+    $currentStatus = [string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "")
+    if ($Reason -eq "legacy-preflight" -and $currentStatus -eq "passed") {
+        return $State
+    }
+
+    Assert-EnterpriseNormalizationTargetsBranchCopy -State $State
+    $statePath = [string](Get-StateValue -State $State -Name "statePath" -Default "")
+    $canPersistImmediately = $statePath -and (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue)
+    $pending = @{
+        enterpriseNormalizationStatus = "pending"
+        enterpriseNormalizationReason = $Reason
+        enterpriseNormalizationError = ""
+    }
+    if ($canPersistImmediately) {
+        Update-DevBranchState -State $State -Updates $pending
+    }
+
+    try {
+        $autoUpdateResult = Invoke-DevBranchEnterpriseAutoUpdate -State $State
+        $passed = @{
+            enterpriseNormalizationStatus = "passed"
+            enterpriseNormalizationReason = $Reason
+            enterpriseNormalizationError = ""
+            enterpriseNormalizedAt = $autoUpdateResult.updatedAt
+            lastEnterpriseAutoUpdateAt = $autoUpdateResult.updatedAt
+            lastEnterpriseAutoUpdateLogPath = $autoUpdateResult.logPath
+            lastEnterpriseAutoUpdateEpfPath = $autoUpdateResult.epfPath
+        }
+        if ($autoUpdateResult.logPath) {
+            $passed["lastLogPath"] = $autoUpdateResult.logPath
+        }
+        if ($null -ne $Updates) {
+            foreach ($key in $passed.Keys) { $Updates[$key] = $passed[$key] }
+        } else {
+            Update-DevBranchState -State $State -Updates $passed
+        }
+    } catch {
+        if ($canPersistImmediately) {
+            Update-DevBranchState -State $State -Updates @{
+                enterpriseNormalizationStatus = "failed"
+                enterpriseNormalizationReason = $Reason
+                enterpriseNormalizationError = $_.Exception.Message
+            }
+        }
+        throw
+    }
+
+    if ($null -ne $Updates) {
+        return $State
+    }
+    return (Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default ""))
 }
 
 function Dump-ConfigToFiles {
@@ -615,7 +773,9 @@ function Load-ConfigFromFiles {
         [string]$ExportPath = (Get-ExportPath),
         [ValidateSet("configuration", "extension")]
         [string]$ContentKind = "configuration",
-        [string]$ExtensionName = ""
+        [string]$ExtensionName = "",
+        [ValidateSet("Auto", "Partial", "Full")]
+        [string]$Mode = "Auto"
     )
 
     $changeSet = Get-ConfigLoadChangeSet -State $State -ExportPath $ExportPath -ContentKind $ContentKind
@@ -628,37 +788,41 @@ function Load-ConfigFromFiles {
             listFile = ""
             currentCommit = $changeSet.currentCommit
             lastLogPath = $script:LastLogPath
+            loadModeUsed = ""
+            partialLogPath = ""
+            fullFallbackLogPath = ""
+            configLoadStatus = "passed"
+            partialError = ""
+            fullFallbackError = ""
         }
     }
 
-    $listFilePath = New-ConfigLoadListFile -State $State -Files $changeSet.files
-    $designerArgs = @("/LoadConfigFromFiles", $changeSet.absoluteExportPath)
-    if ($ExtensionName) {
-        $designerArgs += @("-Extension", $ExtensionName)
+    $listFilePath = ""
+    if ($Mode -ne "Full") {
+        $listFilePath = New-ConfigLoadListFile -State $State -Files $changeSet.files
     }
-
-    if (Test-ConfigLoadRequiresFullLoad -Files $changeSet.files) {
-        Write-Host "Root Configuration.xml changed; using full config load because 1C Designer does not reliably accept it through -listFile."
-        Write-Host "Changed config file count: $($changeSet.files.Count)"
-        Write-Host "Changed config file list: $listFilePath"
-    } else {
-        Write-Host "Partial config load file count: $($changeSet.files.Count)"
-        Write-Host "Partial config load list: $listFilePath"
-        $designerArgs += @("-listFile", $listFilePath)
-    }
-    $designerArgs += @("-Format", "Hierarchical", "/UpdateDBCfg")
-
-    Invoke-Designer `
+    $orchestration = Invoke-ConfigLoadWithFallback `
         -InfoBasePath $InfoBasePath `
         -InfoBaseKind $InfoBaseKind `
-        -DesignerArgs $designerArgs | Out-Null
+        -State $State `
+        -AbsoluteExportPath $changeSet.absoluteExportPath `
+        -ListFilePath $listFilePath `
+        -FileCount $changeSet.files.Count `
+        -ExtensionName $ExtensionName `
+        -Mode $Mode
 
     return [pscustomobject]@{
         loaded = $true
         fileCount = $changeSet.files.Count
         listFile = $listFilePath
         currentCommit = $changeSet.currentCommit
-        lastLogPath = $script:LastLogPath
+        lastLogPath = $orchestration.lastLogPath
+        loadModeUsed = $orchestration.loadModeUsed
+        partialLogPath = $orchestration.partialLogPath
+        fullFallbackLogPath = $orchestration.fullFallbackLogPath
+        configLoadStatus = $orchestration.configLoadStatus
+        partialError = $orchestration.partialError
+        fullFallbackError = $orchestration.fullFallbackError
     }
 }
 
@@ -1363,10 +1527,90 @@ function Write-AiRules1cMcpPreservedWarning {
     Write-Host "  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup"
 }
 
+function Test-StaleAiRules1cDataMcpShouldBePruned {
+    $publishUrl = [string](Get-EnvValue -Name "INFOBASE_PUBLISH_URL" -Default "")
+    if (-not [string]::IsNullOrWhiteSpace($publishUrl) -or (Get-WebPublishByDefault)) {
+        return $false
+    }
+
+    try {
+        $state = Read-DevBranchState -Name ""
+        $stateUrl = [string](Get-StateValue -State $state -Name "publicationUrl" -Default "")
+        $stateStatus = [string](Get-StateValue -State $state -Name "publicationStatus" -Default "")
+        if ($stateUrl -or ($stateStatus -and $stateStatus -notin @("disabled", "skipped"))) {
+            return $false
+        }
+    } catch {
+    }
+    return $true
+}
+
+function Remove-StaleAiRules1cDataMcpConfig {
+    if (-not (Test-StaleAiRules1cDataMcpShouldBePruned)) {
+        return @()
+    }
+
+    $removed = @()
+    $codexPath = Join-Path $script:ProjectRoot ".codex\config.toml"
+    if (Test-Path -LiteralPath $codexPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        $text = Read-Utf8Text -Path $codexPath
+        $pattern = '(?ms)^\[mcp_servers\.(?:"1c-data-mcp"|1c-data-mcp)\]\r?\n.*?(?=^\[|^# >>> vibecoding1c-mcp|\z)'
+        foreach ($match in @([regex]::Matches($text, $pattern) | Sort-Object Index -Descending)) {
+            if (Test-TextIndexInsideVibecoding1cMcpManagedBlock -Text $text -Index $match.Index) { continue }
+            $managedBy = Get-AiRules1cTomlMcpManagedBy -SectionText $match.Value
+            $isManaged = if (-not [string]::IsNullOrWhiteSpace($managedBy)) {
+                Test-AiRules1cMcpEntryCanBeRemoved -ManagedBy $managedBy
+            } else {
+                $match.Value -match '\{INFOBASE_PUBLISH_URL\}/hs/mcp'
+            }
+            if (-not $isManaged) { continue }
+            $text = $text.Remove($match.Index, $match.Length)
+            $removed += "codex:1c-data-mcp"
+        }
+        if ($removed -contains "codex:1c-data-mcp") {
+            Write-Utf8Text -Path $codexPath -Value ($text.TrimEnd() + [Environment]::NewLine)
+        }
+    }
+
+    $kiloPath = Join-Path $script:ProjectRoot ".kilo\kilo.json"
+    if (Test-Path -LiteralPath $kiloPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        try {
+            $config = ConvertTo-Vibecoding1cMcpHashtable -Object ((Read-Utf8Text -Path $kiloPath) | ConvertFrom-Json)
+            if ($config.Contains("mcp")) {
+                $mcp = ConvertTo-Vibecoding1cMcpHashtable -Object $config["mcp"]
+                if ($mcp.Contains("1c-data-mcp")) {
+                    $entry = ConvertTo-Vibecoding1cMcpHashtable -Object $mcp["1c-data-mcp"]
+                    $managedBy = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "managedBy" -Default "")
+                    $url = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "url" -Default "")
+                    $isManaged = if (-not [string]::IsNullOrWhiteSpace($managedBy)) {
+                        Test-AiRules1cMcpEntryCanBeRemoved -ManagedBy $managedBy
+                    } else {
+                        $url -match '\{INFOBASE_PUBLISH_URL\}/hs/mcp'
+                    }
+                    if ($isManaged) {
+                        [void]$mcp.Remove("1c-data-mcp")
+                        $config["mcp"] = $mcp
+                        Write-Utf8Text -Path $kiloPath -Value (($config | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+                        $removed += "kilo:1c-data-mcp"
+                    }
+                }
+            }
+        } catch {
+            Write-Warning "Could not parse Kilo MCP config while pruning stale ai_rules_1c Data MCP: $kiloPath. $($_.Exception.Message)"
+        }
+    }
+
+    if ($removed.Count -gt 0) {
+        Write-Host "Removed stale ai_rules_1c-managed 1c-data-mcp because publication is disabled and INFOBASE_PUBLISH_URL is empty."
+    }
+    return @($removed)
+}
+
 function Invoke-AiRules1cManagedMcpConfigReconcile {
     param([string]$Operation = "MCP reconcile")
 
     $managedServerIds = @(Get-AiRules1cManagedMcpServerIds)
+    $pruned = @(Remove-StaleAiRules1cDataMcpConfig)
     $selection = Read-Vibecoding1cMcpSelection
     $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection
     if (-not $selectionCompleteness.isComplete) {
@@ -1375,6 +1619,7 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
             reconciled = $false
             preserved = $true
             replacements = @()
+            pruned = @($pruned)
         }
     }
 
@@ -1386,6 +1631,7 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
             reconciled = $false
             preserved = $true
             replacements = @()
+            pruned = @($pruned)
         }
     }
 
@@ -1396,6 +1642,7 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
             reconciled = $false
             preserved = $true
             replacements = @()
+            pruned = @($pruned)
         }
     }
 
@@ -1413,6 +1660,7 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
             preserved = $false
             replacements = @($replacementServerIds)
             removed = @($removed)
+            pruned = @($pruned)
         }
     } catch {
         $errorMessage = $_.Exception.Message
@@ -1426,6 +1674,7 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
             reconciled = $false
             preserved = $true
             replacements = @()
+            pruned = @($pruned)
         }
     }
 }
@@ -1972,9 +2221,12 @@ function Update-UserRules {
     $marker = "## 1C Project Lifecycle"
     $templateBlock = (Read-Utf8Text -Path $templatePath).Trim()
     if (-not (Test-ProductDocsMcpAllowed)) {
-        $productDocsRule = 'For PM5 product logic, architecture, workflows, terminology, permissions, reports, integrations, or acceptance tests, use `.agents/skills/product-docs/SKILL.md` and search `BookStack-product-docs-mcp` before answering, exploring, planning, proposing, or changing behavior. BookStack is advisory, not authoritative; verify against code, tests, current 1C metadata, and available MCP evidence. Cite relevant page URLs/`updated_at`. On conflict, report `BookStack says`, `Code/MCP currently shows`, and `Decision`.'
-        $pm4Rule = 'For PM4 projects, PM5 product documentation MCP is disabled. Before answering, exploring, planning, proposing, or changing product logic, architecture, workflows, terminology, permissions, reports, integrations, or acceptance tests, rely on the user request, code, tests, current 1C metadata, and available non-product MCP evidence; report product-intent uncertainty explicitly.'
-        $templateBlock = $templateBlock.Replace($productDocsRule, $pm4Rule)
+        $productDocsRulePattern = '(?m)^For PM5 product logic,.*$'
+        if (-not [regex]::IsMatch($templateBlock, $productDocsRulePattern)) {
+            throw "PM5 product-docs rule was not found in USER-RULES overlay; refusing to install PM5 BookStack routing into a PM4 project."
+        }
+        $pm4Rule = 'For PM4 projects, PM5 product documentation MCP is disabled. Before answering, exploring, planning, proposing, or changing product logic, technical or implementation architecture, internal subsystem design, technical decisions/constraints/rationale, workflows, terminology, permissions, reports, integrations, or acceptance tests, rely on the user request, code, tests, current 1C metadata, and available non-product MCP evidence; report product-intent uncertainty explicitly.'
+        $templateBlock = [regex]::Replace($templateBlock, $productDocsRulePattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $pm4Rule }, 1)
     }
     $block = ($startMarker + [Environment]::NewLine + $templateBlock + [Environment]::NewLine + $endMarker)
 
@@ -2078,7 +2330,7 @@ function Test-DevBranchInitializationResumable {
     param([object]$State)
 
     $status = Get-DevBranchInitializationStatus -State $State
-    return (@("initializing", "infobase-copied", "repository-unbound", "launcher-registered", "failed") -contains $status)
+    return (@("initializing", "infobase-copied", "repository-unbound", "launcher-registered", "enterprise-normalization-pending", "failed") -contains $status)
 }
 
 function Set-DevBranchInitializationFields {
@@ -2113,6 +2365,24 @@ function Write-DevBranchInitializationStatusLines {
     )
 
     $status = Get-DevBranchInitializationStatus -State $State
+    $normalizationStatus = Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "legacy-pending"
+    Write-Host "${Indent}Enterprise normalization: $normalizationStatus"
+    $normalizationReason = Get-StateValue -State $State -Name "enterpriseNormalizationReason" -Default ""
+    if ($normalizationReason) {
+        Write-Host "${Indent}Enterprise normalization reason: $normalizationReason"
+    }
+    $normalizationError = Get-StateValue -State $State -Name "enterpriseNormalizationError" -Default ""
+    if ($normalizationError) {
+        Write-Host "${Indent}Enterprise normalization error: $normalizationError"
+    }
+    $configLoadStatus = Get-StateValue -State $State -Name "configLoadStatus" -Default ""
+    if ($configLoadStatus) {
+        Write-Host "${Indent}Last config load: $configLoadStatus / $(Get-StateValue -State $State -Name 'lastConfigLoadMode' -Default '<unknown>')"
+        $partialLog = Get-StateValue -State $State -Name "lastConfigPartialLogPath" -Default ""
+        $fullLog = Get-StateValue -State $State -Name "lastConfigFullFallbackLogPath" -Default ""
+        if ($partialLog) { Write-Host "${Indent}Last partial config log: $partialLog" }
+        if ($fullLog) { Write-Host "${Indent}Last full fallback config log: $fullLog" }
+    }
     if ($status -eq "ready") {
         return
     }
@@ -2965,7 +3235,8 @@ function Invoke-DevBranchPublicationCycle {
     param(
         [object]$State,
         [bool]$PublicationEnabled,
-        [bool]$AttemptAuto
+        [bool]$AttemptAuto,
+        [switch]$SkipDataMcp
     )
 
     if (-not $PublicationEnabled) {
@@ -2986,6 +3257,7 @@ function Invoke-DevBranchPublicationCycle {
                 -Name ([string]$publication.publicationName) `
                 -Dir ([string]$publication.publicationDir)
             Write-Host "Publication URL: $($publication.url)"
+            if ($SkipDataMcp) { return $state }
             return Invoke-DevBranchDataMcpAfterPublication -State $state
         } catch {
             $message = $_.Exception.Message
@@ -3024,6 +3296,7 @@ function Invoke-DevBranchPublicationCycle {
                     -Name ([string]$publication.publicationName) `
                     -Dir ([string]$publication.publicationDir)
                 Write-Host "Publication URL: $($publication.url)"
+                if ($SkipDataMcp) { return $state }
                 return Invoke-DevBranchDataMcpAfterPublication -State $state
             } catch {
                 $message = $_.Exception.Message
@@ -3043,6 +3316,7 @@ function Invoke-DevBranchPublicationCycle {
             -Url $url `
             -Name $publicationName `
             -Dir $publicationDir
+        if ($SkipDataMcp) { return $state }
         return Invoke-DevBranchDataMcpAfterPublication -State $state
     }
 }
@@ -3050,6 +3324,7 @@ function Invoke-DevBranchPublicationCycle {
 function Publish-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "publish-dev-branch"
+    $state = Ensure-DevBranchEnterpriseNormalized -State $state -Reason "legacy-preflight"
     $state = Invoke-DevBranchPublicationCycle -State $state -PublicationEnabled $true -AttemptAuto (Get-WebPublishAuto)
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
@@ -3418,7 +3693,17 @@ function Initialize-DevBranchRuntime {
         @{ name = "unsafeActionProtectionConfirmedAt"; value = "" },
         @{ name = "unsafeActionProtectionUser"; value = "" },
         @{ name = "createdAt"; value = $now },
-        @{ name = "lastLogPath"; value = "" }
+        @{ name = "lastLogPath"; value = "" },
+        @{ name = "enterpriseNormalizationStatus"; value = "pending" },
+        @{ name = "enterpriseNormalizationReason"; value = "branch-copy" },
+        @{ name = "enterpriseNormalizationError"; value = "" },
+        @{ name = "enterpriseNormalizedAt"; value = "" },
+        @{ name = "configLoadStatus"; value = "" },
+        @{ name = "lastConfigLoadMode"; value = "" },
+        @{ name = "lastConfigPartialLogPath"; value = "" },
+        @{ name = "lastConfigFullFallbackLogPath"; value = "" },
+        @{ name = "lastConfigPartialError"; value = "" },
+        @{ name = "lastConfigFullFallbackError"; value = "" }
     )) {
         if (-not $stateHash.ContainsKey($default.name)) {
             $stateHash[$default.name] = $default.value
@@ -3434,6 +3719,24 @@ function Initialize-DevBranchRuntime {
     }
 
     try {
+        if ($currentStatus -eq "enterprise-normalization-pending") {
+            Write-Host "Resuming final Enterprise normalization for existing development branch copy: $DevBranchInfoBasePath"
+            $state = Read-DevBranchStateFile -Path $statePath
+            Ensure-DevBranchEnterpriseNormalized -State $state -Reason "branch-copy" | Out-Null
+            $normalizedState = Read-DevBranchStateFile -Path $statePath
+            $normalizedHash = ConvertTo-Agent1cHashtable $normalizedState
+            [void]$normalizedHash.Remove("statePath")
+            [void]$normalizedHash.Remove("stateProjectRoot")
+            $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $normalizedHash -Status "ready"
+            $state = Read-DevBranchStateFile -Path $statePath
+            if (Get-StateValue -State $state -Name "publicationUrl" -Default "") {
+                $state = Invoke-DevBranchDataMcpAfterPublication -State $state
+            }
+            Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
+            Sync-KiloItlCommandSurface
+            return
+        }
+
         if ($kind -eq "file") {
             if (Test-Path -LiteralPath $DevBranchInfoBasePath) {
                 if ($null -eq $existingState) {
@@ -3523,7 +3826,7 @@ function Initialize-DevBranchRuntime {
         Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
         $state = Invoke-DevBranchDefaultMcpSetup -State $state
         Invoke-DevBranchVibecoding1cMcpInheritance -MainProjectRoot $MainProjectRoot
-        $state = Invoke-DevBranchPublicationCycle -State $state -PublicationEnabled $publicationEnabled -AttemptAuto $publicationAuto
+        $state = Invoke-DevBranchPublicationCycle -State $state -PublicationEnabled $publicationEnabled -AttemptAuto $publicationAuto -SkipDataMcp
         $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
         if ($publicationUrl) {
             Write-Host "Publication URL: $publicationUrl"
@@ -3534,6 +3837,17 @@ function Initialize-DevBranchRuntime {
             }
         }
         $state = Initialize-DevBranchEventLogBaseline -State $state
+        $pendingHash = ConvertTo-Agent1cHashtable $state
+        [void]$pendingHash.Remove("statePath")
+        [void]$pendingHash.Remove("stateProjectRoot")
+        $pendingHash["enterpriseNormalizationStatus"] = "pending"
+        $pendingHash["enterpriseNormalizationReason"] = "branch-copy"
+        $pendingHash["enterpriseNormalizationError"] = ""
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $pendingHash -Status "enterprise-normalization-pending"
+        $currentStatus = "enterprise-normalization-pending"
+        $state = Read-DevBranchStateFile -Path $statePath
+        Ensure-DevBranchEnterpriseNormalized -State $state -Reason "branch-copy" | Out-Null
+        $state = Read-DevBranchStateFile -Path $statePath
         $finalHash = @{}
         $finalStateHash = ConvertTo-Agent1cHashtable $state
         foreach ($key in $finalStateHash.Keys) {
@@ -3544,11 +3858,14 @@ function Initialize-DevBranchRuntime {
         }
         $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $finalHash -Status "ready"
         $state = Read-DevBranchStateFile -Path $statePath
+        if (Get-StateValue -State $state -Name "publicationUrl" -Default "") {
+            $state = Invoke-DevBranchDataMcpAfterPublication -State $state
+        }
         Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
         Sync-KiloItlCommandSurface
     } catch {
         $message = $_.Exception.Message
-        $statusForError = if ($currentStatus -and @("infobase-copied", "repository-unbound", "launcher-registered") -contains $currentStatus) { $currentStatus } else { "failed" }
+        $statusForError = if ($currentStatus -and @("infobase-copied", "repository-unbound", "launcher-registered", "enterprise-normalization-pending") -contains $currentStatus) { $currentStatus } else { "failed" }
         $failureHash = $stateHash
         if (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue) {
             try {
@@ -3749,7 +4066,7 @@ function Update-DevBranchBase {
     if ((Get-DevBranchKind -State $state) -eq "extension") {
         $extensionName = Require-DevBranchExtensionName -State $state
         $extensionExportPath = Assert-ExtensionFilesReady -State $state
-        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath $extensionExportPath -ContentKind "extension" -ExtensionName $extensionName
+        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath $extensionExportPath -ContentKind "extension" -ExtensionName $extensionName -Mode $ConfigLoadMode
         $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "extension"
         Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch extension base was updated." -CurrentCommit $loadResult.currentCommit
@@ -3757,7 +4074,7 @@ function Update-DevBranchBase {
         $updatedState = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "development branch extension base update"
         Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch extension"
     } else {
-        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
+        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration" -Mode $ConfigLoadMode
         $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
         Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch configuration base was updated." -CurrentCommit $loadResult.currentCommit
@@ -3785,7 +4102,7 @@ function Refresh-DevBranch {
     }
 
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
-    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
+    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration" -Mode $ConfigLoadMode
     $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
     Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
     $updates["lastRefreshAt"] = (Get-Date).ToString("o")
@@ -3816,6 +4133,79 @@ function Dump-DevBranchExtension {
     Sync-DevBranchContextToDotEnv -State $updatedState
     Write-Host "Extension dumped: $($dumpResult.exportPath)"
     Write-Host "Last 1C log: $($dumpResult.logPath)"
+}
+
+function Get-ConfigurationRootComment {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Root Configuration.xml was not found: $Path"
+    }
+    $document = New-Object System.Xml.XmlDocument
+    $document.PreserveWhitespace = $true
+    $document.Load($Path)
+    $nodes = @($document.SelectNodes("//*[local-name()='Configuration']/*[local-name()='Properties']/*[local-name()='Comment']"))
+    if ($nodes.Count -ne 1) {
+        throw "Expected exactly one root Configuration/Properties/Comment node in '$Path'; found $($nodes.Count)."
+    }
+    return [string]$nodes[0].InnerText
+}
+
+function Invoke-ReleaseE2EConfigRoundtrip {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "release-e2e-config-roundtrip"
+    Assert-DevBranchKind -State $state -Expected "configuration"
+
+    $exportPath = Assert-ExportPathInsideProject (Get-ExportPath)
+    $sourceConfigurationPath = Join-Path $exportPath "Configuration.xml"
+    $sourceParentConfigurationsPath = Join-Path $exportPath "Ext\ParentConfigurations.bin"
+    if (-not (Test-Path -LiteralPath $sourceParentConfigurationsPath -PathType Leaf)) {
+        throw "Release E2E requires Ext/ParentConfigurations.bin in the configuration dump: $sourceParentConfigurationsPath"
+    }
+    $expectedComment = Get-ConfigurationRootComment -Path $sourceConfigurationPath
+
+    $roundtripRoot = Resolve-ProjectPath ".agent-1c/release-e2e-roundtrip"
+    New-Item -ItemType Directory -Force -Path $roundtripRoot | Out-Null
+    $dumpPath = Join-Path $roundtripRoot ((Get-Date -Format "yyyyMMdd-HHmmss-fff") + "-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+    New-Item -ItemType Directory -Force -Path $dumpPath | Out-Null
+    $evidencePath = Resolve-ProjectPath "build/test-results/release-e2e/config-roundtrip.json"
+    $passed = $false
+    try {
+        Invoke-Designer `
+            -InfoBasePath $state.devBranchInfoBasePath `
+            -InfoBaseKind $state.infoBaseKind `
+            -DesignerArgs @("/DumpConfigToFiles", $dumpPath, "-Format", "Hierarchical") | Out-Null
+
+        $dumpedConfigurationPath = Join-Path $dumpPath "Configuration.xml"
+        $dumpedParentConfigurationsPath = Join-Path $dumpPath "Ext\ParentConfigurations.bin"
+        if (-not (Test-Path -LiteralPath $dumpedParentConfigurationsPath -PathType Leaf)) {
+            throw "Roundtrip dump did not produce ParentConfigurations.bin: $dumpedParentConfigurationsPath"
+        }
+        $actualComment = Get-ConfigurationRootComment -Path $dumpedConfigurationPath
+        if ($actualComment -cne $expectedComment) {
+            throw "Partial root Configuration.xml roundtrip changed Comment. Expected '$expectedComment', actual '$actualComment'."
+        }
+
+        $evidence = [ordered]@{
+            schemaVersion = 1
+            checkedAt = [DateTime]::UtcNow.ToString("o")
+            devBranchName = [string](Get-StateValue -State $state -Name "devBranchName" -Default "")
+            expectedComment = $expectedComment
+            actualComment = $actualComment
+            sourceParentConfigurationsPath = $sourceParentConfigurationsPath
+            parentConfigurationsPresentInDump = $true
+            dumpedConfigurationSha256 = (Get-FileHash -LiteralPath $dumpedConfigurationPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            dumpedParentConfigurationsSha256 = (Get-FileHash -LiteralPath $dumpedParentConfigurationsPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            designerLogPath = $script:LastLogPath
+        }
+        Write-Utf8Text -Path $evidencePath -Value (($evidence | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
+        $passed = $true
+        Write-Host "Release E2E partial Configuration.xml roundtrip passed: $evidencePath"
+    } finally {
+        if ($passed -and (Test-Path -LiteralPath $dumpPath -PathType Container)) {
+            Remove-Item -LiteralPath $dumpPath -Recurse -Force
+        }
+    }
 }
 
 function Show-WorkflowStatus {
@@ -3963,9 +4353,9 @@ function Export-DevBranchResult {
     if ($kind -eq "extension") {
         $extensionName = Require-DevBranchExtensionName -State $state
         $extensionExportPath = Assert-ExtensionFilesReady -State $state
-        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath $extensionExportPath -ContentKind "extension" -ExtensionName $extensionName
+        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath $extensionExportPath -ContentKind "extension" -ExtensionName $extensionName -Mode $ConfigLoadMode
     } else {
-        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
+        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration" -Mode $ConfigLoadMode
     }
     $devBranchCommit = Get-CurrentCommit
     $masterCommit = Get-GitCommitOrEmpty (Get-MasterBranch)
@@ -4033,14 +4423,14 @@ function Close-DevBranch {
     Sync-DevBranchContextToDotEnv -State $state
 
     $kind = Get-DevBranchKind -State $state
-    $configLoadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration"
+    $configLoadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration" -Mode $ConfigLoadMode
     $updates = New-LoadStateUpdates -LoadResult $configLoadResult -ContentKind "configuration"
     Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $configLoadResult -Updates $updates
     Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch was refreshed and updated before close." -CurrentCommit $configLoadResult.currentCommit
     if ($kind -eq "extension") {
         $extensionName = Require-DevBranchExtensionName -State $state
         $extensionExportPath = Assert-ExtensionFilesReady -State $state
-        $extensionLoadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath $extensionExportPath -ContentKind "extension" -ExtensionName $extensionName
+        $extensionLoadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath $extensionExportPath -ContentKind "extension" -ExtensionName $extensionName -Mode $ConfigLoadMode
         $extensionUpdates = New-LoadStateUpdates -LoadResult $extensionLoadResult -ContentKind "extension"
         Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $extensionLoadResult -Updates $extensionUpdates
         foreach ($key in $extensionUpdates.Keys) {

@@ -12,6 +12,18 @@
         $HelperText = $context.HelperText
         $LauncherText = $context.LauncherText
         $McpHostText = $context.McpHostText
+
+        function Copy-AutoUpdateToolFixture {
+            param([string]$TargetRoot)
+            $target = Join-Path $TargetRoot ".agents\skills\1c-workflow\tools\auto-update"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\tools\auto-update") -Destination $target -Recurse
+
+            $fakePlatform = Join-Path $TargetRoot "source-base\test-platform\1cv8.cmd"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $fakePlatform) | Out-Null
+            Set-Content -LiteralPath $fakePlatform -Encoding ASCII -Value "@exit /b 0"
+            return $fakePlatform
+        }
     }
     It "normalizes existing paths and not-yet-created children through the nearest existing ancestor" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-path-normalization-" + [guid]::NewGuid().ToString("N"))
@@ -144,6 +156,7 @@
 
             $enterpriseCalls = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-SourceInfoBasePath { return "C:\bases\source" }
 
                 $script:EnterpriseCalls = @()
                 function Invoke-Enterprise {
@@ -235,6 +248,7 @@
         try {
             & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                function Get-SourceInfoBasePath { return "C:\bases\source" }
 
                 function Invoke-DevBranchEnterpriseAutoUpdate {
                     param([object]$State)
@@ -248,13 +262,61 @@
                     listFile = "C:\logs\list.txt"
                     lastLogPath = "C:\logs\designer.log"
                 }
-                Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State ([pscustomobject]@{}) -LoadResult $loadResult -Updates $updates
+                $state = [pscustomobject]@{ devBranchInfoBasePath = "C:\bases\branch"; infoBaseKind = "file" }
+                Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
             }
         } catch {
             $errorText = $_.Exception.Message
         }
 
         $errorText | Should -Match "auto-update failed"
+    }
+
+    It "normalizes a legacy branch once and rejects the source infobase" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:Calls = 0
+            function Get-SourceInfoBasePath { return "C:\bases\source" }
+            function Invoke-DevBranchEnterpriseAutoUpdate {
+                param([object]$State)
+                $script:Calls++
+                [pscustomobject]@{ epfPath = "C:\tools\auto.epf"; logPath = "C:\logs\enterprise.log"; updatedAt = "2026-07-13T12:00:00+03:00" }
+            }
+            $updates = @{}
+            $state = [pscustomobject]@{ devBranchInfoBasePath = "C:\bases\branch"; infoBaseKind = "file" }
+            Ensure-DevBranchEnterpriseNormalized -State $state -Reason legacy-preflight -Updates $updates 6>$null | Out-Null
+            [pscustomobject]@{ calls = $script:Calls; updates = $updates }
+        }
+        $result.calls | Should -Be 1
+        $result.updates.enterpriseNormalizationStatus | Should -Be "passed"
+        $result.updates.enterpriseNormalizationReason | Should -Be "legacy-preflight"
+        $result.updates.lastEnterpriseAutoUpdateLogPath | Should -Be "C:\logs\enterprise.log"
+
+        $errorText = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-SourceInfoBasePath { return "C:\bases\source" }
+            try {
+                Ensure-DevBranchEnterpriseNormalized -State ([pscustomobject]@{ devBranchInfoBasePath = "C:\bases\source"; infoBaseKind = "file" }) -Reason branch-copy -Updates @{} | Out-Null
+            } catch { $_.Exception.Message }
+        }
+        $errorText | Should -Match "target is the source infobase"
+    }
+
+    It "keeps Enterprise normalization as the final resumable branch initialization step" {
+        $initStart = $HelperText.IndexOf('function Initialize-DevBranchRuntime')
+        $initBlock = $HelperText.Substring($initStart, $HelperText.IndexOf('function Get-ResumableDevBranchState', $initStart) - $initStart)
+        $baselineIndex = $initBlock.IndexOf('Initialize-DevBranchEventLogBaseline')
+        $pendingIndex = $initBlock.IndexOf('-Status "enterprise-normalization-pending"')
+        $normalizeIndex = $initBlock.LastIndexOf('Ensure-DevBranchEnterpriseNormalized -State $state -Reason "branch-copy"')
+        $readyIndex = $initBlock.IndexOf('-Status "ready"', $pendingIndex)
+        $dataMcpIndex = $initBlock.IndexOf('Invoke-DevBranchDataMcpAfterPublication', $readyIndex)
+        $baselineIndex | Should -BeGreaterThan -1
+        $pendingIndex | Should -BeGreaterThan $baselineIndex
+        $normalizeIndex | Should -BeGreaterThan $pendingIndex
+        $readyIndex | Should -BeGreaterThan $normalizeIndex
+        $dataMcpIndex | Should -BeGreaterThan $readyIndex
+        $initBlock | Should -Match 'Resuming final Enterprise normalization for existing development branch copy'
+        $initBlock | Should -Match 'enterpriseNormalizationStatus'
     }
 
     It "collects config load paths from Git without losing Cyrillic names" {
@@ -364,7 +426,7 @@
         }
     }
 
-    It "uses a full files load when the root Configuration.xml changed" {
+    It "keeps root Configuration.xml in the exact partial load list" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
 
@@ -400,7 +462,8 @@
         }
 
         $result.args | Should -Contain "/LoadConfigFromFiles"
-        $result.args | Should -Not -Contain "-listFile"
+        $result.args | Should -Contain "-listFile"
+        $result.args | Should -Contain "C:\logs\changed-files.txt"
         $result.args | Should -Contain "/UpdateDBCfg"
         $result.listFile | Should -Be "C:\logs\changed-files.txt"
     }
@@ -440,6 +503,163 @@
         $result | Should -Contain "-listFile"
         $result | Should -Contain "C:\logs\changed-files.txt"
         $result | Should -Contain "/UpdateDBCfg"
+    }
+
+    It "falls back once to full load only after a partial Designer failure" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:DesignerCalls = @()
+            function Get-ConfigLoadChangeSet {
+                [pscustomobject]@{ files = @("Configuration.xml", "CommonModules\Модуль.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\project\src\cf" }
+            }
+            function New-ConfigLoadListFile { return "C:\logs\changed-files.txt" }
+            function Invoke-Designer {
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                $script:DesignerCalls += , @($DesignerArgs)
+                if ($script:DesignerCalls.Count -eq 1) {
+                    $script:LastLogPath = "C:\logs\partial.log"
+                    $script:LastNativeProcessStarted = $true
+                    throw "partial failed"
+                }
+                $script:LastLogPath = "C:\logs\full.log"
+            }
+
+            $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind "file" -State ([pscustomobject]@{}) -ExportPath "src/cf" 3>$null 6>$null
+            [pscustomobject]@{ calls = @($script:DesignerCalls); load = $load }
+        }
+
+        $result.calls.Count | Should -Be 2
+        $result.calls[0] | Should -Contain "-listFile"
+        $result.calls[1] | Should -Not -Contain "-listFile"
+        $result.load.loadModeUsed | Should -Be "full-fallback"
+        $result.load.configLoadStatus | Should -Be "fallback-succeeded"
+        $result.load.partialLogPath | Should -Be "C:\logs\partial.log"
+        $result.load.fullFallbackLogPath | Should -Be "C:\logs\full.log"
+    }
+
+    It "records both logs and leaves the loaded commit unchanged when fallback also fails" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:DesignerCallCount = 0
+            $script:StateUpdates = @{}
+            function Get-ConfigLoadChangeSet {
+                [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\project\src\cf" }
+            }
+            function New-ConfigLoadListFile { return "C:\logs\changed-files.txt" }
+            function Invoke-Designer {
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                $script:DesignerCallCount++
+                $script:LastLogPath = if ($script:DesignerCallCount -eq 1) { "C:\logs\partial.log" } else { "C:\logs\full.log" }
+                $script:LastNativeProcessStarted = $true
+                throw "designer failure $script:DesignerCallCount"
+            }
+            function Update-DevBranchState {
+                param([object]$State, [hashtable]$Updates)
+                $script:StateUpdates = $Updates
+            }
+
+            $message = ""
+            try {
+                Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind "file" -State ([pscustomobject]@{}) -ExportPath "src/cf" 3>$null 6>$null | Out-Null
+            } catch { $message = $_.Exception.Message }
+            [pscustomobject]@{ calls = $script:DesignerCallCount; updates = $script:StateUpdates; message = $message }
+        }
+
+        $result.calls | Should -Be 2
+        $result.updates.configLoadStatus | Should -Be "fallback-failed"
+        $result.updates.lastConfigPartialLogPath | Should -Be "C:\logs\partial.log"
+        $result.updates.lastConfigFullFallbackLogPath | Should -Be "C:\logs\full.log"
+        $result.updates.ContainsKey("lastConfigBaseUpdatedCommit") | Should -BeFalse
+        $result.message | Should -Match "intermediate state"
+    }
+
+    It "supports diagnostic Partial and emergency Full modes without crossing modes" {
+        $partial = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:Calls = @()
+            function Invoke-Designer {
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                $script:Calls += , @($DesignerArgs)
+                $script:LastNativeProcessStarted = $true
+                throw "partial failed"
+            }
+            try { Invoke-ConfigLoadWithFallback -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -AbsoluteExportPath "C:\src" -ListFilePath "C:\list.txt" -FileCount 1 -Mode Partial 6>$null | Out-Null } catch {}
+            [pscustomobject]@{ calls = @($script:Calls) }
+        }
+        $partial.calls.Count | Should -Be 1
+        $partial.calls[0] | Should -Contain "-listFile"
+
+        $full = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:Calls = @()
+            function Invoke-Designer {
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                $script:Calls += , @($DesignerArgs)
+                $script:LastLogPath = "C:\logs\full.log"
+            }
+            $load = Invoke-ConfigLoadWithFallback -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -AbsoluteExportPath "C:\src" -ListFilePath "C:\list.txt" -FileCount 1 -Mode Full 6>$null
+            [pscustomobject]@{ calls = @($script:Calls); load = $load }
+        }
+        $full.calls.Count | Should -Be 1
+        $full.calls[0] | Should -Not -Contain "-listFile"
+        $full.load.loadModeUsed | Should -Be "full"
+    }
+
+    It "does not fallback when Designer preparation fails before a process starts and Full does not require a list file" {
+        $auto = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:Calls = 0
+            function Invoke-Designer {
+                $script:Calls++
+                throw "platform path is missing"
+            }
+            $message = ""
+            try {
+                Invoke-ConfigLoadWithFallback -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -AbsoluteExportPath "C:\src" -ListFilePath "C:\list.txt" -FileCount 1 -Mode Auto 6>$null | Out-Null
+            } catch { $message = $_.Exception.Message }
+            [pscustomobject]@{ calls = $script:Calls; message = $message }
+        }
+        $auto.calls | Should -Be 1
+        $auto.message | Should -Match "platform path is missing"
+
+        $full = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:Calls = 0
+            function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" } }
+            function New-ConfigLoadListFile { throw "list must not be created" }
+            function Invoke-Designer { param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs); $script:Calls++; $script:LastLogPath = "C:\logs\full.log" }
+            $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -ExportPath "src/cf" -Mode Full 6>$null
+            [pscustomobject]@{ calls = $script:Calls; listFile = $load.listFile; mode = $load.loadModeUsed }
+        }
+        $full.calls | Should -Be 1
+        $full.listFile | Should -Be ""
+        $full.mode | Should -Be "full"
+    }
+
+    It "does not invoke Designer or full fallback for no-op or list preparation errors" {
+        $noOpCalls = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:DesignerCallCount = 0
+            function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @(); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" } }
+            function Invoke-Designer { $script:DesignerCallCount++ }
+            $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -ExportPath "src/cf" 6>$null
+            [pscustomobject]@{ calls = $script:DesignerCallCount; loaded = $load.loaded }
+        }
+        $noOpCalls.calls | Should -Be 0
+        $noOpCalls.loaded | Should -BeFalse
+
+        $prep = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:DesignerCallCount = 0
+            function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" } }
+            function New-ConfigLoadListFile { throw "list preparation failed" }
+            function Invoke-Designer { $script:DesignerCallCount++ }
+            $message = ""
+            try { Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -ExportPath "src/cf" 6>$null | Out-Null } catch { $message = $_.Exception.Message }
+            [pscustomobject]@{ calls = $script:DesignerCallCount; message = $message }
+        }
+        $prep.calls | Should -Be 0
+        $prep.message | Should -Match "list preparation failed"
     }
 
     It "reports detailed diagnostics when Git path collection fails" {
@@ -543,6 +763,7 @@
                     -DevBranch "itldev/branch3" `
                     -RunStatusPath $statusPath `
                     -RunLogPath $logPath `
+                    -ConfigLoadMode Full `
                     -InstallVanessaIfMissing `
                     -AllowUnverifiedClose *> $null
                 Get-Agent1cReexecArguments
@@ -560,6 +781,8 @@
             $args | Should -Contain $statusPath
             $args | Should -Contain "-RunLogPath"
             $args | Should -Contain $logPath
+            $args | Should -Contain "-ConfigLoadMode"
+            $args | Should -Contain "Full"
             $args | Should -Contain "-InstallVanessaIfMissing"
             $args | Should -Contain "-AllowUnverifiedClose"
             $args | Should -Not -Contain "-AllowUnverifiedResult"
@@ -671,6 +894,73 @@
                 $result.legacyErrorCount | Should -Be 1
                 (Test-Path -LiteralPath $result.reportPath -PathType Leaf) | Should -Be $true
                 (Get-Content -Encoding UTF8 -Raw $result.reportPath) | Should -Match "New error"
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "streams and caches event-log signatures per rotated segment" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-cache-test-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            $logDir = Join-Path $tempRoot "ib\1Cv8Log"
+            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{1}"
+            $segment1 = Join-Path $logDir "20260703.lgp"
+            Set-Content -LiteralPath $segment1 -Encoding UTF8 -Value @(
+                '{20260703100000,E,"_$PerformError$_","Catalog.Items",',
+                '"Item 1","Legacy error"}',
+                '{20260703100500,W,"_$PerformError$_","Catalog.Items","Item 1","Warning only"}'
+            )
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    devBranch = "itldev/current-branch"
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "ib")
+                    stateProjectRoot = $tempRoot
+                    mainWorktreePath = $tempRoot
+                }
+
+                $first = Read-DevBranchEventLogBaselineWithCache -State $state
+                $first.cacheStatus | Should -Be "rebuilt"
+                $first.errorCount | Should -Be 1
+                $first.signatureCount | Should -Be 1
+                Test-Path -LiteralPath $first.cachePath -PathType Leaf | Should -BeTrue
+
+                $hit = Read-DevBranchEventLogBaselineWithCache -State $state
+                $hit.cacheStatus | Should -Be "hit"
+                $hit.signatureCount | Should -Be 1
+
+                Add-Content -LiteralPath $segment1 -Encoding UTF8 -Value '{20260703101000,E,"_$PerformError$_","Catalog.Items","Item 2","Changed error"}'
+                (Get-Item -LiteralPath $segment1).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddSeconds(2)
+                $changed = Read-DevBranchEventLogBaselineWithCache -State $state
+                $changed.cacheStatus | Should -Be "updated"
+                $changed.errorCount | Should -Be 2
+                $changed.signatureCount | Should -Be 2
+
+                $segment2 = Join-Path $logDir "20260704.lgp"
+                Set-Content -LiteralPath $segment2 -Encoding UTF8 -Value '{20260704100000,E,"_$PerformError$_","Catalog.Items","Item 3","Rotated error"}'
+                $added = Read-DevBranchEventLogBaselineWithCache -State $state
+                $added.cacheStatus | Should -Be "updated"
+                $added.errorCount | Should -Be 3
+
+                Remove-Item -LiteralPath $segment1 -Force
+                $rotated = Read-DevBranchEventLogBaselineWithCache -State $state
+                $rotated.cacheStatus | Should -Be "updated"
+                $rotated.errorCount | Should -Be 1
+                $rotated.signatureCount | Should -Be 1
+
+                Set-Content -LiteralPath $rotated.cachePath -Encoding UTF8 -Value "{broken"
+                $rebuilt = Read-DevBranchEventLogBaselineWithCache -State $state 6>$null
+                $rebuilt.cacheStatus | Should -Be "rebuilt"
+                $rebuilt.errorCount | Should -Be 1
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -1786,13 +2076,15 @@ if (`$?) { exit 0 } else { exit 1 }
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8.1CD") -Value "stub" -Encoding ASCII
             New-Item -ItemType Directory -Force -Path (Join-Path $sourceBase "1Cv8Log") | Out-Null
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
-            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`nappdata/`n.kilo/commands/itl*.md`n" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`nappdata/`n.agent-1c/`n.kilo/commands/itl*.md`n" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Value '{"tools":["kilocode"],"files":{}}' -Encoding UTF8
             $templateTarget = Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Destination $templateTarget -Recurse
+            $fakePlatform = Copy-AutoUpdateToolFixture -TargetRoot $tempRoot
             $devEnv = @(
+                "PLATFORM_PATH=$fakePlatform",
                 "INFOBASE_KIND=file",
                 "SOURCE_USES_REPOSITORY=false",
                 "SOURCE_INFOBASE_PATH=$sourceBase",
@@ -1915,12 +2207,14 @@ if (`$?) { exit 0 } else { exit 1 }
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8.1CD") -Value "stub" -Encoding ASCII
             New-Item -ItemType Directory -Force -Path (Join-Path $sourceBase "1Cv8Log") | Out-Null
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
-            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`nappdata/`n" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`nappdata/`n.agent-1c/`n" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
             $templateTarget = Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Destination $templateTarget -Recurse
+            $fakePlatform = Copy-AutoUpdateToolFixture -TargetRoot $tempRoot
             $devEnv = @(
+                "PLATFORM_PATH=$fakePlatform",
                 "INFOBASE_KIND=file",
                 "SOURCE_USES_REPOSITORY=false",
                 "SOURCE_INFOBASE_PATH=$sourceBase",
@@ -2016,12 +2310,14 @@ if (`$?) { exit 0 } else { exit 1 }
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8.1CD") -Value "stub" -Encoding ASCII
             New-Item -ItemType Directory -Force -Path (Join-Path $sourceBase "1Cv8Log") | Out-Null
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
-            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`nregistry/`n.agent-1c/mcp/`n" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`nregistry/`n.agent-1c/`n" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
             $templateTarget = Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Destination $templateTarget -Recurse
+            $fakePlatform = Copy-AutoUpdateToolFixture -TargetRoot $tempRoot
             $devEnv = @(
+                "PLATFORM_PATH=$fakePlatform",
                 "INFOBASE_KIND=file",
                 "SOURCE_USES_REPOSITORY=false",
                 "SOURCE_INFOBASE_PATH=$sourceBase",
@@ -2250,12 +2546,14 @@ if (`$?) { exit 0 } else { exit 1 }
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8.1CD") -Value "stub" -Encoding ASCII
             New-Item -ItemType Directory -Force -Path (Join-Path $sourceBase "1Cv8Log") | Out-Null
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
-            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`n" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`n.agent-1c/`n" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
             $templateTarget = Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Destination $templateTarget -Recurse
+            $fakePlatform = Copy-AutoUpdateToolFixture -TargetRoot $tempRoot
             $devEnv = @(
+                "PLATFORM_PATH=$fakePlatform",
                 "INFOBASE_KIND=file",
                 "SOURCE_USES_REPOSITORY=false",
                 "SOURCE_INFOBASE_PATH=$sourceBase",

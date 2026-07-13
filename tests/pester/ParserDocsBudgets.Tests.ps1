@@ -559,6 +559,11 @@
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($baselinePath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($baselinePath))
         $HelperText | Should -Match ([regex]::Escape($baselinePath))
+
+        $cachePath = ".agent-1c/event-log-signature-cache/"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($cachePath))
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($cachePath))
+        $HelperText | Should -Match ([regex]::Escape($cachePath))
     }
 
     It "ignores monitored run status and log artifacts" {

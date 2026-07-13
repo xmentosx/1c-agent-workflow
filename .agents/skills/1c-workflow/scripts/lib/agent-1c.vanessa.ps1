@@ -493,6 +493,63 @@ function Get-OneCBracketRecords {
     return @($records)
 }
 
+function Invoke-OneCBracketRecordStream {
+    param(
+        [string]$Path,
+        [scriptblock]$OnRecord
+    )
+
+    $reader = $null
+    $builder = New-Object System.Text.StringBuilder
+    $depth = 0
+    $inString = $false
+    try {
+        $reader = New-Object System.IO.StreamReader($Path, $true)
+        while ($null -ne ($line = $reader.ReadLine())) {
+            for ($i = 0; $i -lt $line.Length; $i++) {
+                $ch = $line[$i]
+                if ($depth -eq 0 -and $ch -ne '{') {
+                    continue
+                }
+
+                [void]$builder.Append($ch)
+                if ($inString) {
+                    if ($ch -eq '"') {
+                        if (($i + 1) -lt $line.Length -and $line[$i + 1] -eq '"') {
+                            [void]$builder.Append($line[$i + 1])
+                            $i++
+                        } else {
+                            $inString = $false
+                        }
+                    }
+                    continue
+                }
+
+                if ($ch -eq '"') {
+                    $inString = $true
+                } elseif ($ch -eq '{') {
+                    $depth++
+                } elseif ($ch -eq '}') {
+                    $depth--
+                    if ($depth -eq 0) {
+                        & $OnRecord $builder.ToString()
+                        [void]$builder.Clear()
+                    }
+                }
+            }
+            if ($depth -gt 0) {
+                [void]$builder.Append("`n")
+            }
+        }
+    } finally {
+        if ($null -ne $reader) { $reader.Dispose() }
+    }
+
+    if ($depth -ne 0) {
+        throw "Incomplete bracket record in 1C event log segment: $Path"
+    }
+}
+
 function Get-OneCBracketTokens {
     param([string]$Text)
 
@@ -579,7 +636,12 @@ function New-EventLogErrorSignature {
 }
 
 function ConvertFrom-OneCEventLogRecord {
-    param([string]$RecordText)
+    param(
+        [string]$RecordText,
+        [hashtable]$WantedLevels = $null,
+        [Nullable[datetime]]$StartTime = $null,
+        [Nullable[datetime]]$EndTime = $null
+    )
 
     $tokens = @(Get-OneCBracketTokens -Text $RecordText)
     if ($tokens.Count -eq 0) {
@@ -614,6 +676,15 @@ function ConvertFrom-OneCEventLogRecord {
     }
     if (-not $level) {
         $level = "Info"
+    }
+    if ($null -ne $WantedLevels -and $WantedLevels.Count -gt 0 -and -not $WantedLevels.ContainsKey($level)) {
+        return $null
+    }
+    if ($null -ne $StartTime -and $date -lt $StartTime) {
+        return $null
+    }
+    if ($null -ne $EndTime -and $date -gt $EndTime) {
+        return $null
     }
 
     $quoted = @($tokens | Where-Object { $_.quoted -and -not [string]::IsNullOrWhiteSpace([string]$_.value) } | ForEach-Object { [string]$_.value })
@@ -666,7 +737,8 @@ function Read-OneCEventLogDirect {
         [object]$State,
         [Nullable[datetime]]$StartTime = $null,
         [Nullable[datetime]]$EndTime = $null,
-        [string[]]$Levels = (Get-VanessaEventLogLevels)
+        [string[]]$Levels = (Get-VanessaEventLogLevels),
+        [string[]]$SegmentPaths = @()
     )
 
     $logDirectory = Get-DevBranchEventLogDirectory -State $State
@@ -675,7 +747,13 @@ function Read-OneCEventLogDirect {
     }
 
     $lgfPath = Join-Path $logDirectory "1Cv8.lgf"
-    $lgpFiles = @(Get-ChildItem -LiteralPath $logDirectory -File -Filter "*.lgp" -ErrorAction SilentlyContinue | Sort-Object Name)
+    $lgpFiles = @(
+        if (@($SegmentPaths).Count -gt 0) {
+            $SegmentPaths | ForEach-Object { Get-Item -LiteralPath $_ -ErrorAction Stop } | Sort-Object Name
+        } else {
+            Get-ChildItem -LiteralPath $logDirectory -File -Filter "*.lgp" -ErrorAction SilentlyContinue | Sort-Object Name
+        }
+    )
     $lgdFiles = @(Get-ChildItem -LiteralPath $logDirectory -File -Filter "*.lgd" -ErrorAction SilentlyContinue)
     if (-not (Test-Path -LiteralPath $lgfPath -PathType Leaf -ErrorAction SilentlyContinue) -and $lgdFiles.Count -gt 0) {
         throw "Unsupported SQLite 1C event log format (.lgd) in '$logDirectory'. ITL verify requires sequential 8.3.22+ .lgf/.lgp event logs."
@@ -696,25 +774,175 @@ function Read-OneCEventLogDirect {
 
     $events = New-Object System.Collections.ArrayList
     foreach ($file in $lgpFiles) {
-        $text = Read-SharedTextFile -Path $file.FullName
-        foreach ($record in Get-OneCBracketRecords -Text $text) {
-            $event = ConvertFrom-OneCEventLogRecord -RecordText $record
+        $processRecord = {
+            param($record)
+            $event = ConvertFrom-OneCEventLogRecord -RecordText $record -WantedLevels $wantedLevels -StartTime $StartTime -EndTime $EndTime
             if ($null -eq $event) {
-                continue
-            }
-            if ($wantedLevels.Count -gt 0 -and -not $wantedLevels.ContainsKey($event.level)) {
-                continue
-            }
-            if ($null -ne $StartTime -and $event.date -lt $StartTime) {
-                continue
-            }
-            if ($null -ne $EndTime -and $event.date -gt $EndTime) {
-                continue
+                return
             }
             [void]$events.Add($event)
         }
+        Invoke-OneCBracketRecordStream -Path $file.FullName -OnRecord $processRecord
     }
     return @($events)
+}
+
+function Get-DevBranchEventLogSignatureCacheRoot {
+    param([object]$State)
+
+    # Installed-project cache path contract: .agent-1c/event-log-signature-cache/
+    $mainRoot = [string](Get-StateValue -State $State -Name "mainWorktreePath" -Default "")
+    if (-not $mainRoot) {
+        $mainRoot = [string](Get-StateValue -State $State -Name "stateProjectRoot" -Default $script:ProjectRoot)
+    }
+    return (Join-Path $mainRoot ".agent-1c\event-log-signature-cache")
+}
+
+function Get-DevBranchEventLogSourceKey {
+    param([object]$State)
+
+    $logDirectory = Get-DevBranchEventLogDirectory -State $State
+    $lgfPath = Join-Path $logDirectory "1Cv8.lgf"
+    if (-not (Test-Path -LiteralPath $lgfPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "1C event log header 1Cv8.lgf was not found: $lgfPath"
+    }
+    $headerHash = (Get-FileHash -LiteralPath $lgfPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $kind = [string](Get-StateValue -State $State -Name "infoBaseKind" -Default "file")
+    $normalizedLogDirectory = (Resolve-Agent1cFullPath -Path $logDirectory).ToLowerInvariant()
+    return (Get-StringSha256 -Value ("$kind|$normalizedLogDirectory|$headerHash"))
+}
+
+function Read-DevBranchEventLogBaselineWithCache {
+    param([object]$State)
+
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $logDirectory = Get-DevBranchEventLogDirectory -State $State
+    $sourceKey = Get-DevBranchEventLogSourceKey -State $State
+    $cacheRoot = Get-DevBranchEventLogSignatureCacheRoot -State $State
+    $cachePath = Join-Path $cacheRoot ($sourceKey + ".json")
+    $files = @(Get-ChildItem -LiteralPath $logDirectory -File -Filter "*.lgp" -ErrorAction SilentlyContinue | Sort-Object Name)
+
+    $cache = $null
+    $cacheStatus = "rebuilt"
+    if (Test-Path -LiteralPath $cachePath -PathType Leaf -ErrorAction SilentlyContinue) {
+        try {
+            $candidate = Read-Utf8Text -Path $cachePath | ConvertFrom-Json
+            if ([int](Get-StateValue -State $candidate -Name "schemaVersion" -Default 0) -ne 1 -or
+                [string](Get-StateValue -State $candidate -Name "sourceKey" -Default "") -ne $sourceKey) {
+                throw "incompatible cache schema or source key"
+            }
+            $cache = $candidate
+            $cacheStatus = "hit"
+        } catch {
+            Write-Host "[WARN] Event log signature cache is damaged or incompatible; rebuilding it: $cachePath"
+            $cache = $null
+            $cacheStatus = "rebuilt"
+        }
+    }
+
+    $cachedByName = @{}
+    if ($null -ne $cache) {
+        foreach ($segment in @($cache.segments)) {
+            $cachedByName[[string]$segment.name] = $segment
+        }
+        $currentNames = @($files | ForEach-Object { $_.Name })
+        if (@($cache.segments | Where-Object { $currentNames -notcontains [string]$_.name }).Count -gt 0) {
+            $cacheStatus = "updated"
+        }
+    }
+
+    $segments = @()
+    foreach ($file in $files) {
+        $lastWrite = $file.LastWriteTimeUtc.ToString("o")
+        $cached = if ($cachedByName.ContainsKey($file.Name)) { $cachedByName[$file.Name] } else { $null }
+        $unchanged = $null -ne $cached -and [int64]$cached.length -eq [int64]$file.Length -and [string]$cached.lastWriteTimeUtc -eq $lastWrite
+        if ($unchanged) {
+            $segments += $cached
+            continue
+        }
+
+        if ($cacheStatus -eq "hit") { $cacheStatus = "updated" }
+        $events = @(Read-OneCEventLogDirect -State $State -Levels @("Error") -SegmentPaths @($file.FullName))
+        $signatures = @($events | ForEach-Object { $_.signature } | Where-Object { $_ } | Sort-Object -Unique)
+        $segments += [ordered]@{
+            name = $file.Name
+            length = [int64]$file.Length
+            lastWriteTimeUtc = $lastWrite
+            errorCount = $events.Count
+            signatureCount = $signatures.Count
+            signatures = @($signatures)
+        }
+    }
+
+    if ($cacheStatus -ne "hit") {
+        New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
+        $cachePayload = [ordered]@{
+            schemaVersion = 1
+            sourceKey = $sourceKey
+            reader = "direct-stream"
+            updatedAt = (Get-Date).ToString("o")
+            segments = @($segments)
+        }
+        Write-Utf8Text -Path $cachePath -Value (($cachePayload | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    }
+
+    $allSignatures = @($segments | ForEach-Object { @($_.signatures) } | Where-Object { $_ } | Sort-Object -Unique)
+    $errorCount = 0
+    foreach ($segment in $segments) { $errorCount += [int]$segment.errorCount }
+    $stopwatch.Stop()
+    return [pscustomobject]@{
+        reader = "direct-stream"
+        cacheStatus = $cacheStatus
+        cachePath = $cachePath
+        sourceKey = $sourceKey
+        segmentCount = $segments.Count
+        errorCount = $errorCount
+        signatureCount = $allSignatures.Count
+        signatures = @($allSignatures)
+        logDirectory = $logDirectory
+        durationMs = [int64]$stopwatch.ElapsedMilliseconds
+    }
+}
+
+function Read-DevBranchEventLogBaselineData {
+    param([object]$State)
+
+    $reader = Get-VanessaEventLogReader
+    $directError = $null
+    if ($reader -eq "auto" -or $reader -eq "direct") {
+        try {
+            return (Read-DevBranchEventLogBaselineWithCache -State $State)
+        } catch {
+            $directError = $_
+            if ($reader -eq "direct" -or $_.Exception.Message -match "Unsupported SQLite") { throw }
+        }
+    }
+
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        $readResult = Read-DevBranchEventLogErrors -State $State
+        $signatures = @($readResult.events | ForEach-Object { $_.signature } | Where-Object { $_ } | Sort-Object -Unique)
+        $stopwatch.Stop()
+        return [pscustomobject]@{
+            reader = $readResult.reader
+            readerDurationMs = $readResult.durationMs
+            scannedErrorCount = $readResult.errorCount
+            cacheStatus = "not-applicable"
+            cachePath = ""
+            sourceKey = ""
+            segmentCount = 0
+            errorCount = @($readResult.events).Count
+            signatureCount = $signatures.Count
+            signatures = @($signatures)
+            logDirectory = $readResult.logDirectory
+            durationMs = [int64]$stopwatch.ElapsedMilliseconds
+        }
+    } catch {
+        if ($null -ne $directError) {
+            throw "Could not build event log baseline by direct reader or fallback exporter. Direct error: $($directError.Exception.Message). Fallback error: $($_.Exception.Message)"
+        }
+        throw
+    }
 }
 
 function Get-EventLogExporterRootFile {
@@ -832,13 +1060,17 @@ function Read-DevBranchEventLogErrors {
     $levels = Get-VanessaEventLogLevels
     $lastError = $null
 
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     if ($reader -eq "auto" -or $reader -eq "direct") {
         try {
             $events = @(Read-OneCEventLogDirect -State $State -StartTime $StartTime -EndTime $EndTime -Levels $levels)
+            $stopwatch.Stop()
             return [pscustomobject]@{
-                reader = "direct"
+                reader = "direct-stream"
                 events = $events
                 logDirectory = (Get-DevBranchEventLogDirectory -State $State)
+                errorCount = $events.Count
+                durationMs = [int64]$stopwatch.ElapsedMilliseconds
             }
         } catch {
             $lastError = $_
@@ -851,10 +1083,13 @@ function Read-DevBranchEventLogErrors {
     if ($reader -eq "auto" -or $reader -eq "fallback") {
         try {
             $events = @(Read-OneCEventLogViaFallback -State $State -StartTime $StartTime -EndTime $EndTime -Levels $levels)
+            $stopwatch.Stop()
             return [pscustomobject]@{
                 reader = "fallback"
                 events = $events
                 logDirectory = (Get-DevBranchEventLogDirectory -State $State)
+                errorCount = $events.Count
+                durationMs = [int64]$stopwatch.ElapsedMilliseconds
             }
         } catch {
             if ($null -ne $lastError) {
@@ -879,19 +1114,26 @@ function Save-DevBranchEventLogBaseline {
         [string]$Reason = "created"
     )
 
-    $readResult = Read-DevBranchEventLogErrors -State $State
-    $signatures = @($readResult.events | ForEach-Object { $_.signature } | Where-Object { $_ } | Sort-Object -Unique)
+    $readResult = Read-DevBranchEventLogBaselineData -State $State
+    $signatures = @($readResult.signatures)
     $baselinePath = Get-DevBranchEventLogBaselinePath -State $State
     $createdAt = (Get-Date).ToString("o")
     $baseline = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         createdAt = $createdAt
         reason = $Reason
         reader = $readResult.reader
         logDirectory = $readResult.logDirectory
-        errorCount = @($readResult.events).Count
+        errorCount = $readResult.errorCount
         signatureCount = @($signatures).Count
         signatures = @($signatures)
+        durationMs = $readResult.durationMs
+        cache = [ordered]@{
+            status = $readResult.cacheStatus
+            path = $readResult.cachePath
+            sourceKey = $readResult.sourceKey
+            segmentCount = $readResult.segmentCount
+        }
     }
     Write-Utf8Text -Path $baselinePath -Value (($baseline | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
 
@@ -900,9 +1142,13 @@ function Save-DevBranchEventLogBaseline {
         eventLogBaselinePath = $baselinePath
         eventLogBaselineCreatedAt = $createdAt
         eventLogBaselineReader = $readResult.reader
-        eventLogBaselineErrorCount = @($readResult.events).Count
+        eventLogBaselineErrorCount = $readResult.errorCount
         eventLogBaselineSignatureCount = @($signatures).Count
         eventLogBaselineHash = $hash
+        eventLogBaselineCacheStatus = $readResult.cacheStatus
+        eventLogBaselineCachePath = $readResult.cachePath
+        eventLogBaselineDurationMs = $readResult.durationMs
+        eventLogBaselineSegmentCount = $readResult.segmentCount
     }
     if ($Reason -eq "backfill") {
         $updates["eventLogBaselineBackfilledAt"] = $createdAt
@@ -910,7 +1156,9 @@ function Save-DevBranchEventLogBaseline {
     Update-DevBranchState -State $State -Updates $updates
 
     Write-Host "Event log baseline saved: $baselinePath"
-    Write-Host "Event log baseline signatures: $(@($signatures).Count)"
+    Write-Host "Event log baseline reader/cache: $($readResult.reader) / $($readResult.cacheStatus)"
+    Write-Host "Event log baseline errors/signatures: $($readResult.errorCount) / $(@($signatures).Count)"
+    Write-Host "Event log baseline duration: $($readResult.durationMs) ms"
 
     $statePath = Get-StateValue -State $State -Name "statePath" -Default ""
     if ($statePath -and (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue)) {
@@ -1017,6 +1265,8 @@ function Test-DevBranchEventLogAfterVanessa {
         newErrorCount = $newErrors.Count
         legacyErrorCount = $legacyCount
         checkedUntil = $endTime
+        scannedErrorCount = $readResult.errorCount
+        readerDurationMs = $readResult.durationMs
     }
 }
 
@@ -1394,6 +1644,7 @@ function Confirm-UnverifiedProceed {
 function Run-DevBranchTests {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "run-dev-branch-tests"
+    $state = Ensure-DevBranchEnterpriseNormalized -State $state -Reason "legacy-preflight"
     Sync-DevBranchContextToDotEnv -State $state
 
     $vanessa = Get-VanessaAutomationState
@@ -2000,7 +2251,8 @@ function Write-VanessaTestStatusLines {
 
     $port = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaTestPort" -Default 0)
     $lastAt = Get-StateValue -State $State -Name "lastVanessaTestAt" -Default ""
-    if ($port -le 0 -and -not $lastAt) {
+    $baselinePath = Get-StateValue -State $State -Name "eventLogBaselinePath" -Default ""
+    if ($port -le 0 -and -not $lastAt -and -not $baselinePath) {
         return
     }
 
@@ -2018,9 +2270,11 @@ function Write-VanessaTestStatusLines {
     if ($logPath) {
         Write-Host "${Indent}Last Vanessa 1C log: $logPath"
     }
-    $baselinePath = Get-StateValue -State $State -Name "eventLogBaselinePath" -Default ""
     if ($baselinePath) {
         Write-Host "${Indent}Event log baseline: $baselinePath"
+        Write-Host "${Indent}Event log baseline reader/cache: $(Get-StateValue -State $State -Name 'eventLogBaselineReader' -Default '<unknown>') / $(Get-StateValue -State $State -Name 'eventLogBaselineCacheStatus' -Default '<unknown>')"
+        Write-Host "${Indent}Event log baseline errors/signatures: $(Get-StateValue -State $State -Name 'eventLogBaselineErrorCount' -Default 0) / $(Get-StateValue -State $State -Name 'eventLogBaselineSignatureCount' -Default 0)"
+        Write-Host "${Indent}Event log baseline duration: $(Get-StateValue -State $State -Name 'eventLogBaselineDurationMs' -Default 0) ms"
     }
     $newErrorCount = Get-StateValue -State $State -Name "lastVanessaEventLogNewErrorCount" -Default ""
     if ($newErrorCount -ne "") {
@@ -2885,6 +3139,7 @@ function Start-VanessaMcp {
     Write-Section "Start Vanessa UI MCP"
 
     $state = Read-CurrentDevBranchStateForVanessaMcp -Operation "start-vanessa-mcp"
+    $state = Ensure-DevBranchEnterpriseNormalized -State $state -Reason "legacy-preflight"
     $runtime = Get-VanessaMcpRuntimeInfo -State $state
     if ($runtime.processAlive) {
         Save-VanessaMcpSettingsToDotEnv -Port $runtime.port -Url $runtime.url

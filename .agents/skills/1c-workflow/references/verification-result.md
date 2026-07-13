@@ -24,7 +24,9 @@ If Vanessa fails, analyze JUnit/report/status/log/event-log paths and active 1C 
 
 ## Event Log Baseline
 
-The verification gate checks the branch-local file infobase event log against `.agent-1c/event-log-baselines/<branch>.json`. Fresh non-baseline `Error` signatures fail verification. Legacy baseline errors remain diagnostics. The direct 8.3.22 sequential event-log reader is preferred when available; fallback exporter sources are bundled in the workflow package.
+The verification gate checks the branch-local file infobase event log against `.agent-1c/event-log-baselines/<branch>.json`. Fresh non-baseline `Error` signatures fail verification; known historical signatures remain diagnostics. Schema 1 baselines stay readable.
+
+The preferred 8.3.22 sequential `.lgp` reader streams records and rejects non-`Error`/out-of-window events before full event/signature construction. Baseline scans cache each segment under `.agent-1c/event-log-signature-cache/<source-key>.json` by name, size, and `LastWriteTimeUtc`: unchanged segments are reused, changed/new segments are rescanned, rotated-away segments disappear, and damaged/incompatible caches rebuild automatically. Baseline/status output records reader, `hit|updated|rebuilt`, error/signature counts, and duration. The Enterprise fallback exporter remains uncached and reports duration/counts because it has no reliable server snapshot identity.
 
 ## EXPORT_DEV_BRANCH_RESULT
 

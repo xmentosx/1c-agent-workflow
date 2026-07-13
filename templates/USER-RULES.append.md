@@ -1,6 +1,6 @@
 ## 1C Project Lifecycle
 
-For routine installed-project lifecycle work, prefer Kilo `/itl-*` or `.agents/skills/1c-workflow-fast/SKILL.md`. Use `.agents/skills/1c-workflow/SKILL.md` for init, recovery, unusual topology, or explanation; it routes to `.agents/skills/1c-workflow/references/`.
+For routine lifecycle work, prefer Kilo `/itl-*` or `.agents/skills/1c-workflow-fast/SKILL.md`. Use `.agents/skills/1c-workflow/SKILL.md` for init and recovery.
 
 For long ITL lifecycle actions, set `timeout_ms >= 1800000`: 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`. Do not use `120000 ms`. `status`/`help` do not need it.
 
@@ -12,7 +12,7 @@ Keep ITL overlay rules in `USER-RULES.md`. Store secrets only in `.dev.env`; wri
 
 Treat `ai_rules_1c` as an on-demand standards, role, and OpenSpec command library. ITL owns lifecycle, MCP config, verification, and export; do not generate `/opsx-*` or load whole upstream `content/skills` trees.
 
-Search hygiene: do not read ignored runtime folders such as `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/infobases/`, `build/test-results/`, or `logs/` unless diagnosing a specific run, MCP state, log, or artifact.
+Search hygiene: ignore `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/infobases/`, `build/test-results/`, and `logs/` unless diagnosing their runtime state.
 
 Use the vibecoding1c MCP helper request for setup/status/update/selection and client config; do not use upstream `/installmcp`, `/updatemcp`, or `/checkmcp`. ITL preserves external entries and keeps keys out of chat/tracked files.
 
@@ -22,11 +22,13 @@ Use `.agents/skills/itl-vanessa-ui-mcp/SKILL.md` only for explicit user-mode ins
 
 `Vanessa Automation verification` is not UI MCP: `/itl-check` runs `StartFeaturePlayer` through `TESTMANAGER -> TESTCLIENT`, JUnit, and event-log checks. Never replace it with UI MCP or treat its failure as an `/itl-check` result.
 
-For PM5 product logic, architecture, workflows, terminology, permissions, reports, integrations, or acceptance tests, use `.agents/skills/product-docs/SKILL.md` and search `BookStack-product-docs-mcp` before answering, exploring, planning, proposing, or changing behavior. BookStack is advisory, not authoritative; verify against code, tests, current 1C metadata, and available MCP evidence. Cite URLs/`updated_at`. On conflict, report `BookStack says`, `Code/MCP currently shows`, and `Decision`.
+For PM5 product logic, technical or implementation architecture, internal subsystem design, technical decisions/constraints/rationale, workflows, terminology, permissions, reports, integrations, or acceptance tests, use `.agents/skills/product-docs/SKILL.md`. Search `BookStack-product-docs-mcp` before a broad repository traversal and before answering, exploring, planning, proposing, or changing behavior. For "how is the plan editor architecture designed", read BookStack first; then verify against code, tests, current 1C metadata, and available MCP evidence. BookStack is advisory, not authoritative. Cite URLs/`updated_at`; report conflicts as `BookStack says`, `Code/MCP currently shows`, and `Decision`. If BookStack is unavailable, say so before code-only research.
 
 Create dev branches in sibling Git worktrees, leave main on `master`, use `-UseCurrentWorktree` only when explicit, and load only into copied branch infobases, never the source infobase.
 
 Treat `.agent-1c/dev-branches/*.json` and `.agent-1c/event-log-baselines/*.json` as local runtime state.
+
+Empty `INFOBASE_PUBLISH_URL` is expected without publication. Recommend it only for requested publication, dependent UI tests, or legacy `1c-data-mcp`.
 
 Before upstream infobase-bound commands (`/update1cbase`, `/loadfrom1cbase`, `/getconfigfiles`) inside `itldev/*`, ensure branch context is active; ITL lifecycle commands do this. On `master`, do not run `/update1cbase` unless a test infobase is explicit.
 

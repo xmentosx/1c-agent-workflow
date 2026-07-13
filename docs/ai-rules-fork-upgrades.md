@@ -3,8 +3,8 @@
 ## Current state
 
 The workflow template is pinned to the controlled fork release
-`itl-main-a421cf44-r2` at commit
-`bcb662c1eb682c1eae94cef8ad56cec0983f41d5`. Its upstream provenance is the
+`itl-main-a421cf44-r3` at commit
+`316da894069d0ad7ac6874fe6faf46028ab69d6a`. Its upstream provenance is the
 explicit snapshot `refs/heads/main` at
 `a421cf44eb1f5859cf2a2b74884f8fbcaefc4826`. The moving `upstream/main` name is
 never consumed by projects.
@@ -43,7 +43,7 @@ dependencies continue to follow the normal fresh/locked policy.
 
 1. a standard legacy `comol/ai_rules_1c` project to the verified fork baseline;
 2. an earlier controlled fork `itl-*` revision to a strictly newer verified
-   downstream revision (currently `r1` to `r2`).
+   downstream revision (currently `r1`/`r2` to `r3`).
 
 Both transitions require:
 

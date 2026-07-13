@@ -33,17 +33,27 @@ From a clean workflow checkout and a clean fork checkout at the annotated
 ```
 
 The command runs the complete static gate, fork gate and compatibility check,
-then executes the E2E branch check and export using the helper from the clean
-workflow checkout being released, not a possibly stale helper copy in the
-stand. Success requires a verification
-timestamp from the current run, `Verification fresh passed: True`, a CF/CFE
-manifest without override, matching artifact SHA256, and successful Vanessa UI
-MCP/ROCTUP MCP cleanup.
+then commits a generated change to only the root `src/cf/Configuration.xml`
+`Comment` in the dedicated E2E branch. The branch must also contain
+`src/cf/Ext/ParentConfigurations.bin`. The runner invokes `/itl-check` with
+`ConfigLoadMode=Partial`, requires the preserved list file to contain only
+`Configuration.xml`, dumps the resulting branch infobase back to ignored local
+state, and compares the `Comment` plus the presence of
+`Ext/ParentConfigurations.bin`. This is a real partial-load roundtrip; automatic
+full fallback is deliberately disabled for this release assertion.
+
+The check and export use the helper from the clean workflow checkout being
+released, not a possibly stale helper copy in the stand. Success also requires
+a verification timestamp from the current run,
+`Verification fresh passed: True`, a CF/CFE manifest without override, matching
+artifact SHA256, and successful Vanessa UI MCP/ROCTUP MCP cleanup. A successful
+run leaves the E2E worktree clean at the generated fixture commit.
 
 Keep `build/test-results/local/check-summary.json` and the nested E2E summary as
 release evidence. A failed cleanup, stale Vanessa result, unverified override,
-missing manifest, hash mismatch, dirty worktree, dynamic fork branch or
-unpinned template is a release failure.
+missing `ParentConfigurations.bin`, non-partial load, extra list-file entry,
+roundtrip mismatch, missing manifest, hash mismatch, dirty worktree, dynamic
+fork branch or unpinned template is a release failure.
 
 ## Reset and rollback
 

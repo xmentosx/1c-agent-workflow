@@ -60,6 +60,7 @@ switch-master
 switch-dev-branch
 list-dev-branches
 status
+release-e2e-config-roundtrip
 ```
 
 Extension helper actions and branch-local MCP actions are advanced/helper commands. Keep `set-dev-branch-extension`, `dump-dev-branch-extension`, ROCTUP MCP actions, and Vanessa UI MCP actions available through helper actions or natural-language requests, but do not generate them as visible Kilo slash commands. New development branches prepare ROCTUP and Vanessa UI MCP as stopped/ready. Start Vanessa UI MCP only for a named runtime UI question, recording, or debugging operation; stop it afterwards, and reload or restart Kilo Code if a manually started server is not visible.
@@ -67,6 +68,8 @@ Extension helper actions and branch-local MCP actions are advanced/helper comman
 `configure-dev-branch-unsafe-action-protection` is an interactive recovery action for an existing development worktree when branch creation used `skip` before protection was actually disabled. Run it through `run-agent-1c-window.ps1`, optionally passing `-InfoBaseUser <name>` for an empty-password local user. It forces the normal visible Designer confirmation flow and records confirmation in branch state; it never disables protection automatically.
 
 `stop-dev-branch-test-clients` stops only Vanessa `TESTMANAGER`/`TESTCLIENT` processes whose command line belongs to the current development branch infobase/worktree, then fails if any remain. Successful Vanessa verification performs the same cleanup automatically. It never stops foreign worktree test processes.
+
+`release-e2e-config-roundtrip` is reserved for `scripts/invoke-release-e2e.ps1`. It dumps the dedicated branch infobase into ignored local state, writes evidence under ignored `build/test-results`, and proves that a root `Configuration.xml` `Comment` loaded in strict `Partial` mode roundtrips while `Ext/ParentConfigurations.bin` is present. Do not expose it as a slash command or use it for ordinary project work.
 
 ROCTUP MCP actions (`install-roctup-mcp`, `update-roctup-mcp`, `start-roctup-mcp`, `stop-roctup-mcp`, `roctup-mcp-status`) manage the ignored EPF/skills cache and the branch-local embedded data MCP. ROCTUP is the preferred data channel for branch infobases and does not need web publication; start it for focused data exploration and stop it after use.
 

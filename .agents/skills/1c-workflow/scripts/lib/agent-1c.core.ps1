@@ -1545,7 +1545,7 @@ function New-DefaultProjectConfig {
         serverBaseCopyScript = ""
         aiRules = [ordered]@{
             repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            ref = "itl-main-a421cf44-r2"
+            ref = "itl-main-a421cf44-r3"
             tools = @("codex", "kilocode")
         }
         vibecoding1cMcp = [ordered]@{
@@ -1596,14 +1596,14 @@ function New-DefaultDependencyLockManifest {
             }
             aiRules1c = [ordered]@{
                 repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-                ref = "itl-main-a421cf44-r2"
-                commit = "bcb662c1eb682c1eae94cef8ad56cec0983f41d5"
+                ref = "itl-main-a421cf44-r3"
+                commit = "316da894069d0ad7ac6874fe6faf46028ab69d6a"
                 upstreamRepo = "https://github.com/comol/ai_rules_1c.git"
                 upstreamRef = "refs/heads/main"
                 upstreamCommit = "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
-                downstreamRevision = 2
+                downstreamRevision = 3
                 compatibilityStatus = "passed"
-                compatibilityCheckedAt = "2026-07-11T23:59:45Z"
+                compatibilityCheckedAt = "2026-07-13T10:18:00Z"
             }
             vanessaAutomation = [ordered]@{
                 version = "1.2.043.28"
@@ -3141,6 +3141,7 @@ function Invoke-NativeProcessAndWaitResult {
         [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10
     )
 
+    $script:LastNativeProcessStarted = $false
     $argumentLine = Join-NativeCommandLineArguments -Arguments $Arguments
     $process = Start-Process `
         -FilePath $FilePath `
@@ -3153,6 +3154,7 @@ function Invoke-NativeProcessAndWaitResult {
         throw "Failed to start process: $FilePath"
     }
 
+    $script:LastNativeProcessStarted = $true
     $script:LastProcessId = $process.Id
     $script:LastProcessTimedOut = $false
     $completedByProbe = $false

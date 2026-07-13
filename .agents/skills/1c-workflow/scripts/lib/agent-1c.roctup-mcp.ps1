@@ -463,6 +463,8 @@ function Start-RoctupMcpForState {
         return $state
     }
 
+    $State = Ensure-DevBranchEnterpriseNormalized -State $State -Reason "legacy-preflight"
+
     $runtime = Get-RoctupMcpRuntimeInfo -State $State
     if ($runtime.processAlive -and $runtime.portOpen) {
         Save-RoctupMcpRuntimeSettingsToDotEnv -Port $runtime.port -Url $runtime.url -HealthUrl $runtime.healthUrl

@@ -9,6 +9,7 @@ testResults.xml
 logs/
 .agent-1c/dev-branches/
 .agent-1c/event-log-baselines/
+.agent-1c/event-log-signature-cache/
 .agent-1c/runs/
 .agent-1c/release-e2e.json
 .agent-1c/infobases/

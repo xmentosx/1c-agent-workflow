@@ -254,6 +254,11 @@ exit 0
         $userRulesTemplateText | Should -Match "product-docs/SKILL.md"
         $userRulesTemplateText | Should -Match "BookStack-product-docs-mcp"
         $userRulesTemplateText | Should -Match "before answering, exploring, planning, proposing, or changing behavior"
+        $userRulesTemplateText | Should -Match "technical or implementation architecture"
+        $userRulesTemplateText | Should -Match "internal subsystem design"
+        $userRulesTemplateText | Should -Match "before a broad repository traversal"
+        $userRulesTemplateText | Should -Match "plan editor architecture"
+        $userRulesTemplateText | Should -Match "If BookStack is unavailable"
         $userRulesTemplateText | Should -Match "BookStack is advisory, not authoritative"
         $userRulesTemplateText | Should -Match "code, tests, current 1C metadata"
         $userRulesTemplateText | Should -Match "available MCP evidence"
@@ -272,6 +277,11 @@ exit 0
         $productDocsSkillText | Should -Match "search_docs"
         $productDocsSkillText | Should -Match "read_page"
         $productDocsSkillText | Should -Match "source of product context and intended behavior"
+        $productDocsSkillText | Should -Match "technical or implementation architecture"
+        $productDocsSkillText | Should -Match "internal design of a subsystem"
+        $productDocsSkillText | Should -Match "before a broad repository traversal"
+        $productDocsSkillText | Should -Match ([regex]::Escape('как устроена архитектура редактора планов'))
+        $productDocsSkillText | Should -Match "Explicitly describe documentation/implementation differences"
         $productDocsSkillText | Should -Not -Match "source of product behavior truth"
         $productDocsSkillText | Should -Match "## Evidence Policy"
         $productDocsSkillText | Should -Match "## Verification Workflow"
@@ -282,7 +292,7 @@ exit 0
         $productDocsSkillText | Should -Match "Code/MCP evidence"
 
         $productDocsOpenAiText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\product-docs\agents\openai.yaml")
-        $productDocsOpenAiText | Should -Match "Verify BookStack product context"
+        $productDocsOpenAiText | Should -Match "technical architecture through BookStack"
         $productDocsOpenAiText | Should -Match "verify it against code/MCP evidence"
         $productDocsOpenAiText | Should -Match "answering, exploring, planning, proposing"
 
@@ -301,6 +311,35 @@ exit 0
         $installText | Should -Match "upstream-managed"
         $installText | Should -Match "AGENTS\.md"
         $installText | Should -Match "USER-RULES.md"
+    }
+
+    It "installs BookStack routing only for PM5 and keeps fresh/update overlay behavior identical" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-product-docs-routing-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "templates") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\USER-RULES.append.md") -Destination (Join-Path $tempRoot "templates\USER-RULES.append.md")
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Test-ProductDocsMcpAllowed { return $false }
+                Update-UserRules
+                $pm4 = Get-Content -LiteralPath (Join-Path $tempRoot "USER-RULES.md") -Raw -Encoding UTF8
+
+                function Test-ProductDocsMcpAllowed { return $true }
+                Update-UserRules
+                $pm5 = Get-Content -LiteralPath (Join-Path $tempRoot "USER-RULES.md") -Raw -Encoding UTF8
+                [pscustomobject]@{ pm4 = $pm4; pm5 = $pm5 }
+            }
+
+            $result.pm4 | Should -Match "For PM4 projects"
+            $result.pm4 | Should -Match "technical or implementation architecture"
+            $result.pm4 | Should -Not -Match "BookStack-product-docs-mcp"
+            $result.pm5 | Should -Match "BookStack-product-docs-mcp"
+            $result.pm5 | Should -Match "plan editor architecture"
+            ([regex]::Matches($result.pm5, 'ITL-WORKFLOW-USER-RULES:START')).Count | Should -Be 1
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "wires ai_rules_1c update through the helper and advanced docs" {
@@ -638,7 +677,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"custom":"keep-project"}'
             Set-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Encoding UTF8 -Value '{"tools":["kilocode"],"files":{}}'
             Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\tools.json") -Encoding UTF8 -Value '{"custom":"keep-tools"}'
-            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{}}'
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Destination (Join-Path $projectRoot ".agent-1c\dependency-lock.json")
             Set-Content -LiteralPath (Join-Path $projectRoot ".dev.env") -Encoding UTF8 -Value "SECRET=keep"
             Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\mcp\state.json") -Encoding UTF8 -Value '{"state":"keep"}'
             Set-Content -LiteralPath (Join-Path $projectRoot ".codex\config.toml") -Encoding UTF8 -Value '[mcp_servers.custom]'

@@ -489,6 +489,8 @@ function Install-DevBranchDataMcpBestEffort {
         }
     }
 
+    $State = Ensure-DevBranchEnterpriseNormalized -State $State -Reason "legacy-preflight"
+
     if (-not $PublicationDir) {
         if (Test-DataMcpEndpointReachable -Url $endpointUrl) {
             Set-DataMcpEndpointState -State $State -EndpointUrl $endpointUrl

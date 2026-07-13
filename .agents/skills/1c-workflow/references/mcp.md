@@ -91,8 +91,10 @@ Rules:
 
 ## Legacy Branch Data MCP
 
-Use this only as a fallback for branches that are intentionally web-published; ROCTUP is the preferred data channel.
+Use this only as a conditional legacy fallback for branches that are intentionally web-published; ROCTUP is the preferred data channel. Empty `INFOBASE_PUBLISH_URL` is expected when publication is disabled and must not produce a setup recommendation.
 
 When a new development branch infobase has a web publication URL, the helper may best-effort install branch-local `1c-data-mcp` from `MCP_1C_Distr.zip`, patch the `APA_Инструменты` XML tool name from `vcvalidatequery` to `validatequery`, expose `/hs/mcp`, and connect it only if the endpoint is reachable without authentication.
 
 Data MCP failures during published branch creation are non-blocking unless the branch lifecycle action itself fails. Record the status/error in branch state for diagnostics.
+
+After `ai_rules_1c` update, workflow reconcile removes an old ai_rules-managed `1c-data-mcp` entry when its URL is still an unresolved publication placeholder, the URL is empty, and project/branch publication is disabled. It never removes External/user-managed entries. A non-empty publication URL enables and probes the server as before.
