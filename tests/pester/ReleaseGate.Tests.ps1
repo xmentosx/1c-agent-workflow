@@ -27,8 +27,11 @@ Describe "Release gate scripts" {
         $text | Should -Match '\$releaseHelperPath'
         $text | Should -Match '"-HelperPath", \$releaseHelperPath'
         $text | Should -Match '"-AiRulesSource", \$resolvedAiRulesSource'
+        $text | Should -Match 'Release E2E summary reports'
+        $text | Should -Match '\[Console\]::Error\.WriteLine\(\$failure\)'
         $runnerText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") -Raw -Encoding UTF8
         $runnerText | Should -Match 'SOURCE_INFOBASE_PATH must be a disposable snapshot inside the stand'
+        $runnerText | Should -Match '\[Console\]::Error\.WriteLine\(\$failure\)'
         (Get-Content -LiteralPath (Join-Path $RepoRoot "docs\release-checklist.md") -Raw -Encoding UTF8) | Should -Match 'source-snapshot'
     }
 }
@@ -118,6 +121,10 @@ switch ($Action) {
         Set-Content -LiteralPath $evidencePath -Encoding UTF8 -Value ($evidence | ConvertTo-Json -Depth 5)
     }
     "release-e2e-extension-smoke" {
+        if ($env:ITL_TEST_FAIL_RELEASE_EXTENSION -eq "true") {
+            [Console]::Error.WriteLine("simulated extension smoke failure")
+            exit 1
+        }
         $evidence = [ordered]@{
             schemaVersion = 1
             extensionName = $ExtensionName
@@ -170,6 +177,25 @@ switch ($Action) {
             $actions | Should -Contain "release-e2e-config-roundtrip"
             $actions | Should -Contain "release-e2e-extension-smoke"
             $actions | Should -Contain "stop-dev-branch-test-clients"
+            @(& git -C $worktreeRoot status --porcelain).Count | Should -Be 0
+
+            $failureSummaryPath = Join-Path $tempRoot "release-failure-summary.json"
+            $oldFailureFlag = $env:ITL_TEST_FAIL_RELEASE_EXTENSION
+            $env:ITL_TEST_FAIL_RELEASE_EXTENSION = "true"
+            $previousPreference = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
+                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $failureSummaryPath *> $null
+                $failureExitCode = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $previousPreference
+                $env:ITL_TEST_FAIL_RELEASE_EXTENSION = $oldFailureFlag
+            }
+            $failureExitCode | Should -Not -Be 0
+            $failureSummary = Get-Content -LiteralPath $failureSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $failureSummary.status | Should -Be "failed"
+            $failureSummary.error | Should -Match "extension smoke evidence was not created"
             @(& git -C $worktreeRoot status --porcelain).Count | Should -Be 0
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

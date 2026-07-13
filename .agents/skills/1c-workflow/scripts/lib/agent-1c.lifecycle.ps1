@@ -4143,17 +4143,15 @@ function Invoke-ExtensionLifecycleTool {
 function Test-DevBranchExtensionExists {
     param(
         [object]$State,
-        [string]$Name,
-        [string]$StagingPath
+        [string]$Name
     )
 
-    $listPath = Join-Path $StagingPath "existing-extension-list.txt"
     try {
         Invoke-Designer `
             -InfoBasePath $State.devBranchInfoBasePath `
             -InfoBaseKind $State.infoBaseKind `
-            -DesignerArgs @("/DumpDBCfgList", $listPath, "-Extension", $Name) | Out-Null
-        return ((Test-Path -LiteralPath $listPath -PathType Leaf) -and (Get-Item -LiteralPath $listPath).Length -gt 0)
+            -DesignerArgs @("/DumpDBCfgList", "-Extension", $Name) | Out-Null
+        return $true
     } catch {
         $message = $_.Exception.Message
         $logText = ""
@@ -4275,7 +4273,7 @@ function Init-DevBranchExtension {
     $vanessaWasRunning = $false
 
     try {
-        if (Test-DevBranchExtensionExists -State $state -Name $ExtensionName -StagingPath $stagingRoot) {
+        if (Test-DevBranchExtensionExists -State $state -Name $ExtensionName) {
             throw "Extension '$ExtensionName' already exists in the development branch infobase; refusing to overwrite it."
         }
 

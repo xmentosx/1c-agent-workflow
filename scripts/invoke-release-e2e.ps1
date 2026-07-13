@@ -255,8 +255,9 @@ try {
         throw "Release E2E partial list must contain only Configuration.xml; actual: $($partialFiles -join ', ')"
     }
 
-    Invoke-E2EHelper -Action "release-e2e-config-roundtrip" -TimeoutSeconds 7200 | Out-Null
     $roundtripEvidencePath = Join-Path $worktreePath "build\test-results\release-e2e\config-roundtrip.json"
+    Remove-Item -LiteralPath $roundtripEvidencePath -Force -ErrorAction SilentlyContinue
+    Invoke-E2EHelper -Action "release-e2e-config-roundtrip" -TimeoutSeconds 7200 | Out-Null
     if (-not (Test-Path -LiteralPath $roundtripEvidencePath -PathType Leaf)) {
         throw "Release E2E roundtrip evidence was not created: $roundtripEvidencePath"
     }
@@ -265,11 +266,12 @@ try {
         throw "Release E2E roundtrip evidence does not prove Comment and ParentConfigurations.bin preservation."
     }
 
+    $extensionSmokeEvidencePath = Join-Path $worktreePath "build\test-results\release-e2e\extension-smoke.json"
+    Remove-Item -LiteralPath $extensionSmokeEvidencePath -Force -ErrorAction SilentlyContinue
     Invoke-E2EHelper -Action "release-e2e-extension-smoke" -TimeoutSeconds 7200 -AdditionalArguments @(
         "-ExtensionName", $extensionSmokeName,
         "-ReleaseAiRulesSource", $AiRulesSource
     ) | Out-Null
-    $extensionSmokeEvidencePath = Join-Path $worktreePath "build\test-results\release-e2e\extension-smoke.json"
     if (-not (Test-Path -LiteralPath $extensionSmokeEvidencePath -PathType Leaf)) {
         throw "Release E2E extension smoke evidence was not created: $extensionSmokeEvidencePath"
     }
@@ -366,7 +368,7 @@ try {
 }
 
 if ($failure) {
-    Write-Error $failure
+    [Console]::Error.WriteLine($failure)
     exit 1
 }
 Write-Host "Release E2E passed. Summary: $OutputPath"

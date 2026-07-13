@@ -220,6 +220,13 @@ try {
             "-HelperPath", $releaseHelperPath,
             "-OutputPath", $e2eReportPath
         ) -TimeoutSeconds 14400 -LogName "release-e2e"
+        if (-not (Test-Path -LiteralPath $e2eReportPath -PathType Leaf)) {
+            throw "Release E2E summary was not created: $e2eReportPath"
+        }
+        $e2eSummary = Get-Content -LiteralPath $e2eReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([string]$e2eSummary.status -ne "passed") {
+            throw "Release E2E summary reports '$($e2eSummary.status)': $([string]$e2eSummary.error)"
+        }
         Add-StageResult -Name "release-e2e" -Status "passed" -Detail $e2eReportPath
     }
 
@@ -264,7 +271,7 @@ try {
 }
 
 if ($failure) {
-    Write-Error $failure
+    [Console]::Error.WriteLine($failure)
     exit 1
 }
 

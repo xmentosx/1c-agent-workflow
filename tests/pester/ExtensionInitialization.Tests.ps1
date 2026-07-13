@@ -116,6 +116,7 @@ Describe "1C workflow extension initialization" {
         $HelperText | Should -Match "ExtensionInitMode"
         $HelperText | Should -Match ([regex]::Escape('"/LoadConfigFromFiles", $scaffoldPath, "-Extension", $ExtensionName'))
         $HelperText | Should -Match ([regex]::Escape('"/LoadCfg", $sourceCfe, "-Extension", $ExtensionName'))
+        $HelperText | Should -Match ([regex]::Escape('-DesignerArgs @("/DumpDBCfgList", "-Extension", $Name)'))
         $HelperText | Should -Not -Match "AgentMode"
         $HelperText | Should -Not -Match "v8unpack"
         $HelperText | Should -Not -Match '"/Extension"'
