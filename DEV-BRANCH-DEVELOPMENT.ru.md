@@ -56,6 +56,8 @@ verify helper action                       Совместимый alias для /
 
 `init-dev-branch-extension` — обязательный отдельный шаг после создания extension-ветки. `set-dev-branch-extension` и `dump-dev-branch-extension` остаются recovery-командами и могут не показываться в коротком beginner-меню `/itl`; `set` только записывает контекст и не создаёт расширение.
 
+Одна configuration-ветка может объединять несколько фич. Одна extension-ветка может объединять несколько фич или OpenSpec changes только внутри одного расширения. Для каждого другого CFE нужна отдельная ветка, worktree и копия базы; массива `extensions[]` нет. Изменения второго корня `src/cfe/<Имя>` блокируются кодом `EXTENSION_BRANCH_SINGLE_ARTIFACT`, но неизменённые расширения, уже существовавшие в baseline, допустимы.
+
 Для пустого расширения:
 
 ```text

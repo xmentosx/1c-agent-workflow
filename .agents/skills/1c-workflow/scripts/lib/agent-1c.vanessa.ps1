@@ -873,6 +873,32 @@ function New-DevBranchEventLogCursor {
     return $Path
 }
 
+function Test-OneCEventLogSegmentMayOverlapFallbackWindow {
+    param(
+        [System.IO.FileInfo]$File,
+        [datetime]$Threshold
+    )
+
+    if ($File.LastWriteTimeUtc -ge $Threshold) { return $true }
+    $stem = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
+    if ($stem -match '^(?<date>\d{8})') {
+        $segmentDate = [datetime]::MinValue
+        if ([datetime]::TryParseExact(
+            [string]$Matches.date,
+            "yyyyMMdd",
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::AssumeUniversal,
+            [ref]$segmentDate
+        )) {
+            return $segmentDate.Date -ge $Threshold.Date
+        }
+    }
+
+    # An unfamiliar segment name is safer to scan than to silently omit. This
+    # path is only used after a corrupt/mismatched cursor or truncation.
+    return $true
+}
+
 function Get-DevBranchEventLogDeltaSelection {
     param(
         [object]$State,
@@ -921,7 +947,7 @@ function Get-DevBranchEventLogDeltaSelection {
 
     if ($mode -eq "fallback") {
         $threshold = $FallbackStartTime.ToUniversalTime().AddMinutes(-1)
-        $selections = @($files | Where-Object { $_.LastWriteTimeUtc -ge $threshold } | ForEach-Object {
+        $selections = @($files | Where-Object { Test-OneCEventLogSegmentMayOverlapFallbackWindow -File $_ -Threshold $threshold } | ForEach-Object {
             [pscustomobject]@{ path = $_.FullName; startOffset = [int64]0 }
         })
     }

@@ -62,6 +62,8 @@ init-dev-branch-extension -ExtensionInitMode Cfe -ExtensionName <имя-расш
 
 Helper создаёт snapshot базы, загружает расширение через Designer с `-Extension`, выгружает нормализованные исходники строго в `src/cfe/<имя-расширения>` и откатывает базу при ошибке. CFE не распаковывается; Designer Agent и `AgentMode` не используются. `set-dev-branch-extension` только записывает recovery-контекст для расширения, созданного вручную, а `dump-dev-branch-extension` остаётся recovery-выгрузкой. Дальше `/update1cbase` — обычный цикл разработки, `/itl-check` — обязательная проверка, `/itl-result` — выгрузка `CFE`.
 
+В configuration-ветке допустимы несколько фич. В extension-ветке тоже допустимы несколько фич/OpenSpec changes, но все они должны относиться к одному расширению. Для второго CFE создавайте отдельные ветку, worktree и копию базы: workflow намеренно не хранит `extensions[]`. Изменённый второй корень `src/cfe/<ДругоеИмя>` блокирует update/check/dump/result/close кодом `EXTENSION_BRANCH_SINGLE_ARTIFACT`; неизменённые baseline-каталоги не мешают.
+
 Команды жизненного цикла автоматически активируют контекст базы ветки разработки для `ai_rules_1c`.
 
 `/deploy-and-test` не используется как обычная проверка в ITL-ветке: эта команда повторно загружает все файлы конфигурации. Стандартный путь быстрее и безопаснее: `/itl-check`. Если нужно только обновить базу без тестов, используйте `update-base helper action`. `verify helper action` остается совместимым alias.

@@ -43,7 +43,9 @@ For extension branches, do not ask for `extensionName` and do not create the ext
 
 After `new-extension-dev-branch`, run `init-dev-branch-extension -ExtensionInitMode Empty|Cfe -ExtensionName <name> [-ExtensionSourcePath <file.cfe>]` from the new worktree. `Empty` uses the installed `cfe-init.ps1` scaffold and Designer `/LoadConfigFromFiles ... -Extension`; `Cfe` loads the binary directly with `/LoadCfg ... -Extension`. Neither mode uses Designer Agent, `AgentMode`, `/Extension`, or CFE unpacking. The helper snapshots the copied infobase, rolls back on failure, dumps normalized sources only to `src/cfe/<ExtensionName>`, validates them, and records state only after full success.
 
-`set-dev-branch-extension` only records recovery context for an extension created manually; it never creates or loads an extension. `dump-dev-branch-extension` is the matching recovery dump action. `/update1cbase` is the subsequent development loop after initialization.
+A configuration branch may contain several related features. An extension branch may also contain several features or OpenSpec changes, but only for its one selected extension. A second changed CFE requires a separate branch, worktree, and branch infobase; the lifecycle intentionally has no `extensions[]` state. Update, check, dump, result, and close reject changed paths under another `src/cfe/<Name>` with `EXTENSION_BRANCH_SINGLE_ARTIFACT` while tolerating unchanged baseline CFE directories.
+
+`set-dev-branch-extension` only records recovery context for an extension already present in the branch infobase; a missing slot fails with `EXTENSION_RECOVERY_SLOT_MISSING` before state or `.dev.env` changes. `dump-dev-branch-extension` writes a temporary dump, validates its root/name/CFE structure, and replaces the canonical dump transactionally. `/update1cbase` is the subsequent development loop after initialization.
 
 Rules:
 

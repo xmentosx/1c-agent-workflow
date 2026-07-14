@@ -20,10 +20,18 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match "FromBase64String"
         $e2eText | Should -Not -Match "Функционал: Четыре независимых"
         $e2eText | Should -Match '"-VanessaFeaturePath", \$vanessaFixture\.path'
+        ([regex]::Matches($e2eText, 'Invoke-E2EHelper -Action "check-dev-branch"')).Count | Should -Be 3
+        $e2eText | Should -Match 'RELEASE_E2E_RESUME_STATE_MISMATCH'
+        $e2eText | Should -Match 'Restore-E2EInfobaseSnapshot'
+        $e2eText | Should -Match 'runnerSha256'
+        $e2eText | Should -Match 'workflowTree'
+        $e2eText | Should -Match 'Register-E2EGeneratedCommit'
         $lifecycleText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
         $lifecycleText | Should -Match '1c-form-scaffold\\scripts\\form-add\.ps1'
         $lifecycleText | Should -Match '1c-template-manage\\scripts\\add-template\.ps1'
-        $lifecycleText | Should -Match 'foreach \(\$iteration in 1\.\.2\)'
+        $lifecycleText | Should -Match 'formContentPreserved'
+        $lifecycleText | Should -Match 'explicitMetadataUpdatesPassed'
+        $lifecycleText | Should -Match 'SetMainSKD'
         $lifecycleText | Should -Match 'Run-DevBranchTests'
         $lifecycleText | Should -Match 'extensionUiTestClientPassed'
         $lifecycleText | Should -Match '(?s)Restore-ReleaseE2EExtensionLocalState\s+if \(Test-Path -LiteralPath \$smokeRoot.*?Remove-Item -LiteralPath \$smokeRoot -Recurse -Force\s+}\s+\s*if \(@\(& git -C \$script:ProjectRoot status --porcelain\)\.Count -ne 0\)'
@@ -57,6 +65,12 @@ Describe "Release E2E orchestration" {
         $summaryPath = Join-Path $tempRoot "release-summary.json"
         try {
             New-Item -ItemType Directory -Force -Path $mainRoot, $aiRulesRoot | Out-Null
+            & git -C $aiRulesRoot init *> $null
+            & git -C $aiRulesRoot config user.email "test@example.invalid"
+            & git -C $aiRulesRoot config user.name "ITL Test"
+            Set-Content -LiteralPath (Join-Path $aiRulesRoot "README.md") -Encoding ASCII -Value "controlled fork fixture"
+            & git -C $aiRulesRoot add .
+            & git -C $aiRulesRoot commit -m "fixture" *> $null
             & git -C $mainRoot init *> $null
             & git -C $mainRoot config user.email "test@example.invalid"
             & git -C $mainRoot config user.name "ITL Test"
@@ -100,7 +114,7 @@ Describe "Release E2E orchestration" {
             Set-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\dev-branches\workflow-release-e2e.json") -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 6)
             Set-Content -LiteralPath $helperPath -Encoding UTF8 -Value @'
 [CmdletBinding()]
-param([string]$ProjectRoot, [string]$Action, [string]$DevBranchName, [string]$ExtensionName, [string]$ReleaseAiRulesSource, [string]$VanessaFeaturePath, [string]$VanessaFilterTags, [ValidateSet("Auto", "Partial", "Full")][string]$ConfigLoadMode = "Auto")
+param([string]$ProjectRoot, [string]$Action, [string]$DevBranchName, [string]$ExtensionName, [string]$ReleaseAiRulesSource, [string]$VanessaFeaturePath, [string]$VanessaFilterTags, [string]$ReleaseSnapshotPath, [ValidateSet("Auto", "Partial", "Full")][string]$ConfigLoadMode = "Auto")
 $actionLogPath = Join-Path $ProjectRoot ".agent-1c\release-e2e-actions.log"
 Add-Content -LiteralPath $actionLogPath -Encoding UTF8 -Value $Action
 $statePath = Join-Path $ProjectRoot ".agent-1c\dev-branches\workflow-release-e2e.json"
@@ -110,7 +124,7 @@ switch ($Action) {
         $firstRun = -not $state.PSObject.Properties["lastConfigDesignerLoadedAt"]
         $previousCheckCount = if ($state.PSObject.Properties["releaseCheckCount"]) { [int]$state.releaseCheckCount } else { 0 }
         $releaseCheckCount = $previousCheckCount + 1
-        $isStopOnErrorProbe = (($releaseCheckCount % 4) -eq 3)
+        $isStopOnErrorProbe = ($releaseCheckCount -eq 2)
         if ($firstRun -and $ConfigLoadMode -ne "Partial") { throw "first release E2E check must request Partial" }
         if ($VanessaFilterTags -ne "@itl_release_flat") { throw "release E2E must filter the four flat scenarios" }
         if ([System.IO.Path]::GetFileName($VanessaFeaturePath) -ne "ITLReleaseFourFlat.feature") { throw "release E2E must run the dedicated four-scenario feature file" }
@@ -123,9 +137,11 @@ switch ($Action) {
         $state | Add-Member -NotePropertyName configLoadStatus -NotePropertyValue "passed" -Force
         $state | Add-Member -NotePropertyName lastConfigLoadMode -NotePropertyValue "partial" -Force
         $state | Add-Member -NotePropertyName lastConfigBaseUpdateListFile -NotePropertyValue $listPath -Force
-        $state | Add-Member -NotePropertyName lastConfigDesignerLoadedAt -NotePropertyValue "2026-07-14T00:00:00Z" -Force
-        $state | Add-Member -NotePropertyName designerInvoked -NotePropertyValue ([bool]$firstRun) -Force
-        $state | Add-Member -NotePropertyName enterpriseInvoked -NotePropertyValue ([bool]$firstRun) -Force
+        $metadataChanged = $releaseCheckCount -in @(1, 3)
+        $designerLoadedAt = if ($releaseCheckCount -eq 3) { "2026-07-14T00:00:03Z" } else { "2026-07-14T00:00:01Z" }
+        $state | Add-Member -NotePropertyName lastConfigDesignerLoadedAt -NotePropertyValue $designerLoadedAt -Force
+        $state | Add-Member -NotePropertyName designerInvoked -NotePropertyValue ([bool]$metadataChanged) -Force
+        $state | Add-Member -NotePropertyName enterpriseInvoked -NotePropertyValue ([bool]$metadataChanged) -Force
         $state | Add-Member -NotePropertyName lastVanessaReportPath -NotePropertyValue $reportPath -Force
         $state | Add-Member -NotePropertyName lastVanessaPostProcessDurationMs -NotePropertyValue 25 -Force
         $state | Add-Member -NotePropertyName releaseCheckCount -NotePropertyValue $releaseCheckCount -Force
@@ -135,11 +151,20 @@ switch ($Action) {
         Set-Content -LiteralPath $statePath -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 8)
         if ($isStopOnErrorProbe) { [Environment]::Exit(1) }
     }
+    "release-e2e-snapshot" {
+        $snapshotPath = Join-Path $ProjectRoot $ReleaseSnapshotPath
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $snapshotPath) | Out-Null
+        Set-Content -LiteralPath $snapshotPath -Encoding ASCII -Value "mock infobase snapshot"
+    }
+    "release-e2e-restore" {
+        $snapshotPath = Join-Path $ProjectRoot $ReleaseSnapshotPath
+        if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { throw "mock snapshot is missing" }
+    }
     "release-e2e-config-roundtrip" {
         [xml]$configuration = Get-Content -LiteralPath (Join-Path $ProjectRoot "src\cf\Configuration.xml") -Raw -Encoding UTF8
         $comment = [string]$configuration.MetaDataObject.Configuration.Properties.Comment
         $evidence = [ordered]@{
-            schemaVersion = 1
+            schemaVersion = 2
             actualComment = $comment
             expectedComment = $comment
             parentConfigurationsPresentInDump = (Test-Path -LiteralPath (Join-Path $ProjectRoot "src\cf\Ext\ParentConfigurations.bin") -PathType Leaf)
@@ -154,7 +179,7 @@ switch ($Action) {
             exit 1
         }
         $evidence = [ordered]@{
-            schemaVersion = 1
+            schemaVersion = 2
             extensionName = $ExtensionName
             emptyInitialized = $true
             cfeCreated = $true
@@ -162,6 +187,10 @@ switch ($Action) {
             databaseRestored = $true
             repeatedFormOperationsIdempotent = $true
             repeatedTemplateOperationsIdempotent = $true
+            formContentPreserved = $true
+            formModulePreserved = $true
+            templateContentPreserved = $true
+            explicitMetadataUpdatesPassed = $true
             formRegistrationCount = 1
             templateRegistrationCount = 1
             extensionUiTestClientPassed = $true
@@ -195,11 +224,39 @@ switch ($Action) {
 }
 '@
 
+            # Fail once at the extension stage after the expensive configuration
+            # stages have passed, then prove Auto resume reuses those checkpoints.
+            $failureSummaryPath = Join-Path $tempRoot "release-failure-summary.json"
+            $oldFailureFlag = $env:ITL_TEST_FAIL_RELEASE_EXTENSION
+            $env:ITL_TEST_FAIL_RELEASE_EXTENSION = "true"
+            $previousPreference = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
+                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $failureSummaryPath *> $null
+                $failureExitCode = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $previousPreference
+                $env:ITL_TEST_FAIL_RELEASE_EXTENSION = $oldFailureFlag
+            }
+            $failureExitCode | Should -Not -Be 0
+            $failureSummary = Get-Content -LiteralPath $failureSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $failureSummary.status | Should -Be "failed"
+            $failureSummary.error | Should -Match "release-e2e-extension-smoke failed with exit code 1"
+            @($failureSummary.executedStages) | Should -Contain "config-cadence"
+            @($failureSummary.executedStages) | Should -Contain "config-roundtrip"
+
             & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
-                -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $summaryPath
+                -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $summaryPath -ResumeMode Auto
             $LASTEXITCODE | Should -Be 0
             $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $summary.status | Should -Be "passed"
+            $summary.schemaVersion | Should -Be 2
+            $summary.checkpointWasResumed | Should -BeTrue
+            @($summary.resumedStages) | Should -Contain "config-cadence"
+            @($summary.resumedStages) | Should -Contain "config-roundtrip"
+            @($summary.executedStages) | Should -Contain "extension-smoke"
+            @($summary.executedStages) | Should -Contain "result-cleanup"
             $summary.sourceSnapshotPath | Should -Be $sourceSnapshot
             $summary.artifactSha256 | Should -Not -BeNullOrEmpty
             $summary.configLoadMode | Should -Be "partial"
@@ -218,6 +275,10 @@ switch ($Action) {
             $summary.extensionDatabaseRestored | Should -BeTrue
             $summary.extensionFormOperationsIdempotent | Should -BeTrue
             $summary.extensionTemplateOperationsIdempotent | Should -BeTrue
+            $summary.extensionFormContentPreserved | Should -BeTrue
+            $summary.extensionFormModulePreserved | Should -BeTrue
+            $summary.extensionTemplateContentPreserved | Should -BeTrue
+            $summary.extensionExplicitMetadataUpdatesPassed | Should -BeTrue
             $summary.extensionFormRegistrationCount | Should -Be 1
             $summary.extensionTemplateRegistrationCount | Should -Be 1
             $summary.extensionUiTestClientPassed | Should -BeTrue
@@ -228,25 +289,48 @@ switch ($Action) {
             $actions | Should -Contain "release-e2e-config-roundtrip"
             $actions | Should -Contain "release-e2e-extension-smoke"
             $actions | Should -Contain "stop-dev-branch-test-clients"
+            @($actions | Where-Object { $_ -eq "check-dev-branch" }).Count | Should -Be 3
+            @($actions | Where-Object { $_ -eq "release-e2e-config-roundtrip" }).Count | Should -Be 1
             @(& git -C $worktreeRoot status --porcelain).Count | Should -Be 0
 
-            $failureSummaryPath = Join-Path $tempRoot "release-failure-summary.json"
-            $oldFailureFlag = $env:ITL_TEST_FAIL_RELEASE_EXTENSION
-            $env:ITL_TEST_FAIL_RELEASE_EXTENSION = "true"
+            # Auto refuses a changed helper identity, while explicit Restart
+            # uses the recorded baseline rollback and starts a new exact run.
+            Add-Content -LiteralPath $helperPath -Encoding UTF8 -Value "# changed helper identity"
             $previousPreference = $ErrorActionPreference
             $ErrorActionPreference = "Continue"
             try {
-                & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
-                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $failureSummaryPath *> $null
-                $failureExitCode = $LASTEXITCODE
+                $identityOutput = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
+                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath (Join-Path $tempRoot "identity-mismatch.json") -ResumeMode Auto 2>&1
+                $identityExitCode = $LASTEXITCODE
             } finally {
                 $ErrorActionPreference = $previousPreference
-                $env:ITL_TEST_FAIL_RELEASE_EXTENSION = $oldFailureFlag
             }
-            $failureExitCode | Should -Not -Be 0
-            $failureSummary = Get-Content -LiteralPath $failureSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            $failureSummary.status | Should -Be "failed"
-            $failureSummary.error | Should -Match "release-e2e-extension-smoke failed with exit code 1"
+            $identityExitCode | Should -Not -Be 0
+            ($identityOutput -join [Environment]::NewLine) | Should -Match "RELEASE_E2E_RESUME_STATE_MISMATCH"
+
+            $restartSummaryPath = Join-Path $tempRoot "restart-summary.json"
+            & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
+                -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $restartSummaryPath -ResumeMode Restart
+            $LASTEXITCODE | Should -Be 0
+            $restartSummary = Get-Content -LiteralPath $restartSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $restartSummary.status | Should -Be "passed"
+            $restartSummary.checkpointWasResumed | Should -BeFalse
+            @($restartSummary.executedStages) | Should -Contain "config-cadence"
+
+            # A corrupt checkpoint must be refused before any expensive stage.
+            $checkpointPath = Join-Path $worktreeRoot ".agent-1c\release-e2e-runs\workflow-release-e2e\checkpoint.json"
+            Set-Content -LiteralPath $checkpointPath -Encoding UTF8 -Value "{broken"
+            $previousPreference = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                $mismatchOutput = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
+                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath (Join-Path $tempRoot "mismatch.json") 2>&1
+                $mismatchExitCode = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $previousPreference
+            }
+            $mismatchExitCode | Should -Not -Be 0
+            ($mismatchOutput -join [Environment]::NewLine) | Should -Match "RELEASE_E2E_RESUME_STATE_MISMATCH"
             @(& git -C $worktreeRoot status --porcelain).Count | Should -Be 0
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

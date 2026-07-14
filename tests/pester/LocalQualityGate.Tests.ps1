@@ -25,6 +25,22 @@ Describe "Local quality gate contract" {
         $text | Should -Match 'invoke-release-e2e\.ps1'
     }
 
+    It "reuses only exact clean Full qualifications and always runs cheap and runtime preflights" {
+        $text = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
+        $text | Should -Match 'itl-workflow-full-qualification'
+        $text | Should -Match 'Test-WorkflowQualification'
+        $text | Should -Match 'repository\.worktreeClean'
+        $text | Should -Match 'Test-HasExactInventory'
+        $text | Should -Match 'qualificationJunitPath'
+        $text | Should -Match 'scripts/invoke-release-e2e\.ps1'
+        $text | Should -Match 'scripts/test-ai-rules-compatibility\.ps1'
+        $text | Should -Match ([regex]::Escape('execution = $Execution'))
+        $text | Should -Match 'Add-ReusedStage -Name "pester"'
+        $text | Should -Match 'Invoke-GateStage -Name "helper-help" -Reason "always-run helper parse preflight"'
+        $text | Should -Match 'Invoke-GateStage -Name "release-e2e" -Reason "always-run release runtime proof"'
+        $text | Should -Match ([regex]::Escape('"-ResumeMode", $ReleaseResumeMode'))
+    }
+
     It "does not install repository-managed git hooks" {
         Test-Path -LiteralPath (Join-Path $RepoRoot ".githooks") | Should -BeFalse
         $text = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\local-quality-gate.md") -Raw -Encoding UTF8

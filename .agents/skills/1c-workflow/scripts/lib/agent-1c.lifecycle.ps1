@@ -113,6 +113,40 @@ function Get-DevBranchExtensionExportPath {
     return $path
 }
 
+function Assert-SingleManagedExtensionArtifact {
+    param(
+        [object]$State,
+        [string]$ExtensionNameOverride = ""
+    )
+
+    if ((Get-DevBranchKind -State $State) -ne "extension") { return }
+    $extensionName = if ($ExtensionNameOverride) { $ExtensionNameOverride } else { Require-DevBranchExtensionName -State $State }
+    Assert-ExtensionInitName -Name $extensionName | Out-Null
+    $allowedRoot = (Get-ExtensionInitDumpPath -Name $extensionName).Replace('\', '/').TrimEnd('/')
+    $baseCommit = [string](Get-StateValue -State $State -Name "createdFromCommit" -Default "")
+    if (-not (Test-GitCommitExists $baseCommit)) {
+        $baseCommit = Get-DevBranchLoadBaseCommit -State $State -ContentKind "extension"
+    }
+
+    $changed = @(Get-GitPathList -Arguments @(
+        "diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", $baseCommit, "--", "src/cfe"
+    ))
+    $untracked = @(Get-GitPathList -Arguments @(
+        "ls-files", "-z", "--others", "--exclude-standard", "--", "src/cfe"
+    ))
+    $offenders = @(
+        @($changed) + @($untracked) |
+            ForEach-Object { ([string]$_).Replace('\', '/').TrimStart('/') } |
+            Where-Object {
+                $_ -and $_ -ne $allowedRoot -and -not $_.StartsWith($allowedRoot + '/', [System.StringComparison]::OrdinalIgnoreCase)
+            } |
+            Sort-Object -Unique
+    )
+    if ($offenders.Count -gt 0) {
+        throw "EXTENSION_BRANCH_SINGLE_ARTIFACT: extension branch '$([string](Get-StateValue -State $State -Name 'devBranch' -Default ''))' may change only '$allowedRoot'. Move each other extension to a separate branch/worktree/base. Offending paths: $($offenders -join ', ')"
+    }
+}
+
 function Assert-ExtensionFilesReady {
     param([object]$State)
 
@@ -335,7 +369,8 @@ function Write-ItlAdditionalHelperActions {
     Write-Host "  ROCTUP MCP: ask for branch-local install, update, start, status, or stop for data exploration."
     Write-Host "  vibecoding1c MCP: ask for setup, status, select, refresh-registry, or update."
     Write-Host "  Vanessa UI MCP: ask for branch-local install, start, status, or stop only for runtime UI research, recording, or debugging."
-    Write-Host "  Extension branches: after branch creation run init-dev-branch-extension; set/dump remain recovery actions."
+    Write-Host "  Extension branches: one branch/worktree/base owns one CFE; several features are allowed only inside it."
+    Write-Host "  After branch creation run init-dev-branch-extension; set/dump remain validated transactional recovery actions."
     Write-Host "  Maintenance/recovery: ask to update base without tests, update workflow/rules, close/list/switch branches."
     Write-Host "  Full helper action catalog: .agents/skills/1c-workflow/references/advanced-actions.md."
 }
@@ -807,36 +842,67 @@ function Dump-ExtensionToFiles {
     param([object]$State)
 
     Assert-DevBranchKind -State $State -Expected "extension"
+    Assert-SingleManagedExtensionArtifact -State $State
     $extensionName = Require-DevBranchExtensionName -State $State
     $extensionExportPath = Get-DevBranchExtensionExportPath -State $State
     $absoluteExportPath = Assert-ExportPathInsideProject $extensionExportPath
-    New-Item -ItemType Directory -Force -Path $absoluteExportPath | Out-Null
+    $transactionRoot = Assert-ExportPathInsideProject -ExportPath (".agent-1c/extension-dump/" + [guid]::NewGuid().ToString("N"))
+    $stagedPath = Join-Path $transactionRoot "staged"
+    $backupPath = Join-Path $transactionRoot "backup"
+    $targetExisted = Test-Path -LiteralPath $absoluteExportPath -PathType Container -ErrorAction SilentlyContinue
+    $targetMoved = $false
+    $stageInstalled = $false
+    $tools = Get-ExtensionLifecycleToolPaths
 
-    $dumpInfoPath = Join-Path $absoluteExportPath "ConfigDumpInfo.xml"
-    $children = @(Get-ChildItem -LiteralPath $absoluteExportPath -Force)
-    $isIncremental = Test-Path -LiteralPath $dumpInfoPath -PathType Leaf
-    $designerArgs = @("/DumpConfigToFiles", $absoluteExportPath, "-Extension", $extensionName, "-Format", "Hierarchical")
-    if ($isIncremental) {
-        $designerArgs += @("-update", "-force")
-    } elseif ($children.Count -gt 0) {
-        throw "Extension export path '$absoluteExportPath' is not empty and ConfigDumpInfo.xml is missing. Clean the folder manually or restore ConfigDumpInfo.xml before dumping extension files."
-    }
+    try {
+        New-Item -ItemType Directory -Force -Path $stagedPath | Out-Null
+        Invoke-Designer `
+            -InfoBasePath $State.devBranchInfoBasePath `
+            -InfoBaseKind $State.infoBaseKind `
+            -DesignerArgs @("/DumpConfigToFiles", $stagedPath, "-Extension", $extensionName, "-Format", "Hierarchical") | Out-Null
 
-    Invoke-Designer `
-        -InfoBasePath $state.devBranchInfoBasePath `
-        -InfoBaseKind $state.infoBaseKind `
-        -DesignerArgs $designerArgs | Out-Null
+        $dumpInfoPath = Join-Path $stagedPath "ConfigDumpInfo.xml"
+        if (-not (Test-Path -LiteralPath $dumpInfoPath -PathType Leaf)) {
+            throw "1C extension dump did not create ConfigDumpInfo.xml for '$extensionName'. Check the 1C log: $script:LastLogPath"
+        }
+        Assert-NormalizedExtensionDump -Path $stagedPath -Name $extensionName
+        Invoke-ExtensionLifecycleTool -ScriptPath $tools.validate -Arguments @("-ExtensionPath", $stagedPath)
 
-    if (-not (Test-Path -LiteralPath $dumpInfoPath -PathType Leaf)) {
-        throw "1C extension dump did not create ConfigDumpInfo.xml in '$absoluteExportPath'. Make sure extension '$extensionName' exists in the development branch infobase. Check the 1C log: $script:LastLogPath"
-    }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $absoluteExportPath) | Out-Null
+        if ($targetExisted) {
+            Move-Item -LiteralPath $absoluteExportPath -Destination $backupPath
+            $targetMoved = $true
+        } elseif (Test-Path -LiteralPath $absoluteExportPath -PathType Leaf -ErrorAction SilentlyContinue) {
+            throw "Extension dump target is a file: $absoluteExportPath"
+        }
+        Move-Item -LiteralPath $stagedPath -Destination $absoluteExportPath
+        $stageInstalled = $true
 
-    return [pscustomobject]@{
-        extensionName = $extensionName
-        exportPath = $extensionExportPath
-        absoluteExportPath = $absoluteExportPath
-        incremental = $isIncremental
-        logPath = $script:LastLogPath
+        return [pscustomobject]@{
+            extensionName = $extensionName
+            exportPath = $extensionExportPath
+            absoluteExportPath = $absoluteExportPath
+            incremental = $false
+            transactional = $true
+            logPath = $script:LastLogPath
+        }
+    } catch {
+        $originalError = $_.Exception.Message
+        try {
+            if ($stageInstalled -and (Test-Path -LiteralPath $absoluteExportPath -ErrorAction SilentlyContinue)) {
+                Remove-Item -LiteralPath $absoluteExportPath -Recurse -Force
+            }
+            if ($targetMoved -and (Test-Path -LiteralPath $backupPath -PathType Container)) {
+                Move-Item -LiteralPath $backupPath -Destination $absoluteExportPath
+            }
+        } catch {
+            throw "Extension dump failed: $originalError Transaction rollback also failed: $($_.Exception.Message)"
+        }
+        throw "Extension dump failed before state or fingerprint update: $originalError"
+    } finally {
+        if (Test-Path -LiteralPath $transactionRoot -PathType Container -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $transactionRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -3896,7 +3962,15 @@ function Initialize-DevBranchRuntime {
         @{ name = "lastConfigPartialLogPath"; value = "" },
         @{ name = "lastConfigFullFallbackLogPath"; value = "" },
         @{ name = "lastConfigPartialError"; value = "" },
-        @{ name = "lastConfigFullFallbackError"; value = "" }
+        @{ name = "lastConfigFullFallbackError"; value = "" },
+        @{ name = "lastConfigDesignerFingerprint"; value = "" },
+        @{ name = "lastConfigDesignerLoadedAt"; value = "" },
+        @{ name = "lastExtensionDesignerFingerprint"; value = "" },
+        @{ name = "lastExtensionDesignerLoadedAt"; value = "" },
+        @{ name = "sourceFingerprint"; value = "" },
+        @{ name = "loadReason"; value = "" },
+        @{ name = "designerInvoked"; value = $false },
+        @{ name = "enterpriseInvoked"; value = $false }
     )) {
         if (-not $stateHash.ContainsKey($default.name)) {
             $stateHash[$default.name] = $default.value
@@ -3911,6 +3985,7 @@ function Initialize-DevBranchRuntime {
         $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "initializing"
     }
 
+    $copyPerformed = $false
     try {
         if ($currentStatus -eq "enterprise-normalization-pending") {
             Write-Host "Resuming final Enterprise normalization for existing development branch copy: $DevBranchInfoBasePath"
@@ -3943,6 +4018,7 @@ function Initialize-DevBranchRuntime {
             } else {
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $DevBranchInfoBasePath) | Out-Null
                 Copy-Item -LiteralPath $source -Destination $DevBranchInfoBasePath -Recurse
+                $copyPerformed = $true
             }
         } else {
             if (@("infobase-copied", "repository-unbound", "launcher-registered") -contains $currentStatus) {
@@ -3961,7 +4037,17 @@ function Initialize-DevBranchRuntime {
                 if ($LASTEXITCODE -ne 0) {
                     throw "Server infobase copy script failed with exit code $LASTEXITCODE"
                 }
+                $copyPerformed = $true
             }
+        }
+        if ($copyPerformed) {
+            $configSource = Get-ConfigSourceFingerprint -ExportPath (Get-ExportPath)
+            $stateHash["lastConfigDesignerFingerprint"] = $configSource.fingerprint
+            $stateHash["lastConfigDesignerLoadedAt"] = $now
+            $stateHash["sourceFingerprint"] = $configSource.fingerprint
+            $stateHash["loadReason"] = "branch-copy-seed"
+            $stateHash["designerInvoked"] = $false
+            $stateHash["enterpriseInvoked"] = $false
         }
         $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "infobase-copied"
         $currentStatus = "infobase-copied"
@@ -4355,8 +4441,10 @@ function Init-DevBranchExtension {
     $existingStateName = Get-StateValue -State $state -Name "extensionName" -Default ""
     $initializedAt = Get-StateValue -State $state -Name "extensionInitializedAt" -Default ""
     if ($existingStateName -or $initializedAt) {
-        throw "Extension state already exists for this branch ('$existingStateName'). init-dev-branch-extension never overwrites it; use set-dev-branch-extension only for recovery of a manually created extension."
+        Write-Host "EXTENSION_BRANCH_ALREADY_INITIALIZED"
+        throw "EXTENSION_BRANCH_ALREADY_INITIALIZED: extension branch already owns '$existingStateName'. Multiple features are allowed only inside that same extension; create a separate extension branch/worktree/base for another CFE."
     }
+    Assert-SingleManagedExtensionArtifact -State $state -ExtensionNameOverride $ExtensionName
 
     $dumpPath = Get-ExtensionInitDumpPath -Name $ExtensionName
     $absoluteDumpPath = Assert-ExportPathInsideProject -ExportPath $dumpPath
@@ -4457,6 +4545,12 @@ function Init-DevBranchExtension {
             lastExtensionBaseUpdatedCommit = Get-CurrentCommit
             lastExtensionDesignerFingerprint = $extensionSource.fingerprint
             lastExtensionDesignerLoadedAt = $now
+            sourceFingerprint = $extensionSource.fingerprint
+            loadReason = "extension-init-seed"
+            designerInvoked = $true
+            enterpriseInvoked = $false
+            extensionRecoveryStatus = "not-required"
+            extensionRecoveryReason = "initialized and dumped transactionally"
             enterpriseNormalizationStatus = "pending"
             enterpriseNormalizationReason = "extension-init"
             enterpriseNormalizationError = ""
@@ -4478,8 +4572,14 @@ function Init-DevBranchExtension {
             try {
                 Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @("/RestoreIB", $snapshotPath) | Out-Null
                 Update-DevBranchState -State $state -Updates @{
+                    lastConfigDesignerFingerprint = ""
+                    lastConfigDesignerLoadedAt = ""
                     lastExtensionDesignerFingerprint = ""
                     lastExtensionDesignerLoadedAt = ""
+                    sourceFingerprint = ""
+                    loadReason = "restore-invalidated"
+                    designerInvoked = $false
+                    enterpriseInvoked = $false
                     enterpriseNormalizationStatus = "pending"
                     enterpriseNormalizationReason = "extension-init-rollback"
                 }
@@ -4530,13 +4630,55 @@ function Set-DevBranchExtension {
         throw "Extension name is already set to '$existing'. Pass -Force to overwrite it."
     }
 
+    if (-not (Test-DevBranchExtensionExists -State $state -Name $ExtensionName)) {
+        Write-Host "EXTENSION_RECOVERY_SLOT_MISSING"
+        throw "EXTENSION_RECOVERY_SLOT_MISSING: extension '$ExtensionName' is absent from the branch infobase. Recovery context was not changed."
+    }
+
+    Assert-SingleManagedExtensionArtifact -State $state -ExtensionNameOverride $ExtensionName
+
     $safeExtensionName = ConvertTo-SafeName $ExtensionName
     $extensionExportPath = Get-ExtensionInitDumpPath -Name $ExtensionName
+    $absoluteExtensionExportPath = Assert-ExportPathInsideProject -ExportPath $extensionExportPath
+    $recoveryStatus = "pending-dump"
+    $recoveryReason = "canonical dump is absent or empty"
+    if (Test-Path -LiteralPath $absoluteExtensionExportPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        throw "Extension recovery dump target is a file: $absoluteExtensionExportPath"
+    }
+    if (Test-Path -LiteralPath $absoluteExtensionExportPath -PathType Container -ErrorAction SilentlyContinue) {
+        $children = @(Get-ChildItem -LiteralPath $absoluteExtensionExportPath -Force -ErrorAction Stop)
+        if ($children.Count -gt 0) {
+            $rootConfiguration = Join-Path $absoluteExtensionExportPath "Configuration.xml"
+            try {
+                $dumpXml = New-Object System.Xml.XmlDocument
+                $dumpXml.Load($rootConfiguration)
+                $dumpNameNode = $dumpXml.SelectSingleNode("//*[local-name()='Configuration']/*[local-name()='Properties']/*[local-name()='Name']")
+                $dumpName = if ($dumpNameNode) { $dumpNameNode.InnerText.Trim() } else { "" }
+            } catch {
+                throw "Extension recovery dump is invalid and state was not changed: $($_.Exception.Message)"
+            }
+            if ($dumpName -eq $ExtensionName) {
+                Assert-NormalizedExtensionDump -Path $absoluteExtensionExportPath -Name $ExtensionName
+                $tools = Get-ExtensionLifecycleToolPaths
+                Invoke-ExtensionLifecycleTool -ScriptPath $tools.validate -Arguments @("-ExtensionPath", $absoluteExtensionExportPath)
+                $recoveryReason = "validated canonical dump requires a fresh transactional slot dump"
+            } elseif ($dumpName) {
+                # The infobase slot is authoritative.  A dump for another name is
+                # tolerated only as pending recovery input and will be replaced
+                # transactionally by dump-dev-branch-extension.
+                $recoveryReason = "existing dump belongs to '$dumpName'; slot '$ExtensionName' is authoritative"
+            } else {
+                throw "Extension recovery dump has no Configuration/Properties/Name and state was not changed: $absoluteExtensionExportPath"
+            }
+        }
+    }
     $updates = @{
         extensionName = $ExtensionName
         safeExtensionName = $safeExtensionName
         extensionDumpPath = $extensionExportPath
         extensionExportPath = $extensionExportPath
+        extensionRecoveryStatus = $recoveryStatus
+        extensionRecoveryReason = $recoveryReason
         lastExtensionDesignerFingerprint = ""
         lastExtensionDesignerLoadedAt = ""
     }
@@ -4572,6 +4714,7 @@ function Write-BaseUpdateResult {
 function Update-DevBranchBase {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "update-dev-branch-base"
+    Assert-SingleManagedExtensionArtifact -State $state
     Sync-DevBranchContextToDotEnv -State $state
 
     if ((Get-DevBranchKind -State $state) -eq "extension") {
@@ -4630,6 +4773,7 @@ function Refresh-DevBranch {
 function Dump-DevBranchExtension {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "dump-dev-branch-extension"
+    Assert-SingleManagedExtensionArtifact -State $state
     $dumpResult = Dump-ExtensionToFiles -State $state
     $source = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
     $now = (Get-Date).ToString("o")
@@ -4640,6 +4784,12 @@ function Dump-DevBranchExtension {
         lastExtensionDumpPath = $dumpResult.exportPath
         lastExtensionDesignerFingerprint = $source.fingerprint
         lastExtensionDesignerLoadedAt = $now
+        sourceFingerprint = $source.fingerprint
+        loadReason = "extension-dump-seed"
+        designerInvoked = $false
+        enterpriseInvoked = $false
+        extensionRecoveryStatus = "passed"
+        extensionRecoveryReason = "transactional dump validated against the infobase slot"
         lastLogPath = $dumpResult.logPath
     }
     Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Extension files were dumped from the branch infobase." -Force
@@ -4780,10 +4930,21 @@ function Invoke-ReleaseE2EExtensionSmoke {
     $cfeDumpSha256 = ""
     $processorName = "ITLReleaseSmokeProcessor"
     $processorSynonym = "ITL Release Extension Form"
+    $processorInitialFormSynonym = "ITL Release Extension Form Draft"
     $processorFormName = "MainForm"
     $processorTemplateName = "SmokeTemplate"
+    $processorTemplateSynonym = "ITL Release Smoke Template"
+    $reportName = "ITLReleaseSmokeReport"
+    $reportSynonym = "ITL Release Smoke Report"
+    $reportTemplateName = "MainDataCompositionSchema"
+    $reportTemplateSynonym = "ITL Release Main Data Composition Schema"
     $formRegistrationCount = 0
     $templateRegistrationCount = 0
+    $formContentPreserved = $false
+    $formModulePreserved = $false
+    $templateContentPreserved = $false
+    $explicitMetadataUpdatesPassed = $false
+    $authoredFileHashes = [ordered]@{}
     $extensionUiReportPath = ""
     $extensionUiJunitTests = 0
 
@@ -4870,20 +5031,118 @@ function Invoke-ReleaseE2EExtensionSmoke {
         )
 
         $processorMetadataPath = Join-Path $dumpPath ("DataProcessors\" + $processorName + ".xml")
-        foreach ($iteration in 1..2) {
-            Invoke-ReleaseAiRulesTool -ToolPath $releaseTools.formAdd -Arguments @(
-                "-ObjectPath", $processorMetadataPath,
-                "-FormName", $processorFormName,
-                "-Synonym", $processorSynonym,
-                "-Purpose", "Object",
-                "-SetDefault"
-            )
-            Invoke-ReleaseAiRulesTool -ToolPath $releaseTools.templateAdd -Arguments @(
-                "-ObjectName", $processorName,
-                "-TemplateName", $processorTemplateName,
-                "-TemplateType", "Text",
-                "-SrcDir", (Join-Path $dumpPath "DataProcessors")
-            )
+        $processorObjectPath = Join-Path $dumpPath ("DataProcessors\" + $processorName)
+        $formMetadataPath = Join-Path $processorObjectPath ("Forms\" + $processorFormName + ".xml")
+        $formContentPath = Join-Path $processorObjectPath ("Forms\" + $processorFormName + "\Ext\Form.xml")
+        $formModulePath = Join-Path $processorObjectPath ("Forms\" + $processorFormName + "\Ext\Form\Module.bsl")
+        $templateMetadataPath = Join-Path $processorObjectPath ("Templates\" + $processorTemplateName + ".xml")
+        $templateContentPath = Join-Path $processorObjectPath ("Templates\" + $processorTemplateName + "\Ext\Template.txt")
+
+        Invoke-ReleaseAiRulesTool -ToolPath $releaseTools.formAdd -Arguments @(
+            "-ObjectPath", $processorMetadataPath,
+            "-FormName", $processorFormName,
+            "-Synonym", $processorInitialFormSynonym,
+            "-Purpose", "Object",
+            "-SetDefault"
+        )
+        Invoke-ReleaseAiRulesTool -ToolPath $releaseTools.templateAdd -Arguments @(
+            "-ObjectName", $processorName,
+            "-TemplateName", $processorTemplateName,
+            "-TemplateType", "Text",
+            "-Synonym", ($processorTemplateSynonym + " Draft"),
+            "-SrcDir", (Join-Path $dumpPath "DataProcessors")
+        )
+        foreach ($requiredFixturePath in @($formMetadataPath, $formContentPath, $formModulePath, $templateMetadataPath, $templateContentPath)) {
+            if (-not (Test-Path -LiteralPath $requiredFixturePath -PathType Leaf)) {
+                throw "Release extension smoke fixture file is missing: $requiredFixturePath"
+            }
+        }
+
+        $formContent = [System.IO.File]::ReadAllText($formContentPath)
+        Write-Utf8Text -Path $formContentPath -Value ($formContent.TrimEnd() + [Environment]::NewLine + "<!-- ITL authored form content -->" + [Environment]::NewLine)
+        Write-Utf8Text -Path $formModulePath -Value ("&AtClient" + [Environment]::NewLine + "Procedure ITLReleaseAuthoredFormCode()" + [Environment]::NewLine + "EndProcedure" + [Environment]::NewLine)
+        Write-Utf8Text -Path $templateContentPath -Value ("ITL authored template content" + [Environment]::NewLine)
+        $authoredFileHashes.form = (Get-FileHash -LiteralPath $formContentPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $authoredFileHashes.module = (Get-FileHash -LiteralPath $formModulePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $authoredFileHashes.template = (Get-FileHash -LiteralPath $templateContentPath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+        # A second call must update only explicitly requested metadata and must
+        # preserve authored Form.xml, Module.bsl, and template bytes.
+        Invoke-ReleaseAiRulesTool -ToolPath $releaseTools.formAdd -Arguments @(
+            "-ObjectPath", $processorMetadataPath,
+            "-FormName", $processorFormName,
+            "-Synonym", $processorSynonym,
+            "-Purpose", "Object",
+            "-SetDefault"
+        )
+        Invoke-ReleaseAiRulesTool -ToolPath $releaseTools.templateAdd -Arguments @(
+            "-ObjectName", $processorName,
+            "-TemplateName", $processorTemplateName,
+            "-TemplateType", "Text",
+            "-Synonym", $processorTemplateSynonym,
+            "-SrcDir", (Join-Path $dumpPath "DataProcessors")
+        )
+        $formContentPreserved = ((Get-FileHash -LiteralPath $formContentPath -Algorithm SHA256).Hash.ToLowerInvariant() -eq $authoredFileHashes.form)
+        $formModulePreserved = ((Get-FileHash -LiteralPath $formModulePath -Algorithm SHA256).Hash.ToLowerInvariant() -eq $authoredFileHashes.module)
+        $templateContentPreserved = ((Get-FileHash -LiteralPath $templateContentPath -Algorithm SHA256).Hash.ToLowerInvariant() -eq $authoredFileHashes.template)
+        if (-not $formContentPreserved -or -not $formModulePreserved -or -not $templateContentPreserved) {
+            throw "Release extension smoke specialized tools overwrote authored form or template content."
+        }
+
+        $reportDefinitionPath = Join-Path $smokeRoot "report.json"
+        Write-Utf8Text -Path $reportDefinitionPath -Value (([ordered]@{
+            type = "Report"
+            name = $reportName
+            synonym = $reportSynonym
+        } | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
+        Invoke-ReleaseAiRulesTool -ToolPath $releaseTools.metaCompile -Arguments @(
+            "-JsonPath", $reportDefinitionPath,
+            "-OutputDir", $dumpPath
+        )
+        $reportMetadataPath = Join-Path $dumpPath ("Reports\" + $reportName + ".xml")
+        $reportTemplateMetadataPath = Join-Path $dumpPath ("Reports\" + $reportName + "\Templates\" + $reportTemplateName + ".xml")
+        $reportTemplateContentPath = Join-Path $dumpPath ("Reports\" + $reportName + "\Templates\" + $reportTemplateName + "\Ext\Template.xml")
+        Invoke-ReleaseAiRulesTool -ToolPath $releaseTools.templateAdd -Arguments @(
+            "-ObjectName", $reportName,
+            "-TemplateName", $reportTemplateName,
+            "-TemplateType", "DataCompositionSchema",
+            "-Synonym", ($reportTemplateSynonym + " Draft"),
+            "-SrcDir", (Join-Path $dumpPath "Reports"),
+            "-SetMainSKD"
+        )
+        $reportTemplateContent = [System.IO.File]::ReadAllText($reportTemplateContentPath)
+        Write-Utf8Text -Path $reportTemplateContentPath -Value ($reportTemplateContent.TrimEnd() + [Environment]::NewLine + "<!-- ITL authored DCS content -->" + [Environment]::NewLine)
+        $authoredFileHashes.reportTemplate = (Get-FileHash -LiteralPath $reportTemplateContentPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        Invoke-ReleaseAiRulesTool -ToolPath $releaseTools.templateAdd -Arguments @(
+            "-ObjectName", $reportName,
+            "-TemplateName", $reportTemplateName,
+            "-TemplateType", "DataCompositionSchema",
+            "-Synonym", $reportTemplateSynonym,
+            "-SrcDir", (Join-Path $dumpPath "Reports"),
+            "-SetMainSKD"
+        )
+        $templateContentPreserved = $templateContentPreserved -and ((Get-FileHash -LiteralPath $reportTemplateContentPath -Algorithm SHA256).Hash.ToLowerInvariant() -eq $authoredFileHashes.reportTemplate)
+
+        $processorDocument = New-Object System.Xml.XmlDocument
+        $processorDocument.Load($processorMetadataPath)
+        $formDocument = New-Object System.Xml.XmlDocument
+        $formDocument.Load($formMetadataPath)
+        $templateDocument = New-Object System.Xml.XmlDocument
+        $templateDocument.Load($templateMetadataPath)
+        $reportDocument = New-Object System.Xml.XmlDocument
+        $reportDocument.Load($reportMetadataPath)
+        $reportTemplateDocument = New-Object System.Xml.XmlDocument
+        $reportTemplateDocument.Load($reportTemplateMetadataPath)
+        $defaultForm = [string]$processorDocument.SelectSingleNode("//*[local-name()='DataProcessor']/*[local-name()='Properties']/*[local-name()='DefaultForm']").InnerText
+        $formSynonym = [string]$formDocument.SelectSingleNode("//*[local-name()='Form']/*[local-name()='Properties']/*[local-name()='Synonym']/*[local-name()='item']/*[local-name()='content']").InnerText
+        $templateSynonym = [string]$templateDocument.SelectSingleNode("//*[local-name()='Template']/*[local-name()='Properties']/*[local-name()='Synonym']/*[local-name()='item']/*[local-name()='content']").InnerText
+        $mainDcs = [string]$reportDocument.SelectSingleNode("//*[local-name()='Report']/*[local-name()='Properties']/*[local-name()='MainDataCompositionSchema']").InnerText
+        $reportTemplateActualSynonym = [string]$reportTemplateDocument.SelectSingleNode("//*[local-name()='Template']/*[local-name()='Properties']/*[local-name()='Synonym']/*[local-name()='item']/*[local-name()='content']").InnerText
+        $explicitMetadataUpdatesPassed = $defaultForm -eq "DataProcessor.$processorName.Form.$processorFormName" -and
+            $formSynonym -eq $processorSynonym -and $templateSynonym -eq $processorTemplateSynonym -and
+            $mainDcs -eq "Report.$reportName.Template.$reportTemplateName" -and $reportTemplateActualSynonym -eq $reportTemplateSynonym
+        if (-not $explicitMetadataUpdatesPassed -or -not $templateContentPreserved) {
+            throw "Release extension smoke did not preserve authored DCS content or apply explicit Synonym/DefaultForm/MainDataCompositionSchema updates."
         }
         $fixtureCounts = Get-ReleaseExtensionFixtureCounts -ExtensionDumpPath $dumpPath
         $formRegistrationCount = $fixtureCounts.forms
@@ -4968,7 +5227,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
             throw "Release extension smoke left the worktree dirty."
         }
         $evidence = [ordered]@{
-            schemaVersion = 1
+            schemaVersion = 2
             checkedAt = [DateTime]::UtcNow.ToString("o")
             devBranchName = $DevBranchName
             extensionName = $ExtensionName
@@ -4978,6 +5237,10 @@ function Invoke-ReleaseE2EExtensionSmoke {
             databaseRestored = $true
             repeatedFormOperationsIdempotent = ($formRegistrationCount -eq 1)
             repeatedTemplateOperationsIdempotent = ($templateRegistrationCount -eq 1)
+            formContentPreserved = $formContentPreserved
+            formModulePreserved = $formModulePreserved
+            templateContentPreserved = $templateContentPreserved
+            explicitMetadataUpdatesPassed = $explicitMetadataUpdatesPassed
             formRegistrationCount = $formRegistrationCount
             templateRegistrationCount = $templateRegistrationCount
             extensionUiTestClientPassed = ($extensionUiJunitTests -eq 1)
@@ -4986,6 +5249,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
             emptyDumpConfigurationSha256 = $emptyDumpSha256
             cfeSha256 = $cfeSha256
             cfeDumpConfigurationSha256 = $cfeDumpSha256
+            authoredFileSha256 = $authoredFileHashes
         }
         Write-Utf8Text -Path $evidencePath -Value (($evidence | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
         Write-Host "Release E2E extension Empty/CFE smoke passed: $evidencePath"
@@ -5156,16 +5420,63 @@ function Invoke-DevBranchCheck {
 }
 
 function Check-DevBranch {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-SingleManagedExtensionArtifact -State $state
     Invoke-DevBranchCheck
 }
 
+function Save-ReleaseE2EInfobaseSnapshot {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "release-e2e-snapshot"
+    Assert-DevBranchKind -State $state -Expected "configuration"
+    Require-Value "ReleaseSnapshotPath" $ReleaseSnapshotPath | Out-Null
+    $snapshotPath = Assert-ExportPathInsideProject -ExportPath $ReleaseSnapshotPath
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $snapshotPath) | Out-Null
+    Stop-OwnVanessaTestProcessesAndAssert -State $state
+    Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @("/DumpIB", $snapshotPath) | Out-Null
+    if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf) -or (Get-Item -LiteralPath $snapshotPath).Length -le 0) {
+        throw "Release E2E snapshot was not created: $snapshotPath"
+    }
+    Write-Host "Release E2E snapshot: $snapshotPath"
+    Write-Host "SHA256: $((Get-FileHash -LiteralPath $snapshotPath -Algorithm SHA256).Hash.ToLowerInvariant())"
+}
+
+function Restore-ReleaseE2EInfobaseSnapshot {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "release-e2e-restore"
+    Assert-DevBranchKind -State $state -Expected "configuration"
+    Require-Value "ReleaseSnapshotPath" $ReleaseSnapshotPath | Out-Null
+    $snapshotPath = Assert-ExportPathInsideProject -ExportPath $ReleaseSnapshotPath
+    if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { throw "Release E2E snapshot is missing: $snapshotPath" }
+    Stop-OwnVanessaTestProcessesAndAssert -State $state
+    Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @("/RestoreIB", $snapshotPath) | Out-Null
+    Update-DevBranchState -State $state -Updates @{
+        lastConfigDesignerFingerprint = ""
+        lastConfigDesignerLoadedAt = ""
+        lastExtensionDesignerFingerprint = ""
+        lastExtensionDesignerLoadedAt = ""
+        sourceFingerprint = ""
+        loadReason = "release-e2e-restore-invalidated"
+        designerInvoked = $false
+        enterpriseInvoked = $false
+        enterpriseNormalizationStatus = "pending"
+        enterpriseNormalizationReason = "release-e2e-restore"
+        enterpriseNormalizationError = ""
+    }
+    Sync-DevBranchContextToDotEnv -State (Read-DevBranchState -Name $DevBranchName) -AllowIncompleteExtension
+    Write-Host "Release E2E snapshot restored: $snapshotPath"
+}
+
 function Verify-DevBranch {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-SingleManagedExtensionArtifact -State $state
     Invoke-DevBranchCheck
 }
 
 function Export-DevBranchResult {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "export-dev-branch-result"
+    Assert-SingleManagedExtensionArtifact -State $state
     Assert-CleanGit
     Sync-DevBranchContextToDotEnv -State $state
     $currentBranch = Get-CurrentBranch
@@ -5224,6 +5535,7 @@ function Export-DevBranchResult {
 function Close-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "close-dev-branch"
+    Assert-SingleManagedExtensionArtifact -State $state
     Stop-RoctupMcpForState -State $state -Quiet | Out-Null
     $state = Read-DevBranchState -Name $DevBranchName
     Stop-VanessaMcpForState -State $state -Quiet | Out-Null

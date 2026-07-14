@@ -32,9 +32,17 @@ From a clean workflow checkout and a clean fork checkout at the annotated
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
-The command runs the complete static gate, fork gate and compatibility check,
-then commits a generated change to only the root `src/cf/Configuration.xml`
-`Comment` in the dedicated E2E branch. The branch must also contain
+Run `Full` once on that exact clean workflow/fork pair before `Release`. Its
+`build/test-results/qualification/full.json` inventories the exact tests,
+gate scripts, JUnit, environment, workflow commit/tree and fork qualification.
+`Release` may reuse only that exact proof for Pester, fork Full and compatibility;
+it still runs `git diff --check`, helper parse/help and the complete runtime E2E.
+Every summary stage records whether it was executed, reused or skipped and why.
+
+The command runs or exactly reuses the qualified static/fork/compatibility
+stages, then makes two sequential generated commits that each change only the
+root `src/cf/Configuration.xml` `Comment` in the dedicated E2E branch. The
+branch must also contain
 `src/cf/Ext/ParentConfigurations.bin`. The runner invokes `/itl-check` with
 `ConfigLoadMode=Partial`, requires the preserved list file to contain only
 `Configuration.xml`, dumps the resulting branch infobase back to ignored local
@@ -42,26 +50,30 @@ state, and compares the `Comment` plus the presence of
 `Ext/ParentConfigurations.bin`. This is a real partial-load roundtrip; automatic
 full fallback is deliberately disabled for this release assertion.
 
-Vanessa is first restricted to the generated four-scenario feature file. The
-runner requires exactly four flat JUnit test cases, verifies that feature-only
-commits do not invoke Designer or Enterprise, then makes one scenario fail on
-purpose. `stoponerror=false` is qualified only when that failed run still emits
-all four independent results with exactly one failure/error and the helper
-returns a non-zero exit code. A recovery commit must restore four passing tests.
-Every completed JUnit run must finish post-processing within 30 seconds.
+Vanessa is restricted to the generated four-scenario feature file. The runner
+performs exactly three configuration checks: metadata plus four passing tests;
+a feature-only commit with one intentional failure and no Designer/Enterprise;
+then a second metadata commit plus feature recovery with Designer/Enterprise
+and four passing tests. `stoponerror=false` is qualified only when the failed
+run still emits all four independent results with exactly one failure/error and
+the helper returns a non-zero exit code. Every completed JUnit run must finish
+post-processing within 30 seconds.
 
 The same disposable branch infobase then runs the extension lifecycle smoke.
 Its scaffold and validation tools are loaded from the exact clean/tagged
 `-AiRulesSource` checkout already qualified by the fork and compatibility gates,
 not from a potentially stale installed copy in the stand.
-The helper creates an Empty extension from `cfe-init.ps1`, adds a data processor,
-runs `form-add` and `add-template` twice each, and requires one registration of
-each child after validation. It loads that extension and opens its real managed
-form through a one-scenario Vanessa `TESTMANAGER -> TESTCLIENT` run. It then
-dumps a non-empty CFE, restores the pre-smoke `.dt` snapshot, initializes the
-same extension from that CFE, revalidates the normalized
-`src/cfe/<ExtensionName>` dump and child counts, and restores the database and
-worktree again. The extension name, UI JUnit path, and proof of both modes are
+The helper creates an Empty extension from `cfe-init.ps1`, adds a data processor
+and a report, and invokes `form-add`/`add-template` repeatedly. It requires one
+registration of each processor child, preserves authored `Form.xml`,
+`Module.bsl`, text-template and data-composition-schema content, and proves
+explicit Synonym, default-form and `SetMainSKD` updates. It loads that extension
+and opens its real managed form through a one-scenario Vanessa
+`TESTMANAGER -> TESTCLIENT` run. It then dumps a non-empty CFE, restores the
+pre-smoke `.dt` snapshot, initializes the same extension from that CFE,
+revalidates the normalized `src/cfe/<ExtensionName>` dump and child counts, and
+restores the database and worktree again. The specialized-tool authored hashes
+are captured before the binary roundtrip. The evidence is
 recorded in `extension-smoke.json` and the combined release summary.
 
 The check and export use the helper from the clean workflow checkout being
@@ -80,11 +92,32 @@ scenario, non-idempotent form/template registration, failed extension TestClient
 form opening, failed extension database restore or unpinned template is a
 release failure.
 
+## Resume after interruption or license failure
+
+The runner checkpoints `config-cadence`, `config-roundtrip`, `extension-smoke`
+and `result-cleanup` under the ignored branch-local
+`.agent-1c/release-e2e-runs/<branch>/` directory. Baseline and post-config `.dt`
+snapshots, state, `.dev.env`, evidence and expected HEAD are SHA-checked. Repeat
+the same Release command with the default `-ReleaseResumeMode Auto` after a
+transient failure. Passed stages are reused and a failed extension stage starts
+from the exact post-config snapshot, so the three configuration checks are not
+repeated.
+
+If workflow/fork/helper/project-config identity changed, `Auto` stops with
+`RELEASE_E2E_RESUME_STATE_MISMATCH`; after inspecting the expected change, use
+`-ReleaseResumeMode Restart`. It validates the checkpoint scope and recorded
+baseline hashes, restores the baseline database and state, and resets only the
+dedicated E2E worktree to the recorded initial commit before beginning a new
+run. A corrupt checkpoint, changed HEAD, damaged evidence/snapshot or different
+project/worktree/branch is refused even for `Restart`; do not edit checkpoint or
+state by hand.
+
 ## Reset and rollback
 
 - A failed E2E run does not qualify a release tag or workflow baseline.
-- Stop remaining branch-local processes, discard the disposable database and
-  recreate it before retrying when the cause is uncertain.
+- For a transient interruption, use `Auto` resume. When the cause or state is
+  uncertain, use the scripted `Restart` rollback; do not manually repair the
+  database, checkpoint or lifecycle state.
 - Never repair an already published fork tag. Publish the next `rN` revision.
 - Roll back a workflow baseline by restoring the previous fork tag and exact
   commit in both templates, then rerun the entire Release gate.

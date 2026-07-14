@@ -859,6 +859,13 @@
         }
     }
 
+    It "seeds fingerprints only after a real branch copy and invalidates both kinds after restore" {
+        $lifecycleText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
+        $lifecycleText | Should -Match '(?s)if \(\$copyPerformed\)\s*\{.*?lastConfigDesignerFingerprint.*?loadReason"\] = "branch-copy-seed"'
+        $lifecycleText | Should -Match '(?s)function Restore-ReleaseE2EInfobaseSnapshot.*?lastConfigDesignerFingerprint = "".*?lastExtensionDesignerFingerprint = "".*?loadReason = "release-e2e-restore-invalidated"'
+        $lifecycleText | Should -Match '(?s)if \(\$currentStatus -eq "enterprise-normalization-pending"\).*?return.*?if \(\$copyPerformed\)'
+    }
+
     It "wires Vanessa verify through TestManager and TestClient" {
         $HelperText | Should -Match "Resolve-VanessaTestPort"
         $HelperText | Should -Match "VANESSA_TEST_PORT_RANGE"
@@ -985,9 +992,25 @@
                 @($read.events.comment) | Should -Contain "Rotated"
                 $read.scannedBytes | Should -BeLessThan ((Get-Item $historical).Length + (Get-Item $active).Length + (Get-Item $newSegment).Length)
 
+                New-DevBranchEventLogCursor -State $state -Path $cursorPath | Out-Null
+                Set-Content -LiteralPath $newSegment -Encoding UTF8 -Value "{}"
+                $truncated = Get-DevBranchEventLogDeltaSelection -State $state -CursorPath $cursorPath -FallbackStartTime ([datetime]"2026-07-03T12:00:00") 6>$null
+                $truncated.mode | Should -Be "fallback"
+
                 Set-Content -LiteralPath $cursorPath -Encoding UTF8 -Value "{broken"
-                $fallback = Get-DevBranchEventLogDeltaSelection -State $state -CursorPath $cursorPath -FallbackStartTime (Get-Date).AddMinutes(-1) 6>$null
+                $mystery = Join-Path $logDir "unknown-segment.lgp"
+                Set-Content -LiteralPath $mystery -Encoding UTF8 -Value '{20260703121000,E,"_$PerformError$_","Catalog.Items","New","Unknown segment"}'
+                (Get-Item $historical).LastWriteTimeUtc = [datetime]"2026-07-02T01:00:00Z"
+                (Get-Item $active).LastWriteTimeUtc = [datetime]"2026-07-02T01:00:00Z"
+                (Get-Item $newSegment).LastWriteTimeUtc = [datetime]"2026-07-02T01:00:00Z"
+                (Get-Item $mystery).LastWriteTimeUtc = [datetime]"2026-07-02T01:00:00Z"
+                $fallback = Get-DevBranchEventLogDeltaSelection -State $state -CursorPath $cursorPath -FallbackStartTime ([datetime]"2026-07-03T12:00:00") 6>$null
                 $fallback.mode | Should -Be "fallback"
+                $selectedNames = @($fallback.selections | ForEach-Object { Split-Path -Leaf $_.path })
+                $selectedNames | Should -Not -Contain "20260702.lgp"
+                $selectedNames | Should -Contain "20260703.lgp"
+                $selectedNames | Should -Contain "20260704.lgp"
+                $selectedNames | Should -Contain "unknown-segment.lgp"
             }
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

@@ -3,7 +3,9 @@ param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
     [Parameter(Mandatory = $true)][string]$AiRulesSource,
     [string]$HelperPath = "",
-    [string]$OutputPath = ""
+    [string]$OutputPath = "",
+    [ValidateSet("Auto", "Restart")]
+    [string]$ResumeMode = "Auto"
 )
 
 Set-StrictMode -Version Latest
@@ -85,6 +87,7 @@ $vanessaFixtureCommit = ""
 $testOnlyCommit = ""
 $stopOnErrorProbeCommit = ""
 $stopOnErrorRecoveryCommit = ""
+$secondMetadataCommit = ""
 $stopOnErrorProbeTests = 0
 $stopOnErrorProbeFailures = 0
 $stopOnErrorProbeErrors = 0
@@ -95,6 +98,7 @@ $roundtripEvidencePath = ""
 $roundtripEvidence = $null
 $extensionSmokeEvidencePath = ""
 $extensionSmokeEvidence = $null
+$configCadenceEvidencePath = Join-Path $outputRoot "config-cadence.json"
 $extensionSmokeName = "ITLReleaseSmoke" + [DateTime]::UtcNow.ToString("yyyyMMddHHmmss")
 
 function ConvertTo-NativeArgument {
@@ -216,8 +220,10 @@ function New-E2ERootConfigurationCommentCommit {
         throw "E2E worktree is dirty after committing the root Configuration.xml fixture."
     }
 
+    $commit = (& git -C $worktreePath rev-parse HEAD).Trim()
+    Register-E2EGeneratedCommit -Kind "configuration-comment" -Commit $commit
     return [pscustomobject]@{
-        commit = (& git -C $worktreePath rev-parse HEAD).Trim()
+        commit = $commit
         comment = $newComment
         configurationPath = $configurationPath
         parentConfigurationsPath = $parentConfigurationsPath
@@ -234,7 +240,9 @@ function New-E2EVanessaFixtureCommit {
     & git -C $worktreePath add -- tests/features/ITLReleaseFourFlat.feature | Out-Null
     & git -C $worktreePath commit -m "test: add four flat Vanessa release scenarios" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Unable to commit the four-scenario Vanessa release fixture." }
-    return [pscustomobject]@{ path = $featurePath; commit = (& git -C $worktreePath rev-parse HEAD).Trim() }
+    $commit = (& git -C $worktreePath rev-parse HEAD).Trim()
+    Register-E2EGeneratedCommit -Kind "vanessa-fixture" -Commit $commit
+    return [pscustomobject]@{ path = $featurePath; commit = $commit }
 }
 
 function Add-E2ETestOnlyCommit {
@@ -267,7 +275,9 @@ function Set-E2EVanessaFailureProbeCommit {
     $message = if ($Fail) { "test: probe Vanessa stop-on-error behavior" } else { "test: restore passing Vanessa release fixture" }
     & git -C $worktreePath commit -m $message | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Unable to commit the Vanessa stop-on-error probe transition." }
-    return (& git -C $worktreePath rev-parse HEAD).Trim()
+    $commit = (& git -C $worktreePath rev-parse HEAD).Trim()
+    Register-E2EGeneratedCommit -Kind $(if ($Fail) { "vanessa-failure-probe" } else { "vanessa-recovery" }) -Commit $commit
+    return $commit
 }
 
 function Get-E2EJunitTotals {
@@ -302,197 +312,544 @@ function Get-E2EState {
     throw "Development branch state was not found for E2E branch '$devBranchName'."
 }
 
+function ConvertTo-E2EHashtable {
+    param([object]$Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $result = [ordered]@{}
+        foreach ($key in $Value.Keys) { $result[[string]$key] = ConvertTo-E2EHashtable $Value[$key] }
+        return $result
+    }
+    if ($Value -is [pscustomobject]) {
+        $result = [ordered]@{}
+        foreach ($property in $Value.PSObject.Properties) { $result[$property.Name] = ConvertTo-E2EHashtable $property.Value }
+        return $result
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        return @($Value | ForEach-Object { ConvertTo-E2EHashtable $_ })
+    }
+    return $Value
+}
+
+function Get-E2EFileSha256 {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return "" }
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+$safeRunName = ($devBranchName -replace '[^A-Za-z0-9_.-]', '_')
+$releaseRunRoot = Join-Path $worktreePath ".agent-1c\release-e2e-runs\$safeRunName"
+$checkpointPath = Join-Path $releaseRunRoot "checkpoint.json"
+$baselineSnapshotPath = Join-Path $releaseRunRoot "snapshots\baseline.dt"
+$postConfigSnapshotPath = Join-Path $releaseRunRoot "snapshots\post-config.dt"
+$baselineStateCopyPath = Join-Path $releaseRunRoot "state\baseline.json"
+$baselineEnvCopyPath = Join-Path $releaseRunRoot "state\baseline.env"
+$postConfigStateCopyPath = Join-Path $releaseRunRoot "state\post-config.json"
+$postConfigEnvCopyPath = Join-Path $releaseRunRoot "state\post-config.env"
+$checkpoint = $null
+$checkpointWasResumed = $false
+$resumedStages = @()
+$executedStages = @()
+
+function Write-E2ECheckpoint {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $checkpointPath) | Out-Null
+    $checkpoint["updatedAt"] = [DateTime]::UtcNow.ToString("o")
+    [System.IO.File]::WriteAllText($checkpointPath, (($checkpoint | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+}
+
+function Register-E2EGeneratedCommit {
+    param([string]$Kind, [string]$Commit)
+    if ($null -eq $checkpoint) { throw "Release E2E checkpoint is not initialized before generated commit '$Commit'." }
+    $records = @()
+    if ($checkpoint.Contains("generatedCommits")) { $records = @($checkpoint["generatedCommits"]) }
+    $checkpoint["generatedCommits"] = @($records + [ordered]@{
+        kind = $Kind
+        commit = $Commit
+        recordedAt = [DateTime]::UtcNow.ToString("o")
+    })
+    $checkpoint["expectedHead"] = $Commit
+    Write-E2ECheckpoint
+}
+
+function Assert-E2ECheckpointFile {
+    param([string]$Path, [string]$Sha256, [string]$Label)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or (Get-E2EFileSha256 -Path $Path) -ne $Sha256) {
+        throw "RELEASE_E2E_RESUME_STATE_MISMATCH: $Label is missing or its SHA256 changed: $Path"
+    }
+}
+
+function Save-E2EStateFiles {
+    param([string]$StateCopyPath, [string]$EnvCopyPath)
+    $stateRecord = Get-E2EState
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $StateCopyPath) | Out-Null
+    Copy-Item -LiteralPath $stateRecord.path -Destination $StateCopyPath -Force
+    $envPath = Join-Path $worktreePath ".dev.env"
+    if (Test-Path -LiteralPath $envPath -PathType Leaf) { Copy-Item -LiteralPath $envPath -Destination $EnvCopyPath -Force }
+    return [ordered]@{
+        actualStatePath = $stateRecord.path
+        stateCopyPath = $StateCopyPath
+        stateSha256 = Get-E2EFileSha256 -Path $StateCopyPath
+        actualEnvPath = $envPath
+        envCopyPath = $(if (Test-Path -LiteralPath $EnvCopyPath -PathType Leaf) { $EnvCopyPath } else { "" })
+        envSha256 = Get-E2EFileSha256 -Path $EnvCopyPath
+    }
+}
+
+function Restore-E2EStateFiles {
+    param([object]$Record)
+    Assert-E2ECheckpointFile -Path ([string]$Record.stateCopyPath) -Sha256 ([string]$Record.stateSha256) -Label "saved branch state"
+    Copy-Item -LiteralPath ([string]$Record.stateCopyPath) -Destination ([string]$Record.actualStatePath) -Force
+    if ([string]$Record.envCopyPath) {
+        Assert-E2ECheckpointFile -Path ([string]$Record.envCopyPath) -Sha256 ([string]$Record.envSha256) -Label "saved .dev.env"
+        Copy-Item -LiteralPath ([string]$Record.envCopyPath) -Destination ([string]$Record.actualEnvPath) -Force
+    }
+}
+
+function Invoke-E2EInfobaseSnapshot {
+    param([string]$Path)
+    $relative = $Path.Substring($worktreePath.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
+    Invoke-E2EHelper -Action "release-e2e-snapshot" -TimeoutSeconds 7200 -AdditionalArguments @("-ReleaseSnapshotPath", $relative) | Out-Null
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Release E2E snapshot helper did not create: $Path" }
+    return [ordered]@{ path = $Path; sha256 = Get-E2EFileSha256 -Path $Path }
+}
+
+function Restore-E2EInfobaseSnapshot {
+    param([object]$Snapshot, [object]$StateFiles)
+    Assert-E2ECheckpointFile -Path ([string]$Snapshot.path) -Sha256 ([string]$Snapshot.sha256) -Label "infobase snapshot"
+    $relative = ([string]$Snapshot.path).Substring($worktreePath.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
+    Restore-E2EStateFiles -Record $StateFiles
+    Invoke-E2EHelper -Action "release-e2e-restore" -TimeoutSeconds 7200 -AdditionalArguments @("-ReleaseSnapshotPath", $relative) | Out-Null
+    Restore-E2EStateFiles -Record $StateFiles
+}
+
+function Set-E2EStageStatus {
+    param([string]$Name, [string]$Status, [string]$ErrorText = "", [string]$EvidencePath = "")
+    if (-not $checkpoint["stages"].Contains($Name)) { $checkpoint["stages"][$Name] = [ordered]@{} }
+    $record = $checkpoint["stages"][$Name]
+    $record["status"] = $Status
+    $record["updatedAt"] = [DateTime]::UtcNow.ToString("o")
+    $record["error"] = $ErrorText
+    $record["evidencePath"] = $EvidencePath
+    $record["evidenceSha256"] = Get-E2EFileSha256 -Path $EvidencePath
+    $checkpoint["expectedHead"] = (& git -C $worktreePath rev-parse HEAD).Trim()
+    if ($Status -eq "passed") { $checkpoint["lastPassedStage"] = $Name }
+    Write-E2ECheckpoint
+}
+
+function Test-E2EStagePassed {
+    param([string]$Name)
+    if (-not $checkpoint["stages"].Contains($Name)) { return $false }
+    $record = $checkpoint["stages"][$Name]
+    if ([string]$record.status -ne "passed") { return $false }
+    if ([string]$record.evidencePath) {
+        Assert-E2ECheckpointFile -Path ([string]$record.evidencePath) -Sha256 ([string]$record.evidenceSha256) -Label "$Name evidence"
+    }
+    return $true
+}
+
+$branch = (& git -C $worktreePath branch --show-current).Trim()
+if ($LASTEXITCODE -ne 0 -or $branch -notlike "itldev/*") { throw "E2E worktree must be an itldev/* Git worktree: $worktreePath" }
+if (@(& git -C $worktreePath status --porcelain).Count -gt 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: E2E worktree must be clean before release verification." }
+$aiRulesCommit = (& git -C $AiRulesSource rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $aiRulesCommit) { throw "Release ai_rules source is not a readable Git checkout: $AiRulesSource" }
+$workflowRoot = Split-Path -Parent $PSScriptRoot
+$workflowCommit = (& git -C $workflowRoot rev-parse HEAD).Trim()
+$workflowTree = (& git -C $workflowRoot rev-parse 'HEAD^{tree}').Trim()
+if ($LASTEXITCODE -ne 0 -or -not $workflowCommit -or -not $workflowTree) { throw "Release workflow source is not a readable Git checkout: $workflowRoot" }
+$runnerSha256 = Get-E2EFileSha256 -Path $PSCommandPath
+$helperSha256 = Get-E2EFileSha256 -Path $HelperPath
+$projectConfigSha256 = Get-E2EFileSha256 -Path (Join-Path $worktreePath ".agent-1c\project.json")
+
+if (Test-Path -LiteralPath $checkpointPath -PathType Leaf) {
+    try { $checkpoint = ConvertTo-E2EHashtable (Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json) }
+    catch { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: checkpoint is corrupt: $checkpointPath. $($_.Exception.Message)" }
+}
+
+if ($checkpoint) {
+    $identity = $checkpoint["identity"]
+    $scopeMatches = [int]$checkpoint["schemaVersion"] -eq 1 -and
+        [string]$identity.projectRoot -eq $ProjectRoot -and
+        [string]$identity.worktreePath -eq $worktreePath -and
+        [string]$identity.branch -eq $branch
+    if (-not $scopeMatches) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: checkpoint belongs to another project/worktree/branch." }
+    $releaseIdentityMatches =
+        [string]$identity.workflowCommit -eq $workflowCommit -and
+        [string]$identity.workflowTree -eq $workflowTree -and
+        [string]$identity.runnerSha256 -eq $runnerSha256 -and
+        [string]$identity.aiRulesCommit -eq $aiRulesCommit -and
+        [string]$identity.helperSha256 -eq $helperSha256 -and
+        [string]$identity.projectConfigSha256 -eq $projectConfigSha256
+    if ($ResumeMode -eq "Auto" -and -not $releaseIdentityMatches) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: checkpoint identity does not match the current workflow/fork/helper/project config. Use -ResumeMode Restart for the scripted baseline rollback." }
+    $currentHead = (& git -C $worktreePath rev-parse HEAD).Trim()
+    if ($currentHead -ne [string]$checkpoint["expectedHead"]) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: current HEAD '$currentHead' differs from checkpoint HEAD '$($checkpoint['expectedHead'])'." }
+
+    if (-not $checkpoint["snapshots"].Contains("baseline")) {
+        if ($checkpoint["stages"].Count -gt 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: baseline snapshot was not checkpointed before stage execution." }
+        Remove-Item -LiteralPath $baselineSnapshotPath -Force -ErrorAction SilentlyContinue
+        $checkpoint["snapshots"]["baseline"] = Invoke-E2EInfobaseSnapshot -Path $baselineSnapshotPath
+        Write-E2ECheckpoint
+    } else {
+        Assert-E2ECheckpointFile -Path ([string]$checkpoint["snapshots"]["baseline"].path) -Sha256 ([string]$checkpoint["snapshots"]["baseline"].sha256) -Label "baseline infobase snapshot"
+    }
+    $baselineStateRecord = $checkpoint["stateFiles"]["baseline"]
+    Assert-E2ECheckpointFile -Path ([string]$baselineStateRecord.stateCopyPath) -Sha256 ([string]$baselineStateRecord.stateSha256) -Label "baseline branch state"
+    if ([string]$baselineStateRecord.envCopyPath) {
+        Assert-E2ECheckpointFile -Path ([string]$baselineStateRecord.envCopyPath) -Sha256 ([string]$baselineStateRecord.envSha256) -Label "baseline .dev.env"
+    }
+    if ($checkpoint["stages"].Contains("config-cadence") -and [string]$checkpoint["stages"]["config-cadence"].status -eq "passed") {
+        if (-not $checkpoint["snapshots"].Contains("postConfig") -or -not $checkpoint["stateFiles"].Contains("postConfig")) {
+            throw "RELEASE_E2E_RESUME_STATE_MISMATCH: passed config-cadence has no post-config snapshot/state."
+        }
+        Assert-E2ECheckpointFile -Path ([string]$checkpoint["snapshots"]["postConfig"].path) -Sha256 ([string]$checkpoint["snapshots"]["postConfig"].sha256) -Label "post-config infobase snapshot"
+        $postConfigStateRecord = $checkpoint["stateFiles"]["postConfig"]
+        Assert-E2ECheckpointFile -Path ([string]$postConfigStateRecord.stateCopyPath) -Sha256 ([string]$postConfigStateRecord.stateSha256) -Label "post-config branch state"
+        if ([string]$postConfigStateRecord.envCopyPath) {
+            Assert-E2ECheckpointFile -Path ([string]$postConfigStateRecord.envCopyPath) -Sha256 ([string]$postConfigStateRecord.envSha256) -Label "post-config .dev.env"
+        }
+    }
+
+    if ($ResumeMode -eq "Restart") {
+        Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["baseline"] -StateFiles $checkpoint["stateFiles"]["baseline"]
+        & git -C $worktreePath reset --hard ([string]$identity.initialHead) *> $null
+        if ($LASTEXITCODE -ne 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: could not restore the exact baseline commit for Restart." }
+        Remove-Item -LiteralPath $releaseRunRoot -Recurse -Force
+        $checkpoint = $null
+    } else {
+        $checkpointWasResumed = $true
+    }
+}
+
+if (-not $checkpoint) {
+    New-Item -ItemType Directory -Force -Path $releaseRunRoot | Out-Null
+    $baselineStateFiles = Save-E2EStateFiles -StateCopyPath $baselineStateCopyPath -EnvCopyPath $baselineEnvCopyPath
+    $initialHead = (& git -C $worktreePath rev-parse HEAD).Trim()
+    $checkpoint = [ordered]@{
+        schemaVersion = 1
+        runId = [guid]::NewGuid().ToString("N")
+        status = "running"
+        identity = [ordered]@{
+            projectRoot = $ProjectRoot
+            worktreePath = $worktreePath
+            branch = $branch
+            initialHead = $initialHead
+            workflowCommit = $workflowCommit
+            workflowTree = $workflowTree
+            runnerSha256 = $runnerSha256
+            aiRulesCommit = $aiRulesCommit
+            helperSha256 = $helperSha256
+            projectConfigSha256 = $projectConfigSha256
+        }
+        expectedHead = $initialHead
+        snapshots = [ordered]@{}
+        stateFiles = [ordered]@{ baseline = $baselineStateFiles }
+        stages = [ordered]@{}
+        generatedCommits = @()
+        lastPassedStage = ""
+        cleanup = [ordered]@{ status = "pending"; actions = @() }
+        createdAt = [DateTime]::UtcNow.ToString("o")
+    }
+    Write-E2ECheckpoint
+    $checkpoint["snapshots"]["baseline"] = Invoke-E2EInfobaseSnapshot -Path $baselineSnapshotPath
+    Write-E2ECheckpoint
+}
+
 try {
-    $branch = (& git -C $worktreePath branch --show-current).Trim()
-    if ($LASTEXITCODE -ne 0 -or $branch -notlike "itldev/*") {
-        throw "E2E worktree must be an itldev/* Git worktree: $worktreePath"
-    }
-    if (@(& git -C $worktreePath status --porcelain).Count -gt 0) {
-        throw "E2E worktree must be clean before release verification."
-    }
     [void](Get-E2EState)
-    $fixture = New-E2ERootConfigurationCommentCommit
-    $fixtureCommit = $fixture.commit
-    $expectedComment = $fixture.comment
-    $vanessaFixture = New-E2EVanessaFixtureCommit
-    $vanessaFixtureCommit = $vanessaFixture.commit
+    if (-not (Test-E2EStagePassed -Name "config-cadence")) {
+        if ($checkpoint["stages"].Contains("config-cadence")) {
+            Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["baseline"] -StateFiles $checkpoint["stateFiles"]["baseline"]
+            & git -C $worktreePath reset --hard ([string]$checkpoint["identity"]["initialHead"]) *> $null
+            if ($LASTEXITCODE -ne 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: could not restore config-cadence baseline." }
+        }
+        Set-E2EStageStatus -Name "config-cadence" -Status "running"
+        $executedStages += "config-cadence"
+        try {
+            $fixture = New-E2ERootConfigurationCommentCommit
+            $fixtureCommit = $fixture.commit
+            $expectedComment = $fixture.comment
+            $vanessaFixture = New-E2EVanessaFixtureCommit
+            $vanessaFixtureCommit = $vanessaFixture.commit
 
-    Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @(
-        "-ConfigLoadMode", "Partial",
-        "-VanessaFeaturePath", $vanessaFixture.path,
-        "-VanessaFilterTags", "@itl_release_flat"
-    ) | Out-Null
-    $partialState = (Get-E2EState).value
-    if ([string]$partialState.configLoadStatus -ne "passed" -or [string]$partialState.lastConfigLoadMode -ne "partial") {
-        throw "Release E2E did not record a successful partial config load."
-    }
-    $partialListPath = [string]$partialState.lastConfigBaseUpdateListFile
-    if (-not $partialListPath -or -not (Test-Path -LiteralPath $partialListPath -PathType Leaf)) {
-        throw "Release E2E partial load list was not preserved."
-    }
-    $partialFiles = @(Get-Content -LiteralPath $partialListPath -Encoding UTF8 | Where-Object { $_ -ne "" })
-    if ($partialFiles.Count -ne 1 -or [string]$partialFiles[0] -ne "Configuration.xml") {
-        throw "Release E2E partial list must contain only Configuration.xml; actual: $($partialFiles -join ', ')"
-    }
-    $designerLoadedAt = [string]$partialState.lastConfigDesignerLoadedAt
-    if (-not $designerLoadedAt) { throw "Release E2E did not persist the configuration Designer fingerprint timestamp." }
+            # Configuration check 1/3: metadata changed, all four flat scenarios pass.
+            Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @(
+                "-ConfigLoadMode", "Partial", "-VanessaFeaturePath", $vanessaFixture.path, "-VanessaFilterTags", "@itl_release_flat"
+            ) | Out-Null
+            $partialState = (Get-E2EState).value
+            if ([string]$partialState.configLoadStatus -ne "passed" -or [string]$partialState.lastConfigLoadMode -ne "partial" -or -not [bool]$partialState.designerInvoked -or -not [bool]$partialState.enterpriseInvoked) {
+                throw "Release E2E first metadata check did not invoke and record Designer plus Enterprise."
+            }
+            $partialListPath = [string]$partialState.lastConfigBaseUpdateListFile
+            $partialFiles = @()
+            if ($partialListPath -and (Test-Path -LiteralPath $partialListPath -PathType Leaf)) {
+                $partialFiles = @(Get-Content -LiteralPath $partialListPath -Encoding UTF8 | Where-Object { $_ -ne "" })
+            }
+            if ($partialFiles.Count -ne 1 -or [string]$partialFiles[0] -ne "Configuration.xml") { throw "Release E2E partial list must contain only Configuration.xml; actual: $($partialFiles -join ', ')" }
+            $designerLoadedAt = [string]$partialState.lastConfigDesignerLoadedAt
+            $firstJunit = Get-E2EJunitTotals -RunDirectory ([string]$partialState.lastVanessaReportPath)
+            if ($firstJunit.tests -ne 4 -or ($firstJunit.failures + $firstJunit.errors) -ne 0) { throw "Release E2E first check must produce four passing JUnit tests." }
 
-    $testOnlyCommit = Add-E2ETestOnlyCommit -FeaturePath $vanessaFixture.path
-    Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @(
-        "-VanessaFeaturePath", $vanessaFixture.path,
-        "-VanessaFilterTags", "@itl_release_flat"
-    ) | Out-Null
-    $testOnlyState = (Get-E2EState).value
-    if ([string]$testOnlyState.lastConfigDesignerLoadedAt -ne $designerLoadedAt -or [bool]$testOnlyState.designerInvoked -or [bool]$testOnlyState.enterpriseInvoked) {
-        throw "Release E2E test-only iteration invoked Designer or Enterprise instead of running Vanessa only."
-    }
-    $junit = Get-E2EJunitTotals -RunDirectory ([string]$testOnlyState.lastVanessaReportPath)
-    $vanessaJUnitTests = $junit.tests
-    if ($junit.tests -ne 4 -or ($junit.failures + $junit.errors) -ne 0) {
-        throw "Release E2E four flat scenarios must produce exactly four passing JUnit tests; tests=$($junit.tests), failures=$($junit.failures), errors=$($junit.errors)."
-    }
-    $vanessaPostProcessDurationMs = [int64]$testOnlyState.lastVanessaPostProcessDurationMs
-    if ($vanessaPostProcessDurationMs -gt 30000) {
-        throw "Release E2E Vanessa post-processing exceeded 30 seconds: $vanessaPostProcessDurationMs ms."
-    }
+            # Configuration check 2/3: a feature-only edit deliberately fails one
+            # scenario; Designer and Enterprise must remain skipped.
+            $stopOnErrorProbeCommit = Set-E2EVanessaFailureProbeCommit -FeaturePath $vanessaFixture.path -Fail $true
+            $testOnlyCommit = $stopOnErrorProbeCommit
+            $stopOnErrorProbe = Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AllowFailure -AdditionalArguments @(
+                "-VanessaFeaturePath", $vanessaFixture.path, "-VanessaFilterTags", "@itl_release_flat"
+            )
+            if ($stopOnErrorProbe.exitCode -eq 0) { throw "Release E2E intentional failing test-only check unexpectedly passed." }
+            $stopOnErrorProbeState = (Get-E2EState).value
+            if ([string]$stopOnErrorProbeState.lastConfigDesignerLoadedAt -ne $designerLoadedAt -or [bool]$stopOnErrorProbeState.designerInvoked -or [bool]$stopOnErrorProbeState.enterpriseInvoked) { throw "Release E2E test-only failing check invoked Designer or Enterprise." }
+            $stopOnErrorJunit = Get-E2EJunitTotals -RunDirectory ([string]$stopOnErrorProbeState.lastVanessaReportPath)
+            $stopOnErrorProbeTests = $stopOnErrorJunit.tests
+            $stopOnErrorProbeFailures = $stopOnErrorJunit.failures
+            $stopOnErrorProbeErrors = $stopOnErrorJunit.errors
+            if ($stopOnErrorProbeTests -ne 4 -or ($stopOnErrorProbeFailures + $stopOnErrorProbeErrors) -ne 1) { throw "stoponerror=false did not preserve four independent results with one failure." }
 
-    $stopOnErrorProbeCommit = Set-E2EVanessaFailureProbeCommit -FeaturePath $vanessaFixture.path -Fail $true
-    $stopOnErrorProbe = Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AllowFailure -AdditionalArguments @(
-        "-VanessaFeaturePath", $vanessaFixture.path,
-        "-VanessaFilterTags", "@itl_release_flat"
-    )
-    if ($stopOnErrorProbe.exitCode -eq 0) {
-        throw "Release E2E stop-on-error probe unexpectedly passed despite one deliberately failing scenario (exit=$($stopOnErrorProbe.exitCode), resultCount=$(@($stopOnErrorProbe).Count))."
-    }
-    $stopOnErrorProbeState = (Get-E2EState).value
-    if ([string]$stopOnErrorProbeState.lastConfigDesignerLoadedAt -ne $designerLoadedAt -or [bool]$stopOnErrorProbeState.designerInvoked -or [bool]$stopOnErrorProbeState.enterpriseInvoked) {
-        throw "Release E2E stop-on-error probe invoked Designer or Enterprise for a feature-only change."
-    }
-    $stopOnErrorJunit = Get-E2EJunitTotals -RunDirectory ([string]$stopOnErrorProbeState.lastVanessaReportPath)
-    $stopOnErrorProbeTests = $stopOnErrorJunit.tests
-    $stopOnErrorProbeFailures = $stopOnErrorJunit.failures
-    $stopOnErrorProbeErrors = $stopOnErrorJunit.errors
-    if ($stopOnErrorProbeTests -ne 4 -or ($stopOnErrorProbeFailures + $stopOnErrorProbeErrors) -ne 1) {
-        throw "stoponerror=false did not preserve all four independent JUnit results; tests=$stopOnErrorProbeTests, failures=$stopOnErrorProbeFailures, errors=$stopOnErrorProbeErrors."
-    }
-    if ([int64]$stopOnErrorProbeState.lastVanessaPostProcessDurationMs -gt 30000) {
-        throw "Release E2E failed-scenario post-processing exceeded 30 seconds: $($stopOnErrorProbeState.lastVanessaPostProcessDurationMs) ms."
-    }
+            # Configuration check 3/3: a second metadata change and the feature
+            # recovery are present together, so both Designer and Enterprise run.
+            $secondFixture = New-E2ERootConfigurationCommentCommit
+            $secondMetadataCommit = $secondFixture.commit
+            $expectedComment = $secondFixture.comment
+            $stopOnErrorRecoveryCommit = Set-E2EVanessaFailureProbeCommit -FeaturePath $vanessaFixture.path -Fail $false
+            Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @(
+                "-VanessaFeaturePath", $vanessaFixture.path, "-VanessaFilterTags", "@itl_release_flat"
+            ) | Out-Null
+            $recoveryState = (Get-E2EState).value
+            if (-not [bool]$recoveryState.designerInvoked -or -not [bool]$recoveryState.enterpriseInvoked -or [string]$recoveryState.lastConfigDesignerLoadedAt -eq $designerLoadedAt) { throw "Release E2E second metadata plus feature recovery did not invoke Designer and Enterprise." }
+            $recoveryJunit = Get-E2EJunitTotals -RunDirectory ([string]$recoveryState.lastVanessaReportPath)
+            $vanessaJUnitTests = $recoveryJunit.tests
+            $vanessaPostProcessDurationMs = [int64]$recoveryState.lastVanessaPostProcessDurationMs
+            if ($vanessaJUnitTests -ne 4 -or ($recoveryJunit.failures + $recoveryJunit.errors) -ne 0) { throw "Release E2E recovery must restore four passing JUnit tests." }
+            if ($vanessaPostProcessDurationMs -gt 30000) { throw "Release E2E recovery post-processing exceeded 30 seconds: $vanessaPostProcessDurationMs ms." }
 
-    $stopOnErrorRecoveryCommit = Set-E2EVanessaFailureProbeCommit -FeaturePath $vanessaFixture.path -Fail $false
-    Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @(
-        "-VanessaFeaturePath", $vanessaFixture.path,
-        "-VanessaFilterTags", "@itl_release_flat"
-    ) | Out-Null
-    $recoveryState = (Get-E2EState).value
-    if ([string]$recoveryState.lastConfigDesignerLoadedAt -ne $designerLoadedAt -or [bool]$recoveryState.designerInvoked -or [bool]$recoveryState.enterpriseInvoked) {
-        throw "Release E2E passing recovery invoked Designer or Enterprise for a feature-only change."
-    }
-    $recoveryJunit = Get-E2EJunitTotals -RunDirectory ([string]$recoveryState.lastVanessaReportPath)
-    $vanessaJUnitTests = $recoveryJunit.tests
-    $vanessaPostProcessDurationMs = [int64]$recoveryState.lastVanessaPostProcessDurationMs
-    if ($vanessaJUnitTests -ne 4 -or ($recoveryJunit.failures + $recoveryJunit.errors) -ne 0) {
-        throw "Release E2E recovery must restore four passing JUnit tests; tests=$vanessaJUnitTests, failures=$($recoveryJunit.failures), errors=$($recoveryJunit.errors)."
-    }
-    if ($vanessaPostProcessDurationMs -gt 30000) {
-        throw "Release E2E recovery post-processing exceeded 30 seconds: $vanessaPostProcessDurationMs ms."
+            $checkpoint["stateFiles"]["postConfig"] = Save-E2EStateFiles -StateCopyPath $postConfigStateCopyPath -EnvCopyPath $postConfigEnvCopyPath
+            $checkpoint["snapshots"]["postConfig"] = Invoke-E2EInfobaseSnapshot -Path $postConfigSnapshotPath
+            $checkpoint["configEvidence"] = [ordered]@{
+                fixtureCommit = $fixtureCommit; vanessaFixtureCommit = $vanessaFixtureCommit; testOnlyCommit = $testOnlyCommit
+                secondMetadataCommit = $secondMetadataCommit; recoveryCommit = $stopOnErrorRecoveryCommit
+                featurePath = $vanessaFixture.path; expectedComment = $expectedComment; designerLoadedAt = [string]$recoveryState.lastConfigDesignerLoadedAt
+                junitTests = $vanessaJUnitTests; postProcessDurationMs = $vanessaPostProcessDurationMs
+                probeTests = $stopOnErrorProbeTests; probeFailures = $stopOnErrorProbeFailures; probeErrors = $stopOnErrorProbeErrors
+            }
+            [System.IO.File]::WriteAllText(
+                $configCadenceEvidencePath,
+                (($checkpoint["configEvidence"] | ConvertTo-Json -Depth 8) + [Environment]::NewLine),
+                [System.Text.UTF8Encoding]::new($false)
+            )
+            Set-E2EStageStatus -Name "config-cadence" -Status "passed" -EvidencePath $configCadenceEvidencePath
+        } catch {
+            Set-E2EStageStatus -Name "config-cadence" -Status "failed" -ErrorText $_.Exception.Message
+            throw
+        }
+    } else {
+        $resumedStages += "config-cadence"
+        $configEvidence = $checkpoint["configEvidence"]
+        $fixtureCommit = [string]$configEvidence.fixtureCommit; $vanessaFixtureCommit = [string]$configEvidence.vanessaFixtureCommit
+        $testOnlyCommit = [string]$configEvidence.testOnlyCommit; $secondMetadataCommit = [string]$configEvidence.secondMetadataCommit
+        $stopOnErrorProbeCommit = $testOnlyCommit
+        $stopOnErrorRecoveryCommit = [string]$configEvidence.recoveryCommit; $expectedComment = [string]$configEvidence.expectedComment
+        $vanessaJUnitTests = [int]$configEvidence.junitTests; $vanessaPostProcessDurationMs = [int64]$configEvidence.postProcessDurationMs
+        $stopOnErrorProbeTests = [int]$configEvidence.probeTests; $stopOnErrorProbeFailures = [int]$configEvidence.probeFailures; $stopOnErrorProbeErrors = [int]$configEvidence.probeErrors
+        $vanessaFixture = [pscustomobject]@{ path = [string]$configEvidence.featurePath; commit = $vanessaFixtureCommit }
     }
 
     $roundtripEvidencePath = Join-Path $worktreePath "build\test-results\release-e2e\config-roundtrip.json"
-    Remove-Item -LiteralPath $roundtripEvidencePath -Force -ErrorAction SilentlyContinue
-    Invoke-E2EHelper -Action "release-e2e-config-roundtrip" -TimeoutSeconds 7200 | Out-Null
-    if (-not (Test-Path -LiteralPath $roundtripEvidencePath -PathType Leaf)) {
-        throw "Release E2E roundtrip evidence was not created: $roundtripEvidencePath"
-    }
-    $roundtripEvidence = Get-Content -LiteralPath $roundtripEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if (-not [bool]$roundtripEvidence.parentConfigurationsPresentInDump -or [string]$roundtripEvidence.actualComment -cne $expectedComment) {
-        throw "Release E2E roundtrip evidence does not prove Comment and ParentConfigurations.bin preservation."
+    if (-not (Test-E2EStagePassed -Name "config-roundtrip")) {
+        if ($checkpoint["stages"].Contains("config-roundtrip")) {
+            Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
+        }
+        Set-E2EStageStatus -Name "config-roundtrip" -Status "running"
+        $executedStages += "config-roundtrip"
+        try {
+            Remove-Item -LiteralPath $roundtripEvidencePath -Force -ErrorAction SilentlyContinue
+            Invoke-E2EHelper -Action "release-e2e-config-roundtrip" -TimeoutSeconds 7200 | Out-Null
+            if (-not (Test-Path -LiteralPath $roundtripEvidencePath -PathType Leaf)) {
+                throw "Release E2E roundtrip evidence was not created: $roundtripEvidencePath"
+            }
+            $roundtripEvidence = Get-Content -LiteralPath $roundtripEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if (-not [bool]$roundtripEvidence.parentConfigurationsPresentInDump -or [string]$roundtripEvidence.actualComment -cne $expectedComment) {
+                throw "Release E2E roundtrip evidence does not prove Comment and ParentConfigurations.bin preservation."
+            }
+            Set-E2EStageStatus -Name "config-roundtrip" -Status "passed" -EvidencePath $roundtripEvidencePath
+        } catch {
+            Set-E2EStageStatus -Name "config-roundtrip" -Status "failed" -ErrorText $_.Exception.Message
+            throw
+        }
+    } else {
+        $resumedStages += "config-roundtrip"
+        $roundtripEvidence = Get-Content -LiteralPath $roundtripEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
 
     $extensionSmokeEvidencePath = Join-Path $worktreePath "build\test-results\release-e2e\extension-smoke.json"
-    Remove-Item -LiteralPath $extensionSmokeEvidencePath -Force -ErrorAction SilentlyContinue
-    Invoke-E2EHelper -Action "release-e2e-extension-smoke" -TimeoutSeconds 7200 -AdditionalArguments @(
-        "-ExtensionName", $extensionSmokeName,
-        "-ReleaseAiRulesSource", $AiRulesSource
-    ) | Out-Null
-    if (-not (Test-Path -LiteralPath $extensionSmokeEvidencePath -PathType Leaf)) {
-        throw "Release E2E extension smoke evidence was not created: $extensionSmokeEvidencePath"
-    }
-    $extensionSmokeEvidence = Get-Content -LiteralPath $extensionSmokeEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if (-not [bool]$extensionSmokeEvidence.emptyInitialized -or
-        -not [bool]$extensionSmokeEvidence.cfeCreated -or
-        -not [bool]$extensionSmokeEvidence.cfeInitialized -or
-        -not [bool]$extensionSmokeEvidence.databaseRestored -or
-        -not [bool]$extensionSmokeEvidence.repeatedFormOperationsIdempotent -or
-        -not [bool]$extensionSmokeEvidence.repeatedTemplateOperationsIdempotent -or
-        -not [bool]$extensionSmokeEvidence.extensionUiTestClientPassed -or
-        [int]$extensionSmokeEvidence.formRegistrationCount -ne 1 -or
-        [int]$extensionSmokeEvidence.templateRegistrationCount -ne 1 -or
-        [int]$extensionSmokeEvidence.extensionUiJunitTests -ne 1 -or
-        [string]$extensionSmokeEvidence.extensionName -ne $extensionSmokeName) {
-        throw "Release E2E extension evidence does not prove Empty/CFE roundtrip, idempotent form/template operations, real TestClient UI, and database restoration."
+    if (-not (Test-E2EStagePassed -Name "extension-smoke")) {
+        # The extension stage always starts from the exact post-configuration
+        # snapshot. This makes a retry after a transient license failure safe.
+        Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
+        Set-E2EStageStatus -Name "extension-smoke" -Status "running"
+        $executedStages += "extension-smoke"
+        try {
+            Remove-Item -LiteralPath $extensionSmokeEvidencePath -Force -ErrorAction SilentlyContinue
+            Invoke-E2EHelper -Action "release-e2e-extension-smoke" -TimeoutSeconds 7200 -AdditionalArguments @(
+                "-ExtensionName", $extensionSmokeName,
+                "-ReleaseAiRulesSource", $AiRulesSource
+            ) | Out-Null
+            if (-not (Test-Path -LiteralPath $extensionSmokeEvidencePath -PathType Leaf)) {
+                throw "Release E2E extension smoke evidence was not created: $extensionSmokeEvidencePath"
+            }
+            $extensionSmokeEvidence = Get-Content -LiteralPath $extensionSmokeEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if (-not [bool]$extensionSmokeEvidence.emptyInitialized -or
+                -not [bool]$extensionSmokeEvidence.cfeCreated -or
+                -not [bool]$extensionSmokeEvidence.cfeInitialized -or
+                -not [bool]$extensionSmokeEvidence.databaseRestored -or
+                -not [bool]$extensionSmokeEvidence.repeatedFormOperationsIdempotent -or
+                -not [bool]$extensionSmokeEvidence.repeatedTemplateOperationsIdempotent -or
+                -not [bool]$extensionSmokeEvidence.formContentPreserved -or
+                -not [bool]$extensionSmokeEvidence.formModulePreserved -or
+                -not [bool]$extensionSmokeEvidence.templateContentPreserved -or
+                -not [bool]$extensionSmokeEvidence.explicitMetadataUpdatesPassed -or
+                -not [bool]$extensionSmokeEvidence.extensionUiTestClientPassed -or
+                [int]$extensionSmokeEvidence.formRegistrationCount -ne 1 -or
+                [int]$extensionSmokeEvidence.templateRegistrationCount -ne 1 -or
+                [int]$extensionSmokeEvidence.extensionUiJunitTests -ne 1 -or
+                [string]$extensionSmokeEvidence.extensionName -ne $extensionSmokeName) {
+                throw "Release E2E extension evidence does not prove transactional content preservation, explicit metadata updates, Empty/CFE roundtrip, idempotence, real TestClient UI, and database restoration."
+            }
+            Set-E2EStageStatus -Name "extension-smoke" -Status "passed" -EvidencePath $extensionSmokeEvidencePath
+        } catch {
+            Set-E2EStageStatus -Name "extension-smoke" -Status "failed" -ErrorText $_.Exception.Message
+            throw
+        }
+    } else {
+        $resumedStages += "extension-smoke"
+        $extensionSmokeEvidence = Get-Content -LiteralPath $extensionSmokeEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
 
-    $statusResult = Invoke-E2EHelper -Action "status" -TimeoutSeconds 120 -AdditionalArguments @(
-        "-VanessaFeaturePath", $vanessaFixture.path
-    )
-    $statusText = Get-Content -LiteralPath $statusResult.stdoutPath -Raw -Encoding UTF8
-    if ($statusText -notmatch '(?im)^Verification fresh passed:\s*True\s*$') {
-        throw "E2E /itl-check did not produce fresh passed verification."
-    }
+    if (-not (Test-E2EStagePassed -Name "result-cleanup")) {
+        Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
+        Set-E2EStageStatus -Name "result-cleanup" -Status "running"
+        $executedStages += "result-cleanup"
+        try {
+            $statusResult = Invoke-E2EHelper -Action "status" -TimeoutSeconds 120 -AdditionalArguments @(
+                "-VanessaFeaturePath", $vanessaFixture.path
+            )
+            $statusText = Get-Content -LiteralPath $statusResult.stdoutPath -Raw -Encoding UTF8
+            if ($statusText -notmatch '(?im)^Verification fresh passed:\s*True\s*$') {
+                throw "E2E /itl-check did not produce fresh passed verification."
+            }
 
-    $stateRecord = Get-E2EState
-    $state = $stateRecord.value
-    if ([string]$state.lastVerificationStatus -ne "passed") {
-        throw "E2E state does not record passed verification."
-    }
-    $verifiedAt = [string]$state.lastVerifiedAt
-    $verifiedCommit = [string]$state.lastVerifiedCommit
-    if (-not $verifiedAt -or ([DateTime]::Parse($verifiedAt).ToUniversalTime() -lt $startedAt)) {
-        throw "E2E verification is not fresh for the current Release run."
-    }
+            $stateRecord = Get-E2EState
+            $state = $stateRecord.value
+            if ([string]$state.lastVerificationStatus -ne "passed") {
+                throw "E2E state does not record passed verification."
+            }
+            $verifiedAt = [string]$state.lastVerifiedAt
+            $verifiedCommit = [string]$state.lastVerifiedCommit
+            $verificationFloor = [DateTime]::Parse([string]$checkpoint["createdAt"]).ToUniversalTime()
+            if (-not $verifiedAt -or ([DateTime]::Parse($verifiedAt).ToUniversalTime() -lt $verificationFloor)) {
+                throw "E2E verification is not fresh for the checkpointed Release run."
+            }
 
-    Invoke-E2EHelper -Action "export-dev-branch-result" -TimeoutSeconds 7200 -AdditionalArguments @(
-        "-VanessaFeaturePath", $vanessaFixture.path
-    ) | Out-Null
-    $stateRecord = Get-E2EState
-    $state = $stateRecord.value
-    $artifactPath = [string]$state.lastResultPath
-    if (-not $artifactPath -or -not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
-        throw "E2E export artifact was not recorded or does not exist."
+            Invoke-E2EHelper -Action "export-dev-branch-result" -TimeoutSeconds 7200 -AdditionalArguments @(
+                "-VanessaFeaturePath", $vanessaFixture.path
+            ) | Out-Null
+            $stateRecord = Get-E2EState
+            $state = $stateRecord.value
+            $artifactPath = [string]$state.lastResultPath
+            if (-not $artifactPath -or -not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
+                throw "E2E export artifact was not recorded or does not exist."
+            }
+            $resultManifestPath = "$artifactPath.manifest.json"
+            if (-not (Test-Path -LiteralPath $resultManifestPath -PathType Leaf)) {
+                throw "E2E result manifest was not created: $resultManifestPath"
+            }
+            $manifest = Get-Content -LiteralPath $resultManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if (-not [bool]$manifest.verification.freshPassed -or [bool]$manifest.unverifiedOverride) {
+                throw "E2E result manifest does not prove fresh passed verification without override."
+            }
+            $artifactSha256 = Get-E2EFileSha256 -Path $artifactPath
+            if ($artifactSha256 -ne ([string]$manifest.artifact.sha256).ToLowerInvariant()) {
+                throw "E2E artifact SHA256 does not match its result manifest."
+            }
+            $checkpoint["resultEvidence"] = [ordered]@{
+                verifiedAt = $verifiedAt; verifiedCommit = $verifiedCommit
+                artifactPath = $artifactPath; artifactSha256 = $artifactSha256
+                manifestPath = $resultManifestPath; manifestSha256 = Get-E2EFileSha256 -Path $resultManifestPath
+            }
+            Set-E2EStageStatus -Name "result-cleanup" -Status "passed" -EvidencePath $resultManifestPath
+        } catch {
+            Set-E2EStageStatus -Name "result-cleanup" -Status "failed" -ErrorText $_.Exception.Message
+            throw
+        }
+    } else {
+        $resumedStages += "result-cleanup"
+        $resultEvidence = $checkpoint["resultEvidence"]
+        $verifiedAt = [string]$resultEvidence.verifiedAt
+        $verifiedCommit = [string]$resultEvidence.verifiedCommit
+        $artifactPath = [string]$resultEvidence.artifactPath
+        $artifactSha256 = [string]$resultEvidence.artifactSha256
+        $resultManifestPath = [string]$resultEvidence.manifestPath
+        Assert-E2ECheckpointFile -Path $artifactPath -Sha256 $artifactSha256 -Label "result artifact"
+        Assert-E2ECheckpointFile -Path $resultManifestPath -Sha256 ([string]$resultEvidence.manifestSha256) -Label "result manifest"
     }
-    $resultManifestPath = "$artifactPath.manifest.json"
-    if (-not (Test-Path -LiteralPath $resultManifestPath -PathType Leaf)) {
-        throw "E2E result manifest was not created: $resultManifestPath"
-    }
-    $manifest = Get-Content -LiteralPath $resultManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if (-not [bool]$manifest.verification.freshPassed -or [bool]$manifest.unverifiedOverride) {
-        throw "E2E result manifest does not prove fresh passed verification without override."
-    }
-    $artifactSha256 = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($artifactSha256 -ne ([string]$manifest.artifact.sha256).ToLowerInvariant()) {
-        throw "E2E artifact SHA256 does not match its result manifest."
-    }
+    $checkpoint["status"] = "passed"
+    Write-E2ECheckpoint
 } catch {
     $failure = $_.Exception.Message
+    if ($_.InvocationInfo.ScriptLineNumber) {
+        $failure += " (invoke-release-e2e.ps1:$($_.InvocationInfo.ScriptLineNumber))"
+    }
 } finally {
+    $cleanupActions = @()
     foreach ($action in @("stop-dev-branch-test-clients", "stop-vanessa-mcp", "stop-roctup-mcp")) {
         try {
             $cleanup = Invoke-E2EHelper -Action $action -TimeoutSeconds 180 -AllowFailure
+            $cleanupActions += [ordered]@{ action = $action; exitCode = [int]$cleanup.exitCode }
             if ($cleanup.exitCode -ne 0) { $cleanupFailures += "$action exit=$($cleanup.exitCode)" }
         } catch {
+            $cleanupActions += [ordered]@{ action = $action; exitCode = -1; error = $_.Exception.Message }
             $cleanupFailures += "$action $($_.Exception.Message)"
         }
     }
     if ($cleanupFailures.Count -gt 0 -and -not $failure) {
         $failure = "E2E cleanup failed: $($cleanupFailures -join '; ')"
     }
+    $checkpoint["cleanup"] = [ordered]@{
+        status = $(if ($cleanupFailures.Count -eq 0) { "passed" } else { "failed" })
+        actions = @($cleanupActions)
+        finishedAt = [DateTime]::UtcNow.ToString("o")
+    }
+    if ($failure) {
+        $checkpoint["status"] = "failed"
+        $checkpoint["error"] = $failure
+        if ($cleanupFailures.Count -gt 0 -and $checkpoint["stages"].Contains("result-cleanup")) {
+            $checkpoint["stages"]["result-cleanup"]["status"] = "failed"
+            $checkpoint["stages"]["result-cleanup"]["error"] = "E2E cleanup failed: $($cleanupFailures -join '; ')"
+        }
+    } else {
+        $checkpoint["status"] = "passed"
+        $checkpoint["error"] = ""
+    }
+    try { Write-E2ECheckpoint } catch {
+        if (-not $failure) { $failure = "Could not persist the final E2E checkpoint: $($_.Exception.Message)" }
+    }
 
     $summary = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         status = $(if ($failure) { "failed" } else { "passed" })
         startedAt = $startedAt.ToString("o")
         finishedAt = [DateTime]::UtcNow.ToString("o")
+        resumeMode = $ResumeMode
+        checkpointPath = $checkpointPath
+        checkpointWasResumed = $checkpointWasResumed
+        resumedStages = @($resumedStages)
+        executedStages = @($executedStages)
+        stages = $checkpoint["stages"]
+        generatedCommits = $checkpoint["generatedCommits"]
+        snapshots = $checkpoint["snapshots"]
+        cleanup = $checkpoint["cleanup"]
+        workflowCommit = $workflowCommit
+        workflowTree = $workflowTree
+        runnerSha256 = $runnerSha256
+        aiRulesCommit = $aiRulesCommit
         projectRoot = $ProjectRoot
         sourceSnapshotPath = $sourceSnapshotPath
         worktreePath = $worktreePath
@@ -502,6 +859,7 @@ try {
         fixtureCommit = $fixtureCommit
         vanessaFixtureCommit = $vanessaFixtureCommit
         testOnlyCommit = $testOnlyCommit
+        secondMetadataCommit = $secondMetadataCommit
         stopOnErrorProbeCommit = $stopOnErrorProbeCommit
         stopOnErrorRecoveryCommit = $stopOnErrorRecoveryCommit
         stopOnErrorProbeTests = $stopOnErrorProbeTests
@@ -511,6 +869,7 @@ try {
         vanessaPostProcessDurationMs = $vanessaPostProcessDurationMs
         expectedComment = $expectedComment
         configLoadMode = "partial"
+        configCadenceEvidencePath = $configCadenceEvidencePath
         roundtripEvidencePath = $roundtripEvidencePath
         roundtripParentConfigurationsPresent = $(if ($roundtripEvidence) { [bool]$roundtripEvidence.parentConfigurationsPresentInDump } else { $false })
         extensionSmokeEvidencePath = $extensionSmokeEvidencePath
@@ -521,6 +880,10 @@ try {
         extensionDatabaseRestored = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.databaseRestored } else { $false })
         extensionFormOperationsIdempotent = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.repeatedFormOperationsIdempotent } else { $false })
         extensionTemplateOperationsIdempotent = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.repeatedTemplateOperationsIdempotent } else { $false })
+        extensionFormContentPreserved = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.formContentPreserved } else { $false })
+        extensionFormModulePreserved = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.formModulePreserved } else { $false })
+        extensionTemplateContentPreserved = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.templateContentPreserved } else { $false })
+        extensionExplicitMetadataUpdatesPassed = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.explicitMetadataUpdatesPassed } else { $false })
         extensionFormRegistrationCount = $(if ($extensionSmokeEvidence) { [int]$extensionSmokeEvidence.formRegistrationCount } else { 0 })
         extensionTemplateRegistrationCount = $(if ($extensionSmokeEvidence) { [int]$extensionSmokeEvidence.templateRegistrationCount } else { 0 })
         extensionUiTestClientPassed = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.extensionUiTestClientPassed } else { $false })
