@@ -462,7 +462,15 @@ function Test-E2EStagePassed {
 
 $branch = (& git -C $worktreePath branch --show-current).Trim()
 if ($LASTEXITCODE -ne 0 -or $branch -notlike "itldev/*") { throw "E2E worktree must be an itldev/* Git worktree: $worktreePath" }
-if (@(& git -C $worktreePath status --porcelain).Count -gt 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: E2E worktree must be clean before release verification." }
+$worktreeStatus = @(& git -C $worktreePath status --porcelain --untracked-files=all)
+if ($usingLegacyRunRoot -and $ResumeMode -eq "Restart") {
+    $legacyRunRelative = $releaseRunRoot.Substring($worktreePath.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
+    $worktreeStatus = @($worktreeStatus | Where-Object {
+        $statusPath = if ([string]$_ -and ([string]$_).Length -gt 3) { ([string]$_).Substring(3).Trim('"').Replace('\', '/') } else { "" }
+        $statusPath -ne $legacyRunRelative -and -not $statusPath.StartsWith("$legacyRunRelative/", [StringComparison]::OrdinalIgnoreCase)
+    })
+}
+if ($worktreeStatus.Count -gt 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: E2E worktree must be clean before release verification." }
 $aiRulesCommit = (& git -C $AiRulesSource rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $aiRulesCommit) { throw "Release ai_rules source is not a readable Git checkout: $AiRulesSource" }
 $workflowRoot = Split-Path -Parent $PSScriptRoot
@@ -529,6 +537,9 @@ if ($checkpoint) {
         if ($usingLegacyRunRoot) {
             Set-E2ERunPaths -Root $preferredReleaseRunRoot
             $usingLegacyRunRoot = $false
+        }
+        if (@(& git -C $worktreePath status --porcelain --untracked-files=all).Count -gt 0) {
+            throw "RELEASE_E2E_RESUME_STATE_MISMATCH: scripted Restart did not restore a clean E2E worktree."
         }
         $checkpoint = $null
     } else {

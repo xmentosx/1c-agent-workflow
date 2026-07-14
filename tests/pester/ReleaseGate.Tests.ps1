@@ -76,7 +76,7 @@ Describe "Release E2E orchestration" {
             & git -C $mainRoot init *> $null
             & git -C $mainRoot config user.email "test@example.invalid"
             & git -C $mainRoot config user.name "ITL Test"
-            Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".agent-1c/`nbuild/`n"
+            Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".agent-1c/dev-branches/`n.agent-1c/runs/`n.agent-1c/release-e2e-actions.log`n.agent-1c/release-e2e-partial-list.txt`nbuild/`n"
             Set-Content -LiteralPath (Join-Path $mainRoot "README.md") -Encoding ASCII -Value "fixture"
             New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot "src\cf\Ext") | Out-Null
             Set-Content -LiteralPath (Join-Path $mainRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value @'
@@ -310,6 +310,20 @@ switch ($Action) {
             $identityExitCode | Should -Not -Be 0
             ($identityOutput -join [Environment]::NewLine) | Should -Match "RELEASE_E2E_RESUME_STATE_MISMATCH"
 
+            # Releases created before the ignored runtime-state location used a
+            # tracked-worktree-visible checkpoint directory. Restart must allow
+            # only that exact owned directory long enough to validate and roll
+            # it back, then return the worktree to a clean state.
+            $preferredRunRoot = Join-Path $worktreeRoot ".agent-1c\runs\release-e2e\workflow-release-e2e"
+            $legacyRunRoot = Join-Path $worktreeRoot ".agent-1c\release-e2e-runs\workflow-release-e2e"
+            $preferredCheckpointPath = Join-Path $preferredRunRoot "checkpoint.json"
+            $checkpointJson = Get-Content -LiteralPath $preferredCheckpointPath -Raw -Encoding UTF8
+            $checkpointJson = $checkpointJson.Replace($preferredRunRoot.Replace('\', '\\'), $legacyRunRoot.Replace('\', '\\'))
+            [System.IO.File]::WriteAllText($preferredCheckpointPath, $checkpointJson, [System.Text.UTF8Encoding]::new($false))
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $legacyRunRoot) | Out-Null
+            Move-Item -LiteralPath $preferredRunRoot -Destination $legacyRunRoot
+            @(& git -C $worktreeRoot status --porcelain --untracked-files=all).Count | Should -BeGreaterThan 0
+
             $restartSummaryPath = Join-Path $tempRoot "restart-summary.json"
             & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
                 -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $restartSummaryPath -ResumeMode Restart
@@ -318,6 +332,8 @@ switch ($Action) {
             $restartSummary.status | Should -Be "passed"
             $restartSummary.checkpointWasResumed | Should -BeFalse
             @($restartSummary.executedStages) | Should -Contain "config-cadence"
+            Test-Path -LiteralPath $legacyRunRoot | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $preferredRunRoot "checkpoint.json") -PathType Leaf | Should -BeTrue
 
             # A corrupt checkpoint must be refused before any expensive stage.
             $checkpointPath = Join-Path $worktreeRoot ".agent-1c\runs\release-e2e\workflow-release-e2e\checkpoint.json"
