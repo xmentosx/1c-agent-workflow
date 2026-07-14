@@ -81,6 +81,15 @@ $artifactSha256 = ""
 $verifiedAt = ""
 $verifiedCommit = ""
 $fixtureCommit = ""
+$vanessaFixtureCommit = ""
+$testOnlyCommit = ""
+$stopOnErrorProbeCommit = ""
+$stopOnErrorRecoveryCommit = ""
+$stopOnErrorProbeTests = 0
+$stopOnErrorProbeFailures = 0
+$stopOnErrorProbeErrors = 0
+$vanessaJUnitTests = 0
+$vanessaPostProcessDurationMs = 0
 $expectedComment = ""
 $roundtripEvidencePath = ""
 $roundtripEvidence = $null
@@ -116,6 +125,9 @@ function Invoke-E2EHelper {
     $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($parts -join " ") `
         -WorkingDirectory $worktreePath -WindowStyle Hidden -RedirectStandardOutput $stdoutPath `
         -RedirectStandardError $stderrPath -PassThru
+    # Windows PowerShell 5.1 may expose a null ExitCode after timed WaitForExit
+    # unless the native process handle is materialized before the wait.
+    $null = $process.Handle
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
         try { $process.Kill() } catch {}
         if ($AllowFailure) { return [pscustomobject]@{ exitCode = -1; stdoutPath = $stdoutPath; stderrPath = $stderrPath } }
@@ -212,6 +224,68 @@ function New-E2ERootConfigurationCommentCommit {
     }
 }
 
+function New-E2EVanessaFixtureCommit {
+    $featurePath = Join-Path $worktreePath "tests\features\ITLReleaseFourFlat.feature"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $featurePath) | Out-Null
+    # Keep the PowerShell 5.1 script source ASCII-safe; otherwise Cyrillic literals in a
+    # UTF-8-without-BOM .ps1 are decoded through the active ANSI code page before writing.
+    $featureBase64 = 'I2xhbmd1YWdlOiBydQoKQGl0bF9yZWxlYXNlX2ZsYXQK0KTRg9C90LrRhtC40L7QvdCw0Ls6INCn0LXRgtGL0YDQtSDQvdC10LfQsNCy0LjRgdC40LzRi9GFIHJlbGVhc2Ut0YHRhtC10L3QsNGA0LjRjwoK0JrQvtC90YLQtdC60YHRgjoKCdCU0LDQvdC+INCvINC30LDQv9GD0YHQutCw0Y4g0YHRhtC10L3QsNGA0LjQuSDQvtGC0LrRgNGL0YLQuNGPIFRlc3RDbGllbnQg0LjQu9C4INC/0L7QtNC60LvRjtGH0LDRjiDRg9C20LUg0YHRg9GJ0LXRgdGC0LLRg9GO0YnQuNC5CgrQodGG0LXQvdCw0YDQuNC5OiBSZWxlYXNlIHNjZW5hcmlvIG9uZQoJ0Jgg0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwINC90LAg0YHQtdGA0LLQtdGA0LUKCSIiImJzbAoJCdCV0YHQu9C4INCb0L7QttGMINCi0L7Qs9C00LAg0JLRi9C30LLQsNGC0YzQmNGB0LrQu9GO0YfQtdC90LjQtSAib25lIjsg0JrQvtC90LXRhtCV0YHQu9C4OwoJIiIiCgrQodGG0LXQvdCw0YDQuNC5OiBSZWxlYXNlIHNjZW5hcmlvIHR3bwoJ0Jgg0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwINC90LAg0YHQtdGA0LLQtdGA0LUKCSIiImJzbAoJCdCV0YHQu9C4INCb0L7QttGMINCi0L7Qs9C00LAg0JLRi9C30LLQsNGC0YzQmNGB0LrQu9GO0YfQtdC90LjQtSAidHdvIjsg0JrQvtC90LXRhtCV0YHQu9C4OwoJIiIiCgrQodGG0LXQvdCw0YDQuNC5OiBSZWxlYXNlIHNjZW5hcmlvIHRocmVlCgnQmCDRjyDQstGL0L/QvtC70L3Rj9GOINC60L7QtCDQstGB0YLRgNC+0LXQvdC90L7Qs9C+INGP0LfRi9C60LAg0L3QsCDRgdC10YDQstC10YDQtQoJIiIiYnNsCgkJ0JXRgdC70Lgg0JvQvtC20Ywg0KLQvtCz0LTQsCDQktGL0LfQstCw0YLRjNCY0YHQutC70Y7Rh9C10L3QuNC1ICJ0aHJlZSI7INCa0L7QvdC10YbQldGB0LvQuDsKCSIiIgoK0KHRhtC10L3QsNGA0LjQuTogUmVsZWFzZSBzY2VuYXJpbyBmb3VyCgnQmCDRjyDQstGL0L/QvtC70L3Rj9GOINC60L7QtCDQstGB0YLRgNC+0LXQvdC90L7Qs9C+INGP0LfRi9C60LAg0L3QsCDRgdC10YDQstC10YDQtQoJIiIiYnNsCgkJ0JXRgdC70Lgg0JvQvtC20Ywg0KLQvtCz0LTQsCDQktGL0LfQstCw0YLRjNCY0YHQutC70Y7Rh9C10L3QuNC1ICJmb3VyIjsg0JrQvtC90LXRhtCV0YHQu9C4OwoJIiIi'
+    [System.IO.File]::WriteAllBytes($featurePath, [System.Convert]::FromBase64String($featureBase64))
+    & git -C $worktreePath add -- tests/features/ITLReleaseFourFlat.feature | Out-Null
+    & git -C $worktreePath commit -m "test: add four flat Vanessa release scenarios" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Unable to commit the four-scenario Vanessa release fixture." }
+    return [pscustomobject]@{ path = $featurePath; commit = (& git -C $worktreePath rev-parse HEAD).Trim() }
+}
+
+function Add-E2ETestOnlyCommit {
+    param([string]$FeaturePath)
+    [System.IO.File]::AppendAllText($FeaturePath, "`n# test-only release iteration " + [DateTime]::UtcNow.ToString("o") + "`n", [System.Text.UTF8Encoding]::new($false))
+    & git -C $worktreePath add -- tests/features/ITLReleaseFourFlat.feature | Out-Null
+    & git -C $worktreePath commit -m "test: exercise test-only verification iteration" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Unable to commit the test-only release fixture change." }
+    return (& git -C $worktreePath rev-parse HEAD).Trim()
+}
+
+function Set-E2EVanessaFailureProbeCommit {
+    param(
+        [Parameter(Mandatory = $true)][string]$FeaturePath,
+        [Parameter(Mandatory = $true)][bool]$Fail
+    )
+
+    $falseCondition = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('0JXRgdC70Lgg0JvQvtC20Yw='))
+    $trueCondition = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('0JXRgdC70Lgg0JjRgdGC0LjQvdCw'))
+    $from = if ($Fail) { $falseCondition } else { $trueCondition }
+    $to = if ($Fail) { $trueCondition } else { $falseCondition }
+    $feature = [System.IO.File]::ReadAllText($FeaturePath, [System.Text.Encoding]::UTF8)
+    $position = $feature.IndexOf($from, [System.StringComparison]::Ordinal)
+    if ($position -lt 0) {
+        throw "Unable to toggle the first Vanessa release scenario for the stop-on-error probe."
+    }
+    $feature = $feature.Substring(0, $position) + $to + $feature.Substring($position + $from.Length)
+    [System.IO.File]::WriteAllText($FeaturePath, $feature, [System.Text.UTF8Encoding]::new($false))
+    & git -C $worktreePath add -- tests/features/ITLReleaseFourFlat.feature | Out-Null
+    $message = if ($Fail) { "test: probe Vanessa stop-on-error behavior" } else { "test: restore passing Vanessa release fixture" }
+    & git -C $worktreePath commit -m $message | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Unable to commit the Vanessa stop-on-error probe transition." }
+    return (& git -C $worktreePath rev-parse HEAD).Trim()
+}
+
+function Get-E2EJunitTotals {
+    param([string]$RunDirectory)
+    $totals = [ordered]@{ tests = 0; failures = 0; errors = 0 }
+    foreach ($file in @(Get-ChildItem -LiteralPath $RunDirectory -Recurse -File -Filter "*.xml" -ErrorAction SilentlyContinue)) {
+        $xml = New-Object System.Xml.XmlDocument; $xml.Load($file.FullName)
+        $nodes = @($xml.SelectNodes('//*[local-name()="testsuite" and not(ancestor::*[local-name()="testsuite"])]'))
+        if ($nodes.Count -eq 0 -and $xml.DocumentElement.LocalName -eq "testsuites") { $nodes = @($xml.DocumentElement) }
+        foreach ($node in $nodes) {
+            foreach ($name in @("tests", "failures", "errors")) {
+                if ($node.Attributes[$name]) { $totals[$name] += [int]$node.Attributes[$name].Value }
+            }
+        }
+    }
+    return [pscustomobject]$totals
+}
+
 function Get-E2EState {
     $roots = @($ProjectRoot, $worktreePath) | Sort-Object -Unique
     foreach ($root in $roots) {
@@ -240,8 +314,14 @@ try {
     $fixture = New-E2ERootConfigurationCommentCommit
     $fixtureCommit = $fixture.commit
     $expectedComment = $fixture.comment
+    $vanessaFixture = New-E2EVanessaFixtureCommit
+    $vanessaFixtureCommit = $vanessaFixture.commit
 
-    Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @("-ConfigLoadMode", "Partial") | Out-Null
+    Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @(
+        "-ConfigLoadMode", "Partial",
+        "-VanessaFeaturePath", $vanessaFixture.path,
+        "-VanessaFilterTags", "@itl_release_flat"
+    ) | Out-Null
     $partialState = (Get-E2EState).value
     if ([string]$partialState.configLoadStatus -ne "passed" -or [string]$partialState.lastConfigLoadMode -ne "partial") {
         throw "Release E2E did not record a successful partial config load."
@@ -253,6 +333,69 @@ try {
     $partialFiles = @(Get-Content -LiteralPath $partialListPath -Encoding UTF8 | Where-Object { $_ -ne "" })
     if ($partialFiles.Count -ne 1 -or [string]$partialFiles[0] -ne "Configuration.xml") {
         throw "Release E2E partial list must contain only Configuration.xml; actual: $($partialFiles -join ', ')"
+    }
+    $designerLoadedAt = [string]$partialState.lastConfigDesignerLoadedAt
+    if (-not $designerLoadedAt) { throw "Release E2E did not persist the configuration Designer fingerprint timestamp." }
+
+    $testOnlyCommit = Add-E2ETestOnlyCommit -FeaturePath $vanessaFixture.path
+    Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @(
+        "-VanessaFeaturePath", $vanessaFixture.path,
+        "-VanessaFilterTags", "@itl_release_flat"
+    ) | Out-Null
+    $testOnlyState = (Get-E2EState).value
+    if ([string]$testOnlyState.lastConfigDesignerLoadedAt -ne $designerLoadedAt -or [bool]$testOnlyState.designerInvoked -or [bool]$testOnlyState.enterpriseInvoked) {
+        throw "Release E2E test-only iteration invoked Designer or Enterprise instead of running Vanessa only."
+    }
+    $junit = Get-E2EJunitTotals -RunDirectory ([string]$testOnlyState.lastVanessaReportPath)
+    $vanessaJUnitTests = $junit.tests
+    if ($junit.tests -ne 4 -or ($junit.failures + $junit.errors) -ne 0) {
+        throw "Release E2E four flat scenarios must produce exactly four passing JUnit tests; tests=$($junit.tests), failures=$($junit.failures), errors=$($junit.errors)."
+    }
+    $vanessaPostProcessDurationMs = [int64]$testOnlyState.lastVanessaPostProcessDurationMs
+    if ($vanessaPostProcessDurationMs -gt 30000) {
+        throw "Release E2E Vanessa post-processing exceeded 30 seconds: $vanessaPostProcessDurationMs ms."
+    }
+
+    $stopOnErrorProbeCommit = Set-E2EVanessaFailureProbeCommit -FeaturePath $vanessaFixture.path -Fail $true
+    $stopOnErrorProbe = Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AllowFailure -AdditionalArguments @(
+        "-VanessaFeaturePath", $vanessaFixture.path,
+        "-VanessaFilterTags", "@itl_release_flat"
+    )
+    if ($stopOnErrorProbe.exitCode -eq 0) {
+        throw "Release E2E stop-on-error probe unexpectedly passed despite one deliberately failing scenario (exit=$($stopOnErrorProbe.exitCode), resultCount=$(@($stopOnErrorProbe).Count))."
+    }
+    $stopOnErrorProbeState = (Get-E2EState).value
+    if ([string]$stopOnErrorProbeState.lastConfigDesignerLoadedAt -ne $designerLoadedAt -or [bool]$stopOnErrorProbeState.designerInvoked -or [bool]$stopOnErrorProbeState.enterpriseInvoked) {
+        throw "Release E2E stop-on-error probe invoked Designer or Enterprise for a feature-only change."
+    }
+    $stopOnErrorJunit = Get-E2EJunitTotals -RunDirectory ([string]$stopOnErrorProbeState.lastVanessaReportPath)
+    $stopOnErrorProbeTests = $stopOnErrorJunit.tests
+    $stopOnErrorProbeFailures = $stopOnErrorJunit.failures
+    $stopOnErrorProbeErrors = $stopOnErrorJunit.errors
+    if ($stopOnErrorProbeTests -ne 4 -or ($stopOnErrorProbeFailures + $stopOnErrorProbeErrors) -ne 1) {
+        throw "stoponerror=false did not preserve all four independent JUnit results; tests=$stopOnErrorProbeTests, failures=$stopOnErrorProbeFailures, errors=$stopOnErrorProbeErrors."
+    }
+    if ([int64]$stopOnErrorProbeState.lastVanessaPostProcessDurationMs -gt 30000) {
+        throw "Release E2E failed-scenario post-processing exceeded 30 seconds: $($stopOnErrorProbeState.lastVanessaPostProcessDurationMs) ms."
+    }
+
+    $stopOnErrorRecoveryCommit = Set-E2EVanessaFailureProbeCommit -FeaturePath $vanessaFixture.path -Fail $false
+    Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @(
+        "-VanessaFeaturePath", $vanessaFixture.path,
+        "-VanessaFilterTags", "@itl_release_flat"
+    ) | Out-Null
+    $recoveryState = (Get-E2EState).value
+    if ([string]$recoveryState.lastConfigDesignerLoadedAt -ne $designerLoadedAt -or [bool]$recoveryState.designerInvoked -or [bool]$recoveryState.enterpriseInvoked) {
+        throw "Release E2E passing recovery invoked Designer or Enterprise for a feature-only change."
+    }
+    $recoveryJunit = Get-E2EJunitTotals -RunDirectory ([string]$recoveryState.lastVanessaReportPath)
+    $vanessaJUnitTests = $recoveryJunit.tests
+    $vanessaPostProcessDurationMs = [int64]$recoveryState.lastVanessaPostProcessDurationMs
+    if ($vanessaJUnitTests -ne 4 -or ($recoveryJunit.failures + $recoveryJunit.errors) -ne 0) {
+        throw "Release E2E recovery must restore four passing JUnit tests; tests=$vanessaJUnitTests, failures=$($recoveryJunit.failures), errors=$($recoveryJunit.errors)."
+    }
+    if ($vanessaPostProcessDurationMs -gt 30000) {
+        throw "Release E2E recovery post-processing exceeded 30 seconds: $vanessaPostProcessDurationMs ms."
     }
 
     $roundtripEvidencePath = Join-Path $worktreePath "build\test-results\release-e2e\config-roundtrip.json"
@@ -280,11 +423,19 @@ try {
         -not [bool]$extensionSmokeEvidence.cfeCreated -or
         -not [bool]$extensionSmokeEvidence.cfeInitialized -or
         -not [bool]$extensionSmokeEvidence.databaseRestored -or
+        -not [bool]$extensionSmokeEvidence.repeatedFormOperationsIdempotent -or
+        -not [bool]$extensionSmokeEvidence.repeatedTemplateOperationsIdempotent -or
+        -not [bool]$extensionSmokeEvidence.extensionUiTestClientPassed -or
+        [int]$extensionSmokeEvidence.formRegistrationCount -ne 1 -or
+        [int]$extensionSmokeEvidence.templateRegistrationCount -ne 1 -or
+        [int]$extensionSmokeEvidence.extensionUiJunitTests -ne 1 -or
         [string]$extensionSmokeEvidence.extensionName -ne $extensionSmokeName) {
-        throw "Release E2E extension evidence does not prove Empty creation, CFE load, and database restoration."
+        throw "Release E2E extension evidence does not prove Empty/CFE roundtrip, idempotent form/template operations, real TestClient UI, and database restoration."
     }
 
-    $statusResult = Invoke-E2EHelper -Action "status" -TimeoutSeconds 120
+    $statusResult = Invoke-E2EHelper -Action "status" -TimeoutSeconds 120 -AdditionalArguments @(
+        "-VanessaFeaturePath", $vanessaFixture.path
+    )
     $statusText = Get-Content -LiteralPath $statusResult.stdoutPath -Raw -Encoding UTF8
     if ($statusText -notmatch '(?im)^Verification fresh passed:\s*True\s*$') {
         throw "E2E /itl-check did not produce fresh passed verification."
@@ -301,7 +452,9 @@ try {
         throw "E2E verification is not fresh for the current Release run."
     }
 
-    Invoke-E2EHelper -Action "export-dev-branch-result" -TimeoutSeconds 7200 | Out-Null
+    Invoke-E2EHelper -Action "export-dev-branch-result" -TimeoutSeconds 7200 -AdditionalArguments @(
+        "-VanessaFeaturePath", $vanessaFixture.path
+    ) | Out-Null
     $stateRecord = Get-E2EState
     $state = $stateRecord.value
     $artifactPath = [string]$state.lastResultPath
@@ -347,6 +500,15 @@ try {
         verifiedAt = $verifiedAt
         verifiedCommit = $verifiedCommit
         fixtureCommit = $fixtureCommit
+        vanessaFixtureCommit = $vanessaFixtureCommit
+        testOnlyCommit = $testOnlyCommit
+        stopOnErrorProbeCommit = $stopOnErrorProbeCommit
+        stopOnErrorRecoveryCommit = $stopOnErrorRecoveryCommit
+        stopOnErrorProbeTests = $stopOnErrorProbeTests
+        stopOnErrorProbeFailures = $stopOnErrorProbeFailures
+        stopOnErrorProbeErrors = $stopOnErrorProbeErrors
+        vanessaJUnitTests = $vanessaJUnitTests
+        vanessaPostProcessDurationMs = $vanessaPostProcessDurationMs
         expectedComment = $expectedComment
         configLoadMode = "partial"
         roundtripEvidencePath = $roundtripEvidencePath
@@ -357,6 +519,13 @@ try {
         extensionCfeCreated = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.cfeCreated } else { $false })
         extensionCfeInitialized = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.cfeInitialized } else { $false })
         extensionDatabaseRestored = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.databaseRestored } else { $false })
+        extensionFormOperationsIdempotent = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.repeatedFormOperationsIdempotent } else { $false })
+        extensionTemplateOperationsIdempotent = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.repeatedTemplateOperationsIdempotent } else { $false })
+        extensionFormRegistrationCount = $(if ($extensionSmokeEvidence) { [int]$extensionSmokeEvidence.formRegistrationCount } else { 0 })
+        extensionTemplateRegistrationCount = $(if ($extensionSmokeEvidence) { [int]$extensionSmokeEvidence.templateRegistrationCount } else { 0 })
+        extensionUiTestClientPassed = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.extensionUiTestClientPassed } else { $false })
+        extensionUiJunitTests = $(if ($extensionSmokeEvidence) { [int]$extensionSmokeEvidence.extensionUiJunitTests } else { 0 })
+        extensionUiReportPath = $(if ($extensionSmokeEvidence) { [string]$extensionSmokeEvidence.extensionUiReportPath } else { "" })
         artifactPath = $artifactPath
         artifactSha256 = $artifactSha256
         resultManifestPath = $resultManifestPath

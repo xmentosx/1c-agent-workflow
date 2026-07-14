@@ -431,6 +431,7 @@
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
 
             $script:CapturedDesignerArgs = @()
+            function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-a"; fileCount = 1; absoluteExportPath = "C:\project\src\cf" } }
             function Get-ConfigLoadChangeSet {
                 return [pscustomobject]@{
                     files = @("Configuration.xml")
@@ -473,6 +474,7 @@
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
 
             $script:CapturedDesignerArgs = @()
+            function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-b"; fileCount = 1; absoluteExportPath = "C:\project\src\cf" } }
             function Get-ConfigLoadChangeSet {
                 return [pscustomobject]@{
                     files = @("CommonModules\WorkflowE2E.xml")
@@ -509,6 +511,7 @@
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:DesignerCalls = @()
+            function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-c"; fileCount = 2; absoluteExportPath = "C:\project\src\cf" } }
             function Get-ConfigLoadChangeSet {
                 [pscustomobject]@{ files = @("Configuration.xml", "CommonModules\Модуль.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\project\src\cf" }
             }
@@ -542,6 +545,7 @@
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:DesignerCallCount = 0
             $script:StateUpdates = @{}
+            function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-d"; fileCount = 1; absoluteExportPath = "C:\project\src\cf" } }
             function Get-ConfigLoadChangeSet {
                 [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\project\src\cf" }
             }
@@ -625,6 +629,7 @@
         $full = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:Calls = 0
+            function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-e"; fileCount = 1; absoluteExportPath = "C:\src" } }
             function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" } }
             function New-ConfigLoadListFile { throw "list must not be created" }
             function Invoke-Designer { param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs); $script:Calls++; $script:LastLogPath = "C:\logs\full.log" }
@@ -640,6 +645,7 @@
         $noOpCalls = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:DesignerCallCount = 0
+            function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-f"; fileCount = 1; absoluteExportPath = "C:\src" } }
             function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @(); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" } }
             function Invoke-Designer { $script:DesignerCallCount++ }
             $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -ExportPath "src/cf" 6>$null
@@ -651,6 +657,7 @@
         $prep = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:DesignerCallCount = 0
+            function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-g"; fileCount = 1; absoluteExportPath = "C:\src" } }
             function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" } }
             function New-ConfigLoadListFile { throw "list preparation failed" }
             function Invoke-Designer { $script:DesignerCallCount++ }
@@ -660,6 +667,44 @@
         }
         $prep.calls | Should -Be 0
         $prep.message | Should -Match "list preparation failed"
+    }
+
+    It "uses content fingerprints to skip Designer and retry only Enterprise when needed" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-fingerprint-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $export = Join-Path $tempRoot "src\cf"
+            New-Item -ItemType Directory -Force -Path $export | Out-Null
+            Set-Content -LiteralPath (Join-Path $export "Configuration.xml") -Encoding UTF8 -Value "<Configuration />"
+            Set-Content -LiteralPath (Join-Path $export "ConfigDumpInfo.xml") -Encoding UTF8 -Value "one"
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-CurrentCommit { "head" }
+                function Get-ConfigLoadChangeSet { throw "Git diff must not run for a fingerprint match" }
+                function Invoke-Designer { throw "Designer must not run for a fingerprint match" }
+                $fingerprint = (Get-ConfigSourceFingerprint -ExportPath "src/cf").fingerprint
+                Set-Content -LiteralPath (Join-Path $export "ConfigDumpInfo.xml") -Encoding UTF8 -Value "two"
+                $afterDumpInfo = (Get-ConfigSourceFingerprint -ExportPath "src/cf").fingerprint
+                $passed = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{
+                    lastConfigDesignerFingerprint = $fingerprint
+                    enterpriseNormalizationStatus = "passed"
+                }) -ExportPath "src/cf" 6>$null
+                $pending = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{
+                    lastConfigDesignerFingerprint = $fingerprint
+                    enterpriseNormalizationStatus = "failed"
+                }) -ExportPath "src/cf" 6>$null
+                [pscustomobject]@{ original = $fingerprint; afterDumpInfo = $afterDumpInfo; passed = $passed; pending = $pending }
+            }
+
+            $result.afterDumpInfo | Should -Be $result.original
+            $result.passed.designerInvoked | Should -BeFalse
+            $result.passed.normalizationRequired | Should -BeFalse
+            $result.pending.designerInvoked | Should -BeFalse
+            $result.pending.normalizationRequired | Should -BeTrue
+            $result.pending.loadReason | Should -Be "source-fingerprint-match-normalization-required"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "reports detailed diagnostics when Git path collection fails" {
@@ -901,6 +946,54 @@
         }
     }
 
+    It "reads only the active tail and new event-log segments from a run cursor" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-cursor-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $logDir = Join-Path $tempRoot "ib\1Cv8Log"
+            $runDir = Join-Path $tempRoot "run"
+            New-Item -ItemType Directory -Force -Path $logDir, $runDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{1}"
+            $historical = Join-Path $logDir "20260702.lgp"
+            $active = Join-Path $logDir "20260703.lgp"
+            Set-Content -LiteralPath $historical -Encoding UTF8 -Value '{20260702100000,E,"_$PerformError$_","Catalog.Items","Old","Historical"}'
+            Set-Content -LiteralPath $active -Encoding UTF8 -Value @(
+                '{20260703100000,E,"_$PerformError$_","Catalog.Items","Old","Before cursor 1"}',
+                '{20260703100100,E,"_$PerformError$_","Catalog.Items","Old","Before cursor 2"}'
+            )
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "ib")
+                    stateProjectRoot = $tempRoot
+                }
+                $cursorPath = Join-Path $runDir "event-log-cursor.json"
+                New-DevBranchEventLogCursor -State $state -Path $cursorPath | Out-Null
+                Add-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{2}"
+                Add-Content -LiteralPath $active -Encoding UTF8 -Value '{20260703120500,E,"_$PerformError$_","Catalog.Items","New","After cursor"}'
+                $newSegment = Join-Path $logDir "20260704.lgp"
+                Set-Content -LiteralPath $newSegment -Encoding UTF8 -Value '{20260704120500,E,"_$PerformError$_","Catalog.Items","New","Rotated"}'
+
+                $read = Read-DevBranchEventLogErrors -State $state `
+                    -StartTime ([datetime]"2026-07-03T12:00:00") `
+                    -EndTime ([datetime]"2026-07-04T12:30:00") `
+                    -CursorPath $cursorPath
+                $read.scanMode | Should -Be "cursor"
+                $read.errorCount | Should -Be 2
+                @($read.events.comment) | Should -Contain "After cursor"
+                @($read.events.comment) | Should -Contain "Rotated"
+                $read.scannedBytes | Should -BeLessThan ((Get-Item $historical).Length + (Get-Item $active).Length + (Get-Item $newSegment).Length)
+
+                Set-Content -LiteralPath $cursorPath -Encoding UTF8 -Value "{broken"
+                $fallback = Get-DevBranchEventLogDeltaSelection -State $state -CursorPath $cursorPath -FallbackStartTime (Get-Date).AddMinutes(-1) 6>$null
+                $fallback.mode | Should -Be "fallback"
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "streams and caches event-log signatures per rotated segment" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-cache-test-" + [guid]::NewGuid().ToString("N"))
 
@@ -1060,11 +1153,14 @@
                 $pathKey = Decode-TestUtf8 "0J/Rg9GC0YzQmtCY0L3RhNC+0LHQsNC30LU="
                 $statusKey = Decode-TestUtf8 "0J/Rg9GC0YzQmtCk0LDQudC70YPQlNC70Y/QktGL0LPRgNGD0LfQutC40KHRgtCw0YLRg9GB0LDQktGL0L/QvtC70L3QtdC90LjRj9Ch0YbQtdC90LDRgNC40LXQsg=="
                 $windowTimeoutKey = Decode-TestUtf8 "0JrQvtC70LjRh9C10YHRgtCy0L7QodC10LrRg9C90LTQn9C+0LjRgdC60LDQntC60L3QsA=="
+                $stopOnErrorKey = Decode-TestUtf8 "0J7RgdGC0LDQvdC+0LLQutCw0J/RgNC40JLQvtC30L3QuNC60L3QvtCy0LXQvdC40LjQntGI0LjQsdC60Lg="
 
                 $params.Version | Should -Be "1.2.043.28"
                 $params.junitpath | Should -Be $runDirectory
+                $params.stoponerror | Should -BeFalse
                 $params.PSObject.Properties[$statusKey].Value | Should -Be $statusPath
                 $params.PSObject.Properties[$scenarioKey].Value.PSObject.Properties[$windowTimeoutKey].Value | Should -Be 60
+                $params.PSObject.Properties[$scenarioKey].Value.PSObject.Properties[$stopOnErrorKey].Value | Should -BeFalse
 
                 $clientSettings = $params.PSObject.Properties[$clientKey].Value
                 $clientRecord = @($clientSettings.PSObject.Properties[$clientsKey].Value)[0]
@@ -1081,6 +1177,29 @@
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
+    }
+
+    It "counts four independent JUnit scenarios and still fails on one failed verdict" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-junit-flat-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "junit.xml") -Encoding UTF8 -Value @'
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="4" failures="1" errors="0">
+  <testsuite name="flat" tests="4" failures="1" errors="0">
+    <testcase name="one"/><testcase name="two"><failure message="expected"/></testcase><testcase name="three"/><testcase name="four"/>
+  </testsuite>
+</testsuites>
+'@
+            & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $summary = Get-VanessaJunitSummary -RunDirectory $tempRoot
+                $status = Get-VanessaVerificationStatus -RunDirectory $tempRoot -StatusPath (Join-Path $tempRoot "missing.json")
+                $summary.tests | Should -Be 4
+                $summary.failures | Should -Be 1
+                $status.status | Should -Be "failed"
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
     It "starts Vanessa verify TestManager without passing TPort on the TestManager command line" {

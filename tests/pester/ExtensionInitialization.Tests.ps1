@@ -147,7 +147,9 @@ Describe "1C workflow extension initialization" {
         $result = Invoke-MockedExtensionInitialization -Mode Empty -FailDump
         $result.error | Should -Match "snapshot was restored"
         $result.rollbackCalled | Should -BeTrue
-        $result.updates | Should -BeNullOrEmpty
+        $result.updates.Keys | Should -Not -Contain "extensionName"
+        $result.updates.lastExtensionDesignerFingerprint | Should -Be ""
+        $result.updates.enterpriseNormalizationStatus | Should -Be "pending"
         $result.targetExists | Should -BeFalse
     }
 
@@ -167,7 +169,9 @@ Describe "1C workflow extension initialization" {
         $validation = Invoke-MockedExtensionInitialization -Mode Empty -FailValidate
         $validation.error | Should -Match "snapshot was restored"
         $validation.rollbackCalled | Should -BeTrue
-        $validation.updates | Should -BeNullOrEmpty
+        $validation.updates.Keys | Should -Not -Contain "extensionName"
+        $validation.updates.lastExtensionDesignerFingerprint | Should -Be ""
+        $validation.updates.enterpriseNormalizationStatus | Should -Be "pending"
 
         $rollback = Invoke-MockedExtensionInitialization -Mode Cfe -FailDump -FailRollback
         $rollback.error | Should -Match "Rollback also failed"

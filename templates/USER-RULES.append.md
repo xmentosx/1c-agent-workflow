@@ -6,7 +6,7 @@ For long ITL lifecycle actions, set `timeout_ms >= 1800000`: 1C Designer/Enterpr
 
 For Kilo `/itl`, paste helper stdout verbatim; do not summarize, translate, merge OpenSpec, omit `Lifecycle:`/`Additional helper actions:`, or append "no lifecycle actions executed".
 
-Use `DEV-BRANCH-DEVELOPMENT.ru.md` only inside `itldev/*`; read `VANESSA-TESTS-GUIDE.md` before creating or editing Vanessa feature files.
+Root developer guides are human-facing; read them only when the user asks for an explanation. Use `1c-workflow/SKILL.md` plus one compact reference. Read `VANESSA-TESTS-GUIDE.md` only before editing `.feature`, never for proposal or routine `/itl-check`.
 
 Keep ITL overlay rules in `USER-RULES.md`. Store secrets only in `.dev.env`; write state as UTF-8.
 
@@ -32,9 +32,11 @@ Empty `INFOBASE_PUBLISH_URL` is expected without publication. Recommend it only 
 
 Before upstream infobase-bound commands (`/update1cbase`, `/loadfrom1cbase`, `/getconfigfiles`) inside `itldev/*`, ensure branch context is active; ITL lifecycle commands do this. On `master`, do not run `/update1cbase` unless a test infobase is explicit.
 
-Development completion gate: in `itldev/*`, any agent-made 1C configuration/extension change in `src/cf`, `src/cfe`, modules, forms, commands, metadata, or related 1C logic must include relevant Vanessa tests in `tests/features` and a fresh passed `/itl-check` after final code, metadata, and test edits. This applies to `/opsx-apply`, quick-fix, "develop code by this plan", "execute development tasks", and "make this change". The final reply must name scenarios and the Vanessa report path. Do not answer ready/done/implemented if tests are missing, `/itl-check` did not run, or verification is not fresh passed; stop with blocker diagnostics.
+Development completion gate: every agent-made 1C configuration/extension change in `itldev/*` must include relevant `tests/features` scenarios and a fresh passed `/itl-check` after final edits. This includes `/opsx-apply`, quick-fix, and direct implementation requests. Name scenarios and the Vanessa report path. Without either proof, stop with blocker diagnostics; do not report ready/done/implemented.
 
-Hybrid cadence: quick-fix needs at least one focused regression scenario. Small OpenSpec runs `test-plan.md` scenarios and one final `/itl-check`. Large OpenSpec groups `tasks.md` into checkable slices: each slice with observable behavior gets at least one focused Vanessa scenario; preparatory tasks are marked pending verification and covered by the next slice. After the last task, run the full 2-4 scenario set for changed business behavior, including happy and boundary/negative cases, and fill `openspec/changes/<change-id>/test-report.md`.
+For quick-fix, upstream verification is only a floor: `syntaxcheck only` is insufficient in `itldev/*`. Define at least one focused regression scenario before code. Promote multi-behavior, public API, architecture, or related-metadata work to OpenSpec.
+
+Hybrid cadence: small OpenSpec runs its `test-plan.md` and one final `/itl-check`. Large OpenSpec verifies each observable slice, carries preparatory tasks into the next slice, then runs the full plan. Plan 2-3 scenarios; a fourth needs justification. Fill `openspec/changes/<change-id>/test-report.md`.
 
 Do not use `/deploy-and-test` as normal ITL verification. The post-change executable cycle is `/itl-check`: it updates the branch infobase, runs Vanessa Automation through `TESTMANAGER -> TESTCLIENT`, checks `.agent-1c/event-log-baselines/*.json`, and fails on fresh non-baseline `Error` signatures. MCP is not the final runner. Stop only current-branch hung `TESTMANAGER`/`TESTCLIENT`.
 

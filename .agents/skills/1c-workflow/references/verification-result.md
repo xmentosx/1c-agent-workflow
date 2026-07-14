@@ -26,7 +26,7 @@ If Vanessa fails, analyze JUnit/report/status/log/event-log paths and active 1C 
 
 The verification gate checks the branch-local file infobase event log against `.agent-1c/event-log-baselines/<branch>.json`. Fresh non-baseline `Error` signatures fail verification; known historical signatures remain diagnostics. Schema 1 baselines stay readable.
 
-The preferred 8.3.22 sequential `.lgp` reader streams records and rejects non-`Error`/out-of-window events before full event/signature construction. Baseline scans cache each segment under `.agent-1c/event-log-signature-cache/<source-key>.json` by name, size, and `LastWriteTimeUtc`: unchanged segments are reused, changed/new segments are rescanned, rotated-away segments disappear, and damaged/incompatible caches rebuild automatically. Baseline/status output records reader, `hit|updated|rebuilt`, error/signature counts, and duration. The Enterprise fallback exporter remains uncached and reports duration/counts because it has no reliable server snapshot identity.
+The preferred 8.3.22 sequential `.lgp` reader streams records and rejects non-`Error`/out-of-window events before full event/signature construction. Baselines cache segments under `.agent-1c/event-log-signature-cache/<source-key>.json`. Each Vanessa run captures `event-log-cursor.json` before TestManager, then reads only the active tail and new/changed segments; rotation, truncation, source change, or damaged cursor falls back to run-period segments. State records runner, cleanup, event-log, post-process duration, scanned bytes, and scan mode. No fixed post-test sleep is allowed; the 10-second completion grace remains. `.lgd` stays unsupported.
 
 ## EXPORT_DEV_BRANCH_RESULT
 

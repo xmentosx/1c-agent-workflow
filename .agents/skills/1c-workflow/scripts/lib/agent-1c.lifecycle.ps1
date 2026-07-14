@@ -371,6 +371,45 @@ function Get-ConfigLoadChangeSet {
     }
 }
 
+function Get-ConfigSourceFingerprint {
+    param([string]$ExportPath)
+
+    $absoluteExportPath = Assert-ExportPathInsideProject $ExportPath
+    $root = $absoluteExportPath.TrimEnd("\", "/")
+    $entries = New-Object System.Collections.Generic.List[string]
+    foreach ($file in @(Get-ChildItem -LiteralPath $absoluteExportPath -Recurse -File -Force -ErrorAction Stop)) {
+        if ($file.Name -ieq "ConfigDumpInfo.xml") { continue }
+        $relative = $file.FullName.Substring($root.Length).TrimStart("\", "/").Replace("\", "/")
+        $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant()
+        $entries.Add(($relative + "`0" + $hash))
+    }
+    $ordered = @($entries.ToArray() | Sort-Object)
+    $payload = [System.Text.Encoding]::UTF8.GetBytes(($ordered -join "`n"))
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $fingerprint = ([System.BitConverter]::ToString($sha.ComputeHash($payload))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+    return [pscustomobject]@{
+        fingerprint = $fingerprint
+        fileCount = $ordered.Count
+        absoluteExportPath = $absoluteExportPath
+    }
+}
+
+function Get-DesignerFingerprintFieldName {
+    param([ValidateSet("configuration", "extension")][string]$ContentKind)
+    if ($ContentKind -eq "extension") { return "lastExtensionDesignerFingerprint" }
+    return "lastConfigDesignerFingerprint"
+}
+
+function Get-DesignerLoadedAtFieldName {
+    param([ValidateSet("configuration", "extension")][string]$ContentKind)
+    if ($ContentKind -eq "extension") { return "lastExtensionDesignerLoadedAt" }
+    return "lastConfigDesignerLoadedAt"
+}
+
 function New-ConfigLoadListFile {
     param(
         [object]$State,
@@ -506,6 +545,17 @@ function New-LoadStateUpdates {
         $updates["lastConfigPartialError"] = $LoadResult.partialError
         $updates["lastConfigFullFallbackError"] = $LoadResult.fullFallbackError
     }
+    foreach ($field in @("sourceFingerprint", "loadReason", "designerInvoked", "enterpriseInvoked")) {
+        if ($LoadResult.PSObject.Properties.Match($field).Count -gt 0) {
+            $updates[$field] = $LoadResult.$field
+        }
+    }
+    if ($LoadResult.PSObject.Properties.Match("sourceFingerprint").Count -gt 0 -and $LoadResult.sourceFingerprint) {
+        $updates[(Get-DesignerFingerprintFieldName -ContentKind $ContentKind)] = $LoadResult.sourceFingerprint
+        if ($LoadResult.PSObject.Properties.Match("designerInvoked").Count -gt 0 -and $LoadResult.designerInvoked) {
+            $updates[(Get-DesignerLoadedAtFieldName -ContentKind $ContentKind)] = $now
+        }
+    }
 
     return $updates
 }
@@ -619,11 +669,16 @@ function Invoke-DevBranchEnterpriseAutoUpdateIfLoaded {
         [hashtable]$Updates
     )
 
-    if (-not $LoadResult.loaded) {
+    $normalizationRequired = $LoadResult.PSObject.Properties.Match("normalizationRequired").Count -gt 0 -and [bool]$LoadResult.normalizationRequired
+    if (-not $LoadResult.loaded -and -not $normalizationRequired) {
         return
     }
 
     Ensure-DevBranchEnterpriseNormalized -State $State -Reason "config-load" -Updates $Updates | Out-Null
+    if ($LoadResult.PSObject.Properties.Match("enterpriseInvoked").Count -gt 0) {
+        $LoadResult.enterpriseInvoked = $true
+        $Updates["enterpriseInvoked"] = $true
+    }
 }
 
 function Assert-EnterpriseNormalizationTargetsBranchCopy {
@@ -798,15 +853,24 @@ function Load-ConfigFromFiles {
         [string]$Mode = "Auto"
     )
 
-    $changeSet = Get-ConfigLoadChangeSet -State $State -ExportPath $ExportPath -ContentKind $ContentKind
-    if ($changeSet.files.Count -eq 0) {
-        Write-Host "No changed config files under $ExportPath since $($changeSet.baseCommit)."
-        Write-Host "Development branch infobase already matches current branch config files."
+    $source = Get-ConfigSourceFingerprint -ExportPath $ExportPath
+    $fingerprintField = Get-DesignerFingerprintFieldName -ContentKind $ContentKind
+    $loadedAtField = Get-DesignerLoadedAtFieldName -ContentKind $ContentKind
+    $previousFingerprint = [string](Get-StateValue -State $State -Name $fingerprintField -Default "")
+    $normalizationStatus = [string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "")
+    $currentCommit = Get-CurrentCommit
+
+    if ($previousFingerprint -and $previousFingerprint -eq $source.fingerprint) {
+        $normalizationRequired = $normalizationStatus -ne "passed"
+        $reason = if ($normalizationRequired) { "source-fingerprint-match-normalization-required" } else { "source-fingerprint-match" }
+        Write-Host "Config source fingerprint unchanged for $ContentKind. Designer skipped."
+        if ($normalizationRequired) { Write-Host "Enterprise normalization remains $normalizationStatus and will be retried without Designer." }
         return [pscustomobject]@{
             loaded = $false
-            fileCount = 0
+            normalizationRequired = $normalizationRequired
+            fileCount = $source.fileCount
             listFile = ""
-            currentCommit = $changeSet.currentCommit
+            currentCommit = $currentCommit
             lastLogPath = $script:LastLogPath
             loadModeUsed = ""
             partialLogPath = ""
@@ -814,6 +878,40 @@ function Load-ConfigFromFiles {
             configLoadStatus = "passed"
             partialError = ""
             fullFallbackError = ""
+            sourceFingerprint = $source.fingerprint
+            loadReason = $reason
+            designerInvoked = $false
+            enterpriseInvoked = $false
+        }
+    }
+
+    $changeSet = Get-ConfigLoadChangeSet -State $State -ExportPath $ExportPath -ContentKind $ContentKind
+    if ($changeSet.files.Count -eq 0) {
+        if ($previousFingerprint) {
+            Write-Warning "Source fingerprint changed but Git produced no partial list. Running a full load to preserve correctness."
+            $Mode = "Full"
+            $changeSet.files = @("<fingerprint-changed>")
+        } else {
+            Write-Host "No changed config files under $ExportPath since $($changeSet.baseCommit)."
+            Write-Host "Legacy state fingerprint initialized without reloading the matching branch infobase."
+            return [pscustomobject]@{
+                loaded = $false
+                normalizationRequired = ($normalizationStatus -ne "passed")
+                fileCount = $source.fileCount
+                listFile = ""
+                currentCommit = $changeSet.currentCommit
+                lastLogPath = $script:LastLogPath
+                loadModeUsed = ""
+                partialLogPath = ""
+                fullFallbackLogPath = ""
+                configLoadStatus = "passed"
+                partialError = ""
+                fullFallbackError = ""
+                sourceFingerprint = $source.fingerprint
+                loadReason = "legacy-fingerprint-seed"
+                designerInvoked = $false
+                enterpriseInvoked = $false
+            }
         }
     }
 
@@ -831,6 +929,18 @@ function Load-ConfigFromFiles {
         -ExtensionName $ExtensionName `
         -Mode $Mode
 
+    $loadedAt = (Get-Date).ToString("o")
+    $statePath = if ($State) { [string](Get-StateValue -State $State -Name "statePath" -Default "") } else { "" }
+    if ($statePath -and (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        Update-DevBranchState -State $State -Updates @{
+            $fingerprintField = $source.fingerprint
+            $loadedAtField = $loadedAt
+            enterpriseNormalizationStatus = "pending"
+            enterpriseNormalizationReason = "config-load"
+            enterpriseNormalizationError = ""
+        }
+    }
+
     return [pscustomobject]@{
         loaded = $true
         fileCount = $changeSet.files.Count
@@ -843,6 +953,11 @@ function Load-ConfigFromFiles {
         configLoadStatus = $orchestration.configLoadStatus
         partialError = $orchestration.partialError
         fullFallbackError = $orchestration.fullFallbackError
+        normalizationRequired = $true
+        sourceFingerprint = $source.fingerprint
+        loadReason = $(if ($Mode -eq "Full" -and $changeSet.files[0] -eq "<fingerprint-changed>") { "fingerprint-changed-full-load" } else { "source-fingerprint-changed" })
+        designerInvoked = $true
+        enterpriseInvoked = $false
     }
 }
 
@@ -4187,6 +4302,12 @@ function Assert-NormalizedExtensionDump {
         if ($relative -match '(?i)(^|[\\/])src[\\/]cfe([\\/]|$)') {
             throw "Nested src/cfe was found inside extension dump: $($directory.FullName)"
         }
+        $segments = @($relative -split '[\\/]' | Where-Object { $_ })
+        for ($index = 1; $index -lt $segments.Count; $index++) {
+            if ($segments[$index] -ieq $segments[$index - 1] -and $segments[$index] -match '(?i)^(DataProcessors|Reports|Catalogs|Documents|Forms|Templates)$') {
+                throw "Duplicated metadata directory '$($segments[$index])/$($segments[$index])' was found inside extension dump: $($directory.FullName)"
+            }
+        }
     }
 
     try {
@@ -4318,6 +4439,7 @@ function Init-DevBranchExtension {
         ) | Out-Null
         Assert-NormalizedExtensionDump -Path $absoluteDumpPath -Name $ExtensionName
         Invoke-ExtensionLifecycleTool -ScriptPath $tools.validate -Arguments @("-ExtensionPath", $absoluteDumpPath)
+        $extensionSource = Get-ConfigSourceFingerprint -ExportPath $dumpPath
 
         Restore-ExtensionInitMcpRuntime -State $state -RoctupWasRunning $roctupWasRunning -VanessaWasRunning $vanessaWasRunning
         $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
@@ -4333,6 +4455,11 @@ function Init-DevBranchExtension {
             lastExtensionDumpPath = $dumpPath
             lastExtensionBaseUpdateAt = $now
             lastExtensionBaseUpdatedCommit = Get-CurrentCommit
+            lastExtensionDesignerFingerprint = $extensionSource.fingerprint
+            lastExtensionDesignerLoadedAt = $now
+            enterpriseNormalizationStatus = "pending"
+            enterpriseNormalizationReason = "extension-init"
+            enterpriseNormalizationError = ""
             lastLoadedCommit = Get-CurrentCommit
             lastLogPath = $script:LastLogPath
         }
@@ -4350,6 +4477,12 @@ function Init-DevBranchExtension {
         if ($snapshotCreated) {
             try {
                 Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @("/RestoreIB", $snapshotPath) | Out-Null
+                Update-DevBranchState -State $state -Updates @{
+                    lastExtensionDesignerFingerprint = ""
+                    lastExtensionDesignerLoadedAt = ""
+                    enterpriseNormalizationStatus = "pending"
+                    enterpriseNormalizationReason = "extension-init-rollback"
+                }
             } catch {
                 $rollbackError = $_.Exception.Message
             }
@@ -4404,6 +4537,8 @@ function Set-DevBranchExtension {
         safeExtensionName = $safeExtensionName
         extensionDumpPath = $extensionExportPath
         extensionExportPath = $extensionExportPath
+        lastExtensionDesignerFingerprint = ""
+        lastExtensionDesignerLoadedAt = ""
     }
     Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Extension settings changed." -Force
     Update-DevBranchState -State $state -Updates $updates
@@ -4496,11 +4631,15 @@ function Dump-DevBranchExtension {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "dump-dev-branch-extension"
     $dumpResult = Dump-ExtensionToFiles -State $state
+    $source = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+    $now = (Get-Date).ToString("o")
     $updates = @{
         extensionDumpPath = $dumpResult.exportPath
         extensionExportPath = $dumpResult.exportPath
-        lastExtensionDumpAt = (Get-Date).ToString("o")
+        lastExtensionDumpAt = $now
         lastExtensionDumpPath = $dumpResult.exportPath
+        lastExtensionDesignerFingerprint = $source.fingerprint
+        lastExtensionDesignerLoadedAt = $now
         lastLogPath = $dumpResult.logPath
     }
     Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Extension files were dumped from the branch infobase." -Force
@@ -4593,9 +4732,17 @@ function Invoke-ReleaseE2EExtensionSmoke {
     Require-Value "ReleaseAiRulesSource" $ReleaseAiRulesSource | Out-Null
     $releaseAiRulesRoot = Resolve-Agent1cFullPath -Path $ReleaseAiRulesSource
     $releaseToolRoot = Join-Path $releaseAiRulesRoot "content\skills\1c-metadata-manage\tools\1c-cfe-manage\scripts"
-    foreach ($requiredTool in @("cfe-init.ps1", "cfe-validate.ps1")) {
-        if (-not (Test-Path -LiteralPath (Join-Path $releaseToolRoot $requiredTool) -PathType Leaf)) {
-            throw "Release ai_rules source does not contain $requiredTool at the expected r4 path: $releaseToolRoot"
+    $releaseMetadataToolRoot = Join-Path $releaseAiRulesRoot "content\skills\1c-metadata-manage\tools"
+    $releaseTools = [ordered]@{
+        cfeInit = Join-Path $releaseToolRoot "cfe-init.ps1"
+        cfeValidate = Join-Path $releaseToolRoot "cfe-validate.ps1"
+        metaCompile = Join-Path $releaseMetadataToolRoot "1c-meta-compile\scripts\meta-compile.ps1"
+        formAdd = Join-Path $releaseMetadataToolRoot "1c-form-scaffold\scripts\form-add.ps1"
+        templateAdd = Join-Path $releaseMetadataToolRoot "1c-template-manage\scripts\add-template.ps1"
+    }
+    foreach ($requiredTool in $releaseTools.GetEnumerator()) {
+        if (-not (Test-Path -LiteralPath $requiredTool.Value -PathType Leaf)) {
+            throw "Release ai_rules source does not contain $($requiredTool.Key) at the expected controlled-fork path: $($requiredTool.Value)"
         }
     }
     $previousToolOverrideVariable = Get-Variable -Name ExtensionLifecycleToolRootOverride -Scope Script -ErrorAction SilentlyContinue
@@ -4631,6 +4778,42 @@ function Invoke-ReleaseE2EExtensionSmoke {
     $emptyDumpSha256 = ""
     $cfeSha256 = ""
     $cfeDumpSha256 = ""
+    $processorName = "ITLReleaseSmokeProcessor"
+    $processorSynonym = "ITL Release Extension Form"
+    $processorFormName = "MainForm"
+    $processorTemplateName = "SmokeTemplate"
+    $formRegistrationCount = 0
+    $templateRegistrationCount = 0
+    $extensionUiReportPath = ""
+    $extensionUiJunitTests = 0
+
+    function Invoke-ReleaseAiRulesTool {
+        param(
+            [Parameter(Mandatory = $true)][string]$ToolPath,
+            [string[]]$Arguments = @()
+        )
+        & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $ToolPath @Arguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "Controlled-fork release tool failed with exit code $LASTEXITCODE`: $ToolPath $($Arguments -join ' ')"
+        }
+    }
+
+    function Get-ReleaseExtensionFixtureCounts {
+        param([Parameter(Mandatory = $true)][string]$ExtensionDumpPath)
+
+        $processorMetadataPath = Join-Path $ExtensionDumpPath ("DataProcessors\" + $processorName + ".xml")
+        if (-not (Test-Path -LiteralPath $processorMetadataPath -PathType Leaf)) {
+            throw "Release extension smoke processor metadata is missing: $processorMetadataPath"
+        }
+        $processorDocument = New-Object System.Xml.XmlDocument
+        $processorDocument.Load($processorMetadataPath)
+        $forms = @($processorDocument.SelectNodes("//*[local-name()='ChildObjects']/*[local-name()='Form' and text()='$processorFormName']"))
+        $templates = @($processorDocument.SelectNodes("//*[local-name()='ChildObjects']/*[local-name()='Template' and text()='$processorTemplateName']"))
+        return [pscustomobject]@{
+            forms = $forms.Count
+            templates = $templates.Count
+        }
+    }
 
     function Restore-ReleaseE2EExtensionLocalState {
         if (Test-Path -LiteralPath $dumpPath -PathType Container -ErrorAction SilentlyContinue) {
@@ -4675,6 +4858,78 @@ function Invoke-ReleaseE2EExtensionSmoke {
         Assert-NormalizedExtensionDump -Path $dumpPath -Name $ExtensionName
         $emptyDumpSha256 = (Get-FileHash -LiteralPath (Join-Path $dumpPath "Configuration.xml") -Algorithm SHA256).Hash.ToLowerInvariant()
 
+        $processorDefinitionPath = Join-Path $smokeRoot "processor.json"
+        Write-Utf8Text -Path $processorDefinitionPath -Value (([ordered]@{
+            type = "DataProcessor"
+            name = $processorName
+            synonym = $processorSynonym
+        } | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
+        Invoke-ReleaseAiRulesTool -ToolPath $releaseTools.metaCompile -Arguments @(
+            "-JsonPath", $processorDefinitionPath,
+            "-OutputDir", $dumpPath
+        )
+
+        $processorMetadataPath = Join-Path $dumpPath ("DataProcessors\" + $processorName + ".xml")
+        foreach ($iteration in 1..2) {
+            Invoke-ReleaseAiRulesTool -ToolPath $releaseTools.formAdd -Arguments @(
+                "-ObjectPath", $processorMetadataPath,
+                "-FormName", $processorFormName,
+                "-Synonym", $processorSynonym,
+                "-Purpose", "Object",
+                "-SetDefault"
+            )
+            Invoke-ReleaseAiRulesTool -ToolPath $releaseTools.templateAdd -Arguments @(
+                "-ObjectName", $processorName,
+                "-TemplateName", $processorTemplateName,
+                "-TemplateType", "Text",
+                "-SrcDir", (Join-Path $dumpPath "DataProcessors")
+            )
+        }
+        $fixtureCounts = Get-ReleaseExtensionFixtureCounts -ExtensionDumpPath $dumpPath
+        $formRegistrationCount = $fixtureCounts.forms
+        $templateRegistrationCount = $fixtureCounts.templates
+        if ($formRegistrationCount -ne 1 -or $templateRegistrationCount -ne 1) {
+            throw "Release extension smoke idempotency failed: forms=$formRegistrationCount, templates=$templateRegistrationCount."
+        }
+        Invoke-ReleaseAiRulesTool -ToolPath $releaseTools.cfeValidate -Arguments @("-ExtensionPath", $dumpPath)
+
+        $extensionSource = Get-ConfigSourceFingerprint -ExportPath $dumpPath
+        $extensionLoadResult = Load-ConfigFromFiles `
+            -InfoBasePath $emptyState.devBranchInfoBasePath `
+            -InfoBaseKind $emptyState.infoBaseKind `
+            -State $emptyState `
+            -ExportPath $dumpPath `
+            -ContentKind "extension" `
+            -ExtensionName $ExtensionName `
+            -Mode "Full"
+        $extensionUpdates = New-LoadStateUpdates -LoadResult $extensionLoadResult -ContentKind "extension"
+        Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $emptyState -LoadResult $extensionLoadResult -Updates $extensionUpdates
+        $extensionUpdates["lastExtensionDesignerFingerprint"] = $extensionSource.fingerprint
+        Update-DevBranchState -State $emptyState -Updates $extensionUpdates
+
+        # This feature is intentionally decoded at runtime so Windows PowerShell 5.1
+        # cannot corrupt Russian Gherkin in this UTF-8-without-BOM source file.
+        $extensionUiFeaturePath = Join-Path $smokeRoot "extension-form.feature"
+        $extensionUiFeatureBase64 = 'I2xhbmd1YWdlOiBydQoKQGl0bF9yZWxlYXNlX2V4dGVuc2lvbl91aQrQpNGD0L3QutGG0LjQvtC90LDQuzog0KTQvtGA0LzQsCDQvtCx0YDQsNCx0L7RgtC60Lgg0YDQsNGB0YjQuNGA0LXQvdC40Y8KCtCa0L7QvdGC0LXQutGB0YI6CgnQlNCw0L3QviDQryDQt9Cw0L/Rg9GB0LrQsNGOINGB0YbQtdC90LDRgNC40Lkg0L7RgtC60YDRi9GC0LjRjyBUZXN0Q2xpZW50INC40LvQuCDQv9C+0LTQutC70Y7Rh9Cw0Y4g0YPQttC1INGB0YPRidC10YHRgtCy0YPRjtGJ0LjQuQoJ0Jgg0Y8g0LfQsNC60YDRi9Cy0LDRjiDQstGB0LUg0L7QutC90LAg0LrQu9C40LXQvdGC0YHQutC+0LPQviDQv9GA0LjQu9C+0LbQtdC90LjRjwoK0KHRhtC10L3QsNGA0LjQuTog0KTQvtGA0LzQsCDRgNCw0YHRiNC40YDQtdC90LjRjyDQvtGC0LrRgNGL0LLQsNC10YLRgdGPINCyIFRlc3RDbGllbnQKCdCYINCvINC+0YLQutGA0YvQstCw0Y4g0L3QsNCy0LjQs9Cw0YbQuNC+0L3QvdGD0Y4g0YHRgdGL0LvQutGDICJlMWNpYi9hcHAv0J7QsdGA0LDQsdC+0YLQutCwLklUTFJlbGVhc2VTbW9rZVByb2Nlc3NvciIKCdCV0YHQu9C4INC/0L7Rj9Cy0LjQu9C+0YHRjCDQv9GA0LXQtNGD0L/RgNC10LbQtNC10L3QuNC1INCi0L7Qs9C00LAKCQnQotC+0LPQtNCwINGPINCy0YvQt9GL0LLQsNGOINC40YHQutC70Y7Rh9C10L3QuNC1ICLQndC1INGD0LTQsNC70L7RgdGMINC+0YLQutGA0YvRgtGMINGE0L7RgNC80YMg0L7QsdGA0LDQsdC+0YLQutC4INGA0LDRgdGI0LjRgNC10L3QuNGPIgoJ0JXRgdC70Lgg0LjQvNGPINGC0LXQutGD0YnQtdC5INGE0L7RgNC80YsgIkVycm9yV2luZG93IiDQotC+0LPQtNCwCgkJ0KLQvtCz0LTQsCDRjyDQstGL0LfRi9Cy0LDRjiDQuNGB0LrQu9GO0YfQtdC90LjQtSAi0J7RgtC60YDRi9C70LDRgdGMINGE0L7RgNC80LAg0L7RiNC40LHQutC4INCy0LzQtdGB0YLQviDRhNC+0YDQvNGLINGA0LDRgdGI0LjRgNC10L3QuNGPIgoJ0KLQvtCz0LTQsCDQvtGC0LrRgNGL0LvQvtGB0Ywg0L7QutC90L4gIipJVEwgUmVsZWFzZSBFeHRlbnNpb24gRm9ybSoi'
+        [System.IO.File]::WriteAllBytes($extensionUiFeaturePath, [System.Convert]::FromBase64String($extensionUiFeatureBase64))
+        $previousVanessaFeaturePath = [string]$script:VanessaFeaturePath
+        $previousVanessaFilterTags = [string]$script:VanessaFilterTags
+        try {
+            $script:VanessaFeaturePath = $extensionUiFeaturePath
+            $script:VanessaFilterTags = "@itl_release_extension_ui"
+            Run-DevBranchTests
+        } finally {
+            $script:VanessaFeaturePath = $previousVanessaFeaturePath
+            $script:VanessaFilterTags = $previousVanessaFilterTags
+        }
+        $extensionUiState = Read-DevBranchState -Name $DevBranchName
+        $extensionUiReportPath = [string](Get-StateValue -State $extensionUiState -Name "lastVanessaReportPath" -Default "")
+        $extensionUiJunit = Get-VanessaJunitSummary -RunDirectory $extensionUiReportPath
+        $extensionUiJunitTests = $extensionUiJunit.tests
+        if (-not $extensionUiJunit.found -or $extensionUiJunitTests -ne 1 -or ($extensionUiJunit.failures + $extensionUiJunit.errors) -ne 0) {
+            throw "Release extension UI smoke must produce one passing TestClient JUnit test; tests=$extensionUiJunitTests, failures=$($extensionUiJunit.failures), errors=$($extensionUiJunit.errors)."
+        }
+
         Invoke-Designer -InfoBasePath $emptyState.devBranchInfoBasePath -InfoBaseKind $emptyState.infoBaseKind -DesignerArgs @(
             "/DumpCfg", $cfePath, "-Extension", $ExtensionName
         ) | Out-Null
@@ -4696,10 +4951,18 @@ function Invoke-ReleaseE2EExtensionSmoke {
         }
         Assert-NormalizedExtensionDump -Path $dumpPath -Name $ExtensionName
         $cfeDumpSha256 = (Get-FileHash -LiteralPath (Join-Path $dumpPath "Configuration.xml") -Algorithm SHA256).Hash.ToLowerInvariant()
+        Invoke-ReleaseAiRulesTool -ToolPath $releaseTools.cfeValidate -Arguments @("-ExtensionPath", $dumpPath)
+        $roundtripFixtureCounts = Get-ReleaseExtensionFixtureCounts -ExtensionDumpPath $dumpPath
+        if ($roundtripFixtureCounts.forms -ne 1 -or $roundtripFixtureCounts.templates -ne 1) {
+            throw "Release extension CFE roundtrip changed specialized child registrations: forms=$($roundtripFixtureCounts.forms), templates=$($roundtripFixtureCounts.templates)."
+        }
 
         Invoke-Designer -InfoBasePath $cfeState.devBranchInfoBasePath -InfoBaseKind $cfeState.infoBaseKind -DesignerArgs @("/RestoreIB", $snapshotPath) | Out-Null
         $databaseRestored = $true
         Restore-ReleaseE2EExtensionLocalState
+        if (Test-Path -LiteralPath $smokeRoot -PathType Container -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $smokeRoot -Recurse -Force
+        }
 
         if (@(& git -C $script:ProjectRoot status --porcelain).Count -ne 0) {
             throw "Release extension smoke left the worktree dirty."
@@ -4713,6 +4976,13 @@ function Invoke-ReleaseE2EExtensionSmoke {
             cfeCreated = $true
             cfeInitialized = $true
             databaseRestored = $true
+            repeatedFormOperationsIdempotent = ($formRegistrationCount -eq 1)
+            repeatedTemplateOperationsIdempotent = ($templateRegistrationCount -eq 1)
+            formRegistrationCount = $formRegistrationCount
+            templateRegistrationCount = $templateRegistrationCount
+            extensionUiTestClientPassed = ($extensionUiJunitTests -eq 1)
+            extensionUiJunitTests = $extensionUiJunitTests
+            extensionUiReportPath = $extensionUiReportPath
             emptyDumpConfigurationSha256 = $emptyDumpSha256
             cfeSha256 = $cfeSha256
             cfeDumpConfigurationSha256 = $cfeDumpSha256

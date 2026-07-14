@@ -12,7 +12,7 @@ The goal of ITL feature tests is to verify the behavior currently being changed.
    - `integration`: object, document, register, exchange, or data movement between subsystems;
    - `UI`: form, command, or visible user behavior.
 3. Search existing steps and local `Libraries`/`@exportscenarios` before inventing new steps.
-4. Write 2-3 small scenarios: the main successful path and one meaningful boundary or negative case. More than 4 scenarios needs explicit justification.
+4. For OpenSpec, write 2-3 small scenarios: the main successful path and one meaningful boundary or negative case; a fourth needs explicit justification. A quick-fix needs at least one focused regression scenario and adds a second only for a separate meaningful boundary.
 5. Run the final ITL check flow. Vanessa UI MCP is only for runtime UI research, authoring support, step search, recording, and debugging; it is not the test runner.
 
 ## Context Economy
@@ -24,6 +24,12 @@ The goal of ITL feature tests is to verify the behavior currently being changed.
 - Keep each scenario short: setup, action, 1-3 observable assertions, cleanup if needed.
 - Do not describe Vanessa history, generic framework capabilities, or unrelated test suites in `test-plan.md`.
 
+## BSL Context And Extension UI
+
+- Vanessa's `Объект` scenario context is not an arbitrary `Структура`. Do not add fields with `Объект.Поле = ...` or `Объект.Вставить(...)`.
+- Values that live only inside one BSL block belong in a local `Структура` created and consumed in that same block. Across steps, use an existing supported Vanessa context mechanism or a reusable library step instead of inventing fields on `Объект`.
+- Extension forms are supported in the real `TESTMANAGER -> TESTCLIENT` run. A requirement about an extension form, command, or visible state needs a UI scenario; a unit-like BSL check does not replace it.
+
 ## Feature File Structure
 
 Minimal structure:
@@ -31,7 +37,6 @@ Minimal structure:
 ```gherkin
 #language: ru
 
-@tree
 @feature_<change-id>
 
 Функционал: <Короткое имя проверяемой фичи>
@@ -41,13 +46,13 @@ Minimal structure:
 	И я закрываю все окна клиентского приложения
 
 Сценарий: <Успешный путь>
-	* Подготовка
+	# Подготовка
 		...
 
-	* Действие
+	# Действие
 		...
 
-	* Проверка
+	# Проверка
 		...
 ```
 
@@ -55,7 +60,7 @@ Rules:
 
 - Store application scenarios in `tests/features`.
 - Name scenarios by checked behavior, not by internal task number.
-- Use `@tree` when readable groups such as `* Подготовка`, `* Действие`, and `* Проверка` help.
+- Keep independent acceptance scenarios flat so each produces its own JUnit verdict. Do not use `@tree` to group them; reserve it for deliberately aggregated non-acceptance output.
 - Add `@exportscenarios` only to library feature files that are actually reused.
 - Do not add tags for large smoke/E2E suites to feature-focused checks.
 
@@ -66,7 +71,6 @@ Use this when logic can be checked without walking through a form.
 ```gherkin
 #language: ru
 
-@tree
 @feature_discount_rule
 
 Функционал: Расчет скидки договора
@@ -75,22 +79,11 @@ Use this when logic can be checked without walking through a form.
 	Дано Я запускаю сценарий открытия TestClient или подключаю уже существующий
 
 Сценарий: Скидка применяется для договора с действующим условием
-	* Подготовка
-		И я выполняю код встроенного языка на сервере
+	И я выполняю код встроенного языка на сервере
 		"""bsl
-			// Создайте минимальные тестовые данные и сохраните ссылки в переменные контекста.
-		"""
-
-	* Действие
-		И я выполняю код встроенного языка на сервере
-		"""bsl
-			// Вызовите проверяемую экспортную процедуру или функцию и сохраните результат в Объект.Результат.
-		"""
-
-	* Проверка
-		И я выполняю код встроенного языка на сервере
-		"""bsl
-			Если Объект.Результат <> 100 Тогда
+			ЛокальныеДанные = Новый Структура;
+			ЛокальныеДанные.Вставить("Результат", 100); // Вызов проверяемой логики.
+			Если ЛокальныеДанные.Результат <> 100 Тогда
 				ВызватьИсключение "Ожидался результат 100";
 			КонецЕсли;
 		"""
@@ -103,7 +96,6 @@ Use this when persistence, posting, register movements, documents, objects, or e
 ```gherkin
 #language: ru
 
-@tree
 @feature_order_posting
 
 Функционал: Проведение заказа с резервом
@@ -113,23 +105,24 @@ Use this when persistence, posting, register movements, documents, objects, or e
 	И я закрываю все окна клиентского приложения
 
 Сценарий: Проведение заказа создает резерв по складу
-	* Подготовка
+	# Подготовка
 		И я выполняю код встроенного языка на сервере
 		"""bsl
 			// Создайте только необходимые справочники, документ и остатки.
 		"""
 
-	* Действие
+	# Действие
 		И я выполняю код встроенного языка на сервере
 		"""bsl
 			// Проведите документ или вызовите прикладную операцию.
 		"""
 
-	* Проверка
+	# Проверка
 		И я выполняю код встроенного языка на сервере
 		"""bsl
-			// Прочитайте регистр и проверьте результат.
-			Если Объект.КоличествоРезерва <> 5 Тогда
+			// Прочитайте регистр в локальную переменную и проверьте результат в этом же блоке.
+			КоличествоРезерва = 5; // Замените чтением проверяемого регистра.
+			Если КоличествоРезерва <> 5 Тогда
 				ВызватьИсключение "Ожидался резерв 5";
 			КонецЕсли;
 		"""
@@ -142,7 +135,6 @@ Use UI checks only for forms, commands, or visible behavior. Prefer form element
 ```gherkin
 #language: ru
 
-@tree
 @feature_order_command
 
 Функционал: Команда заполнения заказа
@@ -152,13 +144,13 @@ Use UI checks only for forms, commands, or visible behavior. Prefer form element
 	И я закрываю все окна клиентского приложения
 
 Сценарий: Команда Заполнить добавляет строку товара
-	* Подготовка
+	# Подготовка
 		И я выполняю код встроенного языка на сервере
 		"""bsl
 			// Создайте минимальные данные и получите навигационную ссылку.
 		"""
 
-	* Действие
+	# Действие
 		И Я открываю навигационную ссылку "$НавигационнаяСсылка$"
 		Если появилось предупреждение Тогда
 			Тогда я вызываю исключение "Не удалось открыть заказ для проверки команды заполнения"
@@ -166,7 +158,7 @@ Use UI checks only for forms, commands, or visible behavior. Prefer form element
 			Тогда я вызываю исключение "Открылась форма ошибки при открытии заказа"
 		И я нажимаю на кнопку с именем 'ФормаЗаполнить'
 
-	* Проверка
+	# Проверка
 		Тогда в таблице "Товары" количество строк "больше" 0
 ```
 

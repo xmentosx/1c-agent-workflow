@@ -42,14 +42,26 @@ state, and compares the `Comment` plus the presence of
 `Ext/ParentConfigurations.bin`. This is a real partial-load roundtrip; automatic
 full fallback is deliberately disabled for this release assertion.
 
+Vanessa is first restricted to the generated four-scenario feature file. The
+runner requires exactly four flat JUnit test cases, verifies that feature-only
+commits do not invoke Designer or Enterprise, then makes one scenario fail on
+purpose. `stoponerror=false` is qualified only when that failed run still emits
+all four independent results with exactly one failure/error and the helper
+returns a non-zero exit code. A recovery commit must restore four passing tests.
+Every completed JUnit run must finish post-processing within 30 seconds.
+
 The same disposable branch infobase then runs the extension lifecycle smoke.
 Its scaffold and validation tools are loaded from the exact clean/tagged
 `-AiRulesSource` checkout already qualified by the fork and compatibility gates,
 not from a potentially stale installed copy in the stand.
-The helper creates an Empty extension from `cfe-init.ps1`, dumps a non-empty CFE,
-restores the pre-smoke `.dt` snapshot, initializes the same extension from that
-CFE, validates the normalized `src/cfe/<ExtensionName>` dump, and restores the
-database and worktree again. The extension name and proof of both modes are
+The helper creates an Empty extension from `cfe-init.ps1`, adds a data processor,
+runs `form-add` and `add-template` twice each, and requires one registration of
+each child after validation. It loads that extension and opens its real managed
+form through a one-scenario Vanessa `TESTMANAGER -> TESTCLIENT` run. It then
+dumps a non-empty CFE, restores the pre-smoke `.dt` snapshot, initializes the
+same extension from that CFE, revalidates the normalized
+`src/cfe/<ExtensionName>` dump and child counts, and restores the database and
+worktree again. The extension name, UI JUnit path, and proof of both modes are
 recorded in `extension-smoke.json` and the combined release summary.
 
 The check and export use the helper from the clean workflow checkout being
@@ -63,8 +75,10 @@ Keep `build/test-results/local/check-summary.json` and the nested E2E summary as
 release evidence. A failed cleanup, stale Vanessa result, unverified override,
 missing `ParentConfigurations.bin`, non-partial load, extra list-file entry,
 roundtrip mismatch, missing manifest, hash mismatch, dirty worktree, dynamic
-fork branch, failed extension database restore or unpinned template is a release
-failure.
+fork branch, aggregated/missing JUnit results, a helper that masks a failed
+scenario, non-idempotent form/template registration, failed extension TestClient
+form opening, failed extension database restore or unpinned template is a
+release failure.
 
 ## Reset and rollback
 

@@ -16,6 +16,17 @@ Describe "Release gate scripts" {
             )
             @($errors) | Should -BeNullOrEmpty
         }
+        $e2eText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") -Raw -Encoding UTF8
+        $e2eText | Should -Match "FromBase64String"
+        $e2eText | Should -Not -Match "Функционал: Четыре независимых"
+        $e2eText | Should -Match '"-VanessaFeaturePath", \$vanessaFixture\.path'
+        $lifecycleText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
+        $lifecycleText | Should -Match '1c-form-scaffold\\scripts\\form-add\.ps1'
+        $lifecycleText | Should -Match '1c-template-manage\\scripts\\add-template\.ps1'
+        $lifecycleText | Should -Match 'foreach \(\$iteration in 1\.\.2\)'
+        $lifecycleText | Should -Match 'Run-DevBranchTests'
+        $lifecycleText | Should -Match 'extensionUiTestClientPassed'
+        $lifecycleText | Should -Match '(?s)Restore-ReleaseE2EExtensionLocalState\s+if \(Test-Path -LiteralPath \$smokeRoot.*?Remove-Item -LiteralPath \$smokeRoot -Recurse -Force\s+}\s+\s*if \(@\(& git -C \$script:ProjectRoot status --porcelain\)\.Count -ne 0\)'
     }
 
     It "requires a local immutable fork tag and explicit E2E stand" {
@@ -89,23 +100,40 @@ Describe "Release E2E orchestration" {
             Set-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\dev-branches\workflow-release-e2e.json") -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 6)
             Set-Content -LiteralPath $helperPath -Encoding UTF8 -Value @'
 [CmdletBinding()]
-param([string]$ProjectRoot, [string]$Action, [string]$DevBranchName, [string]$ExtensionName, [string]$ReleaseAiRulesSource, [ValidateSet("Auto", "Partial", "Full")][string]$ConfigLoadMode = "Auto")
+param([string]$ProjectRoot, [string]$Action, [string]$DevBranchName, [string]$ExtensionName, [string]$ReleaseAiRulesSource, [string]$VanessaFeaturePath, [string]$VanessaFilterTags, [ValidateSet("Auto", "Partial", "Full")][string]$ConfigLoadMode = "Auto")
 $actionLogPath = Join-Path $ProjectRoot ".agent-1c\release-e2e-actions.log"
 Add-Content -LiteralPath $actionLogPath -Encoding UTF8 -Value $Action
 $statePath = Join-Path $ProjectRoot ".agent-1c\dev-branches\workflow-release-e2e.json"
 $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
 switch ($Action) {
     "check-dev-branch" {
-        if ($ConfigLoadMode -ne "Partial") { throw "release E2E must request Partial" }
+        $firstRun = -not $state.PSObject.Properties["lastConfigDesignerLoadedAt"]
+        $previousCheckCount = if ($state.PSObject.Properties["releaseCheckCount"]) { [int]$state.releaseCheckCount } else { 0 }
+        $releaseCheckCount = $previousCheckCount + 1
+        $isStopOnErrorProbe = (($releaseCheckCount % 4) -eq 3)
+        if ($firstRun -and $ConfigLoadMode -ne "Partial") { throw "first release E2E check must request Partial" }
+        if ($VanessaFilterTags -ne "@itl_release_flat") { throw "release E2E must filter the four flat scenarios" }
+        if ([System.IO.Path]::GetFileName($VanessaFeaturePath) -ne "ITLReleaseFourFlat.feature") { throw "release E2E must run the dedicated four-scenario feature file" }
         $listPath = Join-Path $ProjectRoot ".agent-1c\release-e2e-partial-list.txt"
         Set-Content -LiteralPath $listPath -Encoding UTF8 -Value "Configuration.xml"
+        $reportPath = Join-Path $ProjectRoot "build\test-results\vanessa\mock"
+        New-Item -ItemType Directory -Force -Path $reportPath | Out-Null
+        $failureCount = if ($isStopOnErrorProbe) { 1 } else { 0 }
+        Set-Content -LiteralPath (Join-Path $reportPath "junit.xml") -Encoding UTF8 -Value "<testsuite tests=`"4`" failures=`"$failureCount`" errors=`"0`"><testcase name=`"one`"/><testcase name=`"two`"/><testcase name=`"three`"/><testcase name=`"four`"/></testsuite>"
         $state | Add-Member -NotePropertyName configLoadStatus -NotePropertyValue "passed" -Force
         $state | Add-Member -NotePropertyName lastConfigLoadMode -NotePropertyValue "partial" -Force
         $state | Add-Member -NotePropertyName lastConfigBaseUpdateListFile -NotePropertyValue $listPath -Force
+        $state | Add-Member -NotePropertyName lastConfigDesignerLoadedAt -NotePropertyValue "2026-07-14T00:00:00Z" -Force
+        $state | Add-Member -NotePropertyName designerInvoked -NotePropertyValue ([bool]$firstRun) -Force
+        $state | Add-Member -NotePropertyName enterpriseInvoked -NotePropertyValue ([bool]$firstRun) -Force
+        $state | Add-Member -NotePropertyName lastVanessaReportPath -NotePropertyValue $reportPath -Force
+        $state | Add-Member -NotePropertyName lastVanessaPostProcessDurationMs -NotePropertyValue 25 -Force
+        $state | Add-Member -NotePropertyName releaseCheckCount -NotePropertyValue $releaseCheckCount -Force
         $state | Add-Member -NotePropertyName lastVerificationStatus -NotePropertyValue "passed" -Force
         $state | Add-Member -NotePropertyName lastVerifiedAt -NotePropertyValue ([DateTime]::UtcNow.ToString("o")) -Force
         $state | Add-Member -NotePropertyName lastVerifiedCommit -NotePropertyValue ((& git -C $ProjectRoot rev-parse HEAD).Trim()) -Force
         Set-Content -LiteralPath $statePath -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 8)
+        if ($isStopOnErrorProbe) { [Environment]::Exit(1) }
     }
     "release-e2e-config-roundtrip" {
         [xml]$configuration = Get-Content -LiteralPath (Join-Path $ProjectRoot "src\cf\Configuration.xml") -Raw -Encoding UTF8
@@ -132,13 +160,24 @@ switch ($Action) {
             cfeCreated = $true
             cfeInitialized = $true
             databaseRestored = $true
+            repeatedFormOperationsIdempotent = $true
+            repeatedTemplateOperationsIdempotent = $true
+            formRegistrationCount = 1
+            templateRegistrationCount = 1
+            extensionUiTestClientPassed = $true
+            extensionUiJunitTests = 1
+            extensionUiReportPath = (Join-Path $ProjectRoot "build\test-results\vanessa\extension-ui")
         }
         $evidencePath = Join-Path $ProjectRoot "build\test-results\release-e2e\extension-smoke.json"
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $evidencePath) | Out-Null
         Set-Content -LiteralPath $evidencePath -Encoding UTF8 -Value ($evidence | ConvertTo-Json -Depth 5)
     }
-    "status" { Write-Host "Verification fresh passed: True" }
+    "status" {
+        if ([System.IO.Path]::GetFileName($VanessaFeaturePath) -ne "ITLReleaseFourFlat.feature") { throw "release E2E status must use the verified feature scope" }
+        Write-Host "Verification fresh passed: True"
+    }
     "export-dev-branch-result" {
+        if ([System.IO.Path]::GetFileName($VanessaFeaturePath) -ne "ITLReleaseFourFlat.feature") { throw "release E2E export must use the verified feature scope" }
         $resultRoot = Join-Path $ProjectRoot "build\result"
         New-Item -ItemType Directory -Force -Path $resultRoot | Out-Null
         $artifact = Join-Path $resultRoot "fixture.cf"
@@ -164,13 +203,25 @@ switch ($Action) {
             $summary.sourceSnapshotPath | Should -Be $sourceSnapshot
             $summary.artifactSha256 | Should -Not -BeNullOrEmpty
             $summary.configLoadMode | Should -Be "partial"
-            $summary.fixtureCommit | Should -Be (& git -C $worktreeRoot rev-parse HEAD).Trim()
+            $summary.testOnlyCommit | Should -Not -BeNullOrEmpty
+            $summary.vanessaJUnitTests | Should -Be 4
+            $summary.stopOnErrorProbeCommit | Should -Not -BeNullOrEmpty
+            $summary.stopOnErrorRecoveryCommit | Should -Be (& git -C $worktreeRoot rev-parse HEAD).Trim()
+            $summary.stopOnErrorProbeTests | Should -Be 4
+            ($summary.stopOnErrorProbeFailures + $summary.stopOnErrorProbeErrors) | Should -Be 1
+            $summary.vanessaPostProcessDurationMs | Should -BeLessOrEqual 30000
             $summary.expectedComment | Should -Match '^ITL release E2E partial root roundtrip '
             $summary.roundtripParentConfigurationsPresent | Should -BeTrue
             $summary.extensionEmptyInitialized | Should -BeTrue
             $summary.extensionCfeCreated | Should -BeTrue
             $summary.extensionCfeInitialized | Should -BeTrue
             $summary.extensionDatabaseRestored | Should -BeTrue
+            $summary.extensionFormOperationsIdempotent | Should -BeTrue
+            $summary.extensionTemplateOperationsIdempotent | Should -BeTrue
+            $summary.extensionFormRegistrationCount | Should -Be 1
+            $summary.extensionTemplateRegistrationCount | Should -Be 1
+            $summary.extensionUiTestClientPassed | Should -BeTrue
+            $summary.extensionUiJunitTests | Should -Be 1
             $summary.extensionSmokeName | Should -Match '^ITLReleaseSmoke\d{14}$'
             $summary.cleanupFailures.Count | Should -Be 0
             $actions = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\release-e2e-actions.log") -Encoding UTF8
@@ -195,7 +246,7 @@ switch ($Action) {
             $failureExitCode | Should -Not -Be 0
             $failureSummary = Get-Content -LiteralPath $failureSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $failureSummary.status | Should -Be "failed"
-            $failureSummary.error | Should -Match "extension smoke evidence was not created"
+            $failureSummary.error | Should -Match "release-e2e-extension-smoke failed with exit code 1"
             @(& git -C $worktreeRoot status --porcelain).Count | Should -Be 0
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

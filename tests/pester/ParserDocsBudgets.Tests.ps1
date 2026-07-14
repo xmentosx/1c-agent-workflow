@@ -469,34 +469,29 @@
 
         foreach ($marker in @(
             "Development completion gate",
-            "src/cf",
-            "src/cfe",
-            "modules, forms, commands, metadata",
+            "configuration/extension change",
             "tests/features",
             "VANESSA-TESTS-GUIDE.md",
             "/itl-check",
             "fresh passed",
             "/opsx-apply",
             "quick-fix",
-            "develop code by this plan",
-            "execute development tasks",
-            "make this change",
+            "direct implementation requests",
             "ready/done/implemented",
-            "final reply",
             "Vanessa report path",
             "Hybrid cadence",
             "focused regression scenario",
-            "focused Vanessa scenario",
-            "pending verification",
+            "observable slice",
+            "2-3 scenarios",
+            "fourth needs justification",
             "test-report.md"
         )) {
             $userRulesText | Should -Match ([regex]::Escape($marker))
         }
 
-        $userRulesText | Should -Match "Do not answer.*tests are missing"
-        $userRulesText | Should -Match "Do not answer.*/itl-check.*did not run"
-        $userRulesText | Should -Match "Do not answer.*verification is not fresh passed"
-        $userRulesText | Should -Match "Large OpenSpec.*tasks\.md.*checkable slices"
+        $userRulesText | Should -Match "Without either proof.*do not report ready/done/implemented"
+        $userRulesText | Should -Match "Large OpenSpec verifies each observable slice"
+        $userRulesText | Should -Match "syntaxcheck only.*insufficient"
         $userRulesText | Should -Not -Match "opsx\*\.md"
     }
 

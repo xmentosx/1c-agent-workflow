@@ -496,7 +496,8 @@ function Get-OneCBracketRecords {
 function Invoke-OneCBracketRecordStream {
     param(
         [string]$Path,
-        [scriptblock]$OnRecord
+        [scriptblock]$OnRecord,
+        [int64]$StartOffset = 0
     )
 
     $reader = $null
@@ -504,7 +505,9 @@ function Invoke-OneCBracketRecordStream {
     $depth = 0
     $inString = $false
     try {
-        $reader = New-Object System.IO.StreamReader($Path, $true)
+        $stream = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        if ($StartOffset -gt 0) { [void]$stream.Seek($StartOffset, [System.IO.SeekOrigin]::Begin) }
+        $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $true)
         while ($null -ne ($line = $reader.ReadLine())) {
             for ($i = 0; $i -lt $line.Length; $i++) {
                 $ch = $line[$i]
@@ -738,7 +741,8 @@ function Read-OneCEventLogDirect {
         [Nullable[datetime]]$StartTime = $null,
         [Nullable[datetime]]$EndTime = $null,
         [string[]]$Levels = (Get-VanessaEventLogLevels),
-        [string[]]$SegmentPaths = @()
+        [string[]]$SegmentPaths = @(),
+        [object[]]$SegmentSelections = @()
     )
 
     $logDirectory = Get-DevBranchEventLogDirectory -State $State
@@ -748,7 +752,9 @@ function Read-OneCEventLogDirect {
 
     $lgfPath = Join-Path $logDirectory "1Cv8.lgf"
     $lgpFiles = @(
-        if (@($SegmentPaths).Count -gt 0) {
+        if (@($SegmentSelections).Count -gt 0) {
+            $SegmentSelections | ForEach-Object { Get-Item -LiteralPath $_.path -ErrorAction Stop } | Sort-Object Name
+        } elseif (@($SegmentPaths).Count -gt 0) {
             $SegmentPaths | ForEach-Object { Get-Item -LiteralPath $_ -ErrorAction Stop } | Sort-Object Name
         } else {
             Get-ChildItem -LiteralPath $logDirectory -File -Filter "*.lgp" -ErrorAction SilentlyContinue | Sort-Object Name
@@ -774,6 +780,11 @@ function Read-OneCEventLogDirect {
 
     $events = New-Object System.Collections.ArrayList
     foreach ($file in $lgpFiles) {
+        $startOffset = 0
+        if (@($SegmentSelections).Count -gt 0) {
+            $selection = @($SegmentSelections | Where-Object { [string]$_.path -eq $file.FullName } | Select-Object -First 1)
+            if ($selection.Count -gt 0) { $startOffset = [int64]$selection[0].startOffset }
+        }
         $processRecord = {
             param($record)
             $event = ConvertFrom-OneCEventLogRecord -RecordText $record -WantedLevels $wantedLevels -StartTime $StartTime -EndTime $EndTime
@@ -782,7 +793,7 @@ function Read-OneCEventLogDirect {
             }
             [void]$events.Add($event)
         }
-        Invoke-OneCBracketRecordStream -Path $file.FullName -OnRecord $processRecord
+        Invoke-OneCBracketRecordStream -Path $file.FullName -OnRecord $processRecord -StartOffset $startOffset
     }
     return @($events)
 }
@@ -806,10 +817,125 @@ function Get-DevBranchEventLogSourceKey {
     if (-not (Test-Path -LiteralPath $lgfPath -PathType Leaf -ErrorAction SilentlyContinue)) {
         throw "1C event log header 1Cv8.lgf was not found: $lgfPath"
     }
-    $headerHash = (Get-FileHash -LiteralPath $lgfPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $header = Get-Item -LiteralPath $lgfPath -ErrorAction Stop
     $kind = [string](Get-StateValue -State $State -Name "infoBaseKind" -Default "file")
     $normalizedLogDirectory = (Resolve-Agent1cFullPath -Path $logDirectory).ToLowerInvariant()
-    return (Get-StringSha256 -Value ("$kind|$normalizedLogDirectory|$headerHash"))
+    return (Get-StringSha256 -Value ("$kind|$normalizedLogDirectory|$($header.CreationTimeUtc.Ticks)"))
+}
+
+function Get-OneCEventLogSafeTailOffset {
+    param([string]$Path)
+
+    $file = Get-Item -LiteralPath $Path -ErrorAction Stop
+    if ($file.Length -le 0) { return [int64]0 }
+    $windowLength = [int][Math]::Min([int64](1024 * 1024), [int64]$file.Length)
+    $windowStart = [int64]$file.Length - $windowLength
+    $buffer = New-Object byte[] $windowLength
+    $stream = New-Object System.IO.FileStream($file.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        [void]$stream.Seek($windowStart, [System.IO.SeekOrigin]::Begin)
+        $read = $stream.Read($buffer, 0, $buffer.Length)
+    } finally { $stream.Dispose() }
+    for ($index = $read - 2; $index -ge 0; $index--) {
+        if ($buffer[$index] -eq 0x0A -and $buffer[$index + 1] -eq 0x7B) {
+            return [int64]($windowStart + $index + 1)
+        }
+    }
+    return [int64]0
+}
+
+function New-DevBranchEventLogCursor {
+    param(
+        [object]$State,
+        [string]$Path
+    )
+
+    $logDirectory = Get-DevBranchEventLogDirectory -State $State
+    $files = @(Get-ChildItem -LiteralPath $logDirectory -File -Filter "*.lgp" -ErrorAction SilentlyContinue | Sort-Object Name)
+    $active = $files | Select-Object -Last 1
+    $segments = @()
+    foreach ($file in $files) {
+        $segments += [ordered]@{
+            name = $file.Name
+            length = [int64]$file.Length
+            lastWriteTimeUtc = $file.LastWriteTimeUtc.ToString("o")
+            startOffset = $(if ($null -ne $active -and $file.FullName -eq $active.FullName) { Get-OneCEventLogSafeTailOffset -Path $file.FullName } else { $null })
+        }
+    }
+    $cursor = [ordered]@{
+        schemaVersion = 1
+        sourceKey = Get-DevBranchEventLogSourceKey -State $State
+        capturedAt = (Get-Date).ToUniversalTime().ToString("o")
+        activeSegment = $(if ($null -ne $active) { $active.Name } else { "" })
+        segments = @($segments)
+    }
+    Write-Utf8Text -Path $Path -Value (($cursor | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
+    return $Path
+}
+
+function Get-DevBranchEventLogDeltaSelection {
+    param(
+        [object]$State,
+        [string]$CursorPath,
+        [datetime]$FallbackStartTime
+    )
+
+    $logDirectory = Get-DevBranchEventLogDirectory -State $State
+    $files = @(Get-ChildItem -LiteralPath $logDirectory -File -Filter "*.lgp" -ErrorAction SilentlyContinue | Sort-Object Name)
+    $mode = "cursor"
+    $cursor = $null
+    try {
+        if (-not (Test-Path -LiteralPath $CursorPath -PathType Leaf)) { throw "cursor file is missing" }
+        $cursor = Read-Utf8Text -Path $CursorPath | ConvertFrom-Json
+        if ([int](Get-StateValue -State $cursor -Name "schemaVersion" -Default 0) -ne 1) { throw "cursor schema is invalid" }
+        if ([string]$cursor.sourceKey -ne (Get-DevBranchEventLogSourceKey -State $State)) { throw "cursor source changed" }
+    } catch {
+        Write-Host "[WARN] Event log cursor cannot be used; scanning run-period segments: $($_.Exception.Message)"
+        $mode = "fallback"
+    }
+
+    $selections = @()
+    if ($mode -eq "cursor") {
+        $captured = @{}
+        foreach ($segment in @($cursor.segments)) { $captured[[string]$segment.name] = $segment }
+        $activeName = [string]$cursor.activeSegment
+        $activeFile = $files | Where-Object Name -eq $activeName | Select-Object -First 1
+        if ($activeName -and (-not $captured.ContainsKey($activeName) -or $null -eq $activeFile -or [int64]$activeFile.Length -lt [int64]$captured[$activeName].length)) {
+            Write-Host "[WARN] Event log active segment rotated or truncated; scanning run-period segments."
+            $mode = "fallback"
+        } else {
+            foreach ($file in $files) {
+                if (-not $captured.ContainsKey($file.Name)) {
+                    $selections += [pscustomobject]@{ path = $file.FullName; startOffset = [int64]0 }
+                    continue
+                }
+                $before = $captured[$file.Name]
+                if ($file.Name -eq $activeName) {
+                    $selections += [pscustomobject]@{ path = $file.FullName; startOffset = [int64]$before.startOffset }
+                } elseif ([int64]$file.Length -ne [int64]$before.length -or $file.LastWriteTimeUtc.ToString("o") -ne [string]$before.lastWriteTimeUtc) {
+                    $selections += [pscustomobject]@{ path = $file.FullName; startOffset = [int64]0 }
+                }
+            }
+        }
+    }
+
+    if ($mode -eq "fallback") {
+        $threshold = $FallbackStartTime.ToUniversalTime().AddMinutes(-1)
+        $selections = @($files | Where-Object { $_.LastWriteTimeUtc -ge $threshold } | ForEach-Object {
+            [pscustomobject]@{ path = $_.FullName; startOffset = [int64]0 }
+        })
+    }
+
+    $scannedBytes = [int64]0
+    foreach ($selection in $selections) {
+        $item = Get-Item -LiteralPath $selection.path
+        $scannedBytes += [Math]::Max([int64]0, [int64]$item.Length - [int64]$selection.startOffset)
+    }
+    return [pscustomobject]@{
+        mode = $mode
+        selections = @($selections)
+        scannedBytes = $scannedBytes
+    }
 }
 
 function Read-DevBranchEventLogBaselineWithCache {
@@ -1053,7 +1179,8 @@ function Read-DevBranchEventLogErrors {
     param(
         [object]$State,
         [Nullable[datetime]]$StartTime = $null,
-        [Nullable[datetime]]$EndTime = $null
+        [Nullable[datetime]]$EndTime = $null,
+        [string]$CursorPath = ""
     )
 
     $reader = Get-VanessaEventLogReader
@@ -1061,16 +1188,26 @@ function Read-DevBranchEventLogErrors {
     $lastError = $null
 
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $delta = $null
+    if ($CursorPath) {
+        $delta = Get-DevBranchEventLogDeltaSelection -State $State -CursorPath $CursorPath -FallbackStartTime ([datetime]$StartTime)
+    }
     if ($reader -eq "auto" -or $reader -eq "direct") {
         try {
-            $events = @(Read-OneCEventLogDirect -State $State -StartTime $StartTime -EndTime $EndTime -Levels $levels)
+            $events = if ($null -ne $delta) {
+                @(Read-OneCEventLogDirect -State $State -StartTime $StartTime -EndTime $EndTime -Levels $levels -SegmentSelections $delta.selections)
+            } else {
+                @(Read-OneCEventLogDirect -State $State -StartTime $StartTime -EndTime $EndTime -Levels $levels)
+            }
             $stopwatch.Stop()
             return [pscustomobject]@{
                 reader = "direct-stream"
                 events = $events
                 logDirectory = (Get-DevBranchEventLogDirectory -State $State)
-                errorCount = $events.Count
+                errorCount = @($events).Count
                 durationMs = [int64]$stopwatch.ElapsedMilliseconds
+                scannedBytes = $(if ($null -ne $delta) { $delta.scannedBytes } else { -1 })
+                scanMode = $(if ($null -ne $delta) { $delta.mode } else { "full" })
             }
         } catch {
             $lastError = $_
@@ -1088,8 +1225,10 @@ function Read-DevBranchEventLogErrors {
                 reader = "fallback"
                 events = $events
                 logDirectory = (Get-DevBranchEventLogDirectory -State $State)
-                errorCount = $events.Count
+                errorCount = @($events).Count
                 durationMs = [int64]$stopwatch.ElapsedMilliseconds
+                scannedBytes = -1
+                scanMode = "fallback-exporter"
             }
         } catch {
             if ($null -ne $lastError) {
@@ -1195,7 +1334,8 @@ function Test-DevBranchEventLogAfterVanessa {
         [object]$State,
         [datetime]$RunStartedAt,
         [datetime]$RunFinishedAt,
-        [string]$RunDirectory
+        [string]$RunDirectory,
+        [string]$CursorPath = ""
     )
 
     $stateWithBaseline = Ensure-DevBranchEventLogBaseline -State $State
@@ -1210,7 +1350,7 @@ function Test-DevBranchEventLogAfterVanessa {
 
     $skewSeconds = Get-VanessaEventLogClockSkewSeconds
     $endTime = $RunFinishedAt.AddSeconds($skewSeconds)
-    $readResult = Read-DevBranchEventLogErrors -State $stateWithBaseline -StartTime $RunStartedAt -EndTime $endTime
+    $readResult = Read-DevBranchEventLogErrors -State $stateWithBaseline -StartTime $RunStartedAt -EndTime $endTime -CursorPath $CursorPath
 
     $newErrors = @()
     $legacyCount = 0
@@ -1267,6 +1407,8 @@ function Test-DevBranchEventLogAfterVanessa {
         checkedUntil = $endTime
         scannedErrorCount = $readResult.errorCount
         readerDurationMs = $readResult.durationMs
+        scannedBytes = $readResult.scannedBytes
+        scanMode = $readResult.scanMode
     }
 }
 
@@ -1343,7 +1485,7 @@ function New-VanessaParamsFile {
     $scenarioSettings = [ordered]@{}
     $scenarioSettings[(ConvertFrom-Utf8Base64 "0JLRi9C/0L7Qu9C90Y/RgtGM0KjQsNCz0LjQkNGB0YHQuNC90YXRgNC+0L3QvdC+")] = $false
     $scenarioSettings[(ConvertFrom-Utf8Base64 "0JjQvdGC0LXRgNCy0LDQu9CS0YvQv9C+0LvQvdC10L3QuNGP0KjQsNCz0LDQl9Cw0LTQsNC90L3Ri9C50J/QvtC70YzQt9C+0LLQsNGC0LXQu9C10Lw=")] = 0.1
-    $scenarioSettings[(ConvertFrom-Utf8Base64 "0J7RgdGC0LDQvdC+0LLQutCw0J/RgNC40JLQvtC30L3QuNC60L3QvtCy0LXQvdC40LjQntGI0LjQsdC60Lg=")] = $true
+    $scenarioSettings[(ConvertFrom-Utf8Base64 "0J7RgdGC0LDQvdC+0LLQutCw0J/RgNC40JLQvtC30L3QuNC60L3QvtCy0LXQvdC40LjQntGI0LjQsdC60Lg=")] = $false
     $scenarioSettings[(ConvertFrom-Utf8Base64 "0JrQvtC70LjRh9C10YHRgtCy0L7QodC10LrRg9C90LTQn9C+0LjRgdC60LDQntC60L3QsA==")] = $windowSearchTimeout
     $scenarioSettings[(ConvertFrom-Utf8Base64 "0JrQvtC70LjRh9C10YHRgtCy0L7Qn9C+0L/Ri9GC0L7QutCS0YvQv9C+0LvQvdC10L3QuNGP0JTQtdC50YHRgtCy0LjRjw==")] = $actionAttempts
     $scenarioSettings[(ConvertFrom-Utf8Base64 "0J/QsNGD0LfQsNCf0YDQuNCe0YLQutGA0YvRgtC40LjQntC60L3QsA==")] = 0
@@ -1376,7 +1518,7 @@ function New-VanessaParamsFile {
     $params["junitpath"] = $RunDirectory
     $params["allurecreatereport"] = $false
     $params["pendingequalfailed"] = $true
-    $params["stoponerror"] = $true
+    $params["stoponerror"] = $false
     $params[(ConvertFrom-Utf8Base64 "0JLRi9C/0L7Qu9C90LXQvdC40LXQodGG0LXQvdCw0YDQuNC10LI=")] = $scenarioSettings
     $params[(ConvertFrom-Utf8Base64 "0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP")] = $testClientSettings
     $params[(ConvertFrom-Utf8Base64 "0JLRi9Cz0YDRg9C20LDRgtGM0KHRgtCw0YLRg9GB0JLRi9C/0L7Qu9C90LXQvdC40Y/QodGG0LXQvdCw0YDQuNC10LLQktCk0LDQudC7")] = $true
@@ -1413,7 +1555,10 @@ function Get-VanessaJunitSummary {
         try {
             $xml = New-Object System.Xml.XmlDocument
             $xml.Load($file.FullName)
-            $nodes = @($xml.SelectNodes('//*[local-name()="testsuite" or local-name()="testsuites"]'))
+            $nodes = @($xml.SelectNodes('//*[local-name()="testsuite" and not(ancestor::*[local-name()="testsuite"])]'))
+            if ($nodes.Count -eq 0 -and $xml.DocumentElement.LocalName -eq "testsuites") {
+                $nodes = @($xml.DocumentElement)
+            }
             foreach ($node in $nodes) {
                 if ($node.Attributes["tests"]) {
                     $summary.tests += [int]$node.Attributes["tests"].Value
@@ -1670,6 +1815,8 @@ function Run-DevBranchTests {
 
     $runDirectory = New-VanessaRunDirectory
     $statusPath = Join-Path $runDirectory "status.json"
+    $eventLogCursorPath = Join-Path $runDirectory "event-log-cursor.json"
+    New-DevBranchEventLogCursor -State $state -Path $eventLogCursorPath | Out-Null
     $paramsPath = New-VanessaParamsFile `
         -FeaturePath $featuresPath `
         -RunDirectory $runDirectory `
@@ -1697,6 +1844,10 @@ function Run-DevBranchTests {
     $runStartedAt = Get-Date
     $runFinishedAt = $null
     $eventLogVerification = $null
+    $runnerStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $cleanupDurationMs = [int64]0
+    $eventLogDurationMs = [int64]0
+    $postProcessStopwatch = $null
     Write-Host "Vanessa test timeout: $timeoutSeconds seconds"
     try {
         $logPath = Invoke-Enterprise `
@@ -1714,14 +1865,21 @@ function Run-DevBranchTests {
                 Write-Host "[WARN] Vanessa verify exceeded timeout; stopping own TESTMANAGER/TESTCLIENT processes."
                 Stop-OwnHungVanessaTestClients -State $state -TestPort $testPort
             }
+        $runnerStopwatch.Stop()
     } catch {
+        if ($runnerStopwatch.IsRunning) { $runnerStopwatch.Stop() }
+        $postProcessStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $runFinishedAt = Get-Date
         $logPath = $script:LastLogPath
         Write-OneCVanessaProcessDiagnostics -State $state -TestPort $testPort -Context "Vanessa verify failed; active 1C process diagnostics"
+        $cleanupStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         Stop-OwnHungVanessaTestClients -State $state -TestPort $testPort
+        $cleanupStopwatch.Stop(); $cleanupDurationMs = $cleanupStopwatch.ElapsedMilliseconds
         $eventLogReason = ""
         try {
-            $eventLogVerification = Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory
+            $eventLogStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            $eventLogVerification = Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $eventLogCursorPath
+            $eventLogStopwatch.Stop(); $eventLogDurationMs = $eventLogStopwatch.ElapsedMilliseconds
             $eventLogReason = $eventLogVerification.reason
         } catch {
             $eventLogReason = "1C event log check failed after Vanessa failure: $($_.Exception.Message)"
@@ -1758,24 +1916,40 @@ function Run-DevBranchTests {
             $updates["lastVanessaEventLogNewErrorCount"] = $eventLogVerification.newErrorCount
             $updates["lastVanessaEventLogLegacyErrorCount"] = $eventLogVerification.legacyErrorCount
             $updates["lastVanessaEventLogCheckedUntil"] = $eventLogVerification.checkedUntil.ToString("o")
+            $updates["lastVanessaEventLogScannedBytes"] = $eventLogVerification.scannedBytes
+            $updates["lastVanessaEventLogScanMode"] = $eventLogVerification.scanMode
         }
+        $postProcessStopwatch.Stop()
+        $updates["lastVanessaRunnerDurationMs"] = [int64]$runnerStopwatch.ElapsedMilliseconds
+        $updates["lastVanessaCleanupDurationMs"] = $cleanupDurationMs
+        $updates["lastVanessaEventLogDurationMs"] = $eventLogDurationMs
+        $updates["lastVanessaPostProcessDurationMs"] = [int64]$postProcessStopwatch.ElapsedMilliseconds
         Update-DevBranchState -State $state -Updates $updates
         throw
     }
 
     $runFinishedAt = Get-Date
+    $postProcessStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $verification = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
     try {
+        $cleanupStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         Stop-OwnVanessaTestProcessesAndAssert -State $state
+        $cleanupStopwatch.Stop(); $cleanupDurationMs = $cleanupStopwatch.ElapsedMilliseconds
     } catch {
+        if ($cleanupStopwatch.IsRunning) { $cleanupStopwatch.Stop() }
+        $cleanupDurationMs = $cleanupStopwatch.ElapsedMilliseconds
         $verification = [pscustomobject]@{
             status = "failed"
             reason = "$($verification.reason) Vanessa process cleanup: $($_.Exception.Message)"
         }
     }
     try {
-        $eventLogVerification = Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory
+        $eventLogStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        $eventLogVerification = Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $eventLogCursorPath
+        $eventLogStopwatch.Stop(); $eventLogDurationMs = $eventLogStopwatch.ElapsedMilliseconds
     } catch {
+        if ($eventLogStopwatch.IsRunning) { $eventLogStopwatch.Stop() }
+        $eventLogDurationMs = $eventLogStopwatch.ElapsedMilliseconds
         $eventLogVerification = [pscustomobject]@{
             status = "failed"
             reason = "1C event log check failed: $($_.Exception.Message)"
@@ -1785,8 +1959,11 @@ function Run-DevBranchTests {
             newErrorCount = 0
             legacyErrorCount = 0
             checkedUntil = $runFinishedAt
+            scannedBytes = 0
+            scanMode = "failed"
         }
     }
+    $postProcessStopwatch.Stop()
     if ($eventLogVerification.status -ne "passed") {
         $verification = [pscustomobject]@{
             status = "failed"
@@ -1818,6 +1995,12 @@ function Run-DevBranchTests {
         lastVanessaEventLogNewErrorCount = $eventLogVerification.newErrorCount
         lastVanessaEventLogLegacyErrorCount = $eventLogVerification.legacyErrorCount
         lastVanessaEventLogCheckedUntil = $eventLogVerification.checkedUntil.ToString("o")
+        lastVanessaEventLogScannedBytes = $eventLogVerification.scannedBytes
+        lastVanessaEventLogScanMode = $eventLogVerification.scanMode
+        lastVanessaRunnerDurationMs = [int64]$runnerStopwatch.ElapsedMilliseconds
+        lastVanessaCleanupDurationMs = $cleanupDurationMs
+        lastVanessaEventLogDurationMs = $eventLogDurationMs
+        lastVanessaPostProcessDurationMs = [int64]$postProcessStopwatch.ElapsedMilliseconds
         lastVerificationStatus = $verification.status
         lastVerifiedCommit = $currentCommit
         lastVerifiedFingerprint = $currentFingerprint
@@ -2283,6 +2466,11 @@ function Write-VanessaTestStatusLines {
     $eventLogReport = Get-StateValue -State $State -Name "lastVanessaEventLogNewErrorsPath" -Default ""
     if ($eventLogReport) {
         Write-Host "${Indent}Last event log new-error report: $eventLogReport"
+    }
+    $postProcessMs = Get-StateValue -State $State -Name "lastVanessaPostProcessDurationMs" -Default ""
+    if ($postProcessMs -ne "") {
+        Write-Host "${Indent}Last Vanessa runner/cleanup/event-log/post-process ms: $(Get-StateValue -State $State -Name 'lastVanessaRunnerDurationMs' -Default 0) / $(Get-StateValue -State $State -Name 'lastVanessaCleanupDurationMs' -Default 0) / $(Get-StateValue -State $State -Name 'lastVanessaEventLogDurationMs' -Default 0) / $postProcessMs"
+        Write-Host "${Indent}Last event log scan mode/bytes: $(Get-StateValue -State $State -Name 'lastVanessaEventLogScanMode' -Default '<unknown>') / $(Get-StateValue -State $State -Name 'lastVanessaEventLogScannedBytes' -Default 0)"
     }
 }
 
