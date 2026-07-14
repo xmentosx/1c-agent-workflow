@@ -4041,11 +4041,17 @@ function Initialize-DevBranchRuntime {
             }
         }
         if ($copyPerformed) {
-            $configSource = Get-ConfigSourceFingerprint -ExportPath (Get-ExportPath)
-            $stateHash["lastConfigDesignerFingerprint"] = $configSource.fingerprint
-            $stateHash["lastConfigDesignerLoadedAt"] = $now
-            $stateHash["sourceFingerprint"] = $configSource.fingerprint
-            $stateHash["loadReason"] = "branch-copy-seed"
+            $configExportPath = Get-ExportPath
+            $absoluteConfigExportPath = Resolve-ProjectPath $configExportPath
+            if (Test-Path -LiteralPath $absoluteConfigExportPath -PathType Container) {
+                $configSource = Get-ConfigSourceFingerprint -ExportPath $configExportPath
+                $stateHash["lastConfigDesignerFingerprint"] = $configSource.fingerprint
+                $stateHash["lastConfigDesignerLoadedAt"] = $now
+                $stateHash["sourceFingerprint"] = $configSource.fingerprint
+                $stateHash["loadReason"] = "branch-copy-seed"
+            } else {
+                $stateHash["loadReason"] = "branch-copy-seed-deferred"
+            }
             $stateHash["designerInvoked"] = $false
             $stateHash["enterpriseInvoked"] = $false
         }
