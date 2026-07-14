@@ -53,7 +53,7 @@ configuration-проверок: первая metadata load, test-only отриц
 без Designer/Enterprise и вторая metadata load с восстановленным тестом. Затем
 идут независимые checkpoint-стадии config roundtrip, extension smoke и
 result/cleanup. Перед ними сохраняются SHA-проверяемые `.dt`, state и `.dev.env`.
-После обрыва или временной ошибки лицензии повторите ту же команду: режим
+После обрыва повторите ту же команду: режим
 `-ReleaseResumeMode Auto` продолжит с первой незавершённой стадии только при
 точном совпадении workflow/fork/helper/project config/HEAD и снимков. Код
 `RELEASE_E2E_RESUME_STATE_MISMATCH` запрещает небезопасное продолжение.

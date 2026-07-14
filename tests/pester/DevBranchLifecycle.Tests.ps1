@@ -707,6 +707,78 @@
         }
     }
 
+    It "keeps configuration and extension designer fingerprints independent" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            $state = [ordered]@{
+                lastConfigDesignerFingerprint = "config-old"
+                lastConfigDesignerLoadedAt = "2026-07-01T10:00:00Z"
+                lastExtensionDesignerFingerprint = "extension-old"
+                lastExtensionDesignerLoadedAt = "2026-07-01T11:00:00Z"
+            }
+            $newLoadResult = {
+                param([string]$Fingerprint, [string]$Commit)
+                return [pscustomobject]@{
+                    currentCommit = $Commit
+                    listFile = "C:\logs\load.txt"
+                    lastLogPath = "C:\logs\1c.log"
+                    loaded = $true
+                    configLoadStatus = "passed"
+                    loadModeUsed = "partial"
+                    partialLogPath = "C:\logs\1c.log"
+                    fullFallbackLogPath = ""
+                    partialError = ""
+                    fullFallbackError = ""
+                    sourceFingerprint = $Fingerprint
+                    loadReason = "source-fingerprint-changed"
+                    designerInvoked = $true
+                    enterpriseInvoked = $false
+                }
+            }
+
+            $configUpdates = New-LoadStateUpdates -LoadResult (& $newLoadResult "config-new" "config-head") -ContentKind configuration
+            foreach ($key in $configUpdates.Keys) { $state[$key] = $configUpdates[$key] }
+            $afterConfig = [pscustomobject]@{
+                configFingerprint = $state.lastConfigDesignerFingerprint
+                configLoadedAt = $state.lastConfigDesignerLoadedAt
+                extensionFingerprint = $state.lastExtensionDesignerFingerprint
+                extensionLoadedAt = $state.lastExtensionDesignerLoadedAt
+                wroteExtensionFingerprint = $configUpdates.ContainsKey("lastExtensionDesignerFingerprint")
+                wroteExtensionLoadedAt = $configUpdates.ContainsKey("lastExtensionDesignerLoadedAt")
+            }
+
+            $configLoadedAtAfterConfig = $state.lastConfigDesignerLoadedAt
+            $extensionUpdates = New-LoadStateUpdates -LoadResult (& $newLoadResult "extension-new" "extension-head") -ContentKind extension
+            foreach ($key in $extensionUpdates.Keys) { $state[$key] = $extensionUpdates[$key] }
+            $afterExtension = [pscustomobject]@{
+                configFingerprint = $state.lastConfigDesignerFingerprint
+                configLoadedAt = $state.lastConfigDesignerLoadedAt
+                extensionFingerprint = $state.lastExtensionDesignerFingerprint
+                extensionLoadedAt = $state.lastExtensionDesignerLoadedAt
+                configLoadedAtAfterConfig = $configLoadedAtAfterConfig
+                wroteConfigFingerprint = $extensionUpdates.ContainsKey("lastConfigDesignerFingerprint")
+                wroteConfigLoadedAt = $extensionUpdates.ContainsKey("lastConfigDesignerLoadedAt")
+            }
+
+            [pscustomobject]@{ afterConfig = $afterConfig; afterExtension = $afterExtension }
+        }
+
+        $result.afterConfig.configFingerprint | Should -Be "config-new"
+        $result.afterConfig.configLoadedAt | Should -Not -Be "2026-07-01T10:00:00Z"
+        $result.afterConfig.extensionFingerprint | Should -Be "extension-old"
+        $result.afterConfig.extensionLoadedAt | Should -Be "2026-07-01T11:00:00Z"
+        $result.afterConfig.wroteExtensionFingerprint | Should -BeFalse
+        $result.afterConfig.wroteExtensionLoadedAt | Should -BeFalse
+
+        $result.afterExtension.configFingerprint | Should -Be "config-new"
+        $result.afterExtension.configLoadedAt | Should -Be $result.afterExtension.configLoadedAtAfterConfig
+        $result.afterExtension.extensionFingerprint | Should -Be "extension-new"
+        $result.afterExtension.extensionLoadedAt | Should -Not -Be "2026-07-01T11:00:00Z"
+        $result.afterExtension.wroteConfigFingerprint | Should -BeFalse
+        $result.afterExtension.wroteConfigLoadedAt | Should -BeFalse
+    }
+
     It "reports detailed diagnostics when Git path collection fails" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-git-path-failure-" + [guid]::NewGuid().ToString("N"))
 

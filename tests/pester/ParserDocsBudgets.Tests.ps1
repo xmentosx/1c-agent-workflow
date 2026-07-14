@@ -520,8 +520,11 @@
             }
 
             $text | Should -Match "quick-fix.*Vanessa regression test"
+            $text | Should -Match "Второй сценарий.*только.*отдельной значимой границы"
             $text | Should -Match "OpenSpec.*hybrid cadence"
-            $text | Should -Match "2-4 Vanessa"
+            $text | Should -Match "2-3 Vanessa"
+            $text | Should -Match "четвертая проверка.*обоснован"
+            $text | Should -Not -Match "2-4 Vanessa"
         }
     }
 
@@ -567,6 +570,13 @@
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
         $HelperText | Should -Match ([regex]::Escape($requiredPath))
         $LauncherText | Should -Match ([regex]::Escape(".agent-1c\runs"))
+    }
+
+    It "ignores lifecycle operation locks in every package surface" {
+        $requiredPath = ".agent-1c/locks/"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
+        $HelperText | Should -Match ([regex]::Escape($requiredPath))
     }
 
     It "ignores local agent client and MCP runtime state without blocking branch creation" {

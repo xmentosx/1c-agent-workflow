@@ -198,6 +198,439 @@ function Set-RunStage {
     if (-not [string]::IsNullOrWhiteSpace($RunStatusPath)) {
         Write-RunStatus -Status "running"
     }
+    Update-Agent1cLifecycleOperationStage -Stage $Stage -Detail $Detail
+}
+
+function Test-Agent1cActionRequiresLifecycleLock {
+    param([string]$RequestedAction)
+
+    $readOnlyActions = @(
+        "help",
+        "status",
+        "list-dev-branches",
+        "validate",
+        "check-tools",
+        "list-platforms",
+        "detect-web-publication",
+        "detect-apache",
+        "vanessa-mcp-status",
+        "roctup-mcp-status",
+        "vibecoding1c-mcp-status"
+    )
+    return -not ($readOnlyActions -contains $RequestedAction)
+}
+
+function Get-Agent1cLifecycleLockPath {
+    param([string]$WorktreePath)
+    return (Join-Path (Resolve-Agent1cFullPath -Path $WorktreePath) ".agent-1c\locks\lifecycle.lock")
+}
+
+function Get-Agent1cLifecycleOperationStatePath {
+    param([string]$WorktreePath)
+    return (Join-Path (Resolve-Agent1cFullPath -Path $WorktreePath) ".agent-1c\locks\lifecycle-operation.json")
+}
+
+function Ensure-Agent1cLifecycleLocksIgnored {
+    param([string]$WorktreePath)
+
+    $resolvedWorktree = Resolve-Agent1cFullPath -Path $WorktreePath
+    if (-not (Test-Path -LiteralPath (Join-Path $resolvedWorktree ".git") -ErrorAction SilentlyContinue)) {
+        return
+    }
+
+    $commonGitDirectoryText = ""
+    try {
+        $commonGitDirectoryText = ([string](Get-GitOutputAt -Root $resolvedWorktree -Arguments @("rev-parse", "--git-common-dir"))).Trim()
+    } catch {
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace($commonGitDirectoryText)) {
+        return
+    }
+
+    $commonGitDirectory = if ([System.IO.Path]::IsPathRooted($commonGitDirectoryText)) {
+        Resolve-Agent1cFullPath -Path $commonGitDirectoryText
+    } else {
+        Resolve-Agent1cFullPath -Path (Join-Path $resolvedWorktree $commonGitDirectoryText)
+    }
+    $excludePath = Join-Path $commonGitDirectory "info\exclude"
+    $ignoreLine = ".agent-1c/locks/"
+    if (Test-Path -LiteralPath $excludePath -PathType Leaf -ErrorAction SilentlyContinue) {
+        $hasRule = [bool](Read-Utf8Lines -Path $excludePath | Where-Object { ([string]$_).Trim() -eq $ignoreLine } | Select-Object -First 1)
+        if ($hasRule) {
+            return
+        }
+    }
+    Add-Utf8Text -Path $excludePath -Value ($ignoreLine + [Environment]::NewLine)
+}
+
+function Read-Agent1cLifecycleOperationRecord {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $null
+    }
+    try {
+        return (ConvertTo-Agent1cHashtable -Object ((Read-Utf8Text -Path $Path) | ConvertFrom-Json))
+    } catch {
+        return $null
+    }
+}
+
+function Write-Agent1cLifecycleOperationRecord {
+    param(
+        [string]$Path,
+        [System.Collections.IDictionary]$Record
+    )
+
+    Write-Utf8Text -Path $Path -Value (($Record | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+}
+
+function Get-Agent1cLifecycleOperationLockScopes {
+    param([string]$RequestedAction)
+
+    $candidatePaths = @($script:ProjectRoot)
+    if ($RequestedAction -in @("refresh-dev-branch", "close-dev-branch", "sync-master")) {
+        $candidatePaths += Get-MainWorktreePath
+    }
+
+    $seen = @{}
+    $scopes = @()
+    foreach ($candidatePath in $candidatePaths) {
+        $resolved = Resolve-Agent1cFullPath -Path $candidatePath
+        $key = $resolved.ToLowerInvariant()
+        if (-not $seen.ContainsKey($key)) {
+            $seen[$key] = $true
+            $scopes += $resolved
+        }
+    }
+    return @($scopes | Sort-Object { $_.ToLowerInvariant() })
+}
+
+function Test-Agent1cProcessAlive {
+    param([int]$ProcessId)
+
+    if ($ProcessId -le 0) {
+        return $false
+    }
+    return $null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
+}
+
+function Test-Agent1cLifecycleLockHeld {
+    param([string]$WorktreePath)
+
+    $lockPath = Get-Agent1cLifecycleLockPath -WorktreePath $WorktreePath
+    $directory = Split-Path -Parent $lockPath
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    $probe = $null
+    try {
+        $probe = [System.IO.File]::Open(
+            $lockPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::Read
+        )
+        return $false
+    } catch [System.IO.IOException] {
+        return $true
+    } finally {
+        if ($null -ne $probe) {
+            $probe.Dispose()
+        }
+    }
+}
+
+function Get-Agent1cLifecycleConflictRecord {
+    param([string]$WorktreePath)
+
+    $statePath = Get-Agent1cLifecycleOperationStatePath -WorktreePath $WorktreePath
+    $record = Read-Agent1cLifecycleOperationRecord -Path $statePath
+    if ($null -ne $record -and $record.Contains("ownerStatePath") -and -not [string]::IsNullOrWhiteSpace([string]$record["ownerStatePath"])) {
+        $ownerStatePath = Resolve-Agent1cFullPath -Path ([string]$record["ownerStatePath"])
+        $ownerRecord = Read-Agent1cLifecycleOperationRecord -Path $ownerStatePath
+        if ($null -ne $ownerRecord -and [string]$ownerRecord["operationId"] -ceq [string]$record["operationId"]) {
+            return [pscustomobject]@{ record = $ownerRecord; statePath = $ownerStatePath }
+        }
+    }
+    return [pscustomobject]@{ record = $record; statePath = $statePath }
+}
+
+function New-Agent1cLifecycleConflictMessage {
+    param(
+        [string]$RequestedAction,
+        [string]$WorktreePath
+    )
+
+    $conflict = Get-Agent1cLifecycleConflictRecord -WorktreePath $WorktreePath
+    $record = $conflict.record
+    $activeAction = if ($null -ne $record -and $record.Contains("action")) { [string]$record["action"] } else { "<unknown>" }
+    $branch = if ($null -ne $record -and $record.Contains("branch")) { [string]$record["branch"] } else { "<unknown>" }
+    $ownerPid = if ($null -ne $record -and $record.Contains("pid")) { [string]$record["pid"] } elseif ($null -ne $record -and $record.Contains("ownerPid")) { [string]$record["ownerPid"] } else { "<unknown>" }
+    $phase = if ($null -ne $record -and $record.Contains("phase")) { [string]$record["phase"] } else { "<unknown>" }
+    $startedAt = if ($null -ne $record -and $record.Contains("startedAt")) { [string]$record["startedAt"] } else { "<unknown>" }
+    return "LIFECYCLE_OPERATION_CONFLICT requestedAction='$RequestedAction' activeAction='$activeAction' worktree='$WorktreePath' branch='$branch' pid='$ownerPid' phase='$phase' startedAt='$startedAt' statePath='$($conflict.statePath)'"
+}
+
+function Assert-Agent1cLifecycleContinuationOwner {
+    if (-not $script:LifecycleOperationIsContinuation -or $null -eq $script:LifecycleOperationRecord) {
+        return
+    }
+    if (-not (Test-Agent1cProcessAlive -ProcessId $script:LifecycleOperationOwnerPid)) {
+        throw "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='owner process is not running' operationId='$($script:LifecycleOperationId)' ownerPid='$($script:LifecycleOperationOwnerPid)'"
+    }
+    foreach ($scope in @($script:LifecycleOperationRecord["lockScopes"])) {
+        if (-not (Test-Agent1cLifecycleLockHeld -WorktreePath ([string]$scope))) {
+            throw "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='owner lock is not held' operationId='$($script:LifecycleOperationId)' ownerPid='$($script:LifecycleOperationOwnerPid)' worktree='$scope'"
+        }
+    }
+}
+
+function Enter-Agent1cLifecycleOperation {
+    param(
+        [string]$RequestedAction,
+        [string]$RequestedOperationId = "",
+        [int]$RequestedOwnerPid = 0,
+        [switch]$Continuation
+    )
+
+    if (-not (Test-Agent1cActionRequiresLifecycleLock -RequestedAction $RequestedAction)) {
+        if ($Continuation) {
+            throw "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='read-only action cannot continue a mutating operation' action='$RequestedAction'"
+        }
+        return
+    }
+
+    $primaryStatePath = Get-Agent1cLifecycleOperationStatePath -WorktreePath $script:ProjectRoot
+    if ($Continuation) {
+        $record = Read-Agent1cLifecycleOperationRecord -Path $primaryStatePath
+        if ($null -eq $record -or
+            [string]::IsNullOrWhiteSpace($RequestedOperationId) -or
+            [string]$record["operationId"] -cne $RequestedOperationId -or
+            [string]$record["action"] -cne $RequestedAction -or
+            [string]$record["status"] -cne "running" -or
+            [int]$record["pid"] -ne $RequestedOwnerPid -or
+            (Resolve-Agent1cFullPath -Path ([string]$record["projectRoot"])) -cne $script:ProjectRoot) {
+            throw "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='operation record does not match' action='$RequestedAction' operationId='$RequestedOperationId' ownerPid='$RequestedOwnerPid' statePath='$primaryStatePath'"
+        }
+
+        $script:LifecycleOperationRecord = $record
+        $script:LifecycleOperationStatePath = $primaryStatePath
+        $script:LifecycleOperationId = $RequestedOperationId
+        $script:LifecycleOperationOwnerPid = $RequestedOwnerPid
+        $script:LifecycleOperationIsContinuation = $true
+        Assert-Agent1cLifecycleContinuationOwner
+        $record["continuationPid"] = $PID
+        $record["updatedAt"] = (Get-Date).ToString("o")
+        $record["phase"] = "continuation"
+        $record["detail"] = "Fresh helper process continued the active operation."
+        Write-Agent1cLifecycleOperationRecord -Path $primaryStatePath -Record $record
+        return
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedOperationId) -or $RequestedOwnerPid -gt 0) {
+        throw "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='continuation arguments require OperationContinuation' action='$RequestedAction' operationId='$RequestedOperationId' ownerPid='$RequestedOwnerPid'"
+    }
+
+    $scopes = @(Get-Agent1cLifecycleOperationLockScopes -RequestedAction $RequestedAction)
+    $handles = @()
+    try {
+        foreach ($scope in $scopes) {
+            Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $scope
+            $lockPath = Get-Agent1cLifecycleLockPath -WorktreePath $scope
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
+            try {
+                $stream = [System.IO.File]::Open(
+                    $lockPath,
+                    [System.IO.FileMode]::OpenOrCreate,
+                    [System.IO.FileAccess]::ReadWrite,
+                    [System.IO.FileShare]::Read
+                )
+            } catch [System.IO.IOException] {
+                throw (New-Agent1cLifecycleConflictMessage -RequestedAction $RequestedAction -WorktreePath $scope)
+            }
+            $handles += [pscustomobject]@{ worktreePath = $scope; lockPath = $lockPath; stream = $stream }
+        }
+    } catch {
+        for ($index = $handles.Count - 1; $index -ge 0; $index--) {
+            $handles[$index].stream.Dispose()
+        }
+        throw
+    }
+
+    $now = (Get-Date).ToString("o")
+    $branch = ""
+    if (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git") -ErrorAction SilentlyContinue) {
+        try { $branch = Get-CurrentBranch } catch { $branch = "" }
+    }
+    $operationIdValue = [guid]::NewGuid().ToString("N")
+    $record = [ordered]@{
+        schemaVersion = 1
+        status = "running"
+        operationId = $operationIdValue
+        action = $RequestedAction
+        projectRoot = $script:ProjectRoot
+        worktreePath = $script:ProjectRoot
+        branch = $branch
+        lockScopes = @($scopes)
+        pid = $PID
+        launcherPid = $script:LauncherPid
+        continuationPid = 0
+        startedAt = $now
+        updatedAt = $now
+        finishedAt = $null
+        phase = "acquired"
+        detail = "Lifecycle operation locks acquired."
+        lastProcessId = 0
+        lastLogPath = ""
+        exitCode = $null
+        errorCode = ""
+        errorMessage = ""
+    }
+
+    $script:LifecycleOperationHandles = @($handles)
+    $script:LifecycleOperationRecord = $record
+    $script:LifecycleOperationStatePath = $primaryStatePath
+    $script:LifecycleOperationId = $operationIdValue
+    $script:LifecycleOperationOwnerPid = $PID
+    Write-Agent1cLifecycleOperationRecord -Path $primaryStatePath -Record $record
+    foreach ($scope in $scopes) {
+        if ($scope -ceq $script:ProjectRoot) {
+            continue
+        }
+        $holder = [ordered]@{
+            schemaVersion = 1
+            status = "running"
+            role = "holder"
+            operationId = $operationIdValue
+            action = $RequestedAction
+            projectRoot = $script:ProjectRoot
+            worktreePath = $scope
+            branch = $branch
+            lockScopes = @($scopes)
+            ownerPid = $PID
+            ownerStatePath = $primaryStatePath
+            startedAt = $now
+            updatedAt = $now
+            finishedAt = $null
+            phase = "acquired"
+            detail = "Secondary lifecycle operation lock held."
+        }
+        Write-Agent1cLifecycleOperationRecord -Path (Get-Agent1cLifecycleOperationStatePath -WorktreePath $scope) -Record $holder
+    }
+}
+
+function Update-Agent1cLifecycleOperationStage {
+    param(
+        [string]$Stage,
+        [string]$Detail = ""
+    )
+
+    if ($null -eq $script:LifecycleOperationRecord -or [string]::IsNullOrWhiteSpace($script:LifecycleOperationStatePath)) {
+        return
+    }
+    Assert-Agent1cLifecycleContinuationOwner
+    $record = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
+    if ($null -eq $record -or [string]$record["operationId"] -cne $script:LifecycleOperationId) {
+        throw "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='operation record disappeared or changed' operationId='$($script:LifecycleOperationId)' statePath='$($script:LifecycleOperationStatePath)'"
+    }
+    $record["phase"] = $Stage
+    $record["detail"] = $Detail
+    $record["updatedAt"] = (Get-Date).ToString("o")
+    $record["lastProcessId"] = $script:LastProcessId
+    $record["lastLogPath"] = $(if ($script:LastLogPath) { [string]$script:LastLogPath } else { "" })
+    if ($script:LifecycleOperationIsContinuation) {
+        $record["continuationPid"] = $PID
+    }
+    $script:LifecycleOperationRecord = $record
+    Write-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -Record $record
+}
+
+function Complete-Agent1cLifecycleOperation {
+    param(
+        [ValidateSet("succeeded", "failed")]
+        [string]$Status,
+        [int]$ExitCode,
+        [string]$ErrorMessage = ""
+    )
+
+    if ($script:LifecycleOperationTerminalWrittenByContinuation -or
+        $null -eq $script:LifecycleOperationRecord -or
+        [string]::IsNullOrWhiteSpace($script:LifecycleOperationStatePath)) {
+        return
+    }
+    $record = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
+    if ($null -eq $record -or [string]$record["operationId"] -cne $script:LifecycleOperationId) {
+        return
+    }
+    $now = (Get-Date).ToString("o")
+    $record["status"] = $Status
+    $record["updatedAt"] = $now
+    $record["finishedAt"] = $now
+    $record["phase"] = $(if ($Status -eq "succeeded") { "complete" } else { "failed" })
+    $record["detail"] = $(if ($Status -eq "succeeded") { "Lifecycle operation completed." } else { $ErrorMessage })
+    $record["lastProcessId"] = $script:LastProcessId
+    $record["lastLogPath"] = $(if ($script:LastLogPath) { [string]$script:LastLogPath } else { "" })
+    $record["exitCode"] = $ExitCode
+    $record["errorCode"] = $(if ($Status -eq "failed") { "LIFECYCLE_OPERATION_FAILED" } else { "" })
+    $record["errorMessage"] = $ErrorMessage
+    if ($script:LifecycleOperationIsContinuation) {
+        $record["continuationPid"] = $PID
+    }
+    $script:LifecycleOperationRecord = $record
+    Write-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -Record $record
+
+    foreach ($scope in @($record["lockScopes"])) {
+        $scopePath = Resolve-Agent1cFullPath -Path ([string]$scope)
+        if ($scopePath -ceq $script:ProjectRoot) {
+            continue
+        }
+        $holderPath = Get-Agent1cLifecycleOperationStatePath -WorktreePath $scopePath
+        $holder = Read-Agent1cLifecycleOperationRecord -Path $holderPath
+        if ($null -ne $holder -and [string]$holder["operationId"] -ceq $script:LifecycleOperationId) {
+            $holder["status"] = $Status
+            $holder["updatedAt"] = $now
+            $holder["finishedAt"] = $now
+            $holder["phase"] = $record["phase"]
+            $holder["detail"] = $record["detail"]
+            Write-Agent1cLifecycleOperationRecord -Path $holderPath -Record $holder
+        }
+    }
+}
+
+function Exit-Agent1cLifecycleOperation {
+    for ($index = $script:LifecycleOperationHandles.Count - 1; $index -ge 0; $index--) {
+        try { $script:LifecycleOperationHandles[$index].stream.Dispose() } catch {}
+    }
+    $script:LifecycleOperationHandles = @()
+}
+
+function Write-Agent1cLifecycleOperationStatusLines {
+    $statePath = Get-Agent1cLifecycleOperationStatePath -WorktreePath $script:ProjectRoot
+    $record = Read-Agent1cLifecycleOperationRecord -Path $statePath
+    if ($null -eq $record) {
+        Write-Host "Lifecycle operation: none"
+        return
+    }
+    if ($record.Contains("ownerStatePath") -and -not [string]::IsNullOrWhiteSpace([string]$record["ownerStatePath"])) {
+        $ownerStatePath = Resolve-Agent1cFullPath -Path ([string]$record["ownerStatePath"])
+        $ownerRecord = Read-Agent1cLifecycleOperationRecord -Path $ownerStatePath
+        if ($null -ne $ownerRecord -and [string]$ownerRecord["operationId"] -ceq [string]$record["operationId"]) {
+            $record = $ownerRecord
+            $statePath = $ownerStatePath
+        }
+    }
+    $status = [string]$record["status"]
+    if ($status -eq "running") {
+        $activeScope = if ($record.Contains("worktreePath")) { [string]$record["worktreePath"] } else { $script:ProjectRoot }
+        if (-not (Test-Agent1cLifecycleLockHeld -WorktreePath $activeScope)) {
+            $status = "orphaned"
+        }
+    }
+    $activeAction = if ($record.Contains("action")) { [string]$record["action"] } else { "<unknown>" }
+    $ownerPid = if ($record.Contains("pid")) { [string]$record["pid"] } elseif ($record.Contains("ownerPid")) { [string]$record["ownerPid"] } else { "<unknown>" }
+    $phase = if ($record.Contains("phase")) { [string]$record["phase"] } else { "<unknown>" }
+    Write-Host "Lifecycle operation: $status (action=$activeAction, pid=$ownerPid, phase=$phase)"
+    Write-Host "Lifecycle operation state: $statePath"
 }
 
 function Import-DotEnv {
@@ -731,7 +1164,7 @@ function Test-IgnorableLocalGitStatusLine {
         return $true
     }
 
-    if ($normalizedPath -eq ".agent-1c/mcp/") {
+    if ($normalizedPath -eq ".agent-1c/mcp/" -or $normalizedPath -eq ".agent-1c/locks/") {
         return $true
     }
 
@@ -1020,6 +1453,7 @@ function Ensure-GitIgnore {
         ".agent-1c/dev-branches/",
         ".agent-1c/event-log-baselines/",
         ".agent-1c/runs/",
+        ".agent-1c/locks/",
         ".agent-1c/infobases/",
         ".agent-1c/tools/event-log-exporter/",
         ".agent-1c/tools/auto-update/",

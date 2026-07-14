@@ -59,7 +59,10 @@ param(
     [string]$RunLogPath,
     [switch]$PauseOnFailure,
     [ValidateSet("", "pre-copy", "post-copy", "post-merge")]
-    [string]$LifecyclePhase = ""
+    [string]$LifecyclePhase = "",
+    [string]$OperationId = "",
+    [int]$OperationOwnerPid = 0,
+    [switch]$OperationContinuation
 )
 
 Set-StrictMode -Version Latest
@@ -237,6 +240,13 @@ $script:InitVibecoding1cMcpSetupRequested = $false
 $script:DependencyLockPath = Join-Path $script:ProjectRoot ".agent-1c\dependency-lock.json"
 $script:Agent1cScriptPath = Resolve-Agent1cFullPath -Path $PSCommandPath
 $script:Agent1cReexecArguments = Get-Agent1cReexecArguments
+$script:LifecycleOperationHandles = @()
+$script:LifecycleOperationRecord = $null
+$script:LifecycleOperationStatePath = ""
+$script:LifecycleOperationId = ""
+$script:LifecycleOperationIsContinuation = [bool]$OperationContinuation
+$script:LifecycleOperationOwnerPid = $OperationOwnerPid
+$script:LifecycleOperationTerminalWrittenByContinuation = $false
 
 $script:Agent1cScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $script:Agent1cLibRoot = Join-Path $script:Agent1cScriptRoot "lib"
@@ -261,9 +271,14 @@ foreach ($moduleFile in $script:Agent1cModuleFiles) {
 Initialize-GitIndexLockTracking
 
 try {
-    Set-RunStage -Stage "start" -Detail "Starting helper"
     Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env")
     Read-ProjectConfig
+    Enter-Agent1cLifecycleOperation `
+        -RequestedAction $Action `
+        -RequestedOperationId $OperationId `
+        -RequestedOwnerPid $OperationOwnerPid `
+        -Continuation:$OperationContinuation
+    Set-RunStage -Stage "start" -Detail "Starting helper action '$Action'"
 
     switch ($Action) {
         "help" { Show-Help }
@@ -322,6 +337,7 @@ try {
         "release-e2e-config-roundtrip" { Invoke-ReleaseE2EConfigRoundtrip }
         "release-e2e-extension-smoke" { Invoke-ReleaseE2EExtensionSmoke }
     }
+    Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
     Write-RunStatus -Status "succeeded" -ExitCode 0
 } catch {
     $errorMessage = $_.Exception.Message
@@ -335,6 +351,11 @@ try {
         $cleanupError = "Git index lock cleanup check failed: $($_.Exception.Message)"
         [Console]::Error.WriteLine($cleanupError)
         $errorMessage = "$errorMessage $cleanupError"
+    }
+    try {
+        Complete-Agent1cLifecycleOperation -Status "failed" -ExitCode 1 -ErrorMessage $errorMessage
+    } catch {
+        [Console]::Error.WriteLine("Failed to write lifecycle operation status: $($_.Exception.Message)")
     }
     try {
         Write-RunStatus -Status "failed" -ExitCode 1 -ErrorMessage $errorMessage
@@ -351,4 +372,6 @@ try {
         }
     }
     exit 1
+} finally {
+    Exit-Agent1cLifecycleOperation
 }

@@ -1813,6 +1813,7 @@ function Confirm-UnverifiedProceed {
 }
 
 function Run-DevBranchTests {
+    Set-RunStage -Stage "vanessa.prepare" -Detail "Preparing Vanessa Automation verification."
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "run-dev-branch-tests"
     $state = Ensure-DevBranchEnterpriseNormalized -State $state -Reason "legacy-preflight"
@@ -1876,6 +1877,7 @@ function Run-DevBranchTests {
     $postProcessStopwatch = $null
     Write-Host "Vanessa test timeout: $timeoutSeconds seconds"
     try {
+        Set-RunStage -Stage "vanessa.run" -Detail "Running TESTMANAGER and TESTCLIENT."
         $logPath = Invoke-Enterprise `
             -InfoBasePath $state.devBranchInfoBasePath `
             -InfoBaseKind $state.infoBaseKind `
@@ -1894,6 +1896,7 @@ function Run-DevBranchTests {
         $runnerStopwatch.Stop()
     } catch {
         if ($runnerStopwatch.IsRunning) { $runnerStopwatch.Stop() }
+        Set-RunStage -Stage "vanessa.postprocess" -Detail "Cleaning up and reading verification evidence after a failed runner."
         $postProcessStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $runFinishedAt = Get-Date
         $logPath = $script:LastLogPath
@@ -1954,6 +1957,7 @@ function Run-DevBranchTests {
         throw
     }
 
+    Set-RunStage -Stage "vanessa.postprocess" -Detail "Cleaning up and reading JUnit and event-log evidence."
     $runFinishedAt = Get-Date
     $postProcessStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $verification = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
@@ -2047,12 +2051,14 @@ function Run-DevBranchTests {
         Write-Host "Event log new errors: $($eventLogVerification.reportPath)"
     }
     if ($verification.status -ne "passed") {
+        Set-RunStage -Stage "vanessa.failed" -Detail $verification.reason
         if ($verification.status -eq "unknown") {
             Write-OneCVanessaProcessDiagnostics -State $state -TestPort $testPort -Context "Vanessa verify produced no reliable JUnit/status; active 1C process diagnostics"
             Stop-OwnHungVanessaTestClients -State $state -TestPort $testPort
         }
         throw "Vanessa verification did not pass: $($verification.status). $($verification.reason)"
     }
+    Set-RunStage -Stage "vanessa.complete" -Detail "Vanessa Automation verification passed."
 }
 
 function ConvertTo-IntOrDefault {

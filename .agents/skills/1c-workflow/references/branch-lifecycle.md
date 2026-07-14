@@ -10,6 +10,12 @@ Use this reference for creating, refreshing, switching, listing, or maintaining 
 - Worktree-created `itldev/*` lifecycle commands must run from the branch worktree unless the helper explicitly delegates to the main worktree.
 - Runtime folders such as `.agent-1c/dev-branches/`, `.agent-1c/event-log-baselines/`, `.agent-1c/event-log-signature-cache/`, `.agent-1c/infobases/`, `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/tools/`, `.codex/config.toml`, and `.kilo/kilo.json*` are local ignored state.
 
+## Lifecycle Operation Lock
+
+Every mutating helper action holds `.agent-1c/locks/lifecycle.lock` in its current worktree and publishes phase/status evidence in the ignored `lifecycle-operation.json`. A second mutating action in the same worktree fails before mutation with `LIFECYCLE_OPERATION_CONFLICT`; use `status` to see its action, PID, phase and state path. Ordinary actions in different development worktrees may run concurrently. `refresh-dev-branch`, `close-dev-branch`, and a delegated `sync-master` hold both the branch and main-worktree locks in canonical path order, so master cannot change midway through those operations.
+
+`help`, `status`, `list-dev-branches`, `validate`, `check-tools`, platform/publication detection and MCP status actions do not acquire the lifecycle lock. A fresh helper process after workflow copy or branch merge continues the exact operation ID while its parent owns the locks; forged or stale continuation arguments fail with `LIFECYCLE_OPERATION_CONTINUATION_INVALID`. A leftover JSON record without a held file lock is shown as `orphaned` and does not require manual deletion. There is no force-unlock command.
+
 ## NEW_DEV_BRANCH / NEW_EXTENSION_DEV_BRANCH
 
 Goal: create an isolated development branch worktree plus isolated copied infobase.
@@ -70,7 +76,7 @@ Development branch changes must never be loaded directly into the source infobas
 
 ## STATUS / LIST / SWITCH
 
-- `status` shows current worktree, branch, initialization/normalization/config-load evidence, event-log reader/cache/count/duration, verification/MCP summaries, and target worktree paths.
+- `status` shows the current lifecycle operation or orphaned record, worktree, branch, initialization/normalization/config-load evidence, event-log reader/cache/count/duration, verification/MCP summaries, and target worktree paths.
 - `list-dev-branches` shows active branches, branch/worktree paths, main worktree path, copied infobase path, launcher metadata, publication URL/status, ROCTUP MCP status, legacy Data MCP status, Vanessa Automation verification port/status, Vanessa UI MCP status, vibecoding1c MCP current-scope status, and timestamps.
 - `switch-master` clears active branch infobase values and returns legacy single-folder checkouts to `master`.
 - `switch-dev-branch` is mainly legacy recovery. For worktree-created branches, report the saved worktree path instead of changing the current folder.

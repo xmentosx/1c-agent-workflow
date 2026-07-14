@@ -719,6 +719,11 @@ local after
             $stdout | Should -Match "ITL workflow package post-copy processing completed"
             $stdout | Should -Match "No commit was created automatically"
             $stdout | Should -Match "No active development branches were found"
+            $operationState = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json") | ConvertFrom-Json
+            $operationState.action | Should -Be "update-workflow"
+            $operationState.status | Should -Be "succeeded"
+            $operationState.phase | Should -Be "complete"
+            [int]$operationState.continuationPid | Should -BeGreaterThan 0
 
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\stale.txt") -PathType Leaf) | Should -Be $false

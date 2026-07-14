@@ -92,7 +92,7 @@ scenario, non-idempotent form/template registration, failed extension TestClient
 form opening, failed extension database restore or unpinned template is a
 release failure.
 
-## Resume after interruption or license failure
+## Resume after interruption
 
 The runner checkpoints `config-cadence`, `config-roundtrip`, `extension-smoke`
 and `result-cleanup` under the ignored branch-local

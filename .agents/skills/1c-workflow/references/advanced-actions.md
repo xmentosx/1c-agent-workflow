@@ -8,6 +8,8 @@ Run helper actions from the project root:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action <action>
 ```
 
+Mutating actions are serialized per worktree through the ignored lifecycle operation lock. Concurrent ordinary operations in separate development worktrees are allowed; actions that also mutate master acquire both scopes. On `LIFECYCLE_OPERATION_CONFLICT`, inspect `status` and wait for or diagnose the recorded PID/phase. Do not delete lock files or edit operation JSON. Read-only help/status/list/validation/tool-detection/MCP-status actions remain available during the operation.
+
 Common internal actions:
 
 ```text

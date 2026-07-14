@@ -266,7 +266,7 @@ try {
             $script:pesterVersion = [string](Get-Module Pester | Select-Object -First 1 -ExpandProperty Version)
             $configuration = New-PesterConfiguration
             $configuration.Run.Path = if ($Mode -eq "Fast") {
-                @(".\tests\pester\ParserDocsBudgets.Tests.ps1", ".\tests\pester\HostTooling.Tests.ps1", ".\tests\pester\DependencyLocks.Tests.ps1", ".\tests\pester\AiRulesClients.Tests.ps1", ".\tests\pester\AiRulesMigration.Tests.ps1", ".\tests\pester\ReleaseGate.Tests.ps1", ".\tests\pester\LocalQualityGate.Tests.ps1")
+                @(".\tests\pester\ParserDocsBudgets.Tests.ps1", ".\tests\pester\LifecycleOperationLock.Tests.ps1", ".\tests\pester\HostTooling.Tests.ps1", ".\tests\pester\DependencyLocks.Tests.ps1", ".\tests\pester\AiRulesClients.Tests.ps1", ".\tests\pester\AiRulesMigration.Tests.ps1", ".\tests\pester\ReleaseGate.Tests.ps1", ".\tests\pester\LocalQualityGate.Tests.ps1")
             } else { @(".\tests\pester") }
             $configuration.Run.PassThru = $true
             $configuration.Output.Verbosity = $(if ($Mode -eq "Fast") { "Normal" } else { "Detailed" })

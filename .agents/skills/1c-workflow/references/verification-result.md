@@ -14,7 +14,7 @@ Do not run a separate base update first for normal verification. Do not use `/de
 
 Use scenarios from `tests/features` for OpenSpec and quick-fix verification. Before creating or editing feature files, read `VANESSA-TESTS-GUIDE.md`; do not load it for routine lifecycle commands.
 
-For behavior changes, create or update a small check set: at least 2 checks, usually 2-3, and no more than 4 unless explicitly justified. Include the main successful scenario and one meaningful boundary or negative case. Choose the cheapest reliable check type:
+For a quick-fix, create or update at least one focused regression scenario; add a second only for a separate meaningful boundary or negative case. For OpenSpec, plan 2-3 scenarios by default and require an explicit short justification for a fourth. Choose the cheapest reliable check type:
 
 - `unit-like`: local calculation, condition, filling, or applied logic.
 - `integration`: object/register/document/exchange interaction.

@@ -23,6 +23,7 @@ Describe "Local quality gate contract" {
         $text | Should -Match 'ITL_AI_RULES_SOURCE_PATH'
         $text | Should -Match 'Get-LocalForkRelease'
         $text | Should -Match 'invoke-release-e2e\.ps1'
+        $text | Should -Match 'LifecycleOperationLock\.Tests\.ps1'
     }
 
     It "reuses only exact clean Full qualifications and always runs cheap and runtime preflights" {

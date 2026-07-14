@@ -710,7 +710,7 @@ try {
     $extensionSmokeEvidencePath = Join-Path $worktreePath "build\test-results\release-e2e\extension-smoke.json"
     if (-not (Test-E2EStagePassed -Name "extension-smoke")) {
         # The extension stage always starts from the exact post-configuration
-        # snapshot. This makes a retry after a transient license failure safe.
+        # snapshot so any resumed run starts from deterministic state.
         Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
         Set-E2EStageStatus -Name "extension-smoke" -Status "running"
         $executedStages += "extension-smoke"

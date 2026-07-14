@@ -328,6 +328,18 @@ function Invoke-Agent1cFreshProcess {
         }
     }
 
+    $continuesLifecycleOperation = $null -ne $script:LifecycleOperationRecord -and
+        -not [string]::IsNullOrWhiteSpace($script:LifecycleOperationId)
+    if ($continuesLifecycleOperation) {
+        Set-RunStage -Stage "reexec" -Detail "Starting a fresh helper process for the same lifecycle operation."
+        $continuationOwnerPid = if ($script:LifecycleOperationIsContinuation) { $script:LifecycleOperationOwnerPid } else { $PID }
+        $reexecArguments.Add("-OperationId") | Out-Null
+        $reexecArguments.Add($script:LifecycleOperationId) | Out-Null
+        $reexecArguments.Add("-OperationOwnerPid") | Out-Null
+        $reexecArguments.Add([string]$continuationOwnerPid) | Out-Null
+        $reexecArguments.Add("-OperationContinuation") | Out-Null
+    }
+
     $arguments = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
@@ -336,6 +348,22 @@ function Invoke-Agent1cFreshProcess {
 
     & powershell @arguments
     $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 }
+    if ($continuesLifecycleOperation) {
+        $terminal = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
+        if ($null -eq $terminal -or
+            [string]$terminal["operationId"] -cne $script:LifecycleOperationId -or
+            [string]$terminal["status"] -notin @("succeeded", "failed")) {
+            $message = "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='fresh process did not write terminal operation state' operationId='$($script:LifecycleOperationId)' statePath='$($script:LifecycleOperationStatePath)'"
+            Complete-Agent1cLifecycleOperation -Status "failed" -ExitCode 1 -ErrorMessage $message
+            [Console]::Error.WriteLine($message)
+            $exitCode = 1
+        } else {
+            $script:LifecycleOperationTerminalWrittenByContinuation = $true
+            if ([string]$terminal["status"] -eq "failed" -and $exitCode -eq 0) {
+                $exitCode = 1
+            }
+        }
+    }
     exit $exitCode
 }
 
@@ -749,6 +777,7 @@ function Ensure-DevBranchEnterpriseNormalized {
         return $State
     }
 
+    Set-RunStage -Stage "enterprise.normalize" -Detail "Running Enterprise normalization for reason '$Reason'."
     Assert-EnterpriseNormalizationTargetsBranchCopy -State $State
     $statePath = [string](Get-StateValue -State $State -Name "statePath" -Default "")
     $canPersistImmediately = $statePath -and (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue)
@@ -919,6 +948,7 @@ function Load-ConfigFromFiles {
         [string]$Mode = "Auto"
     )
 
+    Set-RunStage -Stage "config-load.fingerprint" -Detail "Calculating the $ContentKind source fingerprint."
     $source = Get-ConfigSourceFingerprint -ExportPath $ExportPath
     $fingerprintField = Get-DesignerFingerprintFieldName -ContentKind $ContentKind
     $loadedAtField = Get-DesignerLoadedAtFieldName -ContentKind $ContentKind
@@ -930,6 +960,7 @@ function Load-ConfigFromFiles {
         $normalizationRequired = $normalizationStatus -ne "passed"
         $reason = if ($normalizationRequired) { "source-fingerprint-match-normalization-required" } else { "source-fingerprint-match" }
         Write-Host "Config source fingerprint unchanged for $ContentKind. Designer skipped."
+        Set-RunStage -Stage "config-load.skipped" -Detail "The $ContentKind fingerprint is unchanged; Designer was skipped."
         if ($normalizationRequired) { Write-Host "Enterprise normalization remains $normalizationStatus and will be retried without Designer." }
         return [pscustomobject]@{
             loaded = $false
@@ -960,6 +991,7 @@ function Load-ConfigFromFiles {
         } else {
             Write-Host "No changed config files under $ExportPath since $($changeSet.baseCommit)."
             Write-Host "Legacy state fingerprint initialized without reloading the matching branch infobase."
+            Set-RunStage -Stage "config-load.seeded" -Detail "Initialized the legacy $ContentKind fingerprint without Designer."
             return [pscustomobject]@{
                 loaded = $false
                 normalizationRequired = ($normalizationStatus -ne "passed")
@@ -985,6 +1017,7 @@ function Load-ConfigFromFiles {
     if ($Mode -ne "Full") {
         $listFilePath = New-ConfigLoadListFile -State $State -Files $changeSet.files
     }
+    Set-RunStage -Stage "config-load.designer" -Detail "Loading $ContentKind source through Designer in $Mode mode."
     $orchestration = Invoke-ConfigLoadWithFallback `
         -InfoBasePath $InfoBasePath `
         -InfoBaseKind $InfoBaseKind `
@@ -994,6 +1027,7 @@ function Load-ConfigFromFiles {
         -FileCount $changeSet.files.Count `
         -ExtensionName $ExtensionName `
         -Mode $Mode
+    Set-RunStage -Stage "config-load.loaded" -Detail "Designer completed the $ContentKind source load."
 
     $loadedAt = (Get-Date).ToString("o")
     $statePath = if ($State) { [string](Get-StateValue -State $State -Name "statePath" -Default "") } else { "" }
@@ -2417,11 +2451,13 @@ function Update-WorkflowPackage {
     }
 
     if ($LifecyclePhase -ne "post-copy") {
+        Set-RunStage -Stage "workflow-update.preflight" -Detail "Validating the master worktree and workflow source."
         Assert-WorkflowPackageUpdateContext
 
         $source = Resolve-WorkflowPackageSource
         Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
 
+        Set-RunStage -Stage "workflow-update.copy" -Detail "Copying the managed workflow package files."
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow"
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow-fast"
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\product-docs"
@@ -2437,6 +2473,7 @@ function Update-WorkflowPackage {
         Invoke-Agent1cFreshProcess -AdditionalArguments @("-LifecyclePhase", "post-copy")
     }
 
+    Set-RunStage -Stage "workflow-update.post-copy" -Detail "Applying installed-project overlays and dependency updates."
     Assert-MasterWorktreeContext -Operation "update-workflow post-copy"
     Ensure-GitIgnore
     Update-AgentGuidanceBridge
@@ -3820,6 +3857,7 @@ function Initialize-Project {
 function Sync-Master {
     param([switch]$NoDelegate)
 
+    Set-RunStage -Stage "master-sync" -Detail "Synchronizing the master worktree."
     Write-Section "Sync master"
     if (-not $NoDelegate) {
         $currentBranch = ""
@@ -4500,6 +4538,7 @@ function Init-DevBranchExtension {
         Stop-VanessaMcpForState -State $state -Quiet | Out-Null
         $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
+        Set-RunStage -Stage "extension-init.snapshot" -Detail "Creating a rollback snapshot before extension initialization."
         New-Item -ItemType Directory -Force -Path $snapshotDir | Out-Null
         Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @("/DumpIB", $snapshotPath) | Out-Null
         if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) {
@@ -4508,6 +4547,7 @@ function Init-DevBranchExtension {
         $snapshotCreated = $true
 
         if ($ExtensionInitMode -eq "Empty") {
+            Set-RunStage -Stage "extension-init.scaffold" -Detail "Creating and validating the Empty extension scaffold."
             $scaffoldPath = Join-Path $stagingRoot "scaffold"
             Invoke-ExtensionLifecycleTool -ScriptPath $tools.init -Arguments @(
                 "-Name", $ExtensionName,
@@ -4518,15 +4558,18 @@ function Init-DevBranchExtension {
                 "-NoRole"
             )
             Invoke-ExtensionLifecycleTool -ScriptPath $tools.validate -Arguments @("-ExtensionPath", $scaffoldPath)
+            Set-RunStage -Stage "extension-init.load" -Detail "Loading the extension scaffold into the branch infobase."
             Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @(
                 "/LoadConfigFromFiles", $scaffoldPath, "-Extension", $ExtensionName, "-Format", "Hierarchical", "/UpdateDBCfg"
             ) | Out-Null
         } else {
+            Set-RunStage -Stage "extension-init.load" -Detail "Loading the supplied CFE into the branch infobase."
             Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @(
                 "/LoadCfg", $sourceCfe, "-Extension", $ExtensionName, "/UpdateDBCfg"
             ) | Out-Null
         }
 
+        Set-RunStage -Stage "extension-init.dump" -Detail "Dumping and validating the canonical extension source tree."
         New-Item -ItemType Directory -Force -Path $absoluteDumpPath | Out-Null
         Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @(
             "/DumpConfigToFiles", $absoluteDumpPath, "-Extension", $ExtensionName, "-Format", "Hierarchical"
@@ -4563,6 +4606,7 @@ function Init-DevBranchExtension {
             lastLoadedCommit = Get-CurrentCommit
             lastLogPath = $script:LastLogPath
         }
+        Set-RunStage -Stage "extension-init.state" -Detail "Saving the initialized extension state and fingerprint."
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Extension was initialized in the development branch infobase." -Force
         Update-DevBranchState -State $state -Updates $updates
         $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
@@ -4576,6 +4620,7 @@ function Init-DevBranchExtension {
         $rollbackError = ""
         if ($snapshotCreated) {
             try {
+                Set-RunStage -Stage "extension-init.rollback" -Detail "Restoring the branch infobase snapshot after extension initialization failure."
                 Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @("/RestoreIB", $snapshotPath) | Out-Null
                 Update-DevBranchState -State $state -Updates @{
                     lastConfigDesignerFingerprint = ""
@@ -4750,15 +4795,18 @@ function Refresh-DevBranch {
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
 
     if ($LifecyclePhase -ne "post-merge") {
+        Set-RunStage -Stage "refresh.master" -Detail "Synchronizing master before refreshing the development branch."
         Assert-CleanGit
         Sync-Master
         if ((Get-CurrentBranch) -ne $state.devBranch) {
             Invoke-Git @("checkout", $state.devBranch)
         }
+        Set-RunStage -Stage "refresh.merge" -Detail "Merging master into the development branch."
         Invoke-Git @("merge", (Get-MasterBranch))
         Restart-Agent1cAfterDevBranchMerge -Operation "refresh-dev-branch"
     }
 
+    Set-RunStage -Stage "refresh.load" -Detail "Updating the branch infobase after the merge."
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration" -Mode $ConfigLoadMode
     $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
@@ -4823,6 +4871,7 @@ function Get-ConfigurationRootComment {
 }
 
 function Invoke-ReleaseE2EConfigRoundtrip {
+    Set-RunStage -Stage "release.config-roundtrip" -Detail "Running the Release E2E configuration roundtrip."
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "release-e2e-config-roundtrip"
     Assert-DevBranchKind -State $state -Expected "configuration"
@@ -4880,6 +4929,7 @@ function Invoke-ReleaseE2EConfigRoundtrip {
 }
 
 function Invoke-ReleaseE2EExtensionSmoke {
+    Set-RunStage -Stage "release.extension-smoke" -Detail "Running the Release E2E extension lifecycle smoke."
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "release-e2e-extension-smoke"
     Assert-DevBranchKind -State $state -Expected "configuration"
@@ -5303,6 +5353,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
 function Show-WorkflowStatus {
     Write-Section "ITL status"
     Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 1800000."
+    Write-Agent1cLifecycleOperationStatusLines
 
     if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git"))) {
         Write-Host "Git repository: missing"
@@ -5432,6 +5483,7 @@ function Check-DevBranch {
 }
 
 function Save-ReleaseE2EInfobaseSnapshot {
+    Set-RunStage -Stage "release.snapshot" -Detail "Creating the Release E2E infobase snapshot."
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "release-e2e-snapshot"
     Assert-DevBranchKind -State $state -Expected "configuration"
@@ -5448,6 +5500,7 @@ function Save-ReleaseE2EInfobaseSnapshot {
 }
 
 function Restore-ReleaseE2EInfobaseSnapshot {
+    Set-RunStage -Stage "release.restore" -Detail "Restoring the Release E2E infobase snapshot."
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "release-e2e-restore"
     Assert-DevBranchKind -State $state -Expected "configuration"
@@ -5550,15 +5603,18 @@ function Close-DevBranch {
     Sync-DevBranchContextToDotEnv -State $state
 
     if ($LifecyclePhase -ne "post-merge") {
+        Set-RunStage -Stage "close.master" -Detail "Synchronizing master before closing the development branch."
         Assert-CleanGit
         Sync-Master
         if ((Get-CurrentBranch) -ne $state.devBranch) {
             Invoke-Git @("checkout", $state.devBranch)
         }
+        Set-RunStage -Stage "close.merge" -Detail "Merging master into the development branch before close."
         Invoke-Git @("merge", (Get-MasterBranch))
         Restart-Agent1cAfterDevBranchMerge -Operation "close-dev-branch"
     }
 
+    Set-RunStage -Stage "close.load" -Detail "Updating the branch infobase before result export."
     Sync-DevBranchContextToDotEnv -State $state
 
     $kind = Get-DevBranchKind -State $state
