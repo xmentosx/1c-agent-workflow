@@ -96,7 +96,7 @@ release failure.
 
 The runner checkpoints `config-cadence`, `config-roundtrip`, `extension-smoke`
 and `result-cleanup` under the ignored branch-local
-`.agent-1c/release-e2e-runs/<branch>/` directory. Baseline and post-config `.dt`
+`.agent-1c/runs/release-e2e/<branch>/` directory. Baseline and post-config `.dt`
 snapshots, state, `.dev.env`, evidence and expected HEAD are SHA-checked. Repeat
 the same Release command with the default `-ReleaseResumeMode Auto` after a
 transient failure. Passed stages are reused and a failed extension stage starts

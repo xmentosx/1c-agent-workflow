@@ -26,6 +26,8 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'runnerSha256'
         $e2eText | Should -Match 'workflowTree'
         $e2eText | Should -Match 'Register-E2EGeneratedCommit'
+        $e2eText | Should -Match ([regex]::Escape('.agent-1c\runs\release-e2e'))
+        (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('.agent-1c/runs/'))
         $lifecycleText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
         $lifecycleText | Should -Match '1c-form-scaffold\\scripts\\form-add\.ps1'
         $lifecycleText | Should -Match '1c-template-manage\\scripts\\add-template\.ps1'
@@ -318,7 +320,7 @@ switch ($Action) {
             @($restartSummary.executedStages) | Should -Contain "config-cadence"
 
             # A corrupt checkpoint must be refused before any expensive stage.
-            $checkpointPath = Join-Path $worktreeRoot ".agent-1c\release-e2e-runs\workflow-release-e2e\checkpoint.json"
+            $checkpointPath = Join-Path $worktreeRoot ".agent-1c\runs\release-e2e\workflow-release-e2e\checkpoint.json"
             Set-Content -LiteralPath $checkpointPath -Encoding UTF8 -Value "{broken"
             $previousPreference = $ErrorActionPreference
             $ErrorActionPreference = "Continue"

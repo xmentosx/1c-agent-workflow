@@ -338,14 +338,27 @@ function Get-E2EFileSha256 {
 }
 
 $safeRunName = ($devBranchName -replace '[^A-Za-z0-9_.-]', '_')
-$releaseRunRoot = Join-Path $worktreePath ".agent-1c\release-e2e-runs\$safeRunName"
-$checkpointPath = Join-Path $releaseRunRoot "checkpoint.json"
-$baselineSnapshotPath = Join-Path $releaseRunRoot "snapshots\baseline.dt"
-$postConfigSnapshotPath = Join-Path $releaseRunRoot "snapshots\post-config.dt"
-$baselineStateCopyPath = Join-Path $releaseRunRoot "state\baseline.json"
-$baselineEnvCopyPath = Join-Path $releaseRunRoot "state\baseline.env"
-$postConfigStateCopyPath = Join-Path $releaseRunRoot "state\post-config.json"
-$postConfigEnvCopyPath = Join-Path $releaseRunRoot "state\post-config.env"
+$preferredReleaseRunRoot = Join-Path $worktreePath ".agent-1c\runs\release-e2e\$safeRunName"
+$legacyReleaseRunRoot = Join-Path $worktreePath ".agent-1c\release-e2e-runs\$safeRunName"
+$usingLegacyRunRoot = $false
+
+function Set-E2ERunPaths {
+    param([string]$Root)
+    $script:releaseRunRoot = $Root
+    $script:checkpointPath = Join-Path $Root "checkpoint.json"
+    $script:baselineSnapshotPath = Join-Path $Root "snapshots\baseline.dt"
+    $script:postConfigSnapshotPath = Join-Path $Root "snapshots\post-config.dt"
+    $script:baselineStateCopyPath = Join-Path $Root "state\baseline.json"
+    $script:baselineEnvCopyPath = Join-Path $Root "state\baseline.env"
+    $script:postConfigStateCopyPath = Join-Path $Root "state\post-config.json"
+    $script:postConfigEnvCopyPath = Join-Path $Root "state\post-config.env"
+}
+
+Set-E2ERunPaths -Root $preferredReleaseRunRoot
+if (-not (Test-Path -LiteralPath $checkpointPath -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $legacyReleaseRunRoot "checkpoint.json") -PathType Leaf)) {
+    Set-E2ERunPaths -Root $legacyReleaseRunRoot
+    $usingLegacyRunRoot = $true
+}
 $checkpoint = $null
 $checkpointWasResumed = $false
 $resumedStages = @()
@@ -513,6 +526,10 @@ if ($checkpoint) {
         & git -C $worktreePath reset --hard ([string]$identity.initialHead) *> $null
         if ($LASTEXITCODE -ne 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: could not restore the exact baseline commit for Restart." }
         Remove-Item -LiteralPath $releaseRunRoot -Recurse -Force
+        if ($usingLegacyRunRoot) {
+            Set-E2ERunPaths -Root $preferredReleaseRunRoot
+            $usingLegacyRunRoot = $false
+        }
         $checkpoint = $null
     } else {
         $checkpointWasResumed = $true
