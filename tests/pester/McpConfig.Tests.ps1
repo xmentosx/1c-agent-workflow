@@ -1285,6 +1285,8 @@ enabled = true
 "@ -Encoding UTF8
             Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value @"
 {
+  "instructions": ["USER-RULES.md", "docs/custom.md"],
+  "permission": { "bash": "ask" },
   "mcp": {
     "1c-code-metadata-mcp": {
       "type": "remote",
@@ -1366,6 +1368,8 @@ enabled = true
             $kilo.mcp.'1c-graph-metadata-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
             $kilo.mcp.'1c-data-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
             $kilo.mcp.'custom-tool'.managedBy | Should -Be "external-mcp"
+            @($kilo.instructions) | Should -Be @("USER-RULES.md", "docs/custom.md")
+            $kilo.permission.bash | Should -Be "ask"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -1394,6 +1398,8 @@ managedBy = "external-mcp"
 "@ -Encoding UTF8
             Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value @"
 {
+  "instructions": ["USER-RULES.md", "docs/custom.md"],
+  "permission": { "bash": "ask" },
   "mcp": {
     "1C-docs-mcp": {
       "type": "remote",
@@ -1451,6 +1457,8 @@ managedBy = "external-mcp"
             $kilo.mcp.'1c-code-metadata-mcp'.url | Should -Be "http://ready/code"
             $kilo.mcp.'1c-code-metadata-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
             $kilo.mcp.'custom-tool'.managedBy | Should -Be "external-mcp"
+            @($kilo.instructions) | Should -Be @("USER-RULES.md", "docs/custom.md")
+            $kilo.permission.bash | Should -Be "ask"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -1467,6 +1475,7 @@ managedBy = "external-mcp"
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", (Join-Path $tempRoot "local-home"), "Process")
             Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value @"
 {
+  "instructions": ["USER-RULES.md", "docs/custom.md"],
   "mcp": {
     "1C-docs-mcp": {
       "type": "remote",
@@ -1499,6 +1508,7 @@ managedBy = "external-mcp"
             $kilo.mcp.'1C-docs-mcp'.url | Should -Be "http://localhost:8003/mcp"
             $kilo.mcp.PSObject.Properties.Name | Should -Contain "1c-data-mcp"
             $kilo.mcp.'custom-tool'.managedBy | Should -Be "external-mcp"
+            @($kilo.instructions) | Should -Be @("USER-RULES.md", "docs/custom.md")
         } finally {
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {

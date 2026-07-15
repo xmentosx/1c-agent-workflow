@@ -131,7 +131,7 @@
             @{ path = "AGENTS.md"; maxWords = 600; maxApproxTokens = 1000 },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 750; maxApproxTokens = 1500 },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 750; maxApproxTokens = 1500 },
-            @{ path = "templates\USER-RULES.append.md"; maxWords = 750; maxApproxTokens = 1500 },
+            @{ path = "templates\USER-RULES.append.md"; maxWords = 650; maxApproxTokens = 1200 },
             @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 900; maxApproxTokens = 1500 }
         )
 

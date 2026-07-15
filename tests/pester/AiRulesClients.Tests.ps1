@@ -158,6 +158,9 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
         $text | Should -Match "git clone"
         $text | Should -Match "protocol must be 1.1"
         $text | Should -Match "Compatibility check changed user-scope Codex prompt"
+        $text | Should -Match 'docs/custom\.md,USER-RULES\.md'
+        $text | Should -Match 'McpMode delegated'
+        $text | Should -Match 'Repeated ai_rules update changed the current Kilo config'
     }
 
     It "validates shared OpenSpec destinations independently of the winning source owner" {

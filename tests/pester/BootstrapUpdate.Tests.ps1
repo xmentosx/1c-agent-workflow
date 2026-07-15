@@ -448,6 +448,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Match "Update-UserRules"
         $HelperText | Should -Match "Assert-WorkflowPackageUpdateContext"
         $HelperText | Should -Match "Assert-WorkflowTrackedGitClean"
+        $HelperText | Should -Match ([regex]::Escape("Kilo Code: run /reload or open a new session"))
         $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "refresh-dev-branch MCP reconcile"'))
         $HelperText | Should -Match "updatedAt"
         $HelperText | Should -Match "VANESSA-TESTS-GUIDE\.md"

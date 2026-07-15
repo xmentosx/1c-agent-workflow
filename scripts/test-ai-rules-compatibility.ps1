@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$AiRulesSource = "https://github.com/xmentosx/itl_ai_rules_1c.git",
-    [string]$AiRulesRef = "itl-main-a421cf44-r6",
+    [string]$AiRulesRef = "itl-main-a421cf44-r7",
     [string]$WorkingDirectory = "",
     [switch]$KeepArtifacts
 )
@@ -114,16 +114,37 @@ try {
     $codexPromptBefore = Get-CodexPromptSnapshot -RulesRoot $rulesRoot
 
     $projectRoot = Join-Path $workRoot "project"
-    New-Item -ItemType Directory -Force -Path $projectRoot | Out-Null
+    $kiloConfigPath = Join-Path $projectRoot ".kilo\kilo.json"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $kiloConfigPath) | Out-Null
+    [System.IO.File]::WriteAllText(
+        $kiloConfigPath,
+        '{"instructions":["docs/custom.md"],"permission":{"bash":"ask"},"mcp":{"custom":{"type":"remote","url":"http://127.0.0.1:19999/mcp"}}}',
+        [System.Text.UTF8Encoding]::new($false)
+    )
     & powershell -NoProfile -ExecutionPolicy Bypass -File $installScript init `
         -ProjectRoot $projectRoot `
         -Source $rulesRoot `
         -Tools "codex,kilocode" `
+        -McpMode delegated `
         -NonInteractive `
         -AssumeYes
     if ($LASTEXITCODE -ne 0) {
         throw "ai_rules_1c init failed with exit code $LASTEXITCODE"
     }
+
+    $kiloConfig = Get-Content -LiteralPath $kiloConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ((@($kiloConfig.instructions) -join ',') -ne 'docs/custom.md,USER-RULES.md') { throw "Kilo project instructions were not merged in order." }
+    if ([string]$kiloConfig.permission.bash -ne 'ask' -or [string]$kiloConfig.mcp.custom.url -ne 'http://127.0.0.1:19999/mcp') { throw "Kilo user configuration was not preserved." }
+    $kiloHash = (Get-FileHash -LiteralPath $kiloConfigPath -Algorithm SHA256).Hash
+
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $installScript update `
+        -ProjectRoot $projectRoot `
+        -Source $rulesRoot `
+        -McpMode delegated `
+        -NonInteractive `
+        -AssumeYes
+    if ($LASTEXITCODE -ne 0) { throw "ai_rules_1c update failed with exit code $LASTEXITCODE" }
+    if ((Get-FileHash -LiteralPath $kiloConfigPath -Algorithm SHA256).Hash -ne $kiloHash) { throw "Repeated ai_rules update changed the current Kilo config." }
 
     & powershell -NoProfile -ExecutionPolicy Bypass -File $installScript doctor `
         -ProjectRoot $projectRoot `

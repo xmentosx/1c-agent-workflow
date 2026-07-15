@@ -2373,6 +2373,7 @@ function Write-WorkflowUpdateFollowUp {
     Write-Host ""
     Write-Host "Next steps:"
     Write-Host "  Review and commit the updated workflow/rules files in master."
+    Write-Host "  Kilo Code: run /reload or open a new session so project instructions, skills, agents, and commands are reread."
     Write-Host "  MCP client config is reconciled automatically when saved vibecoding1c selection/state has ready replacements."
     Write-Host "  If the helper preserved upstream MCP entries, complete setup when ready:"
     Write-Host "    powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup"
@@ -2828,6 +2829,29 @@ function Copy-DotEnvToWorktree {
     $sourceDotEnv = Join-Path $script:ProjectRoot ".dev.env"
     if (Test-Path -LiteralPath $sourceDotEnv -PathType Leaf -ErrorAction SilentlyContinue) {
         Copy-Item -LiteralPath $sourceDotEnv -Destination (Join-Path $WorktreePath ".dev.env") -Force
+    }
+}
+
+function Copy-KiloProjectConfigToWorktree {
+    param(
+        [string]$MainProjectRoot,
+        [string]$WorktreePath
+    )
+
+    foreach ($fileName in @("kilo.json", "kilo.jsonc")) {
+        $sourcePath = Join-Path (Join-Path $MainProjectRoot ".kilo") $fileName
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf -ErrorAction SilentlyContinue)) {
+            continue
+        }
+
+        $targetDirectory = Join-Path $WorktreePath ".kilo"
+        $targetPath = Join-Path $targetDirectory $fileName
+        if (Test-Path -LiteralPath $targetPath -PathType Leaf -ErrorAction SilentlyContinue) {
+            continue
+        }
+
+        New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
+        Copy-Item -LiteralPath $sourcePath -Destination $targetPath
     }
 }
 
@@ -4285,6 +4309,7 @@ function New-DevBranchCore {
             $resumeWorktreePath = Get-StateValue -State $resumeState -Name "worktreePath" -Default (Get-StateValue -State $resumeState -Name "stateProjectRoot" -Default "")
             Write-Host "Resuming development branch initialization: $DevBranch"
             Write-Host "Development branch worktree: $resumeWorktreePath"
+            Copy-KiloProjectConfigToWorktree -MainProjectRoot $mainProjectRoot -WorktreePath $resumeWorktreePath
             Invoke-InProjectContext -Root $resumeWorktreePath -ScriptBlock {
                 Initialize-DevBranchRuntime `
                     -DevBranchKind $DevBranchKind `
@@ -4312,6 +4337,7 @@ function New-DevBranchCore {
     }
     Invoke-Git @("worktree", "add", "-b", $DevBranch, $worktreePath, (Get-MasterBranch))
     Copy-DotEnvToWorktree -WorktreePath $worktreePath
+    Copy-KiloProjectConfigToWorktree -MainProjectRoot $mainProjectRoot -WorktreePath $worktreePath
 
     Invoke-InProjectContext -Root $worktreePath -ScriptBlock {
         Initialize-DevBranchRuntime `

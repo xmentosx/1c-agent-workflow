@@ -2318,7 +2318,7 @@ if (`$?) { exit 0 } else { exit 1 }
             & git -C $tempRoot branch -M master
 
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".kilo") | Out-Null
-            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value "{}" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value '{"instructions":["USER-RULES.md","docs/custom.md"],"permission":{"bash":"ask"}}' -Encoding ASCII
 
             $env:APPDATA = Join-Path $tempRoot "appdata"
             & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action new-dev-branch -DevBranchName "Fixture Branch" *> $null
@@ -2361,6 +2361,9 @@ if (`$?) { exit 0 } else { exit 1 }
             $kiloText = Get-Content -Encoding UTF8 -Raw (Join-Path $worktreePath ".kilo\kilo.json")
             $kiloText | Should -Not -Match "itl-.*-roctup"
             $kiloText | Should -Not -Match "VanessaAutomation-"
+            $kiloConfig = $kiloText | ConvertFrom-Json
+            @($kiloConfig.instructions) | Should -Be @("USER-RULES.md", "docs/custom.md")
+            $kiloConfig.permission.bash | Should -Be "ask"
             $branchKiloCommands = @(Get-ChildItem -LiteralPath (Join-Path $worktreePath ".kilo\commands") -File -Filter "itl*.md" | Select-Object -ExpandProperty Name | Sort-Object)
             $branchKiloCommands | Should -Be @("itl.md", "itl-check.md", "itl-refresh.md", "itl-result.md", "itl-status.md")
             $branchKiloCommands | Should -Not -Contain "itl-new-config-branch.md"
