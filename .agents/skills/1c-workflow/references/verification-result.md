@@ -41,6 +41,8 @@ Goal: export a CF or CFE artifact from the current development branch.
 
 The result manifest records artifact SHA256, operation, branch metadata, master/development commits, verification status/report/log, latest 1C log path, publication URL, manual import note, and whether an unverified override was used.
 
+Verification freshness uses a content-aware fingerprint of configured configuration, extension, and feature paths. A second edit of an already dirty file makes a previous passed verification stale even when its porcelain Git status remains `M`.
+
 ## Verification Policy
 
 `verificationPolicy=warn` is the default and requires explicit unverified confirmation before result export or advanced close when verification is not fresh passed. `verificationPolicy=block` forbids result export and advanced close until `/itl-check` or `verify-dev-branch` is fresh passed.

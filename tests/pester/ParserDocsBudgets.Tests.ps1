@@ -233,8 +233,7 @@
 
         @(Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "itl*.md" -ErrorAction SilentlyContinue).Count | Should -Be 0
         @(Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "opsx*.md" -ErrorAction SilentlyContinue).Count | Should -Be 0
-        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands") -PathType Container) | Should -Be $true
-        @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".kilo\commands") -File -Filter "itl*.md" -ErrorAction SilentlyContinue).Count | Should -Be 0
+        @(& git -C $RepoRoot ls-files -- ".kilo/commands/itl*.md").Count | Should -Be 0
     }
 
     It "uses only helper actions that are declared in the Action ValidateSet" {
@@ -492,6 +491,10 @@
         $userRulesText | Should -Match "Without either proof.*do not report ready/done/implemented"
         $userRulesText | Should -Match "Large OpenSpec verifies each observable slice"
         $userRulesText | Should -Match "syntaxcheck only.*insufficient"
+        $userRulesText | Should -Match "itldev/\*.*current Git branch name.*never a directory"
+        $userRulesText | Should -Match 'configured `exportPath`/`extensionsPath`'
+        $userRulesText | Should -Match "XML-only.*no exemption"
+        $userRulesText | Should -Match 'On `master`.*branch-safety blocker'
         $userRulesText | Should -Not -Match "opsx\*\.md"
     }
 
@@ -524,6 +527,9 @@
             $text | Should -Match "OpenSpec.*hybrid cadence"
             $text | Should -Match "2-3 Vanessa"
             $text | Should -Match "четвертая проверка.*обоснован"
+            $text | Should -Match "git branch --show-current.*не каталог"
+            $text | Should -Match "exportPath.*extensionsPath"
+            $text | Should -Match "master.*branch-safety blocker"
             $text | Should -Not -Match "2-4 Vanessa"
         }
     }

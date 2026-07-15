@@ -1,6 +1,6 @@
 # 1C Agent Workflow Reference Index
 
-Lightweight lifecycle routing index. Open topic references only when helper output, failure, or user request needs them.
+Lifecycle routing index. Open a topic only when helper output, failure, or the request needs it.
 
 ## User-Facing Menu
 
