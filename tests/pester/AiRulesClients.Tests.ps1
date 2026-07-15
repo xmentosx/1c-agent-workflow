@@ -141,6 +141,9 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
             $masterKiloCommands | Should -Not -Contain "itl-check.md"
             $masterKiloCommands | Should -Not -Contain "itl-refresh.md"
             $masterKiloCommands | Should -Not -Contain "itl-result.md"
+            $kiloConfig = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
+            @($kiloConfig.plugin) | Should -Contain "../.agents/skills/1c-workflow/kilo-plugin/itl-completion-gate.js"
+            (Test-Path -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-plugin\itl-completion-gate.js") -PathType Leaf) | Should -BeTrue
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

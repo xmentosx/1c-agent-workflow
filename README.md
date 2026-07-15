@@ -115,11 +115,13 @@ Slash-команды генерируются локально для каждо
 
 `/itl` показывает карту lifecycle, текущий контекст, доступные действия и пути соседних worktree. Редкие/helper-действия вызываются обычным текстом через агента или напрямую через PowerShell helper, но не засоряют slash-палитру. `/itl-update-workflow` виден в `master`, потому что обновление workflow-пакета - регулярное обслуживание проекта.
 
+Workflow регистрирует локальный Kilo plugin, который после потенциальной записи проверяет branch-aware completion gate. Обычные ответы и read-only tools не вычисляют verification fingerprint. После bootstrap/update/refresh выполните Kilo `/reload` или откройте новую сессию. `KILO_PURE=1` отключает внешний plugin и оставляет только текстовый fallback из `USER-RULES.md`.
+
 ## Важные правила
 
 Этот раздел намеренно краткий. Канонические agent-critical правила находятся в `templates/USER-RULES.append.md` и установленном `USER-RULES.md`, а lifecycle details - в `.agents/skills/1c-workflow/references/`.
 
 - Не коммитьте `.dev.env`, пароли, локальные базы, downloaded tools, логи, `.agent-1c/dev-branches/*.json`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/commands/itl*.md` и `.kilo/kilo.json*`.
 - Не загружайте изменения ветки разработки напрямую в исходную базу; helper работает только с копией базы текущей `itldev/*` ветки.
-- Для agent-made 1С-изменений готовность подтверждается релевантными Vanessa-сценариями и fresh passed `/itl-check`.
+- `itldev/*` в completion gate — имя Git-ветки, не каталог. Для agent-made 1С-изменений готовность подтверждается релевантными Vanessa-сценариями и fresh passed `/itl-check`.
 - `/itl-result` подчиняется `VERIFICATION_POLICY`, а зависимости - `DEPENDENCY_MODE`.

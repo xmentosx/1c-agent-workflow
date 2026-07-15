@@ -492,6 +492,10 @@
         $userRulesText | Should -Match "Without either proof.*do not report ready/done/implemented"
         $userRulesText | Should -Match "Large OpenSpec verifies each observable slice"
         $userRulesText | Should -Match "syntaxcheck only.*insufficient"
+        $userRulesText | Should -Match "itldev/\*.*current Git branch name.*never a directory"
+        $userRulesText | Should -Match 'configured `exportPath`/`extensionsPath`'
+        $userRulesText | Should -Match "XML-only.*no exemption"
+        $userRulesText | Should -Match 'On `master`.*branch-safety blocker'
         $userRulesText | Should -Not -Match "opsx\*\.md"
     }
 
@@ -524,6 +528,9 @@
             $text | Should -Match "OpenSpec.*hybrid cadence"
             $text | Should -Match "2-3 Vanessa"
             $text | Should -Match "четвертая проверка.*обоснован"
+            $text | Should -Match "git branch --show-current.*не каталог"
+            $text | Should -Match "exportPath.*extensionsPath"
+            $text | Should -Match "master.*branch-safety blocker"
             $text | Should -Not -Match "2-4 Vanessa"
         }
     }

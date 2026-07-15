@@ -106,7 +106,7 @@ DEV-BRANCH-DEVELOPMENT.ru.md
 /itl-check
 ```
 
-Любая доработка конфигурации или расширения агентом в `itldev/*` не считается готовой без релевантных Vanessa-тестов в `tests/features` и fresh passed `/itl-check` после последних изменений. Подробные правила тестовой cadence, MCP-ролей и verification gate находятся в `DEV-BRANCH-DEVELOPMENT.ru.md` и `.agents/skills/1c-workflow/references/verification-result.md`.
+`itldev/*` здесь означает имя текущей Git-ветки, а не путь: в такой ветке агентская правка под настроенными `exportPath`/`extensionsPath` не готова без сценариев под `testsPath` и fresh passed `/itl-check`. На `master` такая правка блокируется branch safety. Подробности находятся в `DEV-BRANCH-DEVELOPMENT.ru.md` и verification reference.
 
 Практические правила для агента, который пишет такие небольшие проверки текущей фичи, находятся в `VANESSA-TESTS-GUIDE.md`.
 

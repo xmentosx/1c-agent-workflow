@@ -1672,15 +1672,41 @@ function Get-GitObjectIdForHeadPath {
     return "<missing>"
 }
 
-function Get-GitStatusForFingerprintPaths {
+function Get-GitDiffDigestForFingerprintPaths {
     param([string[]]$PathSpec)
 
-    $arguments = @("status", "--porcelain", "--") + @($PathSpec)
+    $arguments = @("-c", "core.quotepath=false", "diff", "--binary", "--no-color", "--no-ext-diff", "HEAD", "--") + @($PathSpec)
     $output = & git -C $script:ProjectRoot @arguments
     if ($LASTEXITCODE -ne 0) {
-        return "<cannot-read-status>"
+        throw "Could not calculate the tracked verification diff."
     }
-    return (@($output) -join "`n")
+    return (Get-StringSha256 -Value (@($output) -join "`n"))
+}
+
+function Get-UntrackedDigestForFingerprintPaths {
+    param([string[]]$PathSpec)
+
+    $arguments = @("-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard", "--") + @($PathSpec)
+    $paths = @(& git -C $script:ProjectRoot @arguments)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not enumerate untracked verification files."
+    }
+
+    $parts = @()
+    foreach ($repoPath in @($paths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Sort-Object -Unique)) {
+        $normalized = ([string]$repoPath -replace "\\", "/").TrimStart("/")
+        $fullPath = Resolve-Agent1cFullPath -Path (Join-Path $script:ProjectRoot $normalized)
+        $rootPath = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd("\\", "/")
+        if (-not $fullPath.StartsWith(($rootPath + "\\"), [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Verification untracked file resolved outside the project root: $normalized"
+        }
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+            $parts += "$normalized=<missing>"
+            continue
+        }
+        $parts += "$normalized=$((Get-FileHash -Algorithm SHA256 -LiteralPath $fullPath).Hash.ToLowerInvariant())"
+    }
+    return (Get-StringSha256 -Value ($parts -join "|"))
 }
 
 function Get-VerificationFingerprint {
@@ -1690,7 +1716,7 @@ function Get-VerificationFingerprint {
         (Get-VanessaFeaturesPath)
     )
 
-    $parts = @()
+    $parts = @("v2")
     foreach ($path in $paths) {
         $normalized = ($path -replace "\\", "/").Trim("/")
         if ($normalized) {
@@ -1698,36 +1724,40 @@ function Get-VerificationFingerprint {
         }
     }
 
-    $relevantStatus = Get-GitStatusForFingerprintPaths -PathSpec $paths
-    if ($relevantStatus) {
-        $parts += "worktree=$relevantStatus"
-    } else {
-        $parts += "worktree=<clean>"
-    }
+    $parts += "tracked=$(Get-GitDiffDigestForFingerprintPaths -PathSpec $paths)"
+    $parts += "untracked=$(Get-UntrackedDigestForFingerprintPaths -PathSpec $paths)"
 
     return ($parts -join "|")
 }
 
 function Get-VerificationState {
-    param([object]$State)
+    param(
+        [object]$State,
+        [string]$CurrentCommit = "",
+        [string]$CurrentFingerprint = ""
+    )
 
     $status = [string](Get-StateValue -State $State -Name "lastVerificationStatus" -Default "missing")
     $commit = [string](Get-StateValue -State $State -Name "lastVerifiedCommit" -Default "")
     $fingerprint = [string](Get-StateValue -State $State -Name "lastVerifiedFingerprint" -Default "")
-    $currentCommit = ""
-    $currentFingerprint = ""
+    $currentCommitValue = $CurrentCommit
+    $currentFingerprintValue = $CurrentFingerprint
     $isFresh = $false
     try {
-        $currentCommit = Get-CurrentCommit
-        $currentFingerprint = Get-VerificationFingerprint
+        if (-not $currentCommitValue) {
+            $currentCommitValue = Get-CurrentCommit
+        }
+        if (-not $currentFingerprintValue) {
+            $currentFingerprintValue = Get-VerificationFingerprint
+        }
         if ($fingerprint) {
-            $isFresh = ($status -eq "passed" -and $fingerprint -eq $currentFingerprint)
+            $isFresh = ($status -eq "passed" -and $fingerprint -eq $currentFingerprintValue)
         } else {
-            $isFresh = ($status -eq "passed" -and $commit -and $commit -eq $currentCommit)
+            $isFresh = ($status -eq "passed" -and $commit -and $commit -eq $currentCommitValue)
         }
     } catch {
-        $currentCommit = ""
-        $currentFingerprint = ""
+        $currentCommitValue = ""
+        $currentFingerprintValue = ""
         $isFresh = $false
     }
 
@@ -1741,14 +1771,54 @@ function Get-VerificationState {
         effectiveStatus = $effectiveStatus
         isFreshPassed = $isFresh
         verifiedCommit = $commit
-        currentCommit = $currentCommit
+        currentCommit = $currentCommitValue
         verifiedFingerprint = $fingerprint
-        currentFingerprint = $currentFingerprint
+        currentFingerprint = $currentFingerprintValue
         verifiedAt = [string](Get-StateValue -State $State -Name "lastVerifiedAt" -Default "")
         reportPath = [string](Get-StateValue -State $State -Name "lastVerifiedReportPath" -Default "")
         logPath = [string](Get-StateValue -State $State -Name "lastVerificationLogPath" -Default "")
         reason = [string](Get-StateValue -State $State -Name "lastVerificationReason" -Default "")
     }
+}
+
+function Get-CompletionGateStatus {
+    $branch = Get-GitHeadBranch
+    if ([string]::IsNullOrWhiteSpace($branch)) {
+        throw "COMPLETION_GATE_BRANCH_UNKNOWN: current Git branch could not be determined."
+    }
+
+    $isDevelopmentBranch = $branch -like "itldev/*"
+    $currentFingerprint = Get-VerificationFingerprint
+    $verification = $null
+    $diagnostic = ""
+    if ($isDevelopmentBranch) {
+        try {
+            $verification = Get-VerificationState -State (Read-DevBranchState -Name "") -CurrentFingerprint $currentFingerprint
+        } catch {
+            $diagnostic = $_.Exception.Message
+        }
+    }
+
+    return [pscustomobject]@{
+        schemaVersion = 1
+        branch = $branch
+        isDevelopmentBranch = $isDevelopmentBranch
+        gateMode = $(if ($isDevelopmentBranch) { "development-verification" } else { "branch-safety" })
+        paths = [pscustomobject]@{
+            exportPath = (Get-ExportPath)
+            extensionsPath = (Get-ExtensionsPath)
+            testsPath = (Get-VanessaFeaturesPath)
+        }
+        currentFingerprint = $currentFingerprint
+        status = $(if ($null -ne $verification) { [string]$verification.effectiveStatus } else { "missing" })
+        freshPassed = $(if ($null -ne $verification) { [bool]$verification.isFreshPassed } else { $false })
+        reportPath = $(if ($null -ne $verification) { [string]$verification.reportPath } else { "" })
+        diagnostic = $diagnostic
+    }
+}
+
+function Write-CompletionGateStatus {
+    Write-Output ((Get-CompletionGateStatus | ConvertTo-Json -Depth 5 -Compress))
 }
 
 function Add-VerificationStaleIfNeeded {
@@ -1761,7 +1831,7 @@ function Add-VerificationStaleIfNeeded {
     )
 
     $verification = Get-VerificationState -State $State
-    $currentFingerprint = Get-VerificationFingerprint
+    $currentFingerprint = $verification.currentFingerprint
     if ($verification.status -eq "passed" -and ($Force -or $verification.verifiedFingerprint -ne $currentFingerprint)) {
         $Updates["lastVerificationStatus"] = "stale"
         $Updates["lastVerificationStaleAt"] = (Get-Date).ToString("o")

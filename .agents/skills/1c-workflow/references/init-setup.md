@@ -16,6 +16,7 @@ Create and maintain:
 - `.agents/skills/1c-workflow/kilo-command-templates/`: tracked canonical Kilo templates.
 - `.kilo/commands/itl*.md`: ignored context-specific ITL Kilo wrappers. OpenSpec command files are managed by `ai_rules_1c` for each selected client.
 - `.codex/config.toml` and `.kilo/kilo.json*`: ignored local MCP client state.
+- `.agents/skills/1c-workflow/kilo-plugin/itl-completion-gate.js`: tracked local Kilo completion enforcement; its relative specifier is preserved in `.kilo/kilo.json -> plugin`.
 
 Never store passwords in committed files. Write workflow state and `.dev.env` as UTF-8 and preserve Cyrillic paths exactly.
 
@@ -118,7 +119,7 @@ Goal: refresh the installed ITL workflow package without rerunning initializatio
 3. Resolve the package source from `ITL_WORKFLOW_SOURCE_PATH` or clone/update `ITL_WORKFLOW_REPO` and `ITL_WORKFLOW_REF` (`https://github.com/xmentosx/1c-agent-workflow.git`, `master` by default).
 4. Copy only managed workflow files: `.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, Kilo templates, `templates/`, `install-agent-1c-workflow.ps1`, `README.md`, `AGENT-INSTALL.md`, `DEVELOPER-GUIDE.ru.md`, `DEV-BRANCH-DEVELOPMENT.ru.md`, `VANESSA-TESTS-GUIDE.md`, and the compatibility stub `VANESSA-TESTS-GUIDE.ru.md`.
 5. Preserve local runtime/project state. Do not overwrite `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, or existing project/tools config.
-6. Record `workflowPackage.repo/ref/commit/source/updatedAt`, reapply `USER-RULES.md`, refresh ROCTUP MCP and Vanessa UI MCP CFE caches, run `update-ai-rules` unless `-SkipAiRules` is explicit, and leave tracked changes for review.
+6. Record `workflowPackage.repo/ref/commit/source/updatedAt`, reapply `USER-RULES.md`, register the local Kilo completion plugin, refresh ROCTUP MCP and Vanessa UI MCP CFE caches, run `update-ai-rules` unless `-SkipAiRules` is explicit, and leave tracked changes for review. Run Kilo `/reload` or open a new session afterwards.
 7. Do not update active `itldev/*` worktrees automatically; print whether MCP client config was reconciled or preserved as upstream fallback, plus follow-up commands for MCP setup/update, branch merge or `/itl-refresh`, and branch-local ROCTUP/Vanessa UI MCP restart when used.
 
 ## UPDATE_AI_RULES
