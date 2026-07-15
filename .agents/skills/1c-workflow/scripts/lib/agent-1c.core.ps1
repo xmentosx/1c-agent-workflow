@@ -247,6 +247,9 @@ function Write-RunStatus {
         stageDetail = $(if ($script:RunStageDetail) { [string]$script:RunStageDetail } else { "" })
         lastProcessId = $script:LastProcessId
         lastProcessTimedOut = $script:LastProcessTimedOut
+        lastProcessMemoryLimitExceeded = [bool]$script:LastProcessMemoryLimitExceeded
+        lastProcessPeakWorkingSetMb = [int]$script:LastProcessPeakWorkingSetMb
+        lastProcessWorkingSetLimitMb = [int]$script:LastProcessWorkingSetLimitMb
         gitIndexLockPreExisted = [bool]$script:GitIndexLockPreExisted
         resumedFrom = $script:ResumedFrom
         recoveryReason = $script:RecoveryReason
@@ -551,6 +554,9 @@ function Enter-Agent1cLifecycleOperation {
         detail = "Lifecycle operation locks acquired."
         lastProcessId = 0
         lastLogPath = ""
+        lastProcessMemoryLimitExceeded = $false
+        lastProcessPeakWorkingSetMb = 0
+        lastProcessWorkingSetLimitMb = 0
         exitCode = $null
         errorCode = ""
         errorMessage = ""
@@ -607,6 +613,9 @@ function Update-Agent1cLifecycleOperationStage {
     $record["updatedAt"] = (Get-Date).ToString("o")
     $record["lastProcessId"] = $script:LastProcessId
     $record["lastLogPath"] = $(if ($script:LastLogPath) { [string]$script:LastLogPath } else { "" })
+    $record["lastProcessMemoryLimitExceeded"] = [bool]$script:LastProcessMemoryLimitExceeded
+    $record["lastProcessPeakWorkingSetMb"] = [int]$script:LastProcessPeakWorkingSetMb
+    $record["lastProcessWorkingSetLimitMb"] = [int]$script:LastProcessWorkingSetLimitMb
     if ($script:LifecycleOperationIsContinuation) {
         $record["continuationPid"] = $PID
     }
@@ -639,8 +648,19 @@ function Complete-Agent1cLifecycleOperation {
     $record["detail"] = $(if ($Status -eq "succeeded") { "Lifecycle operation completed." } else { $ErrorMessage })
     $record["lastProcessId"] = $script:LastProcessId
     $record["lastLogPath"] = $(if ($script:LastLogPath) { [string]$script:LastLogPath } else { "" })
+    $record["lastProcessMemoryLimitExceeded"] = [bool]$script:LastProcessMemoryLimitExceeded
+    $record["lastProcessPeakWorkingSetMb"] = [int]$script:LastProcessPeakWorkingSetMb
+    $record["lastProcessWorkingSetLimitMb"] = [int]$script:LastProcessWorkingSetLimitMb
     $record["exitCode"] = $ExitCode
-    $record["errorCode"] = $(if ($Status -eq "failed") { "LIFECYCLE_OPERATION_FAILED" } else { "" })
+    $record["errorCode"] = $(
+        if ($Status -ne "failed") {
+            ""
+        } elseif ($ErrorMessage -match '^(DESIGNER_MEMORY_LIMIT_EXCEEDED|DESIGNER_MEMORY_MONITOR_FAILED)\b') {
+            $Matches[1]
+        } else {
+            "LIFECYCLE_OPERATION_FAILED"
+        }
+    )
     $record["errorMessage"] = $ErrorMessage
     if ($script:LifecycleOperationIsContinuation) {
         $record["continuationPid"] = $PID
@@ -804,6 +824,31 @@ function Get-Setting {
     }
 
     return Get-ConfigValue -Path $ConfigName -Default $Default
+}
+
+function Get-DesignerMaxWorkingSetMb {
+    $rawValue = Get-Setting `
+        -EnvName "DESIGNER_MAX_WORKING_SET_MB" `
+        -ConfigName "designerMaxWorkingSetMb" `
+        -Default 10240
+    $text = ([string]$rawValue).Trim()
+    $parsed = 0
+    if ($text -notmatch '^\d+$' -or
+        -not [int]::TryParse($text, [ref]$parsed) -or
+        $parsed -lt 0 -or
+        $parsed -gt 1048576) {
+        throw "DESIGNER_MAX_WORKING_SET_MB or project.designerMaxWorkingSetMb must be an integer between 0 and 1048576. Actual: '$rawValue'."
+    }
+    return $parsed
+}
+
+function Write-DesignerMemoryLimitStatusLine {
+    $limitMb = Get-DesignerMaxWorkingSetMb
+    if ($limitMb -eq 0) {
+        Write-Host "Designer memory limit: disabled"
+        return
+    }
+    Write-Host "Designer memory limit: $limitMb MB per automated process"
 }
 
 function ConvertTo-BoolSetting {
@@ -3634,6 +3679,48 @@ function Format-SafeCommandLine {
     return ($parts -join " ")
 }
 
+function Stop-NativeProcessForSafety {
+    param([Parameter(Mandatory = $true)][object]$Process)
+
+    $errors = New-Object System.Collections.Generic.List[string]
+    $confirmed = $false
+    try {
+        if ($Process.HasExited) {
+            return [pscustomobject]@{ confirmed = $true; error = "" }
+        }
+    } catch {
+        $errors.Add($_.Exception.Message)
+    }
+
+    try {
+        Stop-Process -Id $Process.Id -Force -ErrorAction Stop
+    } catch {
+        $errors.Add($_.Exception.Message)
+        try {
+            if (-not $Process.HasExited) {
+                $Process.Kill()
+            }
+        } catch {
+            $errors.Add($_.Exception.Message)
+        }
+    }
+
+    try {
+        $confirmed = [bool]$Process.WaitForExit(10000)
+    } catch {
+        $errors.Add($_.Exception.Message)
+        try { $confirmed = [bool]$Process.HasExited } catch { $confirmed = $false }
+    }
+    if (-not $confirmed -and $errors.Count -eq 0) {
+        $errors.Add("Process PID $($Process.Id) did not exit within 10 seconds after forced termination.")
+    }
+
+    return [pscustomobject]@{
+        confirmed = $confirmed
+        error = ($errors -join " ")
+    }
+}
+
 function Invoke-NativeProcessAndWaitResult {
     param(
         [string]$FilePath,
@@ -3641,7 +3728,8 @@ function Invoke-NativeProcessAndWaitResult {
         [int]$TimeoutSeconds = 0,
         [scriptblock]$OnTimeout = $null,
         [scriptblock]$CompletionProbe = $null,
-        [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10
+        [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10,
+        [ValidateRange(0, 1048576)][int]$MaxWorkingSetMb = 0
     )
 
     $script:LastNativeProcessStarted = $false
@@ -3660,13 +3748,61 @@ function Invoke-NativeProcessAndWaitResult {
     $script:LastNativeProcessStarted = $true
     $script:LastProcessId = $process.Id
     $script:LastProcessTimedOut = $false
+    $script:LastProcessMemoryLimitExceeded = $false
+    $script:LastProcessPeakWorkingSetMb = 0
+    $script:LastProcessWorkingSetLimitMb = $MaxWorkingSetMb
     $completedByProbe = $false
-    if ($TimeoutSeconds -gt 0) {
-        if ($null -ne $CompletionProbe) {
-            $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-            $probeObservedAt = $null
-            $finished = $process.HasExited
-            while (-not $finished -and [DateTime]::UtcNow -lt $deadline) {
+    $memoryMonitorFailed = $false
+    $memoryMonitorError = ""
+    $terminationConfirmed = $true
+    $terminationError = ""
+    if ($TimeoutSeconds -gt 0 -or $MaxWorkingSetMb -gt 0) {
+        $deadline = if ($TimeoutSeconds -gt 0) { [DateTime]::UtcNow.AddSeconds($TimeoutSeconds) } else { [DateTime]::MaxValue }
+        $probeObservedAt = $null
+        $finished = $process.HasExited
+        while (-not $finished -and [DateTime]::UtcNow -lt $deadline) {
+            if ($MaxWorkingSetMb -gt 0) {
+                $workingSetMb = 0
+                $sampleError = $null
+                try {
+                    $process.Refresh()
+                    $workingSetMb = [int][Math]::Ceiling([double]$process.WorkingSet64 / 1MB)
+                } catch {
+                    $sampleError = $_
+                }
+
+                if ($null -ne $sampleError) {
+                    $exitedAfterSampleError = $false
+                    try { $exitedAfterSampleError = [bool]$process.HasExited } catch { $exitedAfterSampleError = $false }
+                    if ($exitedAfterSampleError) {
+                        $finished = $true
+                        break
+                    }
+
+                    $memoryMonitorFailed = $true
+                    $memoryMonitorError = $sampleError.Exception.Message
+                    $termination = Stop-NativeProcessForSafety -Process $process
+                    $terminationConfirmed = [bool]$termination.confirmed
+                    $terminationError = [string]$termination.error
+                    $finished = $true
+                    break
+                }
+
+                if ($workingSetMb -gt $script:LastProcessPeakWorkingSetMb) {
+                    $script:LastProcessPeakWorkingSetMb = $workingSetMb
+                }
+                if ($workingSetMb -gt $MaxWorkingSetMb) {
+                    $script:LastProcessMemoryLimitExceeded = $true
+                    Write-Warning "Process PID $($process.Id) exceeded memory limit: ${workingSetMb} MB > ${MaxWorkingSetMb} MB. Stopping it to protect the workstation."
+                    $termination = Stop-NativeProcessForSafety -Process $process
+                    $terminationConfirmed = [bool]$termination.confirmed
+                    $terminationError = [string]$termination.error
+                    $finished = $true
+                    break
+                }
+            }
+
+            if ($null -ne $CompletionProbe) {
                 $probeComplete = $false
                 try {
                     $probeComplete = [bool](& $CompletionProbe)
@@ -3696,12 +3832,10 @@ function Invoke-NativeProcessAndWaitResult {
                 } else {
                     $probeObservedAt = $null
                 }
-                $finished = $process.WaitForExit(250)
             }
-        } else {
-            $finished = $process.WaitForExit($TimeoutSeconds * 1000)
+            $finished = $process.WaitForExit(250)
         }
-        if (-not $finished) {
+        if (-not $finished -and $TimeoutSeconds -gt 0) {
             $script:LastProcessTimedOut = $true
             if ($null -ne $OnTimeout) {
                 & $OnTimeout
@@ -3721,11 +3855,24 @@ function Invoke-NativeProcessAndWaitResult {
         $process.WaitForExit()
     }
 
-    $process.Refresh()
+    try { $process.Refresh() } catch {}
     return [pscustomobject]@{
         processId = $process.Id
-        exitCode = $(if ($script:LastProcessTimedOut) { -1 } elseif ($completedByProbe) { 0 } else { $process.ExitCode })
+        exitCode = $(
+            if ($script:LastProcessMemoryLimitExceeded) { -2 }
+            elseif ($memoryMonitorFailed) { -3 }
+            elseif ($script:LastProcessTimedOut) { -1 }
+            elseif ($completedByProbe) { 0 }
+            else { $process.ExitCode }
+        )
         timedOut = $script:LastProcessTimedOut
+        memoryLimitExceeded = [bool]$script:LastProcessMemoryLimitExceeded
+        memoryMonitorFailed = $memoryMonitorFailed
+        memoryMonitorError = $memoryMonitorError
+        peakWorkingSetMb = [int]$script:LastProcessPeakWorkingSetMb
+        workingSetLimitMb = $MaxWorkingSetMb
+        terminationConfirmed = $terminationConfirmed
+        terminationError = $terminationError
         completedByProbe = $completedByProbe
     }
 }
@@ -3758,6 +3905,10 @@ function Invoke-VisibleNativeProcessAndWait {
     }
 
     $script:LastProcessId = $process.Id
+    $script:LastProcessTimedOut = $false
+    $script:LastProcessMemoryLimitExceeded = $false
+    $script:LastProcessPeakWorkingSetMb = 0
+    $script:LastProcessWorkingSetLimitMb = 0
     $process.WaitForExit()
     $process.Refresh()
     return $process.ExitCode
@@ -3811,9 +3962,21 @@ function Invoke-Designer {
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
 
-    $exitCode = Invoke-NativeProcessAndWait -FilePath $platformPath -Arguments $args
-    if ($exitCode -ne 0) {
-        throw "1C Designer failed with exit code $exitCode. Log: $logPath"
+    $maxWorkingSetMb = Get-DesignerMaxWorkingSetMb
+    $result = Invoke-NativeProcessAndWaitResult `
+        -FilePath $platformPath `
+        -Arguments $args `
+        -MaxWorkingSetMb $maxWorkingSetMb
+    if ($result.memoryMonitorFailed) {
+        $detail = (([string]$result.memoryMonitorError + " " + [string]$result.terminationError).Trim() -replace '[\r\n]+', ' ')
+        throw "DESIGNER_MEMORY_MONITOR_FAILED pid=$($result.processId) limitMb=$maxWorkingSetMb peakWorkingSetMb=$($result.peakWorkingSetMb) terminationConfirmed=$($result.terminationConfirmed) log=$logPath detail='$detail'"
+    }
+    if ($result.memoryLimitExceeded) {
+        $terminationDetail = if ($result.terminationError) { " terminationError='$(([string]$result.terminationError) -replace '[\r\n]+', ' ')'" } else { "" }
+        throw "DESIGNER_MEMORY_LIMIT_EXCEEDED pid=$($result.processId) limitMb=$maxWorkingSetMb peakWorkingSetMb=$($result.peakWorkingSetMb) terminationConfirmed=$($result.terminationConfirmed) log=$logPath$terminationDetail"
+    }
+    if ($result.exitCode -ne 0) {
+        throw "1C Designer failed with exit code $($result.exitCode). Log: $logPath"
     }
 
     return $logPath
