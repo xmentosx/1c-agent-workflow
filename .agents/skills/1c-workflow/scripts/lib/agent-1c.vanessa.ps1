@@ -1696,8 +1696,8 @@ function Get-UntrackedDigestForFingerprintPaths {
     foreach ($repoPath in @($paths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Sort-Object -Unique)) {
         $normalized = ([string]$repoPath -replace "\\", "/").TrimStart("/")
         $fullPath = Resolve-Agent1cFullPath -Path (Join-Path $script:ProjectRoot $normalized)
-        $rootPath = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd("\\", "/")
-        if (-not $fullPath.StartsWith(($rootPath + "\\"), [System.StringComparison]::OrdinalIgnoreCase)) {
+        $rootPath = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd([char[]]@('\', '/'))
+        if (-not $fullPath.StartsWith(($rootPath + [System.IO.Path]::DirectorySeparatorChar), [System.StringComparison]::OrdinalIgnoreCase)) {
             throw "Verification untracked file resolved outside the project root: $normalized"
         }
         if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf -ErrorAction SilentlyContinue)) {

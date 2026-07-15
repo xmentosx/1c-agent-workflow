@@ -122,11 +122,17 @@ Describe "Kilo mechanical completion gate" {
             $dirtyOnce = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action completion-gate-status | ConvertFrom-Json
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Form.xml") -Encoding UTF8 -Value '<form>second edit</form>'
             $dirtyTwice = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action completion-gate-status | ConvertFrom-Json
+            Set-Content -LiteralPath (Join-Path $tempRoot "tests\features\new-regression.feature") -Encoding UTF8 -Value 'Feature: new regression'
+            $withUntracked = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action completion-gate-status | ConvertFrom-Json
 
             $dirtyOnce.freshPassed | Should -BeFalse
             $dirtyOnce.status | Should -Be "stale"
             $dirtyOnce.currentFingerprint | Should -Not -Be $fresh.currentFingerprint
             $dirtyTwice.currentFingerprint | Should -Not -Be $dirtyOnce.currentFingerprint
+            $withUntracked | Should -Not -BeNullOrEmpty
+            $withUntracked.diagnostic | Should -BeNullOrEmpty
+            $withUntracked.status | Should -Be "stale"
+            $withUntracked.currentFingerprint | Should -Not -Be $dirtyTwice.currentFingerprint
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
