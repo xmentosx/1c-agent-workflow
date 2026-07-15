@@ -117,7 +117,10 @@ export function createCompletionGateServer({ readBranch, readStatus, sendPrompt,
       sessions.set(input.sessionID, state)
       if (branch.startsWith("itldev/")) {
         const status = { branch, paths: readProjectPathsForContext() }
-        output.parts.push({ type: "text", text: buildDevelopmentContext(status) })
+        const textPart = output.parts.find((part) => part.type === "text")
+        if (textPart) {
+          textPart.text = `${buildDevelopmentContext(status)}\n\n${textPart.text}`
+        }
       }
     },
 
