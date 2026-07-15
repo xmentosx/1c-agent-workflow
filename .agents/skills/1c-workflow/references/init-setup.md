@@ -125,7 +125,7 @@ Goal: refresh the installed ITL workflow package without rerunning initializatio
 
 Goal: refresh the configured `ai_rules_1c` source while preserving the ITL overlay.
 
-1. Clone or update the configured `ai_rules_1c` repo under `%TEMP%\ai_rules_1c`.
+1. Clone or update the configured `ai_rules_1c` repo under the first writable workflow temp root (`TEMP`/`TMP`, user-profile temp, or project-local `.agent-1c/tmp` fallback).
 2. When `aiRules.ref` is configured, both `fresh` and `locked` checkout that immutable tag. The controlled fork accepts only `itl-*`; verify that the tag resolves to the commit recorded in the dependency lock, and never consume fork `main`.
 3. In `locked`, use the lock repo/ref/commit and stop when required values are missing or disagree. Remote HEAD is allowed only for an explicitly configured legacy/custom repository without `aiRules.ref`; it is never the standard ITL path.
 4. Run the configured source installer with `update` when `.ai-rules.json` exists, otherwise `init` with configured clients. Afterward add each configured client absent from `.ai-rules.json`; do not remove additional installed clients automatically.

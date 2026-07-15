@@ -1411,7 +1411,7 @@ function Sync-AiRules1cCheckout {
         throw "The controlled ai_rules_1c fork requires an immutable configured tag in aiRules.ref; fork main is not allowed."
     }
 
-    $tempRoot = Resolve-Agent1cFullPath -Path $env:TEMP
+    $tempRoot = Get-Agent1cTempRoot
     $rulesDir = Resolve-Agent1cFullPath -Path (Join-Path $tempRoot "ai_rules_1c")
 
     if (Test-Path -LiteralPath $rulesDir) {
@@ -1972,7 +1972,7 @@ function Get-WorkflowPackageRef {
 }
 
 function Get-WorkflowPackageTempRoot {
-    return (Resolve-Agent1cFullPath -Path (Join-Path (Join-Path (Resolve-Agent1cFullPath -Path $env:TEMP) "1c-agent-workflow") "workflow-package"))
+    return (Resolve-Agent1cFullPath -Path (Join-Path (Join-Path (Get-Agent1cTempRoot) "1c-agent-workflow") "workflow-package"))
 }
 
 function Test-GitRefExistsAt {

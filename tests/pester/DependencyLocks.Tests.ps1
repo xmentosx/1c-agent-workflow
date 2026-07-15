@@ -70,6 +70,66 @@
         @(& git -C $RepoRoot ls-files --cached --others --exclude-standard -- $moduleRelativePath).Count | Should -BeGreaterThan 0
     }
 
+    It "keeps direct process TEMP access inside the shared temp resolver" {
+        $tempReaders = @($HelperModulePaths | ForEach-Object {
+            Select-String -LiteralPath $_ -SimpleMatch '$env:TEMP'
+        })
+        $tmpReaders = @($HelperModulePaths | ForEach-Object {
+            Select-String -LiteralPath $_ -SimpleMatch '$env:TMP'
+        })
+
+        $tempReaders.Count | Should -Be 1
+        $tmpReaders.Count | Should -Be 1
+        (Split-Path -Leaf $tempReaders[0].Path) | Should -Be "agent-1c.core.ps1"
+        (Split-Path -Leaf $tmpReaders[0].Path) | Should -Be "agent-1c.core.ps1"
+    }
+
+    It "falls back from invalid process temp aliases and preserves a valid TEMP" {
+        $fixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-temp-root-test-" + [guid]::NewGuid().ToString("N"))
+        $validTemp = Join-Path $fixtureRoot "valid-temp"
+        $localAppData = Join-Path $fixtureRoot "local-app-data"
+        $localTemp = Join-Path $localAppData "Temp"
+        $brokenTemp = Join-Path $fixtureRoot "BROKEN~1.USR\AppData\Local\Temp\108"
+        $savedTemp = $env:TEMP
+        $savedTmp = $env:TMP
+        $savedLocalAppData = $env:LOCALAPPDATA
+
+        try {
+            New-Item -ItemType Directory -Force -Path $validTemp, $localTemp | Out-Null
+
+            $env:TEMP = $validTemp
+            $env:TMP = $brokenTemp
+            $env:LOCALAPPDATA = $localAppData
+            $resolvedValid = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                Get-Agent1cTempRoot
+            }
+            $resolvedValid | Should -Be (Resolve-Path -LiteralPath $validTemp).Path
+
+            $env:TEMP = $brokenTemp
+            $env:TMP = $brokenTemp
+            $resolvedFallback = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $tempRoot = Get-Agent1cTempRoot
+                [pscustomobject]@{
+                    tempRoot = $tempRoot
+                    writable = Test-Agent1cWritableDirectory -Path $tempRoot
+                    vanessaCache = Get-VanessaCacheDirectory
+                }
+            }
+
+            $resolvedFallback.tempRoot | Should -Not -Be $brokenTemp
+            (Test-Path -LiteralPath $resolvedFallback.tempRoot -PathType Container) | Should -Be $true
+            $resolvedFallback.writable | Should -Be $true
+            $resolvedFallback.vanessaCache | Should -Be (Join-Path $resolvedFallback.tempRoot "1c-agent-workflow\vanessa-automation")
+        } finally {
+            $env:TEMP = $savedTemp
+            $env:TMP = $savedTmp
+            $env:LOCALAPPDATA = $savedLocalAppData
+            Remove-Item -LiteralPath $fixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "wires dependency lock mode and verification policy" {
         $projectTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\project.json")
         $devEnvTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")
