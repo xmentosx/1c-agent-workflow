@@ -36,8 +36,12 @@ function createHarness(statuses, branch = "itldev/demo") {
   return { hooks, prompts, logs, get statusCalls() { return statusCalls } }
 }
 
-async function userTurn(harness, sessionID = "s1") {
-  const output = { parts: [] }
+async function userTurn(harness, sessionID = "s1", includeText = true) {
+  const messageID = `msg-${sessionID}`
+  const output = {
+    message: { id: messageID, sessionID },
+    parts: includeText ? [{ id: `part-${sessionID}`, sessionID, messageID, type: "text", text: "Implement the change." }] : [],
+  }
   await harness.hooks["chat.message"]({ sessionID }, output)
   return output
 }
@@ -57,11 +61,22 @@ assert.equal(isPotentiallyMutatingTool("apply_patch", {}), true)
   const harness = createHarness([dev("A")])
   const output = await userTurn(harness)
   assert.equal(harness.statusCalls, 0, "chat context must not calculate a fingerprint")
+  assert.equal(output.parts.length, 1, "chat hook must mutate the existing Kilo Part instead of adding an input-only part")
+  assert.equal(output.parts[0].id, "part-s1")
+  assert.equal(output.parts[0].sessionID, "s1")
+  assert.equal(output.parts[0].messageID, "msg-s1")
   assert.match(output.parts[0].text, /Git branch name, not a directory/)
   assert.ok(Math.ceil(Buffer.byteLength(output.parts[0].text, "utf8") / 4) <= 80)
   await harness.hooks["tool.execute.before"]({ tool: "bash", sessionID: "s1" }, { args: { command: "rg -n gate ." } })
   await idle(harness)
   assert.equal(harness.statusCalls, 0, "read-only turns must not calculate a fingerprint")
+}
+
+{
+  const harness = createHarness([dev("A")])
+  const output = await userTurn(harness, "s-no-text", false)
+  assert.equal(output.parts.length, 0, "chat hook must not synthesize a Kilo Part without aggregate fields")
+  assert.equal(harness.statusCalls, 0)
 }
 
 {
@@ -100,7 +115,8 @@ assert.equal(isPotentiallyMutatingTool("apply_patch", {}), true)
 {
   const harness = createHarness([master("A"), master("B")], "master")
   const output = await userTurn(harness)
-  assert.equal(output.parts.length, 0, "master must not receive runtime prompt tokens")
+  assert.equal(output.parts.length, 1)
+  assert.equal(output.parts[0].text, "Implement the change.", "master must not receive runtime prompt tokens")
   await harness.hooks["tool.execute.before"]({ tool: "write", sessionID: "s1" }, { args: {} })
   await idle(harness)
   assert.match(harness.prompts[0].text, /outside itldev/)
