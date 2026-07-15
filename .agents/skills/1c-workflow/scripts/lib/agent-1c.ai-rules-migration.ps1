@@ -294,7 +294,7 @@ function Invoke-AiRulesMigrationCandidatePreflight {
         throw "Installed aiRules upstream provenance is not an ancestor of the target upstream baseline: $($Plan.comparisonCommit)"
     }
 
-    $preflightRoot = Join-Path (Resolve-Agent1cFullPath -Path $env:TEMP) ("itl-ai-rules-preflight-" + [guid]::NewGuid().ToString("N"))
+    $preflightRoot = Join-Path (Get-Agent1cTempRoot) ("itl-ai-rules-preflight-" + [guid]::NewGuid().ToString("N"))
     try {
         New-Item -ItemType Directory -Force -Path $preflightRoot | Out-Null
         $installScript = Join-Path $checkout.root "install.ps1"

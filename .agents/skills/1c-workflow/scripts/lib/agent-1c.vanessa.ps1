@@ -145,7 +145,7 @@ function Get-VanessaAutomationDownloadInfo {
 }
 
 function Get-VanessaCacheDirectory {
-    return (Join-Path $env:TEMP "1c-agent-workflow\vanessa-automation")
+    return (Join-Path (Get-Agent1cTempRoot) "1c-agent-workflow\vanessa-automation")
 }
 
 function Save-VanessaAutomationArchive {

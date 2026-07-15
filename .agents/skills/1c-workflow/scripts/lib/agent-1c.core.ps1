@@ -121,6 +121,74 @@ function Resolve-Agent1cFullPath {
     return (Normalize-Agent1cFullPathText -Path $full)
 }
 
+function Test-Agent1cWritableDirectory {
+    param([AllowNull()][string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $false
+    }
+
+    $resolved = Resolve-Agent1cFullPath -Path $Path
+    if (-not (Test-Path -LiteralPath $resolved -PathType Container -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+
+    $probePath = Join-Path $resolved (".itl-temp-probe-" + [guid]::NewGuid().ToString("N") + ".tmp")
+    try {
+        $stream = [System.IO.File]::Open($probePath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $stream.Dispose()
+        return $true
+    } catch {
+        return $false
+    } finally {
+        Remove-Item -LiteralPath $probePath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-Agent1cTempRoot {
+    $userTemp = ""
+    $userTmp = ""
+    try {
+        $userTemp = [Environment]::GetEnvironmentVariable("TEMP", [EnvironmentVariableTarget]::User)
+        $userTmp = [Environment]::GetEnvironmentVariable("TMP", [EnvironmentVariableTarget]::User)
+    } catch {
+    }
+
+    $localAppData = [string]$env:LOCALAPPDATA
+    if ([string]::IsNullOrWhiteSpace($localAppData)) {
+        try {
+            $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+        } catch {
+        }
+    }
+
+    $candidates = @(
+        [string]$env:TEMP,
+        [string]$env:TMP,
+        [string]$userTemp,
+        [string]$userTmp,
+        $(if ([string]::IsNullOrWhiteSpace($localAppData)) { "" } else { Join-Path $localAppData "Temp" }),
+        $(if ([string]::IsNullOrWhiteSpace([string]$env:USERPROFILE)) { "" } else { Join-Path ([string]$env:USERPROFILE) "AppData\Local\Temp" })
+    )
+
+    foreach ($candidate in $candidates) {
+        if (Test-Agent1cWritableDirectory -Path $candidate) {
+            return (Resolve-Agent1cFullPath -Path $candidate)
+        }
+    }
+
+    $fallback = Resolve-Agent1cFullPath -Path (Join-Path $script:ProjectRoot ".agent-1c\tmp")
+    try {
+        New-Item -ItemType Directory -Force -Path $fallback -ErrorAction Stop | Out-Null
+    } catch {
+        throw "Could not create the project-local temporary directory: $fallback"
+    }
+    if (-not (Test-Agent1cWritableDirectory -Path $fallback)) {
+        throw "No writable temporary directory is available. Checked TEMP, TMP, user profile, and project-local fallback '$fallback'."
+    }
+    return $fallback
+}
+
 function Resolve-RunFilePath {
     param([string]$Path)
 
