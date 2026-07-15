@@ -233,8 +233,7 @@
 
         @(Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "itl*.md" -ErrorAction SilentlyContinue).Count | Should -Be 0
         @(Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "opsx*.md" -ErrorAction SilentlyContinue).Count | Should -Be 0
-        (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands") -PathType Container) | Should -Be $true
-        @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".kilo\commands") -File -Filter "itl*.md" -ErrorAction SilentlyContinue).Count | Should -Be 0
+        @(& git -C $RepoRoot ls-files -- ".kilo/commands/itl*.md").Count | Should -Be 0
     }
 
     It "uses only helper actions that are declared in the Action ValidateSet" {

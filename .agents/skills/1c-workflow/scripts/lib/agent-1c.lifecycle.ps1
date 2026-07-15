@@ -2049,7 +2049,8 @@ function Resolve-WorkflowPackageSource {
 
     Assert-WorkflowPackageSourceRoot -SourceRoot $root
     $commit = ""
-    if (Test-Path -LiteralPath (Join-Path $root ".git") -PathType Container -ErrorAction SilentlyContinue) {
+    # A linked worktree stores .git as a file, while a primary checkout uses a directory.
+    if (Test-Path -LiteralPath (Join-Path $root ".git") -ErrorAction SilentlyContinue) {
         $commit = (Get-GitOutputAt -Root $root -Arguments @("rev-parse", "HEAD")).Trim()
     }
 

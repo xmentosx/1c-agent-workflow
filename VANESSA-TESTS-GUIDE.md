@@ -17,12 +17,12 @@ The goal of ITL feature tests is to verify the behavior currently being changed.
 
 ## Context Economy
 
-- Do not read large external smoke suites before every task; use them only as pattern references.
-- Do not paste full catalogs of known steps into the prompt. Search for the specific step by meaning or, when runtime UI evidence is needed, through Vanessa UI MCP.
+- Read large external smoke suites only as pattern references.
+- Search known steps by meaning or, for runtime UI evidence, through Vanessa UI MCP; do not paste full catalogs.
 - Prefer data/object/register checks over long UI sequences when they prove the same behavior.
 - Reuse an existing library step when it already expresses the business action.
 - Keep each scenario short: setup, action, 1-3 observable assertions, cleanup if needed.
-- Do not describe Vanessa history, generic framework capabilities, or unrelated test suites in `test-plan.md`.
+- Keep Vanessa history and unrelated suites out of `test-plan.md`.
 
 ## BSL Context And Extension UI
 
@@ -164,7 +164,7 @@ Use UI checks only for forms, commands, or visible behavior. Prefer form element
 
 ## Reliability
 
-- Create minimal test data inside the scenario or a library step. Do not rely on arbitrary database data except explicitly agreed fixtures.
+- Create minimal test data in the scenario or library step; use only agreed database fixtures.
 - Make test object names unique, for example with the change id plus date or UUID.
 - Assert observable results: value, record, movement, table row, command availability, not just absence of errors.
 - After opening a form, check warnings and `ErrorWindow` when the next step assumes a successful open.
