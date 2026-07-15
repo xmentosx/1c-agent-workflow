@@ -538,6 +538,35 @@ function Invoke-ConfigLoadWithFallback {
     } catch {
         $partialException = $_
         $partialLogPath = $script:LastLogPath
+        $partialMessage = $partialException.Exception.Message
+        $memoryGuardCode = ""
+        if ($partialMessage -match '^(DESIGNER_MEMORY_LIMIT_EXCEEDED|DESIGNER_MEMORY_MONITOR_FAILED)\b') {
+            $memoryGuardCode = $Matches[1]
+        }
+        if ($memoryGuardCode) {
+            $configLoadStatus = if ($memoryGuardCode -eq "DESIGNER_MEMORY_LIMIT_EXCEEDED") { "memory-limit-exceeded" } else { "memory-monitor-failed" }
+            if ($State) {
+                Update-DevBranchState -State $State -Updates @{
+                    configLoadStatus = $configLoadStatus
+                    lastConfigLoadMode = "partial"
+                    lastConfigPartialLogPath = $partialLogPath
+                    lastConfigFullFallbackLogPath = ""
+                    lastConfigPartialError = $partialMessage
+                    lastConfigFullFallbackError = ""
+                    lastDesignerMemoryLimitExceeded = ($memoryGuardCode -eq "DESIGNER_MEMORY_LIMIT_EXCEEDED")
+                    lastDesignerPeakWorkingSetMb = [int]$script:LastProcessPeakWorkingSetMb
+                    lastDesignerWorkingSetLimitMb = [int]$script:LastProcessWorkingSetLimitMb
+                    lastDesignerMemoryGuardError = $partialMessage
+                    lastDesignerMemoryGuardFailedAt = (Get-Date).ToString("o")
+                    lastLogPath = $partialLogPath
+                }
+            }
+            $contentLabel = if ($ExtensionName) { "extension" } else { "configuration" }
+            Set-RunStage -Stage "config-load.$configLoadStatus" -Detail "$memoryGuardCode stopped the partial $contentLabel load; full fallback is suppressed."
+            Write-Warning "$memoryGuardCode stopped Designer. Full-load fallback is suppressed to avoid submitting the same source files to another process."
+            Write-Warning "Inspect the input XML/source files. Because no infobase snapshot is available, recreate the branch infobase if its state is uncertain. Log: $partialLogPath"
+            throw
+        }
         if ($Mode -eq "Partial" -or -not $script:LastNativeProcessStarted) {
             throw
         }
@@ -2750,6 +2779,11 @@ function Write-DevBranchInitializationStatusLines {
         $fullLog = Get-StateValue -State $State -Name "lastConfigFullFallbackLogPath" -Default ""
         if ($partialLog) { Write-Host "${Indent}Last partial config log: $partialLog" }
         if ($fullLog) { Write-Host "${Indent}Last full fallback config log: $fullLog" }
+        if ($configLoadStatus -in @("memory-limit-exceeded", "memory-monitor-failed")) {
+            $memoryLimitMb = Get-StateValue -State $State -Name "lastDesignerWorkingSetLimitMb" -Default 0
+            $peakWorkingSetMb = Get-StateValue -State $State -Name "lastDesignerPeakWorkingSetMb" -Default 0
+            Write-Host "${Indent}Designer memory guard: limitMb=$memoryLimitMb peakWorkingSetMb=$peakWorkingSetMb"
+        }
     }
     if ($status -eq "ready") {
         return
@@ -4096,6 +4130,11 @@ function Initialize-DevBranchRuntime {
         @{ name = "lastConfigFullFallbackLogPath"; value = "" },
         @{ name = "lastConfigPartialError"; value = "" },
         @{ name = "lastConfigFullFallbackError"; value = "" },
+        @{ name = "lastDesignerMemoryLimitExceeded"; value = $false },
+        @{ name = "lastDesignerPeakWorkingSetMb"; value = 0 },
+        @{ name = "lastDesignerWorkingSetLimitMb"; value = 0 },
+        @{ name = "lastDesignerMemoryGuardError"; value = "" },
+        @{ name = "lastDesignerMemoryGuardFailedAt"; value = "" },
         @{ name = "lastConfigDesignerFingerprint"; value = "" },
         @{ name = "lastConfigDesignerLoadedAt"; value = "" },
         @{ name = "lastExtensionDesignerFingerprint"; value = "" },
@@ -5450,6 +5489,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
 function Show-WorkflowStatus {
     Write-Section "ITL status"
     Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 1800000."
+    Write-DesignerMemoryLimitStatusLine
     Write-Agent1cLifecycleOperationStatusLines
 
     if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git"))) {

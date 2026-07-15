@@ -54,7 +54,7 @@ Use this as `.agent-1c/project.json`:
 }
 ```
 
-Use `.dev.env` for secrets, passwords, web publication values, local tool paths, `DEPENDENCY_MODE`, `VERIFICATION_POLICY`, and optional overrides. `GITHUB_TOKEN` (then `GH_TOKEN`) optionally authenticates GitHub API requests; without a token, a fresh dependency resolve falls back to a compatible lock entry only after GitHub rate limiting. Empty password values mean the password is not set.
+Use `.dev.env` for secrets, passwords, web publication values, local tool paths, `DEPENDENCY_MODE`, `VERIFICATION_POLICY`, and optional overrides. `DESIGNER_MAX_WORKING_SET_MB` overrides the project-level `designerMaxWorkingSetMb` limit for automated Designer processes in the current worktree; the default is 10240 MB and `0` disables the guard. `GITHUB_TOKEN` (then `GH_TOKEN`) optionally authenticates GitHub API requests; without a token, a fresh dependency resolve falls back to a compatible lock entry only after GitHub rate limiting. Empty password values mean the password is not set.
 
 ## Required Questions
 

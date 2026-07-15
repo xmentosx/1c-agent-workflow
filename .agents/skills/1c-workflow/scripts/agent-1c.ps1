@@ -221,6 +221,9 @@ function Get-Agent1cReexecArguments {
 $script:LastLogPath = $null
 $script:LastProcessId = 0
 $script:LastProcessTimedOut = $false
+$script:LastProcessMemoryLimitExceeded = $false
+$script:LastProcessPeakWorkingSetMb = 0
+$script:LastProcessWorkingSetLimitMb = 0
 $script:RunStage = ""
 $script:RunStageDetail = ""
 $script:RunStartedAt = Get-Date
