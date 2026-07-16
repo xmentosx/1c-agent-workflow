@@ -1,6 +1,6 @@
 ## 1C Project Lifecycle
 
-Use Kilo `/itl-*` or `.agents/skills/1c-workflow-fast/SKILL.md` routinely; use `.agents/skills/1c-workflow/SKILL.md` plus one reference for init/recovery. Long 1C Designer/Enterprise actions need `timeout_ms >= 1800000`; do not use `120000 ms` for `LoadConfigFromFiles`/`UpdateDBCfg`. `status`/`help` do not.
+Use Kilo `/itl-*` or `.agents/skills/1c-workflow-fast/SKILL.md` routinely. For init/recovery use `.agents/skills/1c-workflow/SKILL.md` plus one reference. Long 1C Designer/Enterprise actions need `timeout_ms >= 1800000`; do not use `120000 ms` for `LoadConfigFromFiles`/`UpdateDBCfg`. `status`/`help` do not.
 
 For Kilo `/itl`, return helper stdout verbatim; do not summarize, translate, merge OpenSpec, omit `Lifecycle:`/`Additional helper actions:`, or add "no lifecycle actions executed". Read `VANESSA-TESTS-GUIDE.md` only before editing `.feature`.
 
@@ -14,7 +14,7 @@ For PM5 product logic, technical or implementation architecture, internal subsys
 
 Use sibling Git worktrees, leave main on `master`, and load only copied branch infobases. Branch/event-baseline JSON is local state. On `master`, never update the source infobase unless an explicit test infobase is named. Empty `INFOBASE_PUBLISH_URL` is normal when publication is disabled.
 
-Development completion gate: `itldev/*` means the current Git branch name, never a directory or file glob. In such a branch, every agent-made 1C configuration/extension change under configured `exportPath`/`extensionsPath` (for example `src/cf`/`src/cfe`) requires relevant scenarios under configured `testsPath` (usually `tests/features`) and one fresh passed `/itl-check` after final edits. `/opsx-apply`, quick-fix, XML-only, and direct implementation requests have no exemption. Name each scenario and Vanessa report path. Without either proof, report blocker diagnostics; do not report ready/done/implemented. On `master`, editing these sources is a branch-safety blocker, not a test-cycle exception.
+Development completion gate: `itldev/*` means the current Git branch name, never a directory. There, every agent-made 1C configuration/extension change under configured `exportPath`/`extensionsPath` requires relevant scenarios under configured `testsPath` (usually `tests/features`) and one fresh passed `/itl-check` after final edits. `/opsx-apply`, quick-fix, XML-only, and direct implementation requests have no exemption. Name each scenario and Vanessa report path. Without either proof, report blocker diagnostics; do not report ready/done/implemented. On `master`, editing these sources is a branch-safety blocker. If coverage or verification was skipped, `/itl-verify-fix` reuses a relevant scenario unchanged and adds one only when missing.
 
 For quick-fix define one focused regression scenario before code; `syntaxcheck only` is insufficient. Promote multi-behavior, public API, architecture, or related-metadata work to OpenSpec.
 

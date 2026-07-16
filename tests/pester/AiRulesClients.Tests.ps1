@@ -139,11 +139,11 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
             $masterKiloCommands = @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".kilo\commands") -File -Filter "itl*.md" | Select-Object -ExpandProperty Name | Sort-Object)
             $masterKiloCommands | Should -Be @("itl.md", "itl-new-config-branch.md", "itl-new-extension-branch.md", "itl-status.md", "itl-update-workflow.md")
             $masterKiloCommands | Should -Not -Contain "itl-check.md"
+            $masterKiloCommands | Should -Not -Contain "itl-verify-fix.md"
             $masterKiloCommands | Should -Not -Contain "itl-refresh.md"
             $masterKiloCommands | Should -Not -Contain "itl-result.md"
-            $kiloConfig = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
-            @($kiloConfig.plugin) | Should -Contain "../.agents/skills/1c-workflow/kilo-plugin/itl-completion-gate.js"
-            (Test-Path -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-plugin\itl-completion-gate.js") -PathType Leaf) | Should -BeTrue
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -ErrorAction SilentlyContinue) | Should -BeFalse
+            (Test-Path -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-plugin\itl-completion-gate.js") -ErrorAction SilentlyContinue) | Should -BeFalse
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

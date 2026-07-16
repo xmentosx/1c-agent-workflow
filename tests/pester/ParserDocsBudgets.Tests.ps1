@@ -131,7 +131,7 @@
             @{ path = "AGENTS.md"; maxWords = 600; maxApproxTokens = 1000 },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 750; maxApproxTokens = 1500 },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 750; maxApproxTokens = 1500 },
-            @{ path = "templates\USER-RULES.append.md"; maxWords = 650; maxApproxTokens = 1200 },
+            @{ path = "templates\USER-RULES.append.md"; maxWords = 650; maxApproxTokens = 1120 },
             @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 900; maxApproxTokens = 1500 }
         )
 
@@ -221,7 +221,7 @@
         $expected = @{
             common = @("itl.md.template", "itl-status.md.template")
             master = @("itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-update-workflow.md.template")
-            dev = @("itl-check.md.template", "itl-refresh.md.template", "itl-result.md.template")
+            dev = @("itl-check.md.template", "itl-refresh.md.template", "itl-result.md.template", "itl-verify-fix.md.template")
         }
 
         foreach ($setName in $expected.Keys) {
@@ -444,9 +444,18 @@
         $wrapperText = Get-Content -Encoding UTF8 -Raw $wrapperPath
         $wrapperText | Should -Match "-Action\s+check-dev-branch"
         $wrapperText | Should -Match ([regex]::Escape('Do not run a separate base update first'))
+        $wrapperText | Should -Not -Match "three failed runs"
+
+        $recoveryPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-verify-fix.md.template"
+        $recoveryText = Get-Content -Encoding UTF8 -Raw $recoveryPath
+        $recoveryText | Should -Match "reuse it unchanged"
+        $recoveryText | Should -Match "do not add or edit a test merely because this command was invoked"
+        $recoveryText | Should -Match "-Action\s+check-dev-branch"
+        $recoveryText | Should -Match "three failed runs"
 
         $menuText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
         $menuText | Should -Match ([regex]::Escape("/itl-check"))
+        $menuText | Should -Match ([regex]::Escape("/itl-verify-fix"))
         $menuText | Should -Match "itldev/\*"
 
         foreach ($relativePath in @(

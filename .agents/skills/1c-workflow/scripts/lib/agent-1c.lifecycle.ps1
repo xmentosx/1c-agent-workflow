@@ -2238,73 +2238,6 @@ function Untrack-GeneratedKiloItlCommands {
     }
 }
 
-function Get-KiloCompletionGatePluginSpecifier {
-    return "../.agents/skills/1c-workflow/kilo-plugin/itl-completion-gate.js"
-}
-
-function Test-KiloPluginEntryMatchesSpecifier {
-    param(
-        [AllowNull()][object]$Entry,
-        [string]$Specifier
-    )
-
-    if ($Entry -is [string]) {
-        return [string]::Equals(([string]$Entry).Trim(), $Specifier, [System.StringComparison]::Ordinal)
-    }
-    if ($Entry -is [System.Collections.IEnumerable] -and $Entry -isnot [System.Collections.IDictionary]) {
-        $items = @($Entry)
-        return ($items.Count -gt 0 -and $items[0] -is [string] -and [string]::Equals(([string]$items[0]).Trim(), $Specifier, [System.StringComparison]::Ordinal))
-    }
-    return $false
-}
-
-function Ensure-KiloCompletionGatePluginConfig {
-    $path = Join-Path $script:ProjectRoot ".kilo\kilo.json"
-    $config = [ordered]@{}
-    if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) {
-        try {
-            $config = ConvertTo-Agent1cHashtable -Object ((Read-Utf8Text -Path $path) | ConvertFrom-Json)
-        } catch {
-            throw "KILO_PLUGIN_INVALID: could not parse $path. The file was not changed. $($_.Exception.Message)"
-        }
-    }
-
-    $entries = @()
-    if ($config.Contains("plugin")) {
-        $rawEntries = $config["plugin"]
-        if ($null -eq $rawEntries -or $rawEntries -is [string] -or $rawEntries -is [System.Collections.IDictionary] -or $rawEntries -isnot [System.Collections.IEnumerable]) {
-            throw "KILO_PLUGIN_INVALID: .kilo/kilo.json property 'plugin' must be an array. The file was not changed."
-        }
-        $entries = @($rawEntries)
-    }
-
-    $specifier = Get-KiloCompletionGatePluginSpecifier
-    $updatedEntries = @()
-    $found = $false
-    foreach ($entry in $entries) {
-        if (Test-KiloPluginEntryMatchesSpecifier -Entry $entry -Specifier $specifier) {
-            if ($found) {
-                continue
-            }
-            $found = $true
-        }
-        $updatedEntries += ,$entry
-    }
-    if (-not $found) {
-        $updatedEntries += $specifier
-    }
-
-    $config["plugin"] = @($updatedEntries)
-    $desiredText = (($config | ConvertTo-Json -Depth 30) + [Environment]::NewLine)
-    if ((Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) -and (Read-Utf8Text -Path $path) -eq $desiredText) {
-        return $path
-    }
-    $parent = Split-Path -Parent $path
-    New-Item -ItemType Directory -Force -Path $parent | Out-Null
-    Write-Utf8Text -Path $path -Value $desiredText
-    return $path
-}
-
 function Sync-KiloItlCommandSurface {
     param([string]$SourceRoot = $script:ProjectRoot)
 
@@ -2312,8 +2245,6 @@ function Sync-KiloItlCommandSurface {
         Write-Host "Skipping Kilo ITL command generation because ai_rules_1c kilocode is not installed."
         return
     }
-
-    $completionGateConfigPath = Ensure-KiloCompletionGatePluginConfig
 
     $templateRoot = Join-Path $SourceRoot ".agents\skills\1c-workflow\kilo-command-templates"
     if (-not (Test-Path -LiteralPath $templateRoot -PathType Container -ErrorAction SilentlyContinue)) {
@@ -2365,7 +2296,6 @@ function Sync-KiloItlCommandSurface {
     }
 
     Write-Host "Generated Kilo ITL command surface: $surface (.kilo\commands\itl*.md)"
-    Write-Host "Kilo ITL completion gate plugin config: $completionGateConfigPath"
 }
 
 function Assert-MasterWorktreeContext {
@@ -6199,6 +6129,7 @@ function Show-Help {
         Write-Host "  /itl"
         Write-Host "  /itl-status"
         Write-Host "  /itl-check"
+        Write-Host "  /itl-verify-fix"
         Write-Host "  /itl-refresh"
         Write-Host "  /itl-result"
         $inheritedPrimaryCommands = @(Get-KiloInheritedPrimaryItlCommands)
@@ -6220,6 +6151,7 @@ function Show-Help {
             Write-Host "  Kilo OpenSpec commands are unavailable: $($openSpec.reason)"
             Write-Host "  Recovery: in master run update-ai-rules or update-workflow, merge the update into this branch, then run /itl-refresh."
         }
+        Write-Host "  use /itl-verify-fix only to repair omitted coverage or a failing verification cycle."
     } else {
         Write-Host ""
         Write-Host "Lifecycle:"

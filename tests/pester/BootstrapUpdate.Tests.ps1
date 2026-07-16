@@ -150,7 +150,6 @@ exit 0
             "/itl-update-rules",
             "/itl-vibecoding1c-mcp",
             "/itl-update-base",
-            "/itl-verify",
             "/itl-switch",
             "/itl-close"
         )
@@ -727,7 +726,7 @@ local after
             [int]$operationState.continuationPid | Should -BeGreaterThan 0
 
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
-            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\kilo-plugin\itl-completion-gate.js") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\kilo-plugin\itl-completion-gate.js") -ErrorAction SilentlyContinue) | Should -Be $false
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\stale.txt") -PathType Leaf) | Should -Be $false
             @(Get-ChildItem -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md" -ErrorAction SilentlyContinue).Count | Should -Be 0
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow-fast\SKILL.md") -PathType Leaf) | Should -Be $true
@@ -761,7 +760,7 @@ local after
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".codex\config.toml")) | Should -Match "custom"
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".kilo\kilo.json")) | Should -Match "keep"
             $updatedKiloConfig = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".kilo\kilo.json") | ConvertFrom-Json
-            @($updatedKiloConfig.plugin) | Should -Contain "../.agents/skills/1c-workflow/kilo-plugin/itl-completion-gate.js"
+            $updatedKiloConfig.PSObject.Properties.Name | Should -Not -Contain "plugin"
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "scratch.local")) | Should -Match "keep untracked"
 
             $lock = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\dependency-lock.json") | ConvertFrom-Json

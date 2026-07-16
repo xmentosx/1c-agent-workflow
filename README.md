@@ -109,13 +109,14 @@ Slash-команды генерируются локально для каждо
 /itl
 /itl-status
 /itl-check
+/itl-verify-fix
 /itl-refresh
 /itl-result
 ```
 
-`/itl` показывает карту lifecycle, текущий контекст, доступные действия и пути соседних worktree. Редкие/helper-действия вызываются обычным текстом через агента или напрямую через PowerShell helper, но не засоряют slash-палитру. `/itl-update-workflow` виден в `master`, потому что обновление workflow-пакета - регулярное обслуживание проекта.
+`/itl-check` выполняет один штатный helper-run. `/itl-verify-fix` используется вручную, если агент мог пропустить релевантный сценарий или должен исправить тест/доработку и повторить проверку до pass.
 
-Workflow регистрирует локальный Kilo plugin, который после потенциальной записи проверяет branch-aware completion gate. Обычные ответы и read-only tools не вычисляют verification fingerprint. После bootstrap/update/refresh выполните Kilo `/reload` или откройте новую сессию. `KILO_PURE=1` отключает внешний plugin и оставляет только текстовый fallback из `USER-RULES.md`.
+`/itl` показывает карту lifecycle, текущий контекст, доступные действия и пути соседних worktree. Редкие/helper-действия вызываются обычным текстом через агента или напрямую через PowerShell helper, но не засоряют slash-палитру. `/itl-update-workflow` виден в `master`, потому что обновление workflow-пакета - регулярное обслуживание проекта.
 
 ## Важные правила
 
@@ -123,5 +124,5 @@ Workflow регистрирует локальный Kilo plugin, который
 
 - Не коммитьте `.dev.env`, пароли, локальные базы, downloaded tools, логи, `.agent-1c/dev-branches/*.json`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/commands/itl*.md` и `.kilo/kilo.json*`.
 - Не загружайте изменения ветки разработки напрямую в исходную базу; helper работает только с копией базы текущей `itldev/*` ветки.
-- `itldev/*` в completion gate — имя Git-ветки, не каталог. Для agent-made 1С-изменений готовность подтверждается релевантными Vanessa-сценариями и fresh passed `/itl-check`.
+- `itldev/*` в правилах готовности — имя Git-ветки, не каталог. Для agent-made 1С-изменений готовность подтверждается релевантными Vanessa-сценариями и fresh passed `/itl-check`.
 - `/itl-result` подчиняется `VERIFICATION_POLICY`, а зависимости - `DEPENDENCY_MODE`.
