@@ -18,11 +18,12 @@ itldev/*:
   /itl
   /itl-status
   /itl-check
+  /itl-verify-fix
   /itl-refresh
   /itl-result
 ```
 
-For Kilo Code, generate `.kilo/commands/itl*.md` only when `ai_rules_1c` lists `kilocode`; `master` gets its master surface and each `itldev/*` its dev surface. Synchronization must remove stale `itl*.md` files and verify that the resulting filenames exactly match the common plus current-context templates before a new worktree is opened. If Kilo still shows a cached command picker after the files are correct, use `/reload`. `/itl` returns helper `-Action help` stdout verbatim: state, recommended next step, lifecycle, visible slash commands, then grouped helper actions. Do not summarize, merge OpenSpec into visible commands, omit `Lifecycle:`/`Additional helper actions:`, or add a "no lifecycle actions executed" note. In a fresh clean `itldev/*` branch, recommend OpenSpec only when managed Kilo artifacts exist; otherwise recommend quick-fix or master-branch recovery. Recommend `/itl-check` only for checkable configuration/extension/Vanessa changes or stale/failed/unknown verification. MCP setup, extension setup/dump, branch closing, and rule updates stay natural-language or direct helper actions, not visible slash commands.
+For Kilo Code, generate `.kilo/commands/itl*.md` only when `ai_rules_1c` lists `kilocode`; `master` and `itldev/*` get their matching surfaces. Synchronization removes stale commands and verifies filenames before opening a worktree. Use `/reload` for a stale picker. `/itl` returns helper `-Action help` stdout verbatim: state, recommendation, lifecycle, visible commands, and grouped helper actions. Do not summarize, merge OpenSpec into visible commands, omit `Lifecycle:`/`Additional helper actions:`, or add a "no lifecycle actions executed" note. In a fresh clean `itldev/*`, recommend OpenSpec only with managed Kilo artifacts; otherwise recommend quick-fix or master recovery. Recommend `/itl-check` only for checkable changes or stale/failed/unknown verification. `/itl-verify-fix` is manual recovery for omitted coverage or a failing cycle, never the default. MCP setup, extension setup/dump, closing, and rule updates stay natural-language or direct helper actions.
 
 For Codex, prefer `$1c-workflow-fast` for routine installed-project actions. Use this detailed skill only for initialization, recovery, unusual topology, or explanation.
 

@@ -54,7 +54,6 @@ activate-dev-branch-context
 update-dev-branch-base
 run-dev-branch-tests
 stop-dev-branch-test-clients
-completion-gate-status
 check-dev-branch
 verify-dev-branch
 refresh-dev-branch
@@ -76,8 +75,6 @@ Extension helper actions and branch-local MCP actions are advanced/helper comman
 
 `stop-dev-branch-test-clients` stops only Vanessa `TESTMANAGER`/`TESTCLIENT` processes whose command line belongs to the current development branch infobase/worktree, then fails if any remain. Successful Vanessa verification performs the same cleanup automatically. It never stops foreign worktree test processes.
 
-`completion-gate-status` is a read-only machine interface for the Kilo plugin. It emits compact JSON with the Git branch, configured source/test paths, content-aware verification fingerprint, freshness, and report path. The plugin calls it only around potentially mutating turns; normal chat and recognized read-only tools do not scan the worktree. `KILO_PURE=1` disables external plugins, so only `USER-RULES.md` remains active in that diagnostic mode.
-
 `release-e2e-config-roundtrip` is reserved for `scripts/invoke-release-e2e.ps1`. It dumps the dedicated branch infobase into ignored local state, writes evidence under ignored `build/test-results`, and proves that a root `Configuration.xml` `Comment` loaded in strict `Partial` mode roundtrips while `Ext/ParentConfigurations.bin` is present. Do not expose it as a slash command or use it for ordinary project work.
 
 `release-e2e-snapshot` and `release-e2e-restore` are internal checkpoint actions for the same runner. They accept only a project-local ignored `.dt`; restore invalidates both configuration and extension fingerprints. Do not expose them as slash commands or use them as a general backup interface.
@@ -98,7 +95,7 @@ Extension branches: initialize extension; set/dump are recovery actions
 Maintenance/recovery: update base without tests, update workflow/rules, close/list/switch branches
 ```
 
-`update-ai-rules` refreshes files from the configured `ai_rules_1c` source with `-McpMode delegated`. A configured immutable `aiRules.ref` remains pinned in both `fresh` and `locked`; the controlled fork never consumes `main`. The installer preserves client MCP entries while idempotently ensuring Kilo loads `USER-RULES.md`; ITL separately registers its local completion plugin and owns the only transactional MCP reconcile when ready vibecoding1c replacements exist. It records the resolved commit in `.agent-1c/dependency-lock.json` and reapplies the ITL overlay in `USER-RULES.md`. If selection/state is incomplete, existing MCP entries are preserved. It does not normally append to `AGENTS.md` when the configured `AGENTS.md` already points to `USER-RULES.md`.
+`update-ai-rules` refreshes files from the configured `ai_rules_1c` source with `-McpMode delegated`. A configured immutable `aiRules.ref` remains pinned in both `fresh` and `locked`; the controlled fork never consumes `main`. The installer preserves client MCP entries while idempotently ensuring Kilo loads `USER-RULES.md`; ITL owns the only transactional MCP reconcile when ready vibecoding1c replacements exist. It records the resolved commit in `.agent-1c/dependency-lock.json` and reapplies the ITL overlay in `USER-RULES.md`. If selection/state is incomplete, existing MCP entries are preserved. It does not normally append to `AGENTS.md` when the configured `AGENTS.md` already points to `USER-RULES.md`.
 
 `update-workflow` refreshes the installed ITL workflow package in an already initialized project. It must run from the `master` worktree. The pre-copy phase checks master/clean state, copies only managed workflow files (never root `AGENTS.md`), records `workflowPackage`, then always starts the installed helper in a fresh PowerShell process with internal `post-copy`; only that new process updates rules, MCP, generated commands, and final checks. Generated `.kilo/commands/itl*.md` stay local and ignored. Projects whose old updater predates this re-exec contract need a one-time double run: the first installs it, the second guarantees all post-copy work runs on it. Later updates need one run. Kilo v7 may still display primary-checkout master commands in linked worktrees; `/itl` lists them separately as inherited and invalid, while direct master actions fail before mutation.
 

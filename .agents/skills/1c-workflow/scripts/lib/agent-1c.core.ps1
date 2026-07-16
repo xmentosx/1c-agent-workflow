@@ -278,7 +278,6 @@ function Test-Agent1cActionRequiresLifecycleLock {
     $readOnlyActions = @(
         "help",
         "status",
-        "completion-gate-status",
         "list-dev-branches",
         "validate",
         "check-tools",

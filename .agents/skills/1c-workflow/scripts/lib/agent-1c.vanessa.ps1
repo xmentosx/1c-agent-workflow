@@ -1781,46 +1781,6 @@ function Get-VerificationState {
     }
 }
 
-function Get-CompletionGateStatus {
-    $branch = Get-GitHeadBranch
-    if ([string]::IsNullOrWhiteSpace($branch)) {
-        throw "COMPLETION_GATE_BRANCH_UNKNOWN: current Git branch could not be determined."
-    }
-
-    $isDevelopmentBranch = $branch -like "itldev/*"
-    $currentFingerprint = Get-VerificationFingerprint
-    $verification = $null
-    $diagnostic = ""
-    if ($isDevelopmentBranch) {
-        try {
-            $verification = Get-VerificationState -State (Read-DevBranchState -Name "") -CurrentFingerprint $currentFingerprint
-        } catch {
-            $diagnostic = $_.Exception.Message
-        }
-    }
-
-    return [pscustomobject]@{
-        schemaVersion = 1
-        branch = $branch
-        isDevelopmentBranch = $isDevelopmentBranch
-        gateMode = $(if ($isDevelopmentBranch) { "development-verification" } else { "branch-safety" })
-        paths = [pscustomobject]@{
-            exportPath = (Get-ExportPath)
-            extensionsPath = (Get-ExtensionsPath)
-            testsPath = (Get-VanessaFeaturesPath)
-        }
-        currentFingerprint = $currentFingerprint
-        status = $(if ($null -ne $verification) { [string]$verification.effectiveStatus } else { "missing" })
-        freshPassed = $(if ($null -ne $verification) { [bool]$verification.isFreshPassed } else { $false })
-        reportPath = $(if ($null -ne $verification) { [string]$verification.reportPath } else { "" })
-        diagnostic = $diagnostic
-    }
-}
-
-function Write-CompletionGateStatus {
-    Write-Output ((Get-CompletionGateStatus | ConvertTo-Json -Depth 5 -Compress))
-}
-
 function Add-VerificationStaleIfNeeded {
     param(
         [object]$State,
