@@ -407,11 +407,11 @@ function Convert-ItlCommandForClient {
     if ($Client -in @("claude-code", "cursor")) {
         return ([regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?\n', ''))
     }
-    if ($Client -eq "opencode" -and $FileName -eq "itl-verify-fix.md") {
-        return ([regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?$', 'agent: build'))
-    }
     if (Test-ItlRoutineEnabledForCommand -FileName $FileName) {
         return ([regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?$', 'agent: itl-routine'))
+    }
+    if ($Client -eq "opencode") {
+        return ([regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?$', 'agent: build'))
     }
     return $Text
 }

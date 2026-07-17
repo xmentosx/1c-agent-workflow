@@ -104,8 +104,13 @@ Describe "ITL client adapters and verification modes" {
                 $commandRoot = if ($client -eq "kilocode") { Join-Path $tempRoot ".kilo\commands" } else { Join-Path $tempRoot ".opencode\command" }
                 $shortText = Get-Content -LiteralPath (Join-Path $commandRoot "itl.md") -Raw
                 $longText = Get-Content -LiteralPath (Join-Path $commandRoot "itl-new-config-branch.md") -Raw
-                $shortText | Should -Match $(if ($case.shortRoutine) { 'agent: itl-routine' } else { 'agent: code' })
-                $longText | Should -Match $(if ($case.longRoutine) { 'agent: itl-routine' } else { 'agent: code' })
+                $primaryAgent = $(if ($client -eq "opencode") { 'agent: build' } else { 'agent: code' })
+                $shortText | Should -Match $(if ($case.shortRoutine) { 'agent: itl-routine' } else { $primaryAgent })
+                $longText | Should -Match $(if ($case.longRoutine) { 'agent: itl-routine' } else { $primaryAgent })
+                if ($client -eq "opencode") {
+                    $shortText | Should -Not -Match '(?m)^agent:\s*code\s*$'
+                    $longText | Should -Not -Match '(?m)^agent:\s*code\s*$'
+                }
                 if ($client -eq "kilocode") {
                     (Get-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Raw | ConvertFrom-Json).snapshot | Should -BeFalse
                 }
@@ -145,11 +150,40 @@ Describe "ITL client adapters and verification modes" {
                 listed = (Get-ItlRoutineCommandNames) -contains "itl-vanessa-author.md"
                 kilocode = Convert-ItlCommandForClient -Text $authorTemplate -Client "kilocode" -FileName "itl-vanessa-author.md"
                 opencode = Convert-ItlCommandForClient -Text $authorTemplate -Client "opencode" -FileName "itl-vanessa-author.md"
+                opencodeVerifyFix = Convert-ItlCommandForClient -Text $verifyFix -Client "opencode" -FileName "itl-verify-fix.md"
             }
         }
         $authorRouting.listed | Should -BeFalse
         $authorRouting.kilocode | Should -Match '(?m)^agent:\s*code\s*$'
-        $authorRouting.opencode | Should -Match '(?m)^agent:\s*code\s*$'
+        $authorRouting.opencode | Should -Match '(?m)^agent:\s*build\s*$'
+        $authorRouting.opencodeVerifyFix | Should -Match '(?m)^agent:\s*build\s*$'
+    }
+
+    It "maps every development OpenCode ITL wrapper to a valid agent" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-opencode-dev-routing-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"masterBranch":"master","aiRules":{"tools":["opencode"]}}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value '{"tools":["opencode"],"files":{}}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_ROUTINE_MODE=off`n"
+            [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", "off", "Process")
+            [Environment]::SetEnvironmentVariable("SUBAGENT_MODEL_LIGHT", $null, "Process")
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot branch -M "itldev/opencode-routing"
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
+
+            $commands = @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".opencode\command") -File -Filter "itl*.md")
+            $commands.Count | Should -BeGreaterThan 0
+            foreach ($command in $commands) {
+                $text = Get-Content -LiteralPath $command.FullName -Raw
+                $text | Should -Match '(?m)^agent:\s*build\s*$'
+                $text | Should -Not -Match '(?m)^agent:\s*code\s*$'
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", $null, "Process")
+            [Environment]::SetEnvironmentVariable("SUBAGENT_MODEL_LIGHT", $null, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "removes only an unchanged inactive routine agent" {
