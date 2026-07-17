@@ -18,6 +18,12 @@ Describe "ITL client adapters and verification modes" {
             $registry.opencode.agentsPath | Should -Be ".opencode/agent"
             $registry.opencode.commandsPath | Should -Be ".opencode/command"
             $registry.opencode.mcpPath | Should -Be "opencode.json"
+            foreach ($client in @($registry.Keys)) {
+                [string]$registry[$client].reload | Should -Not -BeNullOrEmpty
+            }
+            $vanessaSource = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
+            $vanessaSource | Should -Match '\$adapter\.reload'
+            $vanessaSource | Should -Match 'reloadInstruction'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
@@ -132,6 +138,18 @@ Describe "ITL client adapters and verification modes" {
         $verifyFix = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-verify-fix.md.template") -Raw
         $verifyFix | Should -Match 'agent: code'
         $verifyFix | Should -Match 'VerificationTrigger repair'
+        $authorTemplate = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-vanessa-author.md.template") -Raw
+        $authorRouting = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            [pscustomobject]@{
+                listed = (Get-ItlRoutineCommandNames) -contains "itl-vanessa-author.md"
+                kilocode = Convert-ItlCommandForClient -Text $authorTemplate -Client "kilocode" -FileName "itl-vanessa-author.md"
+                opencode = Convert-ItlCommandForClient -Text $authorTemplate -Client "opencode" -FileName "itl-vanessa-author.md"
+            }
+        }
+        $authorRouting.listed | Should -BeFalse
+        $authorRouting.kilocode | Should -Match '(?m)^agent:\s*code\s*$'
+        $authorRouting.opencode | Should -Match '(?m)^agent:\s*code\s*$'
     }
 
     It "removes only an unchanged inactive routine agent" {

@@ -45,7 +45,7 @@ For low-risk ambiguity, choose the codebase-consistent option, state the assumpt
 
 - Verification evidence must be newer than the last relevant edit. Reuse fresh evidence; never claim a check ran when it did not.
 - BSL uses the applicable syntax, logic/review, style, impact, and runtime gates from `verification-gates.md`. Metadata XML uses schema/examples plus `verify_xml`. Embedded BSL requires both chains.
-- For agent-made 1C configuration/extension behavior changes in an installed ITL project, do not report ready/done until relevant Vanessa coverage exists or was updated and a fresh successful `/itl-check` completed after the last change. The helper owns infobase update and Vanessa execution. A quick-fix validation is not a substitute for this project completion gate.
+- For agent-made 1C configuration/extension behavior changes in an installed ITL project, do not report ready/done until relevant Vanessa coverage exists or was updated and a fresh successful `/itl-check` completed after the last change. A new or changed `.feature` must first pass `/itl-vanessa-author`; this authoring MCP pass does not replace `/itl-check`. The helper owns infobase update and final Vanessa execution. A quick-fix validation is not a substitute for this project completion gate.
 - If `USER-RULES.md` defines a post-change or completion command, it is mandatory even when a narrower validator already passed.
 - Load `content/rules/verification-delivery.md` after the hard gates. Report what changed, evidence actually produced, remaining risks, and relevant artifact paths.
 

@@ -75,4 +75,27 @@ exit 0
             $summary.logPath | Should -Be (Join-Path $runRoot "console.log")
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
+
+    It "returns structured Vanessa authoring failure without requiring the log tail" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-authoring-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$authoring = Join-Path $ProjectRoot '.agent-1c\vanessa-authoring\state.json'
+$payload = [ordered]@{ schemaVersion=1; status='failed'; action=$Action; stage='vanessa.preflight'; stageDetail='stale'; errorMessage='authoring pass stale'; exitCode=1; lastLogPath=''; errorCategory='unsupported-step'; requiredAction='/itl-vanessa-author'; authoringStatus='reload-required'; authoringStatePath=$authoring }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 1
+'@
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -- -Action check-dev-branch
+            $LASTEXITCODE | Should -Be 1
+            $summary = ($output -join "`n") | ConvertFrom-Json
+            $summary.errorCategory | Should -Be "unsupported-step"
+            $summary.requiredAction | Should -Be "/itl-vanessa-author"
+            $summary.nextAction | Should -Be "/itl-vanessa-author"
+            $summary.authoringStatus | Should -Be "reload-required"
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
 }

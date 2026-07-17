@@ -46,6 +46,14 @@ function Read-JsonFile {
     try { return (Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return $null }
 }
 
+function Get-ObjectValue {
+    param([object]$Object, [string]$Name, [object]$Default = $null)
+    if ($null -eq $Object) { return $Default }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) { return $Default }
+    return $property.Value
+}
+
 function Find-LauncherRunDirectory {
     param([object[]]$Output, [datetime]$StartedAt, [string]$RunsRoot)
     foreach ($line in @($Output)) {
@@ -132,7 +140,11 @@ if ($null -eq $status) {
     }
 }
 
-$errorText = Limit-Text -Value $status.errorMessage -Length 1400
+$errorText = Limit-Text -Value (Get-ObjectValue -Object $status -Name "errorMessage" -Default "") -Length 1400
+$errorCategory = [string](Get-ObjectValue -Object $status -Name "errorCategory" -Default "")
+$requiredAction = [string](Get-ObjectValue -Object $status -Name "requiredAction" -Default "")
+$authoringStatus = [string](Get-ObjectValue -Object $status -Name "authoringStatus" -Default "")
+$authoringStatePath = [string](Get-ObjectValue -Object $status -Name "authoringStatePath" -Default "")
 $logTail = ""
 if ($exitCode -ne 0 -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
     $logTail = ((Get-Content -LiteralPath $logPath -Tail 80 -Encoding UTF8 -ErrorAction SilentlyContinue) -join [Environment]::NewLine)
@@ -145,11 +157,17 @@ $nextAction = if ($exitCode -eq 0) {
     "none"
 } elseif ($confirmationRequired) {
     "Ask the developer for explicit confirmation, then rerun with -AllowUnverifiedResult."
+} elseif ($requiredAction) {
+    $requiredAction
+} elseif ($errorCategory -eq "runner") {
+    "Read only the last 80 lines of console.log and address the reported runner failure."
+} elseif ($errorCategory) {
+    "/itl-verify-fix"
 } else {
     "Read only the last 80 lines of console.log and address the reported failure."
 }
 $artifacts = [System.Collections.Generic.List[string]]::new()
-foreach ($candidate in @($status.lastLogPath, $logPath, $statusPath)) {
+foreach ($candidate in @((Get-ObjectValue -Object $status -Name "lastLogPath" -Default ""), $authoringStatePath, $logPath, $statusPath)) {
     if ($candidate -and -not $artifacts.Contains([string]$candidate)) { $artifacts.Add([string]$candidate) }
 }
 
@@ -162,6 +180,10 @@ $summary = [ordered]@{
     nextAction = $nextAction
     artifacts = @($artifacts)
     error = $errorText
+    errorCategory = $errorCategory
+    requiredAction = $requiredAction
+    authoringStatus = $authoringStatus
+    authoringStatePath = $authoringStatePath
     logPath = $logPath
     statusPath = $statusPath
 }

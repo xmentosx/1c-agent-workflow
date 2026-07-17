@@ -19,6 +19,7 @@ master:
 itldev/*:
   /itl
   /itl-status
+  /itl-vanessa-author
   /itl-check
   /itl-verify-fix
   /itl-refresh
@@ -26,7 +27,7 @@ itldev/*:
   /itl-litemode <mode>
 ```
 
-Render ITL commands only for the one active client. Kilo, Claude, Cursor, and OpenCode use their native project command paths; Codex uses project-local skills and natural requests. `master` and `itldev/*` get matching surfaces. Synchronization removes only generated `itl*.md`, preserves user files, and verifies filenames. Follow the adapter reload instruction. `/itl` returns helper `-Action help` stdout verbatim: state, recommendation, lifecycle, visible commands, and grouped helper actions. Do not summarize, merge OpenSpec into visible commands, omit `Lifecycle:`/`Additional helper actions:`, or add a "no lifecycle actions executed" note. Recommend `/itl-check` only for checkable changes or stale/failed/unknown verification. `/itl-verify-fix` is manual recovery, never the default.
+Render ITL commands only for the one active client. Kilo, Claude, Cursor, and OpenCode use their native project command paths; Codex uses project-local skills and natural requests. `master` and `itldev/*` get matching surfaces. Synchronization removes only generated `itl*.md`, preserves user files, and verifies filenames. Follow the adapter reload instruction. `/itl` returns helper `-Action help` stdout verbatim: state, recommendation, lifecycle, visible commands, and grouped helper actions. Do not summarize, merge OpenSpec into visible commands, omit `Lifecycle:`/`Additional helper actions:`, or add a "no lifecycle actions executed" note. Recommend `/itl-vanessa-author` when changed features lack a fresh authoring pass; otherwise use `/itl-check` for checkable changes or stale/failed/unknown verification. `/itl-verify-fix` is manual recovery, never the default.
 
 For Codex, prefer `$1c-workflow-fast` for routine installed-project actions. Use this detailed skill only for initialization, recovery, unusual topology, or explanation.
 
@@ -74,7 +75,7 @@ Do not call the wizard helper directly, run `Test-Path` preflight, use backgroun
 - Use sibling Git worktrees for new development branches by default and leave the main folder on `master`.
 - Load branch changes only into the copied development branch infobase, never directly into the source infobase.
 - Use `/itl-check` or `check-dev-branch` for executable verification. Effective ITL modes decide which components run; a skipped component produces partial evidence, never a fresh pass. `/deploy-and-test` is a bridge to the same helper.
-- Read `references/vanessa-tests.md` only before creating or editing Vanessa Automation feature files.
+- Read `references/vanessa-tests.md` and `vanessa-authoring.md` only before creating or editing Vanessa feature files.
 - For native Windows executables such as `1cv8.exe`, pass `Start-Process -ArgumentList` as one joined and correctly quoted command-line string, never as a PowerShell array.
 - Do not search or load ignored runtime folders such as `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/infobases/`, `build/test-results/`, or `logs/` unless diagnosing a specific helper run or artifact.
 

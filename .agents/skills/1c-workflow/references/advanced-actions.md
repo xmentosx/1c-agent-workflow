@@ -26,6 +26,9 @@ install-vanessa-mcp
 start-vanessa-mcp
 stop-vanessa-mcp
 vanessa-mcp-status
+prepare-vanessa-authoring
+complete-vanessa-authoring
+begin-verification-repair
 install-roctup-mcp
 update-roctup-mcp
 start-roctup-mcp

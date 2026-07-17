@@ -2571,6 +2571,7 @@ function Update-WorkflowPackage {
     Set-RunStage -Stage "workflow-update.post-copy" -Detail "Applying installed-project overlays and dependency updates."
     Assert-MasterWorktreeContext -Operation "update-workflow post-copy"
     Ensure-GitIgnore
+    Sync-ItlVanessaLibraries
     Update-AgentGuidanceBridge
     Update-UserRules
     Update-RoctupMcp
@@ -4018,6 +4019,7 @@ function Initialize-Project {
         Install-AiRules1c
     }
     Set-RunStage -Stage "init.guidance" -Detail "Updating agent guidance, USER-RULES, and Kilo commands"
+    Sync-ItlVanessaLibraries
     Update-AgentGuidanceBridge
     Update-UserRules
     Sync-KiloItlCommandSurface
@@ -5667,10 +5669,18 @@ function Show-WorkflowStatus {
 }
 
 function Invoke-DevBranchCheck {
-    Update-DevBranchBase
     $trigger = $(if ($VerificationTrigger) { $VerificationTrigger } else { "command" })
     $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
+    $state = Read-DevBranchState -Name $DevBranchName
+    $mcpRuntime = Get-VanessaMcpRuntimeInfo -State $state
+    if ($mcpRuntime.processAlive) {
+        Stop-VanessaAuthoringMcpForState -State $state -Quiet | Out-Null
+    }
+    Assert-VanessaAuthoringPreflight -Trigger $trigger -ExplicitComponents $explicit
+    Use-ItlVerificationRepairAttempt
+    Update-DevBranchBase
     Invoke-ItlVerificationCycle -Trigger $trigger -ExplicitComponents $explicit
+    Complete-ItlVerificationRepairSession
 }
 
 function Check-DevBranch {
@@ -6214,6 +6224,8 @@ function Show-Help {
             $verification = Get-VerificationState -State $state
             $kind = Get-DevBranchKind -State $state
             $hasCheckableChanges = Test-DevBranchHasCheckableChanges -State $state
+            $authoringRequired = $false
+            try { $authoringRequired = Test-VanessaAuthoringRequired } catch { $authoringRequired = $false }
 
             Write-Host ""
             Write-Host "Branch:"
@@ -6239,7 +6251,9 @@ function Show-Help {
             Write-Host "  Last result: $(Get-StateValue -State $state -Name 'lastResultPath' -Default '<none>')"
             Write-Host "  Final result: $(Get-StateValue -State $state -Name 'finalResultPath' -Default '<none>')"
             Write-Host ""
-            if ($hasCheckableChanges -or (@("failed", "stale", "unknown") -contains $verification.effectiveStatus)) {
+            if ($authoringRequired) {
+                Write-Host "Recommended next step: /itl-vanessa-author"
+            } elseif ($hasCheckableChanges -or (@("failed", "stale", "unknown") -contains $verification.effectiveStatus)) {
                 Write-Host "Recommended next step: /itl-check"
             } elseif (-not $verification.isFreshPassed) {
                 if ($openSpec.isAvailable) {
@@ -6257,9 +6271,9 @@ function Show-Help {
         Write-Host ""
         Write-Host "Lifecycle:"
         if ($openSpec.isAvailable) {
-            Write-Host "  optional /opsx-explore -> quick-fix or /opsx-propose -> /opsx-apply/work -> /itl-check -> /itl-result"
+            Write-Host "  optional /opsx-explore -> quick-fix or /opsx-propose -> /opsx-apply/work -> /itl-vanessa-author when features change -> /itl-check -> /itl-result"
         } else {
-            Write-Host "  quick-fix -> /itl-check -> /itl-result; restore the active client's OpenSpec surface before an OpenSpec change."
+            Write-Host "  quick-fix -> /itl-vanessa-author when features change -> /itl-check -> /itl-result; restore the active client's OpenSpec surface before an OpenSpec change."
         }
         Write-Host "  use /itl-refresh when master changes must be merged into this branch."
         Write-Host ""
@@ -6267,6 +6281,7 @@ function Show-Help {
         Write-Host "  /itl"
         Write-Host "  /itl-status"
         Write-Host "  /itl-check"
+        Write-Host "  /itl-vanessa-author"
         Write-Host "  /itl-verify-fix"
         Write-Host "  /itl-refresh"
         Write-Host "  /itl-result"

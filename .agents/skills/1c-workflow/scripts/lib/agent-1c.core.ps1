@@ -255,9 +255,49 @@ function Write-RunStatus {
         gitIndexLockPreExisted = [bool]$script:GitIndexLockPreExisted
         resumedFrom = $script:ResumedFrom
         recoveryReason = $script:RecoveryReason
+        errorCategory = $(if ($script:RunErrorCategory) { [string]$script:RunErrorCategory } else { "" })
+        requiredAction = $(if ($script:RunRequiredAction) { [string]$script:RunRequiredAction } else { "" })
+        authoringStatus = $(if ($script:RunAuthoringStatus) { [string]$script:RunAuthoringStatus } else { "" })
+        authoringStatePath = $(if ($script:RunAuthoringStatePath) { [string]$script:RunAuthoringStatePath } else { "" })
     }
 
     Write-Utf8Text -Path $script:ResolvedRunStatusPath -Value (($payload | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+}
+
+function Set-RunFailureContext {
+    param(
+        [ValidateSet("", "missing-suite", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log")]
+        [string]$Category = "",
+        [string]$RequiredAction = ""
+    )
+
+    if ($Category) { $script:RunErrorCategory = $Category }
+    if ($RequiredAction) { $script:RunRequiredAction = $RequiredAction }
+}
+
+function Set-RunFailureContextFromMessage {
+    param([string]$Message)
+
+    if ($script:RunErrorCategory -or [string]::IsNullOrWhiteSpace($Message)) { return }
+    $category = "runner"
+    $requiredAction = ""
+    if ($Message -match '(?i)(No Vanessa .*feature|features path was not found|missing-suite)') {
+        $category = "missing-suite"
+        $requiredAction = "/itl-verify-fix"
+    } elseif ($Message -match '(?i)(undefined step|step.+not found|unsupported-step|authoring pass)') {
+        $category = "unsupported-step"
+        $requiredAction = "/itl-vanessa-author"
+    } elseif ($Message -match '(?i)(scenario context|scenario-context)') {
+        $category = "scenario-context"
+        $requiredAction = "/itl-vanessa-author"
+    } elseif ($Message -match '(?i)(event.?log)') {
+        $category = "event-log"
+        $requiredAction = "/itl-verify-fix"
+    } elseif ($Message -match '(?i)(assert|expected|verification failed)') {
+        $category = "product-assertion"
+        $requiredAction = "/itl-verify-fix"
+    }
+    Set-RunFailureContext -Category $category -RequiredAction $requiredAction
 }
 
 function Set-RunStage {
@@ -1569,6 +1609,8 @@ function Ensure-GitIgnore {
         ".agent-1c/dev-branches/",
         ".agent-1c/event-log-baselines/",
         ".agent-1c/runs/",
+        ".agent-1c/vanessa-authoring/",
+        ".agent-1c/verification-repair/",
         ".agent-1c/locks/",
         ".agent-1c/infobases/",
         ".agent-1c/tools/event-log-exporter/",

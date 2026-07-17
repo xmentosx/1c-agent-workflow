@@ -2380,7 +2380,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $kiloConfig.permission.bash | Should -Be "ask"
             $kiloConfig.PSObject.Properties.Name | Should -Not -Contain "plugin"
             $branchKiloCommands = @(Get-ChildItem -LiteralPath (Join-Path $worktreePath ".kilo\commands") -File -Filter "itl*.md" | Select-Object -ExpandProperty Name | Sort-Object)
-            $branchKiloCommands | Should -Be @("itl.md", "itl-check.md", "itl-litemode.md", "itl-refresh.md", "itl-result.md", "itl-status.md", "itl-verify-fix.md")
+            $branchKiloCommands | Should -Be @("itl.md", "itl-check.md", "itl-litemode.md", "itl-refresh.md", "itl-result.md", "itl-status.md", "itl-vanessa-author.md", "itl-verify-fix.md")
             $branchKiloCommands | Should -Not -Contain "itl-new-config-branch.md"
             $branchKiloCommands | Should -Not -Contain "itl-new-extension-branch.md"
             $branchKiloCommands | Should -Not -Contain "itl-update-workflow.md"

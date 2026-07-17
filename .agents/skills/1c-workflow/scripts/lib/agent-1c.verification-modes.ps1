@@ -121,7 +121,69 @@ function Test-ItlEventLogCurrent {
         lastEventLogOnlyNewErrorCount = $newErrors.Count
     }
     Write-Host "Event-log verification: $status. $reason"
-    if ($status -ne "passed") { throw $reason }
+    if ($status -ne "passed") {
+        Set-RunFailureContext -Category "event-log" -RequiredAction "/itl-verify-fix"
+        throw $reason
+    }
+}
+
+function Get-ItlVerificationRepairStatePath {
+    return (Join-Path $script:ProjectRoot ".agent-1c\verification-repair\current.json")
+}
+
+function Start-ItlVerificationRepairSession {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "begin-verification-repair"
+    $record = [pscustomobject][ordered]@{
+        schemaVersion = 1
+        sessionId = [guid]::NewGuid().ToString("N")
+        projectRoot = $script:ProjectRoot
+        branch = Get-CurrentBranch
+        attempts = 0
+        maximumAttempts = 3
+        status = "active"
+        startedAt = (Get-Date).ToString("o")
+        updatedAt = (Get-Date).ToString("o")
+    }
+    $path = Get-ItlVerificationRepairStatePath
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+    Write-Utf8Text -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+    Write-Host "Repair session: $($record.sessionId)"
+    Write-Host "Repair attempts: 0/3"
+}
+
+function Use-ItlVerificationRepairAttempt {
+    if ($VerificationTrigger -ne "repair") { return }
+    $path = Get-ItlVerificationRepairStatePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
+        Start-ItlVerificationRepairSession
+    }
+    $record = Read-Utf8Text -Path $path | ConvertFrom-Json
+    if ($RepairSessionId -and [string]$record.sessionId -ne $RepairSessionId) {
+        throw "Repair session mismatch. Active: $($record.sessionId); requested: $RepairSessionId."
+    }
+    if ([string]$record.branch -ne (Get-CurrentBranch) -or (Get-FullPathNormalized ([string]$record.projectRoot)) -ne (Get-FullPathNormalized $script:ProjectRoot)) {
+        throw "Repair session belongs to another branch or worktree. Begin a new /itl-verify-fix invocation."
+    }
+    if ([int]$record.attempts -ge 3) {
+        Set-RunFailureContext -Category "runner" -RequiredAction "report-blocker"
+        throw "Repair session $($record.sessionId) exhausted its three full verification runs. Return blocker diagnostics; a fourth run is forbidden."
+    }
+    $record.attempts = [int]$record.attempts + 1
+    $record.updatedAt = (Get-Date).ToString("o")
+    Write-Utf8Text -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+    Write-Host "Repair session: $($record.sessionId)"
+    Write-Host "Repair attempt: $($record.attempts)/3"
+}
+
+function Complete-ItlVerificationRepairSession {
+    if ($VerificationTrigger -ne "repair") { return }
+    $path = Get-ItlVerificationRepairStatePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) { return }
+    $record = Read-Utf8Text -Path $path | ConvertFrom-Json
+    $record.status = "passed"
+    $record.updatedAt = (Get-Date).ToString("o")
+    Write-Utf8Text -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
 }
 
 function Invoke-ItlVerificationCycle {

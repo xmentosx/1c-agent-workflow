@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status", "install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "run-dev-branch-tests", "stop-dev-branch-test-clients", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status", "prepare-vanessa-authoring", "complete-vanessa-authoring", "begin-verification-repair", "install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "run-dev-branch-tests", "stop-dev-branch-test-clients", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -51,6 +51,12 @@ param(
     [string]$VerificationTrigger = "",
     [ValidateSet("", "vanessa", "event-log", "all")]
     [string]$ExplicitVerificationComponent = "",
+    [ValidateSet("", "passed", "failed")]
+    [string]$AuthoringResult = "",
+    [ValidateSet("", "missing-suite", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log")]
+    [string]$AuthoringErrorCategory = "",
+    [string]$AuthoringResultsPath = "",
+    [string]$RepairSessionId = "",
     [string[]]$ConfigObjectPaths = @(),
     [switch]$PublishToWeb,
     [switch]$Force,
@@ -209,6 +215,10 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Mode" -Value $Mode
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationTrigger" -Value $VerificationTrigger
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ExplicitVerificationComponent" -Value $ExplicitVerificationComponent
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuthoringResult" -Value $AuthoringResult
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuthoringErrorCategory" -Value $AuthoringErrorCategory
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuthoringResultsPath" -Value $AuthoringResultsPath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "RepairSessionId" -Value $RepairSessionId
     if ($ConfigObjectPaths.Count -gt 0) { Add-Agent1cReexecArgument -Arguments $arguments -Name "ConfigObjectPaths" -Value ($ConfigObjectPaths -join ",") }
     Add-Agent1cReexecArgument -Arguments $arguments -Name "PublishToWeb" -Value $PublishToWeb
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Force" -Value $Force
@@ -246,6 +256,10 @@ $script:GitIndexLockPreExisted = $false
 $script:LauncherPid = $LauncherPid
 $script:ResumedFrom = $(if ($ResumeRunStatusPath) { Resolve-Agent1cFullPath -Path $ResumeRunStatusPath } else { "" })
 $script:RecoveryReason = $RecoveryReason
+$script:RunErrorCategory = ""
+$script:RunRequiredAction = ""
+$script:RunAuthoringStatus = ""
+$script:RunAuthoringStatePath = ""
 $script:ProjectRoot = Resolve-Agent1cFullPath -Path $ProjectRoot
 $script:ConfigPath = Resolve-Agent1cFullPath -Path $ConfigPath
 $script:Config = $null
@@ -314,6 +328,9 @@ try {
         "start-vanessa-mcp" { Start-VanessaMcp }
         "stop-vanessa-mcp" { Stop-VanessaMcp }
         "vanessa-mcp-status" { Show-VanessaMcpStatus }
+        "prepare-vanessa-authoring" { Prepare-VanessaAuthoring }
+        "complete-vanessa-authoring" { Complete-VanessaAuthoring -Result $AuthoringResult -ErrorCategory $AuthoringErrorCategory -ResultsPath $AuthoringResultsPath }
+        "begin-verification-repair" { Start-ItlVerificationRepairSession }
         "install-roctup-mcp" { Install-RoctupMcp }
         "update-roctup-mcp" { Update-RoctupMcp }
         "start-roctup-mcp" { Start-RoctupMcp }
@@ -367,6 +384,7 @@ try {
     Write-RunStatus -Status "succeeded" -ExitCode 0
 } catch {
     $errorMessage = $_.Exception.Message
+    Set-RunFailureContextFromMessage -Message $errorMessage
     try {
         $cleanupMessage = Invoke-GitIndexLockCleanupOnFailure
         if ($cleanupMessage) {
