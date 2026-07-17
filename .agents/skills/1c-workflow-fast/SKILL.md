@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow-fast
-description: Run routine 1C Agent Workflow commands through the PowerShell helper with minimal context loading. Use for status, ROCTUP/Vanessa UI MCP status/start/stop, vibecoding1c MCP setup/status, config or extension branch creation from master, Vanessa Automation verification, refresh, and CF/CFE export in installed projects.
+description: Run routine helper commands in installed ITL 1C projects for status, MCP control, branch creation, Vanessa verification, refresh, and CF/CFE export. Never use for development, review, tests, or docs of the 1c-agent-workflow source repository.
 ---
 
 # 1C Workflow Fast

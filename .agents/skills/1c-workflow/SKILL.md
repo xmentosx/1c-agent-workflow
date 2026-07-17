@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow
-description: Initialize and operate ITL 1C configuration/extension projects with Git, source infobases, branch infobase copies, ROCTUP/Vanessa UI MCP, web publication, Vanessa Automation verification, CF/CFE export, and refresh. Use for init, checks, MCP setup/status, branch lifecycle, verification, export, switching, or ITL command help.
+description: Initialize and operate installed ITL 1C projects for bootstrap, checks, MCP, branch lifecycle, verification, export, refresh, switching, and command help. Never use for development, review, tests, or docs of the 1c-agent-workflow source repository.
 ---
 
 # 1C Workflow
