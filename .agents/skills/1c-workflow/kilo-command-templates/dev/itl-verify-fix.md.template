@@ -7,7 +7,7 @@ Use this recovery command only from an active `itldev/*` development branch work
 
 1. Identify the current agent-made configuration/extension change from the user request, Git status/diff, and configured `exportPath`/`extensionsPath`. A Git-only refresh or merge from `master` is not an agent-made behavior change by itself.
 2. Search configured `testsPath` for scenarios that exercise the changed observable behavior. Name the matching scenarios. If coverage is relevant and sufficient, reuse it unchanged: do not add or edit a test merely because this command was invoked.
-3. Only when relevant coverage is missing, read `VANESSA-TESTS-GUIDE.md` and add the smallest reliable scenario. A quick-fix normally needs one focused scenario; add another only for a separate meaningful boundary.
+3. Only when relevant coverage is missing, read `.agents/skills/1c-workflow/references/vanessa-tests.md` and add the smallest reliable scenario. A quick-fix normally needs one focused scenario; add another only for a separate meaningful boundary.
 4. Run the existing helper directly from the current project directory with `timeout_ms >= 1800000` when supported:
 
 ```powershell

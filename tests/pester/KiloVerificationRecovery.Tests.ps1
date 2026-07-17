@@ -59,7 +59,7 @@ Describe "Kilo verification recovery command" {
             "current agent-made configuration/extension change",
             "reuse it unchanged",
             "do not add or edit a test merely because this command was invoked",
-            "VANESSA-TESTS-GUIDE.md",
+            ".agents/skills/1c-workflow/references/vanessa-tests.md",
             "-Action check-dev-branch",
             "event-log baseline check",
             "Fix a defective scenario",

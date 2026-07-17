@@ -31,4 +31,5 @@ These instructions govern development of the `1c-agent-workflow` source reposito
 - Installed-project lifecycle: `.agents/skills/1c-workflow/SKILL.md` and its matching reference only.
 - Package bootstrap contract: `AGENT-INSTALL.md` and `install-agent-1c-workflow.ps1`.
 - Controlled fork intake and migration: `docs/ai-rules-fork-upgrades.md`.
+- Source package layout and ownership: `docs/package-architecture.md`.
 - Local and release gates: `docs/local-quality-gate.md` and `docs/release-checklist.md`.

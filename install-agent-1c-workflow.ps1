@@ -267,6 +267,7 @@ foreach ($relativePath in @(
     ".agents\skills\product-docs",
     ".agents\skills\itl-roctup-1c-data",
     ".agents\skills\itl-vanessa-ui-mcp",
+    "docs\itl-workflow",
     "templates"
 )) {
     Copy-ManagedDirectory -SourceRoot $sourceRootFull -TargetRoot $projectRootFull -RelativePath $relativePath
@@ -274,12 +275,7 @@ foreach ($relativePath in @(
 
 foreach ($relativePath in @(
     "install-agent-1c-workflow.ps1",
-    "README.md",
-    "AGENT-INSTALL.md",
-    "DEVELOPER-GUIDE.ru.md",
-    "DEV-BRANCH-DEVELOPMENT.ru.md",
-    "VANESSA-TESTS-GUIDE.md",
-    "VANESSA-TESTS-GUIDE.ru.md"
+    "AGENT-INSTALL.md"
 )) {
     Copy-ManagedFile -SourceRoot $sourceRootFull -TargetRoot $projectRootFull -RelativePath $relativePath
 }

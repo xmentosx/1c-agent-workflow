@@ -16,9 +16,10 @@ Use `scripts/agent-1c.ps1` when PowerShell is available. Open `references/workfl
 - `references/branch-lifecycle.md`: branches, worktrees, extension helpers, context activation, refresh, list/switch, advanced close.
 - `references/verification-result.md`: `/itl-check`, Vanessa Automation, event-log baseline, result export, `verificationPolicy`.
 - `references/dev-branch-development.md`: work inside an existing `itldev/*` branch.
+- `references/vanessa-tests.md`: author or edit focused Vanessa Automation feature tests.
 - `references/advanced-actions.md`: diagnostics and full helper action catalog.
 
-Root `DEVELOPER-GUIDE.ru.md` and `DEV-BRANCH-DEVELOPMENT.ru.md` are human-facing; read only for explanation. For unclear intent, show helper `help` unchanged.
+Human-facing guides live under `docs/itl-workflow/`; read them only for explanation. For unclear intent, show helper `help` unchanged.
 
 ## Safety Guardrails
 
