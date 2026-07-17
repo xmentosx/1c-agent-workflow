@@ -305,20 +305,26 @@
     It "keeps Enterprise normalization as the final resumable branch initialization step" {
         $initStart = $HelperText.IndexOf('function Initialize-DevBranchRuntime')
         $initBlock = $HelperText.Substring($initStart, $HelperText.IndexOf('function Get-ResumableDevBranchState', $initStart) - $initStart)
-        $baselineIndex = $initBlock.IndexOf('Initialize-DevBranchEventLogBaseline')
-        $pendingIndex = $initBlock.IndexOf('-Status "enterprise-normalization-pending"')
+        $repositoryUnboundIndex = $initBlock.LastIndexOf('-Status "repository-unbound"')
+        $protectionIndex = $initBlock.LastIndexOf('Resolve-DevBranchUnsafeActionProtectionState')
+        $protectionStateIndex = $initBlock.LastIndexOf('-Status "unsafe-action-protection-resolved"')
+        $launcherIndex = $initBlock.LastIndexOf('Register-DevBranchInLauncher')
+        $baselineIndex = $initBlock.LastIndexOf('Initialize-DevBranchEventLogBaseline')
+        $pendingIndex = $initBlock.LastIndexOf('-Status "enterprise-normalization-pending"')
         $normalizeIndex = $initBlock.LastIndexOf('Ensure-DevBranchEnterpriseNormalized -State $state -Reason "branch-copy"')
         $dataMcpIndex = $initBlock.LastIndexOf('Invoke-DevBranchDataMcpAfterPublication')
         $surfaceIndex = $initBlock.LastIndexOf('Sync-KiloItlCommandSurface')
-        $confirmationIndex = $initBlock.LastIndexOf('Confirm-DevBranchUnsafeActionProtection')
         $readyIndex = $initBlock.LastIndexOf('-Status "ready"')
+        $repositoryUnboundIndex | Should -BeGreaterThan -1
+        $protectionIndex | Should -BeGreaterThan $repositoryUnboundIndex
+        $protectionStateIndex | Should -BeGreaterThan $protectionIndex
+        $launcherIndex | Should -BeGreaterThan $protectionStateIndex
         $baselineIndex | Should -BeGreaterThan -1
         $pendingIndex | Should -BeGreaterThan $baselineIndex
         $normalizeIndex | Should -BeGreaterThan $pendingIndex
         $dataMcpIndex | Should -BeGreaterThan $normalizeIndex
         $surfaceIndex | Should -BeGreaterThan $dataMcpIndex
-        $confirmationIndex | Should -BeGreaterThan $surfaceIndex
-        $readyIndex | Should -BeGreaterThan $confirmationIndex
+        $readyIndex | Should -BeGreaterThan $surfaceIndex
         $initBlock | Should -Match 'Resuming final Enterprise normalization for existing development branch copy'
         $initBlock | Should -Match 'enterpriseNormalizationStatus'
     }
@@ -1650,6 +1656,7 @@
             "WEB_PUBLISH_BY_DEFAULT",
             "WEB_PUBLISH_AUTO",
             "DEPENDENCY_MODE",
+            "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE",
             "VIBECODING1C_MCP_SETUP_DURING_INIT"
         )
         $savedEnv = @{}
@@ -1681,6 +1688,7 @@
                         WEB_PUBLISH_BY_DEFAULT = "false"
                         WEB_PUBLISH_AUTO = "false"
                         DEPENDENCY_MODE = "fresh"
+                        SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE = "defer"
                         VIBECODING1C_MCP_SETUP_DURING_INIT = "false"
                     }
                     Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
@@ -2063,6 +2071,132 @@ if (`$?) { exit 0 } else { exit 1 }
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\branch-lifecycle.md")) | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP"
     }
 
+    It "keeps source confirmation local, context-bound, and free of passwords" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-source-protection-state-" + [guid]::NewGuid().ToString("N"))
+        $oldKind = [Environment]::GetEnvironmentVariable("INFOBASE_KIND", "Process")
+        $oldSource = [Environment]::GetEnvironmentVariable("SOURCE_INFOBASE_PATH", "Process")
+        $oldUser = [Environment]::GetEnvironmentVariable("IB_USER", "Process")
+        try {
+            $sourceBase = Join-Path $tempRoot "source"
+            New-Item -ItemType Directory -Force -Path $sourceBase | Out-Null
+            [Environment]::SetEnvironmentVariable("INFOBASE_KIND", "file", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_INFOBASE_PATH", $sourceBase, "Process")
+            [Environment]::SetEnvironmentVariable("IB_USER", "Developer", "Process")
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $saved = Save-SourceInfoBaseUnsafeActionProtectionConfirmation -ConfirmationMode "manual-confirm"
+                $valid = Get-ValidSourceInfoBaseUnsafeActionProtectionConfirmation
+                [Environment]::SetEnvironmentVariable("SOURCE_INFOBASE_PATH", (Join-Path $tempRoot "another-source"), "Process")
+                $changedSource = Get-ValidSourceInfoBaseUnsafeActionProtectionConfirmation
+                [Environment]::SetEnvironmentVariable("SOURCE_INFOBASE_PATH", $sourceBase, "Process")
+                [Environment]::SetEnvironmentVariable("IB_USER", "AnotherUser", "Process")
+                $changedUser = Get-ValidSourceInfoBaseUnsafeActionProtectionConfirmation
+                [pscustomobject]@{
+                    saved = $saved
+                    valid = $valid
+                    changedSource = $changedSource
+                    changedUser = $changedUser
+                    stateText = Read-Utf8Text -Path (Get-SourceInfoBaseUnsafeActionProtectionStatePath)
+                }
+            }
+
+            $result.valid.sourceKey | Should -Be $result.saved.sourceKey
+            $result.changedSource | Should -BeNullOrEmpty
+            $result.changedUser | Should -BeNullOrEmpty
+            $result.stateText | Should -Not -Match "password"
+            $result.stateText | Should -Match '"infoBaseUser"\s*:\s*"Developer"'
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match "source-infobase-unsafe-action-protection\.json"
+        } finally {
+            [Environment]::SetEnvironmentVariable("INFOBASE_KIND", $oldKind, "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_INFOBASE_PATH", $oldSource, "Process")
+            [Environment]::SetEnvironmentVariable("IB_USER", $oldUser, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "uses a valid master confirmation before branch fallback" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-ValidSourceInfoBaseUnsafeActionProtectionConfirmation {
+                return [pscustomobject]@{
+                    sourceKey = "abc123"
+                    confirmationMode = "manual-confirm"
+                    confirmedAt = "2026-07-17T12:00:00+03:00"
+                    infoBaseUser = "Developer"
+                    confirmed = $true
+                }
+            }
+            function Confirm-DevBranchUnsafeActionProtection { throw "branch fallback must not run" }
+            function Test-InteractiveInputAvailable { return $false }
+            function Get-DevBranchUnsafeActionProtectionSetupRaw { throw "branch mode must not be read for a valid source confirmation" }
+            Assert-DevBranchUnsafeActionProtectionPromptAvailable
+            $state = Resolve-DevBranchUnsafeActionProtectionState `
+                -State @{} `
+                -InfoBaseKind "file" `
+                -InfoBasePath "C:\bases\branch" `
+                -BranchName "feature" `
+                -MainProjectRoot $RepoRoot
+            [pscustomobject]$state
+        }
+
+        $result.unsafeActionProtectionResolution | Should -Be "source-confirmed"
+        $result.unsafeActionProtectionConfirmed | Should -BeTrue
+        $result.unsafeActionProtectionSourceKey | Should -Be "abc123"
+    }
+
+    It "keeps source confirmation quiet and branch fallback attention-visible" {
+        $sourceStart = $HelperText.IndexOf('function Confirm-SourceInfoBaseUnsafeActionProtection')
+        $sourceEnd = $HelperText.IndexOf('function Initialize-SourceInfoBaseUnsafeActionProtection', $sourceStart)
+        $sourceBlock = $HelperText.Substring($sourceStart, $sourceEnd - $sourceStart)
+        $sourceBlock | Should -Not -Match "Show-DevBranchUnsafeActionProtectionAttention"
+        $sourceBlock | Should -Not -Match '\[Console\]::Beep'
+        $branchStart = $HelperText.IndexOf('function Confirm-DevBranchUnsafeActionProtection')
+        $branchEnd = $HelperText.IndexOf('function Confirm-SourceInfoBaseUnsafeActionProtection', $branchStart)
+        $branchBlock = $HelperText.Substring($branchStart, $branchEnd - $branchStart)
+        $branchBlock | Should -Match "Show-DevBranchUnsafeActionProtectionAttention"
+    }
+
+    It "implements defer, confirmed, and manual-confirm source init modes" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:Mode = ""
+            $script:Clears = 0
+            $script:Saves = @()
+            $script:ManualPrompts = 0
+            function Get-SourceInfoBaseUnsafeActionProtectionMode { return $script:Mode }
+            function Clear-SourceInfoBaseUnsafeActionProtectionConfirmation { $script:Clears++ }
+            function Save-SourceInfoBaseUnsafeActionProtectionConfirmation {
+                param([string]$ConfirmationMode)
+                $script:Saves += $ConfirmationMode
+                return [pscustomobject]@{ confirmationMode = $ConfirmationMode }
+            }
+            function Test-InteractiveInputAvailable { return $true }
+            function Confirm-SourceInfoBaseUnsafeActionProtection {
+                $script:ManualPrompts++
+                return [pscustomobject]@{ confirmed = $true }
+            }
+
+            $script:Mode = "defer"
+            Initialize-SourceInfoBaseUnsafeActionProtection 6>$null
+            $script:Mode = "confirmed"
+            Initialize-SourceInfoBaseUnsafeActionProtection 6>$null
+            $script:Mode = "manual-confirm"
+            Initialize-SourceInfoBaseUnsafeActionProtection 6>$null
+            [pscustomobject]@{
+                clears = $script:Clears
+                saves = ($script:Saves -join "|")
+                manualPrompts = $script:ManualPrompts
+            }
+        }
+
+        $result.clears | Should -Be 1
+        $result.saves | Should -Be "confirmed|manual-confirm"
+        $result.manualPrompts | Should -Be 1
+    }
+
     It "stops a lingering native process after result artifacts are complete" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-native-completion-" + [guid]::NewGuid().ToString("N"))
 
@@ -2425,7 +2559,7 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
-    It "resumes worktree branch initialization after final confirmation failure" {
+    It "resumes worktree branch initialization after the early protection resolution fails" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-worktree-resume-test-" + [guid]::NewGuid().ToString("N"))
         $worktreeRoot = "$tempRoot-worktrees"
         $worktreePath = Join-Path $worktreeRoot "partial-branch"
@@ -2478,25 +2612,21 @@ if (`$?) { exit 0 } else { exit 1 }
             $statePath = Join-Path $worktreePath ".agent-1c\dev-branches\partial-branch.json"
             (Test-Path -LiteralPath $statePath -PathType Leaf) | Should -Be $true
             $state = Get-Content -Encoding UTF8 -Raw $statePath | ConvertFrom-Json
-            $state.initializationStatus | Should -Be "enterprise-normalization-pending"
+            $state.initializationStatus | Should -Be "repository-unbound"
             $state.initializationError | Should -Match "Unsupported DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP value"
-            $expectedLauncherName = "$projectName - Partial Branch"
-            $state.launcherInfoBaseName | Should -Be $expectedLauncherName
-
             $launcherPath = Join-Path $env:APPDATA "1C\1CEStart\ibases.v8i"
-            $launcherText = Get-Content -Encoding UTF8 -Raw $launcherPath
-            ([regex]::Matches($launcherText, ("(?m)^\[{0}\]\r?$" -f [regex]::Escape($expectedLauncherName)))).Count | Should -Be 1
+            (Test-Path -LiteralPath $launcherPath -PathType Leaf -ErrorAction SilentlyContinue) | Should -BeFalse
 
             $statusOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action status 2>&1
             $LASTEXITCODE | Should -Be 0
             $statusText = $statusOutput -join [Environment]::NewLine
-            $statusText | Should -Match "Initialization status: enterprise-normalization-pending"
+            $statusText | Should -Match "Initialization status: repository-unbound"
             $statusText | Should -Match "Recovery: rerun new-dev-branch"
 
             $listOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action list-dev-branches 2>&1
             $LASTEXITCODE | Should -Be 0
             $listText = $listOutput -join [Environment]::NewLine
-            $listText | Should -Match "Initialization status: enterprise-normalization-pending"
+            $listText | Should -Match "Initialization status: repository-unbound"
             $listText | Should -Match ([regex]::Escape([System.IO.Path]::GetFullPath($worktreePath)))
 
             foreach ($envPath in @((Join-Path $tempRoot ".dev.env"), (Join-Path $worktreePath ".dev.env"))) {
@@ -2512,6 +2642,8 @@ if (`$?) { exit 0 } else { exit 1 }
             $resumedState.initializationStatus | Should -Be "ready"
             $resumedState.initializationError | Should -Be ""
             $resumedState.unsafeActionProtectionSetupMode | Should -Be "skip"
+            $resumedState.unsafeActionProtectionResolution | Should -Be "skip"
+            $expectedLauncherName = "$projectName - Partial Branch"
             $launcherTextAfter = Get-Content -Encoding UTF8 -Raw $launcherPath
             ([regex]::Matches($launcherTextAfter, ("(?m)^\[{0}\]\r?$" -f [regex]::Escape($expectedLauncherName)))).Count | Should -Be 1
         } finally {

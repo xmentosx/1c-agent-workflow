@@ -1292,6 +1292,73 @@ exit 0
         $result.webPublishAuto | Should -BeFalse
     }
 
+    It "requires and normalizes the source unsafe action protection init mode" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            $base = [pscustomobject]@{
+                agentTarget = "codex"
+                platformPath = "C:\Program Files\1cv8\8.3.99.1\bin\1cv8.exe"
+                infoBaseKind = "file"
+                sourceUsesRepository = $false
+                sourceInfoBasePath = "C:\bases\source"
+                dependencyMode = "fresh"
+            }
+            $missing = Normalize-InitAnswers -Answers $base
+            $missingMessage = ""
+            try { Assert-InitAnswers -Answers $missing } catch { $missingMessage = $_.Exception.Message }
+
+            $manual = Normalize-InitAnswers -Answers ([pscustomobject]@{
+                agentTarget = "codex"
+                platformPath = $base.platformPath
+                infoBaseKind = "file"
+                sourceUsesRepository = $false
+                sourceInfoBasePath = $base.sourceInfoBasePath
+                dependencyMode = "fresh"
+                sourceInfoBaseUnsafeActionProtectionMode = "MANUAL-CONFIRM"
+            })
+            $invalidMessage = ""
+            try { ConvertTo-SourceInfoBaseUnsafeActionProtectionMode "automatic" | Out-Null } catch { $invalidMessage = $_.Exception.Message }
+
+            [pscustomobject]@{
+                missingMessage = $missingMessage
+                manual = $manual.sourceInfoBaseUnsafeActionProtectionMode
+                invalidMessage = $invalidMessage
+            }
+        }
+
+        $result.missingMessage | Should -Match "sourceInfoBaseUnsafeActionProtectionMode"
+        $result.manual | Should -Be "manual-confirm"
+        $result.invalidMessage | Should -Match "manual-confirm, defer, or confirmed"
+        $HelperText | Should -Match 'sourceInfoBaseUnsafeActionProtectionMode\s*=\s*"manual-confirm"'
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\project.json")) | Should -Match '"sourceInfoBaseUnsafeActionProtectionMode"\s*:\s*"manual-confirm"'
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE=manual-confirm"
+    }
+
+    It "gives the configured source protection environment setting precedence over project json" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-source-protection-config-" + [guid]::NewGuid().ToString("N"))
+        $oldMode = [Environment]::GetEnvironmentVariable("SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE", "Process")
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $tempRoot ".agent-1c\project.json")
+            [Environment]::SetEnvironmentVariable("SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE", "defer", "Process")
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $fromEnvironment = (New-ConfiguredInitAnswers).sourceInfoBaseUnsafeActionProtectionMode
+                [Environment]::SetEnvironmentVariable("SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE", $null, "Process")
+                $fromProject = (New-ConfiguredInitAnswers).sourceInfoBaseUnsafeActionProtectionMode
+                [pscustomobject]@{ fromEnvironment = $fromEnvironment; fromProject = $fromProject }
+            }
+            $result.fromEnvironment | Should -Be "defer"
+            $result.fromProject | Should -Be "manual-confirm"
+        } finally {
+            [Environment]::SetEnvironmentVariable("SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE", $oldMode, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "normalizes and persists base configuration version init answers" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-base-configuration-version-" + [guid]::NewGuid().ToString("N"))
         $envNames = @(

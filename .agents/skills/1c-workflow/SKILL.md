@@ -44,7 +44,7 @@ Long lifecycle runs need `timeout_ms >= 1800000`; monitored init needs an outer 
 
 If monitored bootstrap is interrupted, repeat the same command with `timeout_ms >= 3900000`; the launcher owns orphan detection and resume. Do not delete Git locks, continue init manually, or edit run status.
 
-With default `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=manual-confirm`, create branches through `scripts/run-agent-1c-window.ps1` so confirmation is visible. Direct helper calls are only explicit automation with `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip`.
+With default `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=manual-confirm`, create branches through `scripts/run-agent-1c-window.ps1`: a valid source confirmation makes the run question-free, otherwise the copied base is confirmed immediately after repository unbind. Direct helper calls require that source confirmation or explicit automation with `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip`.
 
 Ask setup questions only when the helper cannot collect them. Store secrets only in `.dev.env` or environment variables. Keep ITL overlay rules in `USER-RULES.md`.
 

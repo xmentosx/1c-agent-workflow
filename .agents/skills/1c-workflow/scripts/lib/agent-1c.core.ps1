@@ -2999,6 +2999,19 @@ function Read-InitAnswersFromJson {
     return Read-Utf8Text -Path $resolvedPath | ConvertFrom-Json
 }
 
+function ConvertTo-SourceInfoBaseUnsafeActionProtectionMode {
+    param([object]$Value)
+
+    $mode = ([string]$Value).Trim().ToLowerInvariant()
+    if (-not $mode) {
+        return ""
+    }
+    if ($mode -notin @("manual-confirm", "defer", "confirmed")) {
+        throw "Unsupported sourceInfoBaseUnsafeActionProtectionMode value: $mode. Use manual-confirm, defer, or confirmed."
+    }
+    return $mode
+}
+
 function Confirm-InitWizardProjectRoot {
     Write-Section (Get-Agent1cUtf8Text "0JzQsNGB0YLQtdGAINC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNC4")
     Write-Host ((Get-Agent1cUtf8Text "0JrQvtGA0LXQvdGMINC/0YDQvtC10LrRgtCwOiA=") + $script:ProjectRoot)
@@ -3027,6 +3040,7 @@ function Read-InitWizardAnswersOnce {
         repositoryPassword = ""
         webPublishByDefault = $false
         webPublishAuto = $false
+        sourceInfoBaseUnsafeActionProtectionMode = "manual-confirm"
     }
 
     if ($infoBaseKind -eq "server") {
@@ -3127,6 +3141,7 @@ function Normalize-InitAnswers {
         webPublishByDefault = $false
         webPublishAuto = $false
         dependencyMode = ConvertTo-DependencyMode -Value $dependencyModeValue
+        sourceInfoBaseUnsafeActionProtectionMode = ConvertTo-SourceInfoBaseUnsafeActionProtectionMode (Get-AnswerValue -Answers $Answers -Names @("sourceInfoBaseUnsafeActionProtectionMode", "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE") -Default "")
         vibecoding1cMcpSetupDuringInit = $true
         installVanessaIfMissing = (ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("installVanessaIfMissing", "INSTALL_VANESSA_IF_MISSING") -Default $false) -Default $false)
     }
@@ -3150,6 +3165,7 @@ function Assert-InitAnswers {
         if (-not $Answers.repositoryPath) { $missing += "repositoryPath" }
         if (-not $Answers.repositoryUser) { $missing += "repositoryUser" }
     }
+    if (-not $Answers.sourceInfoBaseUnsafeActionProtectionMode) { $missing += "sourceInfoBaseUnsafeActionProtectionMode(manual-confirm|defer|confirmed)" }
 
     if ($missing.Count -gt 0) {
         throw "Init answers are incomplete. Missing: $($missing -join ', ')"
@@ -3174,6 +3190,7 @@ function Save-InitAnswers {
         WEB_PUBLISH_BY_DEFAULT = $(if ($Answers.webPublishByDefault) { "true" } else { "false" })
         WEB_PUBLISH_AUTO = $(if ($Answers.webPublishAuto) { "true" } else { "false" })
         DEPENDENCY_MODE = $Answers.dependencyMode
+        SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE = $Answers.sourceInfoBaseUnsafeActionProtectionMode
         VIBECODING1C_MCP_SETUP_DURING_INIT = $(if ($Answers.vibecoding1cMcpSetupDuringInit) { "true" } else { "false" })
     }
 
@@ -3186,10 +3203,12 @@ function Save-InitAnswers {
 }
 
 function New-ConfiguredInitAnswers {
+    $unsafeActionProtectionMode = ConvertTo-SourceInfoBaseUnsafeActionProtectionMode (Require-Value "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE or project.sourceInfoBaseUnsafeActionProtectionMode" (Get-Setting -EnvName "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE" -ConfigName "sourceInfoBaseUnsafeActionProtectionMode"))
     return [pscustomobject]@{
         webPublishByDefault = (Get-WebPublishByDefault)
         webPublishAuto = (Get-WebPublishAuto)
         installVanessaIfMissing = [bool]$InstallVanessaIfMissing
+        sourceInfoBaseUnsafeActionProtectionMode = $unsafeActionProtectionMode
     }
 }
 

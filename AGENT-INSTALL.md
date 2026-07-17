@@ -68,6 +68,8 @@ For non-interactive automation, write a JSON answers file and run:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-project -InitMode json -InitAnswersPath <answers.json>
 ```
 
+The answers JSON must include `sourceInfoBaseUnsafeActionProtectionMode` as `manual-confirm`, `defer`, or `confirmed`. Configured init reads the same setting from `SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE` first and then `project.json`. The normal wizard uses `manual-confirm`, opens the source Configurator only after a negative answer, and stores a local context-bound confirmation without passwords. `defer` leaves the copied-branch fallback active; `confirmed` is an explicit external assertion.
+
 If the wizard fails because terminal input is unavailable, do not collect the initialization questionnaire in chat and do not continue the lifecycle manually. Run the monitored wizard command above, or use JSON mode only when the developer explicitly requested non-interactive initialization or an answers file already exists.
 
 The agent should ask setup questions itself only when preparing a JSON answers file. Manual collection is not a fallback for unavailable interactive terminal input.

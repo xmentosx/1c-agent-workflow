@@ -16,6 +16,7 @@
 | `BASE_CONFIGURATION_VERSION` | Локальный override семейства конфигурации | `PM4`/`PM5`; пусто = project.json | user |
 | `IB_USER` | Пользователь копии базы | пусто = без имени | user/secret |
 | `IB_PASSWORD` | Пароль копии базы | пусто = без пароля | user/secret |
+| `SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE` | Защита исходной базы при init | `manual-confirm`/`defer`/`confirmed`; обязателен для JSON/configured, wizard сохраняет `manual-confirm` | init/user |
 | `REPOSITORY_PATH` | Путь к хранилищу 1С | путь/URL | user |
 | `REPOSITORY_USER` | Пользователь хранилища | строка | user/secret |
 | `REPOSITORY_PASSWORD` | Пароль хранилища | строка | user/secret |
@@ -66,7 +67,7 @@
 | `ITL_PORT_REGISTRY_HOME` | Общий writable-каталог реестра | путь или пусто | user |
 | `DEV_BRANCH_INFOBASE_ROOT` | Корень копий баз | пусто = `.agent-1c/infobases/dev-branches` | user |
 | `DEV_BRANCH_WORKTREE_ROOT` | Корень worktree | пусто = соседний `<project>-worktrees` | user |
-| `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP` | Подтверждение настройки защиты | `manual-confirm`/`skip`, default `manual-confirm` | user/init |
+| `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP` | Fallback-подтверждение для копии при отсутствии master-маркера | `manual-confirm`/`skip`, default `manual-confirm` | user/init |
 
 ## Web publication
 
