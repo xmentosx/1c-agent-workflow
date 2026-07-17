@@ -300,6 +300,341 @@ function Get-VanessaFeatureFiles {
     return @(Get-ChildItem -LiteralPath $resolvedPath -Recurse -File -Filter "*.feature" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
 }
 
+function Get-VanessaApplicationFeatureFiles {
+    param([string]$FeaturePath)
+
+    $featuresRoot = Resolve-ProjectPath $FeaturePath
+    return @(Get-VanessaFeatureFiles -FeaturePath $FeaturePath | Where-Object {
+        $relative = [string]$_.Substring($featuresRoot.TrimEnd("\", "/").Length).TrimStart("\", "/")
+        $relative -notmatch '^(?i)Libraries[\\/]'
+    })
+}
+
+function Get-VanessaAuthoringStatePath {
+    return (Join-Path $script:ProjectRoot ".agent-1c\vanessa-authoring\state.json")
+}
+
+function Read-VanessaAuthoringState {
+    $path = Get-VanessaAuthoringStatePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) { return $null }
+    try { return (Read-Utf8Text -Path $path | ConvertFrom-Json) } catch { throw "Vanessa authoring state is invalid: $path. $($_.Exception.Message)" }
+}
+
+function Write-VanessaAuthoringState {
+    param([object]$State)
+
+    $path = Get-VanessaAuthoringStatePath
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+    Write-Utf8Text -Path $path -Value (($State | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+    $script:RunAuthoringStatePath = $path
+    $script:RunAuthoringStatus = [string](Get-StateValue -State $State -Name "phase" -Default "")
+    return $path
+}
+
+function ConvertTo-ProjectRelativePath {
+    param([string]$Path)
+
+    $root = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd("\", "/")
+    $full = Resolve-Agent1cFullPath -Path $Path
+    if (-not $full.StartsWith(($root + "\"), [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Path is outside the project root: $full"
+    }
+    return $full.Substring($root.Length + 1).Replace("\", "/")
+}
+
+function Get-VanessaChangedFeatureFiles {
+    $featuresRoot = Resolve-ProjectPath (Get-VanessaFeaturesPath)
+    if (-not (Test-Path -LiteralPath $featuresRoot -ErrorAction SilentlyContinue)) { return @() }
+
+    $previousErrorAction = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $master = Get-MasterBranch
+        $base = (& git -C $script:ProjectRoot merge-base HEAD $master 2>$null | Select-Object -First 1)
+        if ($LASTEXITCODE -ne 0 -or -not $base) { $base = "HEAD" }
+        $names = @(& git -C $script:ProjectRoot -c core.quotepath=false -c core.safecrlf=false diff --name-only --diff-filter=ACMR $base -- 2>$null)
+        $names += @(& git -C $script:ProjectRoot -c core.quotepath=false ls-files --others --exclude-standard 2>$null)
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+    $result = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in @($names | Sort-Object -Unique)) {
+        if (-not $name -or [System.IO.Path]::GetExtension([string]$name) -ine ".feature") { continue }
+        $candidate = Resolve-ProjectPath ([string]$name)
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf -ErrorAction SilentlyContinue)) { continue }
+        $normalizedRoot = (Resolve-Agent1cFullPath -Path $featuresRoot).TrimEnd("\", "/")
+        $normalizedCandidate = Resolve-Agent1cFullPath -Path $candidate
+        if ($normalizedCandidate.StartsWith(($normalizedRoot + "\"), [System.StringComparison]::OrdinalIgnoreCase) -or $normalizedCandidate -eq $normalizedRoot) {
+            $result.Add($normalizedCandidate)
+        }
+    }
+    return @($result)
+}
+
+function Get-VanessaAuthoringFeatureRecords {
+    return @(Get-VanessaChangedFeatureFiles | ForEach-Object {
+        [pscustomobject][ordered]@{
+            path = ConvertTo-ProjectRelativePath -Path $_
+            sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+    } | Sort-Object path)
+}
+
+function Get-VanessaItlLibraryFingerprint {
+    $root = Join-Path (Resolve-ProjectPath (Get-VanessaFeaturesPath)) "Libraries\ITL"
+    if (-not (Test-Path -LiteralPath $root -PathType Container -ErrorAction SilentlyContinue)) { return "" }
+    $parts = @(Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue | Sort-Object FullName | ForEach-Object {
+        "$(ConvertTo-ProjectRelativePath -Path $_.FullName):$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())"
+    })
+    return Get-StringSha256 -Value ($parts -join "`n")
+}
+
+function Sync-ItlVanessaLibraries {
+    $sourceRoot = Join-Path (Split-Path -Parent $script:Agent1cScriptRoot) "assets\vanessa-libraries"
+    if (-not (Test-Path -LiteralPath $sourceRoot -PathType Container -ErrorAction SilentlyContinue)) {
+        throw "Managed Vanessa library assets are missing: $sourceRoot"
+    }
+    $featuresRoot = Resolve-ProjectPath (Get-VanessaFeaturesPath)
+    $itlRoot = Join-Path $featuresRoot "Libraries\ITL"
+    $projectRoot = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd("\", "/")
+    $normalizedItlRoot = Resolve-Agent1cFullPath -Path $itlRoot
+    if (-not $normalizedItlRoot.StartsWith(($projectRoot + "\"), [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to install managed Vanessa libraries outside the project root: $normalizedItlRoot"
+    }
+
+    New-Item -ItemType Directory -Force -Path $itlRoot | Out-Null
+    $edition = Get-BaseConfigurationVersion
+    foreach ($name in @("Core", $edition)) {
+        $source = Join-Path $sourceRoot $name
+        $target = Join-Path $itlRoot $name
+        if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw "Managed Vanessa library layer is missing: $source" }
+        if (Test-Path -LiteralPath $target -ErrorAction SilentlyContinue) { Remove-Item -LiteralPath $target -Recurse -Force }
+        Copy-Item -LiteralPath $source -Destination $target -Recurse -Force
+    }
+    $inactive = Join-Path $itlRoot $(if ($edition -eq "PM4") { "PM5" } else { "PM4" })
+    if (Test-Path -LiteralPath $inactive -ErrorAction SilentlyContinue) { Remove-Item -LiteralPath $inactive -Recurse -Force }
+    Write-Host "Managed Vanessa libraries: Core + $edition ($itlRoot)"
+}
+
+function Test-VanessaAuthoringStateMatches {
+    param([object]$State, [object[]]$FeatureRecords, [string]$LibraryFingerprint)
+
+    if ($null -eq $State) { return $false }
+    if ((Get-FullPathNormalized (Get-StateValue -State $State -Name "projectRoot" -Default "")) -ne (Get-FullPathNormalized $script:ProjectRoot)) { return $false }
+    if ([string](Get-StateValue -State $State -Name "branch" -Default "") -ne (Get-CurrentBranch)) { return $false }
+    if ([string](Get-StateValue -State $State -Name "libraryFingerprint" -Default "") -ne $LibraryFingerprint) { return $false }
+    $expected = @($FeatureRecords | ForEach-Object { "$($_.path):$($_.sha256)" }) -join "`n"
+    $featuresProperty = $State.PSObject.Properties["features"]
+    $stateFeatures = $(if ($null -eq $featuresProperty -or $null -eq $featuresProperty.Value) { @() } else { @($featuresProperty.Value) })
+    $actual = @($stateFeatures | ForEach-Object { "$($_.path):$($_.sha256)" }) -join "`n"
+    return ($expected -eq $actual)
+}
+
+function New-VanessaAuthoringState {
+    param([string]$Phase, [object[]]$FeatureRecords, [string]$LibraryFingerprint)
+
+    return [pscustomobject][ordered]@{
+        schemaVersion = 1
+        projectRoot = $script:ProjectRoot
+        branch = (Get-CurrentBranch)
+        productEdition = (Get-BaseConfigurationVersion)
+        testsPath = (Get-VanessaFeaturesPath)
+        phase = $Phase
+        reloadRequired = $false
+        client = ""
+        reloadInstruction = ""
+        mcpPid = 0
+        mcpPort = 0
+        mcpUrl = ""
+        mcpStoppedAt = ""
+        features = @($FeatureRecords)
+        libraryFingerprint = $LibraryFingerprint
+        resultsPath = ""
+        errorCategory = ""
+        createdAt = (Get-Date).ToString("o")
+        updatedAt = (Get-Date).ToString("o")
+        passedAt = ""
+    }
+}
+
+function Prepare-VanessaAuthoring {
+    Write-Section "Prepare Vanessa authoring"
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "prepare-vanessa-authoring"
+    $decision = Get-ItlVerificationExecutionDecision -Component "vanessa" -Trigger "command"
+    $features = @(Get-VanessaAuthoringFeatureRecords)
+    $libraryFingerprint = Get-VanessaItlLibraryFingerprint
+
+    if (-not $decision.run) {
+        $authoring = New-VanessaAuthoringState -Phase "skipped" -FeatureRecords $features -LibraryFingerprint $libraryFingerprint
+        $authoring | Add-Member -NotePropertyName reason -NotePropertyValue $decision.reason -Force
+        Write-VanessaAuthoringState -State $authoring | Out-Null
+        Write-Host "Vanessa authoring: skipped ($($decision.reason))."
+        return
+    }
+    if ($features.Count -eq 0) {
+        $authoring = New-VanessaAuthoringState -Phase "not-required" -FeatureRecords @() -LibraryFingerprint $libraryFingerprint
+        Write-VanessaAuthoringState -State $authoring | Out-Null
+        Write-Host "Vanessa authoring: not required; no new or changed .feature files."
+        return
+    }
+    $applicationFeatures = @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaFeaturesPath))
+    if ($applicationFeatures.Count -eq 0) {
+        Set-RunFailureContext -Category "missing-suite" -RequiredAction "/itl-verify-fix"
+        throw "missing-suite: changed library features exist, but no application .feature provides product coverage. Run /itl-verify-fix."
+    }
+
+    $existing = Read-VanessaAuthoringState
+    if ((Test-VanessaAuthoringStateMatches -State $existing -FeatureRecords $features -LibraryFingerprint $libraryFingerprint) -and [string]$existing.phase -eq "passed") {
+        Write-VanessaAuthoringState -State $existing | Out-Null
+        Write-Host "Vanessa authoring: existing pass is fresh."
+        return
+    }
+
+    $sameContext = $null -ne $existing -and
+        (Get-FullPathNormalized ([string](Get-StateValue -State $existing -Name "projectRoot" -Default ""))) -eq (Get-FullPathNormalized $script:ProjectRoot) -and
+        [string](Get-StateValue -State $existing -Name "branch" -Default "") -eq (Get-CurrentBranch)
+    if ($sameContext -and [string](Get-StateValue -State $existing -Name "phase" -Default "") -eq "reload-required") {
+        $runtime = Get-VanessaMcpRuntimeInfo -State $state
+        if ($runtime.processAlive) {
+            # Feature edits made during authoring are expected. Keep the live runtime and
+            # refresh the draft hashes; complete-vanessa-authoring records the final pass.
+            $existing.features = @($features)
+            $existing.libraryFingerprint = $libraryFingerprint
+            $existing.mcpPid = [int]$runtime.pid
+            $existing.mcpPort = [int]$runtime.port
+            $existing.mcpUrl = [string]$runtime.url
+            $existing.updatedAt = (Get-Date).ToString("o")
+            Write-VanessaAuthoringState -State $existing | Out-Null
+            Write-Host "Vanessa authoring: resuming the existing MCP runtime for this worktree."
+            Write-Host "Use the exposed Vanessa UI MCP tools; do not update the infobase or start another TESTMANAGER."
+            return
+        }
+    }
+
+    Set-RunStage -Stage "vanessa.authoring-update" -Detail "Updating the branch infobase before Vanessa MCP authoring."
+    Update-DevBranchBase
+    Start-VanessaMcp
+    $state = Read-DevBranchState -Name $DevBranchName
+    $runtime = Get-VanessaMcpRuntimeInfo -State $state
+    $client = Get-ItlActiveClient
+    $adapter = Get-ItlClientAdapter -Client $client
+    $authoring = New-VanessaAuthoringState -Phase "reload-required" -FeatureRecords $features -LibraryFingerprint $libraryFingerprint
+    $authoring.client = $client
+    $authoring.reloadRequired = $true
+    $authoring.reloadInstruction = [string]$adapter.reload
+    $authoring.mcpPid = [int]$runtime.pid
+    $authoring.mcpPort = [int]$runtime.port
+    $authoring.mcpUrl = [string]$runtime.url
+    $authoring.updatedAt = (Get-Date).ToString("o")
+    Write-VanessaAuthoringState -State $authoring | Out-Null
+    Write-Host "Vanessa authoring state: reloadRequired"
+    Write-Host "Reload/resume: $($adapter.reload) Then invoke /itl-vanessa-author again; do not use raw HTTP."
+}
+
+function Complete-VanessaAuthoring {
+    param(
+        [ValidateSet("", "passed", "failed")][string]$Result,
+        [string]$ErrorCategory = "",
+        [string]$ResultsPath = ""
+    )
+
+    if (-not $Result) { throw "complete-vanessa-authoring requires -AuthoringResult passed|failed." }
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "complete-vanessa-authoring"
+    $features = @(Get-VanessaAuthoringFeatureRecords)
+    $libraryFingerprint = Get-VanessaItlLibraryFingerprint
+    $authoring = Read-VanessaAuthoringState
+    if ($null -eq $authoring -or
+        (Get-FullPathNormalized ([string](Get-StateValue -State $authoring -Name "projectRoot" -Default ""))) -ne (Get-FullPathNormalized $script:ProjectRoot) -or
+        [string](Get-StateValue -State $authoring -Name "branch" -Default "") -ne (Get-CurrentBranch)) {
+        throw "Vanessa authoring state belongs to another branch/worktree or is missing. Rerun /itl-vanessa-author."
+    }
+    if ($features.Count -eq 0) {
+        throw "No changed .feature files remain to complete Vanessa authoring."
+    }
+
+    Stop-VanessaAuthoringMcpForState -State $state -Quiet | Out-Null
+    $authoring.features = @($features)
+    $authoring.libraryFingerprint = $libraryFingerprint
+    $authoring.phase = $Result
+    $authoring.reloadRequired = $false
+    $authoring.mcpPid = 0
+    $authoring.mcpStoppedAt = (Get-Date).ToString("o")
+    $authoring.resultsPath = $ResultsPath
+    $authoring.errorCategory = $(if ($Result -eq "failed") { $(if ($ErrorCategory) { $ErrorCategory } else { "runner" }) } else { "" })
+    $authoring.updatedAt = (Get-Date).ToString("o")
+    if ($Result -eq "passed") { $authoring.passedAt = $authoring.updatedAt }
+    Write-VanessaAuthoringState -State $authoring | Out-Null
+    if ($Result -eq "failed") {
+        Set-RunFailureContext -Category $authoring.errorCategory -RequiredAction "/itl-vanessa-author"
+        throw "Vanessa authoring failed ($($authoring.errorCategory)). Inspect MCP results: $ResultsPath"
+    }
+    Write-Host "Vanessa authoring: passed."
+}
+
+function Stop-VanessaAuthoringMcpForState {
+    param(
+        [object]$State,
+        [switch]$Quiet
+    )
+
+    $stopped = Stop-VanessaMcpForState -State $State -Quiet:$Quiet
+    $authoring = Read-VanessaAuthoringState
+    if ($null -eq $authoring) { return $stopped }
+    $sameContext = (Get-FullPathNormalized ([string](Get-StateValue -State $authoring -Name "projectRoot" -Default ""))) -eq (Get-FullPathNormalized $script:ProjectRoot) -and
+        [string](Get-StateValue -State $authoring -Name "branch" -Default "") -eq (Get-CurrentBranch)
+    if ($sameContext -and [string](Get-StateValue -State $authoring -Name "phase" -Default "") -eq "reload-required") {
+        $authoring.phase = "stopped"
+        $authoring.reloadRequired = $false
+        $authoring.mcpPid = 0
+        $authoring.mcpStoppedAt = (Get-Date).ToString("o")
+        $authoring.updatedAt = $authoring.mcpStoppedAt
+        Write-VanessaAuthoringState -State $authoring | Out-Null
+    }
+    return $stopped
+}
+
+function Assert-VanessaAuthoringPreflight {
+    param([ValidateSet("implicit", "command", "repair", "explicit")][string]$Trigger = "command", [string[]]$ExplicitComponents = @())
+
+    $decision = Get-ItlVerificationExecutionDecision -Component "vanessa" -Trigger $Trigger -ExplicitComponents $ExplicitComponents
+    if (-not $decision.run) { return }
+    $featuresPath = Get-VanessaFeaturesPath
+    $resolved = Resolve-ProjectPath $featuresPath
+    if (-not (Test-Path -LiteralPath $resolved -ErrorAction SilentlyContinue)) {
+        Set-RunFailureContext -Category "missing-suite" -RequiredAction "/itl-verify-fix"
+        throw "missing-suite: Vanessa testsPath was not found: $resolved"
+    }
+    $applicationFeatures = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath)
+    if ($applicationFeatures.Count -eq 0) {
+        Set-RunFailureContext -Category "missing-suite" -RequiredAction "/itl-verify-fix"
+        throw "missing-suite: no application .feature files found under '$featuresPath'. Libraries do not count as product coverage."
+    }
+    $changed = @(Get-VanessaAuthoringFeatureRecords)
+    if ($changed.Count -eq 0) { return }
+    $authoring = Read-VanessaAuthoringState
+    $libraryFingerprint = Get-VanessaItlLibraryFingerprint
+    if (-not (Test-VanessaAuthoringStateMatches -State $authoring -FeatureRecords $changed -LibraryFingerprint $libraryFingerprint) -or [string](Get-StateValue -State $authoring -Name "phase" -Default "") -ne "passed") {
+        Set-RunFailureContext -Category "unsupported-step" -RequiredAction "/itl-vanessa-author"
+        $script:RunAuthoringStatus = [string](Get-StateValue -State $authoring -Name "phase" -Default "missing")
+        $script:RunAuthoringStatePath = Get-VanessaAuthoringStatePath
+        throw "Vanessa authoring pass is missing or stale for changed .feature files. Run /itl-vanessa-author before /itl-check."
+    }
+    $script:RunAuthoringStatus = "passed"
+    $script:RunAuthoringStatePath = Get-VanessaAuthoringStatePath
+}
+
+function Test-VanessaAuthoringRequired {
+    $decision = Get-ItlVerificationExecutionDecision -Component "vanessa" -Trigger "command"
+    if (-not $decision.run) { return $false }
+    $changed = @(Get-VanessaAuthoringFeatureRecords)
+    if ($changed.Count -eq 0) { return $false }
+    $authoring = Read-VanessaAuthoringState
+    return (-not (Test-VanessaAuthoringStateMatches -State $authoring -FeatureRecords $changed -LibraryFingerprint (Get-VanessaItlLibraryFingerprint)) -or
+        [string](Get-StateValue -State $authoring -Name "phase" -Default "") -ne "passed")
+}
+
 function New-VanessaRunDirectory {
     $reportsRoot = Resolve-ProjectPath (Get-VanessaReportsPath)
     New-Item -ItemType Directory -Force -Path $reportsRoot | Out-Null
@@ -2094,8 +2429,17 @@ function Run-DevBranchTests {
     if ($verification.status -ne "passed") {
         Set-RunStage -Stage "vanessa.failed" -Detail $verification.reason
         if ($verification.status -eq "unknown") {
+            Set-RunFailureContext -Category "runner"
             Write-OneCVanessaProcessDiagnostics -State $state -TestPort $testPort -Context "Vanessa verify produced no reliable JUnit/status; active 1C process diagnostics"
             Stop-OwnHungVanessaTestClients -State $state -TestPort $testPort
+        } elseif ($eventLogVerification.status -eq "failed") {
+            Set-RunFailureContext -Category "event-log" -RequiredAction "/itl-verify-fix"
+        } elseif ([string]$verification.reason -match '(?i)(undefined step|step.+not found|unsupported-step)') {
+            Set-RunFailureContext -Category "unsupported-step" -RequiredAction "/itl-vanessa-author"
+        } elseif ([string]$verification.reason -match '(?i)(scenario context|scenario-context)') {
+            Set-RunFailureContext -Category "scenario-context" -RequiredAction "/itl-vanessa-author"
+        } else {
+            Set-RunFailureContext -Category "product-assertion" -RequiredAction "/itl-verify-fix"
         }
         throw "Vanessa verification did not pass: $($verification.status). $($verification.reason)"
     }
@@ -2196,6 +2540,7 @@ function Test-OneCVanessaTestProcess {
         return $false
     }
 
+    if ($commandLine -match '(?i)runMcp\s*;\s*mcpPort=') { return $false }
     return ($commandLine -match "(?i)(/TESTMANAGER|/TESTCLIENT|StartFeaturePlayer|VAParams=)")
 }
 

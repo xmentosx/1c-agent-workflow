@@ -2571,6 +2571,7 @@ function Update-WorkflowPackage {
     Set-RunStage -Stage "workflow-update.post-copy" -Detail "Applying installed-project overlays and dependency updates."
     Assert-MasterWorktreeContext -Operation "update-workflow post-copy"
     Ensure-GitIgnore
+    Sync-ItlVanessaLibraries
     Update-AgentGuidanceBridge
     Update-UserRules
     Update-RoctupMcp
@@ -2721,7 +2722,7 @@ function Test-DevBranchInitializationResumable {
     param([object]$State)
 
     $status = Get-DevBranchInitializationStatus -State $State
-    return (@("initializing", "infobase-copied", "repository-unbound", "launcher-registered", "enterprise-normalization-pending", "failed") -contains $status)
+    return (@("initializing", "infobase-copied", "repository-unbound", "unsafe-action-protection-resolved", "launcher-registered", "enterprise-normalization-pending", "failed") -contains $status)
 }
 
 function Set-DevBranchInitializationFields {
@@ -3299,6 +3300,91 @@ function Register-DevBranchInLauncher {
     }
 }
 
+function Get-SourceInfoBaseUnsafeActionProtectionStatePath {
+    param([string]$ProjectRootOverride = $script:ProjectRoot)
+    return (Join-Path $ProjectRootOverride ".agent-1c\source-infobase-unsafe-action-protection.json")
+}
+
+function Get-SourceInfoBaseUnsafeActionProtectionContext {
+    param([string]$ProjectRootOverride = $script:ProjectRoot)
+    $kind = ([string](Get-InfoBaseKind)).Trim().ToLowerInvariant()
+    $source = [string](Get-SourceInfoBasePath)
+    $identity = if ($kind -eq "file") {
+        $sourcePath = if ([System.IO.Path]::IsPathRooted($source)) { $source } else { Join-Path $ProjectRootOverride $source }
+        (Resolve-Agent1cFullPath -Path $sourcePath).TrimEnd("\", "/").ToLowerInvariant()
+    } else {
+        $source.Trim().ToLowerInvariant()
+    }
+    $user = ([string](Get-EnvValue -Name "IB_USER")).Trim()
+    $payload = "$kind`n$identity`n$($user.ToLowerInvariant())"
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $key = ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+    return [pscustomobject]@{
+        key = $key
+        infoBaseKind = $kind
+        sourceIdentity = $identity
+        user = $user
+    }
+}
+
+function Get-ValidSourceInfoBaseUnsafeActionProtectionConfirmation {
+    param([string]$ProjectRootOverride = $script:ProjectRoot)
+
+    $path = Get-SourceInfoBaseUnsafeActionProtectionStatePath -ProjectRootOverride $ProjectRootOverride
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+    try {
+        $state = Read-Utf8Text -Path $path | ConvertFrom-Json
+        $context = Get-SourceInfoBaseUnsafeActionProtectionContext -ProjectRootOverride $ProjectRootOverride
+        if (-not (ConvertTo-BoolSetting -Value (Get-StateValue -State $state -Name "confirmed" -Default $false) -Default $false)) {
+            return $null
+        }
+        if ([string](Get-StateValue -State $state -Name "sourceKey" -Default "") -ne $context.key) {
+            return $null
+        }
+        return $state
+    } catch {
+        Write-Warning "Ignoring unreadable source unsafe-action protection confirmation: $path. $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Save-SourceInfoBaseUnsafeActionProtectionConfirmation {
+    param([ValidateSet("manual-confirm", "confirmed")][string]$ConfirmationMode)
+
+    $context = Get-SourceInfoBaseUnsafeActionProtectionContext
+    $state = [ordered]@{
+        schemaVersion = 1
+        sourceKey = $context.key
+        infoBaseKind = $context.infoBaseKind
+        sourceIdentity = $context.sourceIdentity
+        infoBaseUser = $context.user
+        confirmationMode = $ConfirmationMode
+        confirmed = $true
+        confirmedAt = (Get-Date).ToString("o")
+    }
+    $path = Get-SourceInfoBaseUnsafeActionProtectionStatePath
+    Write-Utf8Text -Path $path -Value (($state | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+    return [pscustomobject]$state
+}
+
+function Clear-SourceInfoBaseUnsafeActionProtectionConfirmation {
+    $path = Get-SourceInfoBaseUnsafeActionProtectionStatePath
+    if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $path -Force
+    }
+}
+
+function Get-SourceInfoBaseUnsafeActionProtectionMode {
+    return ConvertTo-SourceInfoBaseUnsafeActionProtectionMode (Require-Value "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE or project.sourceInfoBaseUnsafeActionProtectionMode" (Get-Setting -EnvName "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE" -ConfigName "sourceInfoBaseUnsafeActionProtectionMode"))
+}
+
 function Get-DevBranchUnsafeActionProtectionSetupRaw {
     return (Get-Setting -EnvName "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP" -ConfigName "devBranchUnsafeActionProtectionSetup" -Default "manual-confirm").Trim().ToLowerInvariant()
 }
@@ -3317,6 +3403,9 @@ function Get-DevBranchUnsafeActionProtectionInteractiveRequiredMessage {
 }
 
 function Assert-DevBranchUnsafeActionProtectionPromptAvailable {
+    if ($null -ne (Get-ValidSourceInfoBaseUnsafeActionProtectionConfirmation)) {
+        return
+    }
     $mode = Get-DevBranchUnsafeActionProtectionSetupRaw
     if ($mode -eq "manual-confirm" -and -not (Test-InteractiveInputAvailable)) {
         throw (Get-DevBranchUnsafeActionProtectionInteractiveRequiredMessage)
@@ -3479,6 +3568,89 @@ function Confirm-DevBranchUnsafeActionProtection {
     }
 }
 
+function Confirm-SourceInfoBaseUnsafeActionProtection {
+    function Get-SourceUnsafeActionProtectionMessage {
+        param([int]$Index)
+        $messages = @(
+            "0J/QvtC00YLQstC10YDQttC00LXQvdC40LUg0LfQsNGJ0LjRgtGLINC+0YIg0L7Qv9Cw0YHQvdGL0YUg0LTQtdC50YHRgtCy0LjQuQ==",
+            "0JrQvtC90YLQtdC60YHRgjog",
+            "0JjQvdGE0L7RgNC80LDRhtC40L7QvdC90LDRjyDQsdCw0LfQsDog",
+            "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30Ys6IA==",
+            "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30Ysg0LIgLmRldi5lbnYg0L3QtSDQt9Cw0LTQsNC9Lg==",
+            "0J7RgtC60LvRjtGH0LjRgtC1INC30LDRidC40YLRgyDRgyDQv9C+0LvRjNC30L7QstCw0YLQtdC70Y8g0JjQkSwg0L/QvtC0INC60L7RgtC+0YDRi9C8IHdvcmtmbG93INC30LDQv9GD0YHQutCw0LXRgiDQvtCx0YDQsNCx0L7RgtC60Lgg0Lgg0YDQsNGB0YjQuNGA0LXQvdC40Y8u",
+            "0JXRgdC70Lgg0L7RgtCy0LXRgiDQvdC1INCU0JAsINCx0YPQtNC10YIg0LfQsNC/0YPRidC10L0g0JrQvtC90YTQuNCz0YPRgNCw0YLQvtGALiDQkiDQvdC10Lwg0L3Rg9C20L3QviDQvtGC0LrQu9GO0YfQuNGC0Ywg0LfQsNGJ0LjRgtGDINC+0YIg0L7Qv9Cw0YHQvdGL0YUg0LTQtdC50YHRgtCy0LjQuSwg0YHQvtGF0YDQsNC90LjRgtGMINC/0L7Qu9GM0LfQvtCy0LDRgtC10LvRjyDQuCDQt9Cw0LrRgNGL0YLRjCDQmtC+0L3RhNC40LPRg9GA0LDRgtC+0YAu",
+            "0JfQsNGJ0LjRgtCwINC+0YIg0L7Qv9Cw0YHQvdGL0YUg0LTQtdC50YHRgtCy0LjQuSDRg9C20LUg0L7RgtC60LvRjtGH0LXQvdCwPyDQktCy0LXQtNC40YLQtSDQlNCQINC00LvRjyDQv9GA0L7QtNC+0LvQttC10L3QuNGP",
+            "0JTQkA==",
+            "0KHQtdC50YfQsNGBINCx0YPQtNC10YIg0L7RgtC60YDRi9GCINCa0L7QvdGE0LjQs9GD0YDQsNGC0L7RgCDRg9C60LDQt9Cw0L3QvdC+0Lkg0LjQvdGE0L7RgNC80LDRhtC40L7QvdC90L7QuSDQsdCw0LfRiy4=",
+            "0JjQvdGB0YLRgNGD0LrRhtC40Y86",
+            "MS4g0J7RgtC60YDQvtC50YLQtSDRgdC/0LjRgdC+0Log0L/QvtC70YzQt9C+0LLQsNGC0LXQu9C10Lkg0LjQvdGE0L7RgNC80LDRhtC40L7QvdC90L7QuSDQsdCw0LfRiy4=",
+            "Mi4g0JLRi9Cx0LXRgNC40YLQtSDQv9C+0LvRjNC30L7QstCw0YLQtdC70Y8gJ3swfScsINC/0L7QtCDQutC+0YLQvtGA0YvQvCB3b3JrZmxvdyDQt9Cw0L/Rg9GB0LrQsNC10YIg0L7QsdGA0LDQsdC+0YLQutC4INC4INGA0LDRgdGI0LjRgNC10L3QuNGPLg==",
+            "Mi4g0JLRi9Cx0LXRgNC40YLQtSDQv9C+0LvRjNC30L7QstCw0YLQtdC70Y8g0JjQkSwg0L/QvtC0INC60L7RgtC+0YDRi9C8INGA0LDQt9GA0LDQsdC+0YLRh9C40Log0YDQsNCx0L7RgtCw0LXRgiDRgSDRjdGC0L7QuSDQsdCw0LfQvtC5Lg==",
+            "My4g0J7RgtC60LvRjtGH0LjRgtC1INC30LDRidC40YLRgyDQvtGCINC+0L/QsNGB0L3Ri9GFINC00LXQudGB0YLQstC40Lku",
+            "NC4g0KHQvtGF0YDQsNC90LjRgtC1INC/0L7Qu9GM0LfQvtCy0LDRgtC10LvRjy4=",
+            "NS4g0JfQsNC60YDQvtC50YLQtSDQmtC+0L3RhNC40LPRg9GA0LDRgtC+0YAu",
+            "Ni4g0J/QvtGB0LvQtSDQt9Cw0LrRgNGL0YLQuNGPINC/0L7QtNGC0LLQtdGA0LTQuNGC0LUg0JTQkCDQsiDRjdGC0L7QvCDQvtC60L3QtSBQb3dlclNoZWxsLg==",
+            "0JjRgdGF0L7QtNC90LDRjyDQsdCw0LfQsCDQv9GA0L7QtdC60YLQsA=="
+        )
+        return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($messages[$Index]))
+    }
+
+    $kind = Get-InfoBaseKind
+    $path = Get-SourceInfoBasePath
+    $user = [string](Get-EnvValue -Name "IB_USER")
+    Write-Section (Get-SourceUnsafeActionProtectionMessage 0)
+    while ($true) {
+        Write-Host ((Get-SourceUnsafeActionProtectionMessage 1) + (Get-SourceUnsafeActionProtectionMessage 18))
+        Write-Host ((Get-SourceUnsafeActionProtectionMessage 2) + $path)
+        if ($user) {
+            Write-Host ((Get-SourceUnsafeActionProtectionMessage 3) + $user)
+        } else {
+            Write-Host (Get-SourceUnsafeActionProtectionMessage 4)
+            Write-Host (Get-SourceUnsafeActionProtectionMessage 5)
+        }
+        Write-Host (Get-SourceUnsafeActionProtectionMessage 6)
+        $answerValue = Read-Host (Get-SourceUnsafeActionProtectionMessage 7)
+        if ($null -eq $answerValue) {
+            throw "Source infobase unsafe action protection confirmation requires interactive input."
+        }
+        if ([string]::Equals(([string]$answerValue).Trim(), (Get-SourceUnsafeActionProtectionMessage 8), [System.StringComparison]::OrdinalIgnoreCase)) {
+            return [pscustomobject]@{ mode = "manual-confirm"; confirmed = $true; confirmedAt = (Get-Date).ToString("o"); user = $user }
+        }
+        Write-Host (Get-SourceUnsafeActionProtectionMessage 9)
+        Write-Host (Get-SourceUnsafeActionProtectionMessage 10)
+        Write-Host (Get-SourceUnsafeActionProtectionMessage 11)
+        if ($user) {
+            Write-Host ((Get-SourceUnsafeActionProtectionMessage 12) -f $user)
+        } else {
+            Write-Host (Get-SourceUnsafeActionProtectionMessage 13)
+        }
+        Write-Host (Get-SourceUnsafeActionProtectionMessage 14)
+        Write-Host (Get-SourceUnsafeActionProtectionMessage 15)
+        Write-Host (Get-SourceUnsafeActionProtectionMessage 16)
+        Write-Host (Get-SourceUnsafeActionProtectionMessage 17)
+        Invoke-DesignerInteractive -InfoBasePath $path -InfoBaseKind $kind -User $user -Password (Get-EnvValue -Name "IB_PASSWORD") | Out-Null
+    }
+}
+
+function Initialize-SourceInfoBaseUnsafeActionProtection {
+    $mode = Get-SourceInfoBaseUnsafeActionProtectionMode
+    if ($mode -eq "defer") {
+        Clear-SourceInfoBaseUnsafeActionProtectionConfirmation
+        Write-Host (Get-Agent1cUtf8Text "0J/QvtC00YLQstC10YDQttC00LXQvdC40LUg0L7RgtC60LvRjtGH0LXQvdC40Y8g0LfQsNGJ0LjRgtGLINC+0YIg0L7Qv9Cw0YHQvdGL0YUg0LTQtdC50YHRgtCy0LjQuSDQtNC70Y8g0LjRgdGF0L7QtNC90L7QuSDQsdCw0LfRiyDQvtGC0LvQvtC20LXQvdC+INC00L4g0YHQvtC30LTQsNC90LjRjyDQstC10YLQutC4Lg==")
+        return
+    }
+    if ($mode -eq "confirmed") {
+        Save-SourceInfoBaseUnsafeActionProtectionConfirmation -ConfirmationMode "confirmed" | Out-Null
+        Write-Host (Get-Agent1cUtf8Text "0J/QvtC00YLQstC10YDQttC00LXQvdC40LUg0L7RgtC60LvRjtGH0LXQvdC40Y8g0LfQsNGJ0LjRgtGLINC+0YIg0L7Qv9Cw0YHQvdGL0YUg0LTQtdC50YHRgtCy0LjQuSDQtNC70Y8g0LjRgdGF0L7QtNC90L7QuSDQsdCw0LfRiyDQv9GA0LjQvdGP0YLQviDQuNC3INGP0LLQvdC+0Lkg0L3QsNGB0YLRgNC+0LnQutC4IGNvbmZpcm1lZC4=")
+        return
+    }
+    if (-not (Test-InteractiveInputAvailable)) {
+        throw "Source infobase unsafe action protection mode manual-confirm requires interactive input. Use the monitored init launcher or choose defer/confirmed explicitly."
+    }
+    Confirm-SourceInfoBaseUnsafeActionProtection | Out-Null
+    Save-SourceInfoBaseUnsafeActionProtectionConfirmation -ConfirmationMode "manual-confirm" | Out-Null
+}
+
 function Configure-DevBranchUnsafeActionProtection {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "configure-dev-branch-unsafe-action-protection"
@@ -3506,6 +3678,44 @@ function Configure-DevBranchUnsafeActionProtection {
     Write-Host "Branch: $($state.devBranch)"
     Write-Host "Infobase: $($state.devBranchInfoBasePath)"
     Write-Host "Infobase user: $($result.user)"
+}
+
+function Resolve-DevBranchUnsafeActionProtectionState {
+    param(
+        [hashtable]$State,
+        [string]$InfoBaseKind,
+        [string]$InfoBasePath,
+        [string]$BranchName,
+        [string]$MainProjectRoot
+    )
+
+    if ([string](Get-StateValue -State $State -Name "unsafeActionProtectionResolution" -Default "")) {
+        return $State
+    }
+
+    $sourceConfirmation = Get-ValidSourceInfoBaseUnsafeActionProtectionConfirmation -ProjectRootOverride $MainProjectRoot
+    if ($null -ne $sourceConfirmation) {
+        $State["unsafeActionProtectionResolution"] = "source-confirmed"
+        $State["unsafeActionProtectionSetupMode"] = [string](Get-StateValue -State $sourceConfirmation -Name "confirmationMode" -Default "confirmed")
+        $State["unsafeActionProtectionConfirmed"] = $true
+        $State["unsafeActionProtectionConfirmedAt"] = [string](Get-StateValue -State $sourceConfirmation -Name "confirmedAt" -Default "")
+        $State["unsafeActionProtectionUser"] = [string](Get-StateValue -State $sourceConfirmation -Name "infoBaseUser" -Default "")
+        $State["unsafeActionProtectionSourceKey"] = [string](Get-StateValue -State $sourceConfirmation -Name "sourceKey" -Default "")
+        Write-Host "Development branch unsafe action protection inherited from the confirmed source infobase context."
+        return $State
+    }
+
+    $result = Confirm-DevBranchUnsafeActionProtection `
+        -InfoBaseKind $InfoBaseKind `
+        -InfoBasePath $InfoBasePath `
+        -DevBranchName $BranchName
+    $State["unsafeActionProtectionResolution"] = $(if ($result.confirmed) { "branch-confirmed" } else { "skip" })
+    $State["unsafeActionProtectionSetupMode"] = $result.mode
+    $State["unsafeActionProtectionConfirmed"] = $result.confirmed
+    $State["unsafeActionProtectionConfirmedAt"] = $result.confirmedAt
+    $State["unsafeActionProtectionUser"] = $result.user
+    $State["unsafeActionProtectionSourceKey"] = ""
+    return $State
 }
 
 function Publish-DevBranchToWeb {
@@ -3898,6 +4108,8 @@ function Test-InitStageAtLeast {
     $stages = @(
         "init.prepare",
         "init.check-tools",
+        "init.unsafe-action-protection",
+        "init.unsafe-action-protection-complete",
         "init.install-roctup-mcp",
         "init.cache-vanessa-ui-mcp",
         "init.git",
@@ -3976,9 +4188,17 @@ function Initialize-Project {
     }
     Apply-BootstrapWorkflowPackageProvenance | Out-Null
     $dumpWasCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.commit-dump") -and (Test-InitDumpArtifactsReady))
+    $unsafeActionProtectionWasCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.unsafe-action-protection-complete"))
     if (-not $dumpWasCompleted) {
         Set-RunStage -Stage "init.check-tools" -Detail "Checking required tools"
         Check-Tools -StopOnMissing
+        if (-not $unsafeActionProtectionWasCompleted) {
+            Set-RunStage -Stage "init.unsafe-action-protection" -Detail "Confirming source infobase unsafe action protection"
+            Initialize-SourceInfoBaseUnsafeActionProtection
+            Set-RunStage -Stage "init.unsafe-action-protection-complete" -Detail "Source infobase unsafe action protection resolved"
+        } else {
+            Write-Host "Resume confirmed that source infobase unsafe action protection setup completed in the interrupted run."
+        }
         Set-RunStage -Stage "init.install-roctup-mcp" -Detail "Installing or updating ROCTUP MCP Toolkit"
         Install-RoctupMcp
         Set-RunStage -Stage "init.cache-vanessa-ui-mcp" -Detail "Caching Vanessa UI MCP artifacts"
@@ -4018,6 +4238,7 @@ function Initialize-Project {
         Install-AiRules1c
     }
     Set-RunStage -Stage "init.guidance" -Detail "Updating agent guidance, USER-RULES, and Kilo commands"
+    Sync-ItlVanessaLibraries
     Update-AgentGuidanceBridge
     Update-UserRules
     Sync-KiloItlCommandSurface
@@ -4169,9 +4390,11 @@ function Initialize-DevBranchRuntime {
         @{ name = "vanessaMcpError"; value = "" },
         @{ name = "vanessaMcpLogPath"; value = "" },
         @{ name = "unsafeActionProtectionSetupMode"; value = "" },
+        @{ name = "unsafeActionProtectionResolution"; value = "" },
         @{ name = "unsafeActionProtectionConfirmed"; value = $false },
         @{ name = "unsafeActionProtectionConfirmedAt"; value = "" },
         @{ name = "unsafeActionProtectionUser"; value = "" },
+        @{ name = "unsafeActionProtectionSourceKey"; value = "" },
         @{ name = "createdAt"; value = $now },
         @{ name = "lastLogPath"; value = "" },
         @{ name = "enterpriseNormalizationStatus"; value = "pending" },
@@ -4216,6 +4439,17 @@ function Initialize-DevBranchRuntime {
         if ($currentStatus -eq "enterprise-normalization-pending") {
             Write-Host "Resuming final Enterprise normalization for existing development branch copy: $DevBranchInfoBasePath"
             $state = Read-DevBranchStateFile -Path $statePath
+            $normalizedHash = ConvertTo-Agent1cHashtable $state
+            [void]$normalizedHash.Remove("statePath")
+            [void]$normalizedHash.Remove("stateProjectRoot")
+            $normalizedHash = Resolve-DevBranchUnsafeActionProtectionState `
+                -State $normalizedHash `
+                -InfoBaseKind $kind `
+                -InfoBasePath $DevBranchInfoBasePath `
+                -BranchName $DevBranchName `
+                -MainProjectRoot $MainProjectRoot
+            $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $normalizedHash -Status "enterprise-normalization-pending"
+            $state = Read-DevBranchStateFile -Path $statePath
             Ensure-DevBranchEnterpriseNormalized -State $state -Reason "branch-copy" | Out-Null
             $state = Read-DevBranchStateFile -Path $statePath
             if (Get-StateValue -State $state -Name "publicationUrl" -Default "") {
@@ -4223,17 +4457,9 @@ function Initialize-DevBranchRuntime {
             }
             Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
             Sync-KiloItlCommandSurface
-            $unsafeActionProtectionSetup = Confirm-DevBranchUnsafeActionProtection `
-                -InfoBaseKind $kind `
-                -InfoBasePath $DevBranchInfoBasePath `
-                -DevBranchName $DevBranchName
             $normalizedHash = ConvertTo-Agent1cHashtable $state
             [void]$normalizedHash.Remove("statePath")
             [void]$normalizedHash.Remove("stateProjectRoot")
-            $normalizedHash["unsafeActionProtectionSetupMode"] = $unsafeActionProtectionSetup.mode
-            $normalizedHash["unsafeActionProtectionConfirmed"] = $unsafeActionProtectionSetup.confirmed
-            $normalizedHash["unsafeActionProtectionConfirmedAt"] = $unsafeActionProtectionSetup.confirmedAt
-            $normalizedHash["unsafeActionProtectionUser"] = $unsafeActionProtectionSetup.user
             $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $normalizedHash -Status "ready"
             return
         }
@@ -4306,6 +4532,15 @@ function Initialize-DevBranchRuntime {
         $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "repository-unbound"
         $currentStatus = "repository-unbound"
 
+        $stateHash = Resolve-DevBranchUnsafeActionProtectionState `
+            -State $stateHash `
+            -InfoBaseKind $kind `
+            -InfoBasePath $DevBranchInfoBasePath `
+            -BranchName $DevBranchName `
+            -MainProjectRoot $MainProjectRoot
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "unsafe-action-protection-resolved"
+        $currentStatus = "unsafe-action-protection-resolved"
+
         $launcherRegistration = Register-DevBranchInLauncher `
             -InfoBaseKind $kind `
             -InfoBasePath $DevBranchInfoBasePath `
@@ -4361,10 +4596,6 @@ function Initialize-DevBranchRuntime {
         }
         Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
         Sync-KiloItlCommandSurface
-        $unsafeActionProtectionSetup = Confirm-DevBranchUnsafeActionProtection `
-            -InfoBaseKind $kind `
-            -InfoBasePath $DevBranchInfoBasePath `
-            -DevBranchName $DevBranchName
         $finalHash = @{}
         $finalStateHash = ConvertTo-Agent1cHashtable $state
         foreach ($key in $finalStateHash.Keys) {
@@ -4373,14 +4604,10 @@ function Initialize-DevBranchRuntime {
             }
             $finalHash[$key] = $finalStateHash[$key]
         }
-        $finalHash["unsafeActionProtectionSetupMode"] = $unsafeActionProtectionSetup.mode
-        $finalHash["unsafeActionProtectionConfirmed"] = $unsafeActionProtectionSetup.confirmed
-        $finalHash["unsafeActionProtectionConfirmedAt"] = $unsafeActionProtectionSetup.confirmedAt
-        $finalHash["unsafeActionProtectionUser"] = $unsafeActionProtectionSetup.user
         $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $finalHash -Status "ready"
     } catch {
         $message = $_.Exception.Message
-        $statusForError = if ($currentStatus -and @("infobase-copied", "repository-unbound", "launcher-registered", "enterprise-normalization-pending") -contains $currentStatus) { $currentStatus } else { "failed" }
+        $statusForError = if ($currentStatus -and @("infobase-copied", "repository-unbound", "unsafe-action-protection-resolved", "launcher-registered", "enterprise-normalization-pending") -contains $currentStatus) { $currentStatus } else { "failed" }
         $failureHash = $stateHash
         if (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue) {
             try {
@@ -5667,10 +5894,18 @@ function Show-WorkflowStatus {
 }
 
 function Invoke-DevBranchCheck {
-    Update-DevBranchBase
     $trigger = $(if ($VerificationTrigger) { $VerificationTrigger } else { "command" })
     $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
+    $state = Read-DevBranchState -Name $DevBranchName
+    $mcpRuntime = Get-VanessaMcpRuntimeInfo -State $state
+    if ($mcpRuntime.processAlive) {
+        Stop-VanessaAuthoringMcpForState -State $state -Quiet | Out-Null
+    }
+    Assert-VanessaAuthoringPreflight -Trigger $trigger -ExplicitComponents $explicit
+    Use-ItlVerificationRepairAttempt
+    Update-DevBranchBase
     Invoke-ItlVerificationCycle -Trigger $trigger -ExplicitComponents $explicit
+    Complete-ItlVerificationRepairSession
 }
 
 function Check-DevBranch {
@@ -6214,6 +6449,8 @@ function Show-Help {
             $verification = Get-VerificationState -State $state
             $kind = Get-DevBranchKind -State $state
             $hasCheckableChanges = Test-DevBranchHasCheckableChanges -State $state
+            $authoringRequired = $false
+            try { $authoringRequired = Test-VanessaAuthoringRequired } catch { $authoringRequired = $false }
 
             Write-Host ""
             Write-Host "Branch:"
@@ -6239,7 +6476,9 @@ function Show-Help {
             Write-Host "  Last result: $(Get-StateValue -State $state -Name 'lastResultPath' -Default '<none>')"
             Write-Host "  Final result: $(Get-StateValue -State $state -Name 'finalResultPath' -Default '<none>')"
             Write-Host ""
-            if ($hasCheckableChanges -or (@("failed", "stale", "unknown") -contains $verification.effectiveStatus)) {
+            if ($authoringRequired) {
+                Write-Host "Recommended next step: /itl-vanessa-author"
+            } elseif ($hasCheckableChanges -or (@("failed", "stale", "unknown") -contains $verification.effectiveStatus)) {
                 Write-Host "Recommended next step: /itl-check"
             } elseif (-not $verification.isFreshPassed) {
                 if ($openSpec.isAvailable) {
@@ -6257,9 +6496,9 @@ function Show-Help {
         Write-Host ""
         Write-Host "Lifecycle:"
         if ($openSpec.isAvailable) {
-            Write-Host "  optional /opsx-explore -> quick-fix or /opsx-propose -> /opsx-apply/work -> /itl-check -> /itl-result"
+            Write-Host "  optional /opsx-explore -> quick-fix or /opsx-propose -> /opsx-apply/work -> /itl-vanessa-author when features change -> /itl-check -> /itl-result"
         } else {
-            Write-Host "  quick-fix -> /itl-check -> /itl-result; restore the active client's OpenSpec surface before an OpenSpec change."
+            Write-Host "  quick-fix -> /itl-vanessa-author when features change -> /itl-check -> /itl-result; restore the active client's OpenSpec surface before an OpenSpec change."
         }
         Write-Host "  use /itl-refresh when master changes must be merged into this branch."
         Write-Host ""
@@ -6267,6 +6506,7 @@ function Show-Help {
         Write-Host "  /itl"
         Write-Host "  /itl-status"
         Write-Host "  /itl-check"
+        Write-Host "  /itl-vanessa-author"
         Write-Host "  /itl-verify-fix"
         Write-Host "  /itl-refresh"
         Write-Host "  /itl-result"

@@ -29,6 +29,8 @@ Before starting the MCP, state the specific runtime question that static analysi
 4. Use the exposed Vanessa UI MCP tools only to answer the recorded runtime question. If the current Kilo session does not expose the server after start, report that a reload or restart is required.
 5. Run `stop-vanessa-mcp` after the research, recording, or debugging operation.
 
+For changed feature authoring, prefer `/itl-vanessa-author`: its helper persists reload/resume state and performs the shutdown/config transition. Search through `search_for_steps_by_keywords` using its exposed schema (`search_name`, `search_description`, `search_type`, `exclude_name`, `exclude_description`, `exclude_type`, `limit`). Do not call raw HTTP or treat a knowledge-base entry as proof that a runtime step exists.
+
 ## Failure Handling
 
 If start fails, report the actual helper error and the branch MCP log path from `vanessa-mcp-status`. Then use static analysis only as an explicitly labelled fallback: it cannot prove the missing runtime behavior.

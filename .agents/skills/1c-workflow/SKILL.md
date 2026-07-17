@@ -17,6 +17,7 @@ Use `scripts/agent-1c.ps1` when PowerShell is available. Open `references/workfl
 - `references/verification-result.md`: `/itl-check`, Vanessa Automation, event-log baseline, result export, `verificationPolicy`.
 - `references/dev-branch-development.md`: work inside an existing `itldev/*` branch.
 - `references/vanessa-tests.md`: author or edit focused Vanessa Automation feature tests.
+- `references/vanessa-authoring.md`: pass the changed-feature MCP authoring gate.
 - `references/advanced-actions.md`: diagnostics and full helper action catalog.
 
 Human-facing guides live under `docs/itl-workflow/`; read them only for explanation. For unclear intent, show helper `help` unchanged.
@@ -43,13 +44,15 @@ Long lifecycle runs need `timeout_ms >= 1800000`; monitored init needs an outer 
 
 If monitored bootstrap is interrupted, repeat the same command with `timeout_ms >= 3900000`; the launcher owns orphan detection and resume. Do not delete Git locks, continue init manually, or edit run status.
 
-With default `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=manual-confirm`, create branches through `scripts/run-agent-1c-window.ps1` so confirmation is visible. Direct helper calls are only explicit automation with `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip`.
+With default `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=manual-confirm`, create branches through `scripts/run-agent-1c-window.ps1`: a valid source confirmation makes the run question-free, otherwise the copied base is confirmed immediately after repository unbind. Direct helper calls require that source confirmation or explicit automation with `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip`.
 
 Ask setup questions only when the helper cannot collect them. Store secrets only in `.dev.env` or environment variables. Keep ITL overlay rules in `USER-RULES.md`.
 
 Use sibling Git worktrees, leave the main folder on `master`, and load only the copied branch infobase. Stop on unexpected dirty Git state before lifecycle changes.
 
 Use `/itl-check` or `check-dev-branch` for the final executable gate. It runs Vanessa Automation verification through `TESTMANAGER -> TESTCLIENT`, reads JUnit, and checks the event-log baseline. Never replace it with MCP, a headless EPF, or `/deploy-and-test`.
+
+Run `/itl-vanessa-author` for new/changed `.feature`; it owns MCP reload/resume and stays outside `itl-routine`.
 
 ROCTUP MCP is the preferred branch-local data channel in `itldev/*` and does not require web publication. Vanessa UI MCP is separate branch runtime tooling; use `.agents/skills/itl-vanessa-ui-mcp/SKILL.md` only when static analysis cannot answer the required UI question. Vanessa Automation verification is the separate `/itl-check` runner. vibecoding1c MCP is helper-managed; External MCP is unmanaged. Do not paste keys into chat or tracked files.
 

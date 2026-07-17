@@ -6,7 +6,9 @@ Use this reference for `/itl-check`, `verify-dev-branch`, Vanessa Automation, ev
 
 Use `/itl-check` or helper action `check-dev-branch` for the post-change executable gate. It updates the copied branch infobase, evaluates `ITL_VANESSA_TESTING` and `ITL_CHECK_EVENT_LOG`, and runs permitted components. Vanessa uses packet `StartFeaturePlayer` in a real `TESTMANAGER -> TESTCLIENT` topology.
 
-`/itl-check` remains a single mechanical helper run: it does not author tests or start an agent repair loop. Use `/itl-verify-fix` explicitly when a previous implementation may have omitted relevant coverage or when the agent must diagnose, fix, and rerun a failing verification cycle. That recovery command first reuses an existing scenario when it already covers the changed behavior and creates a scenario only when coverage is missing.
+`/itl-check` remains a single mechanical helper run: it does not author tests or start an agent repair loop. New/changed features first require `/itl-vanessa-author`; missing suites route to `/itl-verify-fix`. Recovery reuses sufficient coverage, otherwise creates a focused scenario, authors it, and uses one helper-owned three-run repair session.
+
+The compact result exposes `errorCategory`, `requiredAction`, `authoringStatus`, and `authoringStatePath`. Categories are `missing-suite`, `unsupported-step`, `scenario-context`, `product-assertion`, `runner`, and `event-log`. Follow the structured action; read the last 80 log lines only for an unclassified runner failure.
 
 Do not run a separate base update first. `/deploy-and-test` is a published compatibility bridge to `check-dev-branch`, not an independent loader. Do not replace executable evidence with MCP or a headless EPF. `verify-dev-branch` is the repair-trigger compatibility alias.
 

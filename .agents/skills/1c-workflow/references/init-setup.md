@@ -10,6 +10,7 @@ Create and maintain:
 - `.agent-1c/tools.json`: configurable software checks and install suggestions.
 - `.agent-1c/dependency-lock.json`: committed dependency lock manifest for the ITL workflow package, `ai_rules_1c`, Vanessa Automation, ROCTUP MCP Toolkit, and the two Vanessa UI MCP CFE artifacts with URLs/SHA256. Default dependency mode is `fresh`; `locked` mode uses only pinned values.
 - `.agent-1c/dev-branches/<safe-dev-branch-name>.json`: local branch runtime state; ignored by Git.
+- `.agent-1c/source-infobase-unsafe-action-protection.json`: local confirmation bound to the source infobase kind/identity and `IB_USER`; ignored by Git and never contains the password.
 - `.agent-1c/mcp/state.json` and `.agent-1c/mcp/vibecoding1c-selection.json`: local MCP runtime and developer selection; ignored by Git.
 - `.dev.env`: local secrets and machine-specific values; never commit it.
 - `.agents/skills/1c-workflow/`, `.agents/skills/1c-workflow-fast/`, `.agents/skills/product-docs/`, `.agents/skills/itl-roctup-1c-data/`, and `.agents/skills/itl-vanessa-ui-mcp/`: shared skills installed with the workflow package.
@@ -40,6 +41,7 @@ Use this as `.agent-1c/project.json`:
   "sourceInfoBasePath": "",
   "sourceServerName": "",
   "sourceInfoBaseName": "",
+  "sourceInfoBaseUnsafeActionProtectionMode": "manual-confirm",
   "repositoryPath": "",
   "dependencyMode": "fresh",
   "verificationPolicy": "warn",
@@ -68,6 +70,7 @@ Ask only for values the helper cannot collect or infer:
 - Whether branch infobases should be web-published by default. If no, store `WEB_PUBLISH_BY_DEFAULT=false` and `WEB_PUBLISH_AUTO=false`.
 - If branch infobases should be web-published, whether to attempt automatic publication during branch creation. Store `WEB_PUBLISH_AUTO=true|false`; if automatic publication is requested, collect existing `webinst`/publication settings but never install a web server.
 - Whether dependencies are `fresh` or `locked`. Default is `fresh`; `locked` requires a complete `.agent-1c/dependency-lock.json`.
+- Source unsafe-action protection mode: `manual-confirm` asks against the source infobase and stores a local context-bound confirmation, `defer` leaves branch creation to confirm its copy, and `confirmed` trusts an explicit external confirmation. JSON/configured init must provide this value; the wizard uses `manual-confirm`.
 - Missing Vanessa Automation, ROCTUP MCP Toolkit, and Vanessa UI MCP CFE artifacts are cached automatically during init/update; do not ask whether they are needed. CFE installation into a branch infobase and the UI MCP server itself remain on demand.
 
 Ask one raw value at a time unless the agent surface supports structured fields. Do not ask for `KEY=value` blocks. For optional passwords, first ask whether the password is set.
@@ -94,7 +97,7 @@ Goal: create baseline project state.
 3. Use `timeout_ms >= 3900000`. If the outer shell interrupts init, repeat the same bootstrap command: the launcher rejects a live duplicate, marks a dead/invalid run `launcher.orphaned`, and resumes saved settings. Never delete `index.lock`, commit or continue lifecycle steps, or edit `status.json` manually. `init.commit-dump` proves the dump returned successfully, so resume validates and commits it without rerunning 1C; earlier stages repeat the dump path.
 4. If terminal input is unavailable, do not collect the initialization questionnaire in chat and do not continue the lifecycle manually. Use the monitored wizard command, or JSON mode only when explicitly requested or an answers file already exists.
 5. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, `.agent-1c/dependency-lock.json`, and `.dev.env` if missing.
-6. Run tool checks, initialize Git, checkout/create `master`, update the source infobase from storage when configured, and dump configuration files to `src/cf`.
+6. Run tool checks, resolve source infobase unsafe-action protection before the first source-base operation, initialize Git, checkout/create `master`, update the source infobase from storage when configured, and dump configuration files to `src/cf`. Source confirmation stays in the current init window without beep/taskbar flashing; interrupted runs repeat only an unproven protection stage.
 7. Initial dump must produce `src/cf/ConfigDumpInfo.xml`; later dumps use incremental `-update -force` when that file exists. Stop if `src/cf` is non-empty without `ConfigDumpInfo.xml`.
 8. Install/cache dependencies, install `ai_rules_1c` for exactly the selected client, record pins, reconcile MCP only for that client, render its ITL surface, generate the Kilo/OpenCode routine agent when applicable, and apply the ITL overlay.
 9. Commit rules and workflow files when there are changes.

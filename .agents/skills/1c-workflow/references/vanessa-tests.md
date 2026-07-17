@@ -15,14 +15,16 @@ The goal of ITL feature tests is to verify the behavior currently being changed.
 4. For OpenSpec, write 2-3 small scenarios: the main successful path and one meaningful boundary or negative case; a fourth needs explicit justification. A quick-fix needs at least one focused regression scenario and adds a second only for a separate meaningful boundary.
 5. Run the final ITL check flow. Vanessa UI MCP is only for runtime UI research, authoring support, step search, recording, and debugging; it is not the test runner.
 
+## Mandatory Authoring Gate
+
+Changed `.feature` files require `/itl-vanessa-author`; see `vanessa-authoring.md`. MCP never replaces `/itl-check`.
+
 ## Context Economy
 
-- Read large external smoke suites only as pattern references.
 - Search known steps by meaning or, for runtime UI evidence, through Vanessa UI MCP; do not paste full catalogs.
 - Prefer data/object/register checks over long UI sequences when they prove the same behavior.
 - Reuse an existing library step when it already expresses the business action.
 - Keep each scenario short: setup, action, 1-3 observable assertions, cleanup if needed.
-- Keep Vanessa history and unrelated suites out of `test-plan.md`.
 
 ## BSL Context And Extension UI
 

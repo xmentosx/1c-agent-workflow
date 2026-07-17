@@ -15,6 +15,7 @@
   "sourceInfoBasePath": "",
   "sourceServerName": "",
   "sourceInfoBaseName": "",
+  "sourceInfoBaseUnsafeActionProtectionMode": "manual-confirm",
   "repositoryPath": "",
   "dependencyMode": "fresh",
   "verificationPolicy": "warn",

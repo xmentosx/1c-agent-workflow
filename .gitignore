@@ -13,6 +13,9 @@ temp/
 .agent-1c/event-log-baselines/
 .agent-1c/event-log-signature-cache/
 .agent-1c/runs/
+.agent-1c/source-infobase-unsafe-action-protection.json
+.agent-1c/vanessa-authoring/
+.agent-1c/verification-repair/
 .agent-1c/locks/
 .agent-1c/release-e2e.json
 .agent-1c/tools/event-log-exporter/

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "refreshPolicy": "latest-master",
+  "suites": {
+    "PM5": {
+      "url": "http://gitlabserv01.itland.local/a.karimov/pm5corp_gitsync/-/tree/master/tests/BDD/Vanessa_automation?ref_type=heads",
+      "branch": "master",
+      "usage": "PM5 structure, syntax, and business-scenario reference"
+    },
+    "PM4": {
+      "url": "http://gitlabserv01.itland.local/root/pmcorp_proj/-/tree/master/tests/BDD/Vanessa_automation?ref_type=heads",
+      "branch": "master",
+      "usage": "PM4 executable reference; PM5 syntax and business-scenario inspiration only"
+    }
+  }
+}

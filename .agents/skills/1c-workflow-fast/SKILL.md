@@ -39,14 +39,14 @@ Long actions (`new-dev-branch`, `new-extension-dev-branch`, `init-dev-branch-ext
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action <action>
 ```
 
-For actions that require a branch name and create a new branch, use the monitored launcher so the manual unsafe-action protection confirmation is visible:
+For actions that require a branch name and create a new branch, use the monitored launcher so fallback unsafe-action protection confirmation is visible when master has no matching source confirmation:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action new-dev-branch -DevBranchName "<dev-branch-name>"
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action new-extension-dev-branch -DevBranchName "<dev-branch-name>"
 ```
 
-Use direct `agent-1c.ps1` for branch creation only in non-interactive automation with `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip`.
+Use direct `agent-1c.ps1` for branch creation only when the master source confirmation matches the current base/user or non-interactive automation explicitly sets `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip`.
 
 New branch commands run from `master` and create a sibling Git worktree by default. Report the printed worktree path and tell the developer to open a separate window of the selected agent or IDE there. Use `-UseCurrentWorktree` only when explicitly requested.
 

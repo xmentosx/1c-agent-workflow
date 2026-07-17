@@ -255,9 +255,49 @@ function Write-RunStatus {
         gitIndexLockPreExisted = [bool]$script:GitIndexLockPreExisted
         resumedFrom = $script:ResumedFrom
         recoveryReason = $script:RecoveryReason
+        errorCategory = $(if ($script:RunErrorCategory) { [string]$script:RunErrorCategory } else { "" })
+        requiredAction = $(if ($script:RunRequiredAction) { [string]$script:RunRequiredAction } else { "" })
+        authoringStatus = $(if ($script:RunAuthoringStatus) { [string]$script:RunAuthoringStatus } else { "" })
+        authoringStatePath = $(if ($script:RunAuthoringStatePath) { [string]$script:RunAuthoringStatePath } else { "" })
     }
 
     Write-Utf8Text -Path $script:ResolvedRunStatusPath -Value (($payload | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+}
+
+function Set-RunFailureContext {
+    param(
+        [ValidateSet("", "missing-suite", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log")]
+        [string]$Category = "",
+        [string]$RequiredAction = ""
+    )
+
+    if ($Category) { $script:RunErrorCategory = $Category }
+    if ($RequiredAction) { $script:RunRequiredAction = $RequiredAction }
+}
+
+function Set-RunFailureContextFromMessage {
+    param([string]$Message)
+
+    if ($script:RunErrorCategory -or [string]::IsNullOrWhiteSpace($Message)) { return }
+    $category = "runner"
+    $requiredAction = ""
+    if ($Message -match '(?i)(No Vanessa .*feature|features path was not found|missing-suite)') {
+        $category = "missing-suite"
+        $requiredAction = "/itl-verify-fix"
+    } elseif ($Message -match '(?i)(undefined step|step.+not found|unsupported-step|authoring pass)') {
+        $category = "unsupported-step"
+        $requiredAction = "/itl-vanessa-author"
+    } elseif ($Message -match '(?i)(scenario context|scenario-context)') {
+        $category = "scenario-context"
+        $requiredAction = "/itl-vanessa-author"
+    } elseif ($Message -match '(?i)(event.?log)') {
+        $category = "event-log"
+        $requiredAction = "/itl-verify-fix"
+    } elseif ($Message -match '(?i)(assert|expected|verification failed)') {
+        $category = "product-assertion"
+        $requiredAction = "/itl-verify-fix"
+    }
+    Set-RunFailureContext -Category $category -RequiredAction $requiredAction
 }
 
 function Set-RunStage {
@@ -1569,6 +1609,8 @@ function Ensure-GitIgnore {
         ".agent-1c/dev-branches/",
         ".agent-1c/event-log-baselines/",
         ".agent-1c/runs/",
+        ".agent-1c/vanessa-authoring/",
+        ".agent-1c/verification-repair/",
         ".agent-1c/locks/",
         ".agent-1c/infobases/",
         ".agent-1c/tools/event-log-exporter/",
@@ -2957,6 +2999,19 @@ function Read-InitAnswersFromJson {
     return Read-Utf8Text -Path $resolvedPath | ConvertFrom-Json
 }
 
+function ConvertTo-SourceInfoBaseUnsafeActionProtectionMode {
+    param([object]$Value)
+
+    $mode = ([string]$Value).Trim().ToLowerInvariant()
+    if (-not $mode) {
+        return ""
+    }
+    if ($mode -notin @("manual-confirm", "defer", "confirmed")) {
+        throw "Unsupported sourceInfoBaseUnsafeActionProtectionMode value: $mode. Use manual-confirm, defer, or confirmed."
+    }
+    return $mode
+}
+
 function Confirm-InitWizardProjectRoot {
     Write-Section (Get-Agent1cUtf8Text "0JzQsNGB0YLQtdGAINC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNC4")
     Write-Host ((Get-Agent1cUtf8Text "0JrQvtGA0LXQvdGMINC/0YDQvtC10LrRgtCwOiA=") + $script:ProjectRoot)
@@ -2985,6 +3040,7 @@ function Read-InitWizardAnswersOnce {
         repositoryPassword = ""
         webPublishByDefault = $false
         webPublishAuto = $false
+        sourceInfoBaseUnsafeActionProtectionMode = "manual-confirm"
     }
 
     if ($infoBaseKind -eq "server") {
@@ -3085,6 +3141,7 @@ function Normalize-InitAnswers {
         webPublishByDefault = $false
         webPublishAuto = $false
         dependencyMode = ConvertTo-DependencyMode -Value $dependencyModeValue
+        sourceInfoBaseUnsafeActionProtectionMode = ConvertTo-SourceInfoBaseUnsafeActionProtectionMode (Get-AnswerValue -Answers $Answers -Names @("sourceInfoBaseUnsafeActionProtectionMode", "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE") -Default "")
         vibecoding1cMcpSetupDuringInit = $true
         installVanessaIfMissing = (ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("installVanessaIfMissing", "INSTALL_VANESSA_IF_MISSING") -Default $false) -Default $false)
     }
@@ -3108,6 +3165,7 @@ function Assert-InitAnswers {
         if (-not $Answers.repositoryPath) { $missing += "repositoryPath" }
         if (-not $Answers.repositoryUser) { $missing += "repositoryUser" }
     }
+    if (-not $Answers.sourceInfoBaseUnsafeActionProtectionMode) { $missing += "sourceInfoBaseUnsafeActionProtectionMode(manual-confirm|defer|confirmed)" }
 
     if ($missing.Count -gt 0) {
         throw "Init answers are incomplete. Missing: $($missing -join ', ')"
@@ -3132,6 +3190,7 @@ function Save-InitAnswers {
         WEB_PUBLISH_BY_DEFAULT = $(if ($Answers.webPublishByDefault) { "true" } else { "false" })
         WEB_PUBLISH_AUTO = $(if ($Answers.webPublishAuto) { "true" } else { "false" })
         DEPENDENCY_MODE = $Answers.dependencyMode
+        SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE = $Answers.sourceInfoBaseUnsafeActionProtectionMode
         VIBECODING1C_MCP_SETUP_DURING_INIT = $(if ($Answers.vibecoding1cMcpSetupDuringInit) { "true" } else { "false" })
     }
 
@@ -3144,10 +3203,12 @@ function Save-InitAnswers {
 }
 
 function New-ConfiguredInitAnswers {
+    $unsafeActionProtectionMode = ConvertTo-SourceInfoBaseUnsafeActionProtectionMode (Require-Value "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE or project.sourceInfoBaseUnsafeActionProtectionMode" (Get-Setting -EnvName "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE" -ConfigName "sourceInfoBaseUnsafeActionProtectionMode"))
     return [pscustomobject]@{
         webPublishByDefault = (Get-WebPublishByDefault)
         webPublishAuto = (Get-WebPublishAuto)
         installVanessaIfMissing = [bool]$InstallVanessaIfMissing
+        sourceInfoBaseUnsafeActionProtectionMode = $unsafeActionProtectionMode
     }
 }
 
