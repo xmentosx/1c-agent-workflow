@@ -170,6 +170,28 @@
         }
     }
 
+    It "bounds source maintenance checks, skill activation, and exploration" {
+        $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "AGENTS.md") -Raw -Encoding UTF8
+
+        $agentsText | Should -Match 'Read-only source maintenance.*does not run `Fast`, `Full`, or `Release`'
+        $agentsText | Should -Match 'During edits run only tests that directly cover the change'
+        $agentsText | Should -Match 'Mode Fast` once unless `Full` is next'
+        $agentsText | Should -Match 'Final delivery does not justify a gate'
+        $agentsText | Should -Match 'never run `Fast` immediately before `Full`'
+        $agentsText | Should -Match 'Mode Full` once on the final tree only before a PR'
+        $agentsText | Should -Match 'Do not activate them for source-repository maintenance'
+        $agentsText | Should -Match 'separate installed project whose root the user identifies'
+        $agentsText | Should -Match 'targeted `rg`.*one matching contract or reference'
+        $agentsText | Should -Match 'Widen one layer only for a concrete gap'
+        $agentsText | Should -Match 'Browse or use MCP only when external or current state is required'
+
+        foreach ($skillId in @('1c-workflow', '1c-workflow-fast')) {
+            $skillText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\$skillId\SKILL.md") -Raw -Encoding UTF8
+            $skillText | Should -Match 'description:.*installed ITL 1C projects'
+            $skillText | Should -Match 'Never use for development, review, tests, or docs of the 1c-agent-workflow source repository'
+        }
+    }
+
     It "agent guidance references stay resolvable" {
         $workflowIndexText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
         foreach ($topic in @("init-setup.md", "mcp.md", "branch-lifecycle.md", "verification-result.md")) {
@@ -192,7 +214,7 @@
     It "keeps README as a compact source-repository entrypoint" {
         $readmeText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")
         ([regex]::Matches($readmeText, '\S+')).Count | Should -BeLessOrEqual 350
-        $firstSection = [regex]::Match($readmeText, '(?m)^## (?<title>.+)$')
+        $firstSection = [regex]::Match($readmeText, '(?m)^## (?<title>[^\r\n]+)\r?$')
         $firstSection.Success | Should -BeTrue
         $firstSection.Groups['title'].Value | Should -Be 'Быстрый старт'
         $readmeText | Should -Match ([regex]::Escape('https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTALL.md'))
