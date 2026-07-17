@@ -30,6 +30,11 @@ function Get-AiRulesBaselineTarget {
     }
 }
 
+function Test-AiRulesManifestPathOwnedByWorkflow {
+    param([string]$Path)
+    return $Path.Replace("\", "/").TrimStart("./") -eq "dev.env"
+}
+
 function Test-AiRulesManifestHasUserChanges {
     $manifestPath = Join-Path $script:ProjectRoot ".ai-rules.json"
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
@@ -40,6 +45,9 @@ function Test-AiRulesManifestHasUserChanges {
         return $false
     }
     foreach ($property in @($manifest.files.PSObject.Properties)) {
+        if (Test-AiRulesManifestPathOwnedByWorkflow -Path ([string]$property.Name)) {
+            continue
+        }
         if ([bool](Get-ConfigValueFromObject -Object $property.Value -Path "userModified" -Default $false)) {
             return $true
         }
@@ -213,7 +221,7 @@ function Get-AiRulesMigrationPlan {
     }
 
     $tools = @(Get-AiRules1cTools)
-    $unsupported = @($tools | Where-Object { $_ -notin @("codex", "kilocode") })
+    $unsupported = @($tools | Where-Object { $_ -notin (Get-SupportedAgentTargets) })
     if ($unsupported.Count -gt 0) {
         return [pscustomobject]@{ status = "unsupported-tools"; eligible = $false; suppressRegularUpdate = $true; reason = "unsupported migration tools: $($unsupported -join ', ')"; target = $target }
     }
@@ -268,14 +276,11 @@ function Assert-AiRulesMigrationCandidateScope {
     param([string]$RulesRoot)
 
     $codexAdapter = Read-Utf8Text -Path (Join-Path $RulesRoot "adapters\codex.yaml")
-    $kiloAdapter = Read-Utf8Text -Path (Join-Path $RulesRoot "adapters\kilocode.yaml")
     if ($codexAdapter -match '(?im)copyTo:\s*["'']?~/') {
         throw "Fork candidate still writes user-scope Codex artifacts."
     }
-    foreach ($entry in @($codexAdapter, $kiloAdapter)) {
-        if ($entry -notmatch '(?im)^skills:\s*\r?\n\s+copyTo:\s*["'']?\.agents/skills/') {
-            throw "Fork candidate does not place shared skills under .agents/skills."
-        }
+    if ($codexAdapter -notmatch '(?im)^skills:\s*\r?\n\s+copyTo:\s*["'']?\.agents/skills/') {
+        throw "Fork candidate does not place Codex project skills under .agents/skills."
     }
 }
 
@@ -322,12 +327,20 @@ function New-AiRulesMigrationSnapshot {
         ".agent-1c\project.json",
         ".agent-1c\dependency-lock.json",
         ".ai-rules.json",
+        ".dev.env",
         "AGENTS.md",
         "USER-RULES.md",
+        "LLM-RULES.md",
         "memory.md",
+        "openspec",
         ".codex",
         ".kilo",
         ".kilocode",
+        ".claude",
+        ".cursor",
+        ".opencode",
+        ".mcp.json",
+        "opencode.json",
         ".agents"
     )
     $entries = @()
@@ -379,7 +392,7 @@ function Restore-AiRulesMigrationSnapshot {
             Copy-Item -LiteralPath $source -Destination $target -Recurse -Force
         }
     }
-    Read-ProjectConfig
+    [void](Read-ProjectConfig)
 }
 
 function Set-AiRulesMigrationTarget {
@@ -389,6 +402,7 @@ function Set-AiRulesMigrationTarget {
     $aiRules = ConvertTo-Agent1cHashtable -Object $config["aiRules"]
     $aiRules["repo"] = [string]$Target.repo
     $aiRules["ref"] = [string]$Target.ref
+    $aiRules["tools"] = @((Get-AiRules1cTools | Select-Object -First 1))
     $config["aiRules"] = $aiRules
     Write-Utf8Text -Path $script:ConfigPath -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
 
@@ -397,7 +411,7 @@ function Set-AiRulesMigrationTarget {
     $dependencies["aiRules1c"] = ConvertTo-Agent1cHashtable -Object $Target.lockEntry
     $lock["dependencies"] = $dependencies
     Write-DependencyLockManifest -Manifest $lock
-    Read-ProjectConfig
+    [void](Read-ProjectConfig)
 }
 
 function New-AiRulesMigrationRecoveryReport {
@@ -458,8 +472,8 @@ function Invoke-AiRulesBaselineMigration {
     $legacyPrompts = @(Get-LegacyCodexPromptPaths -RulesRoot ([string]$candidate.root))
     $snapshot = New-AiRulesMigrationSnapshot
     try {
-        Set-AiRulesMigrationTarget -Target $plan.target
-        Update-AiRules1c
+        Set-AiRulesMigrationTarget -Target $plan.target | Out-Null
+        Update-AiRules1c | Out-Null
         $report = [ordered]@{
             schemaVersion = 1
             status = "passed"

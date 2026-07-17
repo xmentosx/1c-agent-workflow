@@ -66,15 +66,15 @@ Helper создаёт snapshot базы, загружает расширение
 
 Команды жизненного цикла автоматически активируют контекст базы ветки разработки для `ai_rules_1c`.
 
-`/deploy-and-test` не используется как обычная проверка в ITL-ветке: эта команда повторно загружает все файлы конфигурации. Стандартный путь быстрее и безопаснее: `/itl-check`. Если нужно только обновить базу без тестов, используйте `update-base helper action`. `verify helper action` остается совместимым alias.
+`/deploy-and-test` сохранён как bridge к тому же `check-dev-branch`; собственного пути загрузки у него нет. Обычное имя ITL-цикла — `/itl-check`. Если нужно только обновить базу без тестов, используйте `update-base helper action`.
 
 After a real file load, `/itl-check`, `update-base helper action`, `verify helper action`, `/itl-refresh`, `/itl-result`, and advanced `close-dev-branch` automatically launch the branch infobase in Enterprise user mode through bundled `ДляАвтоматическогоОбновленияИБ.epf`. This applies update handlers and answers the legal-copy prompt non-interactively. No-op updates do not launch Enterprise.
 
 ## Общее правило готовности
 
-Здесь `itldev/*` означает текущее имя Git-ветки (`git branch --show-current`), а не каталог или файловый glob. В такой ветке любая доработка агентом под настроенными `exportPath`/`extensionsPath` считается готовой только после релевантных сценариев под `testsPath` и fresh passed `/itl-check`. Реальные корни берутся из `.agent-1c/project.json` (`src/cf` и `src/cfe` — только типичные значения). `/opsx-apply`, quick-fix, XML-only и прямой запрос исключений не дают. На `master` правка этих исходников является branch-safety blocker, а не поводом пропустить gate.
+Здесь `itldev/*` означает текущее имя Git-ветки (`git branch --show-current`), а не каталог или файловый glob. В такой ветке любая доработка агентом под настроенными `exportPath`/`extensionsPath` считается готовой только после релевантных сценариев под `testsPath` и fresh passed `/itl-check`; quick-fix и OpenSpec исключений не дают. Явно выбранный ITL lite допускает только partial evidence с формулировкой `implemented; executable verification skipped`. На `master` правка исходников остаётся branch-safety blocker.
 
-Перед созданием или правкой Vanessa-тестов агент читает `VANESSA-TESTS-GUIDE.md`. Финальный ответ "готово/сделано/реализовано" запрещен, пока после последних изменений кода, метаданных и тестов не добавлены или обновлены сценарии в `tests/features`, не выполнен `/itl-check`, не получен fresh passed результат и не указан путь к отчету Vanessa. Если тест невозможно написать или `/itl-check` невозможно довести до pass, агент останавливается с блокером и диагностикой.
+Перед созданием или правкой Vanessa-тестов агент читает `VANESSA-TESTS-GUIDE.md`. При `ITL_VANESSA_TESTING=off` новые тесты автоматически не создаются и в новый план не добавляются. Пропуск никогда не называется `готово/verified/done`; при `verificationPolicy=block` он блокирует result/close, при `warn` требует явного подтверждения partial result.
 
 Для больших OpenSpec changes действует hybrid cadence: не полный набор тестов на каждую строку `tasks.md`, а проверяемые срезы. Каждый срез с наблюдаемым поведением получает минимум один focused Vanessa scenario; подготовительные tasks фиксируются как pending verification и покрываются ближайшим последующим проверяемым срезом. После последней задачи запускается полный набор OpenSpec-проверок.
 

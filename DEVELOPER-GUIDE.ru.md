@@ -19,7 +19,7 @@
 
 ## 2. Инициализация проекта
 
-Откройте пустую или существующую папку проекта в Codex или Kilo Code и напишите:
+Откройте пустую или существующую папку проекта в Codex, Kilo Code, Claude Code, Cursor или OpenCode и напишите:
 
 ```text
 Инициализируй 1С-проект по файлу https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTALL.md
@@ -45,7 +45,7 @@
 - `build/test-results/vanessa` - отчеты Vanessa Automation, не коммитятся.
 - `.agent-1c/tools/vanessa-mcp` - скачанные `client_mcp.cfe` и `VAExtension.*.cfe`, не коммитятся.
 - `.agent-1c/mcp/` - локальное состояние MCP текущего проекта/worktree и выбор remote/local, не коммитится.
-- `.codex/config.toml`, `.kilo/commands/itl*.md`, `.kilo/kilo.json`, `.kilo/kilo.jsonc` - локальные generated/client config, не коммитятся.
+- native client surfaces/configs (`.codex/config.toml`, `.kilo/commands/itl*.md`, `.kilo/kilo.json`, `.claude/commands`, `.cursor/commands`, `.opencode/command`) и `.agent-1c/client-surface.json` - локальные managed данные, не коммитятся; tracked `.cursor/mcp.json` и `opencode.json` меняются только явной миграцией.
 - `ITL_PORT_REGISTRY_SCOPE` / `ITL_PORT_REGISTRY_HOME` в `.dev.env` - общий реестр helper-managed портов для проектов, worktree и пользователей терминального сервера.
 - `VANESSA_TEST_PORT` в `.dev.env` - branch-local порт запуска/подключения TestClient для `/itl-check`, управляется helper и передается в VAParams.
 - `VANESSA_MCP_PORT` и `VANESSA_MCP_URL` в `.dev.env` - активная точка Vanessa UI MCP текущей ветки, управляется helper; пустые значения означают stopped/on-demand, а не отсутствие настройки.

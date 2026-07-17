@@ -68,6 +68,8 @@
         $modulePath | Should -Not -BeNullOrEmpty
         $moduleRelativePath = $modulePath.Substring($RepoRoot.Length + 1).Replace("\", "/")
         @(& git -C $RepoRoot ls-files --cached --others --exclude-standard -- $moduleRelativePath).Count | Should -BeGreaterThan 0
+        (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Raw -Encoding UTF8) |
+            Should -Match ([regex]::Escape('.agent-1c/client-surface.json'))
     }
 
     It "keeps direct process TEMP access inside the shared temp resolver" {
@@ -143,16 +145,17 @@
         $lockTemplate.mode | Should -Be "fresh"
         $project = $projectTemplate | ConvertFrom-Json
         $project.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $project.aiRules.ref | Should -Be "itl-main-a421cf44-r7"
+        $project.aiRules.ref | Should -Be "itl-main-b4d9875b-r10"
+        @($project.aiRules.tools).Count | Should -Be 0
         $lockTemplate.dependencies.aiRules1c.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-a421cf44-r7"
+        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-b4d9875b-r10"
         $lockTemplate.dependencies.workflowPackage.commit | Should -Be ""
         $lockTemplate.dependencies.workflowPackage.source | Should -Be "template default"
         $lockTemplate.dependencies.workflowPackage.updatedAt | Should -Be ""
-        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "7f6d4cc68adfb6ada6d8e67ec4327cabbf3d0428"
+        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "760aab7fc2ef12d5019749e564803bbd4d6b1f5a"
         $lockTemplate.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
-        $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
-        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 7
+        $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "b4d9875b15c6d93f493035aee51f077126e72a21"
+        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 10
         $lockTemplate.dependencies.aiRules1c.compatibilityStatus | Should -Be "passed"
         $lockTemplate.dependencies.roctupMcpToolkit.assetName | Should -Be "MCP_Toolkit.epf"
         $lockTemplate.dependencies.roctupMcpToolkit.sha256 | Should -Be "e9a0856224aea4f54763fe1fb6a21aa8e71efb9d14158adc4382e1b2276d829d"
@@ -171,5 +174,28 @@
         $HelperText | Should -Match "function Get-VerificationPolicy"
         $HelperText | Should -Match "verificationPolicy=block"
         $HelperText | Should -Match "Dependency mode is locked"
+    }
+
+    It "keeps dependency lock bytes stable when an entry payload is unchanged" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lock-idempotence-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"dependencyMode":"fresh"}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{"fixture":{"version":"1","nested":{"value":2},"updatedAt":"original"}}}'
+            $lockPath = Join-Path $tempRoot ".agent-1c\dependency-lock.json"
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Update-DependencyLockEntry -Name "fixture" -Values ([ordered]@{ version = "2"; nested = [ordered]@{ value = 3; updatedAt = "first" } })
+            }
+            $beforeRepeat = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Update-DependencyLockEntry -Name "fixture" -Values ([ordered]@{ version = "2"; nested = [ordered]@{ value = 3; updatedAt = "second" } })
+            }
+            (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $beforeRepeat
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }

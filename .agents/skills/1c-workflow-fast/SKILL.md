@@ -48,7 +48,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ru
 
 Use direct `agent-1c.ps1` for branch creation only in non-interactive automation with `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip`.
 
-New branch commands run from `master` and create a sibling Git worktree by default. Report the printed worktree path and tell the developer to open a separate Codex/Kilo/IDE window there. Use `-UseCurrentWorktree` only when explicitly requested.
+New branch commands run from `master` and create a sibling Git worktree by default. Report the printed worktree path and tell the developer to open a separate window of the selected agent or IDE there. Use `-UseCurrentWorktree` only when explicitly requested.
 
 New branch commands prepare branch-local ROCTUP and Vanessa UI MCP as stopped/ready; they do not start MCP or open the branch infobase. For data exploration, run `start-roctup-mcp`, use the MCP, then run `stop-roctup-mcp`. For runtime UI research, recording, or debugging only, follow `.agents/skills/itl-vanessa-ui-mcp/SKILL.md`, then use `start-vanessa-mcp` and `stop-vanessa-mcp`. Static form/source questions do not start Vanessa UI MCP. `/itl-check` is separate Vanessa Automation verification, not MCP.
 

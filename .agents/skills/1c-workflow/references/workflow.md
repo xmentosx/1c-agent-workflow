@@ -13,6 +13,8 @@ master:
   /itl-new-config-branch <name>
   /itl-new-extension-branch <name>
   /itl-update-workflow
+  /itl-switch-client <client>
+  /itl-litemode <mode>
 
 itldev/*:
   /itl
@@ -21,9 +23,10 @@ itldev/*:
   /itl-verify-fix
   /itl-refresh
   /itl-result
+  /itl-litemode <mode>
 ```
 
-For Kilo Code, generate `.kilo/commands/itl*.md` only when `ai_rules_1c` lists `kilocode`; `master` and `itldev/*` get their matching surfaces. Synchronization removes stale commands and verifies filenames before opening a worktree. Use `/reload` for a stale picker. `/itl` returns helper `-Action help` stdout verbatim: state, recommendation, lifecycle, visible commands, and grouped helper actions. Do not summarize, merge OpenSpec into visible commands, omit `Lifecycle:`/`Additional helper actions:`, or add a "no lifecycle actions executed" note. In a fresh clean `itldev/*`, recommend OpenSpec only with managed Kilo artifacts; otherwise recommend quick-fix or master recovery. Recommend `/itl-check` only for checkable changes or stale/failed/unknown verification. `/itl-verify-fix` is manual recovery for omitted coverage or a failing cycle, never the default. MCP setup, extension setup/dump, closing, and rule updates stay natural-language or direct helper actions.
+Render ITL commands only for the one active client. Kilo, Claude, Cursor, and OpenCode use their native project command paths; Codex uses project-local skills and natural requests. `master` and `itldev/*` get matching surfaces. Synchronization removes only generated `itl*.md`, preserves user files, and verifies filenames. Follow the adapter reload instruction. `/itl` returns helper `-Action help` stdout verbatim: state, recommendation, lifecycle, visible commands, and grouped helper actions. Do not summarize, merge OpenSpec into visible commands, omit `Lifecycle:`/`Additional helper actions:`, or add a "no lifecycle actions executed" note. Recommend `/itl-check` only for checkable changes or stale/failed/unknown verification. `/itl-verify-fix` is manual recovery, never the default.
 
 For Codex, prefer `$1c-workflow-fast` for routine installed-project actions. Use this detailed skill only for initialization, recovery, unusual topology, or explanation.
 
@@ -70,7 +73,7 @@ Do not call the wizard helper directly, run `Test-Path` preflight, use backgroun
 - Keep ITL overlay rules in `USER-RULES.md`; do not append detailed workflow notes to upstream-managed `AGENTS.md` when it already points to `USER-RULES.md`.
 - Use sibling Git worktrees for new development branches by default and leave the main folder on `master`.
 - Load branch changes only into the copied development branch infobase, never directly into the source infobase.
-- Use `/itl-check` or `check-dev-branch` for the normal executable gate. Do not replace the final gate with MCP, a headless EPF, or `/deploy-and-test`.
+- Use `/itl-check` or `check-dev-branch` for executable verification. Effective ITL modes decide which components run; a skipped component produces partial evidence, never a fresh pass. `/deploy-and-test` is a bridge to the same helper.
 - Read `VANESSA-TESTS-GUIDE.md` only before creating or editing Vanessa Automation feature files.
 - For native Windows executables such as `1cv8.exe`, pass `Start-Process -ArgumentList` as one joined and correctly quoted command-line string, never as a PowerShell array.
 - Do not search or load ignored runtime folders such as `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/infobases/`, `build/test-results/`, or `logs/` unless diagnosing a specific helper run or artifact.

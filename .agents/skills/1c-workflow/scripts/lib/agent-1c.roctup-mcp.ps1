@@ -780,11 +780,9 @@ function Write-ItlBranchMcpClientConfig {
 
     Ensure-GitIgnore
     $endpoints = @(Get-ItlBranchMcpEndpointEntries -State $State)
-    $codexPath = Write-ItlBranchMcpCodexConfig -Endpoints $endpoints
-    $kiloPath = Write-ItlBranchMcpKiloConfig -Endpoints $endpoints
+    $path = Write-ItlClientMcpEndpoints -Endpoints $endpoints -Owner "branch-runtime"
     if ($endpoints.Count -gt 0) {
-        Write-Host "Branch MCP Codex config: $codexPath"
-        Write-Host "Branch MCP Kilo config: $kiloPath"
+        Write-Host "Branch MCP client config: $path"
     }
 }
 

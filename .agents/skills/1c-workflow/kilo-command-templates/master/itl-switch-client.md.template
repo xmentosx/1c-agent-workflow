@@ -1,0 +1,12 @@
+---
+description: Transactionally switch the single active project agent client
+agent: code
+---
+
+Use only from the clean `master` worktree. Require one explicit target from `codex`, `kilocode`, `claude-code`, `cursor`, or `opencode`, then run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action itl-switch-client -Client <client>
+```
+
+The helper owns snapshot, guards, cleanup, pinned rules installation, model reset, rollback, and reload instructions. Do not update development worktrees or remove RTK integration manually.

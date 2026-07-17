@@ -1813,7 +1813,7 @@ function Confirm-UnverifiedProceed {
 
     $policy = Get-VerificationPolicy
     if ($policy -eq "block") {
-        throw "$Operation stopped because verificationPolicy=block and fresh passed Vanessa verification is missing. Run verify-dev-branch before exporting or closing the branch."
+        throw "$Operation stopped because verificationPolicy=block and fresh passed full executable verification is missing. Run verify-dev-branch before exporting or closing the branch."
     }
 
     Write-Host "[WARN] Current development branch has no fresh successful Vanessa verification."
@@ -1836,6 +1836,9 @@ function Confirm-UnverifiedProceed {
 
     if ($Allow) {
         Write-Host "Explicit unverified override accepted for $Operation."
+        if ($verification.status -eq "partial") {
+            Write-Host "Result wording is restricted to: implemented; executable verification skipped. Do not report verified/done."
+        }
         return $true
     }
 
@@ -1937,7 +1940,11 @@ function Run-DevBranchTests {
         $eventLogReason = ""
         try {
             $eventLogStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-            $eventLogVerification = Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $eventLogCursorPath
+            $eventLogVerification = if ($script:ItlSkipEventLogForVerification) {
+                [pscustomobject]@{ status = "skipped"; reason = "ITL_CHECK_EVENT_LOG=off skipped event-log verification."; reader = ""; baselinePath = ""; reportPath = ""; newErrorCount = 0; legacyErrorCount = 0; checkedUntil = $runFinishedAt; scannedBytes = 0; scanMode = "skipped" }
+            } else {
+                Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $eventLogCursorPath
+            }
             $eventLogStopwatch.Stop(); $eventLogDurationMs = $eventLogStopwatch.ElapsedMilliseconds
             $eventLogReason = $eventLogVerification.reason
         } catch {
@@ -2005,7 +2012,11 @@ function Run-DevBranchTests {
     }
     try {
         $eventLogStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-        $eventLogVerification = Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $eventLogCursorPath
+        $eventLogVerification = if ($script:ItlSkipEventLogForVerification) {
+            [pscustomobject]@{ status = "skipped"; reason = "ITL_CHECK_EVENT_LOG=off skipped event-log verification."; reader = ""; baselinePath = ""; reportPath = ""; newErrorCount = 0; legacyErrorCount = 0; checkedUntil = $runFinishedAt; scannedBytes = 0; scanMode = "skipped" }
+        } else {
+            Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $eventLogCursorPath
+        }
         $eventLogStopwatch.Stop(); $eventLogDurationMs = $eventLogStopwatch.ElapsedMilliseconds
     } catch {
         if ($eventLogStopwatch.IsRunning) { $eventLogStopwatch.Stop() }
@@ -2024,12 +2035,12 @@ function Run-DevBranchTests {
         }
     }
     $postProcessStopwatch.Stop()
-    if ($eventLogVerification.status -ne "passed") {
+    if ($eventLogVerification.status -eq "failed") {
         $verification = [pscustomobject]@{
             status = "failed"
             reason = "$($verification.reason) Event log: $($eventLogVerification.reason)"
         }
-    } elseif ($verification.status -eq "passed") {
+    } elseif ($eventLogVerification.status -eq "passed" -and $verification.status -eq "passed") {
         $verification = [pscustomobject]@{
             status = "passed"
             reason = "$($verification.reason) Event log: $($eventLogVerification.reason)"

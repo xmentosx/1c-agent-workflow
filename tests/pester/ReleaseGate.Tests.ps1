@@ -26,6 +26,8 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'runnerSha256'
         $e2eText | Should -Match 'workflowTree'
         $e2eText | Should -Match 'Register-E2EGeneratedCommit'
+        $e2eText | Should -Match 'Sync-E2EWorktreeFromMaster'
+        $e2eText | Should -Match 'Invoke-E2EHelper -Action "refresh-dev-branch"'
         $e2eText | Should -Match ([regex]::Escape('.agent-1c\runs\release-e2e'))
         (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('.agent-1c/runs/'))
         $lifecycleText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
@@ -39,15 +41,16 @@ Describe "Release gate scripts" {
         $lifecycleText | Should -Match '(?s)Restore-ReleaseE2EExtensionLocalState\s+if \(Test-Path -LiteralPath \$smokeRoot.*?Remove-Item -LiteralPath \$smokeRoot -Recurse -Force\s+}\s+\s*if \(@\(& git -C \$script:ProjectRoot status --porcelain\)\.Count -ne 0\)'
     }
 
-    It "requires a local immutable fork tag and explicit E2E stand" {
+    It "requires the lock-pinned annotated fork tag and explicit E2E stand" {
         $text = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
-        $text | Should -Match 'exactly one immutable itl-\* tag'
+        $text | Should -Match 'Pinned fork tag must exist locally and be annotated'
+        $text | Should -Match 'release/\$tag'
         $text | Should -Match 'Release mode requires -E2EProjectRoot'
         $text | Should -Match 'compatibilityStatus'
         $text | Should -Match 'release-e2e-summary.json'
         $text | Should -Match '\$releaseHelperPath'
         $text | Should -Match '"-HelperPath", \$releaseHelperPath'
-        $text | Should -Match '"-AiRulesSource", \$resolvedAiRulesSource'
+        $text | Should -Match '"-AiRulesSource", \$releaseRulesSource'
         $text | Should -Match 'Release E2E summary reports'
         $text | Should -Match '\[Console\]::Error\.WriteLine\(\$failure\)'
         $runnerText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") -Raw -Encoding UTF8

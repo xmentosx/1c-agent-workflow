@@ -1292,10 +1292,14 @@ function Get-AiRules1cOpenSpecBundleValidation {
     $missing = @()
     foreach ($bundleFile in $bundleFiles) {
         $relative = $bundleFile.FullName.Substring($bundleRoot.Length + 1).Replace('\', '/')
-        # Protocol 1.1 can merge identical Codex/Kilo bundle destinations into
-        # one manifest entry whose source belongs to either owner. Destination
-        # inventory, not source-string identity, proves the bundle is present.
-        $matches = @($entries | Where-Object { $_.target -eq $relative })
+        $sourceSuffix = "content/openspec-bundle/$Tool/$relative"
+        # A shared destination can legitimately be owned by another selected bundle
+        # after installer de-duplication. Accept that winner by destination, while
+        # retaining source matching for adapter mappings that rewrite destinations.
+        $matches = @($entries | Where-Object {
+            $_.source.Replace('\', '/') -eq $sourceSuffix -or
+            $_.target.Replace('\', '/').TrimStart('/') -eq $relative.TrimStart('/')
+        })
         if ($matches.Count -eq 0) {
             $missing += $relative
             continue
@@ -1331,6 +1335,10 @@ function Assert-AiRules1cInstallation {
     if ($missingTools.Count -gt 0) {
         throw "ai_rules_1c installer did not activate required tool(s): $($missingTools -join ', ')."
     }
+    $unexpectedTools = @($installedTools | Where-Object { $DesiredTools -notcontains $_ })
+    if ($unexpectedTools.Count -gt 0 -or $installedTools.Count -ne 1 -or $DesiredTools.Count -ne 1) {
+        throw "ai_rules_1c installation must contain exactly the configured client. Configured: $($DesiredTools -join ', '). Installed: $($installedTools -join ', ')."
+    }
 
     foreach ($tool in $DesiredTools) {
         $bundle = Get-AiRules1cOpenSpecBundleValidation -RulesDir $RulesDir -Tool $tool -Manifest $manifest
@@ -1342,8 +1350,13 @@ function Assert-AiRules1cInstallation {
     return $manifest
 }
 
-function Get-AiRules1cKiloOpenSpecStatus {
-    $requiredCommands = @("opsx-propose", "opsx-explore", "opsx-apply", "opsx-archive")
+function Get-AiRules1cOpenSpecStatus {
+    $requiredStages = [ordered]@{
+        propose = @("openspec-propose", "opsx-propose")
+        explore = @("openspec-explore", "opsx-explore")
+        apply = @("openspec-apply-change", "opsx-apply")
+        archive = @("openspec-archive-change", "opsx-archive")
+    }
     try {
         $manifest = Get-AiRules1cProjectManifest
     } catch {
@@ -1353,29 +1366,29 @@ function Get-AiRules1cKiloOpenSpecStatus {
     if ($null -eq $manifest) {
         return [pscustomobject]@{ isAvailable = $false; reason = "ai_rules_1c manifest is missing." }
     }
-    if (-not (Test-AiRules1cToolInstalled -Tool "kilocode")) {
-        return [pscustomobject]@{ isAvailable = $false; reason = "ai_rules_1c does not list kilocode as an installed tool." }
-    }
+    try { $client = Get-ItlActiveClient } catch { return [pscustomobject]@{ isAvailable = $false; reason = $_.Exception.Message } }
 
     $entries = @(Get-AiRules1cManifestFileEntries -Manifest $manifest)
     $missing = @()
-    foreach ($command in $requiredCommands) {
+    foreach ($stage in $requiredStages.Keys) {
+        $tokens = @($requiredStages[$stage])
         $matches = @($entries | Where-Object {
-            $_.source.Replace('\', '/') -match ("/" + [regex]::Escape($command) + "\.md$")
+            $source = $_.source.Replace('\', '/')
+            @($tokens | Where-Object { $source -match ("/" + [regex]::Escape($_) + "(?:/SKILL)?\.md$") }).Count -gt 0
         })
         if ($matches.Count -eq 0) {
-            $missing += $command
+            $missing += $stage
             continue
         }
         if (@($matches | Where-Object { -not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $_.target) -PathType Leaf) }).Count -gt 0) {
-            $missing += $command
+            $missing += $stage
         }
     }
 
     if ($missing.Count -gt 0) {
         return [pscustomobject]@{
             isAvailable = $false
-            reason = "managed OpenSpec command artifact(s) are missing: $($missing -join ', ')."
+            reason = "managed OpenSpec artifact(s) for $client are missing: $($missing -join ', ')."
         }
     }
     return [pscustomobject]@{ isAvailable = $true; reason = "" }
@@ -1532,6 +1545,27 @@ function Invoke-AiRules1cInstaller {
         $effectiveCommand = "init"
     }
 
+    if ($effectiveCommand -eq "update") {
+        $installedToolsBeforeUpdate = @(Get-AiRules1cManifestToolNames)
+        $toolDifference = @(Compare-Object -ReferenceObject @($desiredTools) -DifferenceObject @($installedToolsBeforeUpdate))
+        if ($toolDifference.Count -gt 0) {
+            if (Test-AiRulesManifestHasUserChanges) {
+                throw "Cannot replace the active ai_rules_1c client because managed files are marked userModified. Resolve those files explicitly first."
+            }
+            Write-Host "Replacing ai_rules_1c client set transactionally: [$($installedToolsBeforeUpdate -join ', ')] -> [$($desiredTools -join ', ')]."
+            Push-Location (Resolve-Agent1cFullPath -Path $script:ProjectRoot)
+            try {
+                & powershell -NoProfile -ExecutionPolicy Bypass -File $installScript remove -ProjectRoot $script:ProjectRoot -Source $rulesDir -McpMode delegated -AssumeYes
+                if ($LASTEXITCODE -ne 0) {
+                    throw "ai_rules_1c remove failed with exit code $LASTEXITCODE"
+                }
+            } finally {
+                Pop-Location
+            }
+            $effectiveCommand = "init"
+        }
+    }
+
     $installArgs = @(
         $effectiveCommand,
         "-ProjectRoot", (Resolve-Agent1cFullPath -Path $script:ProjectRoot),
@@ -1555,28 +1589,13 @@ function Invoke-AiRules1cInstaller {
         Pop-Location
     }
 
-    $installedTools = @(Get-AiRules1cManifestToolNames)
-    foreach ($tool in @($desiredTools | Where-Object { $installedTools -notcontains $_ })) {
-        $addArgs = @(
-            "add",
-            "-Tool", $tool,
-            "-ProjectRoot", (Resolve-Agent1cFullPath -Path $script:ProjectRoot),
-            "-Source", $rulesDir,
-            "-McpMode", "delegated",
-            "-AssumeYes"
-        )
-        Push-Location (Resolve-Agent1cFullPath -Path $script:ProjectRoot)
-        try {
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $installScript @addArgs
-            if ($LASTEXITCODE -ne 0) {
-                throw "ai_rules_1c add $tool failed with exit code $LASTEXITCODE"
-            }
-        } finally {
-            Pop-Location
-        }
-    }
-
     Assert-AiRules1cInstallation -RulesDir $rulesDir -DesiredTools $desiredTools | Out-Null
+
+    $configuredRaw = @(ConvertTo-AgentToolList -Value (Get-ConfigValue -Path "aiRules.tools" -Default @()))
+    if ($configuredRaw.Count -ne 1 -or $configuredRaw[0] -ne $desiredTools[0]) {
+        Set-ProjectAiRulesClient -Client $desiredTools[0]
+        Read-ProjectConfig
+    }
 
     Invoke-AiRules1cManagedMcpConfigReconcile -Operation "ai_rules_1c $effectiveCommand" | Out-Null
 
@@ -1746,12 +1765,16 @@ function Remove-AiRules1cManagedMcpConfig {
 }
 
 function Get-AiRules1cMcpClientConfigPaths {
-    $paths = @(
-        (Get-Vibecoding1cMcpCodexHomeConfigPath),
-        (Get-Vibecoding1cMcpCodexProjectConfigPath),
-        (Get-Vibecoding1cMcpKiloConfigPath)
-    )
-    return @($paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+    try {
+        $adapter = Get-ItlClientAdapter -Client ([string](@(Get-AgentTargets) | Select-Object -First 1))
+        return @((Join-Path $script:ProjectRoot $adapter.mcpPath))
+    } catch {
+        return @()
+    }
+}
+
+function Get-AiRules1cKiloOpenSpecStatus {
+    return (Get-AiRules1cOpenSpecStatus)
 }
 
 function New-AiRules1cMcpConfigSnapshot {
@@ -2352,14 +2375,20 @@ function Update-WorkflowPackageLockEntry {
     $manifest = ConvertTo-Agent1cHashtable -Object (Read-DependencyLockManifest)
     $dependencies = ConvertTo-Agent1cHashtable -Object $manifest["dependencies"]
     $entry = ConvertTo-Agent1cHashtable -Object $dependencies["workflowPackage"]
-    $entry["repo"] = [string]$Source.repo
-    $entry["ref"] = [string]$Source.ref
-    $entry["commit"] = [string]$Source.commit
-    $entry["source"] = [string]$Source.source
+    $next = [ordered]@{
+        repo = [string]$Source.repo
+        ref = [string]$Source.ref
+        commit = [string]$Source.commit
+        source = [string]$Source.source
+    }
+    $unchanged = @($next.Keys | Where-Object { [string]$entry[$_] -ne [string]$next[$_] }).Count -eq 0
+    if ($unchanged) { return $false }
+    foreach ($key in $next.Keys) { $entry[$key] = $next[$key] }
     $entry["updatedAt"] = (Get-Date).ToString("o")
     $dependencies["workflowPackage"] = $entry
     $manifest["dependencies"] = $dependencies
     Write-DependencyLockManifest -Manifest $manifest
+    return $true
 }
 
 function Apply-BootstrapWorkflowPackageProvenance {
@@ -2374,13 +2403,13 @@ function Apply-BootstrapWorkflowPackageProvenance {
         throw "Bootstrap workflow provenance commit must be a full 40-character Git SHA: $BootstrapWorkflowCommit"
     }
 
-    Update-WorkflowPackageLockEntry -Source ([pscustomobject]@{
+    $changed = Update-WorkflowPackageLockEntry -Source ([pscustomobject]@{
         repo = [string]$BootstrapWorkflowRepo
         ref = [string]$BootstrapWorkflowRef
         commit = ([string]$BootstrapWorkflowCommit).ToLowerInvariant()
         source = [string]$BootstrapWorkflowSource
     })
-    Write-Host "Recorded bootstrap workflow package provenance: $(if ($BootstrapWorkflowCommit) { $BootstrapWorkflowCommit } else { '<non-Git source>' })"
+    Write-Host "$(if ($changed) { 'Recorded' } else { 'Confirmed' }) bootstrap workflow package provenance: $(if ($BootstrapWorkflowCommit) { $BootstrapWorkflowCommit } else { '<non-Git source>' })"
     return $true
 }
 
@@ -2499,7 +2528,7 @@ function Update-WorkflowPackage {
             Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
         }
 
-        Update-WorkflowPackageLockEntry -Source $source
+        Update-WorkflowPackageLockEntry -Source $source | Out-Null
         Write-Host "Workflow package files copied. Restarting the installed helper in a fresh PowerShell process for post-copy processing."
         Invoke-Agent1cFreshProcess -AdditionalArguments @("-LifecyclePhase", "post-copy")
     }
@@ -2925,7 +2954,7 @@ function Write-DevBranchWorktreeOpenMessage {
     Write-Host "Рабочая папка новой ветки:"
     Write-Host $WorktreePath
     Write-Host ""
-    Write-Host "Чтобы продолжить работу агентом с этой линией разработки, откройте отдельное окно Codex/Kilo/IDE в этой папке."
+    Write-Host "Чтобы продолжить работу агентом с этой линией разработки, откройте отдельное окно выбранного агента или IDE в этой папке."
     Write-Host "Могу попробовать открыть новое окно агента для этой папки автоматически."
     Write-Host "Если Kilo показывает устаревший список slash-команд в новом worktree, выполните /reload."
 }
@@ -5540,7 +5569,9 @@ function Show-WorkflowStatus {
 
 function Invoke-DevBranchCheck {
     Update-DevBranchBase
-    Run-DevBranchTests
+    $trigger = $(if ($VerificationTrigger) { $VerificationTrigger } else { "command" })
+    $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
+    Invoke-ItlVerificationCycle -Trigger $trigger -ExplicitComponents $explicit
 }
 
 function Check-DevBranch {
@@ -5596,7 +5627,13 @@ function Restore-ReleaseE2EInfobaseSnapshot {
 function Verify-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-SingleManagedExtensionArtifact -State $state
-    Invoke-DevBranchCheck
+    $savedTrigger = $VerificationTrigger
+    try {
+        if (-not $VerificationTrigger) { $script:VerificationTrigger = "repair" }
+        Invoke-DevBranchCheck
+    } finally {
+        $script:VerificationTrigger = $savedTrigger
+    }
 }
 
 function Export-DevBranchResult {
@@ -5903,7 +5940,7 @@ function Switch-DevBranch {
         if ($worktreePath -and ((Get-FullPathNormalized $worktreePath) -ne (Get-FullPathNormalized $script:ProjectRoot))) {
             Write-Host "Ветка разработки находится в отдельной рабочей папке:"
             Write-Host $worktreePath
-            Write-Host "Чтобы продолжить работу агентом с этой линией разработки, откройте отдельное окно Codex/Kilo/IDE в этой папке."
+            Write-Host "Чтобы продолжить работу агентом с этой линией разработки, откройте отдельное окно выбранного агента или IDE в этой папке."
             Open-AgentWorktreeBestEffort -WorktreePath $worktreePath
             return
         }
@@ -6039,6 +6076,8 @@ function Show-Help {
         Write-Host "  /itl-new-config-branch <name>"
         Write-Host "  /itl-new-extension-branch <name>"
         Write-Host "  /itl-update-workflow"
+        Write-Host "  /itl-switch-client <client>"
+        Write-Host "  /itl-litemode <mode>"
         Write-Host ""
         Write-Host "Active development worktrees:"
         $states = @(Get-WorkflowActiveDevBranchStates)
@@ -6062,7 +6101,7 @@ function Show-Help {
         Write-Host ""
         Write-Host "Next step: create a configuration or extension branch, then open the printed worktree folder."
     } elseif ($surface -eq "dev") {
-        $openSpec = Get-AiRules1cKiloOpenSpecStatus
+        $openSpec = Get-AiRules1cOpenSpecStatus
         $state = $null
         try {
             $state = Read-DevBranchState -Name ""
@@ -6107,7 +6146,7 @@ function Show-Help {
                 if ($openSpec.isAvailable) {
                     Write-Host "Recommended next step: choose development mode: quick-fix, /opsx-explore, or /opsx-propose"
                 } else {
-                    Write-Host "Recommended next step: choose quick-fix, or restore Kilo OpenSpec commands from master before starting an OpenSpec change."
+                    Write-Host "Recommended next step: choose quick-fix, or restore the active client's OpenSpec surface from master before starting an OpenSpec change."
                 }
             } elseif (-not (Get-StateValue -State $state -Name "lastResultPath" -Default "")) {
                 Write-Host "Recommended next step: /itl-result"
@@ -6121,7 +6160,7 @@ function Show-Help {
         if ($openSpec.isAvailable) {
             Write-Host "  optional /opsx-explore -> quick-fix or /opsx-propose -> /opsx-apply/work -> /itl-check -> /itl-result"
         } else {
-            Write-Host "  quick-fix -> /itl-check -> /itl-result; restore Kilo OpenSpec commands before an OpenSpec change."
+            Write-Host "  quick-fix -> /itl-check -> /itl-result; restore the active client's OpenSpec surface before an OpenSpec change."
         }
         Write-Host "  use /itl-refresh when master changes must be merged into this branch."
         Write-Host ""
@@ -6132,7 +6171,13 @@ function Show-Help {
         Write-Host "  /itl-verify-fix"
         Write-Host "  /itl-refresh"
         Write-Host "  /itl-result"
-        $inheritedPrimaryCommands = @(Get-KiloInheritedPrimaryItlCommands)
+        Write-Host "  /itl-litemode <mode>"
+        $inheritedPrimaryCommands = @()
+        try {
+            if ((Get-ItlActiveClient) -eq "kilocode") { $inheritedPrimaryCommands = @(Get-KiloInheritedPrimaryItlCommands) }
+        } catch {
+            $inheritedPrimaryCommands = @()
+        }
         if ($inheritedPrimaryCommands.Count -gt 0) {
             Write-Host ""
             Write-Host "Inherited by Kilo from primary checkout; invalid in this context:"
@@ -6148,7 +6193,7 @@ function Show-Help {
             Write-Host "  /opsx-archive  Archive an accepted OpenSpec change."
             Write-Host "  /opsx-explore  Optional: explore code or task boundaries before proposal when context is unclear."
         } else {
-            Write-Host "  Kilo OpenSpec commands are unavailable: $($openSpec.reason)"
+            Write-Host "  Active-client OpenSpec surface is unavailable: $($openSpec.reason)"
             Write-Host "  Recovery: in master run update-ai-rules or update-workflow, merge the update into this branch, then run /itl-refresh."
         }
         Write-Host "  use /itl-verify-fix only to repair omitted coverage or a failing verification cycle."

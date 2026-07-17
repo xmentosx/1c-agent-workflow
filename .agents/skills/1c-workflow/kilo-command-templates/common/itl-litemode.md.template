@@ -1,0 +1,12 @@
+---
+description: Show or change ITL Vanessa and event-log verification modes
+agent: code
+---
+
+Run the deterministic ITL mode helper from the current project directory. Pass the requested argument (`lite`, `on`, `standard`, `full`, `off`, or `status`) as `-Mode`; use `status` when omitted.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action itl-litemode -Mode status
+```
+
+Return the effective `ITL_VANESSA_TESTING` and `ITL_CHECK_EVENT_LOG` values exactly. Do not change upstream `VERIFICATION_DEPTH` or `UI_TESTING`.

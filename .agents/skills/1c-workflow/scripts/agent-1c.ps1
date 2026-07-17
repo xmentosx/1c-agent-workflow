@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status", "install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "run-dev-branch-tests", "stop-dev-branch-test-clients", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status", "install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "run-dev-branch-tests", "stop-dev-branch-test-clients", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -45,6 +45,13 @@ param(
     [ValidateSet("", "path")]
     [string]$BootstrapWorkflowSource = "",
     [string]$AgentTarget = "",
+    [string]$Client = "",
+    [string]$Mode = "status",
+    [ValidateSet("", "implicit", "command", "repair", "explicit")]
+    [string]$VerificationTrigger = "",
+    [ValidateSet("", "vanessa", "event-log", "all")]
+    [string]$ExplicitVerificationComponent = "",
+    [string[]]$ConfigObjectPaths = @(),
     [switch]$PublishToWeb,
     [switch]$Force,
     [switch]$SkipAiRules,
@@ -198,6 +205,11 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "LauncherPid" -Value $(if ($LauncherPid -gt 0) { $LauncherPid } else { $null })
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DependencyMode" -Value $DependencyMode
     Add-Agent1cReexecArgument -Arguments $arguments -Name "AgentTarget" -Value $AgentTarget
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "Client" -Value $Client
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "Mode" -Value $Mode
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationTrigger" -Value $VerificationTrigger
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "ExplicitVerificationComponent" -Value $ExplicitVerificationComponent
+    if ($ConfigObjectPaths.Count -gt 0) { Add-Agent1cReexecArgument -Arguments $arguments -Name "ConfigObjectPaths" -Value ($ConfigObjectPaths -join ",") }
     Add-Agent1cReexecArgument -Arguments $arguments -Name "PublishToWeb" -Value $PublishToWeb
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Force" -Value $Force
     Add-Agent1cReexecArgument -Arguments $arguments -Name "SkipAiRules" -Value $SkipAiRules
@@ -240,6 +252,7 @@ $script:Config = $null
 $script:ToolsManifest = $null
 $script:ToolsManifestLoaded = $false
 $script:InitVibecoding1cMcpSetupRequested = $false
+$script:ItlSkipEventLogForVerification = $false
 $script:DependencyLockPath = Join-Path $script:ProjectRoot ".agent-1c\dependency-lock.json"
 $script:Agent1cScriptPath = Resolve-Agent1cFullPath -Path $PSCommandPath
 $script:Agent1cReexecArguments = Get-Agent1cReexecArguments
@@ -261,6 +274,9 @@ $script:Agent1cModuleFiles = @(
     "agent-1c.data-mcp.ps1",
     "agent-1c.roctup-mcp.ps1",
     "agent-1c.lifecycle.ps1",
+    "agent-1c.client-adapters.ps1",
+    "agent-1c.verification-modes.ps1",
+    "agent-1c.legacy-bridges.ps1",
     "agent-1c.ai-rules-migration.ps1"
 )
 foreach ($moduleFile in $script:Agent1cModuleFiles) {
@@ -285,6 +301,7 @@ try {
 
     switch ($Action) {
         "help" { Show-Help }
+        "doctor" { Show-ItlDoctor }
         "validate" { Validate-Project }
         "check-tools" { Check-Tools -StopOnMissing }
         "list-platforms" { List-Platforms }
@@ -314,6 +331,12 @@ try {
         "vibecoding1c-mcp-write-client-config" { Write-Vibecoding1cMcpClientConfig }
         "update-workflow" { Update-WorkflowPackage }
         "update-ai-rules" { Update-AiRules1c }
+        "itl-litemode" { Set-ItlLiteMode -Mode $Mode }
+        "itl-switch-client" { Switch-ItlClient -Client $Client }
+        "update1cbase" { Invoke-ItlUpdate1cBaseBridge }
+        "loadfrom1cbase" { Invoke-ItlLoadFrom1cBaseBridge }
+        "getconfigfiles" { Invoke-ItlGetConfigFilesBridge }
+        "deploy-and-test" { Invoke-ItlDeployAndTestBridge }
         "status" { Show-WorkflowStatus }
         "run-dev-branch-tests" { Run-DevBranchTests }
         "stop-dev-branch-test-clients" { Stop-DevBranchTestClients }

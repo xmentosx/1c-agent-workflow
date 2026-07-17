@@ -4,11 +4,17 @@ Use this reference for `/itl-check`, `verify-dev-branch`, Vanessa Automation, ev
 
 ## Normal Gate
 
-Use `/itl-check` or helper action `check-dev-branch` for the normal post-change executable gate. It updates the copied branch infobase and then runs Vanessa Automation through packet `StartFeaturePlayer` in a real `TESTMANAGER -> TESTCLIENT` topology with a branch-local `VANESSA_TEST_PORT` used as the TestClient launch/connect port in VAParams.
+Use `/itl-check` or helper action `check-dev-branch` for the post-change executable gate. It updates the copied branch infobase, evaluates `ITL_VANESSA_TESTING` and `ITL_CHECK_EVENT_LOG`, and runs permitted components. Vanessa uses packet `StartFeaturePlayer` in a real `TESTMANAGER -> TESTCLIENT` topology.
 
 `/itl-check` remains a single mechanical helper run: it does not author tests or start an agent repair loop. Use `/itl-verify-fix` explicitly when a previous implementation may have omitted relevant coverage or when the agent must diagnose, fix, and rerun a failing verification cycle. That recovery command first reuses an existing scenario when it already covers the changed behavior and creates a scenario only when coverage is missing.
 
-Do not run a separate base update first for normal verification. Do not use `/deploy-and-test` as the normal gate because it reloads all files. Do not replace the final gate with MCP or a headless EPF. `verify-dev-branch` remains a compatibility alias.
+Do not run a separate base update first. `/deploy-and-test` is a published compatibility bridge to `check-dev-branch`, not an independent loader. Do not replace executable evidence with MCP or a headless EPF. `verify-dev-branch` is the repair-trigger compatibility alias.
+
+## ITL Modes
+
+Both ITL keys accept `auto|manual|off`; missing/invalid uses safe effective `auto`. `auto` runs for implicit completion, command, repair, and direct requests. `manual` runs for command, repair, and direct requests. `off` runs only for an explicit request naming that component; generic `/itl-check` and `/itl-verify-fix` do not override it. `/itl-litemode` maps `lite/on` to `off/off`, `standard` to `auto/manual`, and `full/off` to `auto/auto`. Upstream `/litemode`, `VERIFICATION_DEPTH`, and `UI_TESTING` remain independent.
+
+When Vanessa is off, do not automatically author tests or add them to a new plan. A skipped component sets `lastVerificationStatus=partial`, clears fresh evidence, and records skipped components. `verificationPolicy=block` still requires full evidence. `warn` accepts partial result/close only with explicit confirmation and wording `implemented; executable verification skipped`.
 
 `VANESSA_TEST_FOREIGN_WAIT_MODE=warn` is the default: foreign branch 1C test processes are diagnostic warnings, not a reason to wait, unless there is a real TestClient port/infobase conflict or the mode is set to `wait`.
 

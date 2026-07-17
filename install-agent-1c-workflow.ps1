@@ -7,6 +7,8 @@ param(
     [string]$InitMode = "wizard",
     [string]$InitAnswersPath = "",
     [string]$ResumeRunStatusPath = "",
+    [ValidateSet("codex", "kilocode", "claude-code", "cursor", "opencode")]
+    [string]$AgentTarget = "",
     [int]$InitMaxWaitSeconds = 3600,
     [switch]$KeepWindowOnFailure
 )
@@ -156,6 +158,7 @@ function Assert-SourcePackage {
         ".agents\skills\itl-roctup-1c-data\SKILL.md",
         ".agents\skills\itl-vanessa-ui-mcp\SKILL.md",
         "templates\project.json",
+        "templates\dependency-lock.json",
         "templates\USER-RULES.append.md"
     )) {
         $path = Join-Path $Root $relativePath
@@ -294,6 +297,9 @@ if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf -ErrorAction Silen
 }
 
 $initArgs = @("-Action", "init-project", "-InitMode", $InitMode)
+if ($AgentTarget) {
+    $initArgs += @("-AgentTarget", $AgentTarget)
+}
 foreach ($provenanceArgument in @(
     @{ name = "-BootstrapWorkflowRepo"; value = [string]$workflowProvenance.repo },
     @{ name = "-BootstrapWorkflowRef"; value = [string]$workflowProvenance.ref },

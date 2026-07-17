@@ -11,14 +11,14 @@
     },
     "aiRules1c": {
       "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
-      "ref": "itl-main-a421cf44-r7",
-      "commit": "7f6d4cc68adfb6ada6d8e67ec4327cabbf3d0428",
+      "ref": "itl-main-b4d9875b-r10",
+      "commit": "760aab7fc2ef12d5019749e564803bbd4d6b1f5a",
       "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
       "upstreamRef": "refs/heads/main",
-      "upstreamCommit": "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826",
-      "downstreamRevision": 7,
+      "upstreamCommit": "b4d9875b15c6d93f493035aee51f077126e72a21",
+      "downstreamRevision": 10,
       "compatibilityStatus": "passed",
-      "compatibilityCheckedAt": "2026-07-15T08:06:00Z"
+      "compatibilityCheckedAt": "2026-07-17T00:00:00Z"
     },
     "vanessaAutomation": {
       "version": "1.2.043.28",

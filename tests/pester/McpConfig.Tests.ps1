@@ -90,7 +90,7 @@
         $HelperText | Should -Match "Test-ProductDocsMcpAllowed"
         $HelperText | Should -Match "Product docs allowed for project"
         $HelperText | Should -Match "Product docs selected in MCP manifest"
-        $HelperText | Should -Match "Product docs effective client config: Codex="
+        $HelperText | Should -Match "Product docs effective client config:.*activeClient"
         $HelperText | Should -Match "Product docs endpoint reachable \(bounded probe\)"
         $HelperText | Should -Match "Test-Vibecoding1cMcpLogicalServerAllowedForProject"
         $HelperText | Should -Not -Match "itl-{projectSlug}-{branchSlug}-vanessa"
@@ -126,7 +126,6 @@
         $HelperText | Should -Not -Match "-p 8000:8000"
         $HelperText | Should -Not -Match "-p 8006:8006"
         $HelperText | Should -Not -Match "ITL_MCP"
-        $HelperText | Should -Not -Match "ITL MCP"
         $HelperText | Should -Not -Match "/itl-mcp"
         $HelperText | Should -Not -Match "itl-mcp"
         $HelperText | Should -Not -Match "(?<![A-Za-z0-9])mcpSetupDuringInit"
@@ -1027,7 +1026,8 @@
                 (Join-Path $projectRoot ".kilo"),
                 (Split-Path -Parent $codexHomeConfig),
                 $localHome | Out-Null
-            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\project.json") -Encoding UTF8 -Value (@{ schemaVersion = 1; baseConfigurationVersion = "PM4" } | ConvertTo-Json)
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\project.json") -Encoding UTF8 -Value (@{ schemaVersion = 1; baseConfigurationVersion = "PM4"; aiRules = @{ tools = @("kilocode") } } | ConvertTo-Json -Depth 5)
+            Set-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Encoding UTF8 -Value '{"schemaVersion":1,"tools":["kilocode"],"files":{}}'
 
             $state = [ordered]@{
                 schemaVersion = 1
@@ -1101,8 +1101,8 @@ enabled = true
             $updatedCodex = Get-Content -Encoding UTF8 -Raw $codexHomeConfig
             $updatedKilo = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".kilo\kilo.json") | ConvertFrom-Json
 
-            $updatedCodex | Should -Not -Match "BookStack-product-docs-mcp"
-            $updatedCodex | Should -Match "1C-docs-mcp"
+            $updatedCodex | Should -Match "BookStack-product-docs-mcp"
+            $updatedCodex | Should -Not -Match "1C-docs-mcp"
             $updatedCodex | Should -Match "external-product-docs"
             $updatedKilo.mcp.PSObject.Properties.Name | Should -Not -Contain "BookStack-product-docs-mcp"
             $updatedKilo.mcp.PSObject.Properties.Name | Should -Contain "1C-docs-mcp"
@@ -1551,7 +1551,9 @@ managedBy = "external-mcp"
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-rules-mcp-reconcile-rollback-" + [guid]::NewGuid().ToString("N"))
 
         try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".codex"), (Join-Path $tempRoot ".kilo") | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot ".codex"), (Join-Path $tempRoot ".kilo") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value '{"schemaVersion":1,"tools":["kilocode"],"files":{}}'
             Set-Content -LiteralPath (Join-Path $tempRoot ".codex\config.toml") -Value @"
 [mcp_servers."1C-docs-mcp"]
 url = "http://localhost:8003/mcp"
@@ -1587,9 +1589,6 @@ enabled = true
                 Invoke-AiRules1cManagedMcpConfigReconcile -Operation "test-rollback" *> $null
             }
 
-            $codexText = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".codex\config.toml")
-            $codexText | Should -Match "http://localhost:8003/mcp"
-
             $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
             $kilo.mcp.'1C-docs-mcp'.url | Should -Be "http://localhost:8003/mcp"
         } finally {
@@ -1604,7 +1603,9 @@ enabled = true
         $oldHome = [Environment]::GetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", "Process")
         try {
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", (Join-Path $tempRoot "local-home"), "Process")
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".codex"), (Join-Path $tempRoot ".kilo") | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot ".codex"), (Join-Path $tempRoot ".kilo") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value '{"schemaVersion":1,"tools":["kilocode"],"files":{}}'
             $codexPath = Join-Path $tempRoot ".codex\config.toml"
             $kiloPath = Join-Path $tempRoot ".kilo\kilo.json"
             [System.IO.File]::WriteAllBytes($codexPath, [byte[]](0xEF, 0xBB, 0xBF, 0x23, 0x20, 0x78, 0x0D, 0x0A))
@@ -1619,13 +1620,12 @@ enabled = true
                 function Write-Vibecoding1cMcpClientConfig { Set-Content -LiteralPath $kiloPath -Encoding UTF8 -Value '{"mcp":{}}' }
                 function Remove-AiRules1cManagedMcpConfig { @() }
                 function Remove-StaleAiRules1cDataMcpConfig {
-                    Set-Content -LiteralPath $codexPath -Encoding UTF8 -Value "changed"
+                    Set-Content -LiteralPath $kiloPath -Encoding UTF8 -Value "changed"
                     throw "simulated stale prune failure"
                 }
                 Invoke-AiRules1cManagedMcpConfigReconcile -Operation "test-prune-rollback" *> $null
             }
 
-            (Get-FileHash -Algorithm SHA256 -LiteralPath $codexPath).Hash | Should -Be $codexBefore
             (Get-FileHash -Algorithm SHA256 -LiteralPath $kiloPath).Hash | Should -Be $kiloBefore
         } finally {
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")

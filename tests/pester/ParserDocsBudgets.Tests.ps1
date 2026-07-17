@@ -131,7 +131,7 @@
             @{ path = "AGENTS.md"; maxWords = 600; maxApproxTokens = 1000 },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 750; maxApproxTokens = 1500 },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 750; maxApproxTokens = 1500 },
-            @{ path = "templates\USER-RULES.append.md"; maxWords = 650; maxApproxTokens = 1120 },
+            @{ path = "templates\USER-RULES.append.md"; maxWords = 650; maxApproxTokens = 1160 },
             @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 900; maxApproxTokens = 1500 }
         )
 
@@ -219,8 +219,8 @@
     It "has context-specific Kilo command templates for the public surface" {
         $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates"
         $expected = @{
-            common = @("itl.md.template", "itl-status.md.template")
-            master = @("itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-update-workflow.md.template")
+            common = @("itl.md.template", "itl-litemode.md.template", "itl-status.md.template")
+            master = @("itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-switch-client.md.template", "itl-update-workflow.md.template")
             dev = @("itl-check.md.template", "itl-refresh.md.template", "itl-result.md.template", "itl-verify-fix.md.template")
         }
 
@@ -343,6 +343,7 @@
 
             $stateDir = Join-Path $tempRoot ".agent-1c\dev-branches"
             New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
             $state = [ordered]@{
                 devBranchName = "branch3"
                 safeDevBranchName = "branch3"
@@ -405,6 +406,7 @@
 
             $stateDir = Join-Path $tempRoot ".agent-1c\dev-branches"
             New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
             $state = [ordered]@{
                 devBranchName = "branch3"
                 safeDevBranchName = "branch3"
@@ -424,7 +426,7 @@
 
             $text | Should -Match "Checkable changes: True"
             $text | Should -Match "Recommended next step: /itl-check"
-            $text | Should -Match "Kilo OpenSpec commands are unavailable"
+            $text | Should -Match "Active-client OpenSpec surface is unavailable"
             $text | Should -Not -Match "  /opsx-propose  Start the normal OpenSpec flow"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -472,38 +474,32 @@
         }
     }
 
-    It "requires Vanessa tests and fresh /itl-check before agent development completion" {
+    It "requires mode-aware executable evidence without false fresh completion" {
         $userRulesText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\USER-RULES.append.md")
 
         foreach ($marker in @(
-            "Development completion gate",
-            "configuration/extension change",
-            "tests/features",
-            "VANESSA-TESTS-GUIDE.md",
+            "mechanically classify",
+            "QUICKFIX_MAX_LINES",
             "/itl-check",
-            "fresh passed",
-            "/opsx-apply",
+            "OpenSpec explore/propose/apply",
             "quick-fix",
-            "direct implementation requests",
-            "ready/done/implemented",
-            "Vanessa report path",
-            "Hybrid cadence",
-            "focused regression scenario",
-            "observable slice",
-            "2-3 scenarios",
-            "fourth needs justification",
-            "test-report.md"
+            "Context Sources",
+            "test-plan.md",
+            "ITL_VANESSA_TESTING",
+            "ITL_CHECK_EVENT_LOG",
+            "auto|manual|off",
+            "partial/skipped",
+            "verificationPolicy=block",
+            "implemented; executable verification skipped"
         )) {
             $userRulesText | Should -Match ([regex]::Escape($marker))
         }
 
-        $userRulesText | Should -Match "Without either proof.*do not report ready/done/implemented"
-        $userRulesText | Should -Match "Large OpenSpec verifies each observable slice"
-        $userRulesText | Should -Match "syntaxcheck only.*insufficient"
-        $userRulesText | Should -Match "itldev/\*.*current Git branch name.*never a directory"
-        $userRulesText | Should -Match 'configured `exportPath`/`extensionsPath`'
-        $userRulesText | Should -Match "XML-only.*no exemption"
-        $userRulesText | Should -Match 'On `master`.*branch-safety blocker'
+        $userRulesText | Should -Match "skipped component.*never a normal fresh pass"
+        $userRulesText | Should -Match '`off` runs only when the user explicitly requests that named component'
+        $userRulesText | Should -Match 'never `verified`, `ready`, or `done`'
+        $userRulesText | Should -Match "USER-RULES.md.*above.*LLM-RULES.md"
+        $userRulesText | Should -Match "rtk rewrite.*lifecycle helper.*observed rewrite.*restart"
         $userRulesText | Should -Not -Match "opsx\*\.md"
     }
 

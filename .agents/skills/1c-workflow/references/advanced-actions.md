@@ -43,6 +43,13 @@ vibecoding1c-mcp-ensure-model
 vibecoding1c-mcp-write-client-config
 update-workflow
 update-ai-rules
+doctor
+itl-litemode
+itl-switch-client
+update1cbase
+loadfrom1cbase
+getconfigfiles
+deploy-and-test
 sync-master
 new-dev-branch
 new-extension-dev-branch
@@ -83,7 +90,7 @@ Extension helper actions and branch-local MCP actions are advanced/helper comman
 
 ROCTUP MCP actions (`install-roctup-mcp`, `update-roctup-mcp`, `start-roctup-mcp`, `stop-roctup-mcp`, `roctup-mcp-status`) manage the ignored EPF/skills cache and the branch-local embedded data MCP. ROCTUP is the preferred data channel for branch infobases and does not need web publication; start it for focused data exploration and stop it after use.
 
-vibecoding1c MCP actions (`vibecoding1c-mcp-setup`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`, `vibecoding1c-mcp-update`, `vibecoding1c-mcp-status`, `vibecoding1c-mcp-start`, `vibecoding1c-mcp-stop`, `vibecoding1c-mcp-rotate-keys`, `vibecoding1c-mcp-ensure-model`, `vibecoding1c-mcp-write-client-config`) are exposed through helper actions or natural-language requests. They manage remote LAN registry discovery, per-server remote/local selection, private vibecoding1c MCP distribution, local key rotation, embedding model bootstrap, port allocation, Docker containers, and Codex/Kilo client config for the current scope. Setup applies saved selection and runs selection first when it is missing or incomplete; use `vibecoding1c-mcp-select` or `vibecoding1c-mcp-setup -Force` for an explicit reselect. Remote is the default provider; config-specific remote vibecoding1c MCP always needs an explicit per-server `configId`, and `code`/`graph` selections do not inherit `configId` or `hostId` from each other. Local `code`/`graph` can be selected for project or branch scope. Vanessa UI MCP is managed separately through helper actions and is always branch-local.
+vibecoding1c MCP actions (`vibecoding1c-mcp-setup`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`, `vibecoding1c-mcp-update`, `vibecoding1c-mcp-status`, `vibecoding1c-mcp-start`, `vibecoding1c-mcp-stop`, `vibecoding1c-mcp-rotate-keys`, `vibecoding1c-mcp-ensure-model`, `vibecoding1c-mcp-write-client-config`) are exposed through helper actions or natural-language requests. They manage remote LAN registry discovery, per-server remote/local selection, private vibecoding1c MCP distribution, local key rotation, embedding model bootstrap, port allocation, Docker containers, and managed MCP entries for the single active client. Setup applies saved selection and runs selection first when it is missing or incomplete; use `vibecoding1c-mcp-select` or `vibecoding1c-mcp-setup -Force` for an explicit reselect. Remote is the default provider; config-specific remote vibecoding1c MCP always needs an explicit per-server `configId`, and `code`/`graph` selections do not inherit `configId` or `hostId` from each other. Local `code`/`graph` can be selected for project or branch scope. Vanessa UI MCP is managed separately through helper actions and is always branch-local.
 
 In the short `/itl` panel, show advanced/helper actions only as grouped additional capabilities, not as visible slash commands:
 
@@ -97,6 +104,10 @@ Maintenance/recovery: update base without tests, update workflow/rules, close/li
 
 `update-ai-rules` refreshes files from the configured `ai_rules_1c` source with `-McpMode delegated`. A configured immutable `aiRules.ref` remains pinned in both `fresh` and `locked`; the controlled fork never consumes `main`. The installer preserves client MCP entries while idempotently ensuring Kilo loads `USER-RULES.md`; ITL owns the only transactional MCP reconcile when ready vibecoding1c replacements exist. It records the resolved commit in `.agent-1c/dependency-lock.json` and reapplies the ITL overlay in `USER-RULES.md`. If selection/state is incomplete, existing MCP entries are preserved. It does not normally append to `AGENTS.md` when the configured `AGENTS.md` already points to `USER-RULES.md`.
 
-`update-workflow` refreshes the installed ITL workflow package in an already initialized project. It must run from the `master` worktree. The pre-copy phase checks master/clean state, copies only managed workflow files (never root `AGENTS.md`), records `workflowPackage`, then always starts the installed helper in a fresh PowerShell process with internal `post-copy`; only that new process updates rules, MCP, generated commands, and final checks. Generated `.kilo/commands/itl*.md` stay local and ignored. Projects whose old updater predates this re-exec contract need a one-time double run: the first installs it, the second guarantees all post-copy work runs on it. Later updates need one run. Kilo v7 may still display primary-checkout master commands in linked worktrees; `/itl` lists them separately as inherited and invalid, while direct master actions fail before mutation.
+`doctor` is read-only and reports the exact-one client, pinned provenance, five ITL skills, mode values, and master/dev state. `itl-litemode` atomically controls only the two ITL verification keys. `itl-switch-client` owns clean-master guards, snapshot, model reset, pinned adapter replacement, rollback, and reload guidance.
+
+`update1cbase`, `loadfrom1cbase`, `getconfigfiles`, and `deploy-and-test` are the implementations behind the four upstream-visible bridges. They reconcile state, prove the branch infobase, refuse source/master execution, and retain rollback evidence for dumps.
+
+`update-workflow` refreshes the installed ITL workflow package in an already initialized project. It must run from the `master` worktree. The pre-copy phase checks master/clean state, copies only managed workflow files (never root `AGENTS.md`), records `workflowPackage`, then always starts the installed helper in a fresh PowerShell process with internal `post-copy`; only that new process updates rules, MCP, the active client's generated command surface, and final checks. Generated client surfaces stay local and ignored. Projects whose old updater predates this re-exec contract need a one-time double run: the first installs it, the second guarantees all post-copy work runs on it. Later updates need one run. A client may still display primary-checkout master commands in linked worktrees; `/itl` lists inherited actions separately as invalid, while direct master actions fail before mutation.
 
 For normal developer work, prefer the short `/itl-*` commands documented in the README and developer guide.

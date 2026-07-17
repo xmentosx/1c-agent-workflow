@@ -460,6 +460,37 @@ function Test-E2EStagePassed {
     return $true
 }
 
+function Sync-E2EWorktreeFromMaster {
+    $masterBranch = "master"
+    $projectConfigPath = Join-Path $worktreePath ".agent-1c\project.json"
+    if (Test-Path -LiteralPath $projectConfigPath -PathType Leaf) {
+        try {
+            $projectConfig = Get-Content -LiteralPath $projectConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string]$projectConfig.masterBranch) { $masterBranch = [string]$projectConfig.masterBranch }
+        } catch {
+            throw "RELEASE_E2E_RESUME_STATE_MISMATCH: project config is unreadable before branch refresh: $($_.Exception.Message)"
+        }
+    }
+
+    & git -C $worktreePath merge-base --is-ancestor $masterBranch HEAD
+    $ancestryExitCode = $LASTEXITCODE
+    if ($ancestryExitCode -eq 0) { return $false }
+    if ($ancestryExitCode -ne 1) {
+        throw "RELEASE_E2E_RESUME_STATE_MISMATCH: could not compare '$masterBranch' with the E2E branch."
+    }
+
+    Write-Host "Release E2E branch does not contain $masterBranch; running script-owned refresh-dev-branch before checkpointing."
+    Invoke-E2EHelper -Action "refresh-dev-branch" -TimeoutSeconds 7200 | Out-Null
+    if (@(& git -C $worktreePath status --porcelain --untracked-files=all).Count -gt 0) {
+        throw "RELEASE_E2E_RESUME_STATE_MISMATCH: refresh-dev-branch left the E2E worktree dirty."
+    }
+    & git -C $worktreePath merge-base --is-ancestor $masterBranch HEAD
+    if ($LASTEXITCODE -ne 0) {
+        throw "RELEASE_E2E_RESUME_STATE_MISMATCH: refresh-dev-branch did not integrate '$masterBranch'."
+    }
+    return $true
+}
+
 $branch = (& git -C $worktreePath branch --show-current).Trim()
 if ($LASTEXITCODE -ne 0 -or $branch -notlike "itldev/*") { throw "E2E worktree must be an itldev/* Git worktree: $worktreePath" }
 $worktreeStatus = @(& git -C $worktreePath status --porcelain --untracked-files=all)
@@ -548,6 +579,8 @@ if ($checkpoint) {
 }
 
 if (-not $checkpoint) {
+    [void](Sync-E2EWorktreeFromMaster)
+    $projectConfigSha256 = Get-E2EFileSha256 -Path (Join-Path $worktreePath ".agent-1c\project.json")
     New-Item -ItemType Directory -Force -Path $releaseRunRoot | Out-Null
     $baselineStateFiles = Save-E2EStateFiles -StateCopyPath $baselineStateCopyPath -EnvCopyPath $baselineEnvCopyPath
     $initialHead = (& git -C $worktreePath rev-parse HEAD).Trim()

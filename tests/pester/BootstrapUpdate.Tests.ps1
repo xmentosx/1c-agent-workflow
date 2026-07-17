@@ -150,7 +150,6 @@ exit 0
             "/itl-update-rules",
             "/itl-vibecoding1c-mcp",
             "/itl-update-base",
-            "/itl-switch",
             "/itl-close"
         )
 
@@ -177,7 +176,7 @@ exit 0
         }
 
         $workflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
-        $shortSurfaceMatch = [regex]::Match($workflowText, "(?s)master:\s*(?<commands>.*?)For Kilo Code")
+        $shortSurfaceMatch = [regex]::Match($workflowText, "(?s)master:\s*(?<commands>.*?)Render ITL commands")
         $shortSurfaceMatch.Success | Should -Be $true
         foreach ($command in $advancedCommands) {
             $shortSurfaceMatch.Groups["commands"].Value | Should -Not -Match ([regex]::Escape($command))
@@ -246,25 +245,16 @@ exit 0
         $userRulesTemplateText | Should -Match "update-ai-rules"
         $userRulesTemplateText | Should -Match "TESTMANAGER -> TESTCLIENT"
         $userRulesTemplateText | Should -Match ([regex]::Escape(".agent-1c/event-log-baselines/*.json"))
-        $userRulesTemplateText | Should -Match "OpenSpec command library"
-        $userRulesTemplateText | Should -Match "content/skills"
         $userRulesTemplateText | Should -Match ([regex]::Escape("/installmcp"))
-        $userRulesTemplateText | Should -Match "vibecoding1c MCP helper request"
+        $userRulesTemplateText | Should -Match "ITL MCP helper requests"
         $userRulesTemplateText | Should -Match "product-docs/SKILL.md"
         $userRulesTemplateText | Should -Match "BookStack-product-docs-mcp"
-        $userRulesTemplateText | Should -Match "before answering, researching, planning, proposing, applying, or changing behavior"
-        $userRulesTemplateText | Should -Match "technical or implementation architecture"
-        $userRulesTemplateText | Should -Match "internal subsystem design"
-        $userRulesTemplateText | Should -Match "before a broad repository traversal"
-        $userRulesTemplateText | Should -Match "OpenSpec explore/propose/apply"
-        $userRulesTemplateText | Should -Match ([regex]::Escape('skill("product-docs")'))
-        $userRulesTemplateText | Should -Match "native skill activation"
-        $userRulesTemplateText | Should -Match "If BookStack is unavailable"
+        $userRulesTemplateText | Should -Match "before broad repository traversal"
+        $userRulesTemplateText | Should -Match "OpenSpec explore/propose/apply surface"
+        $userRulesTemplateText | Should -Match "activate required project skills"
         $userRulesTemplateText | Should -Match "code, tests, current 1C metadata"
         $userRulesTemplateText | Should -Match "available MCP evidence"
-        $userRulesTemplateText | Should -Match "BookStack says"
-        $userRulesTemplateText | Should -Match "Code/MCP currently shows"
-        $userRulesTemplateText | Should -Match "Decision"
+        $userRulesTemplateText | Should -Match "surface conflicts"
         $userRulesTemplateText | Should -Not -Match ([regex]::Escape("/itl-vibecoding1c-mcp"))
 
         $productDocsSkillPath = Join-Path $RepoRoot ".agents\skills\product-docs\SKILL.md"
@@ -336,8 +326,8 @@ exit 0
             $result.pm4 | Should -Match "technical or implementation architecture"
             $result.pm4 | Should -Not -Match "BookStack-product-docs-mcp"
             $result.pm5 | Should -Match "BookStack-product-docs-mcp"
-            $result.pm5 | Should -Match "OpenSpec explore/propose/apply"
-            $result.pm5 | Should -Match ([regex]::Escape('skill("product-docs")'))
+            $result.pm5 | Should -Match "OpenSpec explore/propose/apply surface"
+            $result.pm5 | Should -Match "product-docs/SKILL.md"
             ([regex]::Matches($result.pm5, 'ITL-WORKFLOW-USER-RULES:START')).Count | Should -Be 1
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -382,7 +372,9 @@ exit 0
 
         try {
             New-Item -ItemType Directory -Force -Path $projectRoot, $rulesRoot, (Join-Path $rulesRoot "adapters") | Out-Null
-            Set-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Encoding UTF8 -Value '{"schemaVersion":1,"tools":["codex","kilocode"],"files":{}}'
+            New-Item -ItemType Directory -Force -Path (Join-Path $projectRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            Set-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Encoding UTF8 -Value '{"schemaVersion":1,"tools":["codex"],"files":{}}'
             Set-Content -LiteralPath (Join-Path $rulesRoot "adapters\codex.yaml") -Encoding ASCII -Value "tool: codex"
             Set-Content -LiteralPath (Join-Path $rulesRoot "adapters\kilocode.yaml") -Encoding ASCII -Value "tool: kilocode"
             Set-Content -LiteralPath (Join-Path $rulesRoot "install.ps1") -Encoding UTF8 -Value @'
@@ -473,7 +465,8 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $kiloTemplateText | Should -Match "update-workflow"
         $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
         $advancedText | Should -Match "update-workflow"
-        $advancedText | Should -Match ([regex]::Escape(".kilo/commands/itl*.md"))
+        $advancedText | Should -Match "active client's generated command surface"
+        $advancedText | Should -Match "Generated client surfaces stay local and ignored"
 
         $docPaths = @(
             "README.md",
@@ -560,6 +553,18 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             $lock.dependencies.workflowPackage.source | Should -Be "path"
             $lock.dependencies.workflowPackage.updatedAt | Should -Not -BeNullOrEmpty
             $lock.dependencies.keepMe.value | Should -Be "preserved"
+
+            $beforeRepeat = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8
+            $repeatApplied = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help `
+                    -BootstrapWorkflowRepo "https://example.invalid/itl-workflow.git" `
+                    -BootstrapWorkflowRef "master" `
+                    -BootstrapWorkflowCommit $commit `
+                    -BootstrapWorkflowSource "path" *> $null
+                Apply-BootstrapWorkflowPackageProvenance
+            }
+            $repeatApplied | Should -BeTrue
+            (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $beforeRepeat
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -661,6 +666,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
 .dev.env
 .agent-1c/mcp/
 .agent-1c/dev-branches/
+.agent-1c/client-surface.json
 .codex/config.toml
 .kilo/kilo.json
 .kilo/kilo.jsonc
@@ -679,7 +685,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             Set-Content -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-old.md") -Encoding UTF8 -Value "stale command"
             Set-Content -LiteralPath (Join-Path $projectRoot ".kilo\commands\custom.md") -Encoding UTF8 -Value "custom command"
             Set-Content -LiteralPath (Join-Path $projectRoot "templates\stale.txt") -Encoding UTF8 -Value "stale template"
-            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"custom":"keep-project"}'
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"custom":"keep-project","aiRules":{"tools":["kilocode"]}}'
             Set-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Encoding UTF8 -Value '{"tools":["kilocode"],"files":{}}'
             Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\tools.json") -Encoding UTF8 -Value '{"custom":"keep-tools"}'
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Destination (Join-Path $projectRoot ".agent-1c\dependency-lock.json")
@@ -706,6 +712,11 @@ local after
             & git -C $projectRoot commit -m init *> $null
             & git -C $projectRoot branch -M master
             Set-Content -LiteralPath (Join-Path $projectRoot "scratch.local") -Encoding UTF8 -Value "keep untracked"
+            $legacySurfaceHash = (Get-FileHash -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-old.md") -Algorithm SHA256).Hash.ToLowerInvariant()
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\client-surface.json") -Encoding UTF8 -Value (@{
+                schemaVersion = 1
+                clients = @{ kilocode = @{ files = @{ ".kilo/commands/itl-old.md" = $legacySurfaceHash } } }
+            } | ConvertTo-Json -Depth 8)
             $commitCountBefore = ((& git -C $projectRoot rev-list --count HEAD).Trim())
 
             $env:ITL_WORKFLOW_SOURCE_PATH = $RepoRoot
@@ -1183,6 +1194,7 @@ exit 0
                     webPublishByDefault = $false
                     webPublishAuto = $false
                     dependencyMode = "fresh"
+                    agentTarget = "codex"
                     vibecoding1cMcpSetupDuringInit = $true
                 }
             }
@@ -1286,6 +1298,7 @@ exit 0
                     sourceUsesRepository = $false
                     sourceInfoBasePath = "C:\bases\source"
                     dependencyMode = "fresh"
+                    agentTarget = "codex"
                 }
                 $defaulted = Normalize-InitAnswers -Answers $baseAnswers
 
@@ -1296,6 +1309,7 @@ exit 0
                     sourceUsesRepository = $false
                     sourceInfoBasePath = "C:\bases\source"
                     dependencyMode = "fresh"
+                    agentTarget = "codex"
                 }
                 $pm4 = Normalize-InitAnswers -Answers $pm4Answers
 
@@ -1318,6 +1332,7 @@ exit 0
                         sourceUsesRepository = $false
                         sourceInfoBasePath = "C:\bases\source"
                         dependencyMode = "fresh"
+                        agentTarget = "codex"
                     }) | Out-Null
                 } catch {
                     $invalidMessage = $_.Exception.Message
