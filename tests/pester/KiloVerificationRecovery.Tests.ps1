@@ -20,7 +20,7 @@ Describe "Kilo verification recovery command" {
         $trackedText | Should -Not -Match "KILO_PURE"
     }
 
-    It "does not create or rewrite Kilo plugin configuration while syncing commands" {
+    It "disables Kilo snapshots while preserving unrelated configuration" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-kilo-no-plugin-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot ".kilo") | Out-Null
@@ -28,7 +28,6 @@ Describe "Kilo verification recovery command" {
             Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value '{"tools":["kilocode"],"files":{}}'
             $configPath = Join-Path $tempRoot ".kilo\kilo.json"
             Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"instructions":["USER-RULES.md"],"plugin":["custom-plugin"],"custom":"keep"}'
-            $before = [System.IO.File]::ReadAllBytes($configPath)
             & git -C $tempRoot init *> $null
 
             & {
@@ -36,8 +35,8 @@ Describe "Kilo verification recovery command" {
                 Sync-KiloItlCommandSurface -SourceRoot $RepoRoot
             }
 
-            [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($configPath)) | Should -Be ([Convert]::ToBase64String($before))
             $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $config.snapshot | Should -BeFalse
             @($config.plugin) | Should -Be @("custom-plugin")
             $config.custom | Should -Be "keep"
         } finally {
@@ -45,6 +44,14 @@ Describe "Kilo verification recovery command" {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
+    }
+
+    It "makes the completion contract explicit without growing USER-RULES" {
+        $rulesText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\USER-RULES.append.md") -Raw -Encoding UTF8
+        foreach ($marker in @("Quick-fix is no exception", "verify_xml", "after the last edit", "pending verification")) {
+            $rulesText | Should -Match ([regex]::Escape($marker))
+        }
+        [regex]::Matches($rulesText, '\S+').Count | Should -BeLessOrEqual 581
     }
 
     It "keeps itl-check mechanical and makes itl-verify-fix the bounded recovery loop" {

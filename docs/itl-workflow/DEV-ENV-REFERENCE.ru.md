@@ -45,6 +45,7 @@
 | `SUBAGENT_MODEL_CODING` | Модель coding tier | model id; пусто = модель клиента | user/installer |
 | `SUBAGENT_MODEL_ANALYSIS` | Модель analysis tier | model id; пусто = модель клиента | user/installer |
 | `SUBAGENT_MODEL_LIGHT` | Модель light tier | model id; пусто = модель клиента | user/installer |
+| `ITL_ROUTINE_MODE` | Делегирование `/itl*` в Kilo/OpenCode routine | `off`/`auto`/`on`, default `off`; `auto` и `on` требуют явный `SUBAGENT_MODEL_LIGHT` для делегирования | user |
 | `CAVEMAN` | Автоактивация краткого стиля | `on`/`auto`/`off`, default `on` | user/`/caveman` |
 
 ## ITL verification

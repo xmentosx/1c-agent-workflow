@@ -29,6 +29,43 @@
         @($errors).Count | Should -Be 0
     }
 
+    It "preserves MCP tool contracts while compacting only descriptions" {
+        $testPath = Join-Path $RepoRoot "tests\node\tools-list-proxy.test.js"
+        $output = & node $testPath 2>&1
+        $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+        ($output -join [Environment]::NewLine) | Should -Match "unit contract passed"
+    }
+
+    It "falls back to the direct endpoint when the qualified proxy is unavailable" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-tools-proxy-state-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{ schemaVersion = 1; stateRoot = (Join-Path $tempRoot "state"); toolsListProxy = [ordered]@{ enabled = $true; serverIds = @("code"); portOffset = 4000 } }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                (Test-ToolsListProxyTarget -Config $hostConfig -ServerId "code") | Should -BeTrue
+                (Test-ToolsListProxyTarget -Config $hostConfig -ServerId "graph") | Should -BeFalse
+                function Get-HostContainerPublishState { param([string]$ContainerName); return "running" }
+                function Test-HostTcpPortOpen { param([int]$Port, [int]$TimeoutMilliseconds = 500); return ($script:ProxyReady -and $Port -eq 22100) }
+                $server = [ordered]@{
+                    id = "code"; url = "http://host:22100/mcp"; directUrl = "http://host:18100/mcp"; proxyUrl = "http://host:22100/mcp"
+                    proxyPort = 22100; proxyContainerName = "itl-code-tools-list-proxy"; toolsContractStatus = "qualified"
+                }
+                $script:ProxyReady = $true
+                $qualified = Update-ToolsListProxyPublishEndpoint -Server $server
+                $qualified.url | Should -Be "http://host:22100/mcp"
+                $qualified.toolsContractStatus | Should -Be "qualified"
+                $script:ProxyReady = $false
+                $fallback = Update-ToolsListProxyPublishEndpoint -Server $server
+                $fallback.url | Should -Be "http://host:18100/mcp"
+                $fallback.toolsContractStatus | Should -Be "fallback-direct"
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "wires standalone MCP host tooling and registry schema" {
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\install-vibecoding1c-mcp-host.ps1") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1") -PathType Leaf) | Should -Be $true
@@ -41,6 +78,9 @@
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\server.py") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\requirements.txt") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\test_server.py") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\Dockerfile") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\mcp-tools-list-proxy.js") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\tools-contract.json") -PathType Leaf) | Should -Be $true
         $bookStackRequirementsText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\requirements.txt")
         $bookStackRequirementsText | Should -Match "sentence-transformers"
         $bookStackServerText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\server.py")
@@ -88,6 +128,9 @@
         $hostConfig.codeMetadataSearchServer.PSObject.Properties["reindexIntervalHours"] | Should -Not -BeNullOrEmpty
         $hostConfig.graphMetadataSearchServer.resetDatabase | Should -Be $false
         $hostConfig.graphMetadataSearchServer.PSObject.Properties["reindexIntervalHours"] | Should -Not -BeNullOrEmpty
+        $hostConfig.toolsListProxy.enabled | Should -BeTrue
+        @($hostConfig.toolsListProxy.serverIds) | Should -Be @("codechecker", "code", "graph")
+        $hostConfig.toolsListProxy.portOffset | Should -Be 4000
         $hostConfig.graphMetadataSearchServer.autoUpdateOnStartup | Should -Be $true
         $hostConfig.configurations[0].configId | Should -Be "trade"
         $hostConfig.configurations[0].sourceRepo | Should -Match "trade-config-dump"

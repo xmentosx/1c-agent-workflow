@@ -308,7 +308,9 @@ To refresh `ai_rules_1c` after initialization, run:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-ai-rules
 ```
 
-Ask the active client to update ITL rules. The helper runs only the pinned source installer, reconciles MCP for that client when ready, records the exact commit, reapplies the managed `USER-RULES.md` block, preserves `LLM-RULES.md`, regenerates native ITL commands and the Kilo/OpenCode routine agent, and avoids modifying source-managed `AGENTS.md` when it already points to `USER-RULES.md`.
+Ask the active client to update ITL rules. The helper runs only the pinned source installer, reconciles MCP for that client when ready, records the exact commit, reapplies the managed `USER-RULES.md` block, preserves `LLM-RULES.md`, regenerates native ITL commands and, when enabled, the Kilo/OpenCode routine agent, and avoids modifying source-managed `AGENTS.md` when it already points to `USER-RULES.md`.
+
+`ITL_ROUTINE_MODE` is non-interactive and defaults to `off`. In `off`, every `/itl*` command runs in the main agent. In `auto`, `/itl`, `/itl-status`, and `/itl-litemode` remain direct while the seven long commands use `itl-routine` only when `SUBAGENT_MODEL_LIGHT` names an explicit inexpensive model. In `on`, all ten commands use the routine and an explicit `SUBAGENT_MODEL_LIGHT` is required. Empty or unknown values safely resolve to `off`; the helper never lets the routine inherit the parent model.
 
 ## Run Initial Lifecycle
 

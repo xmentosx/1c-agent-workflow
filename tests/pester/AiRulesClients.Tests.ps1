@@ -146,8 +146,9 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
             $masterKiloCommands | Should -Not -Contain "itl-verify-fix.md"
             $masterKiloCommands | Should -Not -Contain "itl-refresh.md"
             $masterKiloCommands | Should -Not -Contain "itl-result.md"
-            (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -ErrorAction SilentlyContinue) | Should -BeFalse
-            (Get-Content -LiteralPath (Join-Path $tempRoot ".kilo\agents\itl-routine.md") -Raw) | Should -Match "name: itl-routine"
+            $kiloConfig = Get-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $kiloConfig.snapshot | Should -BeFalse
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo\agents\itl-routine.md") -PathType Leaf) | Should -BeFalse
             (Test-Path -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-plugin\itl-completion-gate.js") -ErrorAction SilentlyContinue) | Should -BeFalse
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {

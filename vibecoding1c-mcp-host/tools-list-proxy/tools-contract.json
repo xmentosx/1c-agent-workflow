@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "approvedAt": "2026-07-17",
+  "descriptionPolicy": {
+    "maximumToolDescriptionCharacters": 160,
+    "removeNestedSchemaDescriptions": true
+  },
+  "servers": {
+    "codechecker": {
+      "toolCount": 11,
+      "structuralSha256": "9ca8cb07c545bd26edefe173e881aa58844a2c4b3a75d98066351d1115cdd129"
+    },
+    "code": {
+      "toolCount": 15,
+      "structuralSha256": "7da36fc59bb43ce70036892223375943fa8991195a8fd58622f49c10de911ab8"
+    },
+    "graph": {
+      "toolCount": 17,
+      "structuralSha256": "b81745be0309bb6dc6941400cb31bff795b7ea17ff25020f574e908adfd57eb5"
+    }
+  }
+}

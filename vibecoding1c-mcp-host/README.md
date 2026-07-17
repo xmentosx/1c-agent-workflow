@@ -36,6 +36,13 @@ The `mantis` global server is built locally from `mantis-ticket-mcp/`.
 Configure `mantisTicketServer.baseUrl`, set read-only `MANTIS_API_TOKEN` in `secrets`,
 and keep `mantis` in `enabledServers.global`. The MCP publishes as
 `itl-mantis-ticket-mcp` and exposes `read_ticket`, `get_attachment`, and `health`.
+
+The optional `toolsListProxy` (enabled in the example config) is built locally from
+`tools-list-proxy/` for `codechecker`, `code`, and `graph`. It forwards MCP sessions and
+`tools/call` unchanged, but caps top-level tool descriptions at 160 characters and removes
+nested schema descriptions from `tools/list`. Before publishing a proxy URL it compares tool
+names, annotations, and description-free JSON Schemas with `tools-contract.json`. Contract
+drift or proxy failure keeps the direct server URL in the registry.
 `read_ticket` returns comments, issue-level and comment-level attachments, sanitized
 rendered HTML, formatting spans, and prompt-ready markdown. Image originals are always
 represented as attachment resource handles; OCR text is only draft accompaniment and tells

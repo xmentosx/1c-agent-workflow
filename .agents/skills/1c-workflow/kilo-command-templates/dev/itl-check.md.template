@@ -10,7 +10,7 @@ Run the helper directly from the current project directory:
 If the agent shell tool supports `timeout_ms`, run this lifecycle command with `timeout_ms >= 1800000`; do not use `120000 ms` or other short defaults because the helper may launch 1C Designer/Enterprise operations.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action check-dev-branch
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action check-dev-branch
 ```
 
-This is the normal post-change cycle. Do not run a separate base update first; the helper updates the branch base and then runs Vanessa Automation through packet `StartFeaturePlayer` in `TESTMANAGER -> TESTCLIENT` mode with a branch-local test port. It also checks the current branch file infobase event log against the branch baseline and fails on fresh non-baseline `Error` records. Other branch Vanessa processes are diagnostic warnings by default, not a reason to wait. If Vanessa fails, report the JUnit/status/log/event-log paths and process diagnostics, then let the agent attempt fixes according to the project rules.
+This is the normal post-change cycle. Do not run a separate base update first; the helper updates the branch base and then runs Vanessa Automation through packet `StartFeaturePlayer` in `TESTMANAGER -> TESTCLIENT` mode with a branch-local test port. It also checks the current branch file infobase event log against the branch baseline and fails on fresh non-baseline `Error` records. Other branch Vanessa processes are diagnostic warnings by default, not a reason to wait. The compact runner returns a bounded JSON summary and stores full output in the printed `logPath`. On failure, read only the last 80 lines of that log before deciding the next action.

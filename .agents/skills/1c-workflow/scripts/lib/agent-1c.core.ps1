@@ -3003,12 +3003,8 @@ function Read-InitWizardAnswersOnce {
         $answers.repositoryPassword = ConvertFrom-OptionalPasswordAnswer (Read-InitOptional (Get-Agent1cUtf8Text "0J/QsNGA0L7Qu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk="))
     }
 
-    $answers.webPublishByDefault = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0J/Rg9Cx0LvQuNC60L7QstCw0YLRjCDQuNC90YTQvtGA0LzQsNGG0LjQvtC90L3Ri9C1INCx0LDQt9GLINCy0LXRgtC+0Log0YDQsNC30YDQsNCx0L7RgtC60Lgg0L3QsCDQstC10LEt0YHQtdGA0LLQtdGA0LUg0LTQu9GPINGC0LXRgdGC0LjRgNC+0LLQsNC90LjRjyDQstC10LEt0LrQu9C40LXQvdGC0LA/") -Default $false
-    if ($answers.webPublishByDefault) {
-        $answers.webPublishAuto = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0J/Ri9GC0LDRgtGM0YHRjyDQsNCy0YLQvtC80LDRgtC40YfQtdGB0LrQuCDQv9GD0LHQu9C40LrQvtCy0LDRgtGMINCx0LDQt9GDINC/0YDQuCDRgdC+0LfQtNCw0L3QuNC4INCy0LXRgtC60Lgg0YDQsNC30YDQsNCx0L7RgtC60Lg/") -Default $false
-    }
     $answers.dependencyMode = Read-InitDependencyMode
-    $answers.vibecoding1cMcpSetupDuringInit = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0J3QsNGB0YLRgNC+0LjRgtGMIHZpYmVjb2RpbmcxYyBNQ1Ag0YHQtdC50YfQsNGBPyDQntGC0LLQtdGC0YzRgtC1INC90LXRgiwg0YfRgtC+0LHRiyDRgdC00LXQu9Cw0YLRjCDRjdGC0L4g0L/QvtC30LbQtSDQvtCx0YvRh9C90YvQvCDQt9Cw0L/RgNC+0YHQvtC8INCw0LPQtdC90YLRgyDQuNC70LggaGVscGVyIGFjdGlvbi4=") -Default $true
+    $answers.vibecoding1cMcpSetupDuringInit = $true
 
     return [pscustomobject]$answers
 }
@@ -3035,10 +3031,7 @@ function Write-InitWizardAnswersSummary {
         Write-Host ((Get-Agent1cUtf8Text "0J/Rg9GC0Ywg0Log0YXRgNCw0L3QuNC70LjRidGDOiA=") + $answers.repositoryPath)
         Write-Host ((Get-Agent1cUtf8Text "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINGF0YDQsNC90LjQu9C40YnQsDog") + $answers.repositoryUser)
     }
-    Write-Host ((Get-Agent1cUtf8Text "0JLQtdCxLdC/0YPQsdC70LjQutCw0YbQuNGPINC/0L4g0YPQvNC+0LvRh9Cw0L3QuNGOOiA=") + $answers.webPublishByDefault)
-    Write-Host ((Get-Agent1cUtf8Text "0JDQstGC0L7QvNCw0YLQuNGH0LXRgdC60LDRjyDQstC10LEt0L/Rg9Cx0LvQuNC60LDRhtC40Y86IA==") + $answers.webPublishAuto)
     Write-Host ((Get-Agent1cUtf8Text "0KDQtdC20LjQvCDQt9Cw0LLQuNGB0LjQvNC+0YHRgtC10Lk6IA==") + $answers.dependencyMode)
-    Write-Host ((Get-Agent1cUtf8Text "0J3QsNGB0YLRgNC+0LjRgtGMIHZpYmVjb2RpbmcxYyBNQ1Ag0YHQtdC50YfQsNGBOiA=") + $answers.vibecoding1cMcpSetupDuringInit)
     Write-Host (Get-Agent1cUtf8Text "0J/QsNGA0L7Qu9C4OiDRgdC60YDRi9GC0Ys=")
 }
 
@@ -3069,12 +3062,6 @@ function Normalize-InitAnswers {
 
     $baseConfigurationVersion = ConvertTo-BaseConfigurationVersion -Value (Get-AnswerValue -Answers $Answers -Names @("baseConfigurationVersion", "BASE_CONFIGURATION_VERSION") -Default "PM5")
     $sourceUsesRepository = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("sourceUsesRepository", "SOURCE_USES_REPOSITORY") -Default $true) -Default $true
-    $webPublishByDefault = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("webPublishByDefault", "WEB_PUBLISH_BY_DEFAULT") -Default $false) -Default $false
-    $webPublishAuto = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("webPublishAuto", "WEB_PUBLISH_AUTO") -Default $false) -Default $false
-    if (-not $webPublishByDefault) {
-        $webPublishAuto = $false
-    }
-    $vibecoding1cMcpSetupDuringInit = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("vibecoding1cMcpSetupDuringInit", "VIBECODING1C_MCP_SETUP_DURING_INIT") -Default $true) -Default $true
     $dependencyModeValue = Get-AnswerValue -Answers $Answers -Names @("dependencyMode", "DEPENDENCY_MODE") -Default ""
     if (-not $dependencyModeValue) {
         $useLatestDependencies = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("useLatestDependencies", "USE_LATEST_DEPENDENCIES") -Default $true) -Default $true
@@ -3095,10 +3082,10 @@ function Normalize-InitAnswers {
         repositoryPath = [string](Get-AnswerValue -Answers $Answers -Names @("repositoryPath", "REPOSITORY_PATH") -Default "")
         repositoryUser = [string](Get-AnswerValue -Answers $Answers -Names @("repositoryUser", "REPOSITORY_USER") -Default "")
         repositoryPassword = ConvertFrom-OptionalPasswordAnswer ([string](Get-AnswerValue -Answers $Answers -Names @("repositoryPassword", "REPOSITORY_PASSWORD") -Default ""))
-        webPublishByDefault = $webPublishByDefault
-        webPublishAuto = $webPublishAuto
+        webPublishByDefault = $false
+        webPublishAuto = $false
         dependencyMode = ConvertTo-DependencyMode -Value $dependencyModeValue
-        vibecoding1cMcpSetupDuringInit = $vibecoding1cMcpSetupDuringInit
+        vibecoding1cMcpSetupDuringInit = $true
         installVanessaIfMissing = (ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $Answers -Names @("installVanessaIfMissing", "INSTALL_VANESSA_IF_MISSING") -Default $false) -Default $false)
     }
 }
@@ -3298,20 +3285,20 @@ function Get-SupportedAgentTargets {
 }
 
 function Read-InitAgentTarget {
-    Write-Host "Select the single agent client for this project:"
+    Write-Host (Get-Agent1cUtf8Text "0JLRi9Cx0LXRgNC40YLQtSDQtdC00LjQvdGB0YLQstC10L3QvdGL0Lkg0LDQs9C10L3RgtGB0LrQuNC5INC60LvQuNC10L3RgiDQtNC70Y8g0L/RgNC+0LXQutGC0LA6")
     $supported = @(Get-SupportedAgentTargets)
     for ($index = 0; $index -lt $supported.Count; $index++) {
         Write-Host ("{0}. {1}" -f ($index + 1), $supported[$index])
     }
     while ($true) {
-        $answer = (Read-Host "Agent client").Trim().ToLowerInvariant()
+        $answer = (Read-Host (Get-Agent1cUtf8Text "0JrQu9C40LXQvdGCINCw0LPQtdC90YLQsA==")).Trim().ToLowerInvariant()
         $number = 0
         if ([int]::TryParse($answer, [ref]$number) -and $number -ge 1 -and $number -le $supported.Count) {
             return $supported[$number - 1]
         }
         if ($answer -eq "kilo") { return "kilocode" }
         if ($supported -contains $answer) { return $answer }
-        Write-Host "Choose one of: $($supported -join ', ')."
+        Write-Host ((Get-Agent1cUtf8Text "0JLRi9Cx0LXRgNC40YLQtSDQvtC00LjQvSDQuNC3Og==") + " $($supported -join ', ').")
     }
 }
 

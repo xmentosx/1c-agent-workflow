@@ -1124,7 +1124,7 @@ exit 0
         $HelperText | Should -Match "Use the direct wizard only for manual debugging"
     }
 
-    It "uses Russian init wizard prompts and defaults vibecoding1c setup to yes" {
+    It "uses Russian init wizard prompts and fixed init defaults" {
         $russianPromptBase64 = @(
             "0JjQvdC40YbQuNCw0LvQuNC30LjRgNC+0LLQsNGC0YwgMUMg0L/RgNC+0LXQutGCINCyINGN0YLQvtC5INC/0LDQv9C60LU/",
             "0JLRi9Cx0LXRgNC40YLQtSDQvdC+0LzQtdGAINC/0LvQsNGC0YTQvtGA0LzRiyDQuNC70Lgg0LLQstC10LTQuNGC0LUg0L/QvtC70L3Ri9C5INC/0YPRgtGMINC6IDFjdjguZXhl",
@@ -1139,10 +1139,10 @@ exit 0
             "0J/Rg9GC0Ywg0Log0YXRgNCw0L3QuNC70LjRidGDINC60L7QvdGE0LjQs9GD0YDQsNGG0LjQuA==",
             "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40Lg=",
             "0J/QsNGA0L7Qu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk=",
-            "0J/Rg9Cx0LvQuNC60L7QstCw0YLRjCDQuNC90YTQvtGA0LzQsNGG0LjQvtC90L3Ri9C1INCx0LDQt9GLINCy0LXRgtC+0Log0YDQsNC30YDQsNCx0L7RgtC60Lgg0L3QsCDQstC10LEt0YHQtdGA0LLQtdGA0LUg0LTQu9GPINGC0LXRgdGC0LjRgNC+0LLQsNC90LjRjyDQstC10LEt0LrQu9C40LXQvdGC0LA/",
-            "0J/Ri9GC0LDRgtGM0YHRjyDQsNCy0YLQvtC80LDRgtC40YfQtdGB0LrQuCDQv9GD0LHQu9C40LrQvtCy0LDRgtGMINCx0LDQt9GDINC/0YDQuCDRgdC+0LfQtNCw0L3QuNC4INCy0LXRgtC60Lgg0YDQsNC30YDQsNCx0L7RgtC60Lg/",
             "0JjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMINGB0LLQtdC20LjQtSDQstC10YDRgdC40Lgg0LfQsNCy0LjRgdC40LzQvtGB0YLQtdC5INC/0YDQuCDQuNC90LjRhtC40LDQu9C40LfQsNGG0LjQuD8g0J7RgtCy0LXRgtGM0YLQtSDQvdC10YIsINGH0YLQvtCx0Ysg0LjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMIHBpbnMg0LjQtyAuYWdlbnQtMWMvZGVwZW5kZW5jeS1sb2NrLmpzb24u",
-            "0J3QsNGB0YLRgNC+0LjRgtGMIHZpYmVjb2RpbmcxYyBNQ1Ag0YHQtdC50YfQsNGBPyDQntGC0LLQtdGC0YzRgtC1INC90LXRgiwg0YfRgtC+0LHRiyDRgdC00LXQu9Cw0YLRjCDRjdGC0L4g0L/QvtC30LbQtSDQvtCx0YvRh9C90YvQvCDQt9Cw0L/RgNC+0YHQvtC8INCw0LPQtdC90YLRgyDQuNC70LggaGVscGVyIGFjdGlvbi4=",
+            "0JLRi9Cx0LXRgNC40YLQtSDQtdC00LjQvdGB0YLQstC10L3QvdGL0Lkg0LDQs9C10L3RgtGB0LrQuNC5INC60LvQuNC10L3RgiDQtNC70Y8g0L/RgNC+0LXQutGC0LA6",
+            "0JrQu9C40LXQvdGCINCw0LPQtdC90YLQsA==",
+            "0JLRi9Cx0LXRgNC40YLQtSDQvtC00LjQvSDQuNC3Og==",
             "0J/RgNC+0LTQvtC70LbQuNGC0Ywg0YEg0Y3RgtC40LzQuCDQt9C90LDRh9C10L3QuNGP0LzQuD8g0J7RgtCy0LXRgtGM0YLQtSDQvdC10YIsINGH0YLQvtCx0Ysg0LfQsNC/0L7Qu9C90LjRgtGMINC/0LDRgNCw0LzQtdGC0YDRiyDQt9Cw0L3QvtCy0L4u",
             "0JfQsNC/0L7Qu9C90LjRgtC1INC/0LDRgNCw0LzQtdGC0YDRiyDQt9Cw0L3QvtCy0L4u",
             "0J/QvtC70L3Ri9C5INC/0YPRgtGMINC6IHdlYmluc3QuZXhl",
@@ -1175,8 +1175,9 @@ exit 0
 
         $HelperText | Should -Match ([regex]::Escape("IFvQlC/QvV0="))
         $HelperText | Should -Match ([regex]::Escape("IFvQtC/QnV0="))
-        $HelperText | Should -Match 'vibecoding1cMcpSetupDuringInit\s*=\s*Read-InitYesNo.*-Default\s+\$true'
-        $HelperText | Should -Match 'VIBECODING1C_MCP_SETUP_DURING_INIT"\)\s+-Default\s+\$true\)\s+-Default\s+\$true'
+        $HelperText | Should -Match 'vibecoding1cMcpSetupDuringInit\s*=\s*\$true'
+        $HelperText | Should -Not -Match 'answers\.webPublishByDefault\s*=\s*Read-InitYesNo'
+        $HelperText | Should -Match 'webPublishByDefault\s*=\s*\$false'
         $HelperText | Should -Match 'Get-EnvValue\s+-Name\s+"VIBECODING1C_MCP_SETUP_DURING_INIT"\s+-Default\s+\$true\)\s+-Default\s+\$true'
     }
 
@@ -1248,7 +1249,7 @@ exit 0
         $result.sourceInfoBasePath | Should -Be "C:\bases\source-2"
     }
 
-    It "normalizes a missing vibecoding1c init answer to true while preserving explicit false" {
+    It "always enables vibecoding1c setup and disables web publication during init" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
 
@@ -1268,17 +1269,23 @@ exit 0
                 sourceInfoBasePath = "C:\bases\source"
                 dependencyMode = "fresh"
                 VIBECODING1C_MCP_SETUP_DURING_INIT = "false"
+                WEB_PUBLISH_BY_DEFAULT = "true"
+                WEB_PUBLISH_AUTO = "true"
             }
             $explicit = Normalize-InitAnswers -Answers $explicitAnswers
 
             [pscustomobject]@{
                 defaulted = [bool]$defaulted.vibecoding1cMcpSetupDuringInit
                 explicit = [bool]$explicit.vibecoding1cMcpSetupDuringInit
+                webPublishByDefault = [bool]$explicit.webPublishByDefault
+                webPublishAuto = [bool]$explicit.webPublishAuto
             }
         }
 
         $result.defaulted | Should -BeTrue
-        $result.explicit | Should -BeFalse
+        $result.explicit | Should -BeTrue
+        $result.webPublishByDefault | Should -BeFalse
+        $result.webPublishAuto | Should -BeFalse
     }
 
     It "normalizes and persists base configuration version init answers" {

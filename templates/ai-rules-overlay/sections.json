@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "baselineUpstreamCommit": "b4d9875b15c6d93f493035aee51f077126e72a21",
+  "baselineReleaseCommit": "af82570afca06c40a9588c8a678bf3665bba4870",
+  "targetPath": "AGENTS.md",
+  "maximumTargetCharacters": 20000,
+  "downstreamPatch": {
+    "disposition": "rewrite",
+    "description": "Reapply the qualified downstream delta from the immutable baseline release, excluding AGENTS.md. Any upstream drift in a touched path blocks the build for an explicit keep/drop/rewrite audit.",
+    "excludePaths": [
+      "AGENTS.md"
+    ]
+  },
+  "sections": [
+    {
+      "heading": "1C Development Rules",
+      "sha256": "8800a349f7f2ba2ad000c1eed32f60d91c6983a45c6b43cd3289e29dc12d1c18",
+      "disposition": "rewrite",
+      "owner": "templates/ai-rules-overlay/AGENTS.md"
+    },
+    {
+      "heading": "Process",
+      "sha256": "c609f9af884dcbf78587ceb955d50c0455c0d1cc7f277c293a49b61088df68d8",
+      "disposition": "rewrite",
+      "owner": "content/rules/development-process.md"
+    },
+    {
+      "heading": "Tooling & Standards",
+      "sha256": "00aaa778814d285636111ee19b3ff8b57c28f98fbe32351268e7d436a963ab02",
+      "disposition": "rewrite",
+      "owner": "content/skills/mcp-1c-tools/SKILL.md"
+    },
+    {
+      "heading": "Discipline",
+      "sha256": "0d2b7de0648e8ead0328cf95a8428fcbf3ce9d332c4c26f3b662e89c356f5a47",
+      "disposition": "rewrite",
+      "owner": "content/rules/project-memory.md"
+    },
+    {
+      "heading": "Additional rules (load on demand)",
+      "sha256": "85fd482ccc3a985ed4333ab21a2bf981f8fe5d530c531cff65107a74f73ec92a",
+      "disposition": "rewrite",
+      "owner": "content/rules/rule-index.md"
+    },
+    {
+      "heading": "Spec-driven development workspace",
+      "sha256": "21bfbb09b15fad9ab0812925f16595fc2d82fde99d189b433eefd53e8dc33440",
+      "disposition": "rewrite",
+      "owner": "content/rules/sdd-integrations.md"
+    }
+  ],
+  "requiredUpstreamAnchors": [
+    "Quick-fix reduces planning / delegation overhead, **not** verification depth.",
+    "The single source of truth for MCP server catalog",
+    "USER-RULES.md` and `memory.md` (project root) — additional rules",
+    "content/rules/verification-policy.md",
+    "verification-gates",
+    "verification-delivery"
+  ],
+  "requiredTargetAnchors": [
+    "USER-RULES.md` / `memory.md` -> `LLM-RULES.md`",
+    "Quick-fix reduces planning overhead, never verification depth.",
+    "do not report ready/done until relevant Vanessa coverage exists or was updated and a fresh successful `/itl-check` completed",
+    "If `USER-RULES.md` defines a post-change or completion command, it is mandatory",
+    "content/skills/mcp-1c-tools/SKILL.md",
+    "verification-gates",
+    "verification-delivery"
+  ]
+}

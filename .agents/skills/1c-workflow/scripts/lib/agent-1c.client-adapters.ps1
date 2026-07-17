@@ -117,6 +117,27 @@ function Assert-ItlClientConfigWritable {
     }
 }
 
+function Set-KiloSnapshotsDisabled {
+    $configPath = Join-Path $script:ProjectRoot ".kilo\kilo.json"
+    $jsoncPath = Join-Path $script:ProjectRoot ".kilo\kilo.jsonc"
+    if ((Test-Path -LiteralPath $jsoncPath -PathType Leaf) -and -not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+        throw "KILO_CONFIG_COLLISION: ITL cannot safely preserve comments while setting snapshot=false in .kilo/kilo.jsonc. Rename it to .kilo/kilo.json first."
+    }
+
+    $config = if (Test-Path -LiteralPath $configPath -PathType Leaf) {
+        ConvertTo-Agent1cHashtable -Object (Read-Utf8Text -Path $configPath | ConvertFrom-Json)
+    } else {
+        [ordered]@{}
+    }
+    if ($config.Contains("snapshot") -and $config["snapshot"] -eq $false) {
+        return
+    }
+
+    $config["snapshot"] = $false
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $configPath) | Out-Null
+    Write-Utf8Text -Path $configPath -Value (($config | ConvertTo-Json -Depth 30) + [Environment]::NewLine)
+}
+
 function Get-ItlManagedMcpStatePath {
     return (Join-Path $script:ProjectRoot ".agent-1c\mcp\client-managed.json")
 }
@@ -289,31 +310,81 @@ function Get-ItlRoutineCommandNames {
     )
 }
 
+function Get-ItlRoutineLongCommandNames {
+    return @(
+        "itl-new-config-branch.md", "itl-new-extension-branch.md",
+        "itl-check.md", "itl-refresh.md", "itl-result.md",
+        "itl-update-workflow.md", "itl-switch-client.md"
+    )
+}
+
+function Get-ItlRoutineMode {
+    $value = ([string](Get-EnvValue -Name "ITL_ROUTINE_MODE" -Default "off")).Trim().ToLowerInvariant()
+    if (-not $value) { return "off" }
+    if ($value -in @("off", "auto", "on")) { return $value }
+
+    if (-not (Test-Path Variable:script:ItlRoutineModeWarningWritten) -or -not $script:ItlRoutineModeWarningWritten) {
+        Write-Warning "Unknown ITL_ROUTINE_MODE '$value'; using safe default 'off'. Valid values: off, auto, on."
+        $script:ItlRoutineModeWarningWritten = $true
+    }
+    return "off"
+}
+
+function Get-ItlRoutineModel {
+    $model = ([string](Get-EnvValue -Name "SUBAGENT_MODEL_LIGHT" -Default "")).Trim()
+    if ($model -and $model -notmatch '^[^/\s]+/[^/\s]+$') {
+        throw "SUBAGENT_MODEL_LIGHT must use provider/model format when ITL routine mode is enabled."
+    }
+    return $model
+}
+
+function Test-ItlRoutineEnabledForCommand {
+    param([string]$FileName)
+
+    if ($FileName -notin (Get-ItlRoutineCommandNames)) { return $false }
+    $mode = Get-ItlRoutineMode
+    if ($mode -eq "off") { return $false }
+
+    $model = Get-ItlRoutineModel
+    if ($mode -eq "on") {
+        if (-not $model) {
+            throw "ITL_ROUTINE_MODE=on requires an explicit SUBAGENT_MODEL_LIGHT in provider/model format; parent-model inheritance is forbidden."
+        }
+        return $true
+    }
+    return ($model -and $FileName -in (Get-ItlRoutineLongCommandNames))
+}
+
 function New-ItlRoutineAgentText {
     param([ValidateSet("kilocode", "opencode")][string]$Client)
 
-    $model = [string](Get-EnvValue -Name "SUBAGENT_MODEL_LIGHT" -Default "")
-    if ($model -and $model -notmatch '^[^/\s]+/[^/\s]+$') {
-        throw "SUBAGENT_MODEL_LIGHT for $Client must use provider/model format."
+    $model = Get-ItlRoutineModel
+    if (-not $model) {
+        throw "itl-routine for $Client requires an explicit SUBAGENT_MODEL_LIGHT; parent-model inheritance is forbidden."
     }
     $frontmatter = [System.Collections.Generic.List[string]]::new()
     $frontmatter.Add("---")
     $frontmatter.Add("name: itl-routine")
     $frontmatter.Add("description: Runs deterministic ITL lifecycle helpers and reports their output without editing project code.")
     $frontmatter.Add($(if ($Client -eq "kilocode") { "mode: subagent" } else { "mode: subagent" }))
-    if ($model) { $frontmatter.Add("model: $model") }
-    if ($Client -eq "opencode") {
-        $frontmatter.Add("permission:")
-        $frontmatter.Add("  edit: deny")
-        $frontmatter.Add("  bash: allow")
-    }
+    $frontmatter.Add("model: $model")
+    $frontmatter.Add("steps: 2")
+    $frontmatter.Add("permission:")
+    $frontmatter.Add('  "*": deny')
+    $frontmatter.Add("  bash:")
+    $frontmatter.Add('    "powershell -ExecutionPolicy Bypass -File .\\.agents\\skills\\1c-workflow\\scripts\\run-itl-command.ps1*": allow')
+    $frontmatter.Add('    "powershell -ExecutionPolicy Bypass -File .\\.agents\\skills\\1c-workflow\\scripts\\agent-1c.ps1*": allow')
     $frontmatter.Add("---")
+    $caveman = ([string](Get-EnvValue -Name "CAVEMAN" -Default "on")).Trim().ToLowerInvariant()
+    $responseStyle = if ($caveman -eq "off") { "normal concise prose" } else { "CAVEMAN terse prose" }
     $body = @(
         "",
         "# ITL routine helper",
         "",
-        "Run only the exact helper command requested by the invoking ITL command and report its stdout, status, and next action.",
+        "Make exactly one shell call: run the exact run-itl-command.ps1 command supplied by the invoking ITL command, then return its bounded summary.",
         "Do not edit code or metadata, author or repair tests, resolve merge conflicts, or substitute your own lifecycle steps.",
+        "Do not load skills, call MCP tools, research, inspect unrelated files, or retry the lifecycle helper.",
+        "Use $responseStyle for your own words; preserve the compact helper summary verbatim.",
         "If the helper refuses the operation, return that refusal unchanged."
     )
     return ((@($frontmatter) + $body) -join [Environment]::NewLine) + [Environment]::NewLine
@@ -339,7 +410,7 @@ function Convert-ItlCommandForClient {
     if ($Client -eq "opencode" -and $FileName -eq "itl-verify-fix.md") {
         return ([regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?$', 'agent: build'))
     }
-    if ($FileName -in (Get-ItlRoutineCommandNames)) {
+    if (Test-ItlRoutineEnabledForCommand -FileName $FileName) {
         return ([regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?$', 'agent: itl-routine'))
     }
     return $Text
@@ -367,7 +438,8 @@ function Get-ItlExpectedSurfaceFiles {
         }
     }
     $routinePath = Get-ItlRoutineAgentRelativePath -Client $Client
-    if ($routinePath) { $files[$routinePath] = New-ItlRoutineAgentText -Client $Client }
+    $routineNeeded = @($files.Keys | Where-Object { ([string]$files[$_]) -match '(?m)^agent:\s*itl-routine\s*$' }).Count -gt 0
+    if ($routinePath -and $routineNeeded) { $files[$routinePath] = New-ItlRoutineAgentText -Client $Client }
     return $files
 }
 
@@ -381,8 +453,12 @@ function Sync-ItlManagedSurfaceFiles {
         $entry = ConvertTo-Vibecoding1cMcpHashtable -Object $clients[$oldClient]
         $managed = if ($entry.Contains("files")) { ConvertTo-Vibecoding1cMcpHashtable -Object $entry["files"] } else { [ordered]@{} }
         foreach ($relative in @($managed.Keys)) {
-            Assert-ItlManagedSurfaceFileUnmodified -RelativePath $relative -ExpectedHash ([string]$managed[$relative])
             $path = Join-Path $script:ProjectRoot $relative
+            if ($relative -match '(?i)(^|/)itl-routine\.md$' -and (Test-Path -LiteralPath $path -PathType Leaf) -and (Get-ItlFileSha256 -Path $path) -ne [string]$managed[$relative]) {
+                Write-Warning "Preserving user-modified inactive routine agent: $relative"
+                continue
+            }
+            Assert-ItlManagedSurfaceFileUnmodified -RelativePath $relative -ExpectedHash ([string]$managed[$relative])
             if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
         }
         $clients.Remove($oldClient)
@@ -391,9 +467,13 @@ function Sync-ItlManagedSurfaceFiles {
     $activeEntry = if ($clients.Contains($Client)) { ConvertTo-Vibecoding1cMcpHashtable -Object $clients[$Client] } else { [ordered]@{} }
     $previous = if ($activeEntry.Contains("files")) { ConvertTo-Vibecoding1cMcpHashtable -Object $activeEntry["files"] } else { [ordered]@{} }
     foreach ($relative in @($previous.Keys)) {
+        $path = Join-Path $script:ProjectRoot $relative
+        if (-not $ExpectedFiles.Contains($relative) -and $relative -match '(?i)(^|/)itl-routine\.md$' -and (Test-Path -LiteralPath $path -PathType Leaf) -and (Get-ItlFileSha256 -Path $path) -ne [string]$previous[$relative]) {
+            Write-Warning "Preserving user-modified inactive routine agent: $relative"
+            continue
+        }
         Assert-ItlManagedSurfaceFileUnmodified -RelativePath $relative -ExpectedHash ([string]$previous[$relative])
         if (-not $ExpectedFiles.Contains($relative)) {
-            $path = Join-Path $script:ProjectRoot $relative
             if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
         }
     }
@@ -451,6 +531,9 @@ function Sync-ItlClientSurface {
     $adapter = Get-ItlClientAdapter -Client $client
     $expectedFiles = Get-ItlExpectedSurfaceFiles -Client $client -SourceRoot $SourceRoot
     Sync-ItlManagedSurfaceFiles -Client $client -ExpectedFiles $expectedFiles
+    if ($client -eq "kilocode") {
+        Set-KiloSnapshotsDisabled
+    }
     $surface = Get-ItlCommandSurface
     if (-not $adapter.commandsPath) {
         Write-Host "Codex uses project-local .agents/skills and natural requests; no project slash prompts were written."

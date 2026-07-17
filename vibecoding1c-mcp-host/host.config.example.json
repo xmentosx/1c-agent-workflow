@@ -55,6 +55,12 @@
     "globalStart": 18000,
     "projectStart": 18100
   },
+  "toolsListProxy": {
+    "enabled": true,
+    "serverIds": [ "codechecker", "code", "graph" ],
+    "portOffset": 4000,
+    "image": "itl/mcp-tools-list-proxy:local"
+  },
   "enabledServers": {
     "global": [ "docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis" ],
     "project": [ "code", "graph" ]

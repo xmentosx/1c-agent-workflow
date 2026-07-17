@@ -2,7 +2,7 @@
 
 Настройки проекта находятся в ignored-файле `.dev.env`. Большинство режимов можно переключить slash-командой или обычным запросом агенту. Полный перечень переменных приведен в [справочнике `.dev.env`](DEV-ENV-REFERENCE.ru.md).
 
-Штатные значения: `VERIFICATION_DEPTH=full`, `UI_TESTING=manual`, `ORCHESTRATION=standard`, `CAVEMAN=on`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
+Штатные значения: `VERIFICATION_DEPTH=full`, `UI_TESTING=manual`, `ORCHESTRATION=standard`, `ITL_ROUTINE_MODE=off`, `CAVEMAN=on`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
 
 ## Краткая карта
 
@@ -46,6 +46,8 @@
 `auto` разрешает компонент для implicit completion, `/itl-check`, repair и прямого запроса. `manual` — для команды, repair или прямого запроса. `off` запускается только при явном запросе именно этого компонента. Пропуск дает partial evidence и не считается fresh pass.
 
 ## `/economymode` и модели
+
+`ITL_ROUTINE_MODE=off` выполняет все `/itl*` в основном агенте и не создает управляемый `itl-routine`. `auto` оставляет `/itl`, `/itl-status` и `/itl-litemode` прямыми, а семь длинных команд делегирует только при явно заданном `SUBAGENT_MODEL_LIGHT`. `on` делегирует все десять команд и требует явную light-модель. Пустое или неизвестное значение безопасно означает `off`; routine никогда не наследует модель родительского агента.
 
 `ORCHESTRATION=standard` оставляет обычную политику делегирования. `ORCHESTRATION=economy` передает больше исполнения субагентам, а решения, спецификации и финальная проверка остаются у головного агента.
 

@@ -112,6 +112,11 @@ notepad .\host.config.json
 - `portRanges.projectStart`: первый порт для config-specific MCP servers.
 - `enabledServers.global`: global servers, обычно `docs`, `templates`, `syntax`, `codechecker`, `ssl`, `bookstack`, `mantis`.
 - `enabledServers.project`: project/config servers, обычно `code`, `graph`.
+- `toolsListProxy`: прозрачное сокращение `tools/list` для `codechecker`, `code`, `graph`.
+  При `enabled=true` host собирает локальный proxy image, сверяет структурный контракт из
+  `tools-list-proxy/tools-contract.json` и публикует proxy URL только после успешной проверки.
+  `tools/call`, сессии, имена инструментов, annotations и ограничения JSON Schema не меняются.
+  При drift или недоступности proxy в registry автоматически остается прямой endpoint.
 - `configurations`: список конфигураций 1C, для которых нужно поднять `code`/`graph`.
 - `mantisTicketServer.baseUrl`: URL Mantis, доступный выделенной машине.
 - `mantisTicketServer.attachmentCachePath`: локальный cache оригиналов вложений Mantis.

@@ -308,13 +308,17 @@
         $baselineIndex = $initBlock.IndexOf('Initialize-DevBranchEventLogBaseline')
         $pendingIndex = $initBlock.IndexOf('-Status "enterprise-normalization-pending"')
         $normalizeIndex = $initBlock.LastIndexOf('Ensure-DevBranchEnterpriseNormalized -State $state -Reason "branch-copy"')
-        $readyIndex = $initBlock.IndexOf('-Status "ready"', $pendingIndex)
-        $dataMcpIndex = $initBlock.IndexOf('Invoke-DevBranchDataMcpAfterPublication', $readyIndex)
+        $dataMcpIndex = $initBlock.LastIndexOf('Invoke-DevBranchDataMcpAfterPublication')
+        $surfaceIndex = $initBlock.LastIndexOf('Sync-KiloItlCommandSurface')
+        $confirmationIndex = $initBlock.LastIndexOf('Confirm-DevBranchUnsafeActionProtection')
+        $readyIndex = $initBlock.LastIndexOf('-Status "ready"')
         $baselineIndex | Should -BeGreaterThan -1
         $pendingIndex | Should -BeGreaterThan $baselineIndex
         $normalizeIndex | Should -BeGreaterThan $pendingIndex
-        $readyIndex | Should -BeGreaterThan $normalizeIndex
-        $dataMcpIndex | Should -BeGreaterThan $readyIndex
+        $dataMcpIndex | Should -BeGreaterThan $normalizeIndex
+        $surfaceIndex | Should -BeGreaterThan $dataMcpIndex
+        $confirmationIndex | Should -BeGreaterThan $surfaceIndex
+        $readyIndex | Should -BeGreaterThan $confirmationIndex
         $initBlock | Should -Match 'Resuming final Enterprise normalization for existing development branch copy'
         $initBlock | Should -Match 'enterpriseNormalizationStatus'
     }
@@ -2032,6 +2036,7 @@ if (`$?) { exit 0 } else { exit 1 }
 
     It "declares manual unsafe action protection confirmation for development branches" {
         $HelperText | Should -Match "function Confirm-DevBranchUnsafeActionProtection"
+        $HelperText | Should -Match "function Show-DevBranchUnsafeActionProtectionAttention"
         $HelperText | Should -Match "function Assert-DevBranchUnsafeActionProtectionPromptAvailable"
         $HelperText | Should -Match "function Get-DevBranchUnsafeActionProtectionSetup"
         $HelperText | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP"
@@ -2046,6 +2051,14 @@ if (`$?) { exit 0 } else { exit 1 }
         $HelperText | Should -Match '\[System\.StringComparison\]::OrdinalIgnoreCase'
         $HelperText | Should -Match "Invoke-DesignerInteractive"
         $HelperText | Should -Match "Invoke-VisibleNativeProcessAndWait"
+        $HelperText | Should -Match "ItlConsoleWindowAttention"
+        $HelperText | Should -Match "FlashWindowEx"
+        $HelperText | Should -Match '\[Console\]::Title'
+        $HelperText | Should -Match '\[Console\]::Beep\(880, 250\)'
+        $confirmStart = $HelperText.IndexOf('function Confirm-DevBranchUnsafeActionProtection')
+        $confirmEnd = $HelperText.IndexOf('function Configure-DevBranchUnsafeActionProtection', $confirmStart)
+        $confirmBlock = $HelperText.Substring($confirmStart, $confirmEnd - $confirmStart)
+        $confirmBlock.IndexOf('Show-DevBranchUnsafeActionProtectionAttention') | Should -BeLessThan $confirmBlock.IndexOf('$answerValue = Read-Host')
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=manual-confirm"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\branch-lifecycle.md")) | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP"
     }
@@ -2191,18 +2204,17 @@ if (`$?) { exit 0 } else { exit 1 }
         (Get-Content -Raw -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")) | Should -Match "configure-dev-branch-unsafe-action-protection"
     }
 
-    It "routes interactive branch creation through the monitored launcher" {
+    It "routes interactive branch creation through the compact runner and monitored launcher" {
         $configBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template")
         $extensionBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template")
         $fastSkill = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md")
 
         foreach ($text in @($configBranchTemplate, $extensionBranchTemplate, $fastSkill)) {
-            $text | Should -Match "run-agent-1c-window\.ps1"
             $text | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip"
         }
 
-        $configBranchTemplate | Should -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action new-dev-branch"))
-        $extensionBranchTemplate | Should -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action new-extension-dev-branch"))
+        $configBranchTemplate | Should -Match ([regex]::Escape("run-itl-command.ps1 -Windowed -- -Action new-dev-branch"))
+        $extensionBranchTemplate | Should -Match ([regex]::Escape("run-itl-command.ps1 -Windowed -- -Action new-extension-dev-branch"))
         $fastSkill | Should -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action new-dev-branch"))
         $fastSkill | Should -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action new-extension-dev-branch"))
     }
@@ -2413,7 +2425,7 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
-    It "resumes worktree branch initialization after launcher registration failure" {
+    It "resumes worktree branch initialization after final confirmation failure" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-worktree-resume-test-" + [guid]::NewGuid().ToString("N"))
         $worktreeRoot = "$tempRoot-worktrees"
         $worktreePath = Join-Path $worktreeRoot "partial-branch"
@@ -2466,7 +2478,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $statePath = Join-Path $worktreePath ".agent-1c\dev-branches\partial-branch.json"
             (Test-Path -LiteralPath $statePath -PathType Leaf) | Should -Be $true
             $state = Get-Content -Encoding UTF8 -Raw $statePath | ConvertFrom-Json
-            $state.initializationStatus | Should -Be "launcher-registered"
+            $state.initializationStatus | Should -Be "enterprise-normalization-pending"
             $state.initializationError | Should -Match "Unsupported DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP value"
             $expectedLauncherName = "$projectName - Partial Branch"
             $state.launcherInfoBaseName | Should -Be $expectedLauncherName
@@ -2478,13 +2490,13 @@ if (`$?) { exit 0 } else { exit 1 }
             $statusOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action status 2>&1
             $LASTEXITCODE | Should -Be 0
             $statusText = $statusOutput -join [Environment]::NewLine
-            $statusText | Should -Match "Initialization status: launcher-registered"
+            $statusText | Should -Match "Initialization status: enterprise-normalization-pending"
             $statusText | Should -Match "Recovery: rerun new-dev-branch"
 
             $listOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action list-dev-branches 2>&1
             $LASTEXITCODE | Should -Be 0
             $listText = $listOutput -join [Environment]::NewLine
-            $listText | Should -Match "Initialization status: launcher-registered"
+            $listText | Should -Match "Initialization status: enterprise-normalization-pending"
             $listText | Should -Match ([regex]::Escape([System.IO.Path]::GetFullPath($worktreePath)))
 
             foreach ($envPath in @((Join-Path $tempRoot ".dev.env"), (Join-Path $worktreePath ".dev.env"))) {

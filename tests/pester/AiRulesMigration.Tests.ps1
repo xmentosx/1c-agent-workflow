@@ -24,18 +24,18 @@ BeforeAll {
         $targetConfig = [ordered]@{
             aiRules = [ordered]@{
                 repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-                ref = $(if ($ConfigureTarget) { "itl-main-b4d9875b-r10" } else { "" })
+                ref = $(if ($ConfigureTarget) { "itl-main-b4d9875b-r11" } else { "" })
                 tools = @("codex", "kilocode")
             }
         }
         $targetEntry = [ordered]@{
             repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            ref = "itl-main-b4d9875b-r10"
-            commit = "760aab7fc2ef12d5019749e564803bbd4d6b1f5a"
+            ref = "itl-main-b4d9875b-r11"
+            commit = "af82570afca06c40a9588c8a678bf3665bba4870"
             upstreamRepo = "https://github.com/comol/ai_rules_1c.git"
             upstreamRef = "refs/heads/main"
             upstreamCommit = "b4d9875b15c6d93f493035aee51f077126e72a21"
-            downstreamRevision = 10
+            downstreamRevision = 11
             compatibilityStatus = $(if ($ConfigureTarget) { "passed" } else { "legacy-baseline" })
             compatibilityCheckedAt = "2026-07-11T00:00:00Z"
         }
@@ -126,7 +126,7 @@ Describe "ai_rules_1c migration planning" {
         }
     }
 
-    It "plans a controlled fork r4 to r10 migration by downstream revision and upstream provenance" {
+    It "plans a controlled fork r4 to r11 migration by downstream revision and upstream provenance" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-controlled-" + [guid]::NewGuid().ToString("N"))
         try {
             New-AiRulesMigrationFixture -Root $tempRoot `
@@ -141,7 +141,7 @@ Describe "ai_rules_1c migration planning" {
             $plan.fromCommit | Should -Be "6396b1538339ce1ff025cd6f2a24ccb8ff742e1e"
             $plan.comparisonCommit | Should -Be "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
             $plan.fromDownstreamRevision | Should -Be 4
-            $plan.target.downstreamRevision | Should -Be 10
+            $plan.target.downstreamRevision | Should -Be 11
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -152,10 +152,10 @@ Describe "ai_rules_1c migration planning" {
         try {
             New-AiRulesMigrationFixture -Root $tempRoot `
                 -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" `
-                -CurrentRef "itl-main-b4d9875b-r10" `
-                -CurrentCommit "760aab7fc2ef12d5019749e564803bbd4d6b1f5a" `
+                -CurrentRef "itl-main-b4d9875b-r11" `
+                -CurrentCommit "af82570afca06c40a9588c8a678bf3665bba4870" `
                 -CurrentUpstreamCommit "b4d9875b15c6d93f493035aee51f077126e72a21" `
-                -CurrentDownstreamRevision 10
+                -CurrentDownstreamRevision 11
             $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "current"
         } finally {
@@ -247,7 +247,7 @@ Describe "ai_rules_1c transactional migration" {
             $report.status | Should -Be "blocked"
             $report.migrationStatus | Should -Be "custom"
             $report.current.repo | Should -Be "https://example.invalid/custom-rules.git"
-            $report.target.ref | Should -Be "itl-main-b4d9875b-r10"
+            $report.target.ref | Should -Be "itl-main-b4d9875b-r11"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -281,8 +281,8 @@ Describe "ai_rules_1c transactional migration" {
             $config = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $lock = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $config.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            $config.aiRules.ref | Should -Be "itl-main-b4d9875b-r10"
-            $lock.dependencies.aiRules1c.commit | Should -Be "760aab7fc2ef12d5019749e564803bbd4d6b1f5a"
+            $config.aiRules.ref | Should -Be "itl-main-b4d9875b-r11"
+            $lock.dependencies.aiRules1c.commit | Should -Be "af82570afca06c40a9588c8a678bf3665bba4870"
             $lock.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
             (Get-FileHash -Algorithm SHA256 -LiteralPath $kiloPath).Hash | Should -Be $kiloBefore
             (Get-FileHash -Algorithm SHA256 -LiteralPath $localStatePath).Hash | Should -Be $localStateBefore

@@ -10,7 +10,7 @@ Run the monitored helper launcher from the current project directory so the manu
 If the agent shell tool supports `timeout_ms`, run this lifecycle command with `timeout_ms >= 1800000`; do not use `120000 ms` or other short defaults because the helper may launch 1C Designer/Enterprise operations.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action new-extension-dev-branch -DevBranchName "<dev-branch-name>"
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -Windowed -- -Action new-extension-dev-branch -DevBranchName "<dev-branch-name>"
 ```
 
 Use direct `agent-1c.ps1` only for non-interactive automation that explicitly sets `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip` after the unsafe-action protection is configured separately.

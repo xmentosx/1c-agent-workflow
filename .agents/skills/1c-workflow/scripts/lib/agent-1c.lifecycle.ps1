@@ -3323,6 +3323,65 @@ function Assert-DevBranchUnsafeActionProtectionPromptAvailable {
     }
 }
 
+function Show-DevBranchUnsafeActionProtectionAttention {
+    $title = Get-Agent1cUtf8Text "SVRMOiDRgtGA0LXQsdGD0LXRgtGB0Y8g0L/QvtC00YLQstC10YDQttC00LXQvdC40LUg0LfQsNGJ0LjRgtGL"
+    try {
+        [Console]::Title = $title
+    } catch {
+    }
+
+    try {
+        if (-not ("ItlConsoleWindowAttention" -as [type])) {
+            Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class ItlConsoleWindowAttention
+{
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FLASHWINFO
+    {
+        public uint cbSize;
+        public IntPtr hwnd;
+        public uint dwFlags;
+        public uint uCount;
+        public uint dwTimeout;
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetConsoleWindow();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool FlashWindowEx(ref FLASHWINFO info);
+
+    public static bool FlashTaskbar()
+    {
+        IntPtr hwnd = GetConsoleWindow();
+        if (hwnd == IntPtr.Zero) return false;
+        FLASHWINFO info = new FLASHWINFO
+        {
+            cbSize = (uint)Marshal.SizeOf(typeof(FLASHWINFO)),
+            hwnd = hwnd,
+            dwFlags = 3,
+            uCount = 5,
+            dwTimeout = 0
+        };
+        return FlashWindowEx(ref info);
+    }
+}
+"@
+        }
+        [ItlConsoleWindowAttention]::FlashTaskbar() | Out-Null
+    } catch {
+    }
+
+    try {
+        [Console]::Beep(880, 250)
+    } catch {
+    }
+}
+
 function Confirm-DevBranchUnsafeActionProtection {
     param(
         [string]$InfoBaseKind,
@@ -3374,6 +3433,7 @@ function Confirm-DevBranchUnsafeActionProtection {
 
     Write-Section (Get-UnsafeActionProtectionMessage 1)
     while ($true) {
+        Show-DevBranchUnsafeActionProtectionAttention
         Write-Host ((Get-UnsafeActionProtectionMessage 2) + $DevBranchName)
         Write-Host ((Get-UnsafeActionProtectionMessage 3) + $InfoBasePath)
         if ($user) {
@@ -4157,17 +4217,24 @@ function Initialize-DevBranchRuntime {
             Write-Host "Resuming final Enterprise normalization for existing development branch copy: $DevBranchInfoBasePath"
             $state = Read-DevBranchStateFile -Path $statePath
             Ensure-DevBranchEnterpriseNormalized -State $state -Reason "branch-copy" | Out-Null
-            $normalizedState = Read-DevBranchStateFile -Path $statePath
-            $normalizedHash = ConvertTo-Agent1cHashtable $normalizedState
-            [void]$normalizedHash.Remove("statePath")
-            [void]$normalizedHash.Remove("stateProjectRoot")
-            $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $normalizedHash -Status "ready"
             $state = Read-DevBranchStateFile -Path $statePath
             if (Get-StateValue -State $state -Name "publicationUrl" -Default "") {
                 $state = Invoke-DevBranchDataMcpAfterPublication -State $state
             }
             Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
             Sync-KiloItlCommandSurface
+            $unsafeActionProtectionSetup = Confirm-DevBranchUnsafeActionProtection `
+                -InfoBaseKind $kind `
+                -InfoBasePath $DevBranchInfoBasePath `
+                -DevBranchName $DevBranchName
+            $normalizedHash = ConvertTo-Agent1cHashtable $state
+            [void]$normalizedHash.Remove("statePath")
+            [void]$normalizedHash.Remove("stateProjectRoot")
+            $normalizedHash["unsafeActionProtectionSetupMode"] = $unsafeActionProtectionSetup.mode
+            $normalizedHash["unsafeActionProtectionConfirmed"] = $unsafeActionProtectionSetup.confirmed
+            $normalizedHash["unsafeActionProtectionConfirmedAt"] = $unsafeActionProtectionSetup.confirmedAt
+            $normalizedHash["unsafeActionProtectionUser"] = $unsafeActionProtectionSetup.user
+            $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $normalizedHash -Status "ready"
             return
         }
 
@@ -4253,16 +4320,6 @@ function Initialize-DevBranchRuntime {
         $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "launcher-registered"
         $currentStatus = "launcher-registered"
 
-        $unsafeActionProtectionSetup = Confirm-DevBranchUnsafeActionProtection `
-            -InfoBaseKind $kind `
-            -InfoBasePath $DevBranchInfoBasePath `
-            -DevBranchName $DevBranchName
-        $stateHash["unsafeActionProtectionSetupMode"] = $unsafeActionProtectionSetup.mode
-        $stateHash["unsafeActionProtectionConfirmed"] = $unsafeActionProtectionSetup.confirmed
-        $stateHash["unsafeActionProtectionConfirmedAt"] = $unsafeActionProtectionSetup.confirmedAt
-        $stateHash["unsafeActionProtectionUser"] = $unsafeActionProtectionSetup.user
-        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "launcher-registered"
-
         Write-Host "Development branch: $GitBranch"
         if ($CreatedWithWorktree) {
             Write-Host "Development branch worktree: $WorktreePath"
@@ -4299,6 +4356,15 @@ function Initialize-DevBranchRuntime {
         $state = Read-DevBranchStateFile -Path $statePath
         Ensure-DevBranchEnterpriseNormalized -State $state -Reason "branch-copy" | Out-Null
         $state = Read-DevBranchStateFile -Path $statePath
+        if (Get-StateValue -State $state -Name "publicationUrl" -Default "") {
+            $state = Invoke-DevBranchDataMcpAfterPublication -State $state
+        }
+        Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
+        Sync-KiloItlCommandSurface
+        $unsafeActionProtectionSetup = Confirm-DevBranchUnsafeActionProtection `
+            -InfoBaseKind $kind `
+            -InfoBasePath $DevBranchInfoBasePath `
+            -DevBranchName $DevBranchName
         $finalHash = @{}
         $finalStateHash = ConvertTo-Agent1cHashtable $state
         foreach ($key in $finalStateHash.Keys) {
@@ -4307,13 +4373,11 @@ function Initialize-DevBranchRuntime {
             }
             $finalHash[$key] = $finalStateHash[$key]
         }
+        $finalHash["unsafeActionProtectionSetupMode"] = $unsafeActionProtectionSetup.mode
+        $finalHash["unsafeActionProtectionConfirmed"] = $unsafeActionProtectionSetup.confirmed
+        $finalHash["unsafeActionProtectionConfirmedAt"] = $unsafeActionProtectionSetup.confirmedAt
+        $finalHash["unsafeActionProtectionUser"] = $unsafeActionProtectionSetup.user
         $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $finalHash -Status "ready"
-        $state = Read-DevBranchStateFile -Path $statePath
-        if (Get-StateValue -State $state -Name "publicationUrl" -Default "") {
-            $state = Invoke-DevBranchDataMcpAfterPublication -State $state
-        }
-        Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
-        Sync-KiloItlCommandSurface
     } catch {
         $message = $_.Exception.Message
         $statusForError = if ($currentStatus -and @("infobase-copied", "repository-unbound", "launcher-registered", "enterprise-normalization-pending") -contains $currentStatus) { $currentStatus } else { "failed" }

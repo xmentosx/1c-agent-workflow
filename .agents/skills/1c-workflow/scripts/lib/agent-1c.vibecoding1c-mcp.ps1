@@ -1192,7 +1192,7 @@ function Read-Vibecoding1cMcpRemoteHostChoice {
     }
 
     while ($true) {
-        $answer = (Read-Host "Choose remote vibecoding1c MCP host by number or hostId").Trim()
+        $answer = (Read-Host (Get-Agent1cUtf8Text "0JLRi9Cx0LXRgNC40YLQtSByZW1vdGUt0L/Rg9Cx0LvQuNC60LDRhtC40Y4gTUNQINC/0L4g0L3QvtC80LXRgNGDINC40LvQuCBob3N0SWQ=")).Trim()
         if (-not $answer) {
             continue
         }
@@ -1218,6 +1218,11 @@ function Read-Vibecoding1cMcpRemoteConfigChoice {
     $configs = @(Get-Vibecoding1cMcpRegistryConfigurations -Registry $registry)
     if ($configs.Count -eq 0) {
         throw "Remote vibecoding1c MCP registry has no configurations. Publish host registry first or choose local vibecoding1c MCP."
+    }
+    if ($configs.Count -eq 1) {
+        $configId = [string](Get-Vibecoding1cMcpObjectValue -Object $configs[0] -Name "configId" -Default "")
+        Write-Host ((Get-Agent1cUtf8Text "0J3QsNC50LTQtdC90LAg0LXQtNC40L3RgdGC0LLQtdC90L3QsNGPIHJlbW90ZS3QutC+0L3RhNC40LPRg9GA0LDRhtC40Y8gTUNQOiB7MH0=") -f $configId)
+        return $configId
     }
     if (-not (Test-InteractiveInputAvailable)) {
         throw "Remote vibecoding1c MCP configuration must be selected explicitly. Run vibecoding1c-mcp-select -McpProvider remote -McpConfigId <configId>."
@@ -1250,7 +1255,7 @@ function Read-Vibecoding1cMcpRemoteConfigChoice {
     }
 
     while ($true) {
-        $answer = (Read-Host "Choose remote vibecoding1c MCP configuration by number or configId").Trim()
+        $answer = (Read-Host (Get-Agent1cUtf8Text "0JLRi9Cx0LXRgNC40YLQtSDQutC+0L3RhNC40LPRg9GA0LDRhtC40Y4gTUNQINC/0L4g0L3QvtC80LXRgNGDINC40LvQuCBjb25maWdJZA==")).Trim()
         if (-not $answer) {
             continue
         }
@@ -1327,6 +1332,11 @@ function Get-Vibecoding1cMcpEndpointFreshness {
         return "indexing"
     }
 
+    $provider = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "provider" -Default "local")
+    if ($provider -eq "remote") {
+        return "remote-shared"
+    }
+
     $sourceFingerprint = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "sourceFingerprint" -Default "")
     if (-not $sourceFingerprint) {
         return "unknown"
@@ -1335,11 +1345,6 @@ function Get-Vibecoding1cMcpEndpointFreshness {
     $currentFingerprint = Get-Vibecoding1cMcpCurrentSourceFingerprint
     if ($currentFingerprint -and $sourceFingerprint -eq $currentFingerprint) {
         return "fresh"
-    }
-
-    $provider = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "provider" -Default "local")
-    if ($provider -eq "remote") {
-        return "remote-shared"
     }
 
     return "stale"
@@ -1426,6 +1431,15 @@ function New-Vibecoding1cMcpRemoteRuntime {
     return $null
 }
 
+function Read-Vibecoding1cMcpProviderSelectionMode {
+    while ($true) {
+        $answer = (Read-Host (Get-Agent1cUtf8Text "0JLRi9Cx0LXRgNC40YLQtSDRgNC10LbQuNC8IE1DUDogcmVtb3RlINC00LvRjyDQstGB0LXRhSwgbG9jYWwg0LTQu9GPINCy0YHQtdGFINC/0L7QtNC00LXRgNC20LjQstCw0Y7RidC40YUgbG9jYWwg0YHQtdGA0LLQtdGA0L7QsiDQuNC70LggZWFjaCDQtNC70Y8g0LLRi9Cx0L7RgNCwINC/0L4g0LrQsNC20LTQvtC80YMg0YHQtdGA0LLQtdGA0YMgW3JlbW90ZV0=")).Trim().ToLowerInvariant()
+        if (-not $answer) { return "remote" }
+        if ($answer -in @("remote", "local", "each")) { return $answer }
+        Write-Host (Get-Agent1cUtf8Text "0JLQstC10LTQuNGC0LUgcmVtb3RlLCBsb2NhbCDQuNC70LggZWFjaC4=")
+    }
+}
+
 function Set-Vibecoding1cMcpSelection {
     Write-Section "Select vibecoding1c MCP"
     Ensure-GitIgnore
@@ -1443,6 +1457,14 @@ function Set-Vibecoding1cMcpSelection {
         }
         if ($id) {
             $targetServerIds += $id
+        }
+    }
+
+    $providerMode = ""
+    if (-not $McpProvider -and -not $McpServerId -and (Test-InteractiveInputAvailable)) {
+        $providerMode = Read-Vibecoding1cMcpProviderSelectionMode
+        if ($providerMode -ne "each") {
+            $selectionHash["defaultProvider"] = $providerMode
         }
     }
 
@@ -1489,6 +1511,8 @@ function Set-Vibecoding1cMcpSelection {
 
         $provider = if ($McpProvider) {
             $McpProvider
+        } elseif ($providerMode -eq "remote" -or $providerMode -eq "local") {
+            $providerMode
         } elseif ($existingProvider -eq "remote" -or $existingProvider -eq "local") {
             $existingProvider
         } else {
@@ -1497,8 +1521,8 @@ function Set-Vibecoding1cMcpSelection {
         if ($id -eq "mantis") {
             $provider = "remote"
         }
-        if (-not $McpProvider -and $id -ne "mantis" -and (Test-InteractiveInputAvailable)) {
-            $answer = (Read-Host "Provider for vibecoding1c MCP server '$id' [remote/local], default $provider").Trim().ToLowerInvariant()
+        if (-not $McpProvider -and $id -ne "mantis" -and ($McpServerId -or $providerMode -eq "each") -and (Test-InteractiveInputAvailable)) {
+            $answer = (Read-Host ((Get-Agent1cUtf8Text "0J/RgNC+0LLQsNC50LTQtdGAIE1DUC3RgdC10YDQstC10YDQsCAnezB9JyBbcmVtb3RlL2xvY2FsXSwg0L/QviDRg9C80L7Qu9GH0LDQvdC40Y4gezF9") -f $id, $provider)).Trim().ToLowerInvariant()
             if ($answer -eq "remote" -or $answer -eq "local") {
                 $provider = $answer
             }
@@ -1518,7 +1542,7 @@ function Set-Vibecoding1cMcpSelection {
         }
         if ($provider -eq "local" -and -not $McpLocalScope -and (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $server) -and (Test-InteractiveInputAvailable)) {
             $scopeChoices = if ($context.isDevelopmentBranch) { "project/branch" } else { "project" }
-            $scopeAnswer = (Read-Host "Local scope for vibecoding1c MCP server '$id' [$scopeChoices], default $localScope").Trim().ToLowerInvariant()
+            $scopeAnswer = (Read-Host ((Get-Agent1cUtf8Text "0JvQvtC60LDQu9GM0L3QsNGPINC+0LHQu9Cw0YHRgtGMIE1DUC3RgdC10YDQstC10YDQsCAnezB9JyBbezF9XSwg0L/QviDRg9C80L7Qu9GH0LDQvdC40Y4gezJ9") -f $id, $scopeChoices, $localScope)).Trim().ToLowerInvariant()
             if ($scopeAnswer -eq "project" -or ($context.isDevelopmentBranch -and $scopeAnswer -eq "branch")) {
                 $localScope = $scopeAnswer
             }

@@ -63,27 +63,108 @@ Describe "ITL client adapters and verification modes" {
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "generates routine agents only for Kilo and OpenCode and keeps verify-fix full" {
+    It "routes Kilo and OpenCode commands through the explicit ITL routine mode matrix" {
+        $cases = @(
+            [pscustomobject]@{ mode = "off"; model = "provider/light"; routine = $false; shortRoutine = $false; longRoutine = $false },
+            [pscustomobject]@{ mode = "auto"; model = ""; routine = $false; shortRoutine = $false; longRoutine = $false },
+            [pscustomobject]@{ mode = "auto"; model = "provider/light"; routine = $true; shortRoutine = $false; longRoutine = $true },
+            [pscustomobject]@{ mode = "on"; model = "provider/light"; routine = $true; shortRoutine = $true; longRoutine = $true },
+            [pscustomobject]@{ mode = "unknown"; model = "provider/light"; routine = $false; shortRoutine = $false; longRoutine = $false }
+        )
         foreach ($client in @("kilocode", "opencode")) {
-            $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-routine-$client-" + [guid]::NewGuid().ToString("N"))
+          foreach ($case in $cases) {
+            $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-routine-$client-$($case.mode)-" + [guid]::NewGuid().ToString("N"))
             try {
                 New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
                 Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value (([ordered]@{ masterBranch = "master"; aiRules = [ordered]@{ tools = @($client) } } | ConvertTo-Json -Depth 5))
                 Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value (([ordered]@{ tools = @($client); files = [ordered]@{} } | ConvertTo-Json -Depth 5))
-                Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "SUBAGENT_MODEL_LIGHT=provider/light`n"
+                Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_ROUTINE_MODE=$($case.mode)`nSUBAGENT_MODEL_LIGHT=$($case.model)`nCAVEMAN=on`n"
+                [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", $case.mode, "Process")
+                [Environment]::SetEnvironmentVariable("SUBAGENT_MODEL_LIGHT", $case.model, "Process")
                 & git -C $tempRoot init *> $null
                 & git -C $tempRoot branch -M master
                 & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
                 $adapter = if ($client -eq "kilocode") { ".kilo" } else { ".opencode" }
                 $agentPath = if ($client -eq "kilocode") { Join-Path $tempRoot "$adapter\agents\itl-routine.md" } else { Join-Path $tempRoot "$adapter\agent\itl-routine.md" }
-                (Get-Content -LiteralPath $agentPath -Raw) | Should -Match 'model: provider/light'
+                (Test-Path -LiteralPath $agentPath -PathType Leaf) | Should -Be $case.routine
+                if ($case.routine) {
+                    $agentText = Get-Content -LiteralPath $agentPath -Raw
+                    $agentText | Should -Match 'model: provider/light'
+                    $agentText | Should -Match 'steps: 2'
+                    $agentText | Should -Match '"\*": deny'
+                    $agentText | Should -Match 'run-itl-command\.ps1\*": allow'
+                    $agentText | Should -Match 'CAVEMAN terse prose'
+                }
                 $commandRoot = if ($client -eq "kilocode") { Join-Path $tempRoot ".kilo\commands" } else { Join-Path $tempRoot ".opencode\command" }
-                (Get-Content -LiteralPath (Join-Path $commandRoot "itl.md") -Raw) | Should -Match 'agent: itl-routine'
-            } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+                $shortText = Get-Content -LiteralPath (Join-Path $commandRoot "itl.md") -Raw
+                $longText = Get-Content -LiteralPath (Join-Path $commandRoot "itl-new-config-branch.md") -Raw
+                $shortText | Should -Match $(if ($case.shortRoutine) { 'agent: itl-routine' } else { 'agent: code' })
+                $longText | Should -Match $(if ($case.longRoutine) { 'agent: itl-routine' } else { 'agent: code' })
+                if ($client -eq "kilocode") {
+                    (Get-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Raw | ConvertFrom-Json).snapshot | Should -BeFalse
+                }
+            } finally {
+                [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", $null, "Process")
+                [Environment]::SetEnvironmentVariable("SUBAGENT_MODEL_LIGHT", $null, "Process")
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
         }
+
+        $missingModelRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-routine-missing-model-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $missingModelRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $missingModelRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"masterBranch":"master","aiRules":{"tools":["kilocode"]}}'
+            Set-Content -LiteralPath (Join-Path $missingModelRoot ".ai-rules.json") -Encoding UTF8 -Value '{"tools":["kilocode"],"files":{}}'
+            Set-Content -LiteralPath (Join-Path $missingModelRoot ".dev.env") -Encoding UTF8 -Value "ITL_ROUTINE_MODE=on`nSUBAGENT_MODEL_LIGHT=`n"
+            [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", "on", "Process")
+            [Environment]::SetEnvironmentVariable("SUBAGENT_MODEL_LIGHT", $null, "Process")
+            & git -C $missingModelRoot init *> $null
+            & git -C $missingModelRoot branch -M master
+            $errorText = & { . $HelperPath -ProjectRoot $missingModelRoot -Action help *> $null; try { Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null } catch { $_.Exception.Message } }
+            $errorText | Should -Match 'requires an explicit SUBAGENT_MODEL_LIGHT'
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", $null, "Process")
+            [Environment]::SetEnvironmentVariable("SUBAGENT_MODEL_LIGHT", $null, "Process")
+            Remove-Item -LiteralPath $missingModelRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
         $verifyFix = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-verify-fix.md.template") -Raw
         $verifyFix | Should -Match 'agent: code'
         $verifyFix | Should -Match 'VerificationTrigger repair'
+    }
+
+    It "removes only an unchanged inactive routine agent" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-routine-cleanup-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"masterBranch":"master","aiRules":{"tools":["kilocode"]}}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value '{"tools":["kilocode"],"files":{}}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_ROUTINE_MODE=on`nSUBAGENT_MODEL_LIGHT=provider/light`n"
+            [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", "on", "Process")
+            [Environment]::SetEnvironmentVariable("SUBAGENT_MODEL_LIGHT", "provider/light", "Process")
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot branch -M master
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
+            $agentPath = Join-Path $tempRoot ".kilo\agents\itl-routine.md"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_ROUTINE_MODE=off`nSUBAGENT_MODEL_LIGHT=provider/light`n"
+            [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", "off", "Process")
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
+            (Test-Path -LiteralPath $agentPath -PathType Leaf) | Should -BeFalse
+
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_ROUTINE_MODE=on`nSUBAGENT_MODEL_LIGHT=provider/light`n"
+            [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", "on", "Process")
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
+            Add-Content -LiteralPath $agentPath -Encoding UTF8 -Value "user edit"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_ROUTINE_MODE=off`nSUBAGENT_MODEL_LIGHT=provider/light`n"
+            [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", "off", "Process")
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
+            (Get-Content -LiteralPath $agentPath -Raw) | Should -Match 'user edit'
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", $null, "Process")
+            [Environment]::SetEnvironmentVariable("SUBAGENT_MODEL_LIGHT", $null, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "tracks ITL surface hashes, blocks drift, and preserves unowned inactive commands" {
@@ -111,7 +192,7 @@ Describe "ITL client adapters and verification modes" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-surface-state-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"masterBranch":"master","aiRules":{"repo":"https://github.com/xmentosx/itl_ai_rules_1c.git","ref":"itl-main-b4d9875b-r10","tools":["kilocode"]}}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"masterBranch":"master","aiRules":{"repo":"https://github.com/xmentosx/itl_ai_rules_1c.git","ref":"itl-main-b4d9875b-r11","tools":["kilocode"]}}'
             Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value '{"protocol":"1.1","tools":["kilocode"],"files":{}}'
             & git -C $tempRoot init *> $null
             & git -C $tempRoot branch -M master
@@ -139,7 +220,7 @@ Describe "ITL client adapters and verification modes" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-doctor-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot ".agents\skills") | Out-Null
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"masterBranch":"master","aiRules":{"repo":"https://github.com/xmentosx/itl_ai_rules_1c.git","ref":"itl-main-b4d9875b-r10","tools":["kilocode"]}}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"masterBranch":"master","aiRules":{"repo":"https://github.com/xmentosx/itl_ai_rules_1c.git","ref":"itl-main-b4d9875b-r11","tools":["kilocode"]}}'
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_VANESSA_TESTING=auto`nITL_CHECK_EVENT_LOG=manual`n"
             $files = [ordered]@{}
             foreach ($skill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")) {
@@ -156,7 +237,7 @@ Describe "ITL client adapters and verification modes" {
             }
             $files[".dev.env"] = [ordered]@{ source = "content/root-templates/.dev.env"; installedHash = "upstream"; userModified = $true }
             Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value (([ordered]@{ protocol = "1.1"; tools = @("kilocode"); files = $files } | ConvertTo-Json -Depth 8) + "`n")
-            $lock = [ordered]@{ dependencies = [ordered]@{ aiRules1c = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-b4d9875b-r10"; commit = "760aab7fc2ef12d5019749e564803bbd4d6b1f5a"; upstreamCommit = "b4d9875b15c6d93f493035aee51f077126e72a21"; downstreamRevision = 10; compatibilityStatus = "passed" } } }
+            $lock = [ordered]@{ dependencies = [ordered]@{ aiRules1c = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-b4d9875b-r11"; commit = "af82570afca06c40a9588c8a678bf3665bba4870"; upstreamCommit = "b4d9875b15c6d93f493035aee51f077126e72a21"; downstreamRevision = 11; compatibilityStatus = "passed" } } }
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value (($lock | ConvertTo-Json -Depth 8) + "`n")
             & git -C $tempRoot init *> $null
             & git -C $tempRoot branch -M master

@@ -13,6 +13,44 @@
         $LauncherText = $context.LauncherText
         $McpHostText = $context.McpHostText
     }
+
+    It "treats remote endpoints without branch fingerprints as shared rather than stale" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            [pscustomobject]@{
+                remote = Get-Vibecoding1cMcpEndpointFreshness -Endpoint ([pscustomobject]@{ provider = "remote"; sourceFingerprint = "" })
+                local = Get-Vibecoding1cMcpEndpointFreshness -Endpoint ([pscustomobject]@{ provider = "local"; sourceFingerprint = "" })
+            }
+        }
+
+        $result.remote | Should -Be "remote-shared"
+        $result.local | Should -Be "unknown"
+    }
+
+    It "offers one bulk provider choice and auto-selects a sole remote configuration" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:Answers = @("", "each")
+            function Read-Host { return $script:Answers[0] }
+            $defaultMode = Read-Vibecoding1cMcpProviderSelectionMode
+            $script:Answers = @("each")
+            $eachMode = Read-Vibecoding1cMcpProviderSelectionMode
+            function Ensure-Vibecoding1cMcpRegistry {}
+            function Read-Vibecoding1cMcpRegistry { return [pscustomobject]@{} }
+            function Get-Vibecoding1cMcpRegistryConfigurations {
+                return @([pscustomobject]@{ configId = "only-config"; title = "Only" })
+            }
+            [pscustomobject]@{
+                defaultMode = $defaultMode
+                eachMode = $eachMode
+                configId = Read-Vibecoding1cMcpRemoteConfigChoice -Selection ([pscustomobject]@{})
+            }
+        }
+
+        $result.defaultMode | Should -Be "remote"
+        $result.eachMode | Should -Be "each"
+        $result.configId | Should -Be "only-config"
+    }
     It "wires ROCTUP MCP defaults, actions, lock, client config, and agent token guardrails" {
         foreach ($action in @("install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status")) {
             $HelperText | Should -Match ([regex]::Escape("`"$action`""))

@@ -10,7 +10,7 @@ Run the helper directly from the current project directory:
 If the agent shell tool supports `timeout_ms`, run this lifecycle command with `timeout_ms >= 1800000`; do not use `120000 ms` or other short defaults because the helper may launch 1C Designer/Enterprise operations.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action export-dev-branch-result
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action export-dev-branch-result
 ```
 
-If the helper warns that fresh passed verification is missing, ask the developer for explicit confirmation before continuing. For confirmed unverified export, rerun with `-AllowUnverifiedResult`. If `VERIFICATION_POLICY=block`, do not ask for an override; run `/itl-check` first.
+If the JSON summary has `confirmationRequired=true`, ask the developer for explicit confirmation before continuing. For confirmed unverified export, rerun the same compact command with `-AllowUnverifiedResult`. If `VERIFICATION_POLICY=block`, do not ask for an override; run `/itl-check` first. For other failures, read only the last 80 lines of `logPath`.

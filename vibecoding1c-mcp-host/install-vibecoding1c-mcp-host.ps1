@@ -1977,6 +1977,115 @@ function Test-HostTcpPortOpen {
     }
 }
 
+function Get-ToolsListProxySettings {
+    param([object]$Config)
+
+    $settings = Get-ObjectValue -Object $Config -Name "toolsListProxy" -Default $null
+    $enabled = ConvertTo-HostBoolSetting -Value (Get-ObjectValue -Object $settings -Name "enabled" -Default $false) -Default $false
+    $serverIds = @(As-Array (Get-ObjectValue -Object $settings -Name "serverIds" -Default @("codechecker", "code", "graph")) | ForEach-Object { [string]$_ } | Where-Object { $_ })
+    $portOffset = [int](Get-ObjectValue -Object $settings -Name "portOffset" -Default 4000)
+    if ($portOffset -le 0) { throw "toolsListProxy.portOffset must be greater than zero." }
+    $sourceRoot = Join-Path $PSScriptRoot "tools-list-proxy"
+    $contractPath = [string](Get-ObjectValue -Object $settings -Name "contractPath" -Default (Join-Path $sourceRoot "tools-contract.json"))
+    if (-not [IO.Path]::IsPathRooted($contractPath)) { $contractPath = Join-Path $PSScriptRoot $contractPath }
+    return [pscustomobject]@{
+        enabled = $enabled
+        serverIds = $serverIds
+        portOffset = $portOffset
+        image = [string](Get-ObjectValue -Object $settings -Name "image" -Default "itl/mcp-tools-list-proxy:local")
+        sourceRoot = $sourceRoot
+        contractPath = [IO.Path]::GetFullPath($contractPath)
+    }
+}
+
+function Test-ToolsListProxyTarget {
+    param([object]$Config, [string]$ServerId)
+    $settings = Get-ToolsListProxySettings -Config $Config
+    return ($settings.enabled -and $ServerId -in @($settings.serverIds))
+}
+
+function Ensure-ToolsListProxyImage {
+    param([object]$Config)
+    if ((Test-Path Variable:script:ToolsListProxyImageReady) -and $script:ToolsListProxyImageReady) { return }
+    $settings = Get-ToolsListProxySettings -Config $Config
+    foreach ($path in @((Join-Path $settings.sourceRoot "Dockerfile"), (Join-Path $settings.sourceRoot "mcp-tools-list-proxy.js"), $settings.contractPath)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "MCP tools-list proxy asset is missing: $path" }
+    }
+    Write-Host "Building MCP tools-list proxy image: $($settings.image)"
+    if (-not $DryRun) {
+        Invoke-DockerCommandChecked -Arguments @("build", "-t", $settings.image, $settings.sourceRoot) -TimeoutSec 600 -Description "docker build MCP tools-list proxy"
+    }
+    $script:ToolsListProxyImageReady = $true
+}
+
+function Enable-ToolsListProxyForRuntime {
+    param([object]$Config, [object]$Runtime)
+    $id = [string](Get-ObjectValue -Object $Runtime -Name "id" -Default "")
+    if (-not (Test-ToolsListProxyTarget -Config $Config -ServerId $id)) { return }
+
+    $settings = Get-ToolsListProxySettings -Config $Config
+    $directUrl = [string]$Runtime.url
+    $proxyPort = [int]$Runtime.hostPort + [int]$settings.portOffset
+    $proxyContainerName = "$($Runtime.containerName)-tools-list-proxy"
+    $baseUrl = ([string](Get-ObjectValue -Object $Config -Name "baseUrl" -Default "http://localhost")).TrimEnd("/")
+    $proxyUrl = "$baseUrl`:$proxyPort/mcp"
+    $Runtime | Add-Member -NotePropertyName directUrl -NotePropertyValue $directUrl -Force
+    $Runtime | Add-Member -NotePropertyName proxyUrl -NotePropertyValue $proxyUrl -Force
+    $Runtime | Add-Member -NotePropertyName proxyPort -NotePropertyValue $proxyPort -Force
+    $Runtime | Add-Member -NotePropertyName proxyContainerName -NotePropertyValue $proxyContainerName -Force
+    $Runtime | Add-Member -NotePropertyName toolsContractStatus -NotePropertyValue "fallback-direct" -Force
+    if ($DryRun) {
+        Write-Host "Would qualify MCP tools-list proxy for '$id': $proxyUrl -> $directUrl"
+        return
+    }
+
+    Ensure-ToolsListProxyImage -Config $Config
+    [void](Invoke-DockerCommand -Arguments @("rm", "-f", $proxyContainerName) -Quiet -TimeoutSec 60)
+    $contractVolume = "$($settings.contractPath):/app/tools-contract.json:ro"
+    $upstreamUrl = "http://host.docker.internal:$($Runtime.hostPort)/mcp"
+    try {
+        Invoke-DockerCommandChecked -Arguments @(
+            "run", "-d", "--name", $proxyContainerName,
+            "--add-host", "host.docker.internal:host-gateway",
+            "-p", "$proxyPort`:8080", "-v", $contractVolume,
+            $settings.image,
+            "--listen-port", "8080", "--upstream-url", $upstreamUrl,
+            "--server-id", $id, "--contract-path", "/app/tools-contract.json"
+        ) -TimeoutSec 180 -Description "docker run $proxyContainerName"
+        $ready = $false
+        for ($attempt = 0; $attempt -lt 30; $attempt++) {
+            if (Test-HostTcpPortOpen -Port $proxyPort -TimeoutMilliseconds 500) { $ready = $true; break }
+            Start-Sleep -Seconds 1
+        }
+        if (-not $ready) {
+            $logs = @(Invoke-DockerCommandCapture -Arguments @("logs", "--tail", "40", $proxyContainerName) -TimeoutSec 60 -Description "docker logs $proxyContainerName")
+            throw "proxy did not become ready. $($logs -join ' ')"
+        }
+        $Runtime.url = $proxyUrl
+        $Runtime.toolsContractStatus = "qualified"
+        Write-Host "Qualified MCP tools-list proxy for '$id': $proxyUrl (direct fallback: $directUrl)"
+    } catch {
+        $Runtime.url = $directUrl
+        $Runtime.toolsContractStatus = "fallback-direct"
+        Write-Warning "MCP tools-list proxy for '$id' was not qualified; registry will keep the direct endpoint. $($_.Exception.Message)"
+        [void](Invoke-DockerCommand -Arguments @("rm", "-f", $proxyContainerName) -Quiet -TimeoutSec 60)
+    }
+}
+
+function Update-ToolsListProxyPublishEndpoint {
+    param([object]$Server)
+    $hash = Convert-ToHash -Object $Server
+    $directUrl = [string](Get-ObjectValue -Object $hash -Name "directUrl" -Default "")
+    $proxyUrl = [string](Get-ObjectValue -Object $hash -Name "proxyUrl" -Default "")
+    if (-not $directUrl -or -not $proxyUrl) { return $hash }
+    $proxyContainer = [string](Get-ObjectValue -Object $hash -Name "proxyContainerName" -Default "")
+    $proxyPort = [int](Get-ObjectValue -Object $hash -Name "proxyPort" -Default 0)
+    $qualified = (Get-HostContainerPublishState -ContainerName $proxyContainer) -eq "running" -and (Test-HostTcpPortOpen -Port $proxyPort)
+    $hash["url"] = $(if ($qualified) { $proxyUrl } else { $directUrl })
+    $hash["toolsContractStatus"] = $(if ($qualified) { "qualified" } else { "fallback-direct" })
+    return $hash
+}
+
 function Get-HostServerPublishStatus {
     param([object]$Server)
 
@@ -2005,7 +2114,7 @@ function Update-HostStateForPublish {
     $changed = $false
 
     foreach ($server in As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @())) {
-        $serverHash = Convert-ToHash -Object $server
+        $serverHash = Update-ToolsListProxyPublishEndpoint -Server $server
         $id = [string](Get-ObjectValue -Object $serverHash -Name "id" -Default "")
         $expectedNames = Get-McpClientNames -ServerId $id
         $expectedAiRules1cName = [string](Get-ObjectValue -Object $expectedNames -Name "aiRules1c" -Default "")
@@ -2128,6 +2237,7 @@ function Start-HostServers {
         $runtime = New-ServerRuntime -Config $Config -Server $server -Index $runtimeIndex
         Write-Host "Global server '$id': container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
         Start-DockerServer -Config $Config -Server $server -Runtime $runtime
+        Enable-ToolsListProxyForRuntime -Config $Config -Runtime $runtime
         $runtime.health = "running"
         $serverStates += $runtime
         $startedGlobal++
@@ -2163,6 +2273,7 @@ function Start-HostServers {
                 } else {
                     Start-DockerServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState
                 }
+                Enable-ToolsListProxyForRuntime -Config $Config -Runtime $runtime
                 $runtime.health = "running"
                 $serverStates += $runtime
                 $startedProject++
@@ -2315,6 +2426,11 @@ function Stop-HostServers {
         $composeProject = [string](Get-ObjectValue -Object $server -Name "composeProject" -Default "")
         $runtimePath = [string](Get-ObjectValue -Object $server -Name "runtimePath" -Default "")
         $containerName = [string](Get-ObjectValue -Object $server -Name "containerName" -Default "")
+        $proxyContainerName = [string](Get-ObjectValue -Object $server -Name "proxyContainerName" -Default "")
+        if ($proxyContainerName) {
+            Write-Host "Stopping tools-list proxy container: $proxyContainerName"
+            if (-not $DryRun) { [void](Invoke-DockerCommand -Arguments @("rm", "-f", $proxyContainerName) -Quiet -TimeoutSec 120) }
+        }
         if ($composeProject -and $runtimePath -and (Test-Path -LiteralPath (Join-Path $runtimePath "docker-compose.yml") -PathType Leaf)) {
             Write-Host "Stopping compose project: $composeProject"
             if (-not $DryRun) {
@@ -2389,6 +2505,9 @@ function ConvertTo-RegistryServers {
             name = [string](Get-ObjectValue -Object $server -Name "name" -Default "")
             clientNames = $clientNames
             url = [string](Get-ObjectValue -Object $server -Name "url" -Default "")
+            directUrl = [string](Get-ObjectValue -Object $server -Name "directUrl" -Default "")
+            proxyUrl = [string](Get-ObjectValue -Object $server -Name "proxyUrl" -Default "")
+            toolsContractStatus = [string](Get-ObjectValue -Object $server -Name "toolsContractStatus" -Default "")
             status = [string](Get-ObjectValue -Object $server -Name "status" -Default "unknown")
             health = [string](Get-ObjectValue -Object $server -Name "health" -Default "unknown")
             image = [string](Get-ObjectValue -Object $server -Name "image" -Default "")
@@ -2578,7 +2697,7 @@ function Show-HostStatus {
         if ($TargetServerId -and $id -ne $TargetServerId) {
             continue
         }
-        Write-Host "  $(Get-ObjectValue -Object $server -Name 'name' -Default '<unknown>') [$(Get-ObjectValue -Object $server -Name 'scope' -Default '')] $(Get-ObjectValue -Object $server -Name 'url' -Default '') health=$(Get-ObjectValue -Object $server -Name 'health' -Default 'unknown') configId=$(Get-ObjectValue -Object $server -Name 'configId' -Default '') indexedAt=$(Get-ObjectValue -Object $server -Name 'indexedAt' -Default '')"
+        Write-Host "  $(Get-ObjectValue -Object $server -Name 'name' -Default '<unknown>') [$(Get-ObjectValue -Object $server -Name 'scope' -Default '')] $(Get-ObjectValue -Object $server -Name 'url' -Default '') health=$(Get-ObjectValue -Object $server -Name 'health' -Default 'unknown') toolsContract=$(Get-ObjectValue -Object $server -Name 'toolsContractStatus' -Default 'direct') configId=$(Get-ObjectValue -Object $server -Name 'configId' -Default '') indexedAt=$(Get-ObjectValue -Object $server -Name 'indexedAt' -Default '')"
         $shown++
     }
     if ($TargetServerId -and $shown -eq 0) {

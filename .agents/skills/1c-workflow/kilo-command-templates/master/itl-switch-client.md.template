@@ -6,7 +6,7 @@ agent: code
 Use only from the clean `master` worktree. Require one explicit target from `codex`, `kilocode`, `claude-code`, `cursor`, or `opencode`, then run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action itl-switch-client -Client <client>
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action itl-switch-client -Client <client>
 ```
 
-The helper owns snapshot, guards, cleanup, pinned rules installation, model reset, rollback, and reload instructions. Do not update development worktrees or remove RTK integration manually.
+The helper owns snapshot, guards, cleanup, pinned rules installation, model reset, rollback, and reload instructions. Use the bounded JSON summary as the result; read only the last 80 lines of its `logPath` on failure. Do not update development worktrees or remove RTK integration manually.

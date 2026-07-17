@@ -145,17 +145,17 @@
         $lockTemplate.mode | Should -Be "fresh"
         $project = $projectTemplate | ConvertFrom-Json
         $project.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $project.aiRules.ref | Should -Be "itl-main-b4d9875b-r10"
+        $project.aiRules.ref | Should -Be "itl-main-b4d9875b-r11"
         @($project.aiRules.tools).Count | Should -Be 0
         $lockTemplate.dependencies.aiRules1c.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-b4d9875b-r10"
+        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-b4d9875b-r11"
         $lockTemplate.dependencies.workflowPackage.commit | Should -Be ""
         $lockTemplate.dependencies.workflowPackage.source | Should -Be "template default"
         $lockTemplate.dependencies.workflowPackage.updatedAt | Should -Be ""
-        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "760aab7fc2ef12d5019749e564803bbd4d6b1f5a"
+        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "af82570afca06c40a9588c8a678bf3665bba4870"
         $lockTemplate.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
         $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "b4d9875b15c6d93f493035aee51f077126e72a21"
-        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 10
+        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 11
         $lockTemplate.dependencies.aiRules1c.compatibilityStatus | Should -Be "passed"
         $lockTemplate.dependencies.roctupMcpToolkit.assetName | Should -Be "MCP_Toolkit.epf"
         $lockTemplate.dependencies.roctupMcpToolkit.sha256 | Should -Be "e9a0856224aea4f54763fe1fb6a21aa8e71efb9d14158adc4382e1b2276d829d"
