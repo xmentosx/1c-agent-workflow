@@ -2197,6 +2197,36 @@ function Copy-WorkflowManagedFile {
     Write-Host "Updated workflow file: $RelativePath"
 }
 
+function Get-LegacyWorkflowManagedFileHashes {
+    return [ordered]@{
+        "README.md" = @("3E834E1FD81F0C06E779FCAAB7D467E1615135A72352650C834B9CE205C394D6")
+        "DEVELOPER-GUIDE.ru.md" = @("E91CE6E8DF9F23B8AC75FA9EE76524DE0585A0F86B277BE67166D5A56A9C5093")
+        "DEV-BRANCH-DEVELOPMENT.ru.md" = @("015C9ECE13462CEA299C795121ADD1AAB4C5C2DACDCFF30AB3D42E3AE5968E03")
+        "VANESSA-TESTS-GUIDE.md" = @("052D1950EAB1078CADEC7A00F068E3F61F22ACA5A1FD99982EB3832075F030B1")
+        "VANESSA-TESTS-GUIDE.ru.md" = @("099725AFCA5A715D40906325B3CDB12217046FB76D6AA8B1F610357C9E8AE58F")
+    }
+}
+
+function Remove-LegacyWorkflowManagedFiles {
+    $knownFiles = Get-LegacyWorkflowManagedFileHashes
+    foreach ($relativePath in @($knownFiles.Keys)) {
+        $targetPath = Join-Path $script:ProjectRoot $relativePath
+        if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+            continue
+        }
+
+        Assert-WorkflowManagedTargetPath -Path $targetPath
+        $actualHash = (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToUpperInvariant()
+        if (@($knownFiles[$relativePath]) -contains $actualHash) {
+            Remove-Item -LiteralPath $targetPath -Force
+            Write-Host "Removed obsolete workflow-managed file: $relativePath"
+            continue
+        }
+
+        Write-Warning "Preserved '$relativePath' because it differs from every known workflow-managed version. The workflow no longer manages this file."
+    }
+}
+
 function Get-KiloItlCommandSurface {
     try {
         $currentBranch = Get-CurrentBranch
@@ -2523,10 +2553,12 @@ function Update-WorkflowPackage {
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\product-docs"
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-roctup-1c-data"
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-vanessa-ui-mcp"
+        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "docs\itl-workflow"
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "templates"
-        foreach ($relativePath in @("install-agent-1c-workflow.ps1", "README.md", "AGENT-INSTALL.md", "DEVELOPER-GUIDE.ru.md", "DEV-BRANCH-DEVELOPMENT.ru.md", "VANESSA-TESTS-GUIDE.md", "VANESSA-TESTS-GUIDE.ru.md")) {
+        foreach ($relativePath in @("install-agent-1c-workflow.ps1", "AGENT-INSTALL.md")) {
             Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
         }
+        Remove-LegacyWorkflowManagedFiles
 
         Update-WorkflowPackageLockEntry -Source $source | Out-Null
         Write-Host "Workflow package files copied. Restarting the installed helper in a fresh PowerShell process for post-copy processing."

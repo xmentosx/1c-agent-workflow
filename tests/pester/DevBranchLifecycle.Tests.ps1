@@ -2025,8 +2025,9 @@ if (`$?) { exit 0 } else { exit 1 }
     It "documents and templates the development branch worktree root" {
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\project.json")) | Should -Match "devBranchWorktreeRoot"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "DEV_BRANCH_WORKTREE_ROOT"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")) | Should -Match "worktree"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "DEVELOPER-GUIDE.ru.md")) | Should -Match "-UseCurrentWorktree"
+        $projectWorkflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "docs\itl-workflow\PROJECT-WORKFLOW.ru.md")
+        $projectWorkflowText | Should -Match "worktree"
+        $projectWorkflowText | Should -Match ([regex]::Escape("/itl-status"))
     }
 
     It "declares manual unsafe action protection confirmation for development branches" {

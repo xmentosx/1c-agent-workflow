@@ -62,7 +62,7 @@
         }
     }
 
-    It 'keeps the detailed skill as a compact router and marks root docs human-facing' {
+    It 'keeps the detailed skill as a compact router and routes human documentation separately' {
         $skillText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.agents\skills\1c-workflow\SKILL.md')
         ([regex]::Matches($skillText, '\S+')).Count | Should -BeLessOrEqual 750
         $skillText | Should -Match 'detailed ITL workflow router'
@@ -71,18 +71,21 @@
         $skillText | Should -Match ([regex]::Escape('references/mcp.md'))
         $skillText | Should -Match ([regex]::Escape('references/branch-lifecycle.md'))
         $skillText | Should -Match ([regex]::Escape('references/verification-result.md'))
+        $skillText | Should -Match ([regex]::Escape('references/vanessa-tests.md'))
         $skillText | Should -Match 'human-facing'
 
-        $humanDocPaths = @('DEVELOPER-GUIDE.ru.md', 'DEV-BRANCH-DEVELOPMENT.ru.md')
+        $humanDocPaths = @(
+            'docs\itl-workflow\PROJECT-WORKFLOW.ru.md',
+            'docs\itl-workflow\FEATURE-DEVELOPMENT.ru.md',
+            'docs\itl-workflow\MODES-AND-SETTINGS.ru.md',
+            'docs\itl-workflow\DEV-ENV-REFERENCE.ru.md'
+        )
         foreach ($relativePath in $humanDocPaths) {
-            $docText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot $relativePath)
-            $docText | Should -Match 'human-facing'
-            if ($relativePath -eq 'DEVELOPER-GUIDE.ru.md') {
-                $docText | Should -Match ([regex]::Escape('.agents/skills/1c-workflow/references/workflow.md'))
-            } else {
-                $docText | Should -Match ([regex]::Escape('.agents/skills/1c-workflow/references/dev-branch-development.md'))
-            }
+            (Test-Path -LiteralPath (Join-Path $RepoRoot $relativePath) -PathType Leaf) | Should -BeTrue
         }
+        (Test-Path -LiteralPath (Join-Path $RepoRoot 'VANESSA-TESTS-GUIDE.ru.md')) | Should -BeFalse
+        (Test-Path -LiteralPath (Join-Path $RepoRoot 'DEVELOPER-GUIDE.ru.md')) | Should -BeFalse
+        (Test-Path -LiteralPath (Join-Path $RepoRoot 'DEV-BRANCH-DEVELOPMENT.ru.md')) | Should -BeFalse
     }
 
     It "keeps every installed ITL skill discoverable through valid frontmatter" {
@@ -186,17 +189,68 @@
         }
     }
 
-    It "human docs are summaries, not canonical procedures" {
+    It "keeps README as a compact source-repository entrypoint" {
         $readmeText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")
-        $developerGuideText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "DEVELOPER-GUIDE.ru.md")
+        ([regex]::Matches($readmeText, '\S+')).Count | Should -BeLessOrEqual 350
+        $firstSection = [regex]::Match($readmeText, '(?m)^## (?<title>.+)$')
+        $firstSection.Success | Should -BeTrue
+        $firstSection.Groups['title'].Value | Should -Be 'Быстрый старт'
+        $readmeText | Should -Match ([regex]::Escape('https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTALL.md'))
+        foreach ($client in @('Codex', 'Kilo Code', 'Claude Code', 'Cursor', 'OpenCode')) {
+            $readmeText | Should -Match ([regex]::Escape($client))
+        }
+        foreach ($forbidden in @('VANESSA-TESTS-GUIDE', 'advanced-actions.md', '.agents/skills/1c-workflow/references/', '/itl-check')) {
+            $readmeText | Should -Not -Match ([regex]::Escape($forbidden))
+        }
+        foreach ($relativePath in @(
+            'docs/itl-workflow/PROJECT-WORKFLOW.ru.md',
+            'docs/itl-workflow/FEATURE-DEVELOPMENT.ru.md',
+            'docs/itl-workflow/MODES-AND-SETTINGS.ru.md',
+            'docs/itl-workflow/DEV-ENV-REFERENCE.ru.md'
+        )) {
+            $readmeText | Should -Match ([regex]::Escape($relativePath))
+            (Test-Path -LiteralPath (Join-Path $RepoRoot ($relativePath -replace '/', '\'))) | Should -BeTrue
+        }
+    }
 
-        $readmeText | Should -Match ([regex]::Escape(".agents/skills/1c-workflow/references/"))
-        $developerGuideText | Should -Match ([regex]::Escape(".agents/skills/1c-workflow/references/"))
+    It "documents every active dev env key and the user-facing mode defaults" {
+        $envTemplateText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot 'templates\dev.env.example')
+        $envReferenceText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot 'docs\itl-workflow\DEV-ENV-REFERENCE.ru.md')
+        $modesText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot 'docs\itl-workflow\MODES-AND-SETTINGS.ru.md')
+        $keys = [regex]::Matches($envTemplateText, '(?m)^(?:#\s*)?(?<key>[A-Z][A-Z0-9_]*)=') | ForEach-Object { $_.Groups['key'].Value } | Select-Object -Unique
+        foreach ($key in $keys) {
+            $envReferenceText | Should -Match ([regex]::Escape("``$key``"))
+        }
+        $envTemplateText | Should -Match '(?m)^DEBUG_FAST_PATH=standard\r?$'
+        $envTemplateText | Should -Match '(?m)^CAVEMAN=on\r?$'
+        foreach ($marker in @(
+            'VERIFICATION_DEPTH=full', 'UI_TESTING=manual', 'ORCHESTRATION=standard',
+            'CAVEMAN=on', 'DEPENDENCY_MODE=fresh', 'VERIFICATION_POLICY=warn',
+            '/litemode', '/itl-litemode', 'rtk', 'SUBAGENT_MODEL_CODING'
+        )) {
+            $modesText | Should -Match ([regex]::Escape($marker))
+        }
+    }
 
-        $readmeText | Should -Not -Match ([regex]::Escape("1. Run installer"))
-        $readmeText | Should -Not -Match ([regex]::Escape("Mantis token"))
-        $developerGuideText | Should -Not -Match ([regex]::Escape("script wizard"))
-        $developerGuideText | Should -Not -Match ([regex]::Escape("Refresh-DevBranch"))
+    It "keeps user-documentation links local and resolvable" {
+        $docPaths = @(
+            'README.md',
+            'docs\itl-workflow\PROJECT-WORKFLOW.ru.md',
+            'docs\itl-workflow\FEATURE-DEVELOPMENT.ru.md',
+            'docs\itl-workflow\MODES-AND-SETTINGS.ru.md',
+            'docs\itl-workflow\DEV-ENV-REFERENCE.ru.md'
+        )
+        foreach ($relativePath in $docPaths) {
+            $path = Join-Path $RepoRoot $relativePath
+            $text = Get-Content -Encoding UTF8 -Raw $path
+            $text | Should -Not -Match ([regex]::Escape('.agents/skills/'))
+            foreach ($match in [regex]::Matches($text, '\[[^\]]+\]\((?<target>[^)#]+)(?:#[^)]*)?\)')) {
+                $target = $match.Groups['target'].Value
+                if ($target -match '^[a-z]+:' -or $target.StartsWith('#')) { continue }
+                $resolved = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $path) ($target -replace '/', '\')))
+                (Test-Path -LiteralPath $resolved -PathType Leaf) | Should -BeTrue -Because "$relativePath links to $target"
+            }
+        }
     }
 
     It 'keeps the local gate output under ignored build test-results path' {
@@ -461,9 +515,8 @@
         $menuText | Should -Match "itldev/\*"
 
         foreach ($relativePath in @(
-            "README.md",
-            "DEVELOPER-GUIDE.ru.md",
-            "DEV-BRANCH-DEVELOPMENT.ru.md",
+            "docs\itl-workflow\PROJECT-WORKFLOW.ru.md",
+            "docs\itl-workflow\FEATURE-DEVELOPMENT.ru.md",
             ".agents\skills\1c-workflow\references\workflow.md",
             ".agents\skills\1c-workflow\references\dev-branch-development.md",
             ".agents\skills\1c-workflow-fast\SKILL.md",
@@ -503,18 +556,14 @@
         $userRulesText | Should -Not -Match "opsx\*\.md"
     }
 
-    It "documents the same development completion gate in dev-branch process docs" {
-        foreach ($relativePath in @(
-            "DEV-BRANCH-DEVELOPMENT.ru.md",
-            ".agents\skills\1c-workflow\references\dev-branch-development.md"
-        )) {
-            $text = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot $relativePath)
+    It "documents the detailed development completion gate in the agent reference" {
+        $text = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\dev-branch-development.md")
 
             foreach ($marker in @(
                 "src/cf",
                 "src/cfe",
                 "tests/features",
-                "VANESSA-TESTS-GUIDE.md",
+                "references/vanessa-tests.md",
                 "/itl-check",
                 "fresh passed",
                 "/opsx-apply",
@@ -536,26 +585,37 @@
             $text | Should -Match "exportPath.*extensionsPath"
             $text | Should -Match "master.*branch-safety blocker"
             $text | Should -Not -Match "2-4 Vanessa"
+    }
+
+    It "keeps the human feature guide outcome-focused and complete" {
+        $text = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "docs\itl-workflow\FEATURE-DEVELOPMENT.ru.md")
+        foreach ($marker in @(
+            "/itl-check", "/itl-verify-fix", "fresh passed", "quick-fix",
+            "/opsx-explore", "/opsx-propose", "/opsx-apply", "/opsx-archive",
+            "focused Vanessa", "pending verification", "VERIFICATION_POLICY"
+        )) {
+            $text | Should -Match ([regex]::Escape($marker))
         }
+        $text | Should -Not -Match ([regex]::Escape('.agents/skills/1c-workflow/references/'))
     }
 
     It "documents OpenSpec slash commands at the matching branch development steps" {
         foreach ($relativePath in @(
-            "DEV-BRANCH-DEVELOPMENT.ru.md",
+            "docs\itl-workflow\FEATURE-DEVELOPMENT.ru.md",
             ".agents\skills\1c-workflow\references\dev-branch-development.md"
         )) {
             $text = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot $relativePath)
             foreach ($command in @("/opsx-propose", "/opsx-apply", "/opsx-archive", "/opsx-explore")) {
                 $text | Should -Match ([regex]::Escape($command))
             }
-
-            $text | Should -Match "/opsx-propose.*proposal"
-            $text | Should -Match "/opsx-explore.*optional"
-            $text | Should -Match "(?s)### 0\..*?/opsx-explore"
-            $text | Should -Match "(?s)### 1\..*?/opsx-propose"
-            $text | Should -Match "(?s)### 4\..*?/opsx-apply"
-            $text | Should -Match "(?s)### 9\..*?/opsx-archive"
         }
+        $agentText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\dev-branch-development.md")
+        $agentText | Should -Match "/opsx-propose.*proposal"
+        $agentText | Should -Match "/opsx-explore.*optional"
+        $agentText | Should -Match "(?s)### 0\..*?/opsx-explore"
+        $agentText | Should -Match "(?s)### 1\..*?/opsx-propose"
+        $agentText | Should -Match "(?s)### 4\..*?/opsx-apply"
+        $agentText | Should -Match "(?s)### 9\..*?/opsx-archive"
     }
 
     It "ignores local runtime branch state in all gitignore surfaces" {

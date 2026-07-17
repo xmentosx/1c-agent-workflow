@@ -134,8 +134,7 @@
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-mcp.md") -PathType Leaf) | Should -Be $false
         $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
         $kiloTemplateText | Should -Not -Match "/itl-vibecoding1c-mcp"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")) | Should -Match "vibecoding1c-mcp-setup"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")) | Should -Not -Match "/itl-vibecoding1c-mcp"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "docs\itl-workflow\DEV-ENV-REFERENCE.ru.md")) | Should -Match "VIBECODING1C_MCP_DISTRIBUTION_REPO"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")) | Should -Match "vibecoding1c-mcp-setup"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")) | Should -Not -Match "/itl-vibecoding1c-mcp"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VIBECODING1C_MCP_DISTRIBUTION_PATH"

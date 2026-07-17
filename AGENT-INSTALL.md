@@ -200,11 +200,13 @@ Use these steps only when `install-agent-1c-workflow.ps1` is unavailable or fail
 
 10. Apply the managed ITL block from `templates/USER-RULES.append.md` to `USER-RULES.md`. New helpers wrap this block with markers so future `update-workflow` runs can replace it safely.
 
-11. Copy developer-facing docs into the target project when present:
+11. Copy the namespaced developer-facing documentation into the target project. Do not copy or overwrite the target project's root `README.md`:
 
 ```text
-<project>/DEVELOPER-GUIDE.ru.md
-<project>/DEV-BRANCH-DEVELOPMENT.ru.md
+<project>/docs/itl-workflow/PROJECT-WORKFLOW.ru.md
+<project>/docs/itl-workflow/FEATURE-DEVELOPMENT.ru.md
+<project>/docs/itl-workflow/MODES-AND-SETTINGS.ru.md
+<project>/docs/itl-workflow/DEV-ENV-REFERENCE.ru.md
 ```
 
 12. Do not add detailed workflow text to `AGENTS.md`. Keep ITL-specific rules in `USER-RULES.md` so upstream-managed `AGENTS.md` can continue to update cleanly.

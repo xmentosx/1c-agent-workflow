@@ -159,13 +159,9 @@ exit 0
         }
 
         $readmeText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")
-        $readmeMenuStart = $readmeText.IndexOf("Slash-")
-        $readmeMenuStart | Should -BeGreaterThan -1
-        $readmeMenuEnd = $readmeText.IndexOf("## ", $readmeMenuStart + 1)
-        $readmeMenuEnd | Should -BeGreaterThan $readmeMenuStart
-        $readmeMenuText = $readmeText.Substring($readmeMenuStart, $readmeMenuEnd - $readmeMenuStart)
+        $readmeText | Should -Not -Match "Slash-"
         foreach ($command in $advancedCommands) {
-            $readmeMenuText | Should -Not -Match ([regex]::Escape($command))
+            $readmeText | Should -Not -Match ([regex]::Escape($command))
         }
 
         $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
@@ -356,9 +352,7 @@ exit 0
 
         $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
         $workflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
-        $readmeText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")
-        $developerGuideText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "DEVELOPER-GUIDE.ru.md")
-        foreach ($text in @($advancedText, $workflowText, $readmeText, $developerGuideText)) {
+        foreach ($text in @($advancedText, $workflowText)) {
             $text | Should -Match "update-ai-rules"
             $text | Should -Match "USER-RULES.md"
             $text | Should -Match "MCP"
@@ -442,8 +436,8 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Match ([regex]::Escape("Kilo Code: run /reload or open a new session"))
         $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "refresh-dev-branch MCP reconcile"'))
         $HelperText | Should -Match "updatedAt"
-        $HelperText | Should -Match "VANESSA-TESTS-GUIDE\.md"
-        $HelperText | Should -Match "VANESSA-TESTS-GUIDE\.ru\.md"
+        $HelperText | Should -Match "Remove-LegacyWorkflowManagedFiles"
+        $HelperText | Should -Match "docs\\itl-workflow"
 
         $lockTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dependency-lock.json") | ConvertFrom-Json
         $lockTemplate.dependencies.workflowPackage.repo | Should -Be "https://github.com/xmentosx/1c-agent-workflow.git"
@@ -469,10 +463,8 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $advancedText | Should -Match "Generated client surfaces stay local and ignored"
 
         $docPaths = @(
-            "README.md",
             "AGENT-INSTALL.md",
-            "DEVELOPER-GUIDE.ru.md",
-            "DEV-BRANCH-DEVELOPMENT.ru.md",
+            "docs\itl-workflow\PROJECT-WORKFLOW.ru.md",
             ".agents\skills\1c-workflow\SKILL.md",
             ".agents\skills\1c-workflow-fast\SKILL.md",
             ".agents\skills\1c-workflow\references\workflow.md",
@@ -485,9 +477,9 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         }
 
         $workflowText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
-        $workflowText | Should -Match "VANESSA-TESTS-GUIDE\.md"
+        $workflowText | Should -Match "references/vanessa-tests\.md"
 
-        $vanessaGuideText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "VANESSA-TESTS-GUIDE.md")
+        $vanessaGuideText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\vanessa-tests.md")
         $vanessaGuideText | Should -Match "Agent reference"
         $vanessaGuideText | Should -Match "Context Economy"
         $vanessaGuideText | Should -Match "Do Not"
@@ -502,11 +494,8 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         }
         [math]::Ceiling(([System.Text.Encoding]::UTF8.GetByteCount($vanessaGuideText)) / 4) | Should -BeLessOrEqual 2400
 
-        $vanessaGuideStubText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "VANESSA-TESTS-GUIDE.ru.md")
-        $vanessaGuideStubText | Should -Match ([regex]::Escape('moved to `VANESSA-TESTS-GUIDE.md`'))
-        $vanessaGuideStubText | Should -Match "compatibility"
-        $vanessaGuideStubText | Should -Not -Match ([regex]::Escape($featureMarker))
-        [math]::Ceiling(([System.Text.Encoding]::UTF8.GetByteCount($vanessaGuideStubText)) / 4) | Should -BeLessOrEqual 120
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "VANESSA-TESTS-GUIDE.md")) | Should -BeFalse
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "VANESSA-TESTS-GUIDE.ru.md")) | Should -BeFalse
     }
 
     It "documents immutable configured ai_rules updates instead of moving upstream main" {
@@ -677,7 +666,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             $installedAgentsText = Get-Content -LiteralPath (Join-Path $projectRoot "AGENTS.md") -Raw -Encoding UTF8
             Set-Content -LiteralPath (Join-Path $projectRoot "DEVELOPER-GUIDE.ru.md") -Encoding UTF8 -Value "old developer guide"
             Set-Content -LiteralPath (Join-Path $projectRoot "DEV-BRANCH-DEVELOPMENT.ru.md") -Encoding UTF8 -Value "old branch guide"
-            Set-Content -LiteralPath (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.ru.md") -Encoding UTF8 -Value "old vanessa guide"
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "tests\fixtures\legacy-vanessa-guide-stub.md") -Destination (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.ru.md")
             Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\stale.txt") -Encoding UTF8 -Value "stale"
             New-Item -ItemType Directory -Force -Path (Join-Path $projectRoot ".agents\skills\1c-workflow\kilo-command-templates\master") | Out-Null
             Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-stale.md") -Encoding UTF8 -Value "stale command-shaped template"
@@ -730,6 +719,7 @@ local after
             $stdout | Should -Match "ITL workflow package post-copy processing completed"
             $stdout | Should -Match "No commit was created automatically"
             $stdout | Should -Match "No active development branches were found"
+            $stdout | Should -Match "Removed obsolete workflow-managed file: VANESSA-TESTS-GUIDE.ru.md"
             $operationState = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json") | ConvertFrom-Json
             $operationState.action | Should -Be "update-workflow"
             $operationState.status | Should -Be "succeeded"
@@ -758,10 +748,17 @@ local after
             @(& git -C $projectRoot ls-files -- ".kilo/commands/custom.md") | Should -Be @(".kilo/commands/custom.md")
             (Test-Path -LiteralPath (Join-Path $projectRoot "templates\dependency-lock.json") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot "templates\stale.txt") -PathType Leaf) | Should -Be $false
-            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.md")) | Should -Match "Vanessa Automation"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agents\skills\1c-workflow\references\vanessa-tests.md")) | Should -Match "Vanessa Automation"
             $featureMarker = -join ([char[]](0x0424, 0x0443, 0x043D, 0x043A, 0x0446, 0x0438, 0x043E, 0x043D, 0x0430, 0x043B, 0x003A))
-            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.md")) | Should -Match ([regex]::Escape($featureMarker))
-            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.ru.md")) | Should -Match "moved to"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agents\skills\1c-workflow\references\vanessa-tests.md")) | Should -Match ([regex]::Escape($featureMarker))
+            (Test-Path -LiteralPath (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.md")) | Should -BeFalse
+            (Test-Path -LiteralPath (Join-Path $projectRoot "VANESSA-TESTS-GUIDE.ru.md")) | Should -BeFalse
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "README.md")) | Should -Match "old readme"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "DEVELOPER-GUIDE.ru.md")) | Should -Match "old developer guide"
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "DEV-BRANCH-DEVELOPMENT.ru.md")) | Should -Match "old branch guide"
+            foreach ($name in @("PROJECT-WORKFLOW.ru.md", "FEATURE-DEVELOPMENT.ru.md", "MODES-AND-SETTINGS.ru.md", "DEV-ENV-REFERENCE.ru.md")) {
+                (Test-Path -LiteralPath (Join-Path $projectRoot "docs\itl-workflow\$name") -PathType Leaf) | Should -BeTrue
+            }
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "AGENTS.md")) | Should -Be $installedAgentsText
 
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".dev.env")) | Should -Match "SECRET=keep"
@@ -832,7 +829,11 @@ local after
             (Test-Path -LiteralPath (Join-Path $tempRoot "templates\AGENTS.append.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot "install-agent-1c-workflow.ps1") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot "AGENT-INSTALL.md") -PathType Leaf) | Should -Be $true
-            (Test-Path -LiteralPath (Join-Path $tempRoot "README.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot "README.md") -PathType Leaf) | Should -Be $false
+            foreach ($name in @("PROJECT-WORKFLOW.ru.md", "FEATURE-DEVELOPMENT.ru.md", "MODES-AND-SETTINGS.ru.md", "DEV-ENV-REFERENCE.ru.md")) {
+                (Test-Path -LiteralPath (Join-Path $tempRoot "docs\itl-workflow\$name") -PathType Leaf) | Should -BeTrue
+            }
+            (Test-Path -LiteralPath (Join-Path $tempRoot "docs\package-architecture.md")) | Should -BeFalse
             (Test-Path -LiteralPath (Join-Path $tempRoot "AGENTS.md") -PathType Leaf) | Should -Be $false
             (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "templates\AGENTS.append.md")) | Should -Match "USER-RULES.md"
             (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "templates\USER-RULES.append.md")) | Should -Match "1C Project Lifecycle"
@@ -849,6 +850,22 @@ local after
                 if (Test-Path -LiteralPath $path -ErrorAction SilentlyContinue) {
                     Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
                 }
+            }
+        }
+    }
+
+    It "preserves an existing project README during bootstrap" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-package-readme-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Encoding UTF8 -Value "# Project-owned documentation"
+
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $InstallerPath -ProjectRoot $tempRoot -NoInit *> $null
+            $LASTEXITCODE | Should -Be 0
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "README.md")) | Should -Match "Project-owned documentation"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
@@ -887,7 +904,9 @@ local after
             New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents") -Destination $sourceRoot -Recurse -Force
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates") -Destination $sourceRoot -Recurse -Force
-            foreach ($name in @("install-agent-1c-workflow.ps1", "README.md", "AGENT-INSTALL.md", "DEVELOPER-GUIDE.ru.md", "DEV-BRANCH-DEVELOPMENT.ru.md", "VANESSA-TESTS-GUIDE.md", "VANESSA-TESTS-GUIDE.ru.md")) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $sourceRoot "docs") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "docs\itl-workflow") -Destination (Join-Path $sourceRoot "docs\itl-workflow") -Recurse -Force
+            foreach ($name in @("install-agent-1c-workflow.ps1", "AGENT-INSTALL.md")) {
                 Copy-Item -LiteralPath (Join-Path $RepoRoot $name) -Destination (Join-Path $sourceRoot $name) -Force
             }
             $fakeLauncherPath = Join-Path $sourceRoot ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"

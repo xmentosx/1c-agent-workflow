@@ -82,7 +82,7 @@ Goal: create baseline project state.
    powershell -ExecutionPolicy Bypass -File <source>\install-agent-1c-workflow.ps1 -ProjectRoot <project>
    ```
 
-   The bootstrap script copies only managed workflow files (`.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, `templates/`, root docs/guides, and `install-agent-1c-workflow.ps1`) and then starts the monitored launcher. It passes the source checkout origin/ref/full commit into init so `workflowPackage` records the files actually copied; a non-Git source is recorded as `source=path` with an empty commit. Do not expand normal initialization into manual copy steps.
+   The bootstrap script copies only managed workflow files (`.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, `docs/itl-workflow/`, `templates/`, `AGENT-INSTALL.md`, and `install-agent-1c-workflow.ps1`) and then starts the monitored launcher. It never overwrites the target project's `README.md`. It passes the source checkout origin/ref/full commit into init so `workflowPackage` records the files actually copied; a non-Git source is recorded as `source=path` with an empty commit. Do not expand normal initialization into manual copy steps.
 
 1. In an already installed project, start with the monitored foreground launcher:
 
@@ -117,7 +117,7 @@ Goal: refresh the installed ITL workflow package without rerunning initializatio
 1. Run only from the `master` worktree.
 2. Require a clean tracked Git worktree while ignoring local runtime state such as `.dev.env`, `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
 3. Resolve the package source from `ITL_WORKFLOW_SOURCE_PATH` or clone/update `ITL_WORKFLOW_REPO` and `ITL_WORKFLOW_REF` (`https://github.com/xmentosx/1c-agent-workflow.git`, `master` by default).
-4. Copy only managed workflow files: `.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, Kilo templates, `templates/`, `install-agent-1c-workflow.ps1`, `README.md`, `AGENT-INSTALL.md`, `DEVELOPER-GUIDE.ru.md`, `DEV-BRANCH-DEVELOPMENT.ru.md`, `VANESSA-TESTS-GUIDE.md`, and the compatibility stub `VANESSA-TESTS-GUIDE.ru.md`.
+4. Copy only managed workflow files: `.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, Kilo templates, `docs/itl-workflow/`, `templates/`, `install-agent-1c-workflow.ps1`, and `AGENT-INSTALL.md`. Never copy or overwrite the target project's root `README.md`. Remove obsolete root workflow docs only when their hashes match a known managed version; preserve divergent files with a warning.
 5. Preserve local runtime/project state. Do not overwrite `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, or existing project/tools config.
 6. Record `workflowPackage.repo/ref/commit/source/updatedAt`, reapply `USER-RULES.md`, refresh ROCTUP MCP and Vanessa UI MCP CFE caches, run `update-ai-rules` unless `-SkipAiRules` is explicit, and leave tracked changes for review. Run Kilo `/reload` or open a new session afterwards.
 7. Do not update active `itldev/*` worktrees automatically; print whether MCP client config was reconciled or preserved as upstream fallback, plus follow-up commands for MCP setup/update, branch merge or `/itl-refresh`, and branch-local ROCTUP/Vanessa UI MCP restart when used.

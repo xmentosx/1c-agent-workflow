@@ -74,7 +74,7 @@ Do not call the wizard helper directly, run `Test-Path` preflight, use backgroun
 - Use sibling Git worktrees for new development branches by default and leave the main folder on `master`.
 - Load branch changes only into the copied development branch infobase, never directly into the source infobase.
 - Use `/itl-check` or `check-dev-branch` for executable verification. Effective ITL modes decide which components run; a skipped component produces partial evidence, never a fresh pass. `/deploy-and-test` is a bridge to the same helper.
-- Read `VANESSA-TESTS-GUIDE.md` only before creating or editing Vanessa Automation feature files.
+- Read `references/vanessa-tests.md` only before creating or editing Vanessa Automation feature files.
 - For native Windows executables such as `1cv8.exe`, pass `Start-Process -ArgumentList` as one joined and correctly quoted command-line string, never as a PowerShell array.
 - Do not search or load ignored runtime folders such as `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/infobases/`, `build/test-results/`, or `logs/` unless diagnosing a specific helper run or artifact.
 
