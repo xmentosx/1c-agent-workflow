@@ -1071,17 +1071,22 @@ function Get-Vibecoding1cMcpProductDocsStatus {
     $selected = Test-Vibecoding1cMcpSelectionHasServerId -Selection $selection -ServerId "bookstack"
     $clientName = Get-Vibecoding1cMcpAiRules1cClientName -ServerId "bookstack"
 
-    $codexConfigured = ((Test-Vibecoding1cMcpCodexConfigContainsName -Path (Get-Vibecoding1cMcpCodexHomeConfigPath) -ClientName $clientName) -or
-        (Test-Vibecoding1cMcpCodexConfigContainsName -Path (Get-Vibecoding1cMcpCodexProjectConfigPath) -ClientName $clientName))
-    $kiloConfigured = $false
-    $kiloPath = Get-Vibecoding1cMcpKiloConfigPath
-    if (Test-Path -LiteralPath $kiloPath -PathType Leaf -ErrorAction SilentlyContinue) {
-        try {
-            $kilo = Read-Utf8Text -Path $kiloPath | ConvertFrom-Json
-            $kiloConfigured = ($kilo.mcp -and @($kilo.mcp.PSObject.Properties.Name) -contains $clientName)
-        } catch {
-            $kiloConfigured = $false
+    $activeClient = "<unconfigured>"
+    $clientConfigured = $false
+    try {
+        $activeClient = Get-ItlActiveClient
+        $adapter = Get-ItlClientAdapter -Client $activeClient
+        $configPath = Join-Path $script:ProjectRoot $adapter.mcpPath
+        if ($activeClient -eq "codex") {
+            $clientConfigured = Test-Vibecoding1cMcpCodexConfigContainsName -Path $configPath -ClientName $clientName
+        } elseif (Test-Path -LiteralPath $configPath -PathType Leaf -ErrorAction SilentlyContinue) {
+            $config = Read-Utf8Text -Path $configPath | ConvertFrom-Json
+            $containerName = $(if ($activeClient -in @("claude-code", "cursor")) { "mcpServers" } else { "mcp" })
+            $container = $config.PSObject.Properties[$containerName].Value
+            $clientConfigured = ($container -and @($container.PSObject.Properties.Name) -contains $clientName)
         }
+    } catch {
+        $clientConfigured = $false
     }
 
     $endpoint = @(Get-Vibecoding1cMcpCurrentEndpoints -IncludeGlobal | Where-Object {
@@ -1114,8 +1119,10 @@ function Get-Vibecoding1cMcpProductDocsStatus {
     return [pscustomobject][ordered]@{
         allowed = $allowed
         selected = $selected
-        codexConfigured = $codexConfigured
-        kiloConfigured = $kiloConfigured
+        activeClient = $activeClient
+        clientConfigured = $clientConfigured
+        codexConfigured = ($activeClient -eq "codex" -and $clientConfigured)
+        kiloConfigured = ($activeClient -eq "kilocode" -and $clientConfigured)
         reachable = $reachable
         probe = $probe
     }
@@ -1127,7 +1134,7 @@ function Write-Vibecoding1cMcpProductDocsStatusLines {
     $status = Get-Vibecoding1cMcpProductDocsStatus
     Write-Host "${Indent}Product docs allowed for project: $($status.allowed)"
     Write-Host "${Indent}Product docs selected in MCP manifest: $($status.selected)"
-    Write-Host "${Indent}Product docs effective client config: Codex=$($status.codexConfigured); Kilo=$($status.kiloConfigured)"
+    Write-Host "${Indent}Product docs effective client config: $($status.activeClient)=$($status.clientConfigured)"
     Write-Host "${Indent}Product docs endpoint reachable (bounded probe): $($status.reachable); $($status.probe)"
 }
 
@@ -3554,17 +3561,14 @@ function Write-Vibecoding1cMcpClientConfig {
 
     Ensure-GitIgnore
     $endpointSet = Get-Vibecoding1cMcpClientConfigEndpointSet
-    $codexHomeConfig = Get-Vibecoding1cMcpCodexHomeConfigPath
-    $codexProjectConfig = Get-Vibecoding1cMcpCodexProjectConfigPath
-
-    Remove-Vibecoding1cMcpDisallowedProductDocsClientConfig -CodexPaths @($codexHomeConfig, $codexProjectConfig)
-    Write-Vibecoding1cMcpCodexConfig -Path $codexHomeConfig -BlockId "global" -Endpoints $endpointSet.globalEndpoints
-    Write-Vibecoding1cMcpCodexConfig -Path $codexProjectConfig -BlockId "project" -Endpoints $endpointSet.localEndpoints
-    Write-Vibecoding1cMcpKiloConfig -Endpoints $endpointSet.allEndpoints
-
-    Write-Host "Codex global MCP config: $codexHomeConfig"
-    Write-Host "Codex project MCP config: $codexProjectConfig"
-    Write-Host "Kilo project MCP config: $(Get-Vibecoding1cMcpKiloConfigPath)"
+    $client = Get-ItlActiveClient
+    $endpoints = @($endpointSet.allEndpoints | ForEach-Object {
+        $name = Get-Vibecoding1cMcpEndpointClientName -Endpoint $_
+        $url = [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "url" -Default "")
+        if ($name -and $url) { [pscustomobject]@{ name = $name; url = $url } }
+    })
+    $path = Write-ItlClientMcpEndpoints -Endpoints $endpoints -Owner "vibecoding1c" -Client $client
+    Write-Host "$client project MCP config: $path"
 }
 
 function Show-Vibecoding1cMcpStatus {

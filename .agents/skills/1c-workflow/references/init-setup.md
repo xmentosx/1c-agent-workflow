@@ -14,8 +14,8 @@ Create and maintain:
 - `.dev.env`: local secrets and machine-specific values; never commit it.
 - `.agents/skills/1c-workflow/`, `.agents/skills/1c-workflow-fast/`, `.agents/skills/product-docs/`, `.agents/skills/itl-roctup-1c-data/`, and `.agents/skills/itl-vanessa-ui-mcp/`: shared skills installed with the workflow package.
 - `.agents/skills/1c-workflow/kilo-command-templates/`: tracked canonical Kilo templates.
-- `.kilo/commands/itl*.md`: ignored context-specific ITL Kilo wrappers. OpenSpec command files are managed by `ai_rules_1c` for each selected client.
-- `.codex/config.toml` and `.kilo/kilo.json*`: ignored local MCP client state.
+- Ignored native `itl*.md` commands for the one active Kilo/Claude/Cursor/OpenCode adapter; Codex uses `.agents/skills`. OpenSpec commands remain owned by `ai_rules_1c`.
+- One active-client MCP config: Codex `.codex/config.toml`, Kilo `.kilo/kilo.json`, Claude `.mcp.json`, Cursor `.cursor/mcp.json`, or OpenCode root `opencode.json`.
 
 Never store passwords in committed files. Write workflow state and `.dev.env` as UTF-8 and preserve Cyrillic paths exactly.
 
@@ -47,8 +47,8 @@ Use this as `.agent-1c/project.json`:
   "devBranchWorktreeRoot": "",
   "aiRules": {
     "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
-    "ref": "itl-main-a421cf44-r7",
-    "tools": ["codex", "kilocode"]
+    "ref": "itl-main-b4d9875b-r9",
+    "tools": []
   }
 }
 ```
@@ -59,6 +59,7 @@ Use `.dev.env` for secrets, passwords, web publication values, local tool paths,
 
 Ask only for values the helper cannot collect or infer:
 
+- One mandatory active client: `codex`, `kilocode`, `claude-code`, `cursor`, or `opencode`.
 - Project/source infobase kind and path/server/name.
 - Base configuration version: `PM4` or `PM5`. Default is `PM5`; store it in committed `.agent-1c/project.json` as `baseConfigurationVersion`.
 - Whether the source uses 1C configuration repository storage.
@@ -95,7 +96,7 @@ Goal: create baseline project state.
 5. Create `.agent-1c/project.json`, `.agent-1c/tools.json`, `.agent-1c/dependency-lock.json`, and `.dev.env` if missing.
 6. Run tool checks, initialize Git, checkout/create `master`, update the source infobase from storage when configured, and dump configuration files to `src/cf`.
 7. Initial dump must produce `src/cf/ConfigDumpInfo.xml`; later dumps use incremental `-update -force` when that file exists. Stop if `src/cf` is non-empty without `ConfigDumpInfo.xml`.
-8. Install/cache ROCTUP MCP Toolkit and Vanessa UI MCP CFE artifacts, install `ai_rules_1c` for every configured `aiRules.tools` client (Codex and Kilo by default), record resolved dependency pins in the dependency lock, reconcile default upstream MCP client entries only when ready vibecoding1c replacements are available, generate Kilo ITL wrappers when Kilo is installed, and apply the ITL overlay to `USER-RULES.md`.
+8. Install/cache dependencies, install `ai_rules_1c` for exactly the selected client, record pins, reconcile MCP only for that client, render its ITL surface, generate the Kilo/OpenCode routine agent when applicable, and apply the ITL overlay.
 9. Commit rules and workflow files when there are changes.
 
 ## Tool Actions
@@ -128,8 +129,8 @@ Goal: refresh the configured `ai_rules_1c` source while preserving the ITL overl
 1. Clone or update the configured `ai_rules_1c` repo under the first writable workflow temp root (`TEMP`/`TMP`, user-profile temp, or project-local `.agent-1c/tmp` fallback).
 2. When `aiRules.ref` is configured, both `fresh` and `locked` checkout that immutable tag. The controlled fork accepts only `itl-*`; verify that the tag resolves to the commit recorded in the dependency lock, and never consume fork `main`.
 3. In `locked`, use the lock repo/ref/commit and stop when required values are missing or disagree. Remote HEAD is allowed only for an explicitly configured legacy/custom repository without `aiRules.ref`; it is never the standard ITL path.
-4. Run the configured source installer with `update` when `.ai-rules.json` exists, otherwise `init` with configured clients. Afterward add each configured client absent from `.ai-rules.json`; do not remove additional installed clients automatically.
+4. Require exact agreement between configured and installed client. Run `update` when they agree; an approved migration/switch transactionally removes the old managed client and initializes the new one. Never use multi-client `add`.
 5. Preserve configured-source files marked `userModified`; use `-Force` only after explicit developer intent.
-6. Reconcile default configured-source MCP client entries from ignored Codex/Kilo config only after writing ready vibecoding1c-managed replacements; if selection/state is missing or incomplete, preserve those entries and print `vibecoding1c-mcp-setup` as the recovery action.
+6. Reconcile default configured-source MCP entries only in the active client's writable config and only after writing ready vibecoding1c-managed replacements; if selection/state is missing or incomplete, preserve those entries and print `vibecoding1c-mcp-setup` as the recovery action.
 7. Reapply the managed ITL block in `USER-RULES.md` from `templates/USER-RULES.append.md`; normally do not append to `AGENTS.md` when it already references `USER-RULES.md`.
-8. Record the resolved `ai_rules_1c` commit in `.agent-1c/dependency-lock.json`.
+8. Record the resolved commit, regenerate the active command/routine-agent surface, and preserve `LLM-RULES.md` byte-for-byte.

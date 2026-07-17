@@ -1666,6 +1666,8 @@
                 function Prepare-ConfiguredInitProjectSettings {
                     Ensure-WorkflowProjectFiles
                     Read-ProjectConfig
+                    Set-ProjectAiRulesClient -Client "kilocode"
+                    Read-ProjectConfig
                     Set-DotEnvValues -Values @{
                         INFOBASE_KIND = "file"
                         SOURCE_USES_REPOSITORY = "false"
@@ -2306,7 +2308,8 @@ if (`$?) { exit 0 } else { exit 1 }
                 "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip",
                 "WEB_PUBLISH_BY_DEFAULT=false",
                 "ROCTUP_MCP_AUTO_START=true",
-                "VANESSA_MCP_AUTO_START=true"
+                "VANESSA_MCP_AUTO_START=true",
+                "AGENT_TOOLS=kilocode"
             ) -join [Environment]::NewLine
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value $devEnv -Encoding UTF8
 
@@ -2355,9 +2358,7 @@ if (`$?) { exit 0 } else { exit 1 }
             [int]$state.vanessaMcpPort | Should -Be 0
             $state.vanessaMcpPid | Should -Be ""
             $state.vanessaMcpUrl | Should -Be ""
-            $codexText = Get-Content -Encoding UTF8 -Raw (Join-Path $worktreePath ".codex\config.toml")
-            $codexText | Should -Not -Match "itl-.*-roctup"
-            $codexText | Should -Not -Match "VanessaAutomation-"
+            (Test-Path -LiteralPath (Join-Path $worktreePath ".codex\config.toml") -PathType Leaf -ErrorAction SilentlyContinue) | Should -BeFalse
             $kiloText = Get-Content -Encoding UTF8 -Raw (Join-Path $worktreePath ".kilo\kilo.json")
             $kiloText | Should -Not -Match "itl-.*-roctup"
             $kiloText | Should -Not -Match "VanessaAutomation-"
@@ -2366,7 +2367,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $kiloConfig.permission.bash | Should -Be "ask"
             $kiloConfig.PSObject.Properties.Name | Should -Not -Contain "plugin"
             $branchKiloCommands = @(Get-ChildItem -LiteralPath (Join-Path $worktreePath ".kilo\commands") -File -Filter "itl*.md" | Select-Object -ExpandProperty Name | Sort-Object)
-            $branchKiloCommands | Should -Be @("itl.md", "itl-check.md", "itl-refresh.md", "itl-result.md", "itl-status.md", "itl-verify-fix.md")
+            $branchKiloCommands | Should -Be @("itl.md", "itl-check.md", "itl-litemode.md", "itl-refresh.md", "itl-result.md", "itl-status.md", "itl-verify-fix.md")
             $branchKiloCommands | Should -Not -Contain "itl-new-config-branch.md"
             $branchKiloCommands | Should -Not -Contain "itl-new-extension-branch.md"
             $branchKiloCommands | Should -Not -Contain "itl-update-workflow.md"
@@ -2426,6 +2427,7 @@ if (`$?) { exit 0 } else { exit 1 }
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`nappdata/`n.agent-1c/`n" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Value '{"tools":["kilocode"],"files":{}}' -Encoding UTF8
             $templateTarget = Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Destination $templateTarget -Recurse
@@ -2440,14 +2442,15 @@ if (`$?) { exit 0 } else { exit 1 }
                 "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=invalid",
                 "WEB_PUBLISH_BY_DEFAULT=false",
                 "ROCTUP_MCP_AUTO_START=false",
-                "VANESSA_MCP_AUTO_START=false"
+                "VANESSA_MCP_AUTO_START=false",
+                "AGENT_TOOLS=kilocode"
             ) -join [Environment]::NewLine
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value $devEnv -Encoding UTF8
 
             & git -C $tempRoot init | Out-Null
             & git -C $tempRoot config user.email "test@example.com"
             & git -C $tempRoot config user.name "Test User"
-            & git -C $tempRoot add .gitignore README.md .agents
+            & git -C $tempRoot add .gitignore README.md .ai-rules.json .agents
             & git -C $tempRoot commit -m init | Out-Null
             & git -C $tempRoot branch -M master
 
@@ -2529,6 +2532,7 @@ if (`$?) { exit 0 } else { exit 1 }
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`nregistry/`n.agent-1c/`n" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Value '{"tools":["kilocode"],"files":{}}' -Encoding UTF8
             $templateTarget = Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Destination $templateTarget -Recurse
@@ -2543,7 +2547,8 @@ if (`$?) { exit 0 } else { exit 1 }
                 "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip",
                 "WEB_PUBLISH_BY_DEFAULT=false",
                 "ROCTUP_MCP_AUTO_START=false",
-                "VANESSA_MCP_AUTO_START=false"
+                "VANESSA_MCP_AUTO_START=false",
+                "AGENT_TOOLS=kilocode"
             ) -join [Environment]::NewLine
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value $devEnv -Encoding UTF8
 
@@ -2585,7 +2590,7 @@ if (`$?) { exit 0 } else { exit 1 }
             & git -C $tempRoot init | Out-Null
             & git -C $tempRoot config user.email "test@example.com"
             & git -C $tempRoot config user.name "Test User"
-            & git -C $tempRoot add .gitignore README.md .agents
+            & git -C $tempRoot add .gitignore README.md .ai-rules.json .agents
             & git -C $tempRoot commit -m init | Out-Null
             & git -C $tempRoot branch -M master
 
@@ -2607,15 +2612,13 @@ if (`$?) { exit 0 } else { exit 1 }
             (@($projectState.servers | Where-Object { $_.id -eq "code" }).Count) | Should -Be 1
             ($projectState.servers | Where-Object { $_.id -eq "code" } | Select-Object -First 1).url | Should -Be "http://host-a:18100/mcp"
 
-            $codexText = Get-Content -Encoding UTF8 -Raw (Join-Path $worktreePath ".codex\config.toml")
-            $codexText | Should -Match ([regex]::Escape("# >>> vibecoding1c-mcp project"))
-            $codexText | Should -Match ([regex]::Escape('[mcp_servers."1c-code-metadata-mcp"]'))
-            $codexText | Should -Match "http://host-a:18100/mcp"
+            (Test-Path -LiteralPath (Join-Path $worktreePath ".codex\config.toml") -PathType Leaf -ErrorAction SilentlyContinue) | Should -BeFalse
 
             $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $worktreePath ".kilo\kilo.json") | ConvertFrom-Json
-            $kilo.mcp.'1c-code-metadata-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
             $kilo.mcp.'1c-code-metadata-mcp'.url | Should -Be "http://host-a:18100/mcp"
             $kilo.mcp.'1c-graph-metadata-mcp'.url | Should -Be "http://host-a:18101/mcp"
+            $managed = Get-Content -Encoding UTF8 -Raw (Join-Path $worktreePath ".agent-1c\mcp\client-managed.json") | ConvertFrom-Json
+            @($managed.owners.'kilocode/vibecoding1c') | Should -Contain "1c-code-metadata-mcp"
         } finally {
             $env:APPDATA = $oldAppData
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")
@@ -2656,7 +2659,8 @@ if (`$?) { exit 0 } else { exit 1 }
             & git -C $mainRoot worktree add -b itldev/branch1 $worktreePath | Out-Null
 
             New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot ".agent-1c\mcp"), (Join-Path $worktreePath ".agent-1c") | Out-Null
-            Set-Content -LiteralPath (Join-Path $worktreePath ".agent-1c\project.json") -Encoding UTF8 -Value (@{ schemaVersion = 1; baseConfigurationVersion = "PM5" } | ConvertTo-Json)
+            Set-Content -LiteralPath (Join-Path $worktreePath ".agent-1c\project.json") -Encoding UTF8 -Value (@{ schemaVersion = 1; baseConfigurationVersion = "PM5"; aiRules = @{ tools = @("kilocode") } } | ConvertTo-Json -Depth 5)
+            Set-Content -LiteralPath (Join-Path $worktreePath ".ai-rules.json") -Encoding UTF8 -Value '{"schemaVersion":1,"tools":["kilocode"],"files":{}}'
 
             $registryServers = @(
                 [ordered]@{ id = "docs"; scope = "global"; family = "vibecoding1c"; provider = "remote"; name = "itl-1c-docs"; url = "http://host-a:18000/mcp"; health = "running" },
@@ -2736,9 +2740,10 @@ if (`$?) { exit 0 } else { exit 1 }
 
             (Test-Path -LiteralPath (Join-Path $worktreePath ".agent-1c\mcp\vibecoding1c-selection.json") -PathType Leaf) | Should -BeTrue
             $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $worktreePath ".kilo\kilo.json") | ConvertFrom-Json
-            $kilo.mcp.'BookStack-product-docs-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
             $kilo.mcp.'BookStack-product-docs-mcp'.url | Should -Be "http://host-a:18005/mcp"
-            (Get-Content -Encoding UTF8 -Raw $codexHomeConfig) | Should -Match ([regex]::Escape('[mcp_servers."BookStack-product-docs-mcp"]'))
+            $managed = Get-Content -Encoding UTF8 -Raw (Join-Path $worktreePath ".agent-1c\mcp\client-managed.json") | ConvertFrom-Json
+            @($managed.owners.'kilocode/vibecoding1c') | Should -Contain "BookStack-product-docs-mcp"
+            (Test-Path -LiteralPath $codexHomeConfig -PathType Leaf -ErrorAction SilentlyContinue) | Should -BeFalse
         } finally {
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldLocalHome, "Process")
@@ -2765,6 +2770,7 @@ if (`$?) { exit 0 } else { exit 1 }
             Set-Content -LiteralPath (Join-Path $sourceBase "1Cv8Log\1Cv8.lgf") -Value "" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`nsource-base/`n.agent-1c/`n" -Encoding ASCII
             Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Value '{"tools":["kilocode"],"files":{}}' -Encoding UTF8
             $templateTarget = Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Destination $templateTarget -Recurse
@@ -2779,14 +2785,15 @@ if (`$?) { exit 0 } else { exit 1 }
                 "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip",
                 "WEB_PUBLISH_BY_DEFAULT=false",
                 "ROCTUP_MCP_AUTO_START=false",
-                "VANESSA_MCP_AUTO_START=false"
+                "VANESSA_MCP_AUTO_START=false",
+                "AGENT_TOOLS=kilocode"
             ) -join [Environment]::NewLine
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Value $devEnv -Encoding UTF8
 
             & git -C $tempRoot init | Out-Null
             & git -C $tempRoot config user.email "test@example.com"
             & git -C $tempRoot config user.name "Test User"
-            & git -C $tempRoot add .gitignore README.md .agents
+            & git -C $tempRoot add .gitignore README.md .ai-rules.json .agents
             & git -C $tempRoot commit -m init | Out-Null
             & git -C $tempRoot branch -M master
 
@@ -2818,12 +2825,13 @@ if (`$?) { exit 0 } else { exit 1 }
         $mainRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-kilo-primary-" + [guid]::NewGuid().ToString("N"))
         $worktreeRoot = $mainRoot + "-worktree"
         try {
-            New-Item -ItemType Directory -Force -Path $mainRoot | Out-Null
+            New-Item -ItemType Directory -Force -Path $mainRoot, (Join-Path $mainRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".kilo/"
+            Set-Content -LiteralPath (Join-Path $mainRoot ".agent-1c\project.json") -Encoding ASCII -Value '{"aiRules":{"tools":["kilocode"]}}'
             & git -C $mainRoot init | Out-Null
             & git -C $mainRoot config user.email "test@example.com"
             & git -C $mainRoot config user.name "Test User"
-            & git -C $mainRoot add .gitignore
+            & git -C $mainRoot add .gitignore .agent-1c/project.json
             & git -C $mainRoot commit -m init | Out-Null
             & git -C $mainRoot branch -M master
             & git -C $mainRoot worktree add -b itldev/branch1 $worktreeRoot | Out-Null

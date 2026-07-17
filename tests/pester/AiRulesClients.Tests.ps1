@@ -6,7 +6,7 @@ Describe "1C workflow ai_rules_1c client checks" {
         $HelperPath = $context.HelperPath
     }
 
-    It "normalizes configured clients, environment overrides, and explicit targets" {
+    It "migrates only the legacy dual client and rejects other multi-client inputs" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-targets-" + [guid]::NewGuid().ToString("N"))
         $savedAgentTools = [Environment]::GetEnvironmentVariable("AGENT_TOOLS", "Process")
 
@@ -17,20 +17,22 @@ Describe "1C workflow ai_rules_1c client checks" {
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $fromConfig = @(Get-AiRules1cTools)
+                $multiError = ""
                 [Environment]::SetEnvironmentVariable("AGENT_TOOLS", "cursor,kilo", "Process")
-                $fromEnvironment = @(Get-AiRules1cTools)
-                $AgentTarget = "claude-code,kilo"
+                try { Get-AiRules1cTools | Out-Null } catch { $multiError = $_.Exception.Message }
+                [Environment]::SetEnvironmentVariable("AGENT_TOOLS", $null, "Process")
+                $AgentTarget = "claude-code"
                 $fromExplicit = @(Get-AiRules1cTools)
                 [pscustomobject]@{
                     fromConfig = $fromConfig
-                    fromEnvironment = $fromEnvironment
+                    multiError = $multiError
                     fromExplicit = $fromExplicit
                 }
             }
 
-            @($result.fromConfig) | Should -Be @("codex", "kilocode")
-            @($result.fromEnvironment) | Should -Be @("cursor", "kilocode")
-            @($result.fromExplicit) | Should -Be @("claude-code", "kilocode")
+            @($result.fromConfig) | Should -Be @("kilocode")
+            $result.multiError | Should -Match "Multiple active agent clients are not supported"
+            @($result.fromExplicit) | Should -Be @("claude-code")
         } finally {
             [Environment]::SetEnvironmentVariable("AGENT_TOOLS", $savedAgentTools, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -39,7 +41,7 @@ Describe "1C workflow ai_rules_1c client checks" {
         }
     }
 
-    It "adds missing configured clients without removing existing clients" {
+    It "replaces a legacy client set instead of adding another client" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-add-" + [guid]::NewGuid().ToString("N"))
         $projectRoot = Join-Path $tempRoot "project"
         $rulesRoot = Join-Path $tempRoot "ai_rules_1c"
@@ -72,7 +74,7 @@ if (Test-Path -LiteralPath $manifestPath) {
 }
 switch ($Command) {
     "init" { $currentTools = @($Tools) }
-    "add" { $currentTools = @($currentTools) + $Tool }
+    "remove" { $currentTools = @() }
 }
 $manifest = [ordered]@{
     tools = @($currentTools | Where-Object { $_ } | Select-Object -Unique)
@@ -106,9 +108,9 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
                 }
             }
 
-            @($result.calls) | Should -Be @("update|||delegated", "add|kilocode||delegated")
-            @($result.tools) | Should -Be @("codex", "kilocode")
-            $result.unknownError | Should -Match "adapter is not available"
+            @($result.calls) | Should -Be @("remove|||delegated", "init||kilocode|delegated")
+            @($result.tools) | Should -Be @("kilocode")
+            $result.unknownError | Should -Match "Unsupported agent client"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -121,6 +123,8 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
 
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"masterBranch":"master","aiRules":{"tools":["kilocode"]}}'
             & git -C $tempRoot init *> $null
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
@@ -137,12 +141,13 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
             (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo\commands\itl-status.md") -PathType Leaf) | Should -BeTrue
             (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo\commands\custom.md") -PathType Leaf) | Should -BeTrue
             $masterKiloCommands = @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".kilo\commands") -File -Filter "itl*.md" | Select-Object -ExpandProperty Name | Sort-Object)
-            $masterKiloCommands | Should -Be @("itl.md", "itl-new-config-branch.md", "itl-new-extension-branch.md", "itl-status.md", "itl-update-workflow.md")
+            $masterKiloCommands | Should -Be @("itl.md", "itl-litemode.md", "itl-new-config-branch.md", "itl-new-extension-branch.md", "itl-status.md", "itl-switch-client.md", "itl-update-workflow.md")
             $masterKiloCommands | Should -Not -Contain "itl-check.md"
             $masterKiloCommands | Should -Not -Contain "itl-verify-fix.md"
             $masterKiloCommands | Should -Not -Contain "itl-refresh.md"
             $masterKiloCommands | Should -Not -Contain "itl-result.md"
             (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -ErrorAction SilentlyContinue) | Should -BeFalse
+            (Get-Content -LiteralPath (Join-Path $tempRoot ".kilo\agents\itl-routine.md") -Raw) | Should -Match "name: itl-routine"
             (Test-Path -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-plugin\itl-completion-gate.js") -ErrorAction SilentlyContinue) | Should -BeFalse
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -156,14 +161,16 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
         $text = Get-Content -LiteralPath $scriptPath -Raw -Encoding UTF8
 
         (Test-Path -LiteralPath $scriptPath -PathType Leaf) | Should -BeTrue
-        $text | Should -Match "codex,kilocode"
+        $text | Should -Match "codex.*kilocode.*claude-code.*cursor.*opencode"
         $text | Should -Match "Assert-OpenSpecBundle"
         $text | Should -Match "git clone"
         $text | Should -Match "protocol must be 1.1"
         $text | Should -Match "Compatibility check changed user-scope Codex prompt"
         $text | Should -Match 'docs/custom\.md,USER-RULES\.md'
         $text | Should -Match 'McpMode delegated'
-        $text | Should -Match 'Repeated ai_rules update changed the current Kilo config'
+        $text | Should -Match 'Repeated ai_rules update was not byte-idempotent'
+        $text | Should -Match 'Exact-one-client manifest failed'
+        $text | Should -Match 'templates\\dependency-lock\.json'
     }
 
     It "validates shared OpenSpec destinations independently of the winning source owner" {

@@ -1,3 +1,5 @@
+$script:Agent1cCoreRoot = $PSScriptRoot
+
 function Write-Section {
     param([string]$Text)
     Write-Host ""
@@ -277,6 +279,7 @@ function Test-Agent1cActionRequiresLifecycleLock {
 
     $readOnlyActions = @(
         "help",
+        "doctor",
         "status",
         "list-dev-branches",
         "validate",
@@ -1580,7 +1583,15 @@ function Ensure-GitIgnore {
         ".codex/config.toml",
         ".kilo/commands/itl*.md",
         ".kilo/kilo.json",
-        ".kilo/kilo.jsonc"
+        ".kilo/kilo.jsonc",
+        ".kilo/agents/itl-routine.md",
+        ".claude/commands/itl*.md",
+        ".cursor/commands/itl*.md",
+        ".opencode/command/itl*.md",
+        ".opencode/agent/itl-routine.md",
+        ".mcp.json",
+        ".cursor/mcp.json",
+        "opencode.json"
     )
 
     $templatePath = Join-Path $script:ProjectRoot "templates\gitignore.append"
@@ -2067,62 +2078,24 @@ function Set-DotEnvValues {
     Write-Utf8Text -Path $path -Value ((@($updated) -join [Environment]::NewLine) + [Environment]::NewLine)
 }
 
-function New-DefaultProjectConfig {
-    return [ordered]@{
-        schemaVersion = 1
-        masterBranch = "master"
-        baseConfigurationVersion = "PM5"
-        exportPath = "src/cf"
-        extensionsPath = "src/cfe"
-        artifactsPath = "build/result"
-        testsPath = "tests/features"
-        testResultsPath = "build/test-results/vanessa"
-        logsPath = "logs/1c"
-        platformPath = ""
-        infoBaseKind = "file"
-        sourceUsesRepository = $true
-        sourceInfoBasePath = ""
-        sourceServerName = ""
-        sourceInfoBaseName = ""
-        repositoryPath = ""
-        dependencyMode = "fresh"
-        verificationPolicy = "warn"
-        devBranchInfoBaseRoot = ".agent-1c/infobases/dev-branches"
-        devBranchWorktreeRoot = ""
-        serverBaseCopyScript = ""
-        aiRules = [ordered]@{
-            repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            ref = "itl-main-a421cf44-r7"
-            tools = @("codex", "kilocode")
-        }
-        vibecoding1cMcp = [ordered]@{
-            registryRepo = "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git"
-            providerDefault = "remote"
-            remoteConfigId = ""
-            localScopeDefault = "project"
-        }
-        web = [ordered]@{
-            publishByDefault = $false
-            publishAuto = $false
-            webInstPath = ""
-            apacheKind = "apache24"
-            apacheHttpdConfPath = ""
-            publicationRoot = ""
-            publicationUrlBase = "http://localhost"
-        }
-        vanessaAutomation = [ordered]@{
-            installRoot = ".agent-1c/tools/vanessa-automation"
-            epfPath = ""
-            version = ""
-            featuresPath = "tests/features"
-            reportsPath = "build/test-results/vanessa"
-        }
-        roctupMcpToolkit = [ordered]@{
-            installRoot = ".agent-1c/tools/roctup-mcp-toolkit"
-            epfPath = ""
-            version = ""
-        }
+function Get-WorkflowTemplatePath {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    $candidates.Add((Join-Path $script:ProjectRoot "templates\$Name"))
+    if ($script:Agent1cCoreRoot) {
+        $packageRoot = [IO.Path]::GetFullPath((Join-Path $script:Agent1cCoreRoot "..\..\..\..\.."))
+        $candidates.Add((Join-Path $packageRoot "templates\$Name"))
     }
+    foreach ($candidate in @($candidates | Select-Object -Unique)) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf -ErrorAction SilentlyContinue) { return $candidate }
+    }
+    throw "Workflow package is missing canonical template '$Name'. Checked: $($candidates -join ', ')"
+}
+
+function New-DefaultProjectConfig {
+    $templatePath = Get-WorkflowTemplatePath -Name "project.json"
+    return ConvertTo-Agent1cHashtable -Object (Read-Utf8Text -Path $templatePath | ConvertFrom-Json)
 }
 
 function Get-EffectiveWebPublicationSettings {
@@ -2130,62 +2103,8 @@ function Get-EffectiveWebPublicationSettings {
 }
 
 function New-DefaultDependencyLockManifest {
-    return [ordered]@{
-        schemaVersion = 1
-        mode = "fresh"
-        dependencies = [ordered]@{
-            workflowPackage = [ordered]@{
-                repo = "https://github.com/xmentosx/1c-agent-workflow.git"
-                ref = "master"
-                commit = ""
-                source = "template default"
-                updatedAt = ""
-            }
-            aiRules1c = [ordered]@{
-                repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-                ref = "itl-main-a421cf44-r7"
-                commit = "7f6d4cc68adfb6ada6d8e67ec4327cabbf3d0428"
-                upstreamRepo = "https://github.com/comol/ai_rules_1c.git"
-                upstreamRef = "refs/heads/main"
-                upstreamCommit = "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
-                downstreamRevision = 7
-                compatibilityStatus = "passed"
-                compatibilityCheckedAt = "2026-07-15T08:06:00Z"
-            }
-            vanessaAutomation = [ordered]@{
-                version = "1.2.043.28"
-                url = "https://github.com/Pr-Mex/vanessa-automation/releases/download/1.2.043.28/vanessa-automation-single.1.2.043.28.zip"
-                sha256 = "cd0a017a8af69328f471f628ac1367a0e5148f790df9c28c318348b30f08f32a"
-                source = "template baseline"
-            }
-            vanessaMcp = [ordered]@{
-                clientMcp = [ordered]@{
-                    version = "v0.6.4"
-                    assetName = "client_mcp.cfe"
-                    url = "https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.4/client_mcp.cfe"
-                    sha256 = "74d3cb7f97e3800860f5a1754eecf47178164d888f2299125d1b3118a4614ec1"
-                    source = "template baseline"
-                    updatedAt = "2026-07-10T00:00:00Z"
-                }
-                vaExtension = [ordered]@{
-                    version = "1.2.043.28"
-                    assetName = "VAExtension.1.29.cfe"
-                    url = "https://github.com/Pr-Mex/vanessa-automation/releases/download/1.2.043.28/VAExtension.1.29.cfe"
-                    sha256 = "fc557bb23371a37dbe22a7a7a83e28f6db75b57f87e8802028cf1f90c4e00605"
-                    source = "template baseline"
-                    updatedAt = "2026-07-10T00:00:00Z"
-                }
-            }
-            roctupMcpToolkit = [ordered]@{
-                version = "v1.7.0"
-                assetName = "MCP_Toolkit.epf"
-                url = "https://github.com/ROCTUP/1c-mcp-toolkit/releases/download/v1.7.0/MCP_Toolkit.epf"
-                sha256 = "e9a0856224aea4f54763fe1fb6a21aa8e71efb9d14158adc4382e1b2276d829d"
-                source = "template baseline"
-                updatedAt = "2026-07-10T00:00:00Z"
-            }
-        }
-    }
+    $templatePath = Get-WorkflowTemplatePath -Name "dependency-lock.json"
+    return ConvertTo-Agent1cHashtable -Object (Read-Utf8Text -Path $templatePath | ConvertFrom-Json)
 }
 
 function Get-DependencyLockPath {
@@ -2467,6 +2386,33 @@ function Get-GitHubRateLimitRecoveryMessage {
     return "GitHub API rate limit reached while $Operation. Set GITHUB_TOKEN (or GH_TOKEN) in the process environment or .dev.env, or provide a complete compatible dependency lock.$resetSuffix"
 }
 
+function ConvertTo-DependencyLockComparableValue {
+    param([object]$Value)
+
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $normalized = [ordered]@{}
+        foreach ($key in @($Value.Keys | Sort-Object)) {
+            if ([string]$key -eq "updatedAt") { continue }
+            $normalized[[string]$key] = ConvertTo-DependencyLockComparableValue -Value $Value[$key]
+        }
+        return [pscustomobject]$normalized
+    }
+    if ($Value -is [pscustomobject]) {
+        $normalized = [ordered]@{}
+        foreach ($property in @($Value.PSObject.Properties | Sort-Object Name)) {
+            if ([string]$property.Name -eq "updatedAt") { continue }
+            $normalized[[string]$property.Name] = ConvertTo-DependencyLockComparableValue -Value $property.Value
+        }
+        return [pscustomobject]$normalized
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        $items = @($Value | ForEach-Object { ConvertTo-DependencyLockComparableValue -Value $_ })
+        return ,$items
+    }
+    return $Value
+}
+
 function Update-DependencyLockEntry {
     param(
         [string]$Name,
@@ -2481,9 +2427,18 @@ function Update-DependencyLockEntry {
     $manifest = ConvertTo-Agent1cHashtable -Object (Read-DependencyLockManifest)
     $dependencies = ConvertTo-Agent1cHashtable -Object $manifest["dependencies"]
     $entry = ConvertTo-Agent1cHashtable -Object $dependencies[$Name]
+    $changed = $false
     foreach ($key in @($Values.Keys)) {
+        if (-not $entry.Contains($key)) {
+            $changed = $true
+        } else {
+            $before = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $entry[$key]) -Depth 100 -Compress
+            $after = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $Values[$key]) -Depth 100 -Compress
+            if ($before -cne $after) { $changed = $true }
+        }
         $entry[$key] = $Values[$key]
     }
+    if (-not $changed) { return }
     $entry["updatedAt"] = (Get-Date).ToString("o")
     $dependencies[$Name] = $entry
     $manifest["dependencies"] = $dependencies
@@ -3011,12 +2966,14 @@ function Confirm-InitWizardProjectRoot {
 }
 
 function Read-InitWizardAnswersOnce {
+    $agentTarget = $(if ([string]::IsNullOrWhiteSpace($AgentTarget)) { Read-InitAgentTarget } else { $AgentTarget.Trim().ToLowerInvariant() })
     $platformPath = Read-InitPlatformPath
     $baseConfigurationVersion = Read-InitBaseConfigurationVersion
     $infoBaseKind = Read-InitInfoBaseKind
     $sourceUsesRepository = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0JjRgdGF0L7QtNC90LDRjyDQuNC90YTQvtGA0LzQsNGG0LjQvtC90L3QsNGPINCx0LDQt9CwINC/0L7QtNC60LvRjtGH0LXQvdCwINC6INGF0YDQsNC90LjQu9C40YnRgyDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggMUM/") -Default $true
 
     $answers = [ordered]@{
+        agentTarget = $agentTarget
         platformPath = $platformPath
         baseConfigurationVersion = $baseConfigurationVersion
         infoBaseKind = $infoBaseKind
@@ -3062,6 +3019,7 @@ function Write-InitWizardAnswersSummary {
     $answers = [pscustomobject]$Answers
     Write-Section (Get-Agent1cUtf8Text "0KHQstC+0LTQutCwINC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNC4")
     Write-Host ((Get-Agent1cUtf8Text "0JrQvtGA0LXQvdGMINC/0YDQvtC10LrRgtCwOiA=") + $script:ProjectRoot)
+    Write-Host ("Agent client: " + $answers.agentTarget)
     Write-Host ((Get-Agent1cUtf8Text "0J/Qu9Cw0YLRhNC+0YDQvNCwOiA=") + $answers.platformPath)
     Write-Host ("Base configuration version: " + $answers.baseConfigurationVersion)
     Write-Host ((Get-Agent1cUtf8Text "0KLQuNC/INC40YHRhdC+0LTQvdC+0Lkg0LHQsNC30Ys6IA==") + $answers.infoBaseKind)
@@ -3124,6 +3082,7 @@ function Normalize-InitAnswers {
     }
 
     return [pscustomobject]@{
+        agentTarget = ([string](Get-AnswerValue -Answers $Answers -Names @("agentTarget", "AGENT_TARGET") -Default $AgentTarget)).Trim().ToLowerInvariant()
         platformPath = [string](Get-AnswerValue -Answers $Answers -Names @("platformPath", "PLATFORM_PATH"))
         baseConfigurationVersion = $baseConfigurationVersion
         infoBaseKind = ([string](Get-AnswerValue -Answers $Answers -Names @("infoBaseKind", "INFOBASE_KIND") -Default "file")).Trim().ToLowerInvariant()
@@ -3148,6 +3107,8 @@ function Assert-InitAnswers {
     param([object]$Answers)
 
     $missing = @()
+    if (-not $Answers.agentTarget) { $missing += "agentTarget(codex|kilocode|claude-code|cursor|opencode)" }
+    if ($Answers.agentTarget -and $Answers.agentTarget -notin (Get-SupportedAgentTargets)) { $missing += "agentTarget(codex|kilocode|claude-code|cursor|opencode)" }
     if (-not $Answers.platformPath) { $missing += "platformPath" }
     if ($Answers.infoBaseKind -ne "file" -and $Answers.infoBaseKind -ne "server") { $missing += "infoBaseKind(file|server)" }
     if ($Answers.infoBaseKind -eq "server") {
@@ -3188,6 +3149,7 @@ function Save-InitAnswers {
     }
 
     Set-DotEnvValues -Values $values
+    Set-ProjectAiRulesClient -Client $Answers.agentTarget
     Set-ProjectBaseConfigurationVersion -Version $Answers.baseConfigurationVersion
     Set-DependencyLockMode -Mode $Answers.dependencyMode
     Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
@@ -3225,6 +3187,12 @@ function Prepare-InitProjectSettings {
 function Prepare-ConfiguredInitProjectSettings {
     Ensure-WorkflowProjectFiles
     Read-ProjectConfig
+
+    if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) {
+        Set-ProjectAiRulesClient -Client $AgentTarget
+        Read-ProjectConfig
+    }
+    Get-AgentTargets | Out-Null
 
     $answers = New-ConfiguredInitAnswers
     Ensure-WebPublicationForInit -Answers $answers
@@ -3325,15 +3293,69 @@ function ConvertTo-AgentToolList {
     return @($items | Select-Object -Unique)
 }
 
+function Get-SupportedAgentTargets {
+    return @("codex", "kilocode", "claude-code", "cursor", "opencode")
+}
+
+function Read-InitAgentTarget {
+    Write-Host "Select the single agent client for this project:"
+    $supported = @(Get-SupportedAgentTargets)
+    for ($index = 0; $index -lt $supported.Count; $index++) {
+        Write-Host ("{0}. {1}" -f ($index + 1), $supported[$index])
+    }
+    while ($true) {
+        $answer = (Read-Host "Agent client").Trim().ToLowerInvariant()
+        $number = 0
+        if ([int]::TryParse($answer, [ref]$number) -and $number -ge 1 -and $number -le $supported.Count) {
+            return $supported[$number - 1]
+        }
+        if ($answer -eq "kilo") { return "kilocode" }
+        if ($supported -contains $answer) { return $answer }
+        Write-Host "Choose one of: $($supported -join ', ')."
+    }
+}
+
+function Set-ProjectAiRulesClient {
+    param([Parameter(Mandatory = $true)][string]$Client)
+
+    $normalized = @(ConvertTo-AgentToolList -Value $Client)
+    if ($normalized.Count -ne 1 -or $normalized[0] -notin (Get-SupportedAgentTargets)) {
+        throw "Exactly one supported agent client is required: $((Get-SupportedAgentTargets) -join ', ')."
+    }
+    $config = if (Test-Path -LiteralPath $script:ConfigPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        ConvertTo-Agent1cHashtable -Object (Read-Utf8Text -Path $script:ConfigPath | ConvertFrom-Json)
+    } else {
+        New-DefaultProjectConfig
+    }
+    $aiRules = if ($config.Contains("aiRules") -and $null -ne $config["aiRules"]) {
+        ConvertTo-Agent1cHashtable -Object $config["aiRules"]
+    } else {
+        [ordered]@{}
+    }
+    $aiRules["tools"] = @($normalized[0])
+    $config["aiRules"] = $aiRules
+    Write-Utf8Text -Path $script:ConfigPath -Value (($config | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
+}
+
 function Get-AgentTargets {
     $target = $AgentTarget
     if ($null -eq $target -or ($target -is [string] -and [string]::IsNullOrWhiteSpace($target))) {
-        $target = Get-Setting -EnvName "AGENT_TOOLS" -ConfigName "aiRules.tools" -Default @("codex", "kilocode")
+        $target = Get-Setting -EnvName "AGENT_TOOLS" -ConfigName "aiRules.tools" -Default @()
     }
 
     $items = @(ConvertTo-AgentToolList -Value $target)
+    if ($items.Count -eq 2 -and $items -contains "codex" -and $items -contains "kilocode") {
+        Write-Host "Migrating legacy aiRules.tools [codex,kilocode] to the single active client [kilocode]."
+        $items = @("kilocode")
+    }
     if ($items.Count -eq 0) {
-        $items = @("codex", "kilocode")
+        throw "No active agent client is configured. Choose exactly one of: $((Get-SupportedAgentTargets) -join ', ')."
+    }
+    if ($items.Count -ne 1) {
+        throw "Multiple active agent clients are not supported. Choose exactly one of: $((Get-SupportedAgentTargets) -join ', '). Configured: $($items -join ', ')."
+    }
+    if ($items[0] -notin (Get-SupportedAgentTargets)) {
+        throw "Unsupported agent client '$($items[0])'. Supported clients: $((Get-SupportedAgentTargets) -join ', ')."
     }
 
     return $items

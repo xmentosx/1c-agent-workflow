@@ -37,7 +37,7 @@ Use the monitored launcher by default when `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_
 11. Build the event-log baseline and store its reader/cache/count/duration evidence.
 12. Persist `initializationStatus=enterprise-normalization-pending`, then run Enterprise with the bundled auto-update EPF against the copied branch infobase only. Save `enterpriseNormalizationStatus`, reason, error, time, EPF and log evidence; set `initializationStatus=ready` only after success.
 13. Report branch, worktree/base paths, launcher, MCP/publication state, event-log scan evidence, and Enterprise normalization state.
-14. Print the Russian instruction that the current folder stayed on `master`, the new worktree path, and the developer should open a separate Codex/Kilo/IDE window there. If Kilo still shows a cached command picker, tell the developer to run `/reload` in the new worktree.
+14. Print the Russian instruction that the current folder stayed on `master`, the new worktree path, and the developer should open a separate window of the selected agent or IDE there. If its command picker is cached, print the adapter-specific reload instruction.
 
 If the final Enterprise step fails, preserve the worktree, copied infobase, launcher, and failed state. Repeating `new-dev-branch` reuses those assets and retries normalization without copying the base again. Branches created by older workflow versions have no marker; before the first Enterprise-bound ROCTUP, Vanessa UI, Vanessa Automation, publication, or legacy Data MCP action, normalize them once with reason `legacy-preflight`. Never run this normalization against the source infobase.
 

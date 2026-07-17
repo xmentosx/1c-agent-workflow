@@ -52,6 +52,7 @@ $qualifiedResult = $null
 $pesterVersion = ""
 $failure = $null
 $aiRulesRelease = $null
+$forkSourceRoot = ""
 $forkQualificationPath = ""
 $forkQualificationSha256 = ""
 $e2eReportPath = ""
@@ -146,21 +147,35 @@ function Resolve-AiRulesSource {
 function Get-LocalForkRelease {
     param([string]$SourceRoot)
     if (-not (Test-Path -LiteralPath (Join-Path $SourceRoot ".git"))) { throw "Release requires a local Git checkout of the controlled ai_rules fork." }
-    if (@(& git -C $SourceRoot status --porcelain).Count -gt 0) { throw "Controlled fork checkout must be clean for Release." }
+    if (@(& git -C $SourceRoot status --porcelain).Count -gt 0) { throw "Controlled fork checkout must be clean for qualification." }
     $origin = (& git -C $SourceRoot remote get-url origin).Trim()
     if ($origin.Replace('\', '/').TrimEnd('/').ToLowerInvariant() -notmatch 'github\.com/xmentosx/itl_ai_rules_1c(?:\.git)?$') { throw "Release aiRules source is not the controlled fork: $origin" }
-    $commit = (& git -C $SourceRoot rev-parse HEAD).Trim()
-    $tree = (& git -C $SourceRoot rev-parse 'HEAD^{tree}').Trim()
-    $tags = @(& git -C $SourceRoot tag --points-at HEAD --list "itl-*")
-    if ($tags.Count -ne 1) { throw "Release fork HEAD must have exactly one immutable itl-* tag; found $($tags.Count)." }
-    $tag = [string]$tags[0]
-    if ((& git -C $SourceRoot cat-file -t "refs/tags/$tag").Trim() -ne "tag") { throw "Release fork tag must be annotated: $tag" }
     $projectTemplate = Get-Content -LiteralPath (Join-Path $repoRoot "templates\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
     $lockTemplate = Get-Content -LiteralPath (Join-Path $repoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
     $entry = $lockTemplate.dependencies.aiRules1c
-    if ([string]$projectTemplate.aiRules.ref -ne $tag -or [string]$entry.ref -ne $tag -or [string]$entry.commit -ne $commit) { throw "Workflow templates do not pin the checked fork tag and commit: $tag@$commit" }
+    $tag = [string]$entry.ref
+    $commit = [string]$entry.commit
+    if ([string]::IsNullOrWhiteSpace($tag) -or $commit -notmatch '^[0-9a-fA-F]{40}$' -or [string]$projectTemplate.aiRules.ref -ne $tag) { throw "Workflow templates do not define one valid pinned fork tag and commit." }
+    if ((& git -C $SourceRoot cat-file -t "refs/tags/$tag" 2>$null).Trim() -ne "tag") { throw "Pinned fork tag must exist locally and be annotated: $tag" }
+    $tagCommit = (& git -C $SourceRoot rev-parse "refs/tags/$tag^{}" 2>$null).Trim().ToLowerInvariant()
+    if ($tagCommit -ne $commit.ToLowerInvariant()) { throw "Pinned fork tag does not resolve to the locked commit: $tag -> $tagCommit, lock=$commit" }
+    $releaseBranch = "release/$tag"
+    $branchCommit = [string](& git -C $SourceRoot rev-parse --verify "refs/heads/$releaseBranch" 2>$null)
+    if (-not $branchCommit) { $branchCommit = [string](& git -C $SourceRoot rev-parse --verify "refs/remotes/origin/$releaseBranch" 2>$null) }
+    if (-not $branchCommit -or $branchCommit.Trim().ToLowerInvariant() -ne $commit.ToLowerInvariant()) { throw "Pinned release branch '$releaseBranch' is missing or does not match $commit." }
+    $tree = (& git -C $SourceRoot rev-parse "$commit^{tree}").Trim()
+    $releaseRoot = ""
+    $candidateRoot = ""
+    foreach ($line in @(& git -C $SourceRoot worktree list --porcelain)) {
+        if ($line -like "worktree *") { $candidateRoot = $line.Substring(9) }
+        elseif ($line -like "HEAD *" -and $line.Substring(5).Trim().ToLowerInvariant() -eq $commit.ToLowerInvariant()) { $releaseRoot = $candidateRoot; break }
+        elseif ([string]::IsNullOrWhiteSpace($line)) { $candidateRoot = "" }
+    }
+    if (-not $releaseRoot) { throw "No local clean worktree is checked out at pinned release $tag@$commit. Create one from the immutable tag before Full/Release qualification." }
+    $releaseRoot = [System.IO.Path]::GetFullPath($releaseRoot)
+    if (@(& git -C $releaseRoot status --porcelain).Count -gt 0) { throw "Pinned fork release worktree must be clean: $releaseRoot" }
     if ([string]$entry.compatibilityStatus -ne "passed" -or -not [string]$entry.upstreamRef -or -not [string]$entry.upstreamCommit) { throw "Workflow aiRules lock lacks passed compatibility and upstream provenance." }
-    return [ordered]@{ repo = $origin; tag = $tag; commit = $commit; tree = $tree; upstreamRef = [string]$entry.upstreamRef; upstreamCommit = [string]$entry.upstreamCommit }
+    return [ordered]@{ repo = $origin; tag = $tag; commit = $commit.ToLowerInvariant(); tree = $tree; sourceRoot = $releaseRoot; upstreamRef = [string]$entry.upstreamRef; upstreamCommit = [string]$entry.upstreamCommit }
 }
 
 function Test-HasExactInventory {
@@ -266,7 +281,7 @@ try {
             $script:pesterVersion = [string](Get-Module Pester | Select-Object -First 1 -ExpandProperty Version)
             $configuration = New-PesterConfiguration
             $configuration.Run.Path = if ($Mode -eq "Fast") {
-                @(".\tests\pester\ParserDocsBudgets.Tests.ps1", ".\tests\pester\LifecycleOperationLock.Tests.ps1", ".\tests\pester\DesignerMemoryGuard.Tests.ps1", ".\tests\pester\HostTooling.Tests.ps1", ".\tests\pester\DependencyLocks.Tests.ps1", ".\tests\pester\AiRulesClients.Tests.ps1", ".\tests\pester\AiRulesMigration.Tests.ps1", ".\tests\pester\ReleaseGate.Tests.ps1", ".\tests\pester\LocalQualityGate.Tests.ps1")
+                @(".\tests\pester\ParserDocsBudgets.Tests.ps1", ".\tests\pester\LifecycleOperationLock.Tests.ps1", ".\tests\pester\DesignerMemoryGuard.Tests.ps1", ".\tests\pester\HostTooling.Tests.ps1", ".\tests\pester\DependencyLocks.Tests.ps1", ".\tests\pester\AiRulesClients.Tests.ps1", ".\tests\pester\ClientAdaptersAndModes.Tests.ps1", ".\tests\pester\AiRulesMigration.Tests.ps1", ".\tests\pester\ReleaseGate.Tests.ps1", ".\tests\pester\LocalQualityGate.Tests.ps1")
             } else { @(".\tests\pester") }
             $configuration.Run.PassThru = $true
             $configuration.Output.Verbosity = $(if ($Mode -eq "Fast") { "Normal" } else { "Detailed" })
@@ -293,15 +308,16 @@ try {
         } else {
             if ($sourceIsLocal) {
                 if (-not $aiRulesRelease) { $aiRulesRelease = Get-LocalForkRelease -SourceRoot ([System.IO.Path]::GetFullPath($resolvedAiRulesSource)) }
-                $forkQualificationPath = Join-Path ([System.IO.Path]::GetFullPath($resolvedAiRulesSource)) "build\test-results\qualification\full.json"
-                if (Test-ForkQualification -SourceRoot ([System.IO.Path]::GetFullPath($resolvedAiRulesSource)) -Path $forkQualificationPath -Identity $aiRulesRelease) {
+                $forkSourceRoot = [string]$aiRulesRelease.sourceRoot
+                $forkQualificationPath = Join-Path $forkSourceRoot "build\test-results\qualification\full.json"
+                if (Test-ForkQualification -SourceRoot $forkSourceRoot -Path $forkQualificationPath -Identity $aiRulesRelease) {
                     Add-ReusedStage -Name "fork-check" -Reason "exact clean fork Full qualification" -Detail $forkQualificationPath
                 } else {
-                    $forkGate = Join-Path ([System.IO.Path]::GetFullPath($resolvedAiRulesSource)) "scripts\check.ps1"
-                    Invoke-GateStage -Name "fork-check" -Reason "missing, corrupt, or stale fork qualification" -Detail $resolvedAiRulesSource -Body {
+                    $forkGate = Join-Path $forkSourceRoot "scripts\check.ps1"
+                    Invoke-GateStage -Name "fork-check" -Reason "missing, corrupt, or stale fork qualification" -Detail $forkSourceRoot -Body {
                         Invoke-PowerShellChild -ScriptPath $forkGate -Arguments @("-Mode", "Full", "-QualificationPath", $forkQualificationPath) -TimeoutSeconds 600 -LogName "fork-check"
                     } | Out-Null
-                    if (-not (Test-ForkQualification -SourceRoot ([System.IO.Path]::GetFullPath($resolvedAiRulesSource)) -Path $forkQualificationPath -Identity $aiRulesRelease)) { throw "Fork Full did not produce an exact reusable qualification." }
+                    if (-not (Test-ForkQualification -SourceRoot $forkSourceRoot -Path $forkQualificationPath -Identity $aiRulesRelease)) { throw "Fork Full did not produce an exact reusable qualification." }
                 }
                 $forkQualificationSha256 = (Get-FileHash -LiteralPath $forkQualificationPath -Algorithm SHA256).Hash.ToLowerInvariant()
             } else {
@@ -309,7 +325,8 @@ try {
             }
             $compatibilityPath = Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"
             Invoke-GateStage -Name "ai-rules-compatibility" -Reason "workflow-to-fork integration boundary" -Detail $resolvedAiRulesSource -Body {
-                Invoke-PowerShellChild -ScriptPath $compatibilityPath -Arguments @("-AiRulesSource", $resolvedAiRulesSource) -TimeoutSeconds 600 -LogName "ai-rules-compatibility"
+                $compatibilitySource = $(if ($forkSourceRoot) { $forkSourceRoot } else { $resolvedAiRulesSource })
+                Invoke-PowerShellChild -ScriptPath $compatibilityPath -Arguments @("-AiRulesSource", $compatibilitySource) -TimeoutSeconds 600 -LogName "ai-rules-compatibility"
             } | Out-Null
         }
     }
@@ -319,7 +336,8 @@ try {
         $e2eScript = Join-Path $repoRoot "scripts\invoke-release-e2e.ps1"
         $releaseHelperPath = Join-Path $repoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
         Invoke-GateStage -Name "release-e2e" -Reason "always-run release runtime proof" -Detail $e2eReportPath -Body {
-            Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments @("-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $resolvedAiRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode) -TimeoutSeconds 14400 -LogName "release-e2e"
+            $releaseRulesSource = $(if ($forkSourceRoot) { $forkSourceRoot } elseif ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
+            Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments @("-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode) -TimeoutSeconds 14400 -LogName "release-e2e"
             if (-not (Test-Path -LiteralPath $e2eReportPath -PathType Leaf)) { throw "Release E2E summary was not created: $e2eReportPath" }
             $e2eSummary = Get-Content -LiteralPath $e2eReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ([string]$e2eSummary.status -ne "passed") { throw "Release E2E summary reports '$($e2eSummary.status)': $([string]$e2eSummary.error)" }

@@ -23,7 +23,8 @@ Describe "Kilo verification recovery command" {
     It "does not create or rewrite Kilo plugin configuration while syncing commands" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-kilo-no-plugin-" + [guid]::NewGuid().ToString("N"))
         try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".kilo") | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot ".kilo") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
             Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value '{"tools":["kilocode"],"files":{}}'
             $configPath = Join-Path $tempRoot ".kilo\kilo.json"
             Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"instructions":["USER-RULES.md"],"plugin":["custom-plugin"],"custom":"keep"}'

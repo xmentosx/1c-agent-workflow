@@ -24,18 +24,18 @@ BeforeAll {
         $targetConfig = [ordered]@{
             aiRules = [ordered]@{
                 repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-                ref = $(if ($ConfigureTarget) { "itl-main-a421cf44-r7" } else { "" })
+                ref = $(if ($ConfigureTarget) { "itl-main-b4d9875b-r10" } else { "" })
                 tools = @("codex", "kilocode")
             }
         }
         $targetEntry = [ordered]@{
             repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            ref = "itl-main-a421cf44-r7"
-            commit = "7f6d4cc68adfb6ada6d8e67ec4327cabbf3d0428"
+            ref = "itl-main-b4d9875b-r10"
+            commit = "760aab7fc2ef12d5019749e564803bbd4d6b1f5a"
             upstreamRepo = "https://github.com/comol/ai_rules_1c.git"
             upstreamRef = "refs/heads/main"
-            upstreamCommit = "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
-            downstreamRevision = 7
+            upstreamCommit = "b4d9875b15c6d93f493035aee51f077126e72a21"
+            downstreamRevision = 10
             compatibilityStatus = $(if ($ConfigureTarget) { "passed" } else { "legacy-baseline" })
             compatibilityCheckedAt = "2026-07-11T00:00:00Z"
         }
@@ -107,7 +107,26 @@ Describe "ai_rules_1c migration planning" {
         }
     }
 
-    It "plans a controlled fork r4 to r7 migration by downstream revision and upstream provenance" {
+    It "does not treat the workflow-owned dev env as controlled-fork user drift" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-dev-env-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-AiRulesMigrationFixture -Root $tempRoot `
+                -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" -CurrentRef "itl-main-a421cf44-r7" `
+                -CurrentCommit "dc9a767f0cb77418bcae3c52521594b183c1b879" `
+                -CurrentUpstreamCommit "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826" -CurrentDownstreamRevision 7
+            $manifestPath = Join-Path $tempRoot ".ai-rules.json"
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            $manifest.files | Add-Member -NotePropertyName ".dev.env" -NotePropertyValue ([pscustomobject]@{ source = "content/root-templates/.dev.env"; installedHash = "upstream"; userModified = $true })
+            Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
+
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $plan.status | Should -Be "eligible"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "plans a controlled fork r4 to r10 migration by downstream revision and upstream provenance" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-controlled-" + [guid]::NewGuid().ToString("N"))
         try {
             New-AiRulesMigrationFixture -Root $tempRoot `
@@ -122,7 +141,7 @@ Describe "ai_rules_1c migration planning" {
             $plan.fromCommit | Should -Be "6396b1538339ce1ff025cd6f2a24ccb8ff742e1e"
             $plan.comparisonCommit | Should -Be "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
             $plan.fromDownstreamRevision | Should -Be 4
-            $plan.target.downstreamRevision | Should -Be 7
+            $plan.target.downstreamRevision | Should -Be 10
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -133,10 +152,10 @@ Describe "ai_rules_1c migration planning" {
         try {
             New-AiRulesMigrationFixture -Root $tempRoot `
                 -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" `
-                -CurrentRef "itl-main-a421cf44-r7" `
-                -CurrentCommit "7f6d4cc68adfb6ada6d8e67ec4327cabbf3d0428" `
-                -CurrentUpstreamCommit "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826" `
-                -CurrentDownstreamRevision 7
+                -CurrentRef "itl-main-b4d9875b-r10" `
+                -CurrentCommit "760aab7fc2ef12d5019749e564803bbd4d6b1f5a" `
+                -CurrentUpstreamCommit "b4d9875b15c6d93f493035aee51f077126e72a21" `
+                -CurrentDownstreamRevision 10
             $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "current"
         } finally {
@@ -228,7 +247,7 @@ Describe "ai_rules_1c transactional migration" {
             $report.status | Should -Be "blocked"
             $report.migrationStatus | Should -Be "custom"
             $report.current.repo | Should -Be "https://example.invalid/custom-rules.git"
-            $report.target.ref | Should -Be "itl-main-a421cf44-r7"
+            $report.target.ref | Should -Be "itl-main-b4d9875b-r10"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -239,10 +258,10 @@ Describe "ai_rules_1c transactional migration" {
         try {
             New-AiRulesMigrationFixture -Root $tempRoot `
                 -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" `
-                -CurrentRef "itl-main-a421cf44-r6" `
-                -CurrentCommit "603987af4b4ca2d7c6be9e894edf3b6239f5ed35" `
+                -CurrentRef "itl-main-a421cf44-r7" `
+                -CurrentCommit "7f6d4cc68adfb6ada6d8e67ec4327cabbf3d0428" `
                 -CurrentUpstreamCommit "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826" `
-                -CurrentDownstreamRevision 6
+                -CurrentDownstreamRevision 7
             $kiloPath = Join-Path $tempRoot ".kilo\kilo.json"
             $localStatePath = Join-Path $tempRoot ".agent-1c\local-state.json"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $kiloPath) | Out-Null
@@ -250,18 +269,20 @@ Describe "ai_rules_1c transactional migration" {
             Set-Content -LiteralPath $localStatePath -Encoding UTF8 -Value '{"keep":"local"}'
             $kiloBefore = (Get-FileHash -Algorithm SHA256 -LiteralPath $kiloPath).Hash
             $localStateBefore = (Get-FileHash -Algorithm SHA256 -LiteralPath $localStatePath).Hash
-            $result = & {
+            $migrationOutput = @(& {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 function Invoke-AiRulesMigrationCandidatePreflight { param([object]$Plan); Write-Output "preflight progress"; return [pscustomobject]@{ root = "fixture" } }
                 function Update-AiRules1c { Set-Content -LiteralPath (Join-Path $script:ProjectRoot "migration-applied.txt") -Encoding ASCII -Value "applied" }
                 Invoke-AiRulesBaselineMigration
-            }
+            })
+            $migrationOutput.Count | Should -Be 1
+            $result = $migrationOutput[0]
             $result.migrated | Should -BeTrue
             $config = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $lock = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $config.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            $config.aiRules.ref | Should -Be "itl-main-a421cf44-r7"
-            $lock.dependencies.aiRules1c.commit | Should -Be "7f6d4cc68adfb6ada6d8e67ec4327cabbf3d0428"
+            $config.aiRules.ref | Should -Be "itl-main-b4d9875b-r10"
+            $lock.dependencies.aiRules1c.commit | Should -Be "760aab7fc2ef12d5019749e564803bbd4d6b1f5a"
             $lock.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
             (Get-FileHash -Algorithm SHA256 -LiteralPath $kiloPath).Hash | Should -Be $kiloBefore
             (Get-FileHash -Algorithm SHA256 -LiteralPath $localStatePath).Hash | Should -Be $localStateBefore

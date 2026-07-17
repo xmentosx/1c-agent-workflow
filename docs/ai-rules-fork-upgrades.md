@@ -1,73 +1,25 @@
 # Controlled ai_rules_1c upgrades
 
-## Current state
+## Current qualified release
 
-The workflow template is pinned to the controlled fork release
-`itl-main-a421cf44-r7` at commit
-`7f6d4cc68adfb6ada6d8e67ec4327cabbf3d0428`. Its upstream provenance is the
-explicit snapshot `refs/heads/main` at
-`a421cf44eb1f5859cf2a2b74884f8fbcaefc4826`. The moving `upstream/main` name is
-never consumed by projects.
+The workflow is pinned to `itl-main-b4d9875b-r10` at fork commit `760aab7fc2ef12d5019749e564803bbd4d6b1f5a`. Its exact upstream provenance is `refs/heads/main@b4d9875b15c6d93f493035aee51f077126e72a21`. `templates/dependency-lock.json` is the single source of this tag, commit, upstream provenance, downstream revision `10`, and `compatibilityStatus=passed`; project templates, code, docs, and tests must agree with it.
 
-## Fork release intake
+Fork `main` is the clean upstream snapshot. Downstream changes exist only on immutable branch/tag `release/itl-main-b4d9875b-r10` / `itl-main-b4d9875b-r10`, which point to the same qualified commit. Installed projects never consume moving `main`. The immutable `r8` and `r9` releases remain published for provenance: `r8` was superseded by `r9` after the Claude first-update idempotence defect, and `r9` was superseded by `r10` after the inherited full-remove runtime defect was found during the real `r7` migration.
 
-Prefer a real upstream tag. If upstream continues to publish only `main`, pass
-the full 40-character SHA of its current remote tip explicitly:
+## Intake discipline
 
-```powershell
-git ls-remote upstream refs/heads/main
-.\scripts\new-upstream-upgrade.ps1 `
-  -UpstreamCommit <40-character-sha> -UpstreamBranch main
-```
+Before an intake, resolve `git ls-remote upstream refs/heads/main`. If it differs from the audited SHA, stop and repeat the audit. Create the upgrade branch directly from the full upstream commit; do not merge or rebase the previous downstream release.
 
-Review the generated intake report, classify every downstream patch as `keep`,
-`drop`, or `rewrite`, adapt the official installer, and run the fork Full gate.
-After review, preview with `publish-fork-release.ps1 -WhatIf`, then publish once
-with `-Push`. A full SHA is resolved only during intake; projects use only the
-resulting immutable annotated `itl-*` tag and exact fork commit.
+Maintain a `keep/drop/rewrite` ledger. For the b4d9875b intake the retained categories are immutable release/installer protocol 1.1, manifest ownership and rollback, delegated MCP, metadata safety, and the compact router. Upstream-native verification/development/project-memory/`LLM-RULES.md`/economy/lite/CAVEMAN/metadata features are kept. Superseded layout patches and the old CAVEMAN category override are dropped. Single-client installation, ITL preflight, command allowlist, verification modes, legacy bridges, economy integration, `/doctor`, and `/evolve` are rewritten as thin overlays.
 
-## Workflow activation
+Run the fork Full gate, preview publication with `publish-fork-release.ps1 -WhatIf`, then publish exactly one immutable branch/tag. Never repoint a release tag.
 
-Only a reviewed workflow release changes `templates/project.json` to the fork
-repo and annotated `itl-*` tag. `templates/dependency-lock.json` must contain the
-same tag and exact fork commit plus upstream ref/commit, downstream revision and
-`compatibilityStatus: passed`.
+## Single-client migration
 
-Once `aiRules.ref` is present, `dependencyMode=fresh` does not advance aiRules:
-`update-ai-rules` reinstalls the configured tag and verifies its commit. Other
-dependencies continue to follow the normal fresh/locked policy.
+Each project has exactly one of `codex`, `kilocode`, `claude-code`, `cursor`, or `opencode`. New initialization requires the choice. Legacy `["codex","kilocode"]` normalizes to `["kilocode"]`; every other multi-client set requires an explicit selection.
 
-## Existing projects
+`update-workflow` supports legacy upstream-to-fork and strictly monotonic controlled-fork upgrades, including `r7 -> r10`. Eligibility requires recorded installed commit/provenance, an immutable `itl-*` ref, no `userModified` managed files, supported client state, and upstream ancestry. A custom repository, missing provenance, tracked-config ambiguity, or modified managed file produces a recovery report instead of mutation.
 
-`update-workflow` supports two automatic transitions:
+The candidate is installed into a temporary project first. The transactional snapshot includes project/lock/manifest, `.dev.env`, `AGENTS.md`, `USER-RULES.md`, `LLM-RULES.md`, OpenSpec, `.agents`, all client directories, and local MCP configs. Failure restores the snapshot and reports recovery evidence. Repeating the update must be byte-idempotent.
 
-1. a standard legacy `comol/ai_rules_1c` project to the verified fork baseline;
-2. an earlier controlled fork `itl-*` revision to a strictly newer verified
-   downstream revision (currently including `r6` to `r7`).
-
-Both transitions require:
-
-- the installed commit and manifest are recorded;
-- `.ai-rules.json` exists and has no `userModified` entries;
-- clients are limited to Codex/Kilo;
-- the target workflow template contains verified fork provenance;
-- the installed upstream provenance is an ancestor of the target upstream
-  baseline (fork release commits are never compared to one another);
-- the candidate has project-local shared skills and no user-scope Codex paths.
-
-The candidate is installed in a temporary project first. Before applying it,
-ITL snapshots config, lock, manifest, root guidance and Codex/Kilo/agent
-directories under `.agent-1c/runs/`. Any failure restores those paths. Custom
-repositories are preserved; modified or ambiguous projects require manual
-review. `-SkipAiRules` leaves an eligible migration explicitly pending.
-
-Legacy global `~/.codex/prompts` are reported by the fork migration but are not
-automatically deleted because they are shared user-scope files.
-
-For a controlled-fork transition, the project repo and lock repo must both
-match the controlled fork, the current ref must be `itl-*`, and the target
-`downstreamRevision` must be greater than the installed revision. A custom repo,
-missing provenance, or any manifest `userModified` entry produces a recovery
-status plus `.agent-1c/runs/.../recovery-report.json` instead of an automatic
-migration or regular ai_rules update. Active `itldev/*` branches are not
-silently advanced by this mechanism.
+Active `itldev/*` worktrees are never advanced automatically; update clean `master`, review/commit it, then use `/itl-refresh` per branch. Legacy user-global Codex prompts and RTK hooks are reported/preserved because they are outside project ownership.

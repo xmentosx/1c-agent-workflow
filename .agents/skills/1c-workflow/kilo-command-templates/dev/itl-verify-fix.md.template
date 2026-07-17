@@ -11,11 +11,11 @@ Use this recovery command only from an active `itldev/*` development branch work
 4. Run the existing helper directly from the current project directory with `timeout_ms >= 1800000` when supported:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action check-dev-branch
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action check-dev-branch -VerificationTrigger repair
 ```
 
 The helper owns the branch infobase update, Vanessa Automation `TESTMANAGER -> TESTCLIENT` run, JUnit/status/log evidence, and event-log baseline check. Do not run a separate base update first.
 
-If verification fails, inspect the Vanessa report/status/log, the 1C log, event-log evidence, and the current change. Fix a defective scenario when the test is wrong; fix the implementation when the product change is wrong. After every edit rerun the full `check-dev-branch` helper because previous evidence is stale. Stop after three failed runs for the same error group and return blocker diagnostics; do not claim completion.
+If verification fails, inspect the Vanessa report/status/log, the 1C log, event-log evidence, and the current change. Fix a defective scenario when the test is wrong; fix the implementation when the product change is wrong. After every edit rerun the full `check-dev-branch -VerificationTrigger repair` helper because previous evidence is stale. Stop after three failed runs for the same error group and return blocker diagnostics; do not claim completion.
 
 On fresh pass, report the reused or added scenario names, whether tests changed, the branch infobase update result, Vanessa report path, and event-log result.

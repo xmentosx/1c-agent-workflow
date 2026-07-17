@@ -24,7 +24,7 @@ Actions:
 
 - `install-roctup-mcp`: download/cache the OS-specific release EPF and upstream skills under ignored `.agent-1c/tools/roctup-mcp-toolkit`.
 - `update-roctup-mcp`: refresh the cached EPF/skills and dependency lock in `fresh` mode.
-- `start-roctup-mcp`: start the current branch embedded server on demand, allocate a branch-local port, and write Codex/Kilo client config.
+- `start-roctup-mcp`: start the current branch embedded server on demand, allocate a branch-local port, and write managed entries only to the active client config.
 - `roctup-mcp-status`: inspect port/PID/URL/log/error.
 - `stop-roctup-mcp`: stop only the current branch server.
 
@@ -74,7 +74,7 @@ Vanessa UI MCP is always branch-local and starts on demand in `itldev/*` worktre
 Actions:
 
 - `install-vanessa-mcp`: install cached branch-local UI MCP CFE tooling into the current branch infobase.
-- `start-vanessa-mcp`: install missing cached UI MCP dependencies if needed, start Vanessa `runMcp` on a branch-local port, and write Codex/Kilo entries.
+- `start-vanessa-mcp`: install missing cached UI MCP dependencies if needed, start Vanessa `runMcp` on a branch-local port, and write managed entries only to the active client config.
 - `vanessa-mcp-status`: inspect branch-local port/PID/URL.
 - `stop-vanessa-mcp`: stop only the current branch server.
 
