@@ -26,6 +26,9 @@ temp/
 .agent-1c/mcp/
 .agent-1c/client-surface.json
 build/data-mcp-tools-loader/
+outputs/
+__pycache__/
+*.pyc
 .codex/config.toml
 .kilo/commands/itl*.md
 .kilo/kilo.json

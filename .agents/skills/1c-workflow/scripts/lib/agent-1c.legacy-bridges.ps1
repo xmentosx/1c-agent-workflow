@@ -4,6 +4,7 @@ function Get-ItlLegacyBridgeState {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation $Operation
     Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation $Operation
+    Assert-DevBranchExtensionInitialized -State $state -Operation $Operation
     $branchBase = [string](Get-StateValue -State $state -Name "devBranchInfoBasePath" -Default "")
     if (-not $branchBase) { throw "$Operation cannot prove the branch infobase from ITL state." }
     $sourceBase = [string](Get-SourceInfoBasePath)

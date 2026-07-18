@@ -10,6 +10,7 @@ Describe "1C workflow extension initialization" {
             param(
                 [ValidateSet("Empty", "Cfe")]
                 [string]$Mode,
+                [switch]$FailTools,
                 [switch]$FailDump,
                 [switch]$FailValidate,
                 [switch]$FailRollback,
@@ -48,7 +49,10 @@ Describe "1C workflow extension initialization" {
                     function Assert-DevelopmentBranchWorktreeContext {}
                     function Assert-DevBranchKind {}
                     function Assert-SingleManagedExtensionArtifact {}
-                    function Get-ExtensionLifecycleToolPaths { return [pscustomobject]@{ init = "cfe-init.ps1"; validate = "cfe-validate.ps1" } }
+                    function Get-ExtensionLifecycleToolPaths {
+                        if ($FailTools) { throw "mock lifecycle tools missing" }
+                        return [pscustomobject]@{ init = "cfe-init.ps1"; validate = "cfe-validate.ps1" }
+                    }
                     function Test-DevBranchExtensionExists { return [bool]$ExistingExtension }
                     function Get-RoctupMcpRuntimeInfo { return [pscustomobject]@{ processAlive = $false } }
                     function Get-VanessaMcpRuntimeInfo { return [pscustomobject]@{ processAlive = $false } }
@@ -65,7 +69,8 @@ Describe "1C workflow extension initialization" {
                     function Get-CurrentCommit { return "head" }
                     function Update-DevBranchState {
                         param([object]$State, [hashtable]$Updates)
-                        $script:extensionInitUpdatesCaptured = $Updates
+                        if ($null -eq $script:extensionInitUpdatesCaptured) { $script:extensionInitUpdatesCaptured = @{} }
+                        foreach ($key in $Updates.Keys) { $script:extensionInitUpdatesCaptured[$key] = $Updates[$key] }
                     }
                     function Invoke-Designer {
                         param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
@@ -121,6 +126,9 @@ Describe "1C workflow extension initialization" {
         $HelperText | Should -Not -Match "AgentMode"
         $HelperText | Should -Not -Match "v8unpack"
         $HelperText | Should -Not -Match '"/Extension"'
+        $HelperText | Should -Match "extension-init.delegate"
+        $HelperText | Should -Match ([regex]::Escape('"-Action", "init-dev-branch-extension"'))
+        $HelperText | Should -Match "EXTENSION_INIT_REQUIRED"
     }
 
     It "initializes Empty sources and records state only after normalized validation" {
@@ -131,6 +139,7 @@ Describe "1C workflow extension initialization" {
         $result.updates.extensionDumpPath | Should -Be "src/cfe/ShipModel"
         $result.updates.extensionExportPath | Should -Be "src/cfe/ShipModel"
         $result.updates.extensionInitializedAt | Should -Not -BeNullOrEmpty
+        $result.updates.extensionInitializationStatus | Should -Be "ready"
         ($result.calls | ForEach-Object { $_ -join " " }) -join "`n" | Should -Match "/LoadConfigFromFiles.*-Extension ShipModel.*-Format Hierarchical.*\/UpdateDBCfg"
     }
 
@@ -151,6 +160,7 @@ Describe "1C workflow extension initialization" {
         $result.updates.Keys | Should -Not -Contain "extensionName"
         $result.updates.lastExtensionDesignerFingerprint | Should -Be ""
         $result.updates.enterpriseNormalizationStatus | Should -Be "pending"
+        $result.updates.extensionInitializationStatus | Should -Be "failed"
         $result.targetExists | Should -BeFalse
     }
 
@@ -178,7 +188,173 @@ Describe "1C workflow extension initialization" {
         $rollback.error | Should -Match "Rollback also failed"
         $rollback.error | Should -Match "mock dump failure"
         $rollback.error | Should -Match "mock rollback failure"
-        $rollback.updates | Should -BeNullOrEmpty
+        $rollback.updates.extensionInitializationStatus | Should -Be "failed"
+        $rollback.updates.extensionInitializationError | Should -Match "Rollback also failed"
+    }
+
+    It "persists failed state when setup fails before the snapshot" {
+        $result = Invoke-MockedExtensionInitialization -Mode Empty -FailTools
+        $result.error | Should -Match "before a snapshot was created"
+        $result.error | Should -Match "mock lifecycle tools missing"
+        $result.updates.extensionInitializationStatus | Should -Be "failed"
+        $result.updates.extensionInitializationError | Should -Match "mock lifecycle tools missing"
+        $result.rollbackCalled | Should -BeFalse
+    }
+
+    It "treats pending extension setup as a persisted lifecycle gate" {
+        & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $pending = [pscustomobject]@{
+                devBranchKind = "extension"
+                extensionInitializationStatus = "pending"
+            }
+            $failed = [pscustomobject]@{
+                devBranchKind = "extension"
+                extensionInitializationStatus = "failed"
+            }
+            $ready = [pscustomobject]@{
+                devBranchKind = "extension"
+                extensionName = "ShipModel"
+            }
+            $configuration = [pscustomobject]@{ devBranchKind = "configuration" }
+
+            (Get-DevBranchExtensionInitializationStatus -State $pending) | Should -Be "pending"
+            (Get-DevBranchExtensionInitializationStatus -State $failed) | Should -Be "failed"
+            (Get-DevBranchExtensionInitializationStatus -State $ready) | Should -Be "ready"
+            (Get-DevBranchExtensionInitializationStatus -State $configuration) | Should -Be "not-required"
+            { Assert-DevBranchExtensionInitialized -State $pending -Operation "check-dev-branch" } | Should -Throw "*EXTENSION_INIT_REQUIRED*"
+            $script:RunRequiredAction | Should -Match "Ask the developer"
+            $script:RunRequiredAction | Should -Match "Do not ask the developer to run PowerShell"
+        }
+    }
+
+    It "orchestrates branch creation and extension initialization as one user scenario" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help -DevBranchName "ship" -ExtensionInitMode Empty -ExtensionName "ShipModel" *> $null
+            $script:testProvisioningState = [pscustomobject]@{
+                devBranchName = "ship"
+                devBranch = "itldev/ship"
+                devBranchKind = "extension"
+                initializationStatus = "ready"
+                extensionInitializationStatus = "pending"
+                worktreePath = "C:\fixture\ship"
+                mainWorktreePath = "C:\fixture\master"
+                stateProjectRoot = "C:\fixture\ship"
+            }
+            $script:coreCalled = $false
+            $script:initCalled = $false
+            $script:contextRoot = ""
+            function Get-PreparedExtensionDevBranchState { return $null }
+            function New-DevBranchCore { param([string]$DevBranchKind, [switch]$DeferHandoff); $script:coreCalled = ($DevBranchKind -eq "extension" -and $DeferHandoff) }
+            function Read-DevBranchState { return $script:testProvisioningState }
+            function Invoke-ExtensionInitializationInWorktree {
+                param([string]$WorktreePath)
+                $script:contextRoot = $WorktreePath
+                $script:initCalled = $true
+                $script:testProvisioningState | Add-Member -NotePropertyName extensionName -NotePropertyValue "ShipModel" -Force
+                $script:testProvisioningState.extensionInitializationStatus = "ready"
+            }
+            function Write-DevBranchWorktreeOpenMessage {}
+            function Open-AgentWorktreeBestEffort {}
+
+            New-ExtensionDevBranch *> $null
+            [pscustomobject]@{
+                coreCalled = $script:coreCalled
+                initCalled = $script:initCalled
+                contextRoot = $script:contextRoot
+                runStatus = $script:RunExtensionInitializationStatus
+                worktreePath = $script:RunWorktreePath
+            }
+        }
+
+        $result.coreCalled | Should -BeTrue
+        $result.initCalled | Should -BeTrue
+        $result.contextRoot | Should -Be "C:\fixture\ship"
+        $result.runStatus | Should -Be "ready"
+        $result.worktreePath | Should -Be "C:\fixture\ship"
+    }
+
+    It "rejects partial setup input before branch creation" {
+        & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help -DevBranchName "ship" -ExtensionName "ShipModel" *> $null
+            $script:coreCalled = $false
+            function New-DevBranchCore { $script:coreCalled = $true }
+            { New-ExtensionDevBranch } | Should -Throw "*EXTENSION_INIT_INPUT_INCOMPLETE*"
+            $script:coreCalled | Should -BeFalse
+        }
+    }
+
+    It "persists an agent-guided pending step when setup parameters are unknown" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help -DevBranchName "ship" *> $null
+            $script:testProvisioningState = [pscustomobject]@{
+                devBranchName = "ship"
+                devBranch = "itldev/ship"
+                devBranchKind = "extension"
+                initializationStatus = "ready"
+                extensionInitializationStatus = "pending"
+                worktreePath = "C:\fixture\ship"
+                mainWorktreePath = "C:\fixture\master"
+                stateProjectRoot = "C:\fixture\ship"
+            }
+            $script:initCalled = $false
+            function Get-PreparedExtensionDevBranchState { return $null }
+            function New-DevBranchCore {}
+            function Read-DevBranchState { return $script:testProvisioningState }
+            function Invoke-ExtensionInitializationInWorktree { param([string]$WorktreePath); $script:initCalled = $true }
+            function Write-DevBranchWorktreeOpenMessage {}
+            function Open-AgentWorktreeBestEffort {}
+
+            New-ExtensionDevBranch *> $null
+            [pscustomobject]@{
+                initCalled = $script:initCalled
+                runStatus = $script:RunExtensionInitializationStatus
+                requiredAction = $script:RunRequiredAction
+            }
+        }
+
+        $result.initCalled | Should -BeFalse
+        $result.runStatus | Should -Be "pending"
+        $result.requiredAction | Should -Match "In the extension worktree"
+        $result.requiredAction | Should -Match "Do not ask the developer to run PowerShell"
+    }
+
+    It "resumes a prepared pending branch without copying its infobase again" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help -DevBranchName "ship" -ExtensionInitMode Empty -ExtensionName "ShipModel" *> $null
+            $script:testProvisioningState = [pscustomobject]@{
+                devBranchName = "ship"
+                devBranch = "itldev/ship"
+                devBranchKind = "extension"
+                initializationStatus = "ready"
+                extensionInitializationStatus = "failed"
+                worktreePath = "C:\fixture\ship"
+                mainWorktreePath = "C:\fixture\master"
+                stateProjectRoot = "C:\fixture\ship"
+            }
+            $script:coreCalled = $false
+            $script:initCalled = $false
+            function Get-PreparedExtensionDevBranchState { return $script:testProvisioningState }
+            function Assert-MasterWorktreeContext {}
+            function Assert-CleanGit {}
+            function New-DevBranchCore { $script:coreCalled = $true }
+            function Invoke-ExtensionInitializationInWorktree {
+                param([string]$WorktreePath)
+                $script:initCalled = $true
+                $script:testProvisioningState | Add-Member -NotePropertyName extensionName -NotePropertyValue "ShipModel" -Force
+                $script:testProvisioningState.extensionInitializationStatus = "ready"
+            }
+            function Read-DevBranchState { return $script:testProvisioningState }
+            function Write-DevBranchWorktreeOpenMessage {}
+            function Open-AgentWorktreeBestEffort {}
+
+            New-ExtensionDevBranch *> $null
+            [pscustomobject]@{ coreCalled = $script:coreCalled; initCalled = $script:initCalled; runStatus = $script:RunExtensionInitializationStatus }
+        }
+
+        $result.coreCalled | Should -BeFalse
+        $result.initCalled | Should -BeTrue
+        $result.runStatus | Should -Be "ready"
     }
 
     It "validates Unicode extension names and rejects nested src cfe roots" {

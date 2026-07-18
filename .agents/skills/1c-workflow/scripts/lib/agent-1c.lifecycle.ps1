@@ -66,6 +66,36 @@ function Get-DevBranchKind {
     return (Get-StateValue -State $State -Name "devBranchKind" -Default "configuration")
 }
 
+function Get-DevBranchExtensionInitializationStatus {
+    param([object]$State)
+
+    if ((Get-DevBranchKind -State $State) -ne "extension") {
+        return "not-required"
+    }
+    if (Get-StateValue -State $State -Name "extensionName" -Default "") {
+        return "ready"
+    }
+    $status = Get-StateValue -State $State -Name "extensionInitializationStatus" -Default "pending"
+    return ([string]$status).Trim().ToLowerInvariant()
+}
+
+function Assert-DevBranchExtensionInitialized {
+    param(
+        [object]$State,
+        [string]$Operation = "development work"
+    )
+
+    if ((Get-DevBranchKind -State $State) -ne "extension") {
+        return
+    }
+    $status = Get-DevBranchExtensionInitializationStatus -State $State
+    if ($status -eq "ready") {
+        return
+    }
+    Set-RunFailureContext -RequiredAction "Ask the developer whether to create an Empty extension or load a CFE, collect the extension name and CFE path when applicable, then let the agent continue initialization in this worktree. Do not ask the developer to run PowerShell."
+    throw "EXTENSION_INIT_REQUIRED: $Operation is blocked because extension initialization is '$status'. The agent must collect Empty or CFE, extension name, and optional CFE path in chat and run the internal initialization helper. Do not ask the developer to run PowerShell."
+}
+
 function Assert-DevBranchKind {
     param(
         [object]$State,
@@ -93,7 +123,8 @@ function Require-DevBranchExtensionName {
     Assert-DevBranchKind -State $State -Expected "extension"
     $name = Get-StateValue -State $State -Name "extensionName" -Default ""
     if (-not $name) {
-        throw "Extension name is not set for this development branch. Run set-dev-branch-extension first."
+        Assert-DevBranchExtensionInitialized -State $State -Operation "extension access"
+        throw "EXTENSION_INIT_REQUIRED: extension name is not set for this development branch."
     }
     return $name
 }
@@ -398,7 +429,7 @@ function Write-ItlAdditionalHelperActions {
     Write-Host "  vibecoding1c MCP: ask for setup, status, select, refresh-registry, or update."
     Write-Host "  Vanessa UI MCP: ask for branch-local install, start, status, or stop only for runtime UI research, recording, or debugging."
     Write-Host "  Extension branches: one branch/worktree/base owns one CFE; several features are allowed only inside it."
-    Write-Host "  After branch creation run init-dev-branch-extension; set/dump remain validated transactional recovery actions."
+    Write-Host "  Extension setup is agent-orchestrated during branch creation or on first entry when its saved status is pending."
     Write-Host "  Maintenance/recovery: ask to update base without tests, update workflow/rules, close/list/switch branches."
     Write-Host "  Full helper action catalog: .agents/skills/1c-workflow/references/advanced-actions.md."
 }
@@ -2757,6 +2788,14 @@ function Write-DevBranchInitializationStatusLines {
     )
 
     $status = Get-DevBranchInitializationStatus -State $State
+    if ((Get-DevBranchKind -State $State) -eq "extension") {
+        $extensionStatus = Get-DevBranchExtensionInitializationStatus -State $State
+        Write-Host "${Indent}Extension initialization: $extensionStatus"
+        $extensionError = Get-StateValue -State $State -Name "extensionInitializationError" -Default ""
+        if ($extensionError) {
+            Write-Host "${Indent}Extension initialization error: $extensionError"
+        }
+    }
     $normalizationStatus = Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "legacy-pending"
     Write-Host "${Indent}Enterprise normalization: $normalizationStatus"
     $normalizationReason = Get-StateValue -State $State -Name "enterpriseNormalizationReason" -Default ""
@@ -3049,7 +3088,7 @@ function Sync-DevBranchContextToDotEnv {
                 $values["EXTENSION_NAME"] = ""
                 Set-DotEnvValues -Values $values
                 Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
-                Write-Host "Development branch context is incomplete: extension name is not set. Run set-dev-branch-extension before using /update1cbase."
+                Write-Host "Development branch context is incomplete: extension initialization is pending. The agent must collect Empty or CFE, extension name, and optional CFE path in chat before development work."
                 return
             }
             Require-DevBranchExtensionName -State $State | Out-Null
@@ -3072,6 +3111,7 @@ function Sync-DevBranchContextToDotEnv {
 function Activate-DevBranchContext {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "activate-dev-branch-context"
+    Assert-DevBranchExtensionInitialized -State $state -Operation "activate-dev-branch-context"
     Sync-DevBranchContextToDotEnv -State $state
 }
 
@@ -4416,6 +4456,9 @@ function Initialize-DevBranchRuntime {
         @{ name = "lastConfigDesignerLoadedAt"; value = "" },
         @{ name = "lastExtensionDesignerFingerprint"; value = "" },
         @{ name = "lastExtensionDesignerLoadedAt"; value = "" },
+        @{ name = "extensionInitializationStatus"; value = $(if ($DevBranchKind -eq "extension") { "pending" } else { "not-required" }) },
+        @{ name = "extensionInitializationError"; value = "" },
+        @{ name = "extensionInitializationUpdatedAt"; value = $now },
         @{ name = "sourceFingerprint"; value = "" },
         @{ name = "loadReason"; value = "" },
         @{ name = "designerInvoked"; value = $false },
@@ -4666,7 +4709,8 @@ function Get-ResumableDevBranchState {
 function New-DevBranchCore {
     param(
         [ValidateSet("configuration", "extension")]
-        [string]$DevBranchKind = "configuration"
+        [string]$DevBranchKind = "configuration",
+        [switch]$DeferHandoff
     )
 
     Require-Value "DevBranchName" $DevBranchName | Out-Null
@@ -4715,8 +4759,10 @@ function New-DevBranchCore {
                     -CreatedWithWorktree $true
             }
 
-            Write-DevBranchWorktreeOpenMessage -MainProjectPath $mainProjectRoot -WorktreePath $resumeWorktreePath
-            Open-AgentWorktreeBestEffort -WorktreePath $resumeWorktreePath
+            if (-not $DeferHandoff) {
+                Write-DevBranchWorktreeOpenMessage -MainProjectPath $mainProjectRoot -WorktreePath $resumeWorktreePath
+                Open-AgentWorktreeBestEffort -WorktreePath $resumeWorktreePath
+            }
             return
         }
 
@@ -4744,19 +4790,145 @@ function New-DevBranchCore {
             -CreatedWithWorktree $true
     }
 
-    Write-DevBranchWorktreeOpenMessage -MainProjectPath $mainProjectRoot -WorktreePath $worktreePath
-    Open-AgentWorktreeBestEffort -WorktreePath $worktreePath
+    if (-not $DeferHandoff) {
+        Write-DevBranchWorktreeOpenMessage -MainProjectPath $mainProjectRoot -WorktreePath $worktreePath
+        Open-AgentWorktreeBestEffort -WorktreePath $worktreePath
+    }
 }
 
 function New-DevBranch {
     New-DevBranchCore -DevBranchKind "configuration"
 }
 
+function Resolve-NewExtensionProvisioningInput {
+    $hasAnyInput = [bool]($ExtensionInitMode -or $ExtensionName -or $ExtensionSourcePath)
+    if (-not $hasAnyInput) {
+        return $false
+    }
+    if (-not $ExtensionInitMode -or -not $ExtensionName) {
+        throw "EXTENSION_INIT_INPUT_INCOMPLETE: provide ExtensionInitMode Empty or Cfe and ExtensionName together. ExtensionSourcePath is also required for Cfe."
+    }
+    Assert-ExtensionInitName -Name $ExtensionName | Out-Null
+    if ($ExtensionInitMode -eq "Cfe") {
+        Require-Value "ExtensionSourcePath" $ExtensionSourcePath | Out-Null
+        $resolvedSource = Resolve-Agent1cFullPath -Path $ExtensionSourcePath
+        if (-not (Test-Path -LiteralPath $resolvedSource -PathType Leaf) -or [System.IO.Path]::GetExtension($resolvedSource) -ine ".cfe") {
+            throw "ExtensionSourcePath must be an existing .cfe file: $ExtensionSourcePath"
+        }
+        if ((Get-Item -LiteralPath $resolvedSource).Length -le 0) {
+            throw "ExtensionSourcePath is empty: $resolvedSource"
+        }
+        $script:ExtensionSourcePath = $resolvedSource
+    } elseif ($ExtensionSourcePath) {
+        throw "EXTENSION_INIT_INPUT_INCOMPLETE: ExtensionSourcePath is valid only with ExtensionInitMode Cfe."
+    }
+    return $true
+}
+
+function Get-PreparedExtensionDevBranchState {
+    Require-Value "DevBranchName" $DevBranchName | Out-Null
+    $safe = ConvertTo-SafeName $DevBranchName
+    $gitBranch = if ($DevBranch) { $DevBranch } else { "itldev/$safe" }
+    if (-not (Test-GitBranchExists -Branch $gitBranch)) {
+        return $null
+    }
+    $statePath = Find-DevBranchStateFile -SafeDevBranchName $safe
+    if (-not $statePath) {
+        return $null
+    }
+    $state = Read-DevBranchStateFile -Path $statePath
+    if ((Get-StateValue -State $state -Name "devBranch" -Default "") -ne $gitBranch) {
+        return $null
+    }
+    if ((Get-DevBranchInitializationStatus -State $state) -ne "ready") {
+        return $null
+    }
+    Assert-DevBranchKind -State $state -Expected "extension"
+    if ((Get-DevBranchExtensionInitializationStatus -State $state) -eq "ready") {
+        return $null
+    }
+    return $state
+}
+
+function Set-RunExtensionProvisioningState {
+    param([object]$State)
+
+    $script:RunDevBranch = Get-StateValue -State $State -Name "devBranch" -Default ""
+    $script:RunWorktreePath = Get-StateValue -State $State -Name "worktreePath" -Default (Get-StateValue -State $State -Name "stateProjectRoot" -Default "")
+    $script:RunExtensionInitializationStatus = Get-DevBranchExtensionInitializationStatus -State $State
+}
+
+function Invoke-ExtensionInitializationInWorktree {
+    param([string]$WorktreePath)
+
+    $resolvedWorktree = Resolve-Agent1cFullPath -Path $WorktreePath
+    if ((Get-FullPathNormalized $resolvedWorktree) -eq (Get-FullPathNormalized $script:ProjectRoot)) {
+        Init-DevBranchExtension
+        return
+    }
+
+    $helperPath = Join-Path $resolvedWorktree ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+    if (-not (Test-Path -LiteralPath $helperPath -PathType Leaf)) {
+        throw "Extension initialization helper is missing from the new worktree: $helperPath"
+    }
+    Set-RunStage -Stage "extension-init.delegate" -Detail "Running the transactional extension initialization under the new worktree lifecycle lock."
+    $childArgs = @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $helperPath,
+        "-ProjectRoot", $resolvedWorktree,
+        "-Action", "init-dev-branch-extension",
+        "-DevBranchName", $DevBranchName,
+        "-ExtensionInitMode", $ExtensionInitMode,
+        "-ExtensionName", $ExtensionName
+    )
+    if ($ExtensionSourcePath) {
+        $childArgs += @("-ExtensionSourcePath", $ExtensionSourcePath)
+    }
+    & powershell @childArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Extension initialization failed in the new worktree. Inspect the preceding helper error and saved branch status."
+    }
+}
+
 function New-ExtensionDevBranch {
-    New-DevBranchCore -DevBranchKind "extension"
-    Write-Host "Mandatory next step (run in the new extension worktree):"
-    Write-Host '  powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action init-dev-branch-extension -ExtensionInitMode Empty -ExtensionName "<ExtensionName>"'
-    Write-Host '  For an existing CFE, use -ExtensionInitMode Cfe -ExtensionName "<ExtensionName>" -ExtensionSourcePath "<file.cfe>".'
+    $hasProvisioningInput = Resolve-NewExtensionProvisioningInput
+    $state = Get-PreparedExtensionDevBranchState
+    if ($state) {
+        Assert-MasterWorktreeContext -Operation "resume extension development branch provisioning"
+        Assert-CleanGit
+    } else {
+        New-DevBranchCore -DevBranchKind "extension" -DeferHandoff
+        $state = Read-DevBranchState -Name $DevBranchName
+    }
+
+    Set-RunExtensionProvisioningState -State $state
+    $worktreePath = Get-StateValue -State $state -Name "worktreePath" -Default (Get-StateValue -State $state -Name "stateProjectRoot" -Default "")
+    $mainWorktreePath = Get-StateValue -State $state -Name "mainWorktreePath" -Default $script:ProjectRoot
+    try {
+        if ($hasProvisioningInput) {
+            Invoke-ExtensionInitializationInWorktree -WorktreePath $worktreePath
+            $state = Read-DevBranchState -Name $DevBranchName
+            Set-RunExtensionProvisioningState -State $state
+        } else {
+            Set-RunStage -Stage "extension-init.pending" -Detail "The extension branch is ready for agent-guided extension initialization."
+            Set-RunFailureContext -RequiredAction "In the extension worktree, ask the developer whether to create an Empty extension or load a CFE, collect the extension name and CFE path when applicable, then run the internal init-dev-branch-extension helper. Do not ask the developer to run PowerShell."
+            Write-Host "Extension initialization: pending"
+            Write-Host "The agent will ask for Empty or CFE, extension name, and optional CFE path in the extension worktree."
+        }
+    } catch {
+        $provisioningError = $_
+        Set-RunFailureContext -RequiredAction "Inspect extensionInitializationError in the saved branch state, address the cause, then repeat the same extension-branch request with the setup values. Do not ask the developer to run PowerShell."
+        try {
+            $state = Read-DevBranchState -Name $DevBranchName
+            Set-RunExtensionProvisioningState -State $state
+        } catch {
+        }
+        throw $provisioningError
+    } finally {
+        if (-not $UseCurrentWorktree -and $worktreePath) {
+            Write-DevBranchWorktreeOpenMessage -MainProjectPath $mainWorktreePath -WorktreePath $worktreePath
+            Open-AgentWorktreeBestEffort -WorktreePath $worktreePath
+        }
+    }
 }
 
 function Assert-ExtensionInitName {
@@ -4924,6 +5096,9 @@ function Init-DevBranchExtension {
     if ($targetExisted -and @(Get-ChildItem -LiteralPath $absoluteDumpPath -Force -ErrorAction Stop).Count -gt 0) {
         throw "Extension dump target is not empty; refusing to overwrite it: $absoluteDumpPath"
     }
+    if (Test-DevBranchExtensionExists -State $state -Name $ExtensionName) {
+        throw "Extension '$ExtensionName' already exists in the development branch infobase; refusing to overwrite it."
+    }
 
     $sourceCfe = ""
     if ($ExtensionInitMode -eq "Cfe") {
@@ -4937,20 +5112,27 @@ function Init-DevBranchExtension {
         }
     }
 
-    $tools = Get-ExtensionLifecycleToolPaths
-    $stagingRoot = Assert-ExportPathInsideProject -ExportPath (".agent-1c/extension-init/" + [guid]::NewGuid().ToString("N"))
-    New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
-    $snapshotDir = Assert-ExportPathInsideProject -ExportPath ".agent-1c/snapshots"
-    $snapshotPath = Join-Path $snapshotDir ("extension-init-{0}-{1}.dt" -f (ConvertTo-SafeName $ExtensionName), (Get-Date -Format "yyyyMMdd-HHmmss"))
+    $tools = $null
+    $stagingRoot = ""
+    $snapshotDir = ""
+    $snapshotPath = ""
     $snapshotCreated = $false
     $roctupWasRunning = $false
     $vanessaWasRunning = $false
 
-    try {
-        if (Test-DevBranchExtensionExists -State $state -Name $ExtensionName) {
-            throw "Extension '$ExtensionName' already exists in the development branch infobase; refusing to overwrite it."
-        }
+    Update-DevBranchState -State $state -Updates @{
+        extensionInitializationStatus = "running"
+        extensionInitializationError = ""
+        extensionInitializationUpdatedAt = (Get-Date).ToString("o")
+    }
+    $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
+    try {
+        $tools = Get-ExtensionLifecycleToolPaths
+        $stagingRoot = Assert-ExportPathInsideProject -ExportPath (".agent-1c/extension-init/" + [guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
+        $snapshotDir = Assert-ExportPathInsideProject -ExportPath ".agent-1c/snapshots"
+        $snapshotPath = Join-Path $snapshotDir ("extension-init-{0}-{1}.dt" -f (ConvertTo-SafeName $ExtensionName), (Get-Date -Format "yyyyMMdd-HHmmss"))
         $roctupWasRunning = [bool](Get-RoctupMcpRuntimeInfo -State $state).processAlive
         $vanessaWasRunning = [bool](Get-VanessaMcpRuntimeInfo -State $state).processAlive
         Stop-OwnVanessaTestProcessesAndAssert -State $state
@@ -5006,6 +5188,9 @@ function Init-DevBranchExtension {
             extensionName = $ExtensionName
             safeExtensionName = ConvertTo-SafeName $ExtensionName
             extensionInitMode = $ExtensionInitMode
+            extensionInitializationStatus = "ready"
+            extensionInitializationError = ""
+            extensionInitializationUpdatedAt = $now
             extensionDumpPath = $dumpPath
             extensionExportPath = $dumpPath
             extensionInitializedAt = $now
@@ -5077,15 +5262,26 @@ function Init-DevBranchExtension {
         } catch {
             Write-Warning "Could not restore branch MCP runtime after extension initialization failure: $($_.Exception.Message)"
         }
-        if ($rollbackError) {
-            throw "Extension initialization failed: $originalError Rollback also failed: $rollbackError Snapshot retained: $snapshotPath"
+        $failureMessage = if ($rollbackError) {
+            "Extension initialization failed: $originalError Rollback also failed: $rollbackError Snapshot retained: $snapshotPath"
+        } elseif ($snapshotCreated) {
+            "Extension initialization failed and the infobase snapshot was restored: $originalError"
+        } else {
+            "Extension initialization failed before a snapshot was created: $originalError"
         }
-        if ($snapshotCreated) {
-            throw "Extension initialization failed and the infobase snapshot was restored: $originalError"
+        try {
+            $failedState = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
+            Update-DevBranchState -State $failedState -Updates @{
+                extensionInitializationStatus = "failed"
+                extensionInitializationError = $failureMessage
+                extensionInitializationUpdatedAt = (Get-Date).ToString("o")
+            }
+        } catch {
+            Write-Warning "Could not persist failed extension initialization status: $($_.Exception.Message)"
         }
-        throw "Extension initialization failed before a snapshot was created: $originalError"
+        throw $failureMessage
     } finally {
-        if (Test-Path -LiteralPath $stagingRoot -PathType Container -ErrorAction SilentlyContinue) {
+        if ($stagingRoot -and (Test-Path -LiteralPath $stagingRoot -PathType Container -ErrorAction SilentlyContinue)) {
             Remove-Item -LiteralPath $stagingRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
@@ -5149,6 +5345,9 @@ function Set-DevBranchExtension {
         safeExtensionName = $safeExtensionName
         extensionDumpPath = $extensionExportPath
         extensionExportPath = $extensionExportPath
+        extensionInitializationStatus = "ready"
+        extensionInitializationError = ""
+        extensionInitializationUpdatedAt = (Get-Date).ToString("o")
         extensionRecoveryStatus = $recoveryStatus
         extensionRecoveryReason = $recoveryReason
         lastExtensionDesignerFingerprint = ""
@@ -5186,6 +5385,7 @@ function Write-BaseUpdateResult {
 function Update-DevBranchBase {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "update-dev-branch-base"
+    Assert-DevBranchExtensionInitialized -State $state -Operation "update-dev-branch-base"
     Assert-SingleManagedExtensionArtifact -State $state
     Sync-DevBranchContextToDotEnv -State $state
 
@@ -5213,6 +5413,7 @@ function Update-DevBranchBase {
 function Refresh-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "refresh-dev-branch"
+    Assert-DevBranchExtensionInitialized -State $state -Operation "refresh-dev-branch"
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
 
     if ($LifecyclePhase -ne "post-merge") {
@@ -5910,6 +6111,7 @@ function Invoke-DevBranchCheck {
 
 function Check-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevBranchExtensionInitialized -State $state -Operation "check-dev-branch"
     Assert-SingleManagedExtensionArtifact -State $state
     Invoke-DevBranchCheck
 }
@@ -5960,6 +6162,7 @@ function Restore-ReleaseE2EInfobaseSnapshot {
 
 function Verify-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevBranchExtensionInitialized -State $state -Operation "verify-dev-branch"
     Assert-SingleManagedExtensionArtifact -State $state
     $savedTrigger = $VerificationTrigger
     try {
@@ -5973,6 +6176,7 @@ function Verify-DevBranch {
 function Export-DevBranchResult {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "export-dev-branch-result"
+    Assert-DevBranchExtensionInitialized -State $state -Operation "export-dev-branch-result"
     Assert-SingleManagedExtensionArtifact -State $state
     Assert-CleanGit
     Sync-DevBranchContextToDotEnv -State $state
@@ -6032,6 +6236,7 @@ function Export-DevBranchResult {
 function Close-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "close-dev-branch"
+    Assert-DevBranchExtensionInitialized -State $state -Operation "close-dev-branch"
     Assert-SingleManagedExtensionArtifact -State $state
     Stop-RoctupMcpForState -State $state -Quiet | Out-Null
     $state = Read-DevBranchState -Name $DevBranchName
@@ -6427,6 +6632,9 @@ function Show-Help {
                 if ($worktreePath) {
                     Write-Host "    Worktree: $worktreePath"
                 }
+                if ((Get-DevBranchKind -State $state) -eq "extension") {
+                    Write-Host "    Extension initialization: $(Get-DevBranchExtensionInitializationStatus -State $state)"
+                }
                 Write-VanessaTestStatusLines -State $state -Indent "    "
                 Write-RoctupMcpStatusLines -State $state -Indent "    "
                 Write-VanessaMcpStatusLines -State $state -Indent "    "
@@ -6448,6 +6656,7 @@ function Show-Help {
         if ($state) {
             $verification = Get-VerificationState -State $state
             $kind = Get-DevBranchKind -State $state
+            $extensionInitializationStatus = Get-DevBranchExtensionInitializationStatus -State $state
             $hasCheckableChanges = Test-DevBranchHasCheckableChanges -State $state
             $authoringRequired = $false
             try { $authoringRequired = Test-VanessaAuthoringRequired } catch { $authoringRequired = $false }
@@ -6456,6 +6665,9 @@ function Show-Help {
             Write-Host "Branch:"
             Write-Host "  Name: $(Get-StateValue -State $state -Name 'devBranchName' -Default (Get-StateValue -State $state -Name 'safeDevBranchName' -Default '<unknown>'))"
             Write-Host "  Type: $kind"
+            if ($kind -eq "extension") {
+                Write-Host "  Extension initialization: $extensionInitializationStatus"
+            }
             Write-Host "  Infobase: $($state.devBranchInfoBasePath)"
             $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
             if ($publicationUrl) {
@@ -6476,7 +6688,9 @@ function Show-Help {
             Write-Host "  Last result: $(Get-StateValue -State $state -Name 'lastResultPath' -Default '<none>')"
             Write-Host "  Final result: $(Get-StateValue -State $state -Name 'finalResultPath' -Default '<none>')"
             Write-Host ""
-            if ($authoringRequired) {
+            if ($kind -eq "extension" -and $extensionInitializationStatus -ne "ready") {
+                Write-Host "Recommended next step: tell the agent whether to create an Empty extension or load a CFE, with the extension name and CFE path when applicable."
+            } elseif ($authoringRequired) {
                 Write-Host "Recommended next step: /itl-vanessa-author"
             } elseif ($hasCheckableChanges -or (@("failed", "stale", "unknown") -contains $verification.effectiveStatus)) {
                 Write-Host "Recommended next step: /itl-check"
@@ -6496,9 +6710,9 @@ function Show-Help {
         Write-Host ""
         Write-Host "Lifecycle:"
         if ($openSpec.isAvailable) {
-            Write-Host "  optional /opsx-explore -> quick-fix or /opsx-propose -> /opsx-apply/work -> /itl-vanessa-author when features change -> /itl-check -> /itl-result"
+            Write-Host "  extension setup when pending -> optional /opsx-explore -> quick-fix or /opsx-propose -> /opsx-apply/work -> /itl-vanessa-author when features change -> /itl-check -> /itl-result"
         } else {
-            Write-Host "  quick-fix -> /itl-vanessa-author when features change -> /itl-check -> /itl-result; restore the active client's OpenSpec surface before an OpenSpec change."
+            Write-Host "  extension setup when pending -> quick-fix -> /itl-vanessa-author when features change -> /itl-check -> /itl-result; restore the active client's OpenSpec surface before an OpenSpec change."
         }
         Write-Host "  use /itl-refresh when master changes must be merged into this branch."
         Write-Host ""

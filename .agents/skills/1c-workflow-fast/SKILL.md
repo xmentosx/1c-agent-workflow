@@ -19,8 +19,8 @@ Do not open full workflow references before normal lifecycle execution. Open det
 - setup/inspect vibecoding1c MCP: `vibecoding1c-mcp-setup` by default, `vibecoding1c-mcp-status`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`
 - update the installed ITL workflow package from `master`: `update-workflow`
 - create new configuration development branch worktree from `master`: `new-dev-branch`
-- create new extension development branch worktree from `master`: `new-extension-dev-branch`
-- initialize the extension after branch creation: `init-dev-branch-extension` with `-ExtensionInitMode Empty|Cfe`, `-ExtensionName`, and optional `-ExtensionSourcePath`
+- create/provision an extension branch: collect `Empty|Cfe`, name, and optional CFE path for `new-extension-dev-branch`; unknown values persist pending for first-entry agent setup
+- resume pending/failed setup internally with `init-dev-branch-extension`; never expose its PowerShell
 - check current branch after changes: `check-dev-branch`
 - update current development branch infobase from branch files without tests, when explicitly requested: `update-dev-branch-base`
 - verify current branch when compatibility wording is used: `verify-dev-branch`
@@ -43,12 +43,14 @@ For actions that require a branch name and create a new branch, use the monitore
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action new-dev-branch -DevBranchName "<dev-branch-name>"
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action new-extension-dev-branch -DevBranchName "<dev-branch-name>"
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action new-extension-dev-branch -DevBranchName "<dev-branch-name>" -ExtensionInitMode Empty -ExtensionName "<extension-name>" -OfferOpenAgent
 ```
+
+For CFE, replace `Empty` with `Cfe` and append `-ExtensionSourcePath "<absolute-file.cfe>"`. If unknown, omit extension parameters; pending state routes first-entry setup.
 
 Use direct `agent-1c.ps1` for branch creation only when the master source confirmation matches the current base/user or non-interactive automation explicitly sets `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip`.
 
-New branch commands run from `master` and create a sibling Git worktree by default. Report the printed worktree path and tell the developer to open a separate window of the selected agent or IDE there. Use `-UseCurrentWorktree` only when explicitly requested.
+New branches use sibling worktrees from `master`. Use the path and helper opening; never make the developer copy lifecycle commands. `-UseCurrentWorktree` is explicit-only.
 
 New branch commands prepare branch-local ROCTUP and Vanessa UI MCP as stopped/ready; they do not start MCP or open the branch infobase. For data exploration, run `start-roctup-mcp`, use the MCP, then run `stop-roctup-mcp`. For runtime UI research, recording, or debugging only, follow `.agents/skills/itl-vanessa-ui-mcp/SKILL.md`, then use `start-vanessa-mcp` and `stop-vanessa-mcp`. Static form/source questions do not start Vanessa UI MCP. `/itl-check` is separate Vanessa Automation verification, not MCP.
 

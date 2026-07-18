@@ -38,17 +38,18 @@ Use the monitored launcher by default when `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_
 12. Build the event-log baseline and store its reader/cache/count/duration evidence.
 13. Persist `initializationStatus=enterprise-normalization-pending`, then run Enterprise with the bundled auto-update EPF against the copied branch infobase only. Save `enterpriseNormalizationStatus`, reason, error, time, EPF and log evidence; set `initializationStatus=ready` only after success.
 14. Report branch, worktree/base paths, launcher, MCP/publication state, event-log scan evidence, and Enterprise normalization state.
-15. Print the Russian instruction that the current folder stayed on `master`, the new worktree path, and the developer should open a separate window of the selected agent or IDE there. If its command picker is cached, print the adapter-specific reload instruction.
+15. For an extension branch, run the separately transactional initialization phase inside the new worktree when `ExtensionInitMode`, `ExtensionName`, and optional CFE path were collected in chat. If they are explicitly unknown, persist `extensionInitializationStatus=pending`; every development action blocks with `EXTENSION_INIT_REQUIRED` until the agent collects the values on first entry and completes initialization. Never hand a PowerShell command to the developer.
+16. Print the Russian instruction that the current folder stayed on `master`, report the structured new worktree path, and open a separate window of the selected agent or IDE best-effort. If its command picker is cached, print the adapter-specific reload instruction.
 
 If the final Enterprise step fails, preserve the worktree, copied infobase, launcher, and failed state. Repeating `new-dev-branch` reuses those assets and retries normalization without copying the base again. Branches created by older workflow versions have no marker; before the first Enterprise-bound ROCTUP, Vanessa UI, Vanessa Automation, publication, or legacy Data MCP action, normalize them once with reason `legacy-preflight`. Never run this normalization against the source infobase.
 
 If branch creation used `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip` before protection was actually disabled, recover from the branch worktree through the monitored `configure-dev-branch-unsafe-action-protection` helper action. It reopens the normal visible Designer confirmation flow and can record an empty-password local user through `-InfoBaseUser`; do not recreate the branch or mark protection confirmed without the developer's explicit UI action and confirmation.
 
-For extension branches, do not ask for `extensionName` and do not create the extension during branch creation. The extension is created later in the copied branch infobase.
+For extension branches, ask in chat for Empty or CFE, the extension name, and the CFE path when applicable before launching branch creation. Branch copy and extension initialization remain separate transactional phases, but `new-extension-dev-branch` orchestrates both in one user scenario. If the values are unknown, only the second phase is deferred and persisted as pending.
 
 ## Extension Helpers
 
-After `new-extension-dev-branch`, run `init-dev-branch-extension -ExtensionInitMode Empty|Cfe -ExtensionName <name> [-ExtensionSourcePath <file.cfe>]` from the new worktree. `Empty` uses the installed `cfe-init.ps1` scaffold and Designer `/LoadConfigFromFiles ... -Extension`; `Cfe` loads the binary directly with `/LoadCfg ... -Extension`. Neither mode uses Designer Agent, `AgentMode`, `/Extension`, or CFE unpacking. The helper snapshots the copied infobase, rolls back on failure, dumps normalized sources only to `src/cfe/<ExtensionName>`, validates them, and records state only after full success.
+The composite `new-extension-dev-branch` invokes `init-dev-branch-extension -ExtensionInitMode Empty|Cfe -ExtensionName <name> [-ExtensionSourcePath <file.cfe>]` internally from the new worktree. A pending or failed second phase can be resumed without copying the branch infobase again. `Empty` uses the installed `cfe-init.ps1` scaffold and Designer `/LoadConfigFromFiles ... -Extension`; `Cfe` loads the binary directly with `/LoadCfg ... -Extension`. Neither mode uses Designer Agent, `AgentMode`, `/Extension`, or CFE unpacking. The helper snapshots the copied infobase, rolls back on failure, dumps normalized sources only to `src/cfe/<ExtensionName>`, validates them, and records `ready` only after full success.
 
 A configuration branch may contain several related features. An extension branch may also contain several features or OpenSpec changes, but only for its one selected extension. A second changed CFE requires a separate branch, worktree, and branch infobase; the lifecycle intentionally has no `extensions[]` state. Update, check, dump, result, and close reject changed paths under another `src/cfe/<Name>` with `EXTENSION_BRANCH_SINGLE_ARTIFACT` while tolerating unchanged baseline CFE directories.
 
@@ -59,7 +60,7 @@ Rules:
 - Find branch state from `DevBranchName` or current branch.
 - If the state belongs to another worktree, report `worktreePath` and tell the developer to open that folder.
 - For legacy branches, require a clean Git worktree and checkout the saved branch.
-- For a new extension branch without initialized extension state, tell the developer to run `init-dev-branch-extension`. Use `set-dev-branch-extension` only for a manually created legacy extension.
+- For a new extension branch without initialized extension state, ask the developer for Empty or CFE, extension name, and optional CFE path in chat, then invoke `init-dev-branch-extension` internally. Never tell the developer to run it. Use `set-dev-branch-extension` only for a manually created legacy extension.
 
 ## Branch Context And Base Update
 

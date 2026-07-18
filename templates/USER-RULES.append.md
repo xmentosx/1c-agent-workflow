@@ -1,16 +1,18 @@
 ## 1C Project Lifecycle
 
-ITL owns lifecycle, branch infobases, MCP state, verification, and result export. Use `.agents/skills/1c-workflow-fast/SKILL.md` for routine work and `.agents/skills/1c-workflow/SKILL.md` plus one routed reference for init, recovery, or explanation. Commands invoke helpers; do not reproduce lifecycle steps. For 1C Designer/Enterprise operations such as `LoadConfigFromFiles` and `UpdateDBCfg`, use `timeout_ms >= 1800000`; do not use `120000 ms`. Status/help actions do not need the long timeout.
+ITL owns lifecycle, branch bases, MCP, verification, and export. Use `1c-workflow-fast` for routine work and `1c-workflow` plus one routed reference for recovery/explanation. Invoke helpers; never reproduce their flows. 1C Designer/Enterprise actions such as `LoadConfigFromFiles` and `UpdateDBCfg` need `timeout_ms >= 1800000`. Do not use `120000 ms`; status/help actions do not.
 
 For Kilo `/itl`, return helper stdout verbatim, including `Lifecycle:` and `Additional helper actions:`; do not summarize, merge OpenSpec into it, or add a "no lifecycle actions executed" note.
 
-Exactly one agent client is active. Its native adapter owns command/rule/agent placement; the five ITL lifecycle skills always remain under `.agents/skills`. Change clients only from clean `master` through `/itl-switch-client`; update development worktrees later through `/itl-refresh`.
+One agent client is active. Its adapter owns commands/rules/agents; five ITL skills remain under `.agents/skills`. Switch only from clean `master` via `/itl-switch-client`; update worktrees later via `/itl-refresh`.
 
 Before any code or metadata edit, mechanically classify the request as quick-fix or OpenSpec. Quick-fix is limited by `QUICKFIX_MAX_LINES` and still needs focused regression evidence. For every OpenSpec explore/propose/apply surface, run the installed ITL preflight: read `AGENTS.md` and `USER-RULES.md`, activate required project skills, consult required documentation sources first, record `Context Sources`, create `test-plan.md` at propose, follow it at apply, and finish with fresh applicable ITL evidence. Do not trust conversational memory as a substitute for this preflight.
 
 For PM5 product logic, architecture, workflows, permissions, reports, integrations, acceptance tests, and OpenSpec work, activate `.agents/skills/product-docs/SKILL.md` before analysis or changes. Search `BookStack-product-docs-mcp` first, before broad repository traversal; verify against code, tests, current 1C metadata, and available MCP evidence; cite sources and surface conflicts. PM4 projects use the PM4 replacement rule installed by the helper.
 
 Use sibling `itldev/*` worktrees and only the state-proven copied branch infobase. Never run development load/dump/test commands against the source infobase. `/update1cbase`, `/loadfrom1cbase`, `/getconfigfiles`, and `/deploy-and-test` are thin ITL bridges and must reconcile branch state before acting. On `master` or outside managed `itldev/*`, they stop without mutation.
+
+Pending extension branches ask Empty/CFE, name, and optional path, then initialize internally in their worktree. Never give PowerShell; blocked actions return `EXTENSION_INIT_REQUIRED`.
 
 `ITL_VANESSA_TESTING` and `ITL_CHECK_EVENT_LOG` accept `auto|manual|off`; default `auto`. Before reporting 1C changes done, ensure coverage; new/changed `.feature` uses `/itl-vanessa-author`; then run fresh `/itl-check` after the last edit. Quick-fix is no exception: `verify_xml` and static checks are prechecks. Else report `pending verification`. `manual` runs for commands or requests; `off` runs only when the user explicitly requests that named component. Upstream `VERIFICATION_DEPTH` and `UI_TESTING` stay independent.
 

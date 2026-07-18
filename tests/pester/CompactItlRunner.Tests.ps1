@@ -76,6 +76,32 @@ exit 0
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "returns a successful pending extension branch with a structured agent next step" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-extension-pending-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            $runRoot = Join-Path $tempRoot ".agent-1c\runs\fixture"
+            $worktree = Join-Path $tempRoot "worktrees\demo"
+            New-Item -ItemType Directory -Force -Path $scriptRoot, $runRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "run-agent-1c-window.ps1") -Encoding UTF8 -Value @"
+`$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action='new-extension-dev-branch'; stage='extension-init.pending'; stageDetail='waiting'; errorMessage=''; exitCode=0; lastLogPath=''; requiredAction='Ask in chat; do not expose PowerShell.'; devBranch='itldev/demo'; worktreePath='$($worktree.Replace("'", "''"))'; extensionInitializationStatus='pending' }
+[IO.File]::WriteAllText('$($runRoot.Replace("'", "''"))\status.json',((`$payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding `$false))
+[IO.File]::WriteAllText('$($runRoot.Replace("'", "''"))\console.log','pending branch log',(New-Object Text.UTF8Encoding `$false))
+Write-Output 'Run directory: $runRoot'
+exit 0
+"@
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -Windowed -- -Action new-extension-dev-branch -DevBranchName demo
+            $LASTEXITCODE | Should -Be 0
+            $summary = ($output -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be "succeeded"
+            $summary.nextAction | Should -Be "Ask in chat; do not expose PowerShell."
+            $summary.devBranch | Should -Be "itldev/demo"
+            $summary.worktreePath | Should -Be $worktree
+            $summary.extensionInitializationStatus | Should -Be "pending"
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "returns structured Vanessa authoring failure without requiring the log tail" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-authoring-" + [guid]::NewGuid().ToString("N"))
         try {

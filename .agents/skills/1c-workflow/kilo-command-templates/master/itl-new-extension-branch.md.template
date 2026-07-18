@@ -5,14 +5,20 @@ agent: code
 
 Use this command only from the `master` worktree. Treat any text after `/itl-new-extension-branch` as the development branch name. If it is missing, ask for one short value.
 
+Before launching, ask in chat whether the branch should create an `Empty` extension or load an existing `CFE`, then collect the extension name and the CFE path when applicable. If the developer explicitly does not know these values yet, create the branch without extension parameters; its saved `pending` state will make extension setup the mandatory first agent-guided step in the new worktree. Never ask the developer to open a terminal or copy a PowerShell command.
+
 Run the monitored helper launcher from the current project directory so the manual unsafe-action protection confirmation is visible:
 
 If the agent shell tool supports `timeout_ms`, run this lifecycle command with `timeout_ms >= 1800000`; do not use `120000 ms` or other short defaults because the helper may launch 1C Designer/Enterprise operations.
 
+For an Empty extension:
+
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -Windowed -- -Action new-extension-dev-branch -DevBranchName "<dev-branch-name>"
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -Windowed -- -Action new-extension-dev-branch -DevBranchName "<dev-branch-name>" -ExtensionInitMode Empty -ExtensionName "<extension-name>" -OfferOpenAgent
 ```
+
+For an existing CFE, use the same command with `-ExtensionInitMode Cfe` and `-ExtensionSourcePath "<absolute-file.cfe>"`. If the values are explicitly unknown, omit all three extension parameters but keep `-OfferOpenAgent`.
 
 Use direct `agent-1c.ps1` only for non-interactive automation that explicitly sets `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip` after the unsafe-action protection is configured separately.
 
-The helper creates a sibling Git worktree and a branch infobase copy. It does not create the extension object itself. After opening the printed worktree folder, ask the agent to set up the extension name and dump extension files when the extension has been created in the branch infobase.
+The helper creates the sibling worktree and branch infobase, then runs the transactional extension initialization inside that worktree. On success, report that the branch and extension are ready and use the structured `worktreePath`; do not expose the internal helper command. Without initialization parameters, report `extensionInitializationStatus=pending` and continue the setup through the agent in that worktree before any development action.

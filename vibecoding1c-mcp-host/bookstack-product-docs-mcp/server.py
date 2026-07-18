@@ -7,12 +7,22 @@ import re
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 from urllib import error, parse, request
+
+
+DEFAULT_SEARCH_LIMIT = 5
+MAX_SEARCH_LIMIT = 20
+SEARCH_PREVIEW_CHARS = 180
+DEFAULT_PAGE_MAX_CHARS = 12000
+MAX_PAGE_MAX_CHARS = 50000
+DEFAULT_STRUCTURE_LIMIT = 30
+MAX_STRUCTURE_LIMIT = 100
 
 
 class BookStackApiError(RuntimeError):
@@ -211,11 +221,18 @@ class BookStackClient:
 
     def structure(self, scope: str, limit: int) -> Dict[str, List[Dict[str, Any]]]:
         payload: Dict[str, List[Dict[str, Any]]] = {}
-        scopes = {"shelves", "books", "chapters", "pages"} if scope == "all" else {scope}
-        for item_scope in scopes:
-            if item_scope not in {"shelves", "books", "chapters", "pages"}:
+        scopes = ["shelves", "books", "chapters", "pages"] if scope == "all" else [scope]
+        scopes = [item_scope for item_scope in scopes if item_scope in {"shelves", "books", "chapters", "pages"}]
+        if not scopes:
+            return payload
+        base_limit, remainder = divmod(limit, len(scopes))
+        for index, item_scope in enumerate(scopes):
+            scope_limit = base_limit + (1 if index < remainder else 0)
+            if scope_limit <= 0:
+                payload[item_scope] = []
                 continue
-            payload[item_scope] = self.paginated(f"/api/{item_scope}", max_items=limit)
+            items = self.paginated(f"/api/{item_scope}", max_items=scope_limit)
+            payload[item_scope] = [compact_structure_item(item, item_scope) for item in items]
         return payload
 
 
@@ -287,10 +304,15 @@ class DocsCache:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
-    def connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _init_schema(self) -> None:
         with self.connect() as conn:
@@ -561,7 +583,7 @@ class ProductDocsService:
         if not query or not query.strip():
             return {"ok": False, "error": "query is required", "results": []}
         effective_filters = filters or {}
-        limit = max(1, min(int(limit or 10), 50))
+        limit = max(1, min(int(limit or DEFAULT_SEARCH_LIMIT), MAX_SEARCH_LIMIT))
         results = self.cache.search(query, limit * 2, effective_filters) if self.cache.count_pages() > 0 else []
         semantic = self.semantic_results(query, limit * 2, effective_filters)
         results = merge_results(results, semantic)
@@ -574,9 +596,7 @@ class ProductDocsService:
             "ok": True,
             "query": query,
             "source": "cache+live" if live_used else "cache",
-            "cache_pages": self.cache.count_pages(),
-            "embedding_enabled": self.embeddings.enabled(),
-            "embedding_error": self.last_embedding_error,
+            "result_count": min(len(results), limit),
             "results": [public_result(result, query) for result in results[:limit]],
         }
 
@@ -600,7 +620,16 @@ class ProductDocsService:
         scored.sort(key=lambda item: float(item.get("semantic_score", 0)), reverse=True)
         return scored[:limit]
 
-    def read_page(self, page_id: Optional[int], url: str, fmt: str) -> Dict[str, Any]:
+    def read_page(
+        self,
+        page_id: Optional[int],
+        url: str,
+        fmt: str,
+        query: str = "",
+        heading: str = "",
+        cursor: int = 0,
+        max_chars: int = DEFAULT_PAGE_MAX_CHARS,
+    ) -> Dict[str, Any]:
         resolved_id = page_id
         if not resolved_id and url:
             resolved_id = self.cache.find_page_id_by_url(url)
@@ -626,18 +655,48 @@ class ProductDocsService:
                     content = self.client.export_page(int(resolved_id), "markdown")
                 except Exception:
                     content = str((cached or {}).get("content_text", "")) or html_to_text(str(page.get("html", "")))
+        normalized_content = clean_text(content) if content_format != "html" else content
+        selection = select_content(
+            normalized_content,
+            query=query,
+            heading=heading,
+            cursor=cursor,
+            max_chars=max_chars,
+            markdown=content_format == "markdown",
+        )
+        if not selection["ok"]:
+            return {
+                "ok": False,
+                "error": selection["error"],
+                "metadata": compact_page_metadata(cached or normalize_search_item(page)),
+                "available_headings": selection.get("available_headings", []),
+            }
         return {
             "ok": True,
             "format": content_format,
-            "metadata": public_page_metadata(cached or normalize_search_item(page)),
-            "content": clean_text(content) if content_format != "html" else content,
+            "metadata": compact_page_metadata(cached or normalize_search_item(page)),
+            "content": selection["content"],
+            "total_chars": len(normalized_content),
+            "selection": selection["selection"],
+            "match_found": selection["match_found"],
+            "cursor": selection["cursor"],
+            "next_cursor": selection["next_cursor"],
+            "truncated": selection["truncated"],
         }
 
     def list_structure(self, scope: str, limit: int) -> Dict[str, Any]:
         scope = (scope or "all").lower()
-        limit = max(1, min(int(limit or 200), 1000))
+        if scope not in {"all", "shelves", "books", "chapters", "pages"}:
+            return {"ok": False, "error": "scope must be all, shelves, books, chapters, or pages", "structure": {}}
+        limit = max(1, min(int(limit or DEFAULT_STRUCTURE_LIMIT), MAX_STRUCTURE_LIMIT))
         structure = self.client.structure(scope, limit)
-        return {"ok": True, "scope": scope, "structure": structure}
+        return {
+            "ok": True,
+            "scope": scope,
+            "limit": limit,
+            "result_count": sum(len(items) for items in structure.values()),
+            "structure": structure,
+        }
 
     def reindex_docs(self, force: bool = False, limit: int = 0) -> Dict[str, Any]:
         pages = self.client.list_pages(max_items=limit or self.settings.max_index_pages)
@@ -740,33 +799,43 @@ def hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def public_page_metadata(page: Dict[str, Any]) -> Dict[str, Any]:
-    return {
+def compact_dict(value: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: item for key, item in value.items() if item not in {None, "", False}}
+
+
+def compact_page_metadata(page: Dict[str, Any]) -> Dict[str, Any]:
+    return compact_dict({
         "id": page.get("id"),
-        "type": page.get("type", "page"),
         "title": page.get("title") or page.get("name"),
-        "name": page.get("name") or page.get("title"),
         "url": page.get("url"),
-        "book_id": page.get("book_id"),
-        "chapter_id": page.get("chapter_id"),
         "book_name": page.get("book_name"),
         "chapter_name": page.get("chapter_name"),
-        "tags": page.get("tags", []),
         "updated_at": page.get("updated_at"),
-        "indexed_at": page.get("indexed_at"),
-        "source": page.get("source", "live"),
-    }
+    })
+
+
+def compact_structure_item(item: Dict[str, Any], scope: str) -> Dict[str, Any]:
+    item_type = {"shelves": "shelf", "books": "book", "chapters": "chapter", "pages": "page"}.get(scope, scope)
+    return compact_dict({
+        "id": to_int(item.get("id")),
+        "type": item_type,
+        "name": item.get("name") or item.get("title"),
+        "url": item.get("url"),
+        "book_id": to_int(item.get("book_id")),
+        "chapter_id": to_int(item.get("chapter_id")),
+        "shelf_id": to_int(item.get("shelf_id")),
+    })
 
 
 def public_result(page: Dict[str, Any], query: str) -> Dict[str, Any]:
-    result = public_page_metadata(page)
+    result = compact_page_metadata(page)
     result["preview"] = preview_for(str(page.get("content_text", "") or page.get("preview", "")), query)
     if "semantic_score" in page:
-        result["semantic_score"] = page["semantic_score"]
+        result["semantic_score"] = round(float(page["semantic_score"]), 4)
     return result
 
 
-def preview_for(text: str, query: str, length: int = 280) -> str:
+def preview_for(text: str, query: str, length: int = SEARCH_PREVIEW_CHARS) -> str:
     text = clean_text(text)
     if not text:
         return ""
@@ -784,6 +853,125 @@ def preview_for(text: str, query: str, length: int = 280) -> str:
     if start + length < len(text):
         snippet += "..."
     return snippet
+
+
+def markdown_headings(content: str) -> List[Dict[str, Any]]:
+    headings: List[Dict[str, Any]] = []
+    for match in re.finditer(r"(?m)^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$", content):
+        headings.append(
+            {
+                "level": len(match.group(1)),
+                "title": clean_text(match.group(2)),
+                "start": match.start(),
+                "content_start": match.end(),
+            }
+        )
+    return headings
+
+
+def markdown_section(content: str, heading: str) -> Tuple[Optional[str], str, List[str]]:
+    headings = markdown_headings(content)
+    available = [str(item["title"]) for item in headings[:50]]
+    requested = clean_text(heading).casefold()
+    selected_index = next(
+        (index for index, item in enumerate(headings) if requested in str(item["title"]).casefold()),
+        None,
+    )
+    if selected_index is None:
+        return None, "", available
+    selected = headings[selected_index]
+    end = len(content)
+    for following in headings[selected_index + 1 :]:
+        if int(following["level"]) <= int(selected["level"]):
+            end = int(following["start"])
+            break
+    return content[int(selected["start"]) : end].strip(), str(selected["title"]), available
+
+
+def query_match_offset(content: str, query: str) -> Optional[int]:
+    lowered = content.casefold()
+    requested = clean_text(query).casefold()
+    if requested:
+        exact = lowered.find(requested)
+        if exact >= 0:
+            return exact
+    for token in re.findall(r"[\w-]+", requested, flags=re.UNICODE):
+        position = lowered.find(token)
+        if position >= 0:
+            return position
+    return None
+
+
+def select_content(
+    content: str,
+    query: str = "",
+    heading: str = "",
+    cursor: int = 0,
+    max_chars: int = DEFAULT_PAGE_MAX_CHARS,
+    markdown: bool = True,
+) -> Dict[str, Any]:
+    try:
+        cursor = max(0, int(cursor or 0))
+        requested_max = int(DEFAULT_PAGE_MAX_CHARS if max_chars is None else max_chars)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "cursor and max_chars must be integers"}
+    if requested_max < 0:
+        return {"ok": False, "error": "max_chars must be zero or a positive integer"}
+    effective_max = 0 if requested_max == 0 else max(1, min(requested_max, MAX_PAGE_MAX_CHARS))
+    selected_content = content
+    selection = "full"
+    match_found = False
+    if heading:
+        if not markdown:
+            return {"ok": False, "error": "heading selection is available only for markdown pages"}
+        section, matched_heading, available = markdown_section(content, heading)
+        if section is None:
+            return {
+                "ok": False,
+                "error": f"heading not found: {heading}",
+                "available_headings": available,
+            }
+        selected_content = section
+        selection = f"heading:{matched_heading}"
+    start = cursor
+    if query and cursor == 0:
+        match_offset = query_match_offset(selected_content, query)
+        match_found = match_offset is not None
+        if match_offset is not None and effective_max:
+            start = max(0, match_offset - min(500, effective_max // 4))
+        if match_offset is not None:
+            selection = f"{selection}+query" if heading else "query"
+    if start > len(selected_content):
+        return {"ok": False, "error": f"cursor {start} is beyond selected content length {len(selected_content)}"}
+    end = len(selected_content) if effective_max == 0 else min(len(selected_content), start + effective_max)
+    next_cursor = end if end < len(selected_content) else None
+    return {
+        "ok": True,
+        "content": selected_content[start:end],
+        "selection": selection,
+        "match_found": match_found,
+        "cursor": start,
+        "next_cursor": next_cursor,
+        "truncated": start > 0 or end < len(selected_content),
+    }
+
+
+def tool_result_summary(operation: str, result: Dict[str, Any]) -> str:
+    if not result.get("ok"):
+        return f"BookStack {operation} failed: {result.get('error', 'unknown error')}"
+    if operation == "search":
+        return f"BookStack search returned {result.get('result_count', 0)} compact result(s)."
+    if operation == "read":
+        content_chars = len(str(result.get("content", "")))
+        suffix = f"; next_cursor={result['next_cursor']}" if result.get("next_cursor") is not None else ""
+        return f"BookStack page excerpt returned {content_chars}/{result.get('total_chars', content_chars)} chars{suffix}."
+    if operation == "structure":
+        return f"BookStack structure returned {result.get('result_count', 0)} compact item(s)."
+    if operation == "reindex":
+        return f"BookStack reindex saw {result.get('pages_seen', 0)} page(s), indexed {result.get('indexed', 0)}."
+    if operation == "status":
+        return f"BookStack index contains {result.get('cache_pages', 0)} cached page(s)."
+    return f"BookStack {operation} completed."
 
 
 def normalize_search_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -865,50 +1053,75 @@ def cosine_similarity(left: List[float], right: List[float]) -> float:
 
 def create_mcp() -> Tuple[Any, ProductDocsService]:
     from fastmcp import FastMCP
+    from fastmcp.tools.tool import ToolResult
 
     settings = Settings.from_env()
     service = ProductDocsService(settings)
     mcp = FastMCP("bookstack-product-docs")
 
-    @mcp.tool
-    def search_docs(query: str, filters: Optional[Dict[str, Any]] = None, limit: int = 10) -> Dict[str, Any]:
-        """Search BookStack product documentation using local cache first, then live BookStack search as fallback."""
-        try:
-            return service.search_docs(query=query, filters=filters, limit=limit)
-        except Exception as exc:
-            return {"ok": False, "error": str(exc), "results": []}
+    def wrap_result(operation: str, result: Dict[str, Any]) -> Any:
+        return ToolResult(content=tool_result_summary(operation, result), structured_content=result)
 
     @mcp.tool
-    def read_page(page_id: Optional[int] = None, url: str = "", format: str = "markdown") -> Dict[str, Any]:
-        """Read a BookStack page by page_id or cached URL and refresh stale cached content before returning it."""
+    def search_docs(query: str, filters: Optional[Dict[str, Any]] = None, limit: int = DEFAULT_SEARCH_LIMIT):
+        """Search BookStack product docs. Start with 3-5 results and read only relevant pages."""
         try:
-            return service.read_page(page_id=page_id, url=url, fmt=format)
+            result = service.search_docs(query=query, filters=filters, limit=limit)
         except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+            result = {"ok": False, "error": str(exc), "results": []}
+        return wrap_result("search", result)
 
     @mcp.tool
-    def list_structure(scope: str = "all", limit: int = 200) -> Dict[str, Any]:
-        """List BookStack shelves, books, chapters, and pages for navigation."""
+    def read_page(
+        page_id: Optional[int] = None,
+        url: str = "",
+        format: str = "markdown",
+        query: str = "",
+        heading: str = "",
+        cursor: int = 0,
+        max_chars: int = DEFAULT_PAGE_MAX_CHARS,
+    ):
+        """Read a bounded page excerpt. Narrow with query/heading; follow next_cursor. Use max_chars=0 only for explicit full reads."""
         try:
-            return service.list_structure(scope=scope, limit=limit)
+            result = service.read_page(
+                page_id=page_id,
+                url=url,
+                fmt=format,
+                query=query,
+                heading=heading,
+                cursor=cursor,
+                max_chars=max_chars,
+            )
         except Exception as exc:
-            return {"ok": False, "error": str(exc), "structure": {}}
+            result = {"ok": False, "error": str(exc)}
+        return wrap_result("read", result)
 
     @mcp.tool
-    def reindex_docs(force: bool = False, limit: int = 0) -> Dict[str, Any]:
+    def list_structure(scope: str = "all", limit: int = DEFAULT_STRUCTURE_LIMIT):
+        """List a compact, bounded BookStack structure. Prefer a specific scope and use only when search is insufficient."""
+        try:
+            result = service.list_structure(scope=scope, limit=limit)
+        except Exception as exc:
+            result = {"ok": False, "error": str(exc), "structure": {}}
+        return wrap_result("structure", result)
+
+    @mcp.tool
+    def reindex_docs(force: bool = False, limit: int = 0):
         """Refresh the local BookStack cache and optional semantic embeddings."""
         try:
-            return service.reindex_docs(force=force, limit=limit)
+            result = service.reindex_docs(force=force, limit=limit)
         except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+            result = {"ok": False, "error": str(exc)}
+        return wrap_result("reindex", result)
 
     @mcp.tool
-    def index_status() -> Dict[str, Any]:
+    def index_status():
         """Return local BookStack cache and embedding index status without refreshing the index."""
         try:
-            return service.index_status()
+            result = service.index_status()
         except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+            result = {"ok": False, "error": str(exc)}
+        return wrap_result("status", result)
 
     return mcp, service
 

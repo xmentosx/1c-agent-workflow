@@ -2349,6 +2349,10 @@ if (`$?) { exit 0 } else { exit 1 }
 
         $configBranchTemplate | Should -Match ([regex]::Escape("run-itl-command.ps1 -Windowed -- -Action new-dev-branch"))
         $extensionBranchTemplate | Should -Match ([regex]::Escape("run-itl-command.ps1 -Windowed -- -Action new-extension-dev-branch"))
+        $extensionBranchTemplate | Should -Match "ExtensionInitMode Empty"
+        $extensionBranchTemplate | Should -Match "ExtensionSourcePath"
+        $extensionBranchTemplate | Should -Match "Never ask the developer to open a terminal or copy a PowerShell command"
+        $extensionBranchTemplate | Should -Match "-OfferOpenAgent"
         $fastSkill | Should -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action new-dev-branch"))
         $fastSkill | Should -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action new-extension-dev-branch"))
     }

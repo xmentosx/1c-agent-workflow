@@ -31,6 +31,13 @@ Configure `bookStackProductDocsServer.baseUrl`, set read-only `BOOKSTACK_TOKEN_I
 `BOOKSTACK_TOKEN_SECRET` in `secrets`, and keep `bookstack` in `enabledServers.global`.
 The MCP publishes as `BookStack-product-docs-mcp` and exposes `search_docs`, `read_page`,
 `list_structure`, `index_status`, and `reindex_docs`.
+Search defaults to five compact results. `read_page` returns at most 12,000 characters by
+default and supports `query`, `heading`, and cursor continuation; use `max_chars=0` only for
+an explicit full-page read. `list_structure` returns compact entries and treats its default
+limit of 30 as a total budget across the requested scopes.
+Tool calls keep the machine-readable payload in `structuredContent` and put only a short
+status summary in the traditional text content, avoiding a second full
+JSON copy in clients that expose both result forms.
 
 The `mantis` global server is built locally from `mantis-ticket-mcp/`.
 Configure `mantisTicketServer.baseUrl`, set read-only `MANTIS_API_TOKEN` in `secrets`,

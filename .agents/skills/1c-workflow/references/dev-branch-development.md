@@ -48,7 +48,7 @@ verify helper action                       Совместимый alias для /
 
 `vibecoding1c-mcp helper action` в worktree текущей `itldev/*` ветки подключает выбранные vibecoding1c MCP endpoints. Если для `code` или `graph` выбран local branch scope, helper поднимает отдельный vibecoding1c MCP для текущей ветки. vibecoding1c MCP соседних веток в client config не добавляются; Vanessa UI MCP управляется отдельно через `vanessa-mcp helper action`.
 
-После создания extension-ветки выполните отдельную обязательную инициализацию. Для пустого расширения:
+Обычно агент собирает параметры в master и helper выполняет отдельную транзакционную инициализацию внутри общего сценария создания extension-ветки. Если параметры при создании были неизвестны, состояние ветки остаётся `pending`: при первом обращении агент должен спросить, создать пустое расширение или загрузить CFE, получить имя и при необходимости путь к CFE, затем сам вызвать внутреннее действие:
 
 ```text
 init-dev-branch-extension -ExtensionInitMode Empty -ExtensionName <имя-расширения>
@@ -60,7 +60,7 @@ init-dev-branch-extension -ExtensionInitMode Empty -ExtensionName <имя-рас
 init-dev-branch-extension -ExtensionInitMode Cfe -ExtensionName <имя-расширения> -ExtensionSourcePath <файл.cfe>
 ```
 
-Helper создаёт snapshot базы, загружает расширение через Designer с `-Extension`, выгружает нормализованные исходники строго в `src/cfe/<имя-расширения>` и откатывает базу при ошибке. CFE не распаковывается; Designer Agent и `AgentMode` не используются. `set-dev-branch-extension` только записывает recovery-контекст для расширения, созданного вручную, а `dump-dev-branch-extension` остаётся recovery-выгрузкой. Дальше `/update1cbase` — обычный цикл разработки, `/itl-check` — обязательная проверка, `/itl-result` — выгрузка `CFE`.
+Эти строки описывают внутренний helper-контракт, а не команды для разработчика. Helper создаёт snapshot базы, загружает расширение через Designer с `-Extension`, выгружает нормализованные исходники строго в `src/cfe/<имя-расширения>` и откатывает базу при ошибке. CFE не распаковывается; Designer Agent и `AgentMode` не используются. `set-dev-branch-extension` только записывает recovery-контекст для расширения, созданного вручную, а `dump-dev-branch-extension` остаётся recovery-выгрузкой. До статуса `ready` все действия разработки блокируются. Дальше `/update1cbase` — обычный цикл разработки, `/itl-check` — обязательная проверка, `/itl-result` — выгрузка `CFE`.
 
 В configuration-ветке допустимы несколько фич. В extension-ветке тоже допустимы несколько фич/OpenSpec changes, но все они должны относиться к одному расширению. Для второго CFE создавайте отдельные ветку, worktree и копию базы: workflow намеренно не хранит `extensions[]`. Изменённый второй корень `src/cfe/<ДругоеИмя>` блокирует update/check/dump/result/close кодом `EXTENSION_BRANCH_SINGLE_ARTIFACT`; неизменённые baseline-каталоги не мешают.
 

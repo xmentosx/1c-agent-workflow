@@ -36,6 +36,13 @@
         ($output -join [Environment]::NewLine) | Should -Match "unit contract passed"
     }
 
+    It "bounds BookStack MCP responses and keeps explicit continuation" {
+        $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\test_server.py"
+        $output = & python $testPath 2>&1
+        $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 5 tests"
+    }
+
     It "falls back to the direct endpoint when the qualified proxy is unavailable" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-tools-proxy-state-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
@@ -74,6 +81,7 @@
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\Dockerfile") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\server.py") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\requirements.txt") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\test_server.py") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\Dockerfile") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\server.py") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\requirements.txt") -PathType Leaf) | Should -Be $true
@@ -82,6 +90,7 @@
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\mcp-tools-list-proxy.js") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\tools-contract.json") -PathType Leaf) | Should -Be $true
         $bookStackRequirementsText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\requirements.txt")
+        $bookStackRequirementsText | Should -Match "fastmcp>=2\.10,<3\.0"
         $bookStackRequirementsText | Should -Match "sentence-transformers"
         $bookStackServerText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\server.py")
         foreach ($toolName in @("search_docs", "read_page", "list_structure", "index_status", "reindex_docs")) {
@@ -99,6 +108,9 @@
         $bookStackServerText | Should -Match "SentenceTransformer"
         $bookStackServerText | Should -Match "cache_folder=self.cache_dir"
         $bookStackServerText | Should -Match "normalize_embeddings=True"
+        $bookStackServerText | Should -Match "DEFAULT_PAGE_MAX_CHARS = 12000"
+        $bookStackServerText | Should -Match "DEFAULT_STRUCTURE_LIMIT = 30"
+        $bookStackServerText | Should -Match "next_cursor"
         $mantisRequirementsText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\requirements.txt")
         $mantisRequirementsText | Should -Match "pytesseract"
         $mantisRequirementsText | Should -Match "Pillow"

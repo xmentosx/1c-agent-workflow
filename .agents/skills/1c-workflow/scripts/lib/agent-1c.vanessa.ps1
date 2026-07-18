@@ -461,6 +461,7 @@ function Prepare-VanessaAuthoring {
     Write-Section "Prepare Vanessa authoring"
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "prepare-vanessa-authoring"
+    Assert-DevBranchExtensionInitialized -State $state -Operation "prepare-vanessa-authoring"
     $decision = Get-ItlVerificationExecutionDecision -Component "vanessa" -Trigger "command"
     $features = @(Get-VanessaAuthoringFeatureRecords)
     $libraryFingerprint = Get-VanessaItlLibraryFingerprint
@@ -2184,6 +2185,7 @@ function Run-DevBranchTests {
     Set-RunStage -Stage "vanessa.prepare" -Detail "Preparing Vanessa Automation verification."
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "run-dev-branch-tests"
+    Assert-DevBranchExtensionInitialized -State $state -Operation "run-dev-branch-tests"
     $state = Ensure-DevBranchEnterpriseNormalized -State $state -Reason "legacy-preflight"
     Sync-DevBranchContextToDotEnv -State $state
 

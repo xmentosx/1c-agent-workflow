@@ -143,6 +143,9 @@ if ($null -eq $status) {
 $errorText = Limit-Text -Value (Get-ObjectValue -Object $status -Name "errorMessage" -Default "") -Length 1400
 $errorCategory = [string](Get-ObjectValue -Object $status -Name "errorCategory" -Default "")
 $requiredAction = [string](Get-ObjectValue -Object $status -Name "requiredAction" -Default "")
+$devBranch = [string](Get-ObjectValue -Object $status -Name "devBranch" -Default "")
+$worktreePath = [string](Get-ObjectValue -Object $status -Name "worktreePath" -Default "")
+$extensionInitializationStatus = [string](Get-ObjectValue -Object $status -Name "extensionInitializationStatus" -Default "")
 $authoringStatus = [string](Get-ObjectValue -Object $status -Name "authoringStatus" -Default "")
 $authoringStatePath = [string](Get-ObjectValue -Object $status -Name "authoringStatePath" -Default "")
 $logTail = ""
@@ -153,7 +156,9 @@ $confirmationRequired = $false
 if ($action -eq "export-dev-branch-result" -and ($errorText + "`n" + $logTail) -match '(?i)AllowUnverifiedResult|unverified|verification.*missing') {
     $confirmationRequired = $true
 }
-$nextAction = if ($exitCode -eq 0) {
+$nextAction = if ($exitCode -eq 0 -and $requiredAction) {
+    $requiredAction
+} elseif ($exitCode -eq 0) {
     "none"
 } elseif ($confirmationRequired) {
     "Ask the developer for explicit confirmation, then rerun with -AllowUnverifiedResult."
@@ -182,6 +187,9 @@ $summary = [ordered]@{
     error = $errorText
     errorCategory = $errorCategory
     requiredAction = $requiredAction
+    devBranch = $devBranch
+    worktreePath = $worktreePath
+    extensionInitializationStatus = $extensionInitializationStatus
     authoringStatus = $authoringStatus
     authoringStatePath = $authoringStatePath
     logPath = $logPath

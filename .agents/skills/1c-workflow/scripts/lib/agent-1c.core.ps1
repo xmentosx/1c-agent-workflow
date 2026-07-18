@@ -257,6 +257,9 @@ function Write-RunStatus {
         recoveryReason = $script:RecoveryReason
         errorCategory = $(if ($script:RunErrorCategory) { [string]$script:RunErrorCategory } else { "" })
         requiredAction = $(if ($script:RunRequiredAction) { [string]$script:RunRequiredAction } else { "" })
+        devBranch = $(if ($script:RunDevBranch) { [string]$script:RunDevBranch } else { "" })
+        worktreePath = $(if ($script:RunWorktreePath) { [string]$script:RunWorktreePath } else { "" })
+        extensionInitializationStatus = $(if ($script:RunExtensionInitializationStatus) { [string]$script:RunExtensionInitializationStatus } else { "" })
         authoringStatus = $(if ($script:RunAuthoringStatus) { [string]$script:RunAuthoringStatus } else { "" })
         authoringStatePath = $(if ($script:RunAuthoringStatePath) { [string]$script:RunAuthoringStatePath } else { "" })
     }
