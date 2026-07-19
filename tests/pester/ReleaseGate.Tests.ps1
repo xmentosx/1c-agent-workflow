@@ -46,6 +46,7 @@ Describe "Release gate scripts" {
         $text | Should -Match 'Pinned fork tag must exist locally and be annotated'
         $text | Should -Match 'release/\$tag'
         $text | Should -Match 'Release mode requires -E2EProjectRoot'
+        $text | Should -Match 'Get-CanonicalTextSha256 -Path \$catalogPath'
         $text | Should -Match 'compatibilityStatus'
         $text | Should -Match 'release-e2e-summary.json'
         $text | Should -Match '\$releaseHelperPath'

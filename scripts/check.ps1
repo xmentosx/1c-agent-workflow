@@ -39,6 +39,19 @@ function New-InventoryEntry {
     }
 }
 
+function Get-CanonicalTextSha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $text = [System.IO.File]::ReadAllText($Path, (New-Object System.Text.UTF8Encoding $false))
+    $bytes = (New-Object System.Text.UTF8Encoding $false).GetBytes($text.Replace("`r`n", "`n").Replace("`r", "`n"))
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $outputRoot = Resolve-RepositoryPath -Path $OutputDirectory -Root $repoRoot
 $qualificationFullPath = Resolve-RepositoryPath -Path $QualificationPath -Root $repoRoot
@@ -345,7 +358,7 @@ try {
                 if ([string]$catalog.generatedFrom -ne "mcp-tools-list" -or -not [string]$catalog.capturedAt) {
                     throw "Release catalog for $family was not generated from a captured real tools/list response."
                 }
-                $actualHash = (Get-FileHash -LiteralPath $catalogPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                $actualHash = Get-CanonicalTextSha256 -Path $catalogPath
                 if ($actualHash -cne ([string]$definition.catalogSha256).ToLowerInvariant()) {
                     throw "Release catalog SHA256 mismatch for $family."
                 }
