@@ -579,25 +579,45 @@ class ProductDocsService:
     def reset_cache(self) -> None:
         self.cache.reset()
 
-    def search_docs(self, query: str, filters: Optional[Dict[str, Any]], limit: int) -> Dict[str, Any]:
+    def search_docs(
+        self,
+        query: str,
+        filters: Optional[Dict[str, Any]],
+        limit: int,
+        cursor: int = 0,
+    ) -> Dict[str, Any]:
         if not query or not query.strip():
             return {"ok": False, "error": "query is required", "results": []}
         effective_filters = filters or {}
         limit = max(1, min(int(limit or DEFAULT_SEARCH_LIMIT), MAX_SEARCH_LIMIT))
-        results = self.cache.search(query, limit * 2, effective_filters) if self.cache.count_pages() > 0 else []
-        semantic = self.semantic_results(query, limit * 2, effective_filters)
+        cursor = int(cursor or 0)
+        if cursor < 0:
+            return {"ok": False, "error": "cursor must be zero or greater", "results": []}
+        cache_pages = self.cache.count_pages()
+        results = self.cache.search(query, cache_pages, effective_filters) if cache_pages > 0 else []
+        semantic = self.semantic_results(query, cache_pages, effective_filters)
         results = merge_results(results, semantic)
         live_used = False
-        if len(results) < limit or truthy(str(effective_filters.get("live", "false"))):
+        requested_end = cursor + limit
+        if len(results) < requested_end or truthy(str(effective_filters.get("live", "false"))):
             live_used = True
             live_query = build_bookstack_search_query(query, effective_filters)
-            results = merge_results(results, [normalize_search_item(item) for item in self.client.search(live_query, limit)])
+            live_limit = min(max(requested_end + 1, limit), 100)
+            results = merge_results(results, [normalize_search_item(item) for item in self.client.search(live_query, live_limit)])
+        total_matches = len(results)
+        page_results = results[cursor:requested_end]
+        next_cursor = cursor + len(page_results) if requested_end < total_matches else None
         return {
             "ok": True,
             "query": query,
             "source": "cache+live" if live_used else "cache",
-            "result_count": min(len(results), limit),
-            "results": [public_result(result, query) for result in results[:limit]],
+            "cursor": cursor,
+            "limit": limit,
+            "result_count": len(page_results),
+            "total_matches": total_matches,
+            "has_more": next_cursor is not None,
+            "next_cursor": next_cursor,
+            "results": [public_result(result, query) for result in page_results],
         }
 
     def semantic_results(self, query: str, limit: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -960,7 +980,11 @@ def tool_result_summary(operation: str, result: Dict[str, Any]) -> str:
     if not result.get("ok"):
         return f"BookStack {operation} failed: {result.get('error', 'unknown error')}"
     if operation == "search":
-        return f"BookStack search returned {result.get('result_count', 0)} compact result(s)."
+        suffix = f"; next_cursor={result['next_cursor']}" if result.get("next_cursor") is not None else ""
+        return (
+            f"BookStack search returned {result.get('result_count', 0)}/"
+            f"{result.get('total_matches', result.get('result_count', 0))} compact result(s){suffix}."
+        )
     if operation == "read":
         content_chars = len(str(result.get("content", "")))
         suffix = f"; next_cursor={result['next_cursor']}" if result.get("next_cursor") is not None else ""
@@ -1063,10 +1087,15 @@ def create_mcp() -> Tuple[Any, ProductDocsService]:
         return ToolResult(content=tool_result_summary(operation, result), structured_content=result)
 
     @mcp.tool
-    def search_docs(query: str, filters: Optional[Dict[str, Any]] = None, limit: int = DEFAULT_SEARCH_LIMIT):
-        """Search BookStack product docs. Start with 3-5 results and read only relevant pages."""
+    def search_docs(
+        query: str,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: int = DEFAULT_SEARCH_LIMIT,
+        cursor: int = 0,
+    ):
+        """Search BookStack product docs. Start with 3-5 results; follow next_cursor when broader coverage is needed."""
         try:
-            result = service.search_docs(query=query, filters=filters, limit=limit)
+            result = service.search_docs(query=query, filters=filters, limit=limit, cursor=cursor)
         except Exception as exc:
             result = {"ok": False, "error": str(exc), "results": []}
         return wrap_result("search", result)

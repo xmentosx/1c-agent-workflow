@@ -119,6 +119,10 @@ class ProductDocsServiceTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["result_count"], 5)
+        self.assertEqual(result["total_matches"], 8)
+        self.assertEqual(result["cursor"], 0)
+        self.assertEqual(result["next_cursor"], 5)
+        self.assertTrue(result["has_more"])
         self.assertEqual(len(result["results"]), 5)
         self.assertNotIn("cache_pages", result)
         self.assertNotIn("embedding_enabled", result)
@@ -126,6 +130,36 @@ class ProductDocsServiceTests(unittest.TestCase):
         self.assertNotIn("indexed_at", result["results"][0])
         self.assertLessEqual(len(result["results"][0]["preview"]), server.SEARCH_PREVIEW_CHARS + 6)
         self.assertLess(len(json.dumps(result, ensure_ascii=False)), 6000)
+        self.assertIn("next_cursor=5", server.tool_result_summary("search", result))
+
+    def test_search_cursor_pages_through_all_results_without_repeating_items(self):
+        pages = [page(index, f"Architecture decision {index}.") for index in range(1, 13)]
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, pages)
+            for item in pages:
+                service.index_page(item)
+            first = service.search_docs("Architecture", filters=None, limit=5)
+            second = service.search_docs("Architecture", filters=None, limit=5, cursor=first["next_cursor"])
+            final = service.search_docs("Architecture", filters=None, limit=5, cursor=second["next_cursor"])
+
+        result_ids = [item["id"] for result in (first, second, final) for item in result["results"]]
+        self.assertEqual(len(result_ids), 12)
+        self.assertEqual(len(set(result_ids)), 12)
+        self.assertEqual(second["cursor"], 5)
+        self.assertEqual(second["next_cursor"], 10)
+        self.assertEqual(final["cursor"], 10)
+        self.assertEqual(final["result_count"], 2)
+        self.assertEqual(final["total_matches"], 12)
+        self.assertFalse(final["has_more"])
+        self.assertIsNone(final["next_cursor"])
+
+    def test_search_rejects_negative_cursor(self):
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, [])
+            result = service.search_docs("Architecture", filters=None, limit=5, cursor=-1)
+
+        self.assertFalse(result["ok"])
+        self.assertIn("cursor", result["error"])
 
     def test_read_page_returns_query_window_and_cursor_instead_of_full_page(self):
         body = "# Intro\n" + ("intro text\n" * 2500) + "\n# Critical section\nneedle decision\n" + ("detail\n" * 2500)

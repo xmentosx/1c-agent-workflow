@@ -31,7 +31,8 @@ Configure `bookStackProductDocsServer.baseUrl`, set read-only `BOOKSTACK_TOKEN_I
 `BOOKSTACK_TOKEN_SECRET` in `secrets`, and keep `bookstack` in `enabledServers.global`.
 The MCP publishes as `BookStack-product-docs-mcp` and exposes `search_docs`, `read_page`,
 `list_structure`, `index_status`, and `reindex_docs`.
-Search defaults to five compact results. `read_page` returns at most 12,000 characters by
+Search defaults to five compact results and exposes `total_matches`, `has_more`, and
+`next_cursor` for bounded pagination. `read_page` returns at most 12,000 characters by
 default and supports `query`, `heading`, and cursor continuation; use `max_chars=0` only for
 an explicit full-page read. `list_structure` returns compact entries and treats its default
 limit of 30 as a total budget across the requested scopes.
