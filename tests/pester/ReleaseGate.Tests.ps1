@@ -324,6 +324,15 @@ switch ($Action) {
             $identityExitCode | Should -Not -Be 0
             ($identityOutput -join [Environment]::NewLine) | Should -Match "RELEASE_E2E_RESUME_STATE_MISMATCH"
 
+            # Restart is the explicit destructive rollback path. It must accept
+            # a clean externally advanced branch HEAD, while Auto above remains
+            # fail-closed for identity or expected-HEAD drift.
+            Add-Content -LiteralPath (Join-Path $worktreeRoot "README.md") -Encoding ASCII -Value "external clean advance"
+            & git -C $worktreeRoot add README.md
+            & git -C $worktreeRoot commit -m "test: externally advance clean E2E branch" *> $null
+            $LASTEXITCODE | Should -Be 0
+            @(& git -C $worktreeRoot status --porcelain --untracked-files=all).Count | Should -Be 0
+
             # Releases created before the ignored runtime-state location used a
             # tracked-worktree-visible checkpoint directory. Restart must allow
             # only that exact owned directory long enough to validate and roll

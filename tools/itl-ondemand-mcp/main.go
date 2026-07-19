@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -66,7 +66,8 @@ func run(args []string) error {
 	rt := &runtime{
 		catalog: catalog, broker: broker, projectRoot: root, family: *family,
 		instanceID: instanceID, idle: *idle, catalogWait: 30 * time.Second, logger: logger,
-		progress: make(map[string]*mcp.ServerSession),
+		vanessaConnectWait: 60 * time.Second,
+		progress:           make(map[string]*mcp.ServerSession),
 	}
 	serverName := "itl-roctup-data"
 	if *family == "vanessa-ui" {

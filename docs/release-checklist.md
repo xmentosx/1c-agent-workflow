@@ -91,6 +91,14 @@ Windows amd64 EXE built by `scripts/Build-ItlOnDemandMcp.ps1`, then copy that
 exact asset SHA256 into `templates/dependency-lock.json`. A source-extracted
 candidate catalog is never release evidence.
 
+The Vanessa live gate must also confirm silent VanessaExt readiness, connect
+TestClient through the reserved `itl-ondemand` profile, call a TestClient UI
+tool, and call an OS-window/screenshot tool. Two simultaneous facade clients
+must have distinct manager and TestClient ports; closing one must leave the
+other usable. EOF and a shortened idle-timeout probe must both remove the owned
+manager/TestClient processes and release both leases. Do not qualify a release
+from `connect_test_client` text alone.
+
 Keep `build/test-results/local/check-summary.json` and the nested E2E summary as
 release evidence. A failed cleanup, stale Vanessa result, unverified override,
 missing `ParentConfigurations.bin`, non-partial load, extra list-file entry,

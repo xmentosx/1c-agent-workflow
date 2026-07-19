@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "facadeVersion": "0.1.0",
-  "minimumFacadeVersion": "0.1.0",
+  "facadeVersion": "0.2.0",
+  "minimumFacadeVersion": "0.2.0",
   "families": {
     "roctup": {
       "serverName": "itl-roctup-data",
@@ -19,15 +19,25 @@
       "serverName": "itl-vanessa-ui",
       "backendVersions": {
         "clientMcp": "v0.6.5",
-        "vaExtension": "1.2.043.28"
+        "vaExtension": "1.2.043.28",
+        "vanessaAutomation": "1.2.043.28",
+        "vanessaExt": "1.3.9.131"
       },
       "lockKeys": [
+        "vanessaAutomation",
         "vanessaMcp.clientMcp",
         "vanessaMcp.vaExtension"
       ],
+      "embeddedDependencies": {
+        "vanessaExt": {
+          "version": "1.3.9.131",
+          "assetName": "AddIn.zip",
+          "sha256": "9ccae6b95077f196641070e358a654047ccf4a4197722d8acf8b2d82c4acea5a"
+        }
+      },
       "qualification": "live-tools-list",
       "catalog": "catalogs/vanessa-ui-v0.6.5-va-1.2.043.28.json",
-      "catalogSha256": "f686921e124916a4208947e1935789dd9546e3bfc7dc0a9ad904247fb8b39708"
+      "catalogSha256": "2d285e0ccca2e49c275b4abac2c0e3f4147a75fc18d9910541a222d937939675"
     }
   }
 }

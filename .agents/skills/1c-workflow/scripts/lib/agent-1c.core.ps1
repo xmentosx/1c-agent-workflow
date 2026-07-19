@@ -4123,9 +4123,18 @@ function Start-EnterpriseBackground {
         [string]$InfoBaseKind,
         [string[]]$EnterpriseArgs,
         [switch]$UseTestManager,
+        [switch]$UseTestClient,
+        [int]$TestClientPort = 0,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
     )
+
+    if ($UseTestManager -and $UseTestClient) {
+        throw "A background 1C process cannot be both TESTMANAGER and TESTCLIENT."
+    }
+    if ($UseTestClient -and $TestClientPort -le 0) {
+        throw "TestClientPort must be positive when UseTestClient is set."
+    }
 
     $platformPath = Get-PlatformPath
     if (-not (Test-Path -LiteralPath $platformPath)) {
@@ -4143,6 +4152,12 @@ function Start-EnterpriseBackground {
     $args = @("ENTERPRISE")
     if ($UseTestManager) {
         $args += "/TESTMANAGER"
+        if ($TestClientPort -gt 0) {
+            $args += @("-TPort", [string]$TestClientPort)
+        }
+    }
+    if ($UseTestClient) {
+        $args += @("/TESTCLIENT", "-TPort", [string]$TestClientPort)
     }
     $args += $ibArgs + @("/DisableStartupMessages", "/Out", $logPath) + $EnterpriseArgs
 

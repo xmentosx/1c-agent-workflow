@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,10 +17,11 @@ import (
 )
 
 type fakeBroker struct {
-	mu      sync.Mutex
-	info    *backendInfo
-	ensures int
-	stops   int
+	mu           sync.Mutex
+	info         *backendInfo
+	ensures      int
+	stops        int
+	stopFailures int
 }
 
 func (b *fakeBroker) Ensure(context.Context) (*backendInfo, error) {
@@ -32,6 +36,10 @@ func (b *fakeBroker) Stop(context.Context) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.stops++
+	if b.stopFailures > 0 {
+		b.stopFailures--
+		return fmt.Errorf("simulated broker stop failure")
+	}
 	return nil
 }
 
@@ -78,13 +86,21 @@ func newBackend(t *testing.T, tools []*mcp.Tool, progress bool) (*mcp.Server, *h
 }
 
 func newFacadeSession(t *testing.T, tools []*mcp.Tool, broker *fakeBroker, idle time.Duration, progress chan *mcp.ProgressNotificationParams) (*runtime, *mcp.ClientSession) {
+	return newFacadeSessionForFamily(t, "roctup", tools, broker, idle, progress)
+}
+
+func newFacadeSessionForFamily(t *testing.T, family string, tools []*mcp.Tool, broker *fakeBroker, idle time.Duration, progress chan *mcp.ProgressNotificationParams) (*runtime, *mcp.ClientSession) {
 	t.Helper()
+	serverName := "itl-roctup-data"
+	if family == "vanessa-ui" {
+		serverName = "itl-vanessa-ui"
+	}
 	rt := &runtime{
-		catalog: &loadedCatalog{SHA256: "catalog", Data: catalogFile{SchemaVersion: 1, Family: "roctup", Tools: tools}},
-		broker:  broker, projectRoot: t.TempDir(), family: "roctup", instanceID: "0123456789abcdef0123456789abcdef",
+		catalog: &loadedCatalog{SHA256: "catalog", Data: catalogFile{SchemaVersion: 1, Family: family, Tools: tools}},
+		broker:  broker, projectRoot: t.TempDir(), family: family, instanceID: "0123456789abcdef0123456789abcdef",
 		idle: idle, logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), progress: make(map[string]*mcp.ServerSession),
 	}
-	server := mcp.NewServer(&mcp.Implementation{Name: "itl-roctup-data", Version: version}, nil)
+	server := mcp.NewServer(&mcp.Implementation{Name: serverName, Version: version}, nil)
 	for _, definition := range tools {
 		tool := definition
 		server.AddTool(tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -113,6 +129,48 @@ func newFacadeSession(t *testing.T, tools []*mcp.Tool, broker *fakeBroker, idle 
 		_ = rt.close(context.Background())
 	})
 	return rt, clientSession
+}
+
+func vanessaIntegrationTools() []*mcp.Tool {
+	object := map[string]any{"type": "object"}
+	return []*mcp.Tool{
+		{Name: "get_environment_data", InputSchema: object},
+		{Name: "connect_test_client", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"profileName": map[string]any{"type": "string"}}}},
+		{Name: "get_window_list_testclient", InputSchema: object},
+		{Name: "manage_test_client_profiles", InputSchema: object},
+	}
+}
+
+func newVanessaBackend(t *testing.T, environmentText, connectText, postText string, connectCalls *int) *httptest.Server {
+	return newVanessaBackendSequence(t, environmentText, []string{connectText}, postText, connectCalls)
+}
+
+func newVanessaBackendSequence(t *testing.T, environmentText string, connectTexts []string, postText string, connectCalls *int) *httptest.Server {
+	t.Helper()
+	server := mcp.NewServer(&mcp.Implementation{Name: "fake-vanessa", Version: "1"}, nil)
+	for _, definition := range vanessaIntegrationTools() {
+		tool := definition
+		server.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			text := tool.Name
+			switch tool.Name {
+			case "get_environment_data":
+				text = environmentText
+			case "connect_test_client":
+				*connectCalls++
+				index := *connectCalls - 1
+				if index >= len(connectTexts) {
+					index = len(connectTexts) - 1
+				}
+				text = connectTexts[index]
+			case "get_window_list_testclient":
+				text = postText
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil
+		})
+	}
+	httpServer := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
+	t.Cleanup(httpServer.Close)
+	return httpServer
 }
 
 func TestRuntimeLazyHTTPPaginationCallAndProgress(t *testing.T) {
@@ -219,6 +277,158 @@ func TestRuntimeIdleCleanupStopsOnlyOwnedBroker(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("idle cleanup did not stop backend")
+}
+
+func TestRuntimeIdleCleanupRetriesAfterBrokerStopFailure(t *testing.T) {
+	tools := integrationTools()
+	_, backend := newBackend(t, tools, false)
+	broker := &fakeBroker{info: &backendInfo{URL: backend.URL}, stopFailures: 1}
+	rt, session := newFacadeSession(t, tools, broker, 30*time.Millisecond, nil)
+	if _, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "echo", Arguments: map[string]any{"value": "x"}}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		_, stops := broker.counts()
+		rt.mu.Lock()
+		cleaned := rt.backend == nil
+		rt.mu.Unlock()
+		if stops >= 2 && cleaned {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("idle cleanup did not retry a failed broker stop")
+}
+
+func TestRuntimeEOFCleanupRetriesAfterBrokerStopFailure(t *testing.T) {
+	tools := integrationTools()
+	_, backend := newBackend(t, tools, false)
+	broker := &fakeBroker{info: &backendInfo{URL: backend.URL}, stopFailures: 1}
+	rt, session := newFacadeSession(t, tools, broker, time.Minute, nil)
+	if _, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "echo", Arguments: map[string]any{"value": "x"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, stops := broker.counts(); stops != 2 {
+		t.Fatalf("EOF cleanup stop attempts=%d", stops)
+	}
+}
+
+func TestRuntimeVanessaRequiresInstalledExtension(t *testing.T) {
+	connectCalls := 0
+	backend := newVanessaBackend(t, "VanessaExt: Ложь\nДругое: Истина", "connected", "window", &connectCalls)
+	broker := &fakeBroker{info: &backendInfo{URL: backend.URL, TestClientProfile: "itl-ondemand", TestClientPort: 48151}}
+	_, session := newFacadeSessionForFamily(t, "vanessa-ui", vanessaIntegrationTools(), broker, time.Minute, nil)
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "connect_test_client", Arguments: map[string]any{"profileName": "itl-ondemand"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertToolErrorCode(t, result, "ITL_VANESSA_EXT_NOT_READY")
+	if connectCalls != 0 {
+		t.Fatalf("connect was called before VanessaExt preflight: %d", connectCalls)
+	}
+	if _, stops := broker.counts(); stops != 1 {
+		t.Fatalf("backend stop count=%d", stops)
+	}
+}
+
+func TestConfirmsVanessaExtRussianYesFromRealEnvironmentShape(t *testing.T) {
+	text := "## Внешняя компонента VanessaExt\n- Включено использование внешней компоненты VanessaExt: Да"
+	if !confirmsVanessaExt(text) {
+		t.Fatal("real get_environment_data answer did not confirm VanessaExt")
+	}
+	if confirmsVanessaExt("VanessaExt: Нет") {
+		t.Fatal("negative VanessaExt answer was accepted")
+	}
+}
+
+func TestRuntimeVanessaRejectsUnmanagedProfileBeforeUpstreamCall(t *testing.T) {
+	connectCalls := 0
+	backend := newVanessaBackend(t, "VanessaExt: Истина", "connected", "window", &connectCalls)
+	broker := &fakeBroker{info: &backendInfo{URL: backend.URL, TestClientProfile: "itl-ondemand", TestClientPort: 48151}}
+	_, session := newFacadeSessionForFamily(t, "vanessa-ui", vanessaIntegrationTools(), broker, time.Minute, nil)
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "connect_test_client", Arguments: map[string]any{"profileName": "custom"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertToolErrorCode(t, result, "ITL_VANESSA_MANAGED_PROFILE_REQUIRED")
+	if connectCalls != 0 {
+		t.Fatalf("unmanaged profile reached upstream: %d", connectCalls)
+	}
+}
+
+func TestRuntimeVanessaRejectsFalseSuccessfulConnection(t *testing.T) {
+	connectCalls := 0
+	backend := newVanessaBackend(t, "VanessaExt: Истина", "Не удалось подключить TestClient", "TestClient НЕ подключен", &connectCalls)
+	broker := &fakeBroker{info: &backendInfo{URL: backend.URL, TestClientProfile: "itl-ondemand", TestClientPort: 48151}}
+	_, session := newFacadeSessionForFamily(t, "vanessa-ui", vanessaIntegrationTools(), broker, time.Minute, nil)
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "connect_test_client", Arguments: map[string]any{"profileName": "itl-ondemand"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertToolErrorCode(t, result, "ITL_VANESSA_TESTCLIENT_CONNECT_FAILED")
+	if connectCalls != 1 {
+		t.Fatalf("connect call count=%d", connectCalls)
+	}
+}
+
+func TestRuntimeVanessaRetriesManagedConnectionUntilPostcondition(t *testing.T) {
+	connectCalls := 0
+	backend := newVanessaBackendSequence(t, "VanessaExt: Истина", []string{"Не удалось подключить TestClient", "TestClient подключен"}, "Окно: Главное", &connectCalls)
+	broker := &fakeBroker{info: &backendInfo{URL: backend.URL, TestClientProfile: "itl-ondemand", TestClientPort: 48151}}
+	rt, session := newFacadeSessionForFamily(t, "vanessa-ui", vanessaIntegrationTools(), broker, time.Minute, nil)
+	rt.vanessaConnectWait = 2 * time.Second
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "connect_test_client", Arguments: map[string]any{"profileName": "itl-ondemand"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("managed connection was not retried: %#v", result.StructuredContent)
+	}
+	if connectCalls != 2 {
+		t.Fatalf("connect call count=%d", connectCalls)
+	}
+}
+
+func TestRuntimeVanessaWritesEvidenceOnlyAfterConnectionPostcondition(t *testing.T) {
+	connectCalls := 0
+	backend := newVanessaBackend(t, "VanessaExt: Истина", "TestClient подключен", "Окно: Главное", &connectCalls)
+	broker := &fakeBroker{info: &backendInfo{URL: backend.URL, BackendVersion: "test", TestClientProfile: "itl-ondemand", TestClientPort: 48151}}
+	rt, session := newFacadeSessionForFamily(t, "vanessa-ui", vanessaIntegrationTools(), broker, time.Minute, nil)
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "connect_test_client", Arguments: map[string]any{"profileName": "itl-ondemand"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("valid managed connection failed: %#v", result.StructuredContent)
+	}
+	evidencePath := filepath.Join(rt.projectRoot, ".agent-1c", "mcp", "ondemand", "vanessa-ui", rt.instanceID+".evidence.jsonl")
+	raw, err := os.ReadFile(evidencePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"tool":"connect_test_client"`) {
+		t.Fatalf("connection evidence missing: %s", raw)
+	}
+}
+
+func assertToolErrorCode(t *testing.T, result *mcp.CallToolResult, expected string) {
+	t.Helper()
+	if result == nil || !result.IsError {
+		t.Fatalf("expected %s tool error, got %#v", expected, result)
+	}
+	structured, ok := result.StructuredContent.(map[string]any)
+	if !ok || structured["code"] != expected {
+		t.Fatalf("expected %s, got %#v", expected, result.StructuredContent)
+	}
 }
 
 func TestRuntimeIdleTimeoutStartsAfterLastConcurrentCall(t *testing.T) {

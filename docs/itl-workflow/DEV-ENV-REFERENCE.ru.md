@@ -115,8 +115,9 @@
 | `VANESSA_MCP_VA_EXTENSION_CFE_VERSION` | Версия VA extension | определяется helper | helper |
 | `VANESSA_MCP_VA_EXTENSION_CFE_SHA256` | SHA256 VA extension | определяется helper | helper |
 | `VANESSA_MCP_PORT_RANGE` | Диапазон портов | default `9874..9973` | user |
-| `VANESSA_MCP_PORT` | Порт текущей ветки | назначается helper | helper |
-| `VANESSA_MCP_URL` | URL текущей ветки | назначается helper | helper |
+| `VANESSA_MCP_TESTCLIENT_PORT_RANGE` | Отдельный диапазон TestClient экземпляров on-demand MCP | default `48151..48250` | user |
+| `VANESSA_MCP_PORT` | Legacy branch-wide порт; stdio-фасада его не использует | пусто | helper |
+| `VANESSA_MCP_URL` | Legacy branch-wide URL; stdio-фасада его не использует | пусто | helper |
 
 ## ROCTUP MCP
 

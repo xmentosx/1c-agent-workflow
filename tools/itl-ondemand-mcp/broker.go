@@ -13,17 +13,19 @@ import (
 const brokerMarker = "ITL_ONDEMAND_RESULT="
 
 type backendInfo struct {
-	SchemaVersion    int    `json:"schemaVersion"`
-	Status           string `json:"status"`
-	Family           string `json:"family"`
-	InstanceID       string `json:"instanceId"`
-	PID              int    `json:"pid"`
-	ProcessStartedAt string `json:"processStartTime"`
-	Port             int    `json:"port"`
-	URL              string `json:"url"`
-	BackendVersion   string `json:"backendVersion"`
-	CatalogSHA256    string `json:"catalogSha256"`
-	LogPath          string `json:"logPath"`
+	SchemaVersion     int    `json:"schemaVersion"`
+	Status            string `json:"status"`
+	Family            string `json:"family"`
+	InstanceID        string `json:"instanceId"`
+	PID               int    `json:"pid"`
+	ProcessStartedAt  string `json:"processStartTime"`
+	Port              int    `json:"port"`
+	URL               string `json:"url"`
+	BackendVersion    string `json:"backendVersion"`
+	CatalogSHA256     string `json:"catalogSha256"`
+	LogPath           string `json:"logPath"`
+	TestClientProfile string `json:"testClientProfile"`
+	TestClientPort    int    `json:"testClientPort"`
 }
 
 type backendBroker interface {

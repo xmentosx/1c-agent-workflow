@@ -67,13 +67,15 @@ Vanessa UI MCP is always branch-local and exposed as the stable logical server `
 Rules:
 
 1. Calls must originate from the active `itldev/*` worktree through `itl-vanessa-ui`.
-2. The first call installs missing cached CFE dependencies, starts a client-owned Vanessa `runMcp` instance, initializes Streamable HTTP, and verifies the actual catalog before forwarding unchanged arguments.
-3. Allocate a distinct port per facade process through the shared ITL registry. A client exit or ten idle minutes stops only that instance and releases its lease.
+2. The first call installs missing cached CFE dependencies, starts a client-owned Vanessa `runMcp` instance with silent/fail-closed VanessaExt installation, confirms the component through `get_environment_data`, initializes Streamable HTTP, and verifies the actual catalog before forwarding unchanged arguments. The first-run VanessaExt dialog is disabled.
+3. Allocate two distinct ports per facade process through the shared ITL registry: the private MCP manager port and a TestClient port from `VANESSA_MCP_TESTCLIENT_PORT_RANGE`. A client exit or ten idle minutes stops only that manager and its owned TestClient, then releases both leases.
 4. Init/update/refresh writes only the active client's native stdio config. One client reload is required when the facade is first installed or upgraded; backend starts never rewrite config and need no reload.
 5. Use `search_for_steps_by_keywords`, `open_feature_file`, `check_syntax`, `get_info_about_line_scenario`, `run_scenario`, and `get_test_results` by their semantic names. The agent does not address the private gateway or raw HTTP endpoint.
 6. All tools and annotations remain visible; client confirmations still apply and the facade never auto-approves dangerous operations.
 7. A catalog mismatch returns `ITL_ONDEMAND_CATALOG_MISMATCH`, stops the backend, and exposes no unverified tools.
 8. Final verification remains `/itl-check` through Vanessa Automation `TESTMANAGER -> TESTCLIENT`, not MCP.
+9. For MCP UI work, Vanessa Automation itself starts TestClient through the reserved `itl-ondemand` profile. Agents call `connect_test_client` with that exact profile and never start a separate `1cv8.exe`, change the reserved profile, or reuse the `/itl-check` TestClient port.
+10. A branch must have confirmed unsafe-action protection setup before Vanessa starts. The gateway returns `ITL_VANESSA_UNSAFE_ACTION_PROTECTION_UNCONFIRMED` instead of editing `conf.cfg` automatically; false textual connection success is converted to `ITL_VANESSA_TESTCLIENT_CONNECT_FAILED` and produces no authoring evidence.
 
 ## Legacy Branch Data MCP
 
