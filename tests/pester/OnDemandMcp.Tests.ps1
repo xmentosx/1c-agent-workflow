@@ -52,6 +52,9 @@ Describe "ITL on-demand MCP facade" {
         $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         $workflow | Should -Match 'itl-ondemand-mcp-v\*'
         $workflow | Should -Match 'scripts\\Build-ItlOnDemandMcp\.ps1'
+        $buildScript = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\Build-ItlOnDemandMcp.ps1") -Raw
+        $buildScript | Should -Match '\$env:CGO_ENABLED\s*=\s*"0"'
+        $buildScript | Should -Match '\$env:GOAMD64\s*=\s*"v1"'
         $workflow | Should -Match 'result\.sha256'
         $workflow | Should -Match 'dependency-lock\.json'
         $workflow | Should -Match 'softprops/action-gh-release@v2'

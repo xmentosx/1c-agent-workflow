@@ -25,14 +25,20 @@ try {
     }
     $oldGoOs = $env:GOOS
     $oldGoArch = $env:GOARCH
+    $oldGoAmd64 = $env:GOAMD64
+    $oldCgoEnabled = $env:CGO_ENABLED
     try {
         $env:GOOS = "windows"
         $env:GOARCH = "amd64"
+        $env:GOAMD64 = "v1"
+        $env:CGO_ENABLED = "0"
         & go build -trimpath -buildvcs=false -ldflags "-s -w -buildid=" -o $OutputPath .
         if ($LASTEXITCODE -ne 0) { throw "itl-ondemand-mcp build failed." }
     } finally {
         $env:GOOS = $oldGoOs
         $env:GOARCH = $oldGoArch
+        $env:GOAMD64 = $oldGoAmd64
+        $env:CGO_ENABLED = $oldCgoEnabled
     }
 } finally {
     Pop-Location
