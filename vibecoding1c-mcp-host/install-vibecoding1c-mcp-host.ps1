@@ -467,11 +467,35 @@ function Resolve-PythonExecutable {
         }
         return $fullPath
     }
-    $command = Get-Command $expanded -CommandType Application -ErrorAction SilentlyContinue
-    if ($null -eq $command) {
+    $commands = @(Get-Command $expanded -CommandType Application -All -ErrorAction SilentlyContinue)
+    if ($commands.Count -eq 0) {
         throw "Python executable was not found in PATH: $expanded. Install Python 3 or set host.config.json pythonPath."
     }
-    return $command.Source
+    $candidates = @(
+        $commands |
+            ForEach-Object { [string]$_.Source } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique
+    )
+    $diagnostics = @()
+    foreach ($candidatePath in $candidates) {
+        if ($candidatePath -match '(?i)[\\/]Microsoft[\\/]WindowsApps[\\/]python(?:3)?\.exe$') {
+            $diagnostics += "$candidatePath (Windows Store alias skipped)"
+            continue
+        }
+        try {
+            $versionResult = Invoke-ProcessCapture -FilePath $candidatePath -Arguments @("--version")
+            $versionText = (($versionResult.lines | Where-Object { $_ }) -join " ").Trim()
+            if ($versionResult.exitCode -eq 0 -and $versionText -match '^Python\s+3\.') {
+                return $candidatePath
+            }
+            $diagnostics += "$candidatePath ($versionText; exit code $($versionResult.exitCode))"
+        } catch {
+            $diagnostics += "$candidatePath ($($_.Exception.Message))"
+        }
+    }
+    $candidateSummary = if ($diagnostics.Count -gt 0) { $diagnostics -join "; " } else { "<none>" }
+    throw "No usable Python 3 executable was found for '$expanded'. Candidates: $candidateSummary. Set host.config.json pythonPath to a real python.exe."
 }
 
 function Ensure-PythonRuntime {

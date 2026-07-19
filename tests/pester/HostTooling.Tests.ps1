@@ -29,6 +29,39 @@
         @($errors).Count | Should -Be 0
     }
 
+    It "selects a real Python 3 executable when PATH also exposes the Windows Store alias" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-python-resolution-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $realPythonPath = Join-Path $tempRoot "python.exe"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            New-Item -ItemType File -Force -Path $realPythonPath | Out-Null
+            $config = [ordered]@{ schemaVersion = 1; stateRoot = (Join-Path $tempRoot "state"); pythonPath = "python" }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:ProbedPythonPaths = @()
+                function Get-Command {
+                    param($Name, $CommandType, [switch]$All, $ErrorAction)
+                    return @(
+                        [pscustomobject]@{ Source = "C:\Users\fixture\AppData\Local\Microsoft\WindowsApps\python.exe" },
+                        [pscustomobject]@{ Source = $realPythonPath }
+                    )
+                }
+                function Invoke-ProcessCapture {
+                    param([string]$FilePath, [string[]]$Arguments)
+                    $script:ProbedPythonPaths += $FilePath
+                    return [pscustomobject]@{ exitCode = 0; lines = @("Python 3.12.4") }
+                }
+
+                $resolved = Resolve-PythonExecutable -Config ([pscustomobject]@{ pythonPath = "python" })
+
+                $resolved | Should -Be $realPythonPath
+                @($script:ProbedPythonPaths) | Should -Be @($realPythonPath)
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "preserves MCP tool contracts while compacting only descriptions" {
         $testPath = Join-Path $RepoRoot "tests\node\tools-list-proxy.test.js"
         $output = & node $testPath 2>&1
