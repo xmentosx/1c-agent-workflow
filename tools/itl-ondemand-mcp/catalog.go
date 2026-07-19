@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -29,6 +30,7 @@ func loadCatalog(path, family string) (*loadedCatalog, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read catalog: %w", err)
 	}
+	raw = bytes.TrimPrefix(raw, []byte{0xef, 0xbb, 0xbf})
 	var data catalogFile
 	if err := json.Unmarshal(raw, &data); err != nil {
 		return nil, fmt.Errorf("decode catalog: %w", err)
@@ -52,8 +54,14 @@ func loadCatalog(path, family string) (*loadedCatalog, error) {
 	if len(data.Tools) == 0 {
 		return nil, fmt.Errorf("catalog contains no tools")
 	}
-	hash := sha256.Sum256(raw)
+	hash := sha256.Sum256(canonicalCatalogBytes(raw))
 	return &loadedCatalog{Path: path, SHA256: hex.EncodeToString(hash[:]), Data: data}, nil
+}
+
+func canonicalCatalogBytes(raw []byte) []byte {
+	raw = bytes.TrimPrefix(raw, []byte{0xef, 0xbb, 0xbf})
+	raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
+	return bytes.ReplaceAll(raw, []byte("\r"), []byte("\n"))
 }
 
 type catalogDiff struct {

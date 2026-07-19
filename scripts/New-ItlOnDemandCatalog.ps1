@@ -58,7 +58,8 @@ $directory = Split-Path -Parent $OutputPath
 if ($directory) {
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
 }
-[System.IO.File]::WriteAllText($OutputPath, (($catalog | ConvertTo-Json -Depth 100) + "`n"), $utf8)
+$json = ($catalog | ConvertTo-Json -Depth 100).Replace("`r`n", "`n").Replace("`r", "`n")
+[System.IO.File]::WriteAllText($OutputPath, ($json + "`n"), $utf8)
 $hash = (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash.ToLowerInvariant()
 Write-Host "Catalog: $OutputPath"
 Write-Host "Tools: $($tools.Count)"

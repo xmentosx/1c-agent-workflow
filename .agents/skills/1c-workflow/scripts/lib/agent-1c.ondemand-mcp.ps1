@@ -10,6 +10,20 @@ function Get-ItlOnDemandMcpCompatibility {
     return (Read-Utf8Text -Path $path | ConvertFrom-Json)
 }
 
+function Get-ItlOnDemandCatalogCanonicalSha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $text = [System.IO.File]::ReadAllText($Path, (New-Object System.Text.UTF8Encoding $false))
+    $normalized = $text.Replace("`r`n", "`n").Replace("`r", "`n")
+    $bytes = (New-Object System.Text.UTF8Encoding $false).GetBytes($normalized)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
 function Get-ItlOnDemandMcpFamilyDefinition {
     param([ValidateSet("roctup", "vanessa-ui")][string]$Family)
 
@@ -22,7 +36,7 @@ function Get-ItlOnDemandMcpFamilyDefinition {
     if (-not (Test-Path -LiteralPath $catalogPath -PathType Leaf)) {
         throw "ITL on-demand MCP catalog was not found: $catalogPath"
     }
-    $actualHash = (Get-FileHash -LiteralPath $catalogPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualHash = Get-ItlOnDemandCatalogCanonicalSha256 -Path $catalogPath
     if ($actualHash -cne ([string]$definition.catalogSha256).ToLowerInvariant()) {
         throw "ITL_ONDEMAND_CATALOG_HASH_MISMATCH family='$Family' expected='$($definition.catalogSha256)' actual='$actualHash' path='$catalogPath'"
     }

@@ -13,7 +13,7 @@
       ],
       "qualification": "live-tools-list",
       "catalog": "catalogs/roctup-v1.7.1.json",
-      "catalogSha256": "aeb3ad3214c32fed7eae3a969eadd90a33e0119963282799579bd43118d5447a"
+      "catalogSha256": "c61009dafbd8d781f44482419a72036155acc5a60f5a65c2d10df6e046cb8011"
     },
     "vanessa-ui": {
       "serverName": "itl-vanessa-ui",
@@ -27,7 +27,7 @@
       ],
       "qualification": "live-tools-list",
       "catalog": "catalogs/vanessa-ui-v0.6.5-va-1.2.043.28.json",
-      "catalogSha256": "d4bb4e2d88373eb0269d4106c14a3c935d9561055f4720c6c38de56a0e9c3473"
+      "catalogSha256": "f686921e124916a4208947e1935789dd9546e3bfc7dc0a9ad904247fb8b39708"
     }
   }
 }

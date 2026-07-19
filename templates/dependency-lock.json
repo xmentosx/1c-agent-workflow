@@ -13,7 +13,7 @@
       "version": "0.1.0",
       "assetName": "itl-ondemand-mcp-windows-amd64.exe",
       "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.1.0/itl-ondemand-mcp-windows-amd64.exe",
-      "sha256": "84d5e6d994470775b96882320a978343cd27026137394c33ed9be5fc524ad4ea",
+      "sha256": "0de4d1fe4f317afc745b771dcaf9372ee5dba172537538e2230fad366660294a",
       "os": "windows",
       "arch": "amd64",
       "source": "workflow release asset"

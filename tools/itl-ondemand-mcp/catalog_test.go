@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -26,6 +27,31 @@ func TestLoadCatalogAndCompare(t *testing.T) {
 	diff, err = compareTools(catalog.Data.Tools, []*mcp.Tool{{Name: "other", InputSchema: map[string]any{"type": "object"}}})
 	if err != nil || len(diff.Added) != 1 || len(diff.Removed) != 1 {
 		t.Fatalf("unexpected diff: %#v, %v", diff, err)
+	}
+}
+
+func TestLoadCatalogHashIgnoresLineEndingsAndBOM(t *testing.T) {
+	dir := t.TempDir()
+	lfPath := filepath.Join(dir, "lf.json")
+	crlfPath := filepath.Join(dir, "crlf.json")
+	raw := "{\n\"schemaVersion\":1,\n\"family\":\"roctup\",\n\"backendVersions\":{\"roctup\":\"v1\"},\n\"tools\":[{\"name\":\"ping\",\"inputSchema\":{\"type\":\"object\"}}]\n}\n"
+	if err := os.WriteFile(lfPath, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	crlf := append([]byte{0xef, 0xbb, 0xbf}, []byte(strings.ReplaceAll(raw, "\n", "\r\n"))...)
+	if err := os.WriteFile(crlfPath, crlf, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lf, err := loadCatalog(lfPath, "roctup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	windows, err := loadCatalog(crlfPath, "roctup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lf.SHA256 != windows.SHA256 {
+		t.Fatalf("catalog hashes differ: lf=%s crlf=%s", lf.SHA256, windows.SHA256)
 	}
 }
 

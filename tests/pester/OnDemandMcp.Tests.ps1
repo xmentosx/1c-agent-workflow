@@ -5,6 +5,7 @@ Describe "ITL on-demand MCP facade" {
         $RepoRoot = $context.RepoRoot
         $HelperPath = $context.HelperPath
         $AssetRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp"
+        . (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.ondemand-mcp.ps1")
     }
 
     It "pins hash-verified full catalogs to compatible backend versions" {
@@ -22,7 +23,7 @@ Describe "ITL on-demand MCP facade" {
         foreach ($family in @("roctup", "vanessa-ui")) {
             $definition = $manifest.families.$family
             $catalogPath = Join-Path $AssetRoot ([string]$definition.catalog)
-            (Get-FileHash -LiteralPath $catalogPath -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be ([string]$definition.catalogSha256)
+            (Get-ItlOnDemandCatalogCanonicalSha256 -Path $catalogPath) | Should -Be ([string]$definition.catalogSha256)
             $catalog = Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8 | ConvertFrom-Json
             @($catalog.tools).Count | Should -Be $(if ($family -eq "roctup") { 13 } else { 38 })
             @($catalog.tools.name | Sort-Object -Unique).Count | Should -Be @($catalog.tools).Count
@@ -30,6 +31,22 @@ Describe "ITL on-demand MCP facade" {
                 [string]$tool.name | Should -Not -BeNullOrEmpty
                 $null -eq $tool.inputSchema | Should -BeFalse
             }
+        }
+    }
+
+    It "keeps catalog identity stable across Windows and Unix line endings" {
+        $sourcePath = Join-Path $AssetRoot "catalogs\roctup-v1.7.1.json"
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-line-endings-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $text = [IO.File]::ReadAllText($sourcePath).Replace("`r`n", "`n").Replace("`r", "`n")
+            $lfPath = Join-Path $tempRoot "lf.json"
+            $crlfPath = Join-Path $tempRoot "crlf.json"
+            [IO.File]::WriteAllText($lfPath, $text, (New-Object Text.UTF8Encoding $false))
+            [IO.File]::WriteAllText($crlfPath, $text.Replace("`n", "`r`n"), (New-Object Text.UTF8Encoding $false))
+            Get-ItlOnDemandCatalogCanonicalSha256 -Path $lfPath | Should -Be (Get-ItlOnDemandCatalogCanonicalSha256 -Path $crlfPath)
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
