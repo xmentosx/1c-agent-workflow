@@ -10,10 +10,14 @@ Describe "ITL on-demand MCP facade" {
 
     It "pins hash-verified full catalogs to compatible backend versions" {
         $manifest = Get-Content -LiteralPath (Join-Path $AssetRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.facadeVersion | Should -Be "0.1.0"
+        $manifest.facadeVersion | Should -Be "0.2.0"
         $manifest.families.roctup.backendVersions.roctup | Should -Be "v1.7.1"
         $manifest.families.'vanessa-ui'.backendVersions.clientMcp | Should -Be "v0.6.5"
         $manifest.families.'vanessa-ui'.backendVersions.vaExtension | Should -Be "1.2.043.28"
+        $manifest.families.'vanessa-ui'.backendVersions.vanessaAutomation | Should -Be "1.2.043.28"
+        $manifest.families.'vanessa-ui'.backendVersions.vanessaExt | Should -Be "1.3.9.131"
+        $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.version | Should -Be "1.3.9.131"
+        $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.sha256 | Should -Match '^[0-9a-f]{64}$'
         $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Match '^[0-9a-f]{64}$'
         foreach ($family in @("roctup", "vanessa-ui")) {
@@ -173,6 +177,58 @@ Describe "ITL on-demand MCP facade" {
             $result.vanessaA | Should -Match '^vanessa-mcp:'
             $result.roctupA | Should -Match '\|instance=client-a$'
             @($result.roctupA, $result.roctupB, $result.roctupOtherBranch, $result.vanessaA | Sort-Object -Unique).Count | Should -Be 4
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "creates a private Vanessa profile with a separately leased TestClient port and silent VanessaExt setup" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-vanessa-profile-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "branch-ib")
+                    stateProjectRoot = $tempRoot
+                    worktreePath = $tempRoot
+                    safeDevBranchName = "itldev/test"
+                }
+                $path = New-ItlOnDemandVanessaParamsFile -State $state -InstanceId ("a" * 32) -TestClientPort 48177 -VanessaVersion "1.2.043.28"
+                $params = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+                $clientsKey = ConvertFrom-Utf8Base64 "0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP"
+                $profilesKey = ConvertFrom-Utf8Base64 "0JTQsNC90L3Ri9C10JrQu9C40LXQvdGC0L7QstCi0LXRgdGC0LjRgNC+0LLQsNC90LjRjw=="
+                $nameKey = ConvertFrom-Utf8Base64 "0JjQvNGP"
+                $portKey = ConvertFrom-Utf8Base64 "0J/QvtGA0YLQl9Cw0L/Rg9GB0LrQsNCi0LXRgdGC0JrQu9C40LXQvdGC0LA="
+                $profile = @($params.$clientsKey.$profilesKey)[0]
+                [pscustomobject]@{
+                    path = $path
+                    useaddin = $params.useaddin
+                    screenshotAddin = $params.useaddinforscreencapture
+                    failClosed = $params.QuitIfSilentInstallationAddinFails
+                    disableLegacyProfiles = $params.DisableLoadTestClientsTable
+                    name = $profile.$nameKey
+                    port = $profile.$portKey
+                    range = Get-ItlOnDemandVanessaTestClientPortRange
+                    portKey = Get-ItlOnDemandVanessaTestClientPortKey -State $state -InstanceId ("a" * 32)
+                }
+            }
+            $result.useaddin | Should -BeTrue
+            $result.screenshotAddin | Should -BeTrue
+            $result.failClosed | Should -BeTrue
+            $result.disableLegacyProfiles | Should -BeTrue
+            $result.name | Should -Be "itl-ondemand"
+            $result.port | Should -Be 48177
+            $result.range.start | Should -Be 48151
+            $result.range.end | Should -Be 48250
+            $result.portKey | Should -Match '^vanessa-mcp-testclient:'
+
+            $broker = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.ondemand-mcp.ps1") -Raw -Encoding UTF8
+            $broker | Should -Match 'QuietInstallVanessaExt;DisableFirstRunHelper'
+            $broker | Should -Match 'ITL_VANESSA_UNSAFE_ACTION_PROTECTION_UNCONFIRMED'
+            $broker | Should -Match 'Start-EnterpriseBackground[\s\S]*-UseTestClient[\s\S]*-TestClientPort'
+            $broker | Should -Match 'testClientProcessStartTime'
+            $broker | Should -Match 'schemaVersion\s*=\s*2'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 

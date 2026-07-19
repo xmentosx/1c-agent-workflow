@@ -536,7 +536,7 @@ if ($checkpoint) {
         [string]$identity.projectConfigSha256 -eq $projectConfigSha256
     if ($ResumeMode -eq "Auto" -and -not $releaseIdentityMatches) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: checkpoint identity does not match the current workflow/fork/helper/project config. Use -ResumeMode Restart for the scripted baseline rollback." }
     $currentHead = (& git -C $worktreePath rev-parse HEAD).Trim()
-    if ($currentHead -ne [string]$checkpoint["expectedHead"]) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: current HEAD '$currentHead' differs from checkpoint HEAD '$($checkpoint['expectedHead'])'." }
+    if ($ResumeMode -eq "Auto" -and $currentHead -ne [string]$checkpoint["expectedHead"]) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: current HEAD '$currentHead' differs from checkpoint HEAD '$($checkpoint['expectedHead'])'." }
 
     if (-not $checkpoint["snapshots"].Contains("baseline")) {
         if ($checkpoint["stages"].Count -gt 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: baseline snapshot was not checkpointed before stage execution." }
@@ -797,8 +797,8 @@ try {
                     facadeSha256 = ("0" * 64)
                     testFixture = $true
                     families = [ordered]@{
-                        roctup = [ordered]@{ toolCount = 13; instances = @([ordered]@{ pid = 101; port = 6003 }); cleanupPassed = $true; secondSurvivedFirstClose = $false }
-                        "vanessa-ui" = [ordered]@{ toolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876 }, [ordered]@{ pid = 202; port = 9877 }); cleanupPassed = $true; secondSurvivedFirstClose = $true }
+                        roctup = [ordered]@{ toolCount = 13; instances = @([ordered]@{ pid = 101; port = 6003 }); cleanupPassed = $true; idleCleanupPassed = $true; secondSurvivedFirstClose = $false }
+                        "vanessa-ui" = [ordered]@{ toolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151 }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152 }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; secondSurvivedFirstClose = $true }
                     }
                     capturedAt = [DateTime]::UtcNow.ToString("o")
                 }
@@ -809,31 +809,41 @@ try {
                 $probeRoot = Join-Path $workflowRoot "tools\itl-ondemand-mcp"
                 $families = [ordered]@{}
                 foreach ($spec in @(
-                    [pscustomobject]@{ family = "roctup"; tool = "get_metadata"; instances = 1 },
-                    [pscustomobject]@{ family = "vanessa-ui"; tool = "get_VanessaAutomation_state"; instances = 2 }
+                    [pscustomobject]@{ family = "roctup"; tool = "get_metadata"; instances = 1; vanessaSmoke = $false },
+                    [pscustomobject]@{ family = "vanessa-ui"; tool = "get_VanessaAutomation_state"; instances = 2; vanessaSmoke = $true }
                 )) {
                     $definition = $compatibility.families.([string]$spec.family)
                     $catalogPath = Join-Path $compatibilityRoot ([string]$definition.catalog)
                     $familyEvidencePath = Join-Path $outputRoot ("ondemand-mcp-{0}.json" -f $spec.family)
                     Push-Location $probeRoot
                     try {
-                        & go run .\cmd\itl-ondemand-probe `
-                            -exe ([string]$facadeBuild.path) `
-                            -family ([string]$spec.family) `
-                            -project-root $worktreePath `
-                            -catalog $catalogPath `
-                            -helper $HelperPath `
-                            -tool ([string]$spec.tool) `
-                            -instances ([int]$spec.instances) `
-                            -output $familyEvidencePath
+                        $probeArguments = @(
+                            "run", ".\cmd\itl-ondemand-probe",
+                            "-exe", [string]$facadeBuild.path,
+                            "-family", [string]$spec.family,
+                            "-project-root", $worktreePath,
+                            "-catalog", $catalogPath,
+                            "-helper", $HelperPath,
+                            "-tool", [string]$spec.tool,
+                            "-instances", [string]([int]$spec.instances),
+                            "-idle-timeout", "5s",
+                            "-verify-idle",
+                            "-output", $familyEvidencePath
+                        )
+                        if ([bool]$spec.vanessaSmoke) { $probeArguments += "-vanessa-ui-smoke" }
+                        & go @probeArguments
                         if ($LASTEXITCODE -ne 0) { throw "On-demand MCP live probe failed for $($spec.family)." }
                     } finally {
                         Pop-Location
                     }
                     $familyEvidence = Get-Content -LiteralPath $familyEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
                     if (-not [bool]$familyEvidence.cleanupPassed) { throw "On-demand MCP cleanup was not proven for $($spec.family)." }
+                    if (-not [bool]$familyEvidence.idleCleanupPassed) { throw "On-demand MCP idle cleanup was not proven for $($spec.family)." }
                     if ([int]$spec.instances -eq 2 -and -not [bool]$familyEvidence.secondSurvivedFirstClose) {
                         throw "The second Vanessa facade did not survive closing the first facade."
+                    }
+                    if ([bool]$spec.vanessaSmoke -and -not [bool]$familyEvidence.vanessaUiSmokePassed) {
+                        throw "VanessaExt/TestClient/UI/screenshot smoke was not proven."
                     }
                     $families[[string]$spec.family] = $familyEvidence
                 }
