@@ -16,10 +16,6 @@ Describe "ITL on-demand MCP facade" {
         $manifest.families.'vanessa-ui'.backendVersions.vaExtension | Should -Be "1.2.043.28"
         $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Match '^[0-9a-f]{64}$'
-        $sourceBuild = Join-Path $RepoRoot "tools\itl-ondemand-mcp\build\itl-ondemand-mcp-windows-amd64.exe"
-        if (Test-Path -LiteralPath $sourceBuild -PathType Leaf) {
-            (Get-FileHash -LiteralPath $sourceBuild -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be ([string]$lock.dependencies.itlOndemandMcp.sha256)
-        }
         foreach ($family in @("roctup", "vanessa-ui")) {
             $definition = $manifest.families.$family
             $catalogPath = Join-Path $AssetRoot ([string]$definition.catalog)
@@ -53,12 +49,21 @@ Describe "ITL on-demand MCP facade" {
     It "publishes the exact hash-locked Windows facade asset from a matching tag" {
         $workflowPath = Join-Path $RepoRoot ".github\workflows\release-ondemand-mcp.yml"
         $workflow = Get-Content -LiteralPath $workflowPath -Raw -Encoding UTF8
+        $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         $workflow | Should -Match 'itl-ondemand-mcp-v\*'
         $workflow | Should -Match 'scripts\\Build-ItlOnDemandMcp\.ps1'
         $workflow | Should -Match 'result\.sha256'
         $workflow | Should -Match 'dependency-lock\.json'
         $workflow | Should -Match 'softprops/action-gh-release@v2'
         $workflow | Should -Match 'itl-ondemand-mcp-windows-amd64\.exe'
+
+        $buildResult = @(& (Join-Path $RepoRoot "scripts\Build-ItlOnDemandMcp.ps1") -SkipTests)
+        $repeatBuildResult = @(& (Join-Path $RepoRoot "scripts\Build-ItlOnDemandMcp.ps1") -SkipTests)
+        $buildResult.Count | Should -Be 1
+        $repeatBuildResult.Count | Should -Be 1
+        $buildResult[0].path | Should -Be (Join-Path $RepoRoot "tools\itl-ondemand-mcp\build\itl-ondemand-mcp-windows-amd64.exe")
+        $buildResult[0].sha256 | Should -Be ([string]$lock.dependencies.itlOndemandMcp.sha256)
+        $repeatBuildResult[0].sha256 | Should -Be $buildResult[0].sha256
     }
 
     It "uses the compatibility manifest instead of an unsupported upstream latest in fresh mode" {

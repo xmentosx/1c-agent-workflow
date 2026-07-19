@@ -18,15 +18,17 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $OutputPath) | Out
 Push-Location $sourceRoot
 try {
     if (-not $SkipTests) {
-        & go test ./...
-        if ($LASTEXITCODE -ne 0) { throw "itl-ondemand-mcp Go tests failed." }
+        $testOutput = @(& go test ./... 2>&1)
+        $testExitCode = $LASTEXITCODE
+        foreach ($line in $testOutput) { Write-Host ([string]$line) }
+        if ($testExitCode -ne 0) { throw "itl-ondemand-mcp Go tests failed." }
     }
     $oldGoOs = $env:GOOS
     $oldGoArch = $env:GOARCH
     try {
         $env:GOOS = "windows"
         $env:GOARCH = "amd64"
-        & go build -trimpath -ldflags "-s -w" -o $OutputPath .
+        & go build -trimpath -buildvcs=false -ldflags "-s -w -buildid=" -o $OutputPath .
         if ($LASTEXITCODE -ne 0) { throw "itl-ondemand-mcp build failed." }
     } finally {
         $env:GOOS = $oldGoOs
