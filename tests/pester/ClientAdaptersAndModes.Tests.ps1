@@ -27,6 +27,41 @@ Describe "ITL client adapters and verification modes" {
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "preserves the output format contracts across native command adapters" {
+        $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\common"
+        $templates = [ordered]@{
+            "itl.md" = Get-Content -LiteralPath (Join-Path $templateRoot "itl.md.template") -Raw -Encoding UTF8
+            "itl-status.md" = Get-Content -LiteralPath (Join-Path $templateRoot "itl-status.md.template") -Raw -Encoding UTF8
+            "itl-litemode.md" = Get-Content -LiteralPath (Join-Path $templateRoot "itl-litemode.md.template") -Raw -Encoding UTF8
+        }
+        $previousMode = [Environment]::GetEnvironmentVariable("ITL_ROUTINE_MODE", "Process")
+        try {
+            [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", "off", "Process")
+            $adapted = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $result = [ordered]@{}
+                foreach ($client in @("kilocode", "claude-code", "cursor", "opencode")) {
+                    $result[$client] = [ordered]@{}
+                    foreach ($fileName in $templates.Keys) {
+                        $result[$client][$fileName] = Convert-ItlCommandForClient -Text $templates[$fileName] -Client $client -FileName $fileName
+                    }
+                }
+                $result
+            }
+
+            foreach ($client in $adapted.Keys) {
+                $adapted[$client]["itl.md"] | Should -Match "entire final response"
+                $adapted[$client]["itl.md"] | Should -Match 'fenced `text` code block'
+                $adapted[$client]["itl-status.md"] | Should -Match "structured Markdown report"
+                $adapted[$client]["itl-status.md"] | Should -Match 'one `- Label: value` field per line'
+                $adapted[$client]["itl-litemode.md"] | Should -Match "complete helper stdout unchanged"
+                $adapted[$client]["itl-litemode.md"] | Should -Match 'exactly one fenced `text` code block'
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", $previousMode, "Process")
+        }
+    }
+
     It "implements auto manual off trigger semantics including explicit off override" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-mode-matrix-" + [guid]::NewGuid().ToString("N"))
         try {
