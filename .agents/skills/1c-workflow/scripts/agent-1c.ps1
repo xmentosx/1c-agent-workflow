@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status", "prepare-vanessa-authoring", "complete-vanessa-authoring", "begin-verification-repair", "install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "run-dev-branch-tests", "stop-dev-branch-test-clients", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "prepare-vanessa-authoring", "complete-vanessa-authoring", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "run-dev-branch-tests", "stop-dev-branch-test-clients", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -75,7 +75,11 @@ param(
     [string]$LifecyclePhase = "",
     [string]$OperationId = "",
     [int]$OperationOwnerPid = 0,
-    [switch]$OperationContinuation
+    [switch]$OperationContinuation,
+    [ValidateSet("", "ensure", "stop", "stop-all")][string]$InternalOnDemandOperation = "",
+    [ValidateSet("", "roctup", "vanessa-ui")][string]$InternalOnDemandFamily = "",
+    [string]$InternalOnDemandInstanceId = "",
+    [string]$InternalOnDemandCatalogSha256 = ""
 )
 
 Set-StrictMode -Version Latest
@@ -292,6 +296,7 @@ $script:Agent1cModuleFiles = @(
     "agent-1c.roctup-mcp.ps1",
     "agent-1c.lifecycle.ps1",
     "agent-1c.client-adapters.ps1",
+    "agent-1c.ondemand-mcp.ps1",
     "agent-1c.verification-modes.ps1",
     "agent-1c.legacy-bridges.ps1",
     "agent-1c.ai-rules-migration.ps1"
@@ -309,14 +314,21 @@ Initialize-GitIndexLockTracking
 try {
     Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env")
     Read-ProjectConfig
+    $requestedLifecycleAction = $(if ($InternalOnDemandOperation) { "internal-ondemand-$InternalOnDemandOperation" } else { $Action })
     Enter-Agent1cLifecycleOperation `
-        -RequestedAction $Action `
+        -RequestedAction $requestedLifecycleAction `
         -RequestedOperationId $OperationId `
         -RequestedOwnerPid $OperationOwnerPid `
         -Continuation:$OperationContinuation
-    Set-RunStage -Stage "start" -Detail "Starting helper action '$Action'"
+    Set-RunStage -Stage "start" -Detail "Starting helper action '$requestedLifecycleAction'"
 
-    switch ($Action) {
+    if ($InternalOnDemandOperation) {
+        Invoke-ItlOnDemandBackendBroker `
+            -Operation $InternalOnDemandOperation `
+            -Family $InternalOnDemandFamily `
+            -InstanceId $InternalOnDemandInstanceId `
+            -CatalogSha256 $InternalOnDemandCatalogSha256
+    } else { switch ($Action) {
         "help" { Show-Help }
         "doctor" { Show-ItlDoctor }
         "validate" { Validate-Project }
@@ -327,18 +339,9 @@ try {
         "configure-web-publication" { Configure-WebPublication }
         "publish-dev-branch" { Publish-DevBranch }
         "install-vanessa-automation" { Install-VanessaAutomation }
-        "install-vanessa-mcp" { Install-VanessaMcp }
-        "start-vanessa-mcp" { Start-VanessaMcp }
-        "stop-vanessa-mcp" { Stop-VanessaMcp }
-        "vanessa-mcp-status" { Show-VanessaMcpStatus }
         "prepare-vanessa-authoring" { Prepare-VanessaAuthoring }
         "complete-vanessa-authoring" { Complete-VanessaAuthoring -Result $AuthoringResult -ErrorCategory $AuthoringErrorCategory -ResultsPath $AuthoringResultsPath }
         "begin-verification-repair" { Start-ItlVerificationRepairSession }
-        "install-roctup-mcp" { Install-RoctupMcp }
-        "update-roctup-mcp" { Update-RoctupMcp }
-        "start-roctup-mcp" { Start-RoctupMcp }
-        "stop-roctup-mcp" { Stop-RoctupMcp }
-        "roctup-mcp-status" { Show-RoctupMcpStatus }
         "vibecoding1c-mcp-setup" { Setup-Vibecoding1cMcp }
         "vibecoding1c-mcp-update" { Update-Vibecoding1cMcp }
         "vibecoding1c-mcp-status" { Show-Vibecoding1cMcpStatus }
@@ -382,7 +385,7 @@ try {
         "release-e2e-restore" { Restore-ReleaseE2EInfobaseSnapshot }
         "release-e2e-config-roundtrip" { Invoke-ReleaseE2EConfigRoundtrip }
         "release-e2e-extension-smoke" { Invoke-ReleaseE2EExtensionSmoke }
-    }
+    } }
     Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
     Write-RunStatus -Status "succeeded" -ExitCode 0
 } catch {

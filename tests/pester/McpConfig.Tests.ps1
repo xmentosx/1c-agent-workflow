@@ -51,12 +51,14 @@
         $result.eachMode | Should -Be "each"
         $result.configId | Should -Be "only-config"
     }
-    It "wires ROCTUP MCP defaults, actions, lock, client config, and agent token guardrails" {
+    It "wires the ROCTUP on-demand facade, compatibility catalog, and token guardrails" {
+        $entrypoint = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1")
         foreach ($action in @("install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status")) {
-            $HelperText | Should -Match ([regex]::Escape("`"$action`""))
+            $entrypoint | Should -Not -Match ([regex]::Escape("`"$action`""))
         }
 
-        $HelperText | Should -Match "ROCTUP/1c-mcp-toolkit"
+        $HelperText | Should -Match "Start-ItlOnDemandBackendInstance"
+        $HelperText | Should -Match "itl-roctup-data"
         $HelperText | Should -Match "MCP_Toolkit.epf"
         $HelperText | Should -Match "MCP_Toolkit_x86.epf"
         $HelperText | Should -Match "MCP_Toolkit_linux.epf"
@@ -65,9 +67,7 @@
         $HelperText | Should -Match "6102"
         $HelperText | Should -Match "startup;mode=embedded;port="
         $HelperText | Should -Match "Invoke-DevBranchDefaultMcpSetup"
-        $HelperText | Should -Match "Invoke-DevBranchMcpRestartAfterInfobaseLoad"
         $HelperText | Should -Match "Write-ItlBranchMcpClientConfig"
-        $HelperText | Should -Match 'itl-\$project-\$safeName-roctup'
         $HelperText | Should -Match "ROCTUP_MCP_REQUIRED"
         $HelperText | Should -Match "roctupMcpToolkit"
         $HelperText | Should -Match "assetName"
@@ -81,14 +81,21 @@
         }
 
         $dependencyLock = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dependency-lock.json") | ConvertFrom-Json
-        $dependencyLock.dependencies.roctupMcpToolkit.version | Should -Be "v1.7.0"
+        $dependencyLock.dependencies.roctupMcpToolkit.version | Should -Be "v1.7.1"
         $dependencyLock.dependencies.roctupMcpToolkit.assetName | Should -Be "MCP_Toolkit.epf"
-        $dependencyLock.dependencies.roctupMcpToolkit.url | Should -Match "/releases/download/v1.7.0/MCP_Toolkit.epf$"
-        $dependencyLock.dependencies.roctupMcpToolkit.sha256 | Should -Be "e9a0856224aea4f54763fe1fb6a21aa8e71efb9d14158adc4382e1b2276d829d"
+        $dependencyLock.dependencies.roctupMcpToolkit.url | Should -Match "/releases/download/v1.7.1/MCP_Toolkit.epf$"
+        $dependencyLock.dependencies.roctupMcpToolkit.sha256 | Should -Be "74bd1d228aa36fda688b34277ede6030ea3b54350c112a680cdce63adb8ac675"
+        $dependencyLock.dependencies.itlOndemandMcp.assetName | Should -Be "itl-ondemand-mcp-windows-amd64.exe"
+        $dependencyLock.dependencies.itlOndemandMcp.sha256 | Should -Match '^[a-f0-9]{64}$'
         $dependencyLock.dependencies.vanessaMcp.clientMcp.assetName | Should -Be "client_mcp.cfe"
-        $dependencyLock.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "74d3cb7f97e3800860f5a1754eecf47178164d888f2299125d1b3118a4614ec1"
+        $dependencyLock.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"
         $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.29.cfe"
         $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "fc557bb23371a37dbe22a7a7a83e28f6db75b57f87e8802028cf1f90c4e00605"
+
+        $compatibility = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") | ConvertFrom-Json
+        $compatibility.families.roctup.serverName | Should -Be "itl-roctup-data"
+        $roctupCatalog = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\catalogs\roctup-v1.7.1.json") | ConvertFrom-Json
+        @($roctupCatalog.tools).Count | Should -Be 13
 
         $skillText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-roctup-1c-data\SKILL.md")
         $skillText | Should -Match "get_metadata"
@@ -1228,8 +1235,8 @@ VANESSA_MCP_VA_EXTENSION_CFE_URL=$extensionUri
             (@($branchArtifacts | Where-Object { $_.key -eq "vaExtension" })[0].path) | Should -Be $masterExtension.path
 
             $lockedManifest = Get-Content -Encoding UTF8 -Raw (Join-Path $branchRoot ".agent-1c\dependency-lock.json") | ConvertFrom-Json
-            $lockedManifest.dependencies.vanessaMcp.clientMcp.version = "fixture"
-            $lockedManifest.dependencies.vanessaMcp.vaExtension.version = "fixture"
+            $lockedManifest.dependencies.vanessaMcp.clientMcp.version = "v0.6.5"
+            $lockedManifest.dependencies.vanessaMcp.vaExtension.version = "1.2.043.28"
             Set-Content -LiteralPath (Join-Path $branchRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value (($lockedManifest | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
             Add-Content -LiteralPath (Join-Path $branchRoot ".dev.env") -Encoding UTF8 -Value "DEPENDENCY_MODE=locked"
             Set-Content -LiteralPath $masterClient.path -Encoding UTF8 -Value "corrupted fixture"
@@ -1247,13 +1254,15 @@ VANESSA_MCP_VA_EXTENSION_CFE_URL=$extensionUri
         }
     }
 
-    It "wires branch-local Vanessa UI MCP actions, cache, and local artifacts" {
+    It "wires Vanessa UI through the stable on-demand facade and local artifacts" {
+        $entrypoint = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1")
         $actions = @("install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status")
         foreach ($action in $actions) {
-            $HelperText | Should -Match ([regex]::Escape("`"$action`""))
+            $entrypoint | Should -Not -Match ([regex]::Escape("`"$action`""))
         }
 
-        $HelperText | Should -Match "Resolve-VanessaMcpPort"
+        $HelperText | Should -Match "itl-vanessa-ui"
+        $HelperText | Should -Match "Get-ItlOnDemandPortKey"
         $HelperText | Should -Match "VANESSA_MCP_PORT_RANGE"
         $HelperText | Should -Match "client_mcp.cfe"
         $HelperText | Should -Match "VAExtension"
@@ -1265,14 +1274,15 @@ VANESSA_MCP_VA_EXTENSION_CFE_URL=$extensionUri
         $HelperText | Should -Match "VANESSA_MCP_CLIENT_CFE_PATH"
         $HelperText | Should -Match "VANESSA_MCP_VA_EXTENSION_CFE_PATH"
         $HelperText | Should -Match "runMcp;mcpPort="
-        $HelperText | Should -Match "Write-VanessaMcpKiloConfig"
-        $HelperText | Should -Match "function Stop-VanessaMcpForState[\s\S]+Write-VanessaMcpClientConfig"
-        $HelperText | Should -Match 'managedBy = "vanessa-ui-mcp"'
-        $HelperText | Should -Match 'family = "vanessa-ui"'
+        $HelperText | Should -Match 'Owner "ondemand-facade"'
         $HelperText | Should -Match "Vanessa UI MCP"
         $HelperText | Should -Match "Vanessa Automation verification"
-        $HelperText | Should -Match "reload or restart Kilo Code"
         $HelperText | Should -Match "StartFeaturePlayer"
+
+        $catalog = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\catalogs\vanessa-ui-v0.6.5-va-1.2.043.28.json") | ConvertFrom-Json
+        @($catalog.tools).Count | Should -Be 38
+        @($catalog.tools.name) | Should -Contain "search_for_steps_by_keywords"
+        @($catalog.tools.name) | Should -Contain "run_scenario"
 
         $mcpToolPath = ".agent-1c/tools/vanessa-mcp/"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($mcpToolPath))
@@ -1282,7 +1292,7 @@ VANESSA_MCP_VA_EXTENSION_CFE_URL=$extensionUri
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md") -PathType Leaf) | Should -Be $true
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md")) | Should -Match "Do \*\*not\*\* start Vanessa UI MCP merely because a request mentions a form"
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-vanessa-mcp.md") -PathType Leaf) | Should -Be $false
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")) | Should -Match "reload or restart Kilo Code"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")) | Should -Not -Match "start-vanessa-mcp"
         $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
         $kiloTemplateText | Should -Not -Match "/itl-vanessa-mcp"
     }

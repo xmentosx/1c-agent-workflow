@@ -8,7 +8,7 @@ Run helper actions from the project root:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action <action>
 ```
 
-Mutating actions are serialized per worktree through the ignored lifecycle operation lock. Concurrent ordinary operations in separate development worktrees are allowed; actions that also mutate master acquire both scopes. On `LIFECYCLE_OPERATION_CONFLICT`, inspect `status` and wait for or diagnose the recorded PID/phase. Do not delete lock files or edit operation JSON. Read-only help/status/list/validation/tool-detection/MCP-status actions remain available during the operation.
+Mutating actions are serialized per worktree through the ignored lifecycle operation lock. Concurrent ordinary operations in separate development worktrees are allowed; actions that also mutate master acquire both scopes. On `LIFECYCLE_OPERATION_CONFLICT`, use `status`, `doctor`, or `help` and wait for or diagnose the recorded PID/phase. Do not delete lock files or edit operation JSON. Status remains observable during active work and removes proven-stale on-demand leases only when it can immediately take lifecycle then runtime locks without disturbing the active operation record.
 
 Common internal actions:
 
@@ -22,18 +22,9 @@ detect-apache
 configure-web-publication
 publish-dev-branch
 install-vanessa-automation
-install-vanessa-mcp
-start-vanessa-mcp
-stop-vanessa-mcp
-vanessa-mcp-status
 prepare-vanessa-authoring
 complete-vanessa-authoring
 begin-verification-repair
-install-roctup-mcp
-update-roctup-mcp
-start-roctup-mcp
-stop-roctup-mcp
-roctup-mcp-status
 vibecoding1c-mcp-setup
 vibecoding1c-mcp-update
 vibecoding1c-mcp-status
@@ -79,7 +70,7 @@ release-e2e-config-roundtrip
 release-e2e-extension-smoke
 ```
 
-Extension helper actions and branch-local MCP actions are advanced/helper commands. `new-extension-dev-branch` normally collects and performs extension initialization as its second internal phase. If parameters are unknown, it records `pending`; on first entry the agent collects them in chat and invokes `init-dev-branch-extension` internally. Never expose that PowerShell invocation or generate a visible initialization slash command. Keep recovery-only `set-dev-branch-extension`/`dump-dev-branch-extension` available through helper actions or natural-language requests. `set-dev-branch-extension` records context only and never creates an extension. New development branches prepare ROCTUP and Vanessa UI MCP as stopped/ready. Start Vanessa UI MCP only for a named runtime UI question, recording, or debugging operation; stop it afterwards, and reload or restart Kilo Code if a manually started server is not visible.
+Extension helper actions are advanced/helper commands. `new-extension-dev-branch` normally collects and performs extension initialization as its second internal phase. If parameters are unknown, it records `pending`; on first entry the agent collects them in chat and invokes `init-dev-branch-extension` internally. Never expose that PowerShell invocation or generate a visible initialization slash command. Keep recovery-only `set-dev-branch-extension`/`dump-dev-branch-extension` available through helper actions or natural-language requests. `set-dev-branch-extension` records context only and never creates an extension. New development branches register `itl-roctup-data` and `itl-vanessa-ui`; their backend processes are private on-demand runtime, not helper actions.
 
 `configure-dev-branch-unsafe-action-protection` is an interactive recovery action for an existing development worktree when branch creation used `skip` before protection was actually disabled. Run it through `run-agent-1c-window.ps1`, optionally passing `-InfoBaseUser <name>` for an empty-password local user. It forces the normal visible Designer confirmation flow and records confirmation in branch state; it never disables protection automatically.
 
@@ -91,16 +82,16 @@ Extension helper actions and branch-local MCP actions are advanced/helper comman
 
 `release-e2e-extension-smoke` is also reserved for the Release runner. It uses the public extension initialization lifecycle to create an Empty extension, produce and reload a CFE, validate both normalized dumps, and restore the disposable infobase and worktree from a snapshot. It is not a project command and must not have a slash wrapper.
 
-ROCTUP MCP actions (`install-roctup-mcp`, `update-roctup-mcp`, `start-roctup-mcp`, `stop-roctup-mcp`, `roctup-mcp-status`) manage the ignored EPF/skills cache and the branch-local embedded data MCP. ROCTUP is the preferred data channel for branch infobases and does not need web publication; start it for focused data exploration and stop it after use.
+ROCTUP and Vanessa dependencies are cached by init/update. Agents call the stable `itl-roctup-data` and `itl-vanessa-ui` servers; private backends start on first use, stop on idle/client exit, and appear in general `status`/`doctor` diagnostics.
 
-vibecoding1c MCP actions (`vibecoding1c-mcp-setup`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`, `vibecoding1c-mcp-update`, `vibecoding1c-mcp-status`, `vibecoding1c-mcp-start`, `vibecoding1c-mcp-stop`, `vibecoding1c-mcp-rotate-keys`, `vibecoding1c-mcp-ensure-model`, `vibecoding1c-mcp-write-client-config`) are exposed through helper actions or natural-language requests. They manage remote LAN registry discovery, per-server remote/local selection, private vibecoding1c MCP distribution, local key rotation, embedding model bootstrap, port allocation, Docker containers, and managed MCP entries for the single active client. Setup applies saved selection and runs selection first when it is missing or incomplete; use `vibecoding1c-mcp-select` or `vibecoding1c-mcp-setup -Force` for an explicit reselect. Remote is the default provider; config-specific remote vibecoding1c MCP always needs an explicit per-server `configId`, and `code`/`graph` selections do not inherit `configId` or `hostId` from each other. Local `code`/`graph` can be selected for project or branch scope. Vanessa UI MCP is managed separately through helper actions and is always branch-local.
+vibecoding1c MCP actions (`vibecoding1c-mcp-setup`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`, `vibecoding1c-mcp-update`, `vibecoding1c-mcp-status`, `vibecoding1c-mcp-start`, `vibecoding1c-mcp-stop`, `vibecoding1c-mcp-rotate-keys`, `vibecoding1c-mcp-ensure-model`, `vibecoding1c-mcp-write-client-config`) are exposed through helper actions or natural-language requests. They manage remote LAN registry discovery, per-server remote/local selection, private vibecoding1c MCP distribution, local key rotation, embedding model bootstrap, port allocation, Docker containers, and managed MCP entries for the single active client. Setup applies saved selection and runs selection first when it is missing or incomplete; use `vibecoding1c-mcp-select` or `vibecoding1c-mcp-setup -Force` for an explicit reselect. Remote is the default provider; config-specific remote vibecoding1c MCP always needs an explicit per-server `configId`, and `code`/`graph` selections do not inherit `configId` or `hostId` from each other. Local `code`/`graph` can be selected for project or branch scope. Vanessa UI MCP is managed separately by the on-demand facade and is always branch-local.
 
 In the short `/itl` panel, show advanced/helper actions only as grouped additional capabilities, not as visible slash commands:
 
 ```text
-ROCTUP MCP: branch-local install/update/start/status/stop
+ROCTUP data: itl-roctup-data on-demand facade and status diagnostics
 vibecoding1c MCP: setup/status/select/refresh-registry/update
-Vanessa UI MCP: branch-local install/start/status/stop
+Vanessa UI MCP: itl-vanessa-ui on-demand facade and status diagnostics
 Extension branches: initialize extension; set/dump are recovery actions
 Maintenance/recovery: update base without tests, update workflow/rules, close/list/switch branches
 ```

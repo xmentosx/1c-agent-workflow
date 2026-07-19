@@ -332,6 +332,25 @@ try {
     }
 
     if ($Mode -eq "Release") {
+        Invoke-GateStage -Name "ondemand-mcp-catalogs" -Reason "real backend catalogs are mandatory for release" -Detail "assets/ondemand-mcp/compatibility.json" -Body {
+            $compatibilityPath = Join-Path $repoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json"
+            $compatibility = Get-Content -LiteralPath $compatibilityPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($family in @("roctup", "vanessa-ui")) {
+                $definition = $compatibility.families.$family
+                if ([string]$definition.qualification -ne "live-tools-list") {
+                    throw "Release requires live-tools-list qualification for $family; actual: '$($definition.qualification)'."
+                }
+                $catalogPath = Join-Path (Split-Path -Parent $compatibilityPath) ([string]$definition.catalog)
+                $catalog = Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ([string]$catalog.generatedFrom -ne "mcp-tools-list" -or -not [string]$catalog.capturedAt) {
+                    throw "Release catalog for $family was not generated from a captured real tools/list response."
+                }
+                $actualHash = (Get-FileHash -LiteralPath $catalogPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($actualHash -cne ([string]$definition.catalogSha256).ToLowerInvariant()) {
+                    throw "Release catalog SHA256 mismatch for $family."
+                }
+            }
+        }
         $e2eReportPath = Join-Path $outputRoot "release-e2e-summary.json"
         $e2eScript = Join-Path $repoRoot "scripts\invoke-release-e2e.ps1"
         $releaseHelperPath = Join-Path $repoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
@@ -341,6 +360,9 @@ try {
             if (-not (Test-Path -LiteralPath $e2eReportPath -PathType Leaf)) { throw "Release E2E summary was not created: $e2eReportPath" }
             $e2eSummary = Get-Content -LiteralPath $e2eReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ([string]$e2eSummary.status -ne "passed") { throw "Release E2E summary reports '$($e2eSummary.status)': $([string]$e2eSummary.error)" }
+            if ([bool]$e2eSummary.onDemandMcpTestFixture) { throw "Release E2E used the test-only on-demand MCP fixture." }
+            if ([int]$e2eSummary.onDemandRoctupToolCount -ne 13 -or [int]$e2eSummary.onDemandVanessaToolCount -ne 38) { throw "Release E2E did not prove both complete on-demand MCP catalogs." }
+            if ([int]$e2eSummary.onDemandVanessaInstances -ne 2 -or -not [bool]$e2eSummary.onDemandVanessaSecondSurvived) { throw "Release E2E did not prove isolated concurrent Vanessa facade instances." }
         } | Out-Null
     }
 

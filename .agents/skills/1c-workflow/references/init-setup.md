@@ -8,7 +8,7 @@ Create and maintain:
 
 - `.agent-1c/project.json`: non-secret project settings.
 - `.agent-1c/tools.json`: configurable software checks and install suggestions.
-- `.agent-1c/dependency-lock.json`: committed dependency lock manifest for the ITL workflow package, `ai_rules_1c`, Vanessa Automation, ROCTUP MCP Toolkit, and the two Vanessa UI MCP CFE artifacts with URLs/SHA256. Default dependency mode is `fresh`; `locked` mode uses only pinned values.
+- `.agent-1c/dependency-lock.json`: committed dependency lock manifest for workflow/rules, Vanessa Automation, compatible ROCTUP/Vanessa backends, and the `itl-ondemand-mcp` Windows x64 executable with URLs/SHA256. Default dependency mode is `fresh`; `locked` uses only pins.
 - `.agent-1c/dev-branches/<safe-dev-branch-name>.json`: local branch runtime state; ignored by Git.
 - `.agent-1c/source-infobase-unsafe-action-protection.json`: local confirmation bound to the source infobase kind/identity and `IB_USER`; ignored by Git and never contains the password.
 - `.agent-1c/mcp/state.json` and `.agent-1c/mcp/vibecoding1c-selection.json`: local MCP runtime and developer selection; ignored by Git.
@@ -110,8 +110,7 @@ Goal: create baseline project state.
 - `configure-web-publication`: run the interactive web publication policy/settings wizard after init.
 - `publish-dev-branch`: publish or record publication for an existing development branch.
 - `install-vanessa-automation`: download `vanessa-automation-single.*.zip`, verify SHA256 when available, unpack under `.agent-1c/tools/vanessa-automation`, and save `VANESSA_*` paths.
-- `install-roctup-mcp` / `update-roctup-mcp`: download/cache the OS-specific `MCP_Toolkit*.epf`, verify SHA256 in locked mode, cache upstream skills under ignored `.agent-1c/tools/roctup-mcp-toolkit/skills`, and save `ROCTUP_*` paths.
-- init/update: cache `client_mcp.cfe` and `VAExtension*.cfe` for Vanessa UI MCP, verify SHA256 in locked mode, save absolute `VANESSA_MCP_*_CFE_PATH` values for future worktrees, and never start the MCP or install CFE into an infobase as part of caching.
+- init/update: download the facade to `%LOCALAPPDATA%\ITL\MCP\ondemand\<version>`, verify SHA256, cache only backend versions admitted by `assets/ondemand-mcp/compatibility.json`, and save ROCTUP/Vanessa artifact paths. It does not start 1C or a backend.
 
 ## UPDATE_WORKFLOW
 
@@ -122,8 +121,8 @@ Goal: refresh the installed ITL workflow package without rerunning initializatio
 3. Resolve the package source from `ITL_WORKFLOW_SOURCE_PATH` or clone/update `ITL_WORKFLOW_REPO` and `ITL_WORKFLOW_REF` (`https://github.com/xmentosx/1c-agent-workflow.git`, `master` by default).
 4. Copy only managed workflow files: `.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, Kilo templates, `docs/itl-workflow/`, `templates/`, `install-agent-1c-workflow.ps1`, and `AGENT-INSTALL.md`. Never copy or overwrite the target project's root `README.md`. Remove obsolete root workflow docs only when their hashes match a known managed version; preserve divergent files with a warning.
 5. Preserve local runtime/project state. Do not overwrite `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, or existing project/tools config.
-6. Record `workflowPackage.repo/ref/commit/source/updatedAt`, reapply `USER-RULES.md`, refresh ROCTUP MCP and Vanessa UI MCP CFE caches, run `update-ai-rules` unless `-SkipAiRules` is explicit, and leave tracked changes for review. Run Kilo `/reload` or open a new session afterwards.
-7. Do not update active `itldev/*` worktrees automatically; print whether MCP client config was reconciled or preserved as upstream fallback, plus follow-up commands for MCP setup/update, branch merge or `/itl-refresh`, and branch-local ROCTUP/Vanessa UI MCP restart when used.
+6. Record provenance, reapply `USER-RULES.md`, refresh the compatible facade/backend caches, run `update-ai-rules` unless skipped, and leave tracked changes for review. Reload the active client once after a facade install/upgrade.
+7. Do not update active `itldev/*` worktrees automatically; merge/refresh each one so its active-client config receives the stable facades. Backend starts thereafter need no reload.
 
 ## UPDATE_AI_RULES
 

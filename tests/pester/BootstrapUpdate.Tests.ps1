@@ -201,7 +201,8 @@ exit 0
 
         $advancedText | Should -Match "set-dev-branch-extension"
         $advancedText | Should -Match "dump-dev-branch-extension"
-        $advancedText | Should -Match "install-vanessa-mcp"
+        $advancedText | Should -Match "itl-vanessa-ui"
+        $advancedText | Should -Not -Match "install-vanessa-mcp"
         $advancedText | Should -Not -Match ([regex]::Escape("/itl-set-dev-branch-extension"))
         $advancedText | Should -Not -Match ([regex]::Escape("/itl-dump-dev-branch-extension"))
         $advancedText | Should -Not -Match ([regex]::Escape("/itl-vanessa-mcp"))

@@ -14,28 +14,21 @@ Do not paste MCP license keys into chat or tracked files. Helper-managed private
 
 ## ROCTUP MCP Toolkit
 
-ROCTUP runs inside the copied branch infobase through `MCP_Toolkit.epf` in embedded mode:
+The client sees the stable logical server `itl-roctup-data` immediately after task startup. Its local stdio facade serves the verified full tool catalog without starting 1C. The first `tools/call` starts `MCP_Toolkit.epf` inside the copied branch infobase in embedded mode:
 
 ```powershell
 1cv8 ENTERPRISE ... /Execute <MCP_Toolkit.epf> /C "startup;mode=embedded;port=<branchPort>"
 ```
 
-Actions:
-
-- `install-roctup-mcp`: download/cache the OS-specific release EPF and upstream skills under ignored `.agent-1c/tools/roctup-mcp-toolkit`.
-- `update-roctup-mcp`: refresh the cached EPF/skills and dependency lock in `fresh` mode.
-- `start-roctup-mcp`: start the current branch embedded server on demand, allocate a branch-local port, and write managed entries only to the active client config.
-- `roctup-mcp-status`: inspect port/PID/URL/log/error.
-- `stop-roctup-mcp`: stop only the current branch server.
-
 Rules:
 
-1. `new-dev-branch` and `new-extension-dev-branch` prepare ROCTUP as stopped/ready and do not open the branch infobase through MCP, even if legacy `.dev.env` values still set `ROCTUP_MCP_AUTO_START=true`.
-2. Ports come from `ROCTUP_MCP_PORT_RANGE` and are reserved through the shared ITL port registry plus active branch states.
-3. Branch client names are unique, for example `itl-<project>-<branch>-roctup`.
-4. Start ROCTUP only for a concrete data exploration operation, then stop it with `stop-roctup-mcp` after use so the branch infobase can be updated or manipulated.
+1. Init/update/refresh registers `itl-roctup-data` for the active client and caches the compatible EPF and facade executable. No user service or manual MCP action is required.
+2. Every client process gets its own backend instance and port. Ports come from `ROCTUP_MCP_PORT_RANGE` and are reserved through the shared ITL port registry with family, project, worktree, branch, and instance identity.
+3. The facade stops only its owned instance after ten idle minutes or stdio EOF. Lifecycle mutations wait for active calls and stop all owned branch instances before changing the infobase.
+4. Use ROCTUP only for a concrete data exploration operation; do not call its private Streamable HTTP URL directly.
 5. Start data exploration with filtered `get_metadata`, then bounded `execute_query`. Do not call `execute_code`, `restart_1c_session`, or `close_1c_session` without explicit user request.
 6. Do not load full ROCTUP references eagerly. Cached upstream ROCTUP skills are read only on demand from ignored `.agent-1c/tools/roctup-mcp-toolkit/skills`.
+7. `fresh` selects the newest ROCTUP version present in the workflow compatibility manifest, never an unverified upstream latest. A catalog mismatch returns `ITL_ONDEMAND_CATALOG_MISMATCH` and stops the backend.
 
 ## vibecoding1c MCP
 
@@ -63,31 +56,24 @@ Rules:
 9. `vibecoding1c-mcp-write-client-config` removes only entries marked as vibecoding1c-managed; never delete External MCP or unrelated custom entries.
 10. `status`, `/itl-status`, and `list-dev-branches` show active names, URLs, provider, configId, health, indexed time, and freshness such as `fresh`, `stale`, `remote-shared`, `unknown`, or `indexing`.
 11. New `itldev/*` worktrees inherit a complete `master` `.agent-1c/mcp/vibecoding1c-selection.json` automatically. The helper does not copy raw `state.json`; it rematerializes selected `remote` and `local + project` endpoints in the new worktree context so project paths and client config belong to that worktree. Inheritance failures are non-blocking and can be repaired with `vibecoding1c-mcp-setup`.
-12. Ignore the legacy logical server `vanessa` if an older or external vibecoding1c distribution manifest or registry still publishes it. Vanessa UI MCP is managed only by the separate branch-local actions below and must not participate in vibecoding1c selection, completeness, runtime state, status, or client config.
+12. Ignore the legacy logical server `vanessa` if an older or external vibecoding1c distribution manifest or registry still publishes it. Vanessa UI MCP is owned by the separate `ondemand-facade` configuration and must not participate in vibecoding1c selection, completeness, runtime state, status, or client config.
 
 Do not use upstream `/installmcp`, `/updatemcp`, or `/checkmcp` as the normal MCP path in ITL projects. ITL owns MCP client config and removes default upstream endpoints after rules install/update only after ready vibecoding1c replacements have been written. If selection or state is incomplete, preserve upstream entries as a working fallback and run `vibecoding1c-mcp-setup` when ready.
 
 ## Vanessa UI MCP
 
-Vanessa UI MCP is always branch-local and starts on demand in `itldev/*` worktrees. New branches prepare the state but leave the server stopped; run one server per worktree only for a named runtime UI question, and do not run a shared server from `master`. Static form structure, handlers, commands, bindings, and direct edits use graph/code MCP and sources instead.
-
-Actions:
-
-- `install-vanessa-mcp`: install cached branch-local UI MCP CFE tooling into the current branch infobase.
-- `start-vanessa-mcp`: install missing cached UI MCP dependencies if needed, start Vanessa `runMcp` on a branch-local port, and write managed entries only to the active client config.
-- `vanessa-mcp-status`: inspect branch-local port/PID/URL.
-- `stop-vanessa-mcp`: stop only the current branch server.
+Vanessa UI MCP is always branch-local and exposed as the stable logical server `itl-vanessa-ui`. Its full verified tool catalog is visible before Vanessa or 1C starts. Static form structure, handlers, commands, bindings, and direct edits use graph/code MCP and sources instead.
 
 Rules:
 
-1. Actions must run from the active `itldev/*` worktree.
-2. Allocate ports through the shared ITL port registry plus branch state so neighboring branches, projects, and terminal-server users do not collide.
-3. Print client snippets with a branch-specific server name such as `VanessaAutomation-<safeBranchName>`.
-4. `start-vanessa-mcp` writes ignored `.codex/config.toml` and `.kilo/kilo.json` through the shared branch MCP config writer. Empty `VANESSA_MCP_PORT` or `VANESSA_MCP_URL` means stopped/on-demand, not unconfigured.
-5. Already running Kilo sessions may not reload MCP config automatically; if the server is not visible after start, reload or restart Kilo Code.
-6. Do not write Vanessa UI MCP into global Codex, VS Code, Cline, Roo, or Continue configs automatically.
-7. Do not generate Vanessa UI MCP as a visible Kilo slash command.
-8. Stop Vanessa UI MCP with `stop-vanessa-mcp` after the research, recording, or debugging operation. If start fails, report helper error and MCP log, then use only an explicitly labelled static fallback. Final verification remains `/itl-check` through Vanessa Automation `TESTMANAGER -> TESTCLIENT`, not MCP.
+1. Calls must originate from the active `itldev/*` worktree through `itl-vanessa-ui`.
+2. The first call installs missing cached CFE dependencies, starts a client-owned Vanessa `runMcp` instance, initializes Streamable HTTP, and verifies the actual catalog before forwarding unchanged arguments.
+3. Allocate a distinct port per facade process through the shared ITL registry. A client exit or ten idle minutes stops only that instance and releases its lease.
+4. Init/update/refresh writes only the active client's native stdio config. One client reload is required when the facade is first installed or upgraded; backend starts never rewrite config and need no reload.
+5. Use `search_for_steps_by_keywords`, `open_feature_file`, `check_syntax`, `get_info_about_line_scenario`, `run_scenario`, and `get_test_results` by their semantic names. The agent does not address the private gateway or raw HTTP endpoint.
+6. All tools and annotations remain visible; client confirmations still apply and the facade never auto-approves dangerous operations.
+7. A catalog mismatch returns `ITL_ONDEMAND_CATALOG_MISMATCH`, stops the backend, and exposes no unverified tools.
+8. Final verification remains `/itl-check` through Vanessa Automation `TESTMANAGER -> TESTCLIENT`, not MCP.
 
 ## Legacy Branch Data MCP
 

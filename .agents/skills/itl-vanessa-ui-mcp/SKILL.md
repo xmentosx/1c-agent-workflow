@@ -19,20 +19,19 @@ Use Vanessa UI MCP only when one of these conditions is true:
 - the task needs actual UI steps for recording or clarifying a Vanessa Automation scenario;
 - source and metadata analysis leave a named runtime gap because the final form depends on indirect code, roles, functional options, opening parameters, extensions, or dynamic form changes.
 
-Before starting the MCP, state the specific runtime question that static analysis could not answer. If the question is answered statically, do not start it.
+Before calling the MCP, state the specific runtime question that static analysis could not answer. If the question is answered statically, do not call it.
 
 ## Runtime Flow
 
 1. Work only in the active `itldev/*` worktree.
-2. Inspect branch state with `vanessa-mcp-status`. Empty `VANESSA_MCP_PORT` or `VANESSA_MCP_URL` means the on-demand server is stopped; it does not mean Vanessa UI MCP is unconfigured.
-3. Run `start-vanessa-mcp` when the runtime question requires it. The helper installs cached CFE tooling into the copied branch infobase when needed and writes branch-local Codex/Kilo MCP client config.
-4. Use the exposed Vanessa UI MCP tools only to answer the recorded runtime question. If the current Kilo session does not expose the server after start, report that a reload or restart is required.
-5. Run `stop-vanessa-mcp` after the research, recording, or debugging operation.
+2. Call the pre-registered `itl-vanessa-ui` MCP server. The first tool call installs missing cached CFE tooling when needed and starts a backend instance owned by this client process.
+3. Use its semantic tools only to answer the recorded runtime question. The backend stops automatically after ten minutes without completed calls or when the client exits.
+4. Do not invoke helper start/stop/status actions and do not call the backend through raw HTTP. Report structured facade, catalog, or broker errors as returned.
 
-For changed feature authoring, prefer `/itl-vanessa-author`: its helper persists reload/resume state and performs the shutdown/config transition. Search through `search_for_steps_by_keywords` using its exposed schema (`search_name`, `search_description`, `search_type`, `exclude_name`, `exclude_description`, `exclude_type`, `limit`). Do not call raw HTTP or treat a knowledge-base entry as proof that a runtime step exists.
+For changed feature authoring, prefer `/itl-vanessa-author`. Use `search_for_steps_by_keywords`, `open_feature_file`, `check_syntax`, `get_info_about_line_scenario`, `run_scenario`, and `get_test_results` on `itl-vanessa-ui`. Search uses `search_name`, `search_description`, `search_type`, `exclude_name`, `exclude_description`, `exclude_type`, and `limit`. Do not treat a knowledge-base entry as proof that a runtime step exists.
 
 ## Failure Handling
 
-If start fails, report the actual helper error and the branch MCP log path from `vanessa-mcp-status`. Then use static analysis only as an explicitly labelled fallback: it cannot prove the missing runtime behavior.
+If a call fails, report the structured facade error and its log path when present. Then use static analysis only as an explicitly labelled fallback: it cannot prove the missing runtime behavior.
 
 Do not turn a Vanessa UI MCP failure into an `/itl-check` failure. Run `/itl-check` only as the ordinary Vanessa Automation verification gate after configuration or test changes.

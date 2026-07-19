@@ -9,6 +9,15 @@
       "source": "template default",
       "updatedAt": ""
     },
+    "itlOndemandMcp": {
+      "version": "0.1.0",
+      "assetName": "itl-ondemand-mcp-windows-amd64.exe",
+      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.1.0/itl-ondemand-mcp-windows-amd64.exe",
+      "sha256": "84d5e6d994470775b96882320a978343cd27026137394c33ed9be5fc524ad4ea",
+      "os": "windows",
+      "arch": "amd64",
+      "source": "workflow release asset"
+    },
     "aiRules1c": {
       "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
       "ref": "itl-main-b4d9875b-r11",
@@ -28,12 +37,12 @@
     },
     "vanessaMcp": {
       "clientMcp": {
-        "version": "v0.6.4",
+        "version": "v0.6.5",
         "assetName": "client_mcp.cfe",
-        "url": "https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.4/client_mcp.cfe",
-        "sha256": "74d3cb7f97e3800860f5a1754eecf47178164d888f2299125d1b3118a4614ec1",
+        "url": "https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.5/client_mcp.cfe",
+        "sha256": "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f",
         "source": "template baseline",
-        "updatedAt": "2026-07-10T00:00:00Z"
+        "updatedAt": "2026-05-26T19:34:34Z"
       },
       "vaExtension": {
         "version": "1.2.043.28",
@@ -45,12 +54,12 @@
       }
     },
     "roctupMcpToolkit": {
-      "version": "v1.7.0",
+      "version": "v1.7.1",
       "assetName": "MCP_Toolkit.epf",
-      "url": "https://github.com/ROCTUP/1c-mcp-toolkit/releases/download/v1.7.0/MCP_Toolkit.epf",
-      "sha256": "e9a0856224aea4f54763fe1fb6a21aa8e71efb9d14158adc4382e1b2276d829d",
+      "url": "https://github.com/ROCTUP/1c-mcp-toolkit/releases/download/v1.7.1/MCP_Toolkit.epf",
+      "sha256": "74bd1d228aa36fda688b34277ede6030ea3b54350c112a680cdce63adb8ac675",
       "source": "template baseline",
-      "updatedAt": "2026-07-10T00:00:00Z"
+      "updatedAt": "2026-06-14T15:19:23Z"
     }
   }
 }

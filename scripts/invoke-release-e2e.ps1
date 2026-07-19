@@ -98,6 +98,9 @@ $roundtripEvidencePath = ""
 $roundtripEvidence = $null
 $extensionSmokeEvidencePath = ""
 $extensionSmokeEvidence = $null
+$onDemandMcpEvidencePath = Join-Path $outputRoot "ondemand-mcp.json"
+$onDemandMcpEvidence = $null
+$onDemandMcpTestFixture = [Environment]::GetEnvironmentVariable("ITL_TEST_RELEASE_ONDEMAND_PROBE") -eq "true"
 $configCadenceEvidencePath = Join-Path $outputRoot "config-cadence.json"
 $extensionSmokeName = "ITLReleaseSmoke" + [DateTime]::UtcNow.ToString("yyyyMMddHHmmss")
 
@@ -784,6 +787,75 @@ try {
         $extensionSmokeEvidence = Get-Content -LiteralPath $extensionSmokeEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
 
+    if (-not (Test-E2EStagePassed -Name "ondemand-mcp")) {
+        Set-E2EStageStatus -Name "ondemand-mcp" -Status "running"
+        $executedStages += "ondemand-mcp"
+        try {
+            if ($onDemandMcpTestFixture) {
+                $onDemandMcpEvidence = [ordered]@{
+                    schemaVersion = 1
+                    facadeSha256 = ("0" * 64)
+                    testFixture = $true
+                    families = [ordered]@{
+                        roctup = [ordered]@{ toolCount = 13; instances = @([ordered]@{ pid = 101; port = 6003 }); cleanupPassed = $true; secondSurvivedFirstClose = $false }
+                        "vanessa-ui" = [ordered]@{ toolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876 }, [ordered]@{ pid = 202; port = 9877 }); cleanupPassed = $true; secondSurvivedFirstClose = $true }
+                    }
+                    capturedAt = [DateTime]::UtcNow.ToString("o")
+                }
+            } else {
+                $facadeBuild = & (Join-Path $workflowRoot "scripts\Build-ItlOnDemandMcp.ps1")
+                $compatibilityRoot = Join-Path $workflowRoot ".agents\skills\1c-workflow\assets\ondemand-mcp"
+                $compatibility = Get-Content -LiteralPath (Join-Path $compatibilityRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                $probeRoot = Join-Path $workflowRoot "tools\itl-ondemand-mcp"
+                $families = [ordered]@{}
+                foreach ($spec in @(
+                    [pscustomobject]@{ family = "roctup"; tool = "get_metadata"; instances = 1 },
+                    [pscustomobject]@{ family = "vanessa-ui"; tool = "get_VanessaAutomation_state"; instances = 2 }
+                )) {
+                    $definition = $compatibility.families.([string]$spec.family)
+                    $catalogPath = Join-Path $compatibilityRoot ([string]$definition.catalog)
+                    $familyEvidencePath = Join-Path $outputRoot ("ondemand-mcp-{0}.json" -f $spec.family)
+                    Push-Location $probeRoot
+                    try {
+                        & go run .\cmd\itl-ondemand-probe `
+                            -exe ([string]$facadeBuild.path) `
+                            -family ([string]$spec.family) `
+                            -project-root $worktreePath `
+                            -catalog $catalogPath `
+                            -helper $HelperPath `
+                            -tool ([string]$spec.tool) `
+                            -instances ([int]$spec.instances) `
+                            -output $familyEvidencePath
+                        if ($LASTEXITCODE -ne 0) { throw "On-demand MCP live probe failed for $($spec.family)." }
+                    } finally {
+                        Pop-Location
+                    }
+                    $familyEvidence = Get-Content -LiteralPath $familyEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if (-not [bool]$familyEvidence.cleanupPassed) { throw "On-demand MCP cleanup was not proven for $($spec.family)." }
+                    if ([int]$spec.instances -eq 2 -and -not [bool]$familyEvidence.secondSurvivedFirstClose) {
+                        throw "The second Vanessa facade did not survive closing the first facade."
+                    }
+                    $families[[string]$spec.family] = $familyEvidence
+                }
+                $onDemandMcpEvidence = [ordered]@{
+                    schemaVersion = 1
+                    facadeSha256 = [string]$facadeBuild.sha256
+                    testFixture = $false
+                    families = $families
+                    capturedAt = [DateTime]::UtcNow.ToString("o")
+                }
+            }
+            [System.IO.File]::WriteAllText($onDemandMcpEvidencePath, (($onDemandMcpEvidence | ConvertTo-Json -Depth 12) + "`n"), (New-Object System.Text.UTF8Encoding($false)))
+            Set-E2EStageStatus -Name "ondemand-mcp" -Status "passed" -EvidencePath $onDemandMcpEvidencePath
+        } catch {
+            Set-E2EStageStatus -Name "ondemand-mcp" -Status "failed" -ErrorText $_.Exception.Message
+            throw
+        }
+    } else {
+        $resumedStages += "ondemand-mcp"
+        $onDemandMcpEvidence = Get-Content -LiteralPath $onDemandMcpEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+
     if (-not (Test-E2EStagePassed -Name "result-cleanup")) {
         Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
         Set-E2EStageStatus -Name "result-cleanup" -Status "running"
@@ -860,9 +932,15 @@ try {
     }
 } finally {
     $cleanupActions = @()
-    foreach ($action in @("stop-dev-branch-test-clients", "stop-vanessa-mcp", "stop-roctup-mcp")) {
+    foreach ($cleanupSpec in @(
+        [pscustomobject]@{ action = "stop-dev-branch-test-clients"; arguments = @() },
+        [pscustomobject]@{ action = "stop-ondemand-vanessa"; arguments = @("-InternalOnDemandOperation", "stop-all", "-InternalOnDemandFamily", "vanessa-ui") },
+        [pscustomobject]@{ action = "stop-ondemand-roctup"; arguments = @("-InternalOnDemandOperation", "stop-all", "-InternalOnDemandFamily", "roctup") }
+    )) {
+        $action = [string]$cleanupSpec.action
         try {
-            $cleanup = Invoke-E2EHelper -Action $action -TimeoutSeconds 180 -AllowFailure
+            $helperAction = $(if ($action -eq "stop-dev-branch-test-clients") { $action } else { "help" })
+            $cleanup = Invoke-E2EHelper -Action $helperAction -TimeoutSeconds 180 -AdditionalArguments @($cleanupSpec.arguments) -AllowFailure
             $cleanupActions += [ordered]@{ action = $action; exitCode = [int]$cleanup.exitCode }
             if ($cleanup.exitCode -ne 0) { $cleanupFailures += "$action exit=$($cleanup.exitCode)" }
         } catch {
@@ -950,6 +1028,12 @@ try {
         extensionUiTestClientPassed = $(if ($extensionSmokeEvidence) { [bool]$extensionSmokeEvidence.extensionUiTestClientPassed } else { $false })
         extensionUiJunitTests = $(if ($extensionSmokeEvidence) { [int]$extensionSmokeEvidence.extensionUiJunitTests } else { 0 })
         extensionUiReportPath = $(if ($extensionSmokeEvidence) { [string]$extensionSmokeEvidence.extensionUiReportPath } else { "" })
+        onDemandMcpEvidencePath = $onDemandMcpEvidencePath
+        onDemandRoctupToolCount = $(if ($onDemandMcpEvidence) { [int]$onDemandMcpEvidence.families.roctup.toolCount } else { 0 })
+        onDemandVanessaToolCount = $(if ($onDemandMcpEvidence) { [int]$onDemandMcpEvidence.families.'vanessa-ui'.toolCount } else { 0 })
+        onDemandVanessaInstances = $(if ($onDemandMcpEvidence) { @($onDemandMcpEvidence.families.'vanessa-ui'.instances).Count } else { 0 })
+        onDemandVanessaSecondSurvived = $(if ($onDemandMcpEvidence) { [bool]$onDemandMcpEvidence.families.'vanessa-ui'.secondSurvivedFirstClose } else { $false })
+        onDemandMcpTestFixture = $(if ($onDemandMcpEvidence) { [bool]$onDemandMcpEvidence.testFixture } else { $false })
         artifactPath = $artifactPath
         artifactSha256 = $artifactSha256
         resultManifestPath = $resultManifestPath

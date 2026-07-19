@@ -32,8 +32,8 @@ Use the monitored launcher by default when `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_
 6. If `sourceUsesRepository=true`, unbind the development branch copy from 1C configuration repository storage without repository parameters.
 7. Resolve unsafe-action protection immediately after repository unbind. Reuse a context-matching source confirmation from the main worktree; otherwise run the visible Russian confirmation/Configurator loop for the copied base. Persist `unsafe-action-protection-resolved` before continuing so resume never recopies the base or repeats a proven answer.
 8. Register the branch infobase in `%APPDATA%\1C\1CEStart\ibases.v8i` under `/ITL/<project-root-name>` with entry name `<project-root-name> - <development-branch-name>`.
-9. Save branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json` inside the worktree, including `createdWithWorktree`, `worktreePath`, `mainWorktreePath`, launcher metadata, `devBranchKind`, publication status fields, ROCTUP/Vanessa UI MCP status, legacy Data MCP status, and Vanessa Automation verification fields.
-10. Activate branch context in the worktree `.dev.env`, prepare branch-local ROCTUP/Vanessa UI MCP state as stopped, and leave both servers closed until an agent explicitly needs them. Inherit absolute paths to the checked Vanessa UI MCP CFE cache from `master`; do not install CFE into the branch infobase until `start-vanessa-mcp`. If `master` has a complete vibecoding1c MCP selection, copy that selection into the new worktree and materialize ready `remote` and `local + project` endpoints in the worktree context. Write vibecoding1c endpoints to branch state, `.dev.env`, `.codex/config.toml`, and `.kilo/kilo.json`; ROCTUP/Vanessa UI MCP client entries are written only after explicit `start-roctup-mcp` or `start-vanessa-mcp`.
+9. Save branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json` inside the worktree, including `createdWithWorktree`, `worktreePath`, `mainWorktreePath`, launcher metadata, `devBranchKind`, publication status fields, legacy MCP migration fields, and Vanessa Automation verification fields.
+10. Activate branch context in `.dev.env`, inherit compatible ROCTUP/Vanessa artifacts, and register the stable `itl-roctup-data` and `itl-vanessa-ui` stdio facades for the active client. Neither backend nor 1C starts until the first tool call. If `master` has a complete vibecoding1c MCP selection, copy and rematerialize it for the new worktree.
 11. If web publication is enabled, run the helper-owned publication cycle: automatic publication only when `WEB_PUBLISH_AUTO=true`, otherwise manual URL entry or skip. Best-effort legacy branch Data MCP connects only after a publication URL exists.
 12. Build the event-log baseline and store its reader/cache/count/duration evidence.
 13. Persist `initializationStatus=enterprise-normalization-pending`, then run Enterprise with the bundled auto-update EPF against the copied branch infobase only. Save `enterpriseNormalizationStatus`, reason, error, time, EPF and log evidence; set `initializationStatus=ready` only after success.
@@ -70,7 +70,7 @@ Rules:
 
 Before a full fallback, the helper preserves the partial exception/list/log and warns that no base snapshot exists. A successful fallback records `configLoadStatus=fallback-succeeded` and `lastConfigLoadMode=full-fallback`; a double failure records `fallback-failed`, both errors/logs, leaves the last-loaded commit unchanged, skips normalization/MCP restart/verification, and requires recreating the branch copy for safe recovery. Full load remains a real-failure fallback, not a special case for root XML.
 
-After any real partial/full configuration or extension load, normalization is marked pending and ITL launches Enterprise through the bundled auto-update EPF to apply update handlers and answer the legal-copy prompt non-interactively, then restarts already-running ROCTUP/Vanessa UI MCP processes. The default timeout is 900 seconds; use `DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS` only for a different positive limit. A timeout fails the lifecycle and stops only the helper-owned Enterprise process. No-op updates do not launch Enterprise or restart MCP.
+After any real partial/full configuration or extension load, normalization is marked pending and ITL launches Enterprise through the bundled auto-update EPF to apply update handlers and answer the legal-copy prompt non-interactively. Lifecycle cleanup stops on-demand backend instances first; later tool calls create fresh ones without client reload. The default timeout is 900 seconds; use `DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS` only for a different positive limit.
 
 After every successful or failed Vanessa verification, stop branch-owned `TESTMANAGER`/`TESTCLIENT` processes and fail the verification if cleanup cannot be proved. Use the advanced `stop-dev-branch-test-clients` recovery action for leftovers from older runs; it matches the current branch infobase/worktree and must not stop foreign worktrees.
 
@@ -79,7 +79,7 @@ Development branch changes must never be loaded directly into the source infobas
 ## STATUS / LIST / SWITCH
 
 - `status` shows the current lifecycle operation or orphaned record, worktree, branch, initialization/normalization/config-load evidence, event-log reader/cache/count/duration, verification/MCP summaries, and target worktree paths.
-- `list-dev-branches` shows active branches, branch/worktree paths, main worktree path, copied infobase path, launcher metadata, publication URL/status, ROCTUP MCP status, legacy Data MCP status, Vanessa Automation verification port/status, Vanessa UI MCP status, vibecoding1c MCP current-scope status, and timestamps.
+- `list-dev-branches` shows active branches, worktree/base state, verification and vibecoding1c status; general `status`/`doctor` also report the facade executable and owned on-demand instances.
 - `switch-master` clears active branch infobase values and returns legacy single-folder checkouts to `master`.
 - `switch-dev-branch` is mainly legacy recovery. For worktree-created branches, report the saved worktree path instead of changing the current folder.
 
@@ -93,9 +93,9 @@ Goal: refresh the current development branch from fresh `master` and source stat
 4. If workflow helper scripts changed, re-exec the helper in the correct phase.
 5. Regenerate context-specific Kilo wrappers if workflow files changed.
 6. Update the branch infobase from changed files.
-7. Restart already-running ROCTUP/Vanessa UI MCP processes after a real load.
+7. Keep the stable facade config and let the next tool call create fresh backend instances after a real load.
 8. Re-check whether verification is fresh; stale or unknown verification must be handled before result export.
 
 ## CLOSE_DEV_BRANCH
 
-`close-dev-branch` is advanced bookkeeping for hiding a branch from active lists. It is not part of the visible slash-command surface. It follows the same verification policy as result export, stops branch-local ROCTUP and Vanessa UI MCP, records close metadata, and must not delete user worktrees or infobases automatically.
+`close-dev-branch` is advanced bookkeeping for hiding a branch from active lists. It follows the same verification policy as result export, exclusively waits for active MCP calls, stops all owned branch backends, records close metadata, and must not delete user worktrees or infobases automatically.

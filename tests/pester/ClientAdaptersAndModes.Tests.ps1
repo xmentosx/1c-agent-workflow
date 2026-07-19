@@ -22,8 +22,8 @@ Describe "ITL client adapters and verification modes" {
                 [string]$registry[$client].reload | Should -Not -BeNullOrEmpty
             }
             $vanessaSource = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
-            $vanessaSource | Should -Match '\$adapter\.reload'
-            $vanessaSource | Should -Match 'reloadInstruction'
+            $vanessaSource | Should -Match 'Vanessa authoring state: ready'
+            $vanessaSource | Should -Not -Match 'reloadInstruction'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 

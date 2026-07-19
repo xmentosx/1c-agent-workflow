@@ -330,9 +330,9 @@ function Test-Agent1cActionRequiresLifecycleLock {
         "list-platforms",
         "detect-web-publication",
         "detect-apache",
-        "vanessa-mcp-status",
-        "roctup-mcp-status",
-        "vibecoding1c-mcp-status"
+        "vibecoding1c-mcp-status",
+        "internal-ondemand-ensure",
+        "internal-ondemand-stop"
     )
     return -not ($readOnlyActions -contains $RequestedAction)
 }
@@ -340,6 +340,11 @@ function Test-Agent1cActionRequiresLifecycleLock {
 function Get-Agent1cLifecycleLockPath {
     param([string]$WorktreePath)
     return (Join-Path (Resolve-Agent1cFullPath -Path $WorktreePath) ".agent-1c\locks\lifecycle.lock")
+}
+
+function Get-Agent1cRuntimeMcpLockPath {
+    param([string]$WorktreePath)
+    return (Join-Path (Resolve-Agent1cFullPath -Path $WorktreePath) ".agent-1c\locks\runtime-mcp.lock")
 }
 
 function Get-Agent1cLifecycleOperationStatePath {
@@ -566,6 +571,30 @@ function Enter-Agent1cLifecycleOperation {
                 throw (New-Agent1cLifecycleConflictMessage -RequestedAction $RequestedAction -WorktreePath $scope)
             }
             $handles += [pscustomobject]@{ worktreePath = $scope; lockPath = $lockPath; stream = $stream }
+        }
+        # Lifecycle is acquired first. The runtime lock then drains active MCP calls
+        # and prevents infobase refresh/close from racing with a proxied tool call.
+        foreach ($scope in $scopes) {
+            $runtimeLockPath = Get-Agent1cRuntimeMcpLockPath -WorktreePath $scope
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $runtimeLockPath) | Out-Null
+            $deadline = (Get-Date).AddMinutes(10)
+            $runtimeStream = $null
+            while ($null -eq $runtimeStream -and (Get-Date) -lt $deadline) {
+                try {
+                    $runtimeStream = [System.IO.File]::Open(
+                        $runtimeLockPath,
+                        [System.IO.FileMode]::OpenOrCreate,
+                        [System.IO.FileAccess]::ReadWrite,
+                        [System.IO.FileShare]::None
+                    )
+                } catch [System.IO.IOException] {
+                    Start-Sleep -Milliseconds 200
+                }
+            }
+            if ($null -eq $runtimeStream) {
+                throw "ITL_RUNTIME_MCP_LOCK_TIMEOUT requestedAction='$RequestedAction' worktree='$scope' lockPath='$runtimeLockPath' timeoutSeconds='600'"
+            }
+            $handles += [pscustomobject]@{ worktreePath = $scope; lockPath = $runtimeLockPath; stream = $runtimeStream }
         }
     } catch {
         for ($index = $handles.Count - 1; $index -ge 0; $index--) {

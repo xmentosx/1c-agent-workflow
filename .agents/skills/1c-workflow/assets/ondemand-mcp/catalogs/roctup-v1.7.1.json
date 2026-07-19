@@ -1,0 +1,526 @@
+{
+    "schemaVersion":  1,
+    "family":  "roctup",
+    "backendVersions":  {
+                            "roctup":  "v1.7.1"
+                        },
+    "generatedFrom":  "mcp-tools-list",
+    "capturedAt":  "2026-07-19T07:43:37.9078920Z",
+    "tools":  [
+                  {
+                      "name":  "close_1c_session",
+                      "description":  "Close the current 1C session — the session that provides this MCP server and executes 1C tool calls —\nand return a launcher script command to start a new one.\nUse this when exclusive database access is needed (e.g. configuration update).\nThe response text contains the shell command to run the launcher script.\nRun it synchronously: exit 0 means the session is ready.\nOn Windows, run the command in PowerShell (not cmd.exe).\nOn timeout, check whether a 1C process was started before launching another.\nOn non-timeout exit 1, read the output: pre-launch errors are safe to retry after fixing the cause;\nfailed startup errors close the failed new instance automatically.\nNOTE: on Linux with password auth, python3 must be available on PATH.\n\nIMPORTANT: Do NOT call this tool on your own initiative. Only invoke when explicitly instructed.\nNote: the first MCP request to the new session may fail - retry once if it does.\n\nArgs:\n    No arguments.",
+                      "inputSchema":  {
+                                          "type":  "object",
+                                          "properties":  {
+
+                                                         },
+                                          "required":  [
+
+                                                       ]
+                                      }
+                  },
+                  {
+                      "name":  "execute_code",
+                      "description":  "Execute arbitrary code in 1C language.\n\nThis tool executes code on the 1C:Enterprise server using the Execute() operator.\nThe result is returned from the \u0027Результат\u0027 (Result) variable as JSON or TOON format.\n\nImportant limitations (code is executed as a statement block, not a full module):\n- Do NOT declare procedures/functions (`Процедура/Функция`) inside the snippet.\n- Do NOT use `Возврат` (Return). Instead assign a value to `Результат`.\n\nWARNING: Some dangerous operations are blocked for safety reasons.\n\nArgs:\n    ctx: MCP Context (injected automatically)\n    code: The 1C code to execute. Use \u0027Результат = ...\u0027 to return a value.\n    execution_context: Optional[\u0027server\u0027|\u0027client\u0027], default=\u0027server\u0027.\n        \u0027server\u0027 — НаСервереБезКонтекста: DB access, 1C objects, no form context.\n        \u0027client\u0027 — НаКлиенте: form attributes (ЭтаФорма), UI functions, no DB queries.\n    \nReturns:\n    Dictionary with:\n    - success: Boolean indicating if the code executed successfully\n    - data: The value of \u0027Результат\u0027 variable in JSON or TOON format (if successful)\n    - error: Error message with line number (if failed)\n    \nExample:\n    execute_code(code=\"Результат = ТекущаяДата();\")\n\nNOTE: Anonymization is enabled for this tool.\nSome returned values (person names, organization names, TINs, and other\npersonal data) are replaced with anonymous tokens in the format\n[CATEGORY-NNNNN] (e.g. [ORG-00001], [PER-00042], [INN-00001]).\nTokens are stable within the current session.\nDo not attempt to interpret these tokens as meaningful data.\nTokens can be used in subsequent requests.",
+                      "inputSchema":  {
+                                          "type":  "object",
+                                          "properties":  {
+                                                             "code":  {
+                                                                          "type":  "string",
+                                                                          "description":  "The 1C code to execute. Use \u0027Результат = ...\u0027 to return a value."
+                                                                      },
+                                                             "execution_context":  {
+                                                                                       "type":  "string",
+                                                                                       "description":  "Execution context: \u0027server\u0027 (default, НаСервереБезКонтекста — DB access, 1C objects) or \u0027client\u0027 (НаКлиенте — form attributes, UI functions, no DB queries)",
+                                                                                       "enum":  [
+                                                                                                    "server",
+                                                                                                    "client"
+                                                                                                ]
+                                                                                   }
+                                                         },
+                                          "required":  [
+                                                           "code"
+                                                       ]
+                                      }
+                  },
+                  {
+                      "name":  "execute_query",
+                      "description":  "Execute a query in 1C query language and return the results.\n\nThis tool executes queries on the 1C:Enterprise database using the 1C query language.\nResults are returned as JSON or TOON format.\n\nArgs:\n    ctx: MCP Context (injected automatically)\n    query: The query text in 1C query language (e.g., \"ВЫБРАТЬ * ИЗ Справочник.Номенклатура\")\n    params: Optional dictionary of query parameters (e.g., {\"Param1\": \"value1\"}).\n           Parameter values can be:\n           - Simple values (string, number, boolean, date)\n           - Object references in format: {\"_objectRef\": true, \"УникальныйИдентификатор\": \"uuid-string\", \"ТипОбъекта\": \"СправочникСсылка.Контрагенты\"}\n             Object references are automatically converted to actual 1C references before query execution.\n    limit: Maximum number of rows to return (default: 100, max: 1000)\n    include_schema: Include column type schema in response (default: False)\n    \nReturns:\n    Dictionary with:\n    - success: Boolean indicating if the query executed successfully\n    - data: Array of result objects in JSON or TOON format (if successful)\n    - schema: Column type information (if include_schema=True and successful)\n    - error: Error message (if failed)\n    \nExamples:\n    # Simple parameter\n    execute_query(\n        query=\"ВЫБРАТЬ Код, Наименование ИЗ Справочник.Номенклатура ГДЕ Код = \u0026КодТовара\",\n        params={\"КодТовара\": \"001\"},\n        limit=100,\n        include_schema=True\n    )\n    \n    # Object reference parameter (from previous execute_query result)\n    execute_query(\n        query=\"ВЫБРАТЬ * ИЗ Документ.РеализацияТоваровУслуг ГДЕ Контрагент = \u0026МойКонтрагент\",\n        params={\n            \"МойКонтрагент\": {\n                \"_objectRef\": true,\n                \"УникальныйИдентификатор\": \"a1b2c3d4-e5f6-7890-1234-567890abcdef\",\n                \"ТипОбъекта\": \"СправочникСсылка.Контрагенты\"\n            }\n        },\n        limit=50\n    )\n\nNOTE: Anonymization is enabled for this tool.\nSome returned values (person names, organization names, TINs, and other\npersonal data) are replaced with anonymous tokens in the format\n[CATEGORY-NNNNN] (e.g. [ORG-00001], [PER-00042], [INN-00001]).\nTokens are stable within the current session.\nDo not attempt to interpret these tokens as meaningful data.\nTokens can be used in subsequent requests.",
+                      "inputSchema":  {
+                                          "type":  "object",
+                                          "properties":  {
+                                                             "query":  {
+                                                                           "type":  "string",
+                                                                           "description":  "The query text in 1C query language (e.g., \"ВЫБРАТЬ * ИЗ Справочник.Номенклатура\")"
+                                                                       },
+                                                             "params":  {
+                                                                            "type":  "object",
+                                                                            "description":  "Optional dictionary of query parameters (e.g., {\"Param1\": \"value1\"}). Object references use format {\"_objectRef\": true, \"УникальныйИдентификатор\": \"uuid\", \"ТипОбъекта\": \"СправочникСсылка.X\"}"
+                                                                        },
+                                                             "limit":  {
+                                                                           "type":  "integer",
+                                                                           "description":  "Maximum number of rows to return (default: 100, max: 1000)",
+                                                                           "default":  100
+                                                                       },
+                                                             "include_schema":  {
+                                                                                    "type":  "boolean",
+                                                                                    "description":  "Include column type schema in response (default: False)",
+                                                                                    "default":  false
+                                                                                }
+                                                         },
+                                          "required":  [
+                                                           "query"
+                                                       ]
+                                      }
+                  },
+                  {
+                      "name":  "find_references_to_object",
+                      "description":  "Find references to a given object across specified metadata collections.\n\nThis tool searches for references to the target object in documents, catalogs,\nand registers. It checks all fields whose type can contain a reference to the\ntarget object type, then queries for actual matches.\n\nThe search is performed in two stages:\n1. Candidate discovery: metadata traversal to find fields that can hold the target type\n2. Query execution: actual queries to find objects/records referencing the target\n\nArgs:\n    ctx: MCP Context (injected automatically)\n    target_object_description: Object description from execute_query results with fields:\n                              - _objectRef: must be true\n                              - УникальныйИдентификатор: UUID string\n                              - ТипОбъекта: object type (e.g., \"СправочникСсылка.Контрагенты\")\n                              - Представление: string representation (optional)\n    search_scope: List of search scopes to check. Valid values:\n                 \"documents\", \"catalogs\", \"information_registers\",\n                 \"accumulation_registers\", \"accounting_registers\", \"calculation_registers\".\n    meta_filter: Optional metadata filter dict with fields:\n                - names: list of exact metadata object names (e.g., [\"Документ.РеализацияТоваровУслуг\"])\n                - name_mask: search mask for name/synonym (case-insensitive)\n                If names is provided, name_mask is ignored.\n    limit_hits: Maximum total number of hits (default: 200, max: 10000).\n    limit_per_meta: Maximum hits per metadata object (default: 20, max: 1000).\n    timeout_budget_sec: Time budget in seconds for the search (default: 30, min: 5, max: 300).\n\nReturns:\n    Dictionary with:\n    - success: Boolean indicating if the request was successful\n    - data: Object containing:\n        - hits: Array of found references, each with:\n            - found_in_meta: metadata object name (e.g., \"Документ.РеализацияТоваровУслуг\")\n            - found_in_object: object_description of the owner (for documents/catalogs) or null (for registers)\n            - record_key: dimension values (for registers only)\n            - path: field path (e.g., \"Контрагент\" or \"Товары.Номенклатура\")\n            - match_kind: field type (attribute, tabular_section, dimension, resource, requisite)\n            - note: human-readable description\n        - total_hits: number of hits found\n        - candidates_checked: number of candidate fields checked\n        - timeout_exceeded: true if time budget was exhausted\n        - skipped_names: names from meta_filter.names that were skipped\n    - error: Error message (if failed)\n\nExample:\n    find_references_to_object(\n        target_object_description={\n            \"_objectRef\": True,\n            \"УникальныйИдентификатор\": \"ba7e5a3d-1234-5678-9abc-def012345678\",\n            \"ТипОбъекта\": \"СправочникСсылка.Контрагенты\",\n            \"Представление\": \"ООО Рога и Копыта\"\n        },\n        search_scope=[\"documents\"],\n        limit_hits=10\n    )\n\nNOTE: Anonymization is enabled for this tool.\nSome returned values (person names, organization names, TINs, and other\npersonal data) are replaced with anonymous tokens in the format\n[CATEGORY-NNNNN] (e.g. [ORG-00001], [PER-00042], [INN-00001]).\nTokens are stable within the current session.\nDo not attempt to interpret these tokens as meaningful data.\nTokens can be used in subsequent requests.",
+                      "inputSchema":  {
+                                          "type":  "object",
+                                          "properties":  {
+                                                             "target_object_description":  {
+                                                                                               "type":  "object",
+                                                                                               "description":  "Object description from execute_query results with fields: _objectRef (must be true), УникальныйИдентификатор (UUID), ТипОбъекта (e.g., \"СправочникСсылка.Контрагенты\"), Представление (optional)"
+                                                                                           },
+                                                             "search_scope":  {
+                                                                                  "type":  "array",
+                                                                                  "items":  {
+                                                                                                "type":  "string"
+                                                                                            },
+                                                                                  "description":  "List of search scopes to check. Valid values: \"documents\", \"catalogs\", \"information_registers\", \"accumulation_registers\", \"accounting_registers\", \"calculation_registers\"."
+                                                                              },
+                                                             "meta_filter":  {
+                                                                                 "type":  "object",
+                                                                                 "description":  "Optional metadata filter dict with fields: names (list of exact metadata object names) and name_mask (case-insensitive search mask). If names is provided, name_mask is ignored."
+                                                                             },
+                                                             "limit_hits":  {
+                                                                                "type":  "integer",
+                                                                                "description":  "Maximum total number of hits (default: 200, max: 10000).",
+                                                                                "default":  200
+                                                                            },
+                                                             "limit_per_meta":  {
+                                                                                    "type":  "integer",
+                                                                                    "description":  "Maximum hits per metadata object (default: 20, max: 1000).",
+                                                                                    "default":  20
+                                                                                },
+                                                             "timeout_budget_sec":  {
+                                                                                        "type":  "integer",
+                                                                                        "description":  "Time budget in seconds for the search (default: 30, min: 5, max: 300).",
+                                                                                        "default":  30
+                                                                                    }
+                                                         },
+                                          "required":  [
+                                                           "target_object_description",
+                                                           "search_scope"
+                                                       ]
+                                      }
+                  },
+                  {
+                      "name":  "get_access_rights",
+                      "description":  "Get role permissions for a metadata object and optionally effective rights for a user.\n\nThis tool retrieves information about what rights each role grants for the specified\nmetadata object. If a user name is provided, it also calculates the effective rights\nfor that user (sum of all their roles).\n\nIMPORTANT limitations:\n- effective_rights is \"rights by sum of roles\", NOT a guarantee of real access\n- RLS (Row Level Security) is NOT taken into account\n- Contextual restrictions (by organizations, departments) are NOT taken into account\n- This is a check of \"what is allowed by roles\", not \"what the user will actually see\"\n\nRuntime requirements:\n- Admin rights are required: AccessRight() with 3rd parameter (Role/User) requires admin rights\n- Privileged mode is forbidden: if enabled, AccessRight() always returns True, result is meaningless\n\nArgs:\n    ctx: MCP Context (injected automatically)\n    metadata_object: Full metadata object name (e.g., \"Справочник.Контрагенты\", \"Документ.РеализацияТоваровУслуг\")\n    user_name: Optional user name for effective rights calculation (case-insensitive search)\n    rights_filter: Optional list of rights to show in result (default: all applicable rights for type)\n    roles_filter: Optional list of roles to show (default: all roles with rights)\n\nReturns:\n    Dictionary with:\n    - success: Boolean indicating if the request was successful\n    - data: Object containing:\n        - metadata_object: full metadata object name\n        - metadata_type: object type (e.g., \"Справочник\", \"Документ\", \"РегистрСведений\")\n        - applicable_rights: array of applicable rights for this object type\n        - roles: array of roles with their rights, sorted by name\n        - total_roles: number of roles in result (after roles_filter)\n        - roles_with_rights: number of roles that have at least one right (after rights_filter)\n        - user: (if user_name provided) object with:\n            - name: user name\n            - full_name: user\u0027s full name (optional, may not be available)\n            - roles: array of role names assigned to the user\n            - effective_rights: object with right names as keys and boolean values\n    - error: Error message (if failed)\n\nExample:\n    # Get all role permissions for a catalog\n    get_access_rights(metadata_object=\"Справочник.Контрагенты\")\n\n    # Get specific rights for a user\n    get_access_rights(\n        metadata_object=\"Справочник.Контрагенты\",\n        user_name=\"Иванов\",\n        rights_filter=[\"Чтение\", \"Изменение\"]\n    )\n\nNOTE: Anonymization is enabled for this tool.\nSome returned values (person names, organization names, TINs, and other\npersonal data) are replaced with anonymous tokens in the format\n[CATEGORY-NNNNN] (e.g. [ORG-00001], [PER-00042], [INN-00001]).\nTokens are stable within the current session.\nDo not attempt to interpret these tokens as meaningful data.\nTokens can be used in subsequent requests.",
+                      "inputSchema":  {
+                                          "type":  "object",
+                                          "properties":  {
+                                                             "metadata_object":  {
+                                                                                     "type":  "string",
+                                                                                     "description":  "Full metadata object name (e.g., \"Справочник.Контрагенты\", \"Документ.РеализацияТоваровУслуг\")"
+                                                                                 },
+                                                             "user_name":  {
+                                                                               "type":  "string",
+                                                                               "description":  "Optional user name for effective rights calculation (case-insensitive search)"
+                                                                           },
+                                                             "rights_filter":  {
+                                                                                   "type":  "array",
+                                                                                   "items":  {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                                   "description":  "Optional list of rights to show in result (default: all applicable rights for type)"
+                                                                               },
+                                                             "roles_filter":  {
+                                                                                  "type":  "array",
+                                                                                  "items":  {
+                                                                                                "type":  "string"
+                                                                                            },
+                                                                                  "description":  "Optional list of roles to show (default: all roles with rights)"
+                                                                              }
+                                                         },
+                                          "required":  [
+                                                           "metadata_object"
+                                                       ]
+                                      }
+                  },
+                  {
+                      "name":  "get_bsl_syntax_help",
+                      "description":  "Get syntax reference for 1C BSL language.\n\nSearch by keywords to find built-in functions, methods, types and language constructs.\nReturns candidates (unique breadcrumb paths) and Markdown content when exactly one breadcrumb matches.\nIf the single match is a navigation section (no content, has sub-topics), returns its sub-topics as candidates instead.\nCandidate paths (e.g. \"Массив/Методы/Найти\") and Markdown link targets from content (format: [Title](topic:Path)) can be used as keywords for exact lookup — pass the full string including the topic: prefix as-is.\nWhen searching for members of a type, include \"Методы\", \"Свойства\", or \"Конструкторы\" in keywords.\nSupports pagination: use limit (default 100) and offset (default 0) to page through results.\nResponse includes total, offset, limit, has_more. If has_more is true, call again with offset += limit.\nIf multiple candidates are returned — add more specific keywords to narrow down, or use pagination to browse all matches.\nWhen content is returned, it may be paginated. If content_has_more is true, call again with content_page + 1.\n\nArgs:\n    keywords: List of search keywords, or a single candidate path / link from content for exact lookup\n    match: \"all\" (default) — all keywords must match; \"any\" — any keyword matches\n    limit: Maximum number of candidates to return (1–300, default 100)\n    offset: Number of candidates to skip for pagination (default 0)\n    content_page: Page number of content to return (1-based, default 1)\n\nReturns:\n    Dictionary with:\n    - success: Boolean indicating if the request was successful\n    - data.candidates: paged slice of matching breadcrumb paths\n    - data.total: total number of matching candidates (before pagination)\n    - data.offset: the offset used for this response\n    - data.limit: the limit used for this response\n    - data.has_more: true if more candidates exist beyond this page\n    - data.content: Markdown text page (only when total==1 and offset==0), else null\n    - data.content_page: current page of content (only when content is not null)\n    - data.content_total_pages: total number of content pages (only when content is not null)\n    - data.content_has_more: true if more content pages exist (only when content is not null)\n\nExample:\n    # Search by keyword\n    keywords=[\"Найти\"]\n\n    # Narrow down with multiple keywords\n    keywords=[\"Найти\", \"Массив\"]\n\n    # Use a candidate path for exact lookup\n    keywords=[\"Массив/Методы/Найти\"]\n\n    # Use a link from content for exact lookup\n    keywords=[\"topic:Массив/Методы/Найти\"]",
+                      "inputSchema":  {
+                                          "type":  "object",
+                                          "properties":  {
+                                                             "keywords":  {
+                                                                              "type":  "array",
+                                                                              "items":  {
+                                                                                            "type":  "string"
+                                                                                        },
+                                                                              "description":  "Search keywords or single full breadcrumb path to follow a link"
+                                                                          },
+                                                             "match":  {
+                                                                           "type":  "string",
+                                                                           "enum":  [
+                                                                                        "all",
+                                                                                        "any"
+                                                                                    ],
+                                                                           "default":  "all",
+                                                                           "description":  "Keyword matching: all (default) or any"
+                                                                       },
+                                                             "limit":  {
+                                                                           "type":  "integer",
+                                                                           "default":  100,
+                                                                           "description":  "Maximum number of candidates to return (1–300, default 100)."
+                                                                       },
+                                                             "offset":  {
+                                                                            "type":  "integer",
+                                                                            "default":  0,
+                                                                            "description":  "Number of candidates to skip (default 0). For next page use offset += limit."
+                                                                        },
+                                                             "content_page":  {
+                                                                                  "type":  "integer",
+                                                                                  "default":  1,
+                                                                                  "description":  "Page number of content (1-based, default 1). If content_has_more is true, call again with content_page + 1."
+                                                                              }
+                                                         },
+                                          "required":  [
+                                                           "keywords"
+                                                       ]
+                                      }
+                  },
+                  {
+                      "name":  "get_event_log",
+                      "description":  "Get event log entries from 1C database with filtering options and cursor pagination.\n\nThis tool retrieves entries from the 1C event log (Журнал регистрации)\nwith optional filtering by date range, importance level, event type,\nand additional filters for data object, metadata type, user, session, etc.\nResults are returned as JSON or TOON format.\n\nSupports cursor pagination for iterating through large result sets:\n- Response includes last_date, next_same_second_offset, and has_more\n- For next page: use last_date as start_date and next_same_second_offset as same_second_offset\n\nArgs:\n    start_date: Start date in ISO 8601 format (YYYY-MM-DDTHH:MM:SS).\n               If not provided, no start date filter is applied.\n               For pagination: use last_date from previous response.\n    end_date: End date in ISO 8601 format (YYYY-MM-DDTHH:MM:SS).\n             If not provided, no end date filter is applied.\n    levels: List of importance levels to filter by.\n           Valid values: \"Information\", \"Warning\", \"Error\", \"Note\".\n           If not provided, all levels are returned.\n    events: List of event types to filter by (e.g., \"_$Data$_.New\", \"_$Session$_.Start\").\n           If not provided, all event types are returned.\n    limit: Maximum number of records to return (default: 100, max: 1000).\n    object_description: Object description from execute_query results.\n                      Priority: object_description \u003e link \u003e data.\n                      Example: {\"_objectRef\": true, \"УникальныйИдентификатор\": \"...\", \"ТипОбъекта\": \"...\"}\n    link: Navigation link in format e1cib/data/Type.Name?ref=HexGUID.\n         Priority: object_description \u003e link \u003e data.\n         Example: \"e1cib/data/Документ.РеализацияТоваровУслуг?ref=...\"\n    data: Reference to data object (navigation link) - for backward compatibility.\n          Priority: object_description \u003e link \u003e data.\n          Example: \"e1cib/data/Документ.РеализацияТоваровУслуг?ref=...\"\n    metadata_type: List of metadata object types to filter by.\n                   Example: [\"Документ.РеализацияТоваровУслуг\", \"Справочник.Номенклатура\"].\n    user: List of user names to filter by.\n    session: List of session numbers to filter by.\n    application: List of application types to filter by.\n                Valid values: \"ThinClient\", \"WebClient\", \"ThickClient\",\n                \"BackgroundJob\", \"Designer\", \"COMConnection\",\n                \"Server\", \"WebService\", \"HTTPService\", \"ODataInterface\",\n                \"MobileAppClient\", \"MobileAppServer\", \"MobileAppBackgroundJob\",\n                \"MobileClient\", \"MobileStandaloneServer\",\n                \"FileVariantBackgroundJob\", \"FileVariantServerSide\",\n                \"WebSocket\", \"FileVariantWebSocket\",\n                \"1CV8C\", \"1CV8\".\n    computer: Computer name to filter by.\n    comment_contains: Substring to search in comment (case-insensitive).\n    transaction_status: Transaction status to filter by.\n                       Valid values: \"Committed\", \"RolledBack\", \"NotApplicable\", \"Unfinished\".\n    same_second_offset: Skip N records with the same second as start_date (for pagination).\n                       For pagination: use next_same_second_offset from previous response.\n                       Requires start_date to be specified.\n\nReturns:\n    Dictionary with:\n    - success: Boolean indicating if the request was successful\n    - data: Array of event log entries in JSON or TOON format (if successful), each containing:\n        - date: Event timestamp\n        - level: Importance level (Information, Warning, Error, Note)\n        - event: Event type\n        - comment: Event description/comment\n        - user: User name\n        - metadata: Metadata object name\n        - data_presentation: Data presentation string\n        - session: Session number\n        - application: Application type\n        - computer: Computer name\n        - transaction_status: Transaction status\n    - count: Number of returned records\n    - last_date: ISO 8601 date of last record (cursor for pagination, only with date filter)\n    - next_same_second_offset: Accumulated offset for next page (only with date filter)\n    - has_more: Boolean indicating if there are more records (only with date filter)\n    - error: Error message (if failed)\n\nExample:\n    # Get all errors from the last day\n    get_event_log(\n        start_date=\"2024-01-15T00:00:00\",\n        end_date=\"2024-01-15T23:59:59\",\n        levels=[\"Error\", \"Warning\"],\n        limit=100\n    )\n\n    # Pagination example - page 1\n    result = get_event_log(\n        start_date=\"2024-01-01T00:00:00\",\n        end_date=\"2024-01-31T23:59:59\",\n        levels=[\"Error\"],\n        limit=100\n    )\n    # Response: last_date=\"2024-01-15T14:30:45\", next_same_second_offset=3, has_more=true\n\n    # Pagination example - page 2\n    result = get_event_log(\n        start_date=\"2024-01-15T14:30:45\",  # last_date from page 1\n        end_date=\"2024-01-31T23:59:59\",\n        levels=[\"Error\"],\n        limit=100,\n        same_second_offset=3  # next_same_second_offset from page 1\n    )\n\n    # Get entries for specific object using object_description\n    get_event_log(\n        object_description={\n            \"_objectRef\": True,\n            \"УникальныйИдентификатор\": \"ba7e5a3d-1234-5678-9abc-def012345678\",\n            \"ТипОбъекта\": \"ДокументСсылка.РеализацияТоваровУслуг\"\n        }\n    )\n\n    # Get entries for specific metadata type and user\n    get_event_log(\n        metadata_type=[\"Документ.РеализацияТоваровУслуг\"],\n        user=[\"Иванов\"],\n        application=[\"ThinClient\", \"WebClient\"],\n        comment_contains=\"ошибка\"\n    )\n\nNOTE: Anonymization is enabled for this tool.\nSome returned values (person names, organization names, TINs, and other\npersonal data) are replaced with anonymous tokens in the format\n[CATEGORY-NNNNN] (e.g. [ORG-00001], [PER-00042], [INN-00001]).\nTokens are stable within the current session.\nDo not attempt to interpret these tokens as meaningful data.\nTokens can be used in subsequent requests.",
+                      "inputSchema":  {
+                                          "type":  "object",
+                                          "properties":  {
+                                                             "start_date":  {
+                                                                                "type":  "string",
+                                                                                "description":  "Start date in ISO 8601 format (YYYY-MM-DDTHH:MM:SS). For pagination: use last_date from previous response."
+                                                                            },
+                                                             "end_date":  {
+                                                                              "type":  "string",
+                                                                              "description":  "End date in ISO 8601 format (YYYY-MM-DDTHH:MM:SS). If not provided, no end date filter is applied."
+                                                                          },
+                                                             "limit":  {
+                                                                           "type":  "integer",
+                                                                           "description":  "Maximum number of records to return (default: 100, max: 1000).",
+                                                                           "default":  100
+                                                                       },
+                                                             "levels":  {
+                                                                            "type":  "array",
+                                                                            "items":  {
+                                                                                          "type":  "string"
+                                                                                      },
+                                                                            "description":  "List of importance levels to filter by. Valid values: \"Information\", \"Warning\", \"Error\", \"Note\". If not provided, all levels are returned."
+                                                                        },
+                                                             "events":  {
+                                                                            "type":  "array",
+                                                                            "items":  {
+                                                                                          "type":  "string"
+                                                                                      },
+                                                                            "description":  "List of event types to filter by (e.g., \"_$Data$_.New\", \"_$Session$_.Start\"). If not provided, all event types are returned."
+                                                                        },
+                                                             "object_description":  {
+                                                                                        "type":  "object",
+                                                                                        "description":  "Object description from execute_query results. Priority: object_description \u003e link \u003e data. Example: {\"_objectRef\": true, \"УникальныйИдентификатор\": \"...\", \"ТипОбъекта\": \"...\"}"
+                                                                                    },
+                                                             "link":  {
+                                                                          "type":  "string",
+                                                                          "description":  "Navigation link in format e1cib/data/Type.Name?ref=HexGUID. Priority: object_description \u003e link \u003e data."
+                                                                      },
+                                                             "data":  {
+                                                                          "type":  "string",
+                                                                          "description":  "Reference to data object (navigation link) - for backward compatibility. Priority: object_description \u003e link \u003e data."
+                                                                      },
+                                                             "metadata_type":  {
+                                                                                   "type":  "array",
+                                                                                   "items":  {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                                   "description":  "List of metadata object types to filter by. Example: [\"Документ.РеализацияТоваровУслуг\", \"Справочник.Номенклатура\"]."
+                                                                               },
+                                                             "user":  {
+                                                                          "type":  "array",
+                                                                          "items":  {
+                                                                                        "type":  "string"
+                                                                                    },
+                                                                          "description":  "List of user names to filter by."
+                                                                      },
+                                                             "session":  {
+                                                                             "type":  "array",
+                                                                             "items":  {
+                                                                                           "type":  "integer"
+                                                                                       },
+                                                                             "description":  "List of session numbers to filter by."
+                                                                         },
+                                                             "application":  {
+                                                                                 "type":  "array",
+                                                                                 "items":  {
+                                                                                               "type":  "string"
+                                                                                           },
+                                                                                 "description":  "List of application types to filter by. Valid values: \"ThinClient\", \"WebClient\", \"ThickClient\", \"BackgroundJob\", \"Designer\", \"COMConnection\", \"Server\", \"WebService\", \"HTTPService\", \"ODataInterface\", \"MobileAppClient\", \"MobileAppServer\", \"1CV8C\", \"1CV8\", etc."
+                                                                             },
+                                                             "computer":  {
+                                                                              "type":  "string",
+                                                                              "description":  "Computer name to filter by."
+                                                                          },
+                                                             "comment_contains":  {
+                                                                                      "type":  "string",
+                                                                                      "description":  "Substring to search in comment (case-insensitive)."
+                                                                                  },
+                                                             "transaction_status":  {
+                                                                                        "type":  "string",
+                                                                                        "description":  "Transaction status to filter by. Valid values: \"Committed\", \"RolledBack\", \"NotApplicable\", \"Unfinished\"."
+                                                                                    },
+                                                             "same_second_offset":  {
+                                                                                        "type":  "integer",
+                                                                                        "description":  "Skip N records with the same second as start_date (for pagination). Use next_same_second_offset from previous response. Requires start_date.",
+                                                                                        "default":  0
+                                                                                    }
+                                                         }
+                                      }
+                  },
+                  {
+                      "name":  "get_link_of_object",
+                      "description":  "Generate a 1C navigation link from an object description.\n\nThis tool converts an object description (returned by execute_query) into a clickable\nnavigation link that can be used to open the object directly in 1C.\n\nUse this tool to provide users with clickable links to 1C objects after finding them\nwith execute_query.\n\nArgs:\n    ctx: MCP Context (injected automatically)\n    object_description: Object description from execute_query results with fields:\n                      - _objectRef: must be true\n                      - УникальныйИдентификатор: UUID string\n                      - ТипОбъекта: object type (e.g., \"СправочникСсылка.Контрагенты\")\n                      - Представление: string representation (optional)\n                      \nReturns:\n    Dictionary with:\n    - success: Boolean indicating if the request was successful\n    - data: Navigation link string (e.g., \"e1cib/data/Справочник.Контрагенты?ref=...\")\n    - error: Error message (if failed)\n    \nExample:\n    # After finding an object with execute_query\n    result = execute_query(\"SELECT Ref FROM Catalog.Customers WHERE Code = \u0027001\u0027\")\n    # result.data[0][\"Ref\"] contains object description\n    \n    # Generate link\n    link_result = get_link_of_object(result.data[0][\"Ref\"])\n    # link_result.link = \"e1cib/data/Справочник.Контрагенты?ref=80c6cc1a...\"",
+                      "inputSchema":  {
+                                          "type":  "object",
+                                          "properties":  {
+                                                             "object_description":  {
+                                                                                        "type":  "object",
+                                                                                        "description":  "Object description from execute_query results with fields: _objectRef (must be true), УникальныйИдентификатор (UUID), ТипОбъекта (e.g., \"СправочникСсылка.Контрагенты\"), Представление (optional)"
+                                                                                    }
+                                                         },
+                                          "required":  [
+                                                           "object_description"
+                                                       ]
+                                      }
+                  },
+                  {
+                      "name":  "get_metadata",
+                      "description":  "Get metadata information about 1C database objects.\n\nThis tool returns information about the structure of the 1C database in JSON format.\n\nUsage modes:\n1. Summary (root types): No parameters (filter/meta_type/name_mask not provided)\n   Returns:\n     - data: list of root metadata types with counts (Тип, Количество)\n     - configuration: configuration/platform info (when available) as a top-level field\n\n2. Filtered list: Use \u0027meta_type\u0027 and/or \u0027name_mask\u0027 parameters\n   Example: meta_type=\"Документ\", name_mask=\"реализ\"\n   Returns: List of objects matching the criteria.\n   Each item includes: ПолноеИмя, Синоним.\n   List results are sorted by ПолноеИмя and support pagination via offset.\n   List mode response always includes pagination metadata:\n     - truncated, limit, returned, count, offset, has_more, next_offset\n   Fields truncated/has_more indicate whether more results exist.\n\n3. Detailed structure: Use \u0027filter\u0027 parameter with exact full name\n   Example: filter=\"Справочник.Номенклатура\"\n   Returns: Full structure with attributes, dimensions, resources, tabular sections\n\n3a. Specific collection element: Use \u0027filter\u0027 with full path to element\n   Collection names are in singular (platform ПолноеИмя() format):\n     filter=\"Справочник.Контрагенты.Реквизит.ИНН\"\n     filter=\"РегистрНакопления.Остатки.Измерение.Номенклатура\"\n     filter=\"РегистрНакопления.Остатки.Ресурс.Количество\"\n     filter=\"Задача.Задача.РеквизитАдресации.Исполнитель\"\n     filter=\"Справочник.Контрагенты.СтандартныйРеквизит.Наименование\"\n     filter=\"Документ.Реализация.ТабличнаяЧасть.Товары\"\n     filter=\"Документ.Реализация.ТабличнаяЧасть.Товары.Реквизит.Номенклатура\"\n   Use with sections=[\"properties\"] to get extended element properties\n   (ПроверкаЗаполнения, ЗначениеЗаполнения, Ведущее, Использование, etc.)\n\n4. Extensions support: Use \u0027extension_name\u0027 parameter\n   - extension_name not provided: work with main configuration (default)\n   - extension_name=\"\": get list of all connected extensions\n   - extension_name=\"ExtensionName\": work with objects inside the specified extension\n\n5. Attribute search: Use \u0027attribute_mask\u0027 parameter\n   Find all attributes (реквизиты/измерения/ресурсы/реквизиты ТЧ) whose name or synonym\n   contains the given substring (case-insensitive).\n   Returns same list contract as mode 2: {success, data, truncated, limit, returned,\n     count, offset, has_more, next_offset}\n   data: array of {ПолноеИмя, Синоним} — same shape as list mode items, e.g.:\n     {ПолноеИмя: \"Документ.Реализация.Реквизит.Контрагент\", Синоним: \"Контрагент\"}\n     {ПолноеИмя: \"Документ.Реализация.ТабличнаяЧасть.Товары.Реквизит.Номенклатура\", Синоним: \"Номенклатура\"}\n   ПолноеИмя uses singular segment names: Реквизит/Измерение/Ресурс/ТабличнаяЧасть\n   Round-trip: get_metadata(filter=data[0][\"ПолноеИмя\"], sections=[\"properties\"])\n   Compatible with: meta_type, name_mask, filter (root object), extension_name (specific).\n   NOTE: extension_name=\"\" (list extensions) takes priority, attribute_mask is ignored.\n   INCOMPATIBLE with sections (returns error). Use round-trip instead.\n\nArgs:\n    ctx: MCP Context (injected automatically)\n    filter: Full name of object (e.g., \"Справочник.Номенклатура\") or full path to collection element\n           (e.g., \"Справочник.Контрагенты.Реквизит.ИНН\",\n           \"РегистрНакопления.Остатки.Измерение.Номенклатура\",\n           \"Документ.Реализация.ТабличнаяЧасть.Товары.Реквизит.Номенклатура\")\n    meta_type: Object type filter for list (string or list). Use \"*\" to list across all root types.\n    name_mask: Search mask for name/synonym (case-insensitive substring search)\n    limit: Maximum number of objects in list (default: 100, max: 1000)\n    sections: Detail sections to include (works only with filter). Supported: properties, forms, commands, layouts, predefined, movements, characteristics (movements is only available for Документ objects)\n    offset: Offset for pagination in list mode (default: 0)\n    extension_name: Extension name (None=main config, \"\"=list extensions, \"Name\"=extension objects).\n                   Whitespace-only values are rejected.\n    attribute_mask: Search mask for attribute name/synonym (case-insensitive substring).\n                   Returns list of {ПолноеИмя, Синоним} items (same shape as list mode).\n                   ПолноеИмя uses singular segment names (Реквизит/Измерение/Ресурс/ТабличнаяЧасть), usable as filter value.\n                   Compatible with meta_type, name_mask, filter, extension_name.\n                   NOTE: extension_name=\"\" (list extensions) ignores attribute_mask.\n                   INCOMPATIBLE with sections (returns error). Round-trip:\n                     data[0][\"ПолноеИмя\"] → filter + sections=[\"properties\"].\n\nReturns:\n    Dictionary with:\n    - success: Boolean indicating if the request was successful\n     - data: Metadata information in JSON format:\n         - Summary: array data of {Тип, Количество} plus optional top-level field configuration\n         - List: array of {ПолноеИмя, Синоним}\n         - Details: object structure; sections like Реквизиты/ТабличныеЧасти/Измерения/Ресурсы may be omitted if not applicable for the metadata object type (if applicable, they are returned as arrays and may be empty)\n         - Extensions list: array of extension properties (ConfigurationExtension), e.g. {Имя, Синоним, Активно, БезопасныйРежим, Версия, УникальныйИдентификатор, Назначение, ОбластьДействия, ...}\n    - extension: Extension name (when working with extension objects)\n    - error: Error message (if failed)\n\nExamples:\n    # Get summary of root metadata types (counts)\n    get_metadata()\n\n    # Get only documents\n    get_metadata(meta_type=\"Документ\")\n\n    # Search for objects with \"реализ\" in name (across all types)\n    get_metadata(name_mask=\"реализ\")\n\n    # Get mixed list across all root types\n    get_metadata(meta_type=\"*\", limit=50)\n\n    # Get details about a specific catalog\n    get_metadata(filter=\"Справочник.Номенклатура\")\n\n    # Get extended properties of a specific attribute\n    get_metadata(filter=\"Справочник.Контрагенты.Реквизит.ИНН\", sections=[\"properties\"])\n\n    # Get extended properties of a dimension\n    get_metadata(filter=\"РегистрНакопления.Остатки.Измерение.Номенклатура\", sections=[\"properties\"])\n\n    # Get info about a tabular section with its attributes\n    get_metadata(filter=\"Документ.Реализация.ТабличнаяЧасть.Товары\")\n\n    # Get extended properties of a tabular section attribute\n    get_metadata(filter=\"Документ.Реализация.ТабличнаяЧасть.Товары.Реквизит.Номенклатура\", sections=[\"properties\"])\n\n    # Get extended properties of a standard attribute\n    get_metadata(filter=\"Справочник.Контрагенты.СтандартныйРеквизит.Наименование\", sections=[\"properties\"])\n\n    # Get list of all connected extensions\n    get_metadata(extension_name=\"\")\n\n    # Get objects from a specific extension\n    get_metadata(extension_name=\"MyExtension\", meta_type=\"Справочник\")\n\n    # Get details about an object in extension\n    get_metadata(extension_name=\"MyExtension\", filter=\"Справочник.МойСправочник\")\n\n    # Find all \u0027Контрагент\u0027 attributes across entire configuration\n    get_metadata(attribute_mask=\"контраг\")\n\n    # Only in documents\n    get_metadata(attribute_mask=\"контраг\", meta_type=\"Документ\")\n\n    # Within one specific object\n    get_metadata(attribute_mask=\"контраг\", filter=\"Справочник.Контрагенты\")\n\n    # Within extension\n    get_metadata(attribute_mask=\"контраг\", extension_name=\"МоёРасширение\")\n\n    # Round-trip: use result as filter for details\n    matches = get_metadata(attribute_mask=\"контраг\")[\"data\"]\n    get_metadata(filter=matches[0][\"ПолноеИмя\"], sections=[\"properties\"])",
+                      "inputSchema":  {
+                                          "type":  "object",
+                                          "properties":  {
+                                                             "filter":  {
+                                                                            "type":  "string",
+                                                                            "description":  "Full name of object (e.g., \"Справочник.Номенклатура\") or full path to collection element (e.g., \"Справочник.Контрагенты.Реквизит.ИНН\", \"РегистрНакопления.Остатки.Измерение.Номенклатура\")"
+                                                                        },
+                                                             "meta_type":  {
+                                                                               "description":  "Object type filter for list (string or list). Use \"*\" to list across all root types.",
+                                                                               "anyOf":  [
+                                                                                             {
+                                                                                                 "type":  "string"
+                                                                                             },
+                                                                                             {
+                                                                                                 "type":  "array",
+                                                                                                 "items":  {
+                                                                                                               "type":  "string"
+                                                                                                           }
+                                                                                             }
+                                                                                         ]
+                                                                           },
+                                                             "name_mask":  {
+                                                                               "type":  "string",
+                                                                               "description":  "Search mask for name/synonym (case-insensitive substring search)"
+                                                                           },
+                                                             "limit":  {
+                                                                           "type":  "integer",
+                                                                           "description":  "Maximum number of objects in list (default: 100, max: 1000)",
+                                                                           "default":  100
+                                                                       },
+                                                             "offset":  {
+                                                                            "type":  "integer",
+                                                                            "description":  "Offset for pagination in list mode (default: 0)",
+                                                                            "default":  0
+                                                                        },
+                                                             "sections":  {
+                                                                              "type":  "array",
+                                                                              "items":  {
+                                                                                            "type":  "string"
+                                                                                        },
+                                                                              "description":  "Detail sections to include (works only with filter). Supported: properties, forms, commands, layouts, predefined, movements, characteristics (movements is only available for Документ objects)"
+                                                                          },
+                                                             "extension_name":  {
+                                                                                    "type":  "string",
+                                                                                    "description":  "Extension name (None=main config, \"\"=list extensions, \"Name\"=extension objects). Whitespace-only values are rejected."
+                                                                                },
+                                                             "attribute_mask":  {
+                                                                                    "type":  "string",
+                                                                                    "description":  "Search mask for attribute name/synonym (case-insensitive substring). Returns list contract: {success, data:[{ПолноеИмя, Синоним}, ...], truncated, limit, returned, count, offset, has_more, next_offset}. Same item shape as list mode. ПолноеИмя is in singular format (Реквизит, Измерение, etc.) and can be used directly as filter value (round-trip: data[0][\"ПолноеИмя\"]). When combined with filter, filter must be Type.Name (not element path). Compatible with: meta_type, name_mask, filter, extension_name=Name. NOTE: extension_name=\"\" (list extensions) takes priority over attribute_mask. INCOMPATIBLE with sections (returns error)."
+                                                                                }
+                                                         }
+                                      }
+                  },
+                  {
+                      "name":  "get_object_by_link",
+                      "description":  "Get 1C object data by navigation link.\n\nThis tool retrieves complete object data from the 1C:Enterprise database\nusing a navigation link. For standard objects: e1cib/data/Type.Name?ref=HexGUID.\nFor external data sources:\n- Object tables (single key): e1cib/data/ВнешнийИсточникДанных.Source.Таблица.TableName?ref=Value\n- Non-object tables (composite key): e1cib/data/ВнешнийИсточникДанных.Source.Таблица.TableName?FieldName=Value\nResults are returned as JSON or TOON format.\n\nArgs:\n    ctx: MCP Context (injected automatically)\n    link: Navigation link. Standard: e1cib/data/Type.Name?ref=HexGUID (32 hex chars).\n          External: e1cib/data/ВнешнийИсточникДанных.Source.Таблица.TableName\n          - Object tables: ?ref=Value (e.g., \"...Таблица.Заказы?ref=117953\")\n          - Non-object tables: ?FieldName=Value (e.g., \"...Таблица.OrderItems?ID=5\u0026Type=A\")\n          \nReturns:\n    Dictionary with:\n    - success: Boolean indicating if the request was successful\n    - data: Object data in JSON or TOON format (if successful), containing:\n        - _type: Full metadata type name\n        - _presentation: String representation of the object\n        - Standard attributes (Код, Наименование, Дата, Номер if applicable)\n        - Custom attributes defined in metadata\n        - Tabular sections with all rows\n    - error: Error message (if failed)\n    \nExample:\n    get_object_by_link(\n        link=\"e1cib/data/Справочник.Контрагенты?ref=80c6cc1a7e58902811ebcda8cb07c0f5\"\n    )\n\nNOTE: Anonymization is enabled for this tool.\nSome returned values (person names, organization names, TINs, and other\npersonal data) are replaced with anonymous tokens in the format\n[CATEGORY-NNNNN] (e.g. [ORG-00001], [PER-00042], [INN-00001]).\nTokens are stable within the current session.\nDo not attempt to interpret these tokens as meaningful data.\nTokens can be used in subsequent requests.",
+                      "inputSchema":  {
+                                          "type":  "object",
+                                          "properties":  {
+                                                             "link":  {
+                                                                          "type":  "string",
+                                                                          "description":  "Navigation link. Standard objects: e1cib/data/Type.Name?ref=HexGUID (32 hex chars). External data sources: e1cib/data/ВнешнийИсточникДанных.Source.Таблица.TableName - Object tables (single key): ?ref=Value (system parameter) - Non-object tables (composite key): ?FieldName=Value (real field names, e.g., ?ID=5\u0026Type=A) Examples: \"e1cib/data/Справочник.Контрагенты?ref=80c6cc1a7e58902811ebcda8cb07c0f5\", \"e1cib/data/ВнешнийИсточникДанных.ВнешняяБД.Таблица.Заказы?ref=117953\", \"e1cib/data/ВнешнийИсточникДанных.ВнешняяБД.Таблица.OrderItems?ID=5\u0026Type=A\""
+                                                                      }
+                                                         },
+                                          "required":  [
+                                                           "link"
+                                                       ]
+                                      }
+                  },
+                  {
+                      "name":  "get_screenshot",
+                      "description":  "Take a screenshot of the active 1C application window and return it as base64 PNG.\n\nArgs:\n    form_name: Optional. Full 1C form name (e.g. \"Справочник.Контрагенты.Форма.ФормаЭлемента\").\n               If provided, opens the form before capturing the window, then automatically closes the form.\n               If omitted, captures the current active 1C window immediately.\n    scale_percent: Output image scale (10–200, default 100). \u003e100 = larger image with more detail (200 = 2× size). \u003c100 = smaller image (50 = half size). Grid labels always show original window pixel coordinates.\n    show_grid: If true, overlays a grid (up to 10×10, dynamic density based on image size; small regions get fewer lines or none). Red lines, yellow px-coordinate labels on black background, red dots at intersections. Coordinate origin (0, 0) is at the top-left corner of the captured image. Grid line coordinates also returned as text (grid_coords). Default false.\n    region: Optional. Crop to a sub-region before scaling. Object with integer fields x, y (≥0), width, height (≥1). Coordinates in original client-area pixels. Omit or null for full window. Returns error if region is outside window bounds.\n    highlight_rects: Optional. Array of rectangles to draw on the screenshot as numbered blue frames (3 px, RGB 0,120,255).\n                     Each rectangle: {x, y, width, height} in original client-area pixels, origin (0, 0) at the top-left corner of the captured image (same coordinate space as grid labels).\n                     Rectangles are labeled 1, 2, 3… in order. Labels appear outside above the top-right corner (inside if not enough space above).\n                     Rectangles must not overlap — returns error if they do. Omit or pass null to draw no rectangles. Max 20 items.\n\nReturns:\n    Image content (PNG) on success, or error on failure.",
+                      "inputSchema":  {
+                                          "type":  "object",
+                                          "properties":  {
+                                                             "form_name":  {
+                                                                               "type":  "string",
+                                                                               "description":  "1C form name to open before capture (optional). If omitted, captures the current active 1C window."
+                                                                           },
+                                                             "scale_percent":  {
+                                                                                   "type":  "integer",
+                                                                                   "default":  100,
+                                                                                   "minimum":  10,
+                                                                                   "maximum":  200,
+                                                                                   "description":  "Output image scale (10–200, default 100). Values above 100 produce a larger image with more detail (e.g. 200 = 2× size). Values below 100 produce a smaller image (e.g. 50 = half size). Grid coordinate labels always show original window pixel coordinates regardless of scale."
+                                                                               },
+                                                             "show_grid":  {
+                                                                               "type":  "boolean",
+                                                                               "default":  false,
+                                                                               "description":  "If true, draws a grid on the screenshot (up to 10×10, dynamic density based on image size — small regions get fewer lines or none): red lines, yellow coordinate labels (px) on black background at each axis, red dots at intersections. Coordinate origin (0, 0) is at the top-left corner of the captured image. Grid line coordinates are also returned as text (grid_coords)."
+                                                                           },
+                                                             "region":  {
+                                                                            "anyOf":  [
+                                                                                          {
+                                                                                              "type":  "object",
+                                                                                              "properties":  {
+                                                                                                                 "x":  {
+                                                                                                                           "type":  "integer",
+                                                                                                                           "minimum":  0,
+                                                                                                                           "maximum":  32767,
+                                                                                                                           "description":  "X offset from client-area top-left"
+                                                                                                                       },
+                                                                                                                 "y":  {
+                                                                                                                           "type":  "integer",
+                                                                                                                           "minimum":  0,
+                                                                                                                           "maximum":  32767,
+                                                                                                                           "description":  "Y offset from client-area top-left"
+                                                                                                                       },
+                                                                                                                 "width":  {
+                                                                                                                               "type":  "integer",
+                                                                                                                               "minimum":  1,
+                                                                                                                               "maximum":  32767,
+                                                                                                                               "description":  "Width of region"
+                                                                                                                           },
+                                                                                                                 "height":  {
+                                                                                                                                "type":  "integer",
+                                                                                                                                "minimum":  1,
+                                                                                                                                "maximum":  32767,
+                                                                                                                                "description":  "Height of region"
+                                                                                                                            }
+                                                                                                             },
+                                                                                              "required":  [
+                                                                                                               "x",
+                                                                                                               "y",
+                                                                                                               "width",
+                                                                                                               "height"
+                                                                                                           ]
+                                                                                          },
+                                                                                          {
+                                                                                              "type":  "null"
+                                                                                          }
+                                                                                      ],
+                                                                            "description":  "Optional. Crop to this sub-region before scaling. Omit or set null for full window. Coordinates in original client-area pixels. Returns error if region is outside window bounds."
+                                                                        },
+                                                             "highlight_rects":  {
+                                                                                     "anyOf":  [
+                                                                                                   {
+                                                                                                       "type":  "array",
+                                                                                                       "maxItems":  20,
+                                                                                                       "items":  {
+                                                                                                                     "type":  "object",
+                                                                                                                     "properties":  {
+                                                                                                                                        "x":  {
+                                                                                                                                                  "type":  "integer",
+                                                                                                                                                  "minimum":  0,
+                                                                                                                                                  "maximum":  32767,
+                                                                                                                                                  "description":  "X offset from client-area top-left"
+                                                                                                                                              },
+                                                                                                                                        "y":  {
+                                                                                                                                                  "type":  "integer",
+                                                                                                                                                  "minimum":  0,
+                                                                                                                                                  "maximum":  32767,
+                                                                                                                                                  "description":  "Y offset from client-area top-left"
+                                                                                                                                              },
+                                                                                                                                        "width":  {
+                                                                                                                                                      "type":  "integer",
+                                                                                                                                                      "minimum":  1,
+                                                                                                                                                      "maximum":  32767,
+                                                                                                                                                      "description":  "Width"
+                                                                                                                                                  },
+                                                                                                                                        "height":  {
+                                                                                                                                                       "type":  "integer",
+                                                                                                                                                       "minimum":  1,
+                                                                                                                                                       "maximum":  32767,
+                                                                                                                                                       "description":  "Height"
+                                                                                                                                                   }
+                                                                                                                                    },
+                                                                                                                     "required":  [
+                                                                                                                                      "x",
+                                                                                                                                      "y",
+                                                                                                                                      "width",
+                                                                                                                                      "height"
+                                                                                                                                  ]
+                                                                                                                 }
+                                                                                                   },
+                                                                                                   {
+                                                                                                       "type":  "null"
+                                                                                                   }
+                                                                                               ],
+                                                                                     "description":  "Optional. Draw numbered blue rectangles (3 px, RGB 0,120,255) on the screenshot. Each rectangle is labeled with its 1-based index. Rectangles must not overlap — returns error if they do. Coordinates are in original client-area pixels, origin (0, 0) at the top-left corner of the captured image (same coordinate space as grid labels)."
+                                                                                 }
+                                                         },
+                                          "required":  [
+
+                                                       ]
+                                      }
+                  },
+                  {
+                      "name":  "restart_1c_session",
+                      "description":  "Restart the current 1C session — the session that provides this MCP server and executes 1C tool calls.\nA restart is typically required after updating the 1C configuration (metadata, extensions, BSL code)\nso the new session picks up the changes. The new session starts automatically with the same database\nand connection settings; anonymization state is preserved. The current session shuts down once the new one is ready.\n\nIMPORTANT: Do NOT call this tool on your own initiative. Only invoke it when explicitly instructed —\neither by the user directly or as a defined step in a pipeline or task specification.\nNever infer that a restart is needed and call it autonomously.\nNote: the first MCP request to the new session may fail - retry once if it does.\n\nArgs:\n    No arguments.",
+                      "inputSchema":  {
+                                          "type":  "object",
+                                          "properties":  {
+
+                                                         },
+                                          "required":  [
+
+                                                       ]
+                                      }
+                  },
+                  {
+                      "name":  "submit_for_deanonymization",
+                      "description":  "Submit the final user-facing response for de-anonymization display.\n\nYou MUST call this tool if, and only if, your final response to the user contains\nanonymization tokens in the form [CATEGORY-NNNNN], for example [ORG-00001],\n[PER-00042], [INN-00001].\n\nCall this tool exactly once, immediately before sending the final response to the user.\nPass the complete final response text in the \"text\" parameter.\nDo NOT call this tool for intermediate reasoning, drafts, or raw tool outputs.\n\nThis tool does NOT return de-anonymized text to you.\nIt only confirms receipt, for example {\"received\": true}.\nAfter calling this tool, send your original final response with tokens unchanged.\nThe user will see the de-anonymized version in their interface.",
+                      "inputSchema":  {
+                                          "type":  "object",
+                                          "properties":  {
+                                                             "text":  {
+                                                                          "type":  "string",
+                                                                          "description":  "The complete final response text containing anonymization tokens to be de-anonymized."
+                                                                      }
+                                                         },
+                                          "required":  [
+                                                           "text"
+                                                       ]
+                                      }
+                  }
+              ]
+}

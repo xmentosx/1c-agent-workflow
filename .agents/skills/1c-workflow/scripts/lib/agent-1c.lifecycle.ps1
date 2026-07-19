@@ -425,9 +425,9 @@ function Restart-Agent1cAfterDevBranchMerge {
 function Write-ItlAdditionalHelperActions {
     Write-Host ""
     Write-Host "Additional helper actions:"
-    Write-Host "  ROCTUP MCP: ask for branch-local install, update, start, status, or stop for data exploration."
+    Write-Host "  ROCTUP data: use the itl-roctup-data MCP server; its branch backend starts and stops automatically."
     Write-Host "  vibecoding1c MCP: ask for setup, status, select, refresh-registry, or update."
-    Write-Host "  Vanessa UI MCP: ask for branch-local install, start, status, or stop only for runtime UI research, recording, or debugging."
+    Write-Host "  Vanessa UI: use the itl-vanessa-ui MCP server only for runtime UI research, recording, or debugging."
     Write-Host "  Extension branches: one branch/worktree/base owns one CFE; several features are allowed only inside it."
     Write-Host "  Extension setup is agent-orchestrated during branch creation or on first entry when its saved status is pending."
     Write-Host "  Maintenance/recovery: ask to update base without tests, update workflow/rules, close/list/switch branches."
@@ -2510,7 +2510,7 @@ function Write-WorkflowUpdateFollowUp {
             Write-Host "    $name -> $worktreePath"
         }
         Write-Host "  In each branch worktree, use refresh-dev-branch or merge master, then rerun vibecoding1c MCP setup/status for that scope."
-        Write-Host "  If Vanessa UI MCP is used in a branch, run stop-vanessa-mcp, install-vanessa-mcp, then start-vanessa-mcp in that branch worktree."
+        Write-Host "  Each refreshed branch receives stable itl-roctup-data and itl-vanessa-ui entries; backend starts need no further reload."
     } else {
         Write-Host "  No active development branches were found."
     }
@@ -2607,6 +2607,7 @@ function Update-WorkflowPackage {
     Update-UserRules
     Update-RoctupMcp
     Update-VanessaMcpArtifacts
+    Install-ItlOnDemandMcp | Out-Null
 
     if ($SkipAiRules) {
         Write-Host "Skipping ai_rules_1c update because -SkipAiRules was specified."
@@ -4240,9 +4241,12 @@ function Initialize-Project {
             Write-Host "Resume confirmed that source infobase unsafe action protection setup completed in the interrupted run."
         }
         Set-RunStage -Stage "init.install-roctup-mcp" -Detail "Installing or updating ROCTUP MCP Toolkit"
+        Remove-ItlOnDemandStaleInstances | Out-Null
         Install-RoctupMcp
         Set-RunStage -Stage "init.cache-vanessa-ui-mcp" -Detail "Caching Vanessa UI MCP artifacts"
         Install-VanessaMcpArtifacts | Out-Null
+        Set-RunStage -Stage "init.install-ondemand-mcp" -Detail "Installing the ITL on-demand MCP facade"
+        Install-ItlOnDemandMcp | Out-Null
         Get-DevBranchInfoBaseRoot | Out-Null
     } else {
         Write-Host "Resume validated the completed configuration dump; tool installation and 1C dump will not be repeated."
@@ -5055,13 +5059,8 @@ function Restore-ExtensionInitMcpRuntime {
     )
 
     $currentState = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
-    if ($RoctupWasRunning) {
-        $currentState = Start-RoctupMcpForState -State $currentState -Quiet
-    }
-    if ($VanessaWasRunning) {
-        Start-VanessaMcp
-        $currentState = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
-    }
+    # Legacy flags are accepted during migration, but no backend is restarted.
+    # Stable stdio facades remain configured and create fresh instances lazily.
     Write-ItlBranchMcpClientConfig -State $currentState
 }
 
@@ -5136,6 +5135,7 @@ function Init-DevBranchExtension {
         $roctupWasRunning = [bool](Get-RoctupMcpRuntimeInfo -State $state).processAlive
         $vanessaWasRunning = [bool](Get-VanessaMcpRuntimeInfo -State $state).processAlive
         Stop-OwnVanessaTestProcessesAndAssert -State $state
+        Stop-ItlOnDemandBackends
         Stop-RoctupMcpForState -State $state -Quiet | Out-Null
         $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
         Stop-VanessaMcpForState -State $state -Quiet | Out-Null
@@ -5430,6 +5430,7 @@ function Refresh-DevBranch {
 
     Set-RunStage -Stage "refresh.load" -Detail "Updating the branch infobase after the merge."
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
+    $state = Invoke-DevBranchDefaultMcpSetup -State $state
     $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration" -Mode $ConfigLoadMode
     $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
     Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
@@ -5675,6 +5676,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
     try {
         New-Item -ItemType Directory -Force -Path $smokeRoot, $snapshotDir | Out-Null
         Stop-OwnVanessaTestProcessesAndAssert -State $state
+        Stop-ItlOnDemandBackends
         Stop-RoctupMcpForState -State $state -Quiet | Out-Null
         $state = Read-DevBranchState -Name $DevBranchName
         Stop-VanessaMcpForState -State $state -Quiet | Out-Null
@@ -5997,6 +5999,7 @@ function Show-WorkflowStatus {
     Write-Host "Git worktree: $(if ($dirty) { 'dirty' } else { 'clean' })"
     Write-WorkflowPackageStatusLines
     Write-AiRules1cStatusLines
+    Write-ItlOnDemandMcpStatusLines
 
     if ($currentBranch -notlike "itldev/*") {
         Write-Vibecoding1cMcpStatusLines
@@ -6022,8 +6025,6 @@ function Show-WorkflowStatus {
                 }
                 Write-DevBranchInitializationStatusLines -State $state -Indent "    "
                 Write-VanessaTestStatusLines -State $state -Indent "    "
-                Write-RoctupMcpStatusLines -State $state -Indent "    "
-                Write-VanessaMcpStatusLines -State $state -Indent "    "
                 Write-DataMcpStatusLines -State $state -Indent "    "
             }
         }
@@ -6058,9 +6059,7 @@ function Show-WorkflowStatus {
         Write-Host "Publication URL: $publicationUrl"
     }
     Write-DataMcpStatusLines -State $state
-    Write-RoctupMcpStatusLines -State $state
     Write-VanessaTestStatusLines -State $state
-    Write-VanessaMcpStatusLines -State $state
     Write-Vibecoding1cMcpStatusLines
     Write-Host "Last config base update: $(Get-StateValue -State $state -Name 'lastConfigBaseUpdateAt' -Default '<never>')"
     if ($kind -eq "extension") {
@@ -6098,6 +6097,7 @@ function Invoke-DevBranchCheck {
     $trigger = $(if ($VerificationTrigger) { $VerificationTrigger } else { "command" })
     $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
     $state = Read-DevBranchState -Name $DevBranchName
+    Stop-ItlOnDemandBackends -Family "vanessa-ui"
     $mcpRuntime = Get-VanessaMcpRuntimeInfo -State $state
     if ($mcpRuntime.processAlive) {
         Stop-VanessaAuthoringMcpForState -State $state -Quiet | Out-Null
@@ -6238,6 +6238,7 @@ function Close-DevBranch {
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "close-dev-branch"
     Assert-DevBranchExtensionInitialized -State $state -Operation "close-dev-branch"
     Assert-SingleManagedExtensionArtifact -State $state
+    Stop-ItlOnDemandBackends
     Stop-RoctupMcpForState -State $state -Quiet | Out-Null
     $state = Read-DevBranchState -Name $DevBranchName
     Stop-VanessaMcpForState -State $state -Quiet | Out-Null

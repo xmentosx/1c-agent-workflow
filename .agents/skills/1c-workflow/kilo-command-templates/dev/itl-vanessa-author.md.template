@@ -11,7 +11,7 @@ Use this command only from an active `itldev/*` worktree. This is an interactive
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action prepare-vanessa-authoring
 ```
 
-2. Read `.agent-1c/vanessa-authoring/state.json`. For `skipped`, `not-required`, or a fresh `passed`, report that result and stop. For `reload-required`, use already exposed Vanessa UI MCP tools if present; otherwise follow `reloadInstruction`, then invoke `/itl-vanessa-author` again. Never call the MCP endpoint through raw HTTP.
+2. Read `.agent-1c/vanessa-authoring/state.json`. For `skipped`, `not-required`, or a fresh `passed`, report that result and stop. For `ready`, use the already exposed tools from `itl-vanessa-ui`; its branch-local backend starts on the first call without client reload. Never call the private backend through raw HTTP.
 3. For every changed feature, use the exposed tools in this order:
    `search_for_steps_by_keywords` → `open_feature_file` → `check_syntax` → `get_info_about_line_scenario` → `run_scenario` → `get_test_results`.
    The search call accepts only `search_name`, `search_description`, `search_type`, `exclude_name`, `exclude_description`, `exclude_type`, and `limit`; never invent `keywords`. A KB or reference-suite match is not proof that a step is exposed by the current Vanessa runtime.

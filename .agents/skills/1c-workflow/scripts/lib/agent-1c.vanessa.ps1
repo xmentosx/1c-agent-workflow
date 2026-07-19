@@ -420,9 +420,12 @@ function Test-VanessaAuthoringStateMatches {
     param([object]$State, [object[]]$FeatureRecords, [string]$LibraryFingerprint)
 
     if ($null -eq $State) { return $false }
+    if ((ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "schemaVersion" -Default 0) -Default 0) -ne 2) { return $false }
     if ((Get-FullPathNormalized (Get-StateValue -State $State -Name "projectRoot" -Default "")) -ne (Get-FullPathNormalized $script:ProjectRoot)) { return $false }
     if ([string](Get-StateValue -State $State -Name "branch" -Default "") -ne (Get-CurrentBranch)) { return $false }
     if ([string](Get-StateValue -State $State -Name "libraryFingerprint" -Default "") -ne $LibraryFingerprint) { return $false }
+    $currentCatalog = Get-ItlOnDemandMcpFamilyDefinition -Family "vanessa-ui"
+    if ([string](Get-StateValue -State $State -Name "catalogSha256" -Default "") -ne [string]$currentCatalog.catalogSha256) { return $false }
     $expected = @($FeatureRecords | ForEach-Object { "$($_.path):$($_.sha256)" }) -join "`n"
     $featuresProperty = $State.PSObject.Properties["features"]
     $stateFeatures = $(if ($null -eq $featuresProperty -or $null -eq $featuresProperty.Value) { @() } else { @($featuresProperty.Value) })
@@ -434,19 +437,15 @@ function New-VanessaAuthoringState {
     param([string]$Phase, [object[]]$FeatureRecords, [string]$LibraryFingerprint)
 
     return [pscustomobject][ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         projectRoot = $script:ProjectRoot
         branch = (Get-CurrentBranch)
         productEdition = (Get-BaseConfigurationVersion)
         testsPath = (Get-VanessaFeaturesPath)
         phase = $Phase
-        reloadRequired = $false
-        client = ""
-        reloadInstruction = ""
-        mcpPid = 0
-        mcpPort = 0
-        mcpUrl = ""
-        mcpStoppedAt = ""
+        mcpFamily = "vanessa-ui"
+        catalogSha256 = ""
+        backendEvidence = @()
         features = @($FeatureRecords)
         libraryFingerprint = $LibraryFingerprint
         resultsPath = ""
@@ -492,45 +491,38 @@ function Prepare-VanessaAuthoring {
         return
     }
 
-    $sameContext = $null -ne $existing -and
-        (Get-FullPathNormalized ([string](Get-StateValue -State $existing -Name "projectRoot" -Default ""))) -eq (Get-FullPathNormalized $script:ProjectRoot) -and
-        [string](Get-StateValue -State $existing -Name "branch" -Default "") -eq (Get-CurrentBranch)
-    if ($sameContext -and [string](Get-StateValue -State $existing -Name "phase" -Default "") -eq "reload-required") {
-        $runtime = Get-VanessaMcpRuntimeInfo -State $state
-        if ($runtime.processAlive) {
-            # Feature edits made during authoring are expected. Keep the live runtime and
-            # refresh the draft hashes; complete-vanessa-authoring records the final pass.
-            $existing.features = @($features)
-            $existing.libraryFingerprint = $libraryFingerprint
-            $existing.mcpPid = [int]$runtime.pid
-            $existing.mcpPort = [int]$runtime.port
-            $existing.mcpUrl = [string]$runtime.url
-            $existing.updatedAt = (Get-Date).ToString("o")
-            Write-VanessaAuthoringState -State $existing | Out-Null
-            Write-Host "Vanessa authoring: resuming the existing MCP runtime for this worktree."
-            Write-Host "Use the exposed Vanessa UI MCP tools; do not update the infobase or start another TESTMANAGER."
-            return
-        }
-    }
-
     Set-RunStage -Stage "vanessa.authoring-update" -Detail "Updating the branch infobase before Vanessa MCP authoring."
     Update-DevBranchBase
-    Start-VanessaMcp
-    $state = Read-DevBranchState -Name $DevBranchName
-    $runtime = Get-VanessaMcpRuntimeInfo -State $state
-    $client = Get-ItlActiveClient
-    $adapter = Get-ItlClientAdapter -Client $client
-    $authoring = New-VanessaAuthoringState -Phase "reload-required" -FeatureRecords $features -LibraryFingerprint $libraryFingerprint
-    $authoring.client = $client
-    $authoring.reloadRequired = $true
-    $authoring.reloadInstruction = [string]$adapter.reload
-    $authoring.mcpPid = [int]$runtime.pid
-    $authoring.mcpPort = [int]$runtime.port
-    $authoring.mcpUrl = [string]$runtime.url
+    $definition = Get-ItlOnDemandMcpFamilyDefinition -Family "vanessa-ui"
+    $configPath = Write-ItlOnDemandMcpClientConfig
+    if (-not $configPath) { throw "ITL on-demand MCP facade is not installed for Vanessa authoring." }
+    $authoring = New-VanessaAuthoringState -Phase "ready" -FeatureRecords $features -LibraryFingerprint $libraryFingerprint
+    $authoring.catalogSha256 = $definition.catalogSha256
     $authoring.updatedAt = (Get-Date).ToString("o")
     Write-VanessaAuthoringState -State $authoring | Out-Null
-    Write-Host "Vanessa authoring state: reloadRequired"
-    Write-Host "Reload/resume: $($adapter.reload) Then invoke /itl-vanessa-author again; do not use raw HTTP."
+    Write-Host "Vanessa authoring state: ready"
+    Write-Host "Use the itl-vanessa-ui MCP tools. The backend starts on the first tool call; no client reload or raw HTTP call is required."
+}
+
+function Get-VanessaAuthoringOnDemandEvidence {
+    param([object]$AuthoringState)
+    $createdAt = [DateTimeOffset]::Parse([string]$AuthoringState.createdAt)
+    $root = Join-Path (Get-ItlOnDemandRuntimeRoot) "vanessa-ui"
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { return @() }
+    $evidence = @()
+    foreach ($file in Get-ChildItem -LiteralPath $root -File -Filter "*.evidence.jsonl" -ErrorAction SilentlyContinue) {
+        foreach ($line in Get-Content -LiteralPath $file.FullName -Encoding UTF8 -ErrorAction SilentlyContinue) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            try {
+                $item = $line | ConvertFrom-Json
+                $succeededAt = [DateTimeOffset]::Parse([string]$item.succeededAt)
+                if ($succeededAt -ge $createdAt -and [string]$item.family -eq "vanessa-ui" -and [string]$item.catalogSha256 -eq [string]$AuthoringState.catalogSha256) {
+                    $evidence += $item
+                }
+            } catch { }
+        }
+    }
+    return @($evidence | Sort-Object succeededAt)
 }
 
 function Complete-VanessaAuthoring {
@@ -551,17 +543,22 @@ function Complete-VanessaAuthoring {
         [string](Get-StateValue -State $authoring -Name "branch" -Default "") -ne (Get-CurrentBranch)) {
         throw "Vanessa authoring state belongs to another branch/worktree or is missing. Rerun /itl-vanessa-author."
     }
+    if ((ConvertTo-IntOrDefault -Value (Get-StateValue -State $authoring -Name "schemaVersion" -Default 0) -Default 0) -ne 2 -or [string]$authoring.phase -ne "ready") {
+        throw "Vanessa authoring state is not schema v2 ready. Rerun /itl-vanessa-author."
+    }
     if ($features.Count -eq 0) {
         throw "No changed .feature files remain to complete Vanessa authoring."
     }
 
-    Stop-VanessaAuthoringMcpForState -State $state -Quiet | Out-Null
+    $evidence = @(Get-VanessaAuthoringOnDemandEvidence -AuthoringState $authoring)
+    if ($Result -eq "passed" -and $evidence.Count -eq 0) {
+        throw "Vanessa authoring cannot pass: no successful itl-vanessa-ui tool call was recorded for this authoring run."
+    }
+    Stop-ItlOnDemandBackends -Family "vanessa-ui"
     $authoring.features = @($features)
     $authoring.libraryFingerprint = $libraryFingerprint
     $authoring.phase = $Result
-    $authoring.reloadRequired = $false
-    $authoring.mcpPid = 0
-    $authoring.mcpStoppedAt = (Get-Date).ToString("o")
+    $authoring.backendEvidence = @($evidence)
     $authoring.resultsPath = $ResultsPath
     $authoring.errorCategory = $(if ($Result -eq "failed") { $(if ($ErrorCategory) { $ErrorCategory } else { "runner" }) } else { "" })
     $authoring.updatedAt = (Get-Date).ToString("o")
@@ -580,17 +577,16 @@ function Stop-VanessaAuthoringMcpForState {
         [switch]$Quiet
     )
 
-    $stopped = Stop-VanessaMcpForState -State $State -Quiet:$Quiet
+    $instances = @(Get-ItlOnDemandRuntimeInstances | Where-Object { [string]$_.family -eq "vanessa-ui" })
+    Stop-ItlOnDemandBackends -Family "vanessa-ui"
+    $stopped = $instances.Count -gt 0
     $authoring = Read-VanessaAuthoringState
     if ($null -eq $authoring) { return $stopped }
     $sameContext = (Get-FullPathNormalized ([string](Get-StateValue -State $authoring -Name "projectRoot" -Default ""))) -eq (Get-FullPathNormalized $script:ProjectRoot) -and
         [string](Get-StateValue -State $authoring -Name "branch" -Default "") -eq (Get-CurrentBranch)
-    if ($sameContext -and [string](Get-StateValue -State $authoring -Name "phase" -Default "") -eq "reload-required") {
+    if ($sameContext -and [string](Get-StateValue -State $authoring -Name "phase" -Default "") -eq "ready") {
         $authoring.phase = "stopped"
-        $authoring.reloadRequired = $false
-        $authoring.mcpPid = 0
-        $authoring.mcpStoppedAt = (Get-Date).ToString("o")
-        $authoring.updatedAt = $authoring.mcpStoppedAt
+        $authoring.updatedAt = (Get-Date).ToString("o")
         Write-VanessaAuthoringState -State $authoring | Out-Null
     }
     return $stopped
@@ -3295,14 +3291,20 @@ function Get-VanessaMcpCachedArtifactInfo {
 function Get-VanessaMcpReleaseAssetInfo {
     param([object]$Definition)
 
-    if ((Get-DependencyMode) -eq "locked") {
-        $locked = Get-VanessaMcpArtifactLockEntry -Definition $Definition
+    $mode = Get-DependencyMode
+    $locked = Get-VanessaMcpArtifactLockEntry -Definition $Definition
+    if ($mode -eq "locked") {
         $version = [string](Get-ConfigValueFromObject -Object $locked -Path "version" -Default "")
         $assetName = [string](Get-ConfigValueFromObject -Object $locked -Path "assetName" -Default "")
         $url = [string](Get-ConfigValueFromObject -Object $locked -Path "url" -Default "")
         $sha256 = [string](Get-ConfigValueFromObject -Object $locked -Path "sha256" -Default "")
         if (-not $version -or -not $assetName -or -not $url -or -not $sha256) {
             throw "Dependency mode is locked, but vanessaMcp.$($Definition.lockKey).version, assetName, url, and sha256 must all be set in .agent-1c/dependency-lock.json."
+        }
+        $compatible = Get-ItlOnDemandMcpFamilyDefinition -Family "vanessa-ui"
+        $requiredVersion = $(if ([string]$Definition.lockKey -eq "clientMcp") { [string]$compatible.backendVersions.clientMcp } else { [string]$compatible.backendVersions.vaExtension })
+        if ($version -ne $requiredVersion) {
+            throw "ITL_ONDEMAND_BACKEND_UNSUPPORTED: locked Vanessa UI $($Definition.lockKey) version '$version' has no packaged compatibility catalog; required '$requiredVersion'."
         }
         return [pscustomobject]@{
             url = $url
@@ -3313,13 +3315,26 @@ function Get-VanessaMcpReleaseAssetInfo {
         }
     }
 
-    $asset = Get-GitHubReleaseAssetInfo `
-        -Repository ([string]$Definition.repository) `
-        -AssetNameLike ([string]$Definition.assetNameLike) `
-        -OverrideEnvName ([string]$Definition.overrideEnvName) `
-        -DefaultFileName ([string]$Definition.defaultFileName)
-    $asset | Add-Member -NotePropertyName expectedSha256 -NotePropertyValue "" -Force
-    return $asset
+    $compatible = Get-ItlOnDemandMcpFamilyDefinition -Family "vanessa-ui"
+    $requiredVersion = if ([string]$Definition.lockKey -eq "clientMcp") {
+        [string]$compatible.backendVersions.clientMcp
+    } else {
+        [string]$compatible.backendVersions.vaExtension
+    }
+    $version = [string](Get-ConfigValueFromObject -Object $locked -Path "version" -Default "")
+    $assetName = [string](Get-ConfigValueFromObject -Object $locked -Path "assetName" -Default "")
+    $url = [string](Get-ConfigValueFromObject -Object $locked -Path "url" -Default "")
+    $sha256 = [string](Get-ConfigValueFromObject -Object $locked -Path "sha256" -Default "")
+    if ($version -ne $requiredVersion -or -not $assetName -or -not $url -or -not $sha256) {
+        throw "ITL_ONDEMAND_BACKEND_UNSUPPORTED: fresh Vanessa UI requires compatibility-manifest version '$requiredVersion' and a complete vanessaMcp.$($Definition.lockKey) lock entry. Actual version: '$version'."
+    }
+    return [pscustomobject]@{
+        url = $url
+        name = $assetName
+        version = $version
+        expectedSha256 = $sha256
+        source = "compatibility-manifest"
+    }
 }
 
 function Save-VanessaMcpArtifact {

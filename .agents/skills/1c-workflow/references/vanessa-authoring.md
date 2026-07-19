@@ -4,11 +4,11 @@ Read this together with `vanessa-tests.md` only while creating or editing `.feat
 
 ## Flow
 
-Run `/itl-vanessa-author`. The helper updates the copied branch infobase, starts Vanessa UI MCP, and persists worktree-local reload/resume state. For every changed feature use:
+Run `/itl-vanessa-author`. The helper updates the copied branch infobase, validates the pre-registered `itl-vanessa-ui` facade, and records authoring state schema v2 without starting a backend. The first semantic tool call starts it automatically. For every changed feature use:
 
 `search_for_steps_by_keywords → open_feature_file → check_syntax → get_info_about_line_scenario → run_scenario → get_test_results`.
 
-The search schema is `search_name`, `search_description`, `search_type`, `exclude_name`, `exclude_description`, `exclude_type`, and `limit`. Never invent `keywords`, call the endpoint through raw HTTP, or treat KB/reference text as proof that the current runtime exposes a step. Finish through `complete-vanessa-authoring`; the helper stops MCP and cleans managed client config. Then run `/itl-check` for `TESTMANAGER → TESTCLIENT`, JUnit, and event-log evidence.
+The search schema is `search_name`, `search_description`, `search_type`, `exclude_name`, `exclude_description`, `exclude_type`, and `limit`. Never invent `keywords`, call the private endpoint through raw HTTP, or treat KB/reference text as proof that the current runtime exposes a step. `complete-vanessa-authoring` requires successful current-run evidence from `itl-vanessa-ui`, stops every Vanessa instance for the branch, and persists that evidence. Then run `/itl-check` for `TESTMANAGER → TESTCLIENT`, JUnit, and event-log evidence.
 
 ## Libraries And References
 

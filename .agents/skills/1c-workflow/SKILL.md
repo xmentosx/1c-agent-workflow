@@ -52,7 +52,7 @@ Use sibling Git worktrees, leave the main folder on `master`, and load only the 
 
 Use `/itl-check` or `check-dev-branch` for the final executable gate. It runs Vanessa Automation verification through `TESTMANAGER -> TESTCLIENT`, reads JUnit, and checks the event-log baseline. Never replace it with MCP, a headless EPF, or `/deploy-and-test`.
 
-Run `/itl-vanessa-author` for new/changed `.feature`; it owns MCP reload/resume and stays outside `itl-routine`.
+Run `/itl-vanessa-author` for new/changed `.feature`; it owns authoring evidence through `itl-vanessa-ui` and stays outside `itl-routine`.
 
 ROCTUP MCP is the preferred branch-local data channel in `itldev/*` and does not require web publication. Vanessa UI MCP is separate branch runtime tooling; use `.agents/skills/itl-vanessa-ui-mcp/SKILL.md` only when static analysis cannot answer the required UI question. Vanessa Automation verification is the separate `/itl-check` runner. vibecoding1c MCP is helper-managed; External MCP is unmanaged. Do not paste keys into chat or tracked files.
 

@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow-fast
-description: Run routine helper commands in installed ITL 1C projects for status, MCP control, branch creation, Vanessa verification, refresh, and CF/CFE export. Never use for development, review, tests, or docs of the 1c-agent-workflow source repository.
+description: Run routine helper commands in installed ITL 1C projects for status, branch creation, Vanessa verification, refresh, and CF/CFE export. Never use for development, review, tests, or docs of the 1c-agent-workflow source repository.
 ---
 
 # 1C Workflow Fast
@@ -14,8 +14,7 @@ Do not open full workflow references before normal lifecycle execution. Open det
 ## Intent Map
 
 - show ITL status: `status`
-- inspect/control ROCTUP branch data MCP: `roctup-mcp-status`, `start-roctup-mcp`, `stop-roctup-mcp`, `install-roctup-mcp`, or `update-roctup-mcp`
-- inspect/control Vanessa UI branch MCP: `vanessa-mcp-status`, `start-vanessa-mcp`, `stop-vanessa-mcp`, or `install-vanessa-mcp`
+- inspect on-demand facade/backend state: `status`; actual data/UI operations use `itl-roctup-data` or `itl-vanessa-ui`, not helper actions
 - setup/inspect vibecoding1c MCP: `vibecoding1c-mcp-setup` by default, `vibecoding1c-mcp-status`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`
 - update the installed ITL workflow package from `master`: `update-workflow`
 - create new configuration development branch worktree from `master`: `new-dev-branch`
@@ -52,7 +51,7 @@ Use direct `agent-1c.ps1` for branch creation only when the master source confir
 
 New branches use sibling worktrees from `master`. Use the path and helper opening; never make the developer copy lifecycle commands. `-UseCurrentWorktree` is explicit-only.
 
-New branch commands prepare branch-local ROCTUP and Vanessa UI MCP as stopped/ready; they do not start MCP or open the branch infobase. For data exploration, run `start-roctup-mcp`, use the MCP, then run `stop-roctup-mcp`. For runtime UI research, recording, or debugging only, follow `.agents/skills/itl-vanessa-ui-mcp/SKILL.md`, then use `start-vanessa-mcp` and `stop-vanessa-mcp`. Static form/source questions do not start Vanessa UI MCP. `/itl-check` is separate Vanessa Automation verification, not MCP.
+New branch commands register stable `itl-roctup-data` and `itl-vanessa-ui` stdio facades without opening the branch infobase. Their first tool call starts a client-owned backend automatically. For runtime UI research, recording, or debugging follow `.agents/skills/itl-vanessa-ui-mcp/SKILL.md`. Static form/source questions do not call Vanessa UI MCP. `/itl-check` is separate Vanessa Automation verification, not MCP.
 
 For `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`, and explicit `close-dev-branch`, do not ask for a branch name; the helper infers current `itldev/<name>`.
 

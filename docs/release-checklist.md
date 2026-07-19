@@ -83,6 +83,14 @@ a verification timestamp from the current run,
 artifact SHA256, and successful Vanessa UI MCP/ROCTUP MCP cleanup. A successful
 run leaves the E2E worktree clean at the generated fixture commit.
 
+For an `itl-ondemand-mcp` release, capture the complete paginated `tools/list`
+from the pinned real ROCTUP and Vanessa backends, regenerate both catalogs with
+`scripts/New-ItlOnDemandCatalog.ps1`, and change each compatibility family
+`qualification` from `pending-live-tools-list` to `live-tools-list`. Publish the
+Windows amd64 EXE built by `scripts/Build-ItlOnDemandMcp.ps1`, then copy that
+exact asset SHA256 into `templates/dependency-lock.json`. A source-extracted
+candidate catalog is never release evidence.
+
 Keep `build/test-results/local/check-summary.json` and the nested E2E summary as
 release evidence. A failed cleanup, stale Vanessa result, unverified override,
 missing `ParentConfigurations.bin`, non-partial load, extra list-file entry,

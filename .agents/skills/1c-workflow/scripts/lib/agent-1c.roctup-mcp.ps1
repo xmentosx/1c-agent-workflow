@@ -128,8 +128,9 @@ function Get-RoctupMcpHealthUrl {
 
 function Get-RoctupMcpReleaseAssetInfo {
     $assetName = Get-RoctupMcpAssetName
-    if ((Get-DependencyMode) -eq "locked") {
-        $locked = Get-DependencyLockEntry -Name "roctupMcpToolkit"
+    $mode = Get-DependencyMode
+    $locked = Get-DependencyLockEntry -Name "roctupMcpToolkit"
+    if ($mode -eq "locked") {
         $version = [string](Get-ConfigValueFromObject -Object $locked -Path "version" -Default "")
         $lockedAssetName = [string](Get-ConfigValueFromObject -Object $locked -Path "assetName" -Default "")
         $url = [string](Get-ConfigValueFromObject -Object $locked -Path "url" -Default "")
@@ -140,6 +141,11 @@ function Get-RoctupMcpReleaseAssetInfo {
         if ($lockedAssetName -ne $assetName) {
             throw "Dependency lock ROCTUP asset '$lockedAssetName' is incompatible with this platform. Expected '$assetName'; provide a platform-specific roctupMcpToolkit lock entry."
         }
+        $compatible = Get-ItlOnDemandMcpFamilyDefinition -Family "roctup"
+        $requiredVersion = [string]$compatible.backendVersions.roctup
+        if ($version -ne $requiredVersion) {
+            throw "ITL_ONDEMAND_BACKEND_UNSUPPORTED: locked ROCTUP version '$version' has no packaged compatibility catalog; required '$requiredVersion'."
+        }
         return [pscustomobject]@{
             url = $url
             name = $lockedAssetName
@@ -149,13 +155,24 @@ function Get-RoctupMcpReleaseAssetInfo {
         }
     }
 
-    $asset = Get-GitHubReleaseAssetInfo `
-        -Repository "ROCTUP/1c-mcp-toolkit" `
-        -AssetNameLike $assetName `
-        -OverrideEnvName "ROCTUP_MCP_TOOLKIT_EPF_URL" `
-        -DefaultFileName $assetName
-    $asset | Add-Member -NotePropertyName expectedSha256 -NotePropertyValue "" -Force
-    return $asset
+    # A newer upstream release may change tools/list. Fresh therefore means the
+    # newest version admitted by the workflow compatibility manifest, not GitHub latest.
+    $compatible = Get-ItlOnDemandMcpFamilyDefinition -Family "roctup"
+    $requiredVersion = [string]$compatible.backendVersions.roctup
+    $version = [string](Get-ConfigValueFromObject -Object $locked -Path "version" -Default "")
+    $lockedAssetName = [string](Get-ConfigValueFromObject -Object $locked -Path "assetName" -Default "")
+    $url = [string](Get-ConfigValueFromObject -Object $locked -Path "url" -Default "")
+    $sha256 = [string](Get-ConfigValueFromObject -Object $locked -Path "sha256" -Default "")
+    if ($version -ne $requiredVersion -or $lockedAssetName -ne $assetName -or -not $url -or -not $sha256) {
+        throw "ITL_ONDEMAND_BACKEND_UNSUPPORTED: fresh ROCTUP requires compatibility-manifest version '$requiredVersion' and a complete roctupMcpToolkit lock entry for '$assetName'. Actual version: '$version'."
+    }
+    return [pscustomobject]@{
+        url = $url
+        name = $lockedAssetName
+        version = $version
+        expectedSha256 = $sha256
+        source = "compatibility-manifest"
+    }
 }
 
 function Save-RoctupMcpArtifact {
@@ -779,11 +796,11 @@ function Write-ItlBranchMcpClientConfig {
     param([object]$State)
 
     Ensure-GitIgnore
-    $endpoints = @(Get-ItlBranchMcpEndpointEntries -State $State)
-    $path = Write-ItlClientMcpEndpoints -Endpoints $endpoints -Owner "branch-runtime"
-    if ($endpoints.Count -gt 0) {
-        Write-Host "Branch MCP client config: $path"
-    }
+    # Remove only legacy ITL-owned remote entries, then materialize the two
+    # stable stdio facades. Backend ports never enter client configuration.
+    Remove-ItlLegacyBranchMcpEntries
+    $path = Write-ItlOnDemandMcpClientConfig
+    if ($path) { Write-Host "ITL on-demand MCP client config: $path" }
 }
 
 function Invoke-DevBranchDefaultMcpSetup {
@@ -791,6 +808,7 @@ function Invoke-DevBranchDefaultMcpSetup {
 
     $state = $State
     Write-Section "Prepare branch-local MCP"
+    Stop-ItlOnDemandBackends
     $roctupRuntime = Get-RoctupMcpRuntimeInfo -State $state
     if ($roctupRuntime.processAlive) {
         try {
@@ -827,8 +845,8 @@ function Invoke-DevBranchDefaultMcpSetup {
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
     Write-ItlBranchMcpClientConfig -State $state
-    Write-Host "ROCTUP MCP is ready for on-demand start with start-roctup-mcp."
-    Write-Host "Vanessa UI MCP is ready for on-demand start with start-vanessa-mcp."
+    Write-Host "ROCTUP tools are exposed through itl-roctup-data and start on the first tool call."
+    Write-Host "Vanessa UI tools are exposed through itl-vanessa-ui and start on the first tool call."
     return (Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default ""))
 }
 
@@ -844,47 +862,8 @@ function Invoke-DevBranchMcpRestartAfterInfobaseLoad {
     }
 
     $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
-    $roctupRuntime = Get-RoctupMcpRuntimeInfo -State $state
-    if ($roctupRuntime.processAlive) {
-        Write-Host "Restarting ROCTUP MCP after $Reason."
-        Stop-RoctupMcpForState -State $state -Quiet | Out-Null
-        $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
-        try {
-            $state = Start-RoctupMcpForState -State $state -Quiet
-        } catch {
-            $message = $_.Exception.Message
-            Write-Warning "ROCTUP MCP restart failed. $message"
-            Update-DevBranchState -State $state -Updates @{
-                roctupMcpStatus = "failed"
-                roctupMcpError = $message
-                roctupMcpUpdatedAt = (Get-Date).ToString("o")
-            }
-            if (Get-RoctupMcpRequired) {
-                throw
-            }
-            $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
-        }
-    }
-
-    $vanessaRuntime = Get-VanessaMcpRuntimeInfo -State $state
-    if ($vanessaRuntime.processAlive) {
-        Write-Host "Restarting Vanessa UI MCP after $Reason."
-        Stop-VanessaMcpForState -State $state -Quiet | Out-Null
-        try {
-            Start-VanessaMcp
-            $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
-        } catch {
-            $message = $_.Exception.Message
-            Write-Warning "Vanessa UI MCP restart failed. $message"
-            Update-DevBranchState -State $state -Updates @{
-                vanessaMcpStatus = "failed"
-                vanessaMcpError = $message
-                vanessaMcpUpdatedAt = (Get-Date).ToString("o")
-            }
-            $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
-        }
-    }
-
+    Write-Host "Stopping on-demand MCP backend instances after $Reason; the next tool call starts fresh instances."
+    Stop-ItlOnDemandBackends
     Write-ItlBranchMcpClientConfig -State $state
     return (Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default ""))
 }

@@ -234,18 +234,49 @@ function Write-ItlClientMcpEndpoints {
     $path = Join-Path $script:ProjectRoot $adapter.mcpPath
     $normalized = @($Endpoints | ForEach-Object {
         $name = [string]$_.name
-        $url = [string]$_.url
-        if ($name -and $url) { [pscustomobject]@{ name = (ConvertTo-ItlClientMcpKey -Name $name -Client $Client); url = $url } }
+        $url = [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "url" -Default "")
+        $transport = [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "transport" -Default $(if ($url) { "remote" } else { "" }))
+        $command = [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "command" -Default "")
+        $arguments = @(Get-Vibecoding1cMcpObjectValue -Object $_ -Name "args" -Default @())
+        $environment = Get-Vibecoding1cMcpObjectValue -Object $_ -Name "env" -Default ([ordered]@{})
+        $startupTimeout = ConvertTo-IntOrDefault -Value (Get-Vibecoding1cMcpObjectValue -Object $_ -Name "startupTimeoutSeconds" -Default 20) -Default 20
+        $toolTimeout = ConvertTo-IntOrDefault -Value (Get-Vibecoding1cMcpObjectValue -Object $_ -Name "toolTimeoutSeconds" -Default 120) -Default 120
+        if ($name -and (($transport -eq "remote" -and $url) -or ($transport -eq "stdio" -and $command))) {
+            [pscustomobject]@{
+                name = (ConvertTo-ItlClientMcpKey -Name $name -Client $Client)
+                transport = $transport
+                url = $url
+                command = $command
+                args = @($arguments | ForEach-Object { [string]$_ })
+                env = $environment
+                startupTimeoutSeconds = $startupTimeout
+                toolTimeoutSeconds = $toolTimeout
+            }
+        }
     })
 
     if ($Client -eq "codex") {
         $lines = [System.Collections.Generic.List[string]]::new()
         foreach ($endpoint in @($normalized | Sort-Object name)) {
             $lines.Add("[mcp_servers.$(ConvertTo-Vibecoding1cMcpTomlString $endpoint.name)]")
-            $lines.Add("url = $(ConvertTo-Vibecoding1cMcpTomlString $endpoint.url)")
+            if ($endpoint.transport -eq "stdio") {
+                $lines.Add("command = $(ConvertTo-Vibecoding1cMcpTomlString $endpoint.command)")
+                $tomlArguments = @($endpoint.args | ForEach-Object { ConvertTo-Vibecoding1cMcpTomlString ([string]$_) }) -join ", "
+                $lines.Add("args = [$tomlArguments]")
+            } else {
+                $lines.Add("url = $(ConvertTo-Vibecoding1cMcpTomlString $endpoint.url)")
+            }
             $lines.Add("enabled = true")
-            $lines.Add("startup_timeout_sec = 20")
-            $lines.Add("tool_timeout_sec = 120")
+            $lines.Add("startup_timeout_sec = $($endpoint.startupTimeoutSeconds)")
+            $lines.Add("tool_timeout_sec = $($endpoint.toolTimeoutSeconds)")
+            $environment = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint.env
+            if ($endpoint.transport -eq "stdio" -and $environment.Count -gt 0) {
+                $lines.Add("")
+                $lines.Add("[mcp_servers.$(ConvertTo-Vibecoding1cMcpTomlString $endpoint.name).env]")
+                foreach ($key in @($environment.Keys | Sort-Object)) {
+                    $lines.Add("$(ConvertTo-Vibecoding1cMcpTomlString ([string]$key)) = $(ConvertTo-Vibecoding1cMcpTomlString ([string]$environment[$key]))")
+                }
+            }
             $lines.Add("")
         }
         Set-Vibecoding1cMcpManagedTextBlock -Path $path -BlockId $Owner -Body ((@($lines) -join [Environment]::NewLine).TrimEnd())
@@ -276,10 +307,25 @@ function Write-ItlClientMcpEndpoints {
     foreach ($oldKey in @($owners[$stateKey])) { if ($container.Contains([string]$oldKey)) { $container.Remove([string]$oldKey) } }
     $written = @()
     foreach ($endpoint in $normalized) {
-        $entry = if ($Client -eq "opencode") {
+        $entry = if ($endpoint.transport -eq "stdio" -and $Client -in @("opencode", "kilocode")) {
+            $local = [ordered]@{
+                type = "local"
+                command = @($endpoint.command) + @($endpoint.args)
+                enabled = $true
+                timeout = ([int]$endpoint.toolTimeoutSeconds * 1000)
+            }
+            $environment = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint.env
+            if ($environment.Count -gt 0) { $local["environment"] = $environment }
+            $local
+        } elseif ($endpoint.transport -eq "stdio") {
+            $local = [ordered]@{ command = $endpoint.command; args = @($endpoint.args) }
+            $environment = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint.env
+            if ($environment.Count -gt 0) { $local["env"] = $environment }
+            $local
+        } elseif ($Client -eq "opencode") {
             [ordered]@{ type = "remote"; url = $endpoint.url; enabled = $true }
         } elseif ($Client -eq "kilocode") {
-            [ordered]@{ type = "remote"; url = $endpoint.url; enabled = $true; timeout = 120000 }
+            [ordered]@{ type = "remote"; url = $endpoint.url; enabled = $true; timeout = ([int]$endpoint.toolTimeoutSeconds * 1000) }
         } else {
             [ordered]@{ type = "http"; url = $endpoint.url }
         }
@@ -292,6 +338,35 @@ function Write-ItlClientMcpEndpoints {
     $state["owners"] = $owners
     Write-ItlManagedMcpState -State $state
     return $path
+}
+
+function Remove-ItlLegacyBranchMcpEntries {
+    param([string]$Client = "")
+    if (-not $Client) { $Client = Get-ItlActiveClient }
+    # Generic owner cleanup handles Codex managed text blocks and any JSON keys
+    # recorded by newer legacy versions.
+    Write-ItlClientMcpEndpoints -Endpoints @() -Owner "branch-runtime" -Client $Client | Out-Null
+    if ($Client -eq "codex") { return }
+
+    $adapter = Get-ItlClientAdapter -Client $Client
+    $path = Join-Path $script:ProjectRoot $adapter.mcpPath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
+    $config = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-Utf8Text -Path $path | ConvertFrom-Json)
+    $containerName = $(if ($Client -in @("claude-code", "cursor")) { "mcpServers" } else { "mcp" })
+    if (-not $config.Contains($containerName)) { return }
+    $container = ConvertTo-Vibecoding1cMcpHashtable -Object $config[$containerName]
+    $changed = $false
+    foreach ($key in @($container.Keys)) {
+        $managedBy = [string](Get-Vibecoding1cMcpObjectValue -Object $container[$key] -Name "managedBy" -Default "")
+        if ($managedBy -in @("itl-branch-mcp", "vanessa-mcp", "vanessa-ui-mcp")) {
+            $container.Remove($key)
+            $changed = $true
+        }
+    }
+    if ($changed) {
+        $config[$containerName] = $container
+        Write-Vibecoding1cMcpJsonFile -Path $path -Value $config
+    }
 }
 
 function Get-ItlCommandSurface {
@@ -534,6 +609,7 @@ function Sync-ItlClientSurface {
     if ($client -eq "kilocode") {
         Set-KiloSnapshotsDisabled
     }
+    Write-ItlOnDemandMcpClientConfig -Client $client | Out-Null
     $surface = Get-ItlCommandSurface
     if (-not $adapter.commandsPath) {
         Write-Host "Codex uses project-local .agents/skills and natural requests; no project slash prompts were written."
@@ -568,6 +644,7 @@ function Switch-ItlClient {
 
     $snapshot = New-AiRulesMigrationSnapshot
     try {
+        Write-ItlClientMcpEndpoints -Endpoints @() -Owner "ondemand-facade" -Client $oldClient | Out-Null
         Set-ProjectAiRulesClient -Client $newClient
         Set-DotEnvValues -Values @{
             SUBAGENT_MODEL_CODING = ""
@@ -675,6 +752,21 @@ function Show-ItlDoctor {
             $checks.Add([pscustomobject]@{ status = $(if ($ownedCount -gt 0) { "OK" } else { "SKIP" }); name = "mcp"; detail = "active=$client; managedEndpoints=$ownedCount; config=$($adapter.mcpPath)" })
         }
     }
+    try {
+        $facadeLock = Get-DependencyLockEntry -Name "itlOndemandMcp"
+        $facadeVersion = [string](Get-ConfigValueFromObject -Object $facadeLock -Path "version" -Default "")
+        $facadePath = Get-ItlOnDemandMcpExecutablePath -AllowMissing
+        $instances = @(Get-ItlOnDemandRuntimeInstances)
+        $stale = @($instances | Where-Object { -not (Test-ItlOnDemandOwnedProcess -RuntimeState $_) }).Count
+        $facadeReady = Test-Path -LiteralPath $facadePath -PathType Leaf
+        $checks.Add([pscustomobject]@{
+            status = $(if (-not $facadeVersion) { "SKIP" } elseif ($facadeReady -and $stale -eq 0) { "OK" } elseif ($facadeReady) { "WARN" } else { "FAIL" })
+            name = "ondemand-mcp"
+            detail = "version=$(if ($facadeVersion) { $facadeVersion } else { '<legacy project>' }); facade=$facadePath; instances=$($instances.Count); stale=$stale"
+        })
+    } catch {
+        $checks.Add([pscustomobject]@{ status = "FAIL"; name = "ondemand-mcp"; detail = $_.Exception.Message })
+    }
     $surface = Get-ItlCommandSurface
     if ($surface -eq "dev") {
         try {
@@ -692,7 +784,7 @@ function Show-ItlDoctor {
     $rtk = Get-ItlRtkStatus
     $checks.Add([pscustomobject]@{ status = $rtk.status; name = "rtk"; detail = $rtk.detail })
     foreach ($check in $checks) { Write-Host ("[{0}] {1}: {2}" -f $check.status, $check.name, $check.detail) }
-    Write-Host "Doctor is read-only. Repair with pinned update-ai-rules, /itl-update-workflow, /itl-refresh, or the matching ITL MCP action."
+    Write-Host "Doctor is read-only. Repair with pinned update-ai-rules, /itl-update-workflow, or /itl-refresh; on-demand backend control is private."
     if (@($checks | Where-Object { $_.status -eq "FAIL" }).Count -gt 0) { throw "ITL doctor found failed checks." }
 }
 

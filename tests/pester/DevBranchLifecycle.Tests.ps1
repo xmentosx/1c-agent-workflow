@@ -1609,42 +1609,6 @@
         }
     }
 
-    It "refuses to start Vanessa MCP outside an itldev worktree" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-master-test-" + [guid]::NewGuid().ToString("N"))
-        $stdoutPath = Join-Path $tempRoot "stdout.log"
-        $stderrPath = Join-Path $tempRoot "stderr.log"
-
-        try {
-            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Value ".dev.env`n" -Encoding ASCII
-            & git -C $tempRoot init *> $null
-            & git -C $tempRoot config user.email "test@example.com"
-            & git -C $tempRoot config user.name "Test User"
-            & git -C $tempRoot add .gitignore
-            & git -C $tempRoot commit -m init *> $null
-            & git -C $tempRoot branch -M master
-
-            $process = Start-Process -FilePath "powershell" -ArgumentList @(
-                "-NoProfile",
-                "-ExecutionPolicy", "Bypass",
-                "-File", $HelperPath,
-                "-ProjectRoot", $tempRoot,
-                "-Action", "start-vanessa-mcp"
-            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
-            $process.ExitCode | Should -Be 1
-            $output = @(
-                if (Test-Path -LiteralPath $stdoutPath) { Get-Content -Encoding UTF8 -Raw $stdoutPath }
-                if (Test-Path -LiteralPath $stderrPath) { Get-Content -Encoding UTF8 -Raw $stderrPath }
-            ) -join [Environment]::NewLine
-            $output | Should -Match "active itldev/\* development branch worktree"
-            $output | Should -Match "Current branch: master"
-        } finally {
-            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
-                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-            }
-        }
-    }
-
     It "leaves master clean after mocked initialization commits managed files" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-init-clean-" + [guid]::NewGuid().ToString("N"))
         $envNames = @(
@@ -2531,8 +2495,8 @@ if (`$?) { exit 0 } else { exit 1 }
             $LASTEXITCODE | Should -Be 0
             $statusText = $statusOutput -join [Environment]::NewLine
             $statusText | Should -Match "Active development worktrees: 1"
-            $statusText | Should -Match "ROCTUP MCP: stopped"
-            $statusText | Should -Match "Vanessa UI MCP: stopped"
+            $statusText | Should -Match "ITL on-demand MCP facade: ready"
+            $statusText | Should -Match "ITL on-demand MCP backend instances: 0"
 
             $listOutput = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action list-dev-branches 2>&1
             $LASTEXITCODE | Should -Be 0

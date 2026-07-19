@@ -38,7 +38,7 @@ Describe "1C workflow lifecycle operation lock" {
         }
     }
 
-    It "blocks a second mutating action but keeps read-only help and status available" {
+    It "blocks a second mutating action but keeps help and status observable" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lifecycle-lock-conflict-" + [guid]::NewGuid().ToString("N"))
         try {
             Initialize-LifecycleLockTestRepository -Path $tempRoot
@@ -48,11 +48,11 @@ Describe "1C workflow lifecycle operation lock" {
                 try {
                     $conflict = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
                         "-ProjectRoot", $tempRoot,
-                        "-Action", "start-vanessa-mcp"
+                        "-Action", "run-dev-branch-tests"
                     )
                     $conflict.exitCode | Should -Be 1
                     $conflict.combinedText | Should -Match "LIFECYCLE_OPERATION_CONFLICT"
-                    $conflict.combinedText | Should -Match "requestedAction='start-vanessa-mcp'"
+                    $conflict.combinedText | Should -Match "requestedAction='run-dev-branch-tests'"
                     $conflict.combinedText | Should -Match "activeAction='run-dev-branch-tests'"
                     $conflict.combinedText | Should -Match ([regex]::Escape($tempRoot))
 
@@ -93,12 +93,12 @@ Describe "1C workflow lifecycle operation lock" {
                 try {
                     $otherBranch = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
                         "-ProjectRoot", $branchTwo,
-                        "-Action", "start-vanessa-mcp"
+                        "-Action", "run-dev-branch-tests"
                     )
                     $otherBranch.exitCode | Should -Be 1
                     $otherBranch.combinedText | Should -Not -Match "LIFECYCLE_OPERATION_CONFLICT"
                     $otherState = Get-Content -Encoding UTF8 -Raw -LiteralPath (Join-Path $branchTwo ".agent-1c\locks\lifecycle-operation.json") | ConvertFrom-Json
-                    $otherState.action | Should -Be "start-vanessa-mcp"
+                    $otherState.action | Should -Be "run-dev-branch-tests"
                     $otherState.status | Should -Be "failed"
                 } finally {
                     Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
@@ -166,12 +166,12 @@ Describe "1C workflow lifecycle operation lock" {
             Initialize-LifecycleLockTestRepository -Path $tempRoot
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                Enter-Agent1cLifecycleOperation -RequestedAction "start-vanessa-mcp"
+                Enter-Agent1cLifecycleOperation -RequestedAction "run-dev-branch-tests"
                 $operationId = $script:LifecycleOperationId
                 try {
                     $continued = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
                         "-ProjectRoot", $tempRoot,
-                        "-Action", "start-vanessa-mcp",
+                        "-Action", "run-dev-branch-tests",
                         "-OperationId", $operationId,
                         "-OperationOwnerPid", ([string]$PID),
                         "-OperationContinuation"
@@ -219,7 +219,7 @@ Describe "1C workflow lifecycle operation lock" {
 
             $forged = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
                 "-ProjectRoot", $tempRoot,
-                "-Action", "start-vanessa-mcp",
+                "-Action", "run-dev-branch-tests",
                 "-OperationId", "wrong-operation",
                 "-OperationOwnerPid", "999999",
                 "-OperationContinuation"
@@ -227,7 +227,7 @@ Describe "1C workflow lifecycle operation lock" {
             $forged.exitCode | Should -Be 1
             $forged.combinedText | Should -Match "LIFECYCLE_OPERATION_CONTINUATION_INVALID"
 
-            $normal = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "start-vanessa-mcp")
+            $normal = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "run-dev-branch-tests")
             $normal.exitCode | Should -Be 1
             $normal.combinedText | Should -Not -Match "LIFECYCLE_OPERATION_CONFLICT"
             $record = Get-Content -Encoding UTF8 -Raw -LiteralPath $statePath | ConvertFrom-Json

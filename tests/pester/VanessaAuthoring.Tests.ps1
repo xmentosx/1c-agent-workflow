@@ -11,12 +11,12 @@ Describe "Vanessa authoring gate" {
         $match = [regex]::Match($lifecycle, '(?s)function Invoke-DevBranchCheck \{(?<body>.*?)\n\}')
         $match.Success | Should -BeTrue
         $match.Groups['body'].Value.IndexOf('Assert-VanessaAuthoringPreflight') | Should -BeLessThan $match.Groups['body'].Value.IndexOf('Update-DevBranchBase')
-        $match.Groups['body'].Value | Should -Match 'Stop-VanessaAuthoringMcpForState'
+        $match.Groups['body'].Value | Should -Match 'Stop-ItlOnDemandBackends'
         $vanessa = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
         $prepare = [regex]::Match($vanessa, '(?s)function Prepare-VanessaAuthoring \{(?<body>.*?)\n\}')
-        $prepare.Groups['body'].Value.IndexOf('Update-DevBranchBase') | Should -BeLessThan $prepare.Groups['body'].Value.IndexOf('Start-VanessaMcp')
-        $prepare.Groups['body'].Value.IndexOf('resuming the existing MCP runtime') | Should -BeLessThan $prepare.Groups['body'].Value.IndexOf('Update-DevBranchBase')
-        $prepare.Groups['body'].Value | Should -Match '\$runtime\.processAlive'
+        $prepare.Groups['body'].Value.IndexOf('Update-DevBranchBase') | Should -BeLessThan $prepare.Groups['body'].Value.IndexOf('Write-ItlOnDemandMcpClientConfig')
+        $prepare.Groups['body'].Value | Should -Not -Match 'Start-VanessaMcp'
+        $prepare.Groups['body'].Value | Should -Match 'Phase "ready"'
         $command = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-vanessa-author.md.template") -Raw -Encoding UTF8
         foreach ($name in @('search_name','search_description','search_type','exclude_name','exclude_description','exclude_type','limit')) { $command | Should -Match $name }
         $command | Should -Match 'never invent `keywords`'
@@ -84,6 +84,7 @@ Describe "Vanessa authoring gate" {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $records = @(Get-VanessaAuthoringFeatureRecords)
                 $authoring = New-VanessaAuthoringState -Phase 'passed' -FeatureRecords $records -LibraryFingerprint ''
+                $authoring.catalogSha256 = (Get-ItlOnDemandMcpFamilyDefinition -Family 'vanessa-ui').catalogSha256
                 $authoring.passedAt = (Get-Date).ToString('o')
                 Write-VanessaAuthoringState -State $authoring *> $null
                 Assert-VanessaAuthoringPreflight -Trigger command
@@ -114,12 +115,18 @@ Describe "Vanessa authoring gate" {
             Add-Content -LiteralPath $feature -Encoding UTF8 -Value "Scenario: Draft"
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $prepared = New-VanessaAuthoringState -Phase 'reload-required' -FeatureRecords @(Get-VanessaAuthoringFeatureRecords) -LibraryFingerprint ''
-                $prepared.PSObject.Properties.Name | Should -Contain 'mcpPid'
-                $prepared.PSObject.Properties.Name | Should -Contain 'mcpPort'
+                $catalogSha256 = (Get-ItlOnDemandMcpFamilyDefinition -Family 'vanessa-ui').catalogSha256
+                $prepared = New-VanessaAuthoringState -Phase 'ready' -FeatureRecords @(Get-VanessaAuthoringFeatureRecords) -LibraryFingerprint ''
+                $prepared.catalogSha256 = $catalogSha256
+                $prepared.PSObject.Properties.Name | Should -Not -Contain 'mcpPid'
+                $prepared.PSObject.Properties.Name | Should -Contain 'backendEvidence'
                 Write-VanessaAuthoringState -State $prepared *> $null
+                $evidenceRoot = Join-Path (Get-ItlOnDemandRuntimeRoot) 'vanessa-ui'
+                New-Item -ItemType Directory -Force -Path $evidenceRoot | Out-Null
+                [ordered]@{ schemaVersion=1; family='vanessa-ui'; instanceId='fixture'; backendVersion='fixture'; catalogSha256=$catalogSha256; tool='run_scenario'; succeededAt=(Get-Date).AddSeconds(1).ToUniversalTime().ToString('o') } |
+                    ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $evidenceRoot 'fixture.evidence.jsonl') -Encoding UTF8
                 Add-Content -LiteralPath $feature -Encoding UTF8 -Value "`tGiven final edit"
-                function Stop-VanessaMcpForState { return $false }
+                function Stop-ItlOnDemandBackends { }
                 Complete-VanessaAuthoring -Result passed
                 $final = Read-VanessaAuthoringState
                 [pscustomobject]@{ phase=$final.phase; matches=(Test-VanessaAuthoringStateMatches -State $final -FeatureRecords @(Get-VanessaAuthoringFeatureRecords) -LibraryFingerprint '') }

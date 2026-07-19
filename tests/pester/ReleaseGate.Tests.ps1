@@ -68,6 +68,8 @@ Describe "Release E2E orchestration" {
         $helperPath = Join-Path $tempRoot "fake-helper.ps1"
         $aiRulesRoot = Join-Path $tempRoot "ai-rules"
         $summaryPath = Join-Path $tempRoot "release-summary.json"
+        $oldOnDemandFixture = $env:ITL_TEST_RELEASE_ONDEMAND_PROBE
+        $env:ITL_TEST_RELEASE_ONDEMAND_PROBE = "true"
         try {
             New-Item -ItemType Directory -Force -Path $mainRoot, $aiRulesRoot | Out-Null
             & git -C $aiRulesRoot init *> $null
@@ -119,9 +121,13 @@ Describe "Release E2E orchestration" {
             Set-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\dev-branches\workflow-release-e2e.json") -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 6)
             Set-Content -LiteralPath $helperPath -Encoding UTF8 -Value @'
 [CmdletBinding()]
-param([string]$ProjectRoot, [string]$Action, [string]$DevBranchName, [string]$ExtensionName, [string]$ReleaseAiRulesSource, [string]$VanessaFeaturePath, [string]$VanessaFilterTags, [string]$ReleaseSnapshotPath, [ValidateSet("Auto", "Partial", "Full")][string]$ConfigLoadMode = "Auto")
+param([string]$ProjectRoot, [string]$Action, [string]$DevBranchName, [string]$ExtensionName, [string]$ReleaseAiRulesSource, [string]$VanessaFeaturePath, [string]$VanessaFilterTags, [string]$ReleaseSnapshotPath, [ValidateSet("Auto", "Partial", "Full")][string]$ConfigLoadMode = "Auto", [string]$InternalOnDemandOperation, [string]$InternalOnDemandFamily)
 $actionLogPath = Join-Path $ProjectRoot ".agent-1c\release-e2e-actions.log"
 Add-Content -LiteralPath $actionLogPath -Encoding UTF8 -Value $Action
+if ($InternalOnDemandOperation -eq "stop-all") {
+    Add-Content -LiteralPath $actionLogPath -Encoding UTF8 -Value "ondemand-stop-all:$InternalOnDemandFamily"
+    exit 0
+}
 $statePath = Join-Path $ProjectRoot ".agent-1c\dev-branches\workflow-release-e2e.json"
 $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
 switch ($Action) {
@@ -223,8 +229,6 @@ switch ($Action) {
         Set-Content -LiteralPath $statePath -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 8)
     }
     "stop-dev-branch-test-clients" { }
-    "stop-vanessa-mcp" { }
-    "stop-roctup-mcp" { }
     default { throw "unexpected action: $Action" }
 }
 '@
@@ -261,6 +265,7 @@ switch ($Action) {
             @($summary.resumedStages) | Should -Contain "config-cadence"
             @($summary.resumedStages) | Should -Contain "config-roundtrip"
             @($summary.executedStages) | Should -Contain "extension-smoke"
+            @($summary.executedStages) | Should -Contain "ondemand-mcp"
             @($summary.executedStages) | Should -Contain "result-cleanup"
             $summary.sourceSnapshotPath | Should -Be $sourceSnapshot
             $summary.artifactSha256 | Should -Not -BeNullOrEmpty
@@ -288,6 +293,11 @@ switch ($Action) {
             $summary.extensionTemplateRegistrationCount | Should -Be 1
             $summary.extensionUiTestClientPassed | Should -BeTrue
             $summary.extensionUiJunitTests | Should -Be 1
+            $summary.onDemandRoctupToolCount | Should -Be 13
+            $summary.onDemandVanessaToolCount | Should -Be 38
+            $summary.onDemandVanessaInstances | Should -Be 2
+            $summary.onDemandVanessaSecondSurvived | Should -BeTrue
+            $summary.onDemandMcpTestFixture | Should -BeTrue
             $summary.extensionSmokeName | Should -Match '^ITLReleaseSmoke\d{14}$'
             $summary.cleanupFailures.Count | Should -Be 0
             $actions = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\release-e2e-actions.log") -Encoding UTF8
@@ -354,6 +364,7 @@ switch ($Action) {
             ($mismatchOutput -join [Environment]::NewLine) | Should -Match "RELEASE_E2E_RESUME_STATE_MISMATCH"
             @(& git -C $worktreeRoot status --porcelain).Count | Should -Be 0
         } finally {
+            $env:ITL_TEST_RELEASE_ONDEMAND_PROBE = $oldOnDemandFixture
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }

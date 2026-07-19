@@ -9,7 +9,7 @@ Use this skill when the agent needs to inspect data in the current `itldev/*` br
 
 ## Priority
 
-- Prefer the branch-local ROCTUP MCP server for data exploration in a development branch.
+- Call the pre-registered `itl-roctup-data` MCP server for data exploration in a development branch. Its branch-local backend starts on the first tool call and stops automatically after inactivity or client exit.
 - Use the legacy web-based Branch Data MCP only when ROCTUP is unavailable or the branch is intentionally published and the requested workflow depends on that legacy channel.
 - Do not assume a database is web-published.
 
@@ -27,10 +27,11 @@ Use this skill when the agent needs to inspect data in the current `itldev/*` br
 - Do not call `execute_code`, `restart_1c_session`, or `close_1c_session` unless the user explicitly requests that exact operation.
 - Do not pass a 1C password through ROCTUP startup parameters.
 - Treat ROCTUP and Vanessa artifacts as runtime tooling; they must not be exported as product CF/CFE artifacts.
+- Never start, stop, or call the backend through raw HTTP. If `itl-roctup-data` reports a facade, catalog, or broker error, report that structured error.
 
 ## On-Demand References
 
 - Do not open the full ROCTUP reference files at session start.
 - Read the downloaded `skills/composing-1c-queries` guidance only before a non-trivial query.
 - Read `skills/tools-full-reference` only when the MCP tool schema is insufficient for a correct call.
-- ROCTUP upstream skills are cached under ignored `.agent-1c/tools/roctup-mcp-toolkit/skills` during install/update and are not vendored into this repository.
+- ROCTUP upstream skills are cached under ignored `.agent-1c/tools/roctup-mcp-toolkit/skills` during workflow init/update and are not vendored into this repository.

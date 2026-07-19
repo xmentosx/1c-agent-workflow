@@ -158,8 +158,8 @@
         $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 11
         $lockTemplate.dependencies.aiRules1c.compatibilityStatus | Should -Be "passed"
         $lockTemplate.dependencies.roctupMcpToolkit.assetName | Should -Be "MCP_Toolkit.epf"
-        $lockTemplate.dependencies.roctupMcpToolkit.sha256 | Should -Be "e9a0856224aea4f54763fe1fb6a21aa8e71efb9d14158adc4382e1b2276d829d"
-        $lockTemplate.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "74d3cb7f97e3800860f5a1754eecf47178164d888f2299125d1b3118a4614ec1"
+        $lockTemplate.dependencies.roctupMcpToolkit.sha256 | Should -Be "74bd1d228aa36fda688b34277ede6030ea3b54350c112a680cdce63adb8ac675"
+        $lockTemplate.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"
         $lockTemplate.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.29.cfe"
         $lockTemplate.dependencies.vanessaAutomation.sha256 | Should -Be "cd0a017a8af69328f471f628ac1367a0e5148f790df9c28c318348b30f08f32a"
         $lockTemplate.dependencies.vanessaAutomation.PSObject.Properties.Name | Should -Contain "sha256"

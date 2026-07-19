@@ -1,0 +1,43 @@
+name: Release itl-ondemand-mcp
+
+on:
+  push:
+    tags:
+      - "itl-ondemand-mcp-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-amd64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.4"
+          cache-dependency-path: tools/itl-ondemand-mcp/go.sum
+
+      - name: Build and verify locked asset
+        shell: pwsh
+        run: |
+          $result = .\scripts\Build-ItlOnDemandMcp.ps1
+          $lock = Get-Content .\templates\dependency-lock.json -Raw -Encoding UTF8 | ConvertFrom-Json
+          $entry = $lock.dependencies.itlOndemandMcp
+          $expectedTag = "itl-ondemand-mcp-v$($entry.version)"
+          if ($env:GITHUB_REF_NAME -cne $expectedTag) {
+            throw "Release tag '$env:GITHUB_REF_NAME' does not match dependency lock '$expectedTag'."
+          }
+          if ($result.assetName -cne [string]$entry.assetName) {
+            throw "Built asset '$($result.assetName)' does not match dependency lock '$($entry.assetName)'."
+          }
+          if ($result.sha256 -cne [string]$entry.sha256) {
+            throw "Built asset SHA256 '$($result.sha256)' does not match dependency lock '$($entry.sha256)'."
+          }
+
+      - name: Publish release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: tools/itl-ondemand-mcp/build/itl-ondemand-mcp-windows-amd64.exe
+          fail_on_unmatched_files: true
