@@ -2,7 +2,7 @@
 
 ITL owns lifecycle, branch bases, MCP, verification, and export. Use `1c-workflow-fast` for routine work and `1c-workflow` plus one routed reference for recovery/explanation. Invoke helpers; never reproduce their flows. 1C Designer/Enterprise actions such as `LoadConfigFromFiles` and `UpdateDBCfg` need `timeout_ms >= 1800000`. Do not use `120000 ms`; status/help actions do not.
 
-For Kilo `/itl`, return helper stdout verbatim, including `Lifecycle:` and `Additional helper actions:`; do not summarize, merge OpenSpec into it, or add a "no lifecycle actions executed" note.
+Native `/itl`: return exact helper stdout in one fenced `text` block; preserve line breaks, blank lines, and indentation; write nothing outside. Never summarize, reorder, omit, or merge sections.
 
 One agent client is active. Its adapter owns commands/rules/agents; five ITL skills remain under `.agents/skills`. Switch only from clean `master` via `/itl-switch-client`; update worktrees later via `/itl-refresh`.
 

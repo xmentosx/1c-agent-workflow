@@ -386,21 +386,43 @@
         $wrapperText = Get-Content -Encoding UTF8 -Raw $wrapperPath
 
         $wrapperText | Should -Match "-Action\s+help"
-        $wrapperText | Should -Match "helper stdout verbatim"
+        $wrapperText | Should -Match "entire final response"
+        $wrapperText | Should -Match 'fenced `text` code block'
+        $wrapperText | Should -Match "nothing outside it"
+        $wrapperText | Should -Match "every helper newline, blank line, and indentation"
         $wrapperText | Should -Match "Do not summarize"
+        $wrapperText | Should -Match "actual error instead of fabricating a panel"
         $wrapperText | Should -Match "Additional helper actions:"
         $wrapperText | Should -Match "Lifecycle:"
         $wrapperText | Should -Not -Match "Lifecycle-РґРµР№СЃС‚РІРёСЏ РЅРµ РІС‹РїРѕР»РЅСЏР»РёСЃСЊ"
     }
 
-    It "tells Kilo rules to keep /itl as a verbatim process panel" {
-        $rulesTemplateText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\USER-RULES.append.md")
+    It "keeps status and litemode responses markdown-safe" {
+        $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\common"
+        $statusText = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "itl-status.md.template")
+        $litemodeText = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "itl-litemode.md.template")
 
-        $rulesTemplateText | Should -Match 'For Kilo `/itl`'
-        $rulesTemplateText | Should -Match "stdout verbatim"
-        $rulesTemplateText | Should -Match "Additional helper actions:"
-        $rulesTemplateText | Should -Match "merge OpenSpec"
-        $rulesTemplateText | Should -Match "no lifecycle actions executed"
+        $statusText | Should -Match "structured Markdown report with no prose paragraphs"
+        $statusText | Should -Match 'one `- Label: value` field per line'
+        $statusText | Should -Match "Use only helper values"
+        $statusText | Should -Match "omit unavailable sections"
+        $litemodeText | Should -Match "complete helper stdout unchanged"
+        $litemodeText | Should -Match 'exactly one fenced `text` code block'
+        $litemodeText | Should -Match "mode-change confirmation"
+        $litemodeText | Should -Match "nothing outside it"
+    }
+
+    It "keeps the native /itl contract compact and consistent" {
+        $rulesTemplateText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\USER-RULES.append.md")
+        $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
+
+        $rulesTemplateText | Should -Match 'Native `/itl`'
+        $rulesTemplateText | Should -Match 'one fenced `text` block'
+        $rulesTemplateText | Should -Match "line breaks, blank lines, and indentation"
+        $rulesTemplateText | Should -Match "write nothing outside"
+        $installText | Should -Match 'exactly one fenced `text` block'
+        $installText | Should -Match "preserving every line break, blank line, and indentation"
+        $installText | Should -Match "actual error instead of fabricating a panel"
     }
 
     It "recommends choosing development mode for a fresh clean dev branch" {
