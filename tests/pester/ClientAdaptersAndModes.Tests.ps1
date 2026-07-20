@@ -4,6 +4,53 @@ Describe "ITL client adapters and verification modes" {
         $context = Initialize-WorkflowPesterContext
         $RepoRoot = $context.RepoRoot
         $HelperPath = $context.HelperPath
+
+        function New-OpenSpecModeFixture {
+            param(
+                [string]$Root,
+                [string]$Client,
+                [ValidateSet("native", "natural")][string]$Mode
+            )
+
+            New-Item -ItemType Directory -Force -Path (Join-Path $Root ".agent-1c"), (Join-Path $Root "openspec/specs"), (Join-Path $Root "openspec/changes"), (Join-Path $Root ".fixture-rules") | Out-Null
+            Set-Content -LiteralPath (Join-Path $Root ".agent-1c/project.json") -Encoding UTF8 -Value (([ordered]@{ aiRules = [ordered]@{ tools = @($Client) } } | ConvertTo-Json -Depth 5) + "`n")
+            foreach ($relative in @("openspec/README.md", "openspec/config.yaml", "openspec/project.md", "openspec/specs/README.md", "openspec/changes/README.md")) {
+                Set-Content -LiteralPath (Join-Path $Root $relative) -Encoding UTF8 -Value "fixture"
+            }
+            Set-Content -LiteralPath (Join-Path $Root "USER-RULES.md") -Encoding UTF8 -Value "<!-- ITL-WORKFLOW-USER-RULES:START -->`nContext Sources; test-plan.md; fresh /itl-check`n<!-- ITL-WORKFLOW-USER-RULES:END -->"
+            $rulePath = Join-Path $Root ".fixture-rules/sdd-integrations.md"
+            Set-Content -LiteralPath $rulePath -Encoding UTF8 -Value "OpenSpec integration fixture"
+            $files = [ordered]@{
+                ".fixture-rules/sdd-integrations.md" = [ordered]@{
+                    source = "content/rules/sdd-integrations.md"
+                    installedHash = (Get-FileHash -LiteralPath $rulePath -Algorithm SHA256).Hash.ToLowerInvariant()
+                }
+            }
+            $integrations = [ordered]@{ openspec = [ordered]@{} }
+            if ($Mode -eq "natural") {
+                $integrations.openspec.bundleSkipped = @($Client)
+            } else {
+                $stages = [ordered]@{
+                    propose = "openspec-propose"
+                    explore = "openspec-explore"
+                    apply = "openspec-apply-change"
+                    archive = "openspec-archive-change"
+                }
+                foreach ($stage in $stages.Keys) {
+                    $token = $stages[$stage]
+                    $target = ".agents/skills/$token/SKILL.md"
+                    $path = Join-Path $Root $target
+                    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+                    Set-Content -LiteralPath $path -Encoding UTF8 -Value "# $stage"
+                    $files[$target] = [ordered]@{
+                        source = "content/openspec-bundle/$Client/.codex/skills/$token/SKILL.md"
+                        installedHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+                    }
+                }
+            }
+            $manifest = [ordered]@{ protocol = "1.1"; tools = @($Client); integrations = $integrations; files = $files }
+            Set-Content -LiteralPath (Join-Path $Root ".ai-rules.json") -Encoding UTF8 -Value (($manifest | ConvertTo-Json -Depth 10) + "`n")
+        }
     }
 
     It "registers all ten capability-driven client layouts" {
@@ -35,6 +82,60 @@ Describe "ITL client adapters and verification modes" {
             $vanessaSource | Should -Match 'Vanessa authoring state: ready'
             $vanessaSource | Should -Not -Match 'reloadInstruction'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "reports native mode only for an intact managed bundle" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-openspec-native-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-OpenSpecModeFixture -Root $tempRoot -Client codex -Mode native
+            $status = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus }
+            $status.mode | Should -Be "native"
+            $status.isAvailable | Should -BeTrue
+            $status.invocations.propose | Should -Be "skill openspec-propose"
+
+            Remove-Item -LiteralPath (Join-Path $tempRoot ".agents/skills/openspec-apply-change/SKILL.md") -Force
+            $broken = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus }
+            $broken.mode | Should -Be "unavailable"
+            $broken.reason | Should -Match "missing or damaged"
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "reports natural mode for every new client even when the external CLI is absent" {
+        foreach ($client in @("kimi", "qwen", "command-code", "cline", "pi")) {
+            $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-openspec-natural-$($client.Replace('-', '_'))-" + [guid]::NewGuid().ToString("N"))
+            try {
+                New-OpenSpecModeFixture -Root $tempRoot -Client $client -Mode natural
+                $status = & {
+                    . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    function Get-ItlOpenSpecCliStatus { [pscustomobject]@{ available = $false; path = "" } }
+                    Get-AiRules1cOpenSpecStatus
+                }
+                $status.mode | Should -Be "natural" -Because $client
+                $status.isAvailable | Should -BeTrue -Because $client
+                $status.cliAvailable | Should -BeFalse -Because $client
+                $status.reason | Should -Match "intentionally skipped" -Because $client
+            } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "does not mask missing workspace or ITL rules with natural fallback" {
+        $workspaceRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-openspec-missing-workspace-" + [guid]::NewGuid().ToString("N"))
+        $rulesRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-openspec-missing-rules-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-OpenSpecModeFixture -Root $workspaceRoot -Client qwen -Mode natural
+            Remove-Item -LiteralPath (Join-Path $workspaceRoot "openspec/project.md") -Force
+            $workspaceStatus = & { . $HelperPath -ProjectRoot $workspaceRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus }
+            $workspaceStatus.mode | Should -Be "unavailable"
+            $workspaceStatus.reason | Should -Match "workspace is incomplete"
+
+            New-OpenSpecModeFixture -Root $rulesRoot -Client qwen -Mode natural
+            Set-Content -LiteralPath (Join-Path $rulesRoot "USER-RULES.md") -Encoding UTF8 -Value "user only"
+            $rulesStatus = & { . $HelperPath -ProjectRoot $rulesRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus }
+            $rulesStatus.mode | Should -Be "unavailable"
+            $rulesStatus.reason | Should -Match "complete ITL OpenSpec preflight"
+        } finally {
+            Remove-Item -LiteralPath $workspaceRoot, $rulesRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "preserves the output format contracts across native command adapters" {
@@ -417,10 +518,18 @@ Describe "ITL client adapters and verification modes" {
     It "keeps doctor read-only while checking provenance integrity OpenSpec modes and branch scope" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-doctor-" + [guid]::NewGuid().ToString("N"))
         try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot ".agents\skills") | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot ".agents\skills"), (Join-Path $tempRoot "openspec/specs"), (Join-Path $tempRoot "openspec/changes"), (Join-Path $tempRoot ".kilo/rules-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"masterBranch":"master","aiRules":{"repo":"https://github.com/xmentosx/itl_ai_rules_1c.git","ref":"itl-main-b4d9875b-r11","tools":["kilocode"]}}'
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_VANESSA_TESTING=auto`nITL_CHECK_EVENT_LOG=manual`n"
-            $files = [ordered]@{}
+            foreach ($relative in @("openspec/README.md", "openspec/config.yaml", "openspec/project.md", "openspec/specs/README.md", "openspec/changes/README.md")) {
+                Set-Content -LiteralPath (Join-Path $tempRoot $relative) -Encoding UTF8 -Value "fixture"
+            }
+            Set-Content -LiteralPath (Join-Path $tempRoot "USER-RULES.md") -Encoding UTF8 -Value "<!-- ITL-WORKFLOW-USER-RULES:START -->`nContext Sources; test-plan.md; fresh /itl-check`n<!-- ITL-WORKFLOW-USER-RULES:END -->"
+            $rulePath = Join-Path $tempRoot ".kilo/rules-1c/sdd-integrations.md"
+            Set-Content -LiteralPath $rulePath -Encoding UTF8 -Value "OpenSpec integration fixture"
+            $files = [ordered]@{
+                ".kilo/rules-1c/sdd-integrations.md" = [ordered]@{ source = "content/rules/sdd-integrations.md"; installedHash = (Get-FileHash -LiteralPath $rulePath -Algorithm SHA256).Hash.ToLowerInvariant() }
+            }
             foreach ($skill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")) {
                 $path = Join-Path $tempRoot ".agents\skills\$skill\SKILL.md"
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
@@ -448,6 +557,32 @@ Describe "ITL client adapters and verification modes" {
             $output | Should -Match '\[OK\] openspec'
             $output | Should -Match '\[SKIP\] branch-infobase'
             $after | Should -Be $before
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "reports a healthy natural OpenSpec mode as OK in doctor" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-doctor-openspec-natural-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-OpenSpecModeFixture -Root $tempRoot -Client qwen -Mode natural
+            $projectConfig = [ordered]@{ masterBranch = "master"; aiRules = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-72665287-r13"; tools = @("qwen") } }
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c/project.json") -Encoding UTF8 -Value (($projectConfig | ConvertTo-Json -Depth 6) + "`n")
+            $lock = [ordered]@{ dependencies = [ordered]@{ aiRules1c = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-72665287-r13"; commit = "b66569bebf46e0369efa53983fca69368e16d57a"; upstreamCommit = "72665287e77361aea3aaf866fef163d98f0fabcd"; downstreamRevision = 13; compatibilityStatus = "passed" } } }
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c/dependency-lock.json") -Encoding UTF8 -Value (($lock | ConvertTo-Json -Depth 8) + "`n")
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_VANESSA_TESTING=auto`nITL_CHECK_EVENT_LOG=manual`n"
+            foreach ($skill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")) {
+                $path = Join-Path $tempRoot ".agents/skills/$skill/SKILL.md"
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+                Set-Content -LiteralPath $path -Encoding UTF8 -Value "# $skill"
+            }
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot branch -M master
+            $output = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-ItlRtkStatus { [pscustomobject]@{ status = "SKIP"; detail = "fixture" } }
+                Show-ItlDoctor
+            } 6>&1 | Out-String
+            $output | Should -Match '\[OK\] openspec: mode=natural'
+            ($output -replace '\s+', '') | Should -Match 'intentionallyskipped'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 

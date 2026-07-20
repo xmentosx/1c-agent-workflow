@@ -968,8 +968,12 @@ function Show-ItlDoctor {
     $missingSkills = @($itlSkills | Where-Object { -not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".agents\skills\$_\SKILL.md") -PathType Leaf) })
     $checks.Add([pscustomobject]@{ status = $(if ($missingSkills.Count -eq 0) { "OK" } else { "FAIL" }); name = "itl-skills"; detail = $(if ($missingSkills.Count -eq 0) { "all five installed" } else { "missing: $($missingSkills -join ', ')" }) })
     $openSpec = Get-AiRules1cOpenSpecStatus
-    $openSpecOptional = $openSpec.PSObject.Properties.Name -contains "required" -and -not [bool]$openSpec.required
-    $checks.Add([pscustomobject]@{ status = $(if ($openSpec.isAvailable) { "OK" } elseif ($openSpecOptional) { "SKIP" } else { "FAIL" }); name = "openspec"; detail = $(if ($openSpec.isAvailable) { "active-client bundle installed" } else { $openSpec.reason }) })
+    $openSpecDetail = if ($openSpec.isAvailable) {
+        "mode=$($openSpec.mode); cli=$(if ($openSpec.cliAvailable) { $openSpec.cliPath } else { '<not-detected>' })$(if ($openSpec.reason) { "; $($openSpec.reason)" } else { '' })"
+    } else {
+        "mode=unavailable; $($openSpec.reason)"
+    }
+    $checks.Add([pscustomobject]@{ status = $(if ($openSpec.isAvailable) { "OK" } else { "FAIL" }); name = "openspec"; detail = $openSpecDetail })
     $devEnvPath = Join-Path $script:ProjectRoot ".dev.env"
     $checks.Add([pscustomobject]@{ status = $(if (Test-Path -LiteralPath $devEnvPath -PathType Leaf) { "OK" } else { "FAIL" }); name = "dev-env"; detail = $(if (Test-Path -LiteralPath $devEnvPath -PathType Leaf) { "present; values inspected without mutation" } else { "missing" }) })
     foreach ($component in @("vanessa", "event-log")) {

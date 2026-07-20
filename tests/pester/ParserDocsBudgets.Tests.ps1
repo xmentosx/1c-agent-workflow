@@ -198,6 +198,11 @@
             $workflowIndexText | Should -Match ([regex]::Escape($topic))
         }
         $workflowIndexText | Should -Match "Open only the matching topic file"
+        foreach ($client in @('Codex', 'Kilo Code', 'Claude Code', 'Cursor', 'OpenCode', 'Kimi Code', 'Qwen Code', 'Command Code', 'Cline', 'Pi')) {
+            $workflowIndexText | Should -Match ([regex]::Escape($client))
+        }
+        $workflowIndexText | Should -Match 'capability registry'
+        $workflowIndexText | Should -Match ('(?i)' + [regex]::Escape('never promise universal `/opsx*`'))
 
         $userRulesText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\USER-RULES.append.md")
         $userRulesText | Should -Match "Search hygiene"
@@ -218,7 +223,7 @@
         $firstSection.Success | Should -BeTrue
         $firstSection.Groups['title'].Value | Should -Be 'Быстрый старт'
         $readmeText | Should -Match ([regex]::Escape('https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTALL.md'))
-        foreach ($client in @('Codex', 'Kilo Code', 'Claude Code', 'Cursor', 'OpenCode')) {
+        foreach ($client in @('Codex', 'Kilo Code', 'Claude Code', 'Cursor', 'OpenCode', 'Kimi Code', 'Qwen Code', 'Command Code', 'Cline', 'Pi')) {
             $readmeText | Should -Match ([regex]::Escape($client))
         }
         foreach ($forbidden in @('VANESSA-TESTS-GUIDE', 'advanced-actions.md', '.agents/skills/1c-workflow/references/', '/itl-check')) {
@@ -348,7 +353,7 @@
         }
     }
 
-    It "shows existing OpenSpec commands only in the dev ITL lifecycle panel" {
+    It "shows capability-matched OpenSpec modes only in the dev ITL lifecycle panel" {
         $masterStart = $HelperText.IndexOf('if ($surface -eq "master")')
         $devStart = $HelperText.IndexOf('} elseif ($surface -eq "dev")', $masterStart)
         $unknownStart = $HelperText.IndexOf('Write-Host "  Open the master worktree to create branches', $devStart)
@@ -358,12 +363,11 @@
 
         $masterBlock = $HelperText.Substring($masterStart, $devStart - $masterStart)
         $devBlock = $HelperText.Substring($devStart, $unknownStart - $devStart)
-        foreach ($command in @("/opsx-propose", "/opsx-apply", "/opsx-archive", "/opsx-explore")) {
-            $devBlock | Should -Match ([regex]::Escape($command))
-            $masterBlock | Should -Not -Match ([regex]::Escape($command))
-        }
-
         $devBlock | Should -Match "OpenSpec"
+        $devBlock | Should -Match 'Mode: \$\(\$openSpec\.mode\)'
+        $devBlock | Should -Match 'openSpec\.mode -eq "native"'
+        $devBlock | Should -Match 'openSpec\.mode -eq "natural"'
+        $devBlock | Should -Match "Get-ItlOpenSpecNaturalRequests"
         $devBlock | Should -Match "Optional"
         $devBlock | Should -Match "proposal"
         $devBlock | Should -Match "choose development mode"
@@ -456,13 +460,21 @@
             Set-Content -LiteralPath (Join-Path $stateDir "branch3.json") -Encoding UTF8 -Value (($state | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
 
             $openSpecDir = Join-Path $tempRoot ".kilocode\workflows"
-            New-Item -ItemType Directory -Force -Path $openSpecDir | Out-Null
-            $openSpecFiles = [ordered]@{}
+            New-Item -ItemType Directory -Force -Path $openSpecDir, (Join-Path $tempRoot "openspec/specs"), (Join-Path $tempRoot "openspec/changes"), (Join-Path $tempRoot ".kilo/rules-1c") | Out-Null
+            foreach ($relativePath in @("openspec/README.md", "openspec/config.yaml", "openspec/project.md", "openspec/specs/README.md", "openspec/changes/README.md")) {
+                Set-Content -LiteralPath (Join-Path $tempRoot $relativePath) -Encoding UTF8 -Value "fixture"
+            }
+            Set-Content -LiteralPath (Join-Path $tempRoot "USER-RULES.md") -Encoding UTF8 -Value "<!-- ITL-WORKFLOW-USER-RULES:START -->`nContext Sources; test-plan.md; fresh /itl-check`n<!-- ITL-WORKFLOW-USER-RULES:END -->"
+            $integrationRulePath = Join-Path $tempRoot ".kilo/rules-1c/sdd-integrations.md"
+            Set-Content -LiteralPath $integrationRulePath -Encoding UTF8 -Value "OpenSpec integration fixture"
+            $openSpecFiles = [ordered]@{
+                ".kilo/rules-1c/sdd-integrations.md" = [ordered]@{ source = "content/rules/sdd-integrations.md"; installedHash = (Get-FileHash -LiteralPath $integrationRulePath -Algorithm SHA256).Hash.ToLowerInvariant() }
+            }
             foreach ($command in @("opsx-propose", "opsx-explore", "opsx-apply", "opsx-archive")) {
                 $relativePath = ".kilocode/workflows/$command.md"
                 $targetPath = Join-Path $tempRoot $relativePath
                 Set-Content -LiteralPath $targetPath -Encoding UTF8 -Value $command
-                $openSpecFiles[$relativePath] = [ordered]@{ source = "content/openspec-bundle/kilocode/$relativePath" }
+                $openSpecFiles[$relativePath] = [ordered]@{ source = "content/openspec-bundle/kilocode/$relativePath"; installedHash = (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant() }
             }
             $aiRulesManifest = [ordered]@{
                 tools = @("kilocode")
@@ -486,6 +498,43 @@
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
+    }
+
+    It "renders exact natural OpenSpec requests without fictitious slash commands" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-help-natural-dev-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c/project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["qwen"]}}'
+            $output = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-KiloItlCommandSurface { "dev" }
+                function Get-CurrentBranch { "itldev/natural" }
+                function Get-AiRules1cOpenSpecStatus {
+                    [pscustomobject]@{ mode = "natural"; isAvailable = $true; reason = "intentional bundleSkipped"; cliAvailable = $false; cliPath = ""; invocations = [pscustomobject]@{} }
+                }
+                function Read-DevBranchState {
+                    [pscustomobject]@{ devBranchName = "natural"; devBranchKind = "configuration"; devBranchInfoBasePath = "fixture"; lastResultPath = ""; finalResultPath = "" }
+                }
+                function Get-VerificationState { [pscustomobject]@{ effectiveStatus = "missing"; isFreshPassed = $false; reportPath = "" } }
+                function Get-DevBranchKind { "configuration" }
+                function Get-DevBranchExtensionInitializationStatus { "ready" }
+                function Test-DevBranchHasCheckableChanges { $false }
+                function Test-VanessaAuthoringRequired { $false }
+                function Get-ItlActiveClient { "qwen" }
+                Show-Help
+            } 6>&1 | Out-String
+            $normalizedOutput = ($output -replace '\s+', ' ').Trim()
+            $normalizedOutput | Should -Match "Mode: natural"
+            foreach ($request in @(
+                "Исследуй задачу в режиме OpenSpec, не создавая proposal и не меняя код",
+                "Подготовь OpenSpec proposal для <изменение>; создай proposal, design, tasks, test-plan и spec deltas; код не меняй",
+                "Реализуй согласованный OpenSpec change <change-id> по tasks.md и test-plan.md",
+                "Заархивируй принятый OpenSpec change <change-id> и синхронизируй specs"
+            )) { $normalizedOutput | Should -Match ([regex]::Escape($request)) }
+            $normalizedOutput | Should -Match "External CLI: not detected; no installation is attempted"
+            $normalizedOutput | Should -Not -Match "/opsx-propose"
+            $normalizedOutput | Should -Not -Match "/opsx-apply"
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
     It "recommends /itl-check when a dev branch has checkable changes" {
@@ -525,7 +574,7 @@
 
             $text | Should -Match "Checkable changes: True"
             $text | Should -Match "Recommended next step: /itl-check"
-            $text | Should -Match "Active-client OpenSpec surface is unavailable"
+            $text | Should -Match "OpenSpec is unavailable"
             $text | Should -Not -Match "  /opsx-propose  Start the normal OpenSpec flow"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -579,7 +628,7 @@
             "mechanically classify",
             "QUICKFIX_MAX_LINES",
             "/itl-check",
-            "OpenSpec explore/propose/apply",
+            "OpenSpec explore/propose/apply phase",
             "quick-fix",
             "Context Sources",
             "test-plan.md",
@@ -641,10 +690,13 @@
         )) {
             $text | Should -Match ([regex]::Escape($marker))
         }
+        foreach ($marker in @('native', 'natural', 'Исследуй задачу в режиме OpenSpec', 'Подготовь OpenSpec proposal', 'не запускает `openspec update`')) {
+            $text | Should -Match ([regex]::Escape($marker))
+        }
         $text | Should -Not -Match ([regex]::Escape('.agents/skills/1c-workflow/references/'))
     }
 
-    It "documents OpenSpec slash commands at the matching branch development steps" {
+    It "documents native examples and natural OpenSpec requests at matching development steps" {
         foreach ($relativePath in @(
             "docs\itl-workflow\FEATURE-DEVELOPMENT.ru.md",
             ".agents\skills\1c-workflow\references\dev-branch-development.md"
@@ -653,6 +705,10 @@
             foreach ($command in @("/opsx-propose", "/opsx-apply", "/opsx-archive", "/opsx-explore")) {
                 $text | Should -Match ([regex]::Escape($command))
             }
+            foreach ($request in @("Исследуй задачу в режиме OpenSpec", "Подготовь OpenSpec proposal", "Реализуй согласованный OpenSpec change", "Заархивируй принятый OpenSpec change")) {
+                $text | Should -Match ([regex]::Escape($request))
+            }
+            $text | Should -Match "не считайте.*универсальным|не универсаль"
         }
         $agentText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\dev-branch-development.md")
         $agentText | Should -Match "/opsx-propose.*proposal"
