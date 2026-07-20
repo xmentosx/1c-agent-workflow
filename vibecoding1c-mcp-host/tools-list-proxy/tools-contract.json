@@ -1,22 +1,274 @@
 {
-  "schemaVersion": 1,
-  "approvedAt": "2026-07-17",
+  "schemaVersion": 2,
+  "approvedAt": "2026-07-20",
   "descriptionPolicy": {
-    "maximumToolDescriptionCharacters": 160,
-    "removeNestedSchemaDescriptions": true
+    "mode": "approved-top-level-only",
+    "maximumApprovedDescriptionCharacters": 240,
+    "preserveNestedSchemaDescriptions": true,
+    "unapprovedOrChangedDescription": "passthrough"
   },
   "servers": {
+    "docs": {
+      "toolCount": 2,
+      "structuralSha256": "86376cf82d5d7caffb2c300f4bd7542e8c3e02fd7dd4d911bc36db64449412ff",
+      "toolDescriptions": {
+        "docsearch": {
+          "sourceSha256": "8f3ef70f47c9d0c3791e2ee4c426873b0d8cc90e7f57fa5820f19d35d024544a",
+          "compact": "Search 1C platform syntax documentation by question, description, or partial name. For an exact object or method name use docinfo."
+        },
+        "docinfo": {
+          "sourceSha256": "525f28f7e60ba01d653793421bff1e3c26c06bfc1c23327fd65866f72c9cf56d",
+          "compact": "Look up 1C platform documentation by an exact object, method, or property name. For descriptive search use docsearch."
+        }
+      }
+    },
+    "templates": {
+      "toolCount": 6,
+      "structuralSha256": "064c6f197b98df70b179d463670d107a12ea34ff3a30415e4f35f1205bbb2f94",
+      "toolDescriptions": {
+        "templatesearch": {
+          "sourceSha256": "85b5fd494f88cfdc4c8f08d4d4f7ff971c33cd32a586b3fb13fcfa91255867aa",
+          "compact": "Search 1C code templates or supporting context by a descriptive query."
+        },
+        "list_templates": {
+          "sourceSha256": "f9f3173f1df31826fde5d88a83968c75c426bc81c8854de00ae550df5acc505b",
+          "compact": "List available 1C code templates with IDs and descriptions."
+        },
+        "get_template": {
+          "sourceSha256": "79e73c569e2ea66f16ddb551a3e82a24591e1fef3924700db9f8a2fbf71d597a",
+          "compact": "Read one 1C code template and its source by template ID."
+        },
+        "add_template": {
+          "sourceSha256": "24c2a4147c8bafc2f2b22f377eb02331f1b5d03209a8745cae553a19fa3d1e1a",
+          "compact": "Add and index a new 1C code template. This changes the shared template database."
+        },
+        "remember": {
+          "sourceSha256": "ac95004965841d58b186a4e355a758ccfaa88d5e31c5fbc0810a7406a9e5f2a0",
+          "compact": "Save a text note to project memory for later retrieval. This changes project memory."
+        },
+        "recall": {
+          "sourceSha256": "868e336dabd85fd35904cf5c57312269ed29b5b2434387590e8998e35e833652",
+          "compact": "Semantically search previously saved project-memory notes."
+        }
+      }
+    },
+    "syntax": {
+      "toolCount": 1,
+      "structuralSha256": "0a62ecaf17cd5d3d14618c09856c4501dae5114b7c54c3a7e4683c86d4170de7",
+      "toolDescriptions": {
+        "syntaxcheck": {
+          "sourceSha256": "a782a7635dcbcff71796c31dd864f0949fd493002c5b0597867303aa427e9210",
+          "compact": "Check BSL source for syntax errors using bsl-analyzer."
+        }
+      }
+    },
     "codechecker": {
       "toolCount": 11,
-      "structuralSha256": "9ca8cb07c545bd26edefe173e881aa58844a2c4b3a75d98066351d1115cdd129"
+      "structuralSha256": "9ca8cb07c545bd26edefe173e881aa58844a2c4b3a75d98066351d1115cdd129",
+      "toolDescriptions": {
+        "ask_1c_ai": {
+          "sourceSha256": "7b30debb87f52ba56c299be0a1db97ac7f97b5131dbcc2391d3b7def1c5eb9b8",
+          "compact": "Ask a general 1C question or follow-up that does not fit checking or documentation tools. Reuses the latest assistant session unless create_new_session=true."
+        },
+        "check_1c_code": {
+          "sourceSha256": "c234b00777e528219c7c714e597cf662e1d0eef94c65f56d8ddcce36e9716c6a",
+          "compact": "Check 1C code for syntax, correctness, bugs, and performance. For style and standards use review_1c_code; for rewriting use rewrite_1c_code."
+        },
+        "review_1c_code": {
+          "sourceSha256": "8c6d2dab206fcc271e3b88ca8a1b7368e2d157a33458ea5d560c271339c5841a",
+          "compact": "Review 1C code style, standards, naming, structure, and readability. Does not check syntax or bugs; use check_1c_code for correctness."
+        },
+        "rewrite_1c_code": {
+          "sourceSha256": "5c15e1257f133d045e0cd3c6cbc35698b040206e0c94f298f861a75aa5606101",
+          "compact": "Let AI choose and apply improvements to 1C code, optionally guided by goal. For an exact requested change use modify_1c_code."
+        },
+        "modify_1c_code": {
+          "sourceSha256": "dc6bdf1c5d3b6ea92e3189748beef578581010262ea27f8f33dabba7c989c851",
+          "compact": "Apply an explicit requested change to 1C code, or generate code when source is empty. For AI-selected improvements use rewrite_1c_code."
+        },
+        "search_1c_documentation": {
+          "sourceSha256": "7b6882cb51fd270a068efb15211ef3ee2b9e45edb68b28606a702a732832b3e2",
+          "compact": "Search version-specific 1C platform documentation for language methods, platform objects, types, events, properties, or capabilities."
+        },
+        "onec_help": {
+          "sourceSha256": "bff044bfb7e741f9f3e64c0289023ca81017c6a465c851bb9df2d8899343d12d",
+          "compact": "Search the latest 1C platform documentation. For a specific platform version use search_1c_documentation."
+        },
+        "its_help": {
+          "sourceSha256": "b5803bc4e6222e965c16132c62a725b3a7f7abd3a6c1c9b7603bf3a76d3eaa90",
+          "compact": "Search the 1C ITS knowledge base for methodology, technical articles, standards, best practices, and configuration documentation. Use fetch_its for a found document ID."
+        },
+        "fetch_its": {
+          "sourceSha256": "81c40072b0afe23863746d103420e9e9d890248248b707f78e8736786899ae30",
+          "compact": "Fetch a specific ITS document or catalog by ID, normally after its_help. Use id=root to explore the catalog."
+        },
+        "diff_1c_documentation_versions": {
+          "sourceSha256": "0ede92b6ea42bd754df7b053e32c74fa590244a58190ca8952c22ea84f7dfccd",
+          "compact": "Compare 1C platform documentation between two versions."
+        },
+        "config_help": {
+          "sourceSha256": "766fc57ebb10cc4bb7902581d288541536ef07a1a691668cc002950f7e315746",
+          "compact": "Search documentation for a specific 1C application or configuration and its business objects. For platform language and types use search_1c_documentation."
+        }
+      }
+    },
+    "ssl": {
+      "toolCount": 1,
+      "structuralSha256": "b5dd2a7d58aa6b2086f9428843931cb45985dccf224da36aeee02255449d0da0",
+      "toolDescriptions": {
+        "ssl_search": {
+          "sourceSha256": "5dfa0dcfbd9846916d071487f3eb921c215e5c61a9fc849f40a32d25decb3b57",
+          "compact": "Search functions in the 1C Standard Subsystems Library (BSP/SSL)."
+        }
+      }
+    },
+    "bookstack": {
+      "toolCount": 5,
+      "structuralSha256": "04423bf430f36110f616841103a8f576010de416c87e71d53b388b4a64d88eea"
+    },
+    "mantis": {
+      "toolCount": 3,
+      "structuralSha256": "a13cf64cac5a4ec9135566224f6a52367a66da40fad1973ac0cb0102a09a1fce"
     },
     "code": {
       "toolCount": 15,
-      "structuralSha256": "7da36fc59bb43ce70036892223375943fa8991195a8fd58622f49c10de911ab8"
+      "structuralSha256": "7da36fc59bb43ce70036892223375943fa8991195a8fd58622f49c10de911ab8",
+      "toolDescriptions": {
+        "metadatasearch": {
+          "sourceSha256": "159d4cfb0be41df2cf80418b19a47d4c97db39266340f9c1b368fb33be334a44",
+          "compact": "Search raw 1C XML metadata by name, text, or category. Prefer names_only=true to identify objects, then get_metadata_details. For graph relationships use graph tools."
+        },
+        "codesearch": {
+          "sourceSha256": "b3c6f3eaac9546279d208e971f7d13b9116d5fe7276b77d3414845a4b240e75e",
+          "compact": "Search raw BSL module text; falls back to grep during indexing. For an exact routine name use search_function; for semantic code search use graph search_code."
+        },
+        "helpsearch": {
+          "sourceSha256": "6cbd7875a0cd56a3a5c634e8f0eb6d10bf576050511c524e83c07d5e8c26c778",
+          "compact": "Search HTML help files included in the current 1C configuration."
+        },
+        "search_function": {
+          "sourceSha256": "8a0b123b587701556aa8d6b2bcc02042c92a6ad718431713deba5c71be1b544c",
+          "compact": "Find BSL procedures and functions by exact or fuzzy routine name, with grep fallback while indexing."
+        },
+        "get_module_structure": {
+          "sourceSha256": "1710957a1d57afc9aa4993e0cc55b012fd32d1cdb68d5688dcbaa5cdaecfca15",
+          "compact": "Get the structure of a BSL module: procedures, functions, regions, exports, and locations."
+        },
+        "get_method_call_hierarchy": {
+          "sourceSha256": "714c0904a1feae94b35531fce7d731699c6a52eb6ec43ae45fb51562087c388d",
+          "compact": "Get callers, callees, or both for a BSL method to a requested recursion depth."
+        },
+        "graph_dependencies": {
+          "sourceSha256": "e7384bc16c731edd708dbca5f985df3cb40a01e563486a3bbfcdbb58881eb3c7",
+          "compact": "Get direct forward or reverse dependencies of a 1C configuration object, with live XML fallback. For recursive impact analysis use graph trace_impact."
+        },
+        "get_metadata_details": {
+          "sourceSha256": "57f298391544aaf9a48d5120d934521070a9c45f393387b274d28c7da3cb7208",
+          "compact": "Get detailed XML metadata for one known 1C configuration object, including attributes and tabular parts."
+        },
+        "search_forms": {
+          "sourceSha256": "3035a5fba12f0063a0cba342114f0477b02473357dcc401b9330d868deaa3efe",
+          "compact": "Search 1C forms by elements, attributes, commands, handlers, DataPath, or structural content. For one known form layout use inspect_form_layout."
+        },
+        "inspect_form_layout": {
+          "sourceSha256": "d846fdb6a649c603aa1f7c80be549b6dc4a4486d45fcdce3268d8e88246f4c07",
+          "compact": "Inspect the full element tree, attributes, commands, and handlers of a known 1C form."
+        },
+        "bsl_scope_members": {
+          "sourceSha256": "5b6111e7a0bba1d0affefc75c2b7b62df5d468ab8a2ae6bb12c6df45f17b3c18",
+          "compact": "List available methods, properties, and events for a BSL execution context."
+        },
+        "get_xsd_schema": {
+          "sourceSha256": "633450cfff8c0638b101831c55671e1c32886627b19c5a17bd4ad544b97d8a33",
+          "compact": "Get the XSD schema for a 1C metadata object type."
+        },
+        "verify_xml": {
+          "sourceSha256": "08bc8c77110f0049ba3a93f915a5e03587d9aa5d8afb4919850cac89a8d56389",
+          "compact": "Validate XML content against the XSD schema for a 1C object type; returns valid, invalid, or error."
+        },
+        "reindex": {
+          "sourceSha256": "7207d095b06b874f3b096086564c1c1f4ad6f2da4922dcac9365f666930e0d2a",
+          "compact": "Start background indexing. force=false is incremental; force=true wipes and rebuilds collections. Returns immediately; monitor with stats. This is an expensive side effect."
+        },
+        "stats": {
+          "sourceSha256": "f8671b6e59223ef78309947d691aa2457c8debaa16e109ef5736bb9220c00554",
+          "compact": "Read server and indexing status, document counts, embedding provider, and per-phase progress without starting indexing."
+        }
+      }
     },
     "graph": {
       "toolCount": 17,
-      "structuralSha256": "b81745be0309bb6dc6941400cb31bff795b7ea17ff25020f574e908adfd57eb5"
+      "structuralSha256": "b81745be0309bb6dc6941400cb31bff795b7ea17ff25020f574e908adfd57eb5",
+      "toolDescriptions": {
+        "search_metadata": {
+          "sourceSha256": "3001fcf7f718488512851cc9e5777597b606f239eccae3b24b830764e4ea9d4b",
+          "compact": "Structural metadata search by known names, categories, relationships, or properties. Prefer deterministic JSON operations. For meaning use business_search; for descriptive text use search_metadata_by_description."
+        },
+        "get_metadata_prompt": {
+          "sourceSha256": "7d3700a293397b7725442b7364080ff2ded69cefbdad0dc3566252ec219555e5",
+          "compact": "Get the Neo4j metadata schema prompt before constructing a direct Cypher query."
+        },
+        "execute_metadata_cypher": {
+          "sourceSha256": "a6be6dc19bb9b4dcc937cfe446c74153f949593c8a31db925ed6199514799991",
+          "compact": "Execute a direct read query against the metadata Neo4j database. Use get_metadata_prompt first and prefer specialized deterministic tools when possible."
+        },
+        "find_objects_using_object": {
+          "sourceSha256": "88280f97f072eabbe2a6a7077b723704fb2805d3b86a6784147fcd90f3c38ad9",
+          "compact": "Find owner metadata objects that use the target as an attribute, dimension, or resource type. For each specific referencing field use find_usages_of_object."
+        },
+        "find_usages_of_object": {
+          "sourceSha256": "a145d586e9e493c276c6f6b17f30abdbb47e5e8ebc460811f4092a8b4facbdce",
+          "compact": "Find every attribute, dimension, or resource that references the target, including owner and type details. For only owner objects use find_objects_using_object."
+        },
+        "find_register_movement_docs": {
+          "sourceSha256": "fe4e09f84e9e8ca375a2fba990ec8aefab15982909d02fb0c922118049ed4ec3",
+          "compact": "Find documents that make movements in a specified 1C register."
+        },
+        "trace_impact": {
+          "sourceSha256": "35e6fb97e2a22a26816f69e26322e98858fb4758e87b4b010bed906228bc0cd8",
+          "compact": "Recursively trace what a metadata object affects downstream or depends on upstream across type, movement, and call relationships."
+        },
+        "trace_call_chain": {
+          "sourceSha256": "644aafbde18dc5941c841a88215f9d8d07c3cacdee4f3ea0c856a801b4a85b76",
+          "compact": "Recursively trace callers or callees of a BSL procedure or function across metadata objects."
+        },
+        "get_object_dossier": {
+          "sourceSha256": "0badbf7113f66e1fb66224824f52186048f4281898f99f2b5186ed2ce8ca36c8",
+          "compact": "Get a deterministic, comprehensive dossier for one known metadata object: structure, forms, roles, dependencies, movements, modules, routines, and business description. Prefer as the first object-understanding step."
+        },
+        "answer_metadata_question": {
+          "sourceSha256": "d33bee3d7df26d17960f8a63e62976cdec90833d59af609cf85562de8c9f233c",
+          "compact": "Use RAG and an LLM for a complex analytical question spanning metadata and code. Avoid for simple lookup: use dossier, structural, semantic, code, or impact tools instead."
+        },
+        "business_search": {
+          "sourceSha256": "f1bc741876e70e3ce60e490779aca42c2288177767428d044a9280dc88769ef0",
+          "compact": "Semantic search by business meaning and functional purpose. Rewrite the query as a descriptive business phrase. For names, synonyms, comments, or help text use search_metadata_by_description."
+        },
+        "search_code": {
+          "sourceSha256": "472e406c11013faae73a7dac28b66293c19695082a79fdb3a689a6dfe3669bf6",
+          "compact": "Search BSL code across metadata using fulltext for exact names or keywords, semantic for behavior, or hybrid by default. For raw module grep use code codesearch."
+        },
+        "search_metadata_by_description": {
+          "sourceSha256": "c06347bf0427664d1d643889e243a2c2b640236ecae68cb111e0495f930f9027",
+          "compact": "Search metadata names, synonyms, comments, descriptions, and help text using fulltext or hybrid matching. For generated business meaning use business_search; for known structure use search_metadata."
+        },
+        "find_by_guid": {
+          "sourceSha256": "e9c9664a468054245897f1837dc89b49c5061de361c8aba88f9c648568c66660",
+          "compact": "Find a metadata node by GUID and return its type, name, and properties."
+        },
+        "resolve_qualified_name": {
+          "sourceSha256": "34e612c1904a8aeee28a1cdf55297aac8466372a5c5956b31a86b050f171705f",
+          "compact": "Resolve a fully qualified 1C metadata name to its graph node."
+        },
+        "get_indexing_status": {
+          "sourceSha256": "353a5630d7680b3426771803f8c1f55b19c62b5402733e084b2c83f5a2cc9cbe",
+          "compact": "Read authoritative status for all background graph indexing tasks, including pending, running, completed, failed, and skipped. Does not start indexing."
+        },
+        "compare_base_and_extension": {
+          "sourceSha256": "26b3f73cdac695841789e36045b01ac775a1888047305de4d79f5ee7894b6a16",
+          "compact": "Compare a base metadata object with its extension counterpart."
+        }
+      }
     }
   }
 }

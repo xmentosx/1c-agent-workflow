@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "publish", "dump-config")]
+    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "publish", "proxy", "dump-config")]
     [string]$Action = "status",
 
     [string]$ConfigPath = ".\host.config.json",
@@ -2006,7 +2006,7 @@ function Get-ToolsListProxySettings {
 
     $settings = Get-ObjectValue -Object $Config -Name "toolsListProxy" -Default $null
     $enabled = ConvertTo-HostBoolSetting -Value (Get-ObjectValue -Object $settings -Name "enabled" -Default $false) -Default $false
-    $serverIds = @(As-Array (Get-ObjectValue -Object $settings -Name "serverIds" -Default @("codechecker", "code", "graph")) | ForEach-Object { [string]$_ } | Where-Object { $_ })
+    $serverIds = @(As-Array (Get-ObjectValue -Object $settings -Name "serverIds" -Default @("docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis", "code", "graph")) | ForEach-Object { [string]$_ } | Where-Object { $_ })
     $portOffset = [int](Get-ObjectValue -Object $settings -Name "portOffset" -Default 4000)
     if ($portOffset -le 0) { throw "toolsListProxy.portOffset must be greater than zero." }
     $sourceRoot = Join-Path $PSScriptRoot "tools-list-proxy"
@@ -2108,6 +2108,146 @@ function Update-ToolsListProxyPublishEndpoint {
     $hash["url"] = $(if ($qualified) { $proxyUrl } else { $directUrl })
     $hash["toolsContractStatus"] = $(if ($qualified) { "qualified" } else { "fallback-direct" })
     return $hash
+}
+
+function Restore-ToolsListProxyTransactions {
+    param([object[]]$Transactions)
+    if (@($Transactions).Count -eq 0) { return }
+    foreach ($transaction in @($Transactions)[(@($Transactions).Count - 1)..0]) {
+        $containerName = [string](Get-ObjectValue -Object $transaction -Name "containerName" -Default "")
+        $backupName = [string](Get-ObjectValue -Object $transaction -Name "backupName" -Default "")
+        if ($containerName) {
+            [void](Invoke-DockerCommand -Arguments @("rm", "-f", $containerName) -Quiet -TimeoutSec 60)
+        }
+        if ($backupName -and (Get-HostContainerPublishState -ContainerName $backupName) -ne "missing") {
+            Invoke-DockerCommandChecked -Arguments @("rename", $backupName, $containerName) -TimeoutSec 60 -Description "restore tools-list proxy $containerName"
+            if ([string](Get-ObjectValue -Object $transaction -Name "previousState" -Default "") -eq "running") {
+                Invoke-DockerCommandChecked -Arguments @("start", $containerName) -TimeoutSec 60 -Description "restart previous tools-list proxy $containerName"
+            }
+        }
+    }
+}
+
+function Enable-TrackedToolsListProxiesAndPublish {
+    param(
+        [object]$Config,
+        [string]$TargetServerId = ""
+    )
+
+    $settings = Get-ToolsListProxySettings -Config $Config
+    if (-not $settings.enabled) { throw "toolsListProxy.enabled must be true for -Action proxy." }
+    if ($TargetServerId -and $TargetServerId -notin @($settings.serverIds)) {
+        throw "Server '$TargetServerId' is not included in toolsListProxy.serverIds."
+    }
+    $statePath = Get-HostStatePath -Config $Config
+    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
+        throw "Tracked host state was not found: $statePath. Run setup once before enabling proxies."
+    }
+    $stateBackup = Read-Text -Path $statePath
+    $state = Read-HostState -Config $Config
+    $selectedIds = $(if ($TargetServerId) { @($TargetServerId) } else { @($settings.serverIds) })
+    $targets = @(As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @()) | Where-Object {
+        [string](Get-ObjectValue -Object $_ -Name "id" -Default "") -in $selectedIds
+    })
+    $trackedIds = @($targets | ForEach-Object { [string](Get-ObjectValue -Object $_ -Name "id" -Default "") } | Select-Object -Unique)
+    $missingIds = @($selectedIds | Where-Object { $_ -notin $trackedIds })
+    if ($missingIds.Count -gt 0) { throw "Proxy targets are missing from tracked host state: $($missingIds -join ', ')." }
+
+    if ($DryRun) {
+        foreach ($server in $targets) {
+            $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
+            $hostPort = [int](Get-ObjectValue -Object $server -Name "hostPort" -Default 0)
+            Write-Host "Would qualify tracked MCP tools-list proxy for '$id' on port $($hostPort + $settings.portOffset); no server setup or indexing would run."
+        }
+        return
+    }
+
+    foreach ($command in @("git", "docker")) {
+        if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "Required command was not found: $command" }
+    }
+    if ((Invoke-DockerCommand -Arguments @("info") -Quiet -TimeoutSec 60) -ne 0) {
+        throw "Docker is installed but not available to the current user/session."
+    }
+    Ensure-ToolsListProxyImage -Config $Config
+
+    $transactions = @()
+    $updatedServers = @()
+    $transactionId = [guid]::NewGuid().ToString("N")
+    try {
+        foreach ($server in As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @())) {
+            $serverHash = Convert-ToHash -Object $server
+            $id = [string](Get-ObjectValue -Object $serverHash -Name "id" -Default "")
+            if ($id -notin $selectedIds) {
+                $updatedServers += $serverHash
+                continue
+            }
+            $hostPort = [int](Get-ObjectValue -Object $serverHash -Name "hostPort" -Default 0)
+            $containerName = [string](Get-ObjectValue -Object $serverHash -Name "containerName" -Default "")
+            if ($hostPort -le 0 -or -not $containerName) { throw "Tracked runtime for '$id' has no hostPort or containerName." }
+            if ((Get-HostContainerPublishState -ContainerName $containerName) -ne "running" -or -not (Test-HostTcpPortOpen -Port $hostPort)) {
+                throw "Direct MCP runtime for '$id' is not running on tracked port $hostPort."
+            }
+
+            $directUrl = [string](Get-ObjectValue -Object $serverHash -Name "directUrl" -Default "")
+            if (-not $directUrl) { $directUrl = [string](Get-ObjectValue -Object $serverHash -Name "url" -Default "") }
+            $proxyPort = $hostPort + [int]$settings.portOffset
+            $proxyContainerName = [string](Get-ObjectValue -Object $serverHash -Name "proxyContainerName" -Default "")
+            if (-not $proxyContainerName) { $proxyContainerName = "$containerName-tools-list-proxy" }
+            $previousState = Get-HostContainerPublishState -ContainerName $proxyContainerName
+            $backupName = $(if ($previousState -eq "missing") { "" } else { "$proxyContainerName-rollback-$transactionId" })
+            $transaction = [ordered]@{ containerName = $proxyContainerName; backupName = $backupName; previousState = $previousState }
+            $transactions += [pscustomobject]$transaction
+            if ($backupName) {
+                Invoke-DockerCommandChecked -Arguments @("rename", $proxyContainerName, $backupName) -TimeoutSec 60 -Description "backup tools-list proxy $proxyContainerName"
+                if ($previousState -eq "running") {
+                    Invoke-DockerCommandChecked -Arguments @("stop", $backupName) -TimeoutSec 60 -Description "stop previous tools-list proxy $backupName"
+                }
+            }
+
+            $contractVolume = "$($settings.contractPath):/app/tools-contract.json:ro"
+            $upstreamUrl = "http://host.docker.internal:$hostPort/mcp"
+            Invoke-DockerCommandChecked -Arguments @(
+                "run", "-d", "--name", $proxyContainerName,
+                "--add-host", "host.docker.internal:host-gateway",
+                "-p", "$proxyPort`:8080", "-v", $contractVolume,
+                $settings.image,
+                "--listen-port", "8080", "--upstream-url", $upstreamUrl,
+                "--server-id", $id, "--contract-path", "/app/tools-contract.json"
+            ) -TimeoutSec 180 -Description "docker run $proxyContainerName"
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+                if (Test-HostTcpPortOpen -Port $proxyPort -TimeoutMilliseconds 500) { $ready = $true; break }
+                Start-Sleep -Seconds 1
+            }
+            if (-not $ready) {
+                $logs = @(Invoke-DockerCommandCapture -Arguments @("logs", "--tail", "40", $proxyContainerName) -TimeoutSec 60 -Description "docker logs $proxyContainerName")
+                throw "Proxy for '$id' did not qualify. $($logs -join ' ')"
+            }
+            $baseUrl = ([string](Get-ObjectValue -Object $Config -Name "baseUrl" -Default "http://localhost")).TrimEnd("/")
+            $proxyUrl = "$baseUrl`:$proxyPort/mcp"
+            $serverHash["directUrl"] = $directUrl
+            $serverHash["proxyUrl"] = $proxyUrl
+            $serverHash["proxyPort"] = $proxyPort
+            $serverHash["proxyContainerName"] = $proxyContainerName
+            $serverHash["toolsContractStatus"] = "qualified"
+            $serverHash["url"] = $proxyUrl
+            $updatedServers += $serverHash
+            Write-Host "Qualified tracked MCP tools-list proxy for '$id': $proxyUrl"
+        }
+
+        $stateHash = Convert-ToHash -Object $state
+        $stateHash["servers"] = $updatedServers
+        Write-HostState -Config $Config -State $stateHash
+        Publish-Registry -Config $Config
+        foreach ($transaction in $transactions) {
+            $backupName = [string](Get-ObjectValue -Object $transaction -Name "backupName" -Default "")
+            if ($backupName) { [void](Invoke-DockerCommand -Arguments @("rm", "-f", $backupName) -Quiet -TimeoutSec 60) }
+        }
+    } catch {
+        try { Restore-ToolsListProxyTransactions -Transactions $transactions } catch { Write-Warning "Proxy container rollback failed: $($_.Exception.Message)" }
+        Write-Text -Path $statePath -Value $stateBackup
+        throw
+    }
 }
 
 function Get-HostServerPublishStatus {
@@ -2754,6 +2894,10 @@ switch ($Action) {
     }
     "publish" {
         Publish-Registry -Config $config
+    }
+    "proxy" {
+        Enable-TrackedToolsListProxiesAndPublish -Config $config -TargetServerId $ServerId
+        Show-HostStatus -Config $config -TargetServerId $ServerId
     }
     "dump-config" {
         Invoke-HostConfigDumpHelper -ResolvedConfigPath $ConfigPath -TargetConfigId $ConfigId

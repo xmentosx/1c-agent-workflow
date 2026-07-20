@@ -106,6 +106,109 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "plans tracked proxy activation without setup, refresh, or indexing" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-tools-proxy-action-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $stateRoot = Join-Path $tempRoot "state"
+        $statePath = Join-Path $stateRoot "host-state.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $stateRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "fixture-host"
+                baseUrl = "http://fixture-host"
+                stateRoot = $stateRoot
+                toolsListProxy = [ordered]@{ enabled = $true; serverIds = @("code"); portOffset = 4000 }
+            }
+            $state = [ordered]@{
+                schemaVersion = 1
+                updatedAt = "2026-07-20T00:00:00Z"
+                configurations = @()
+                servers = @([ordered]@{
+                    id = "code"; scope = "project"; configId = "trade"; name = "itl-code-trade"
+                    containerName = "itl-code-trade"; hostPort = 18100; url = "http://fixture-host:18100/mcp"
+                    status = "running"; health = "running"
+                })
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            Set-Content -LiteralPath $statePath -Encoding UTF8 -Value (($state | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            $beforeHash = (Get-FileHash -LiteralPath $statePath -Algorithm SHA256).Hash
+
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $McpHostPath -Action proxy -ConfigPath $configPath -DryRun 2>&1
+
+            $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+            ($output -join [Environment]::NewLine) | Should -Match "no server setup or indexing would run"
+            ($output -join [Environment]::NewLine) | Should -Not -Match "Refreshing configurations|Reindexing database-backed|Starting global MCP servers"
+            (Get-FileHash -LiteralPath $statePath -Algorithm SHA256).Hash | Should -Be $beforeHash
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "rolls back tracked proxy activation before publish when qualification fails" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-tools-proxy-rollback-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $stateRoot = Join-Path $tempRoot "state"
+        $statePath = Join-Path $stateRoot "host-state.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $stateRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1; hostId = "fixture-host"; baseUrl = "http://fixture-host"; stateRoot = $stateRoot
+                toolsListProxy = [ordered]@{ enabled = $true; serverIds = @("code"); portOffset = 4000; image = "fixture-proxy:latest" }
+            }
+            $state = [ordered]@{
+                schemaVersion = 1; updatedAt = "2026-07-20T00:00:00Z"; configurations = @()
+                servers = @([ordered]@{
+                    id = "code"; scope = "project"; configId = "trade"; name = "itl-code-trade"
+                    containerName = "itl-code-trade"; hostPort = 18100; url = "http://fixture-host:18100/mcp"
+                    status = "running"; health = "running"
+                })
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            Set-Content -LiteralPath $statePath -Encoding UTF8 -Value (($state | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            $before = Get-Content -Raw -LiteralPath $statePath
+
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:DryRun = $false
+                $script:ProxyRollbackDockerCalls = New-Object System.Collections.Generic.List[string]
+                $script:ProxyRollbackPublished = $false
+                function Get-Command { param($Name, $ErrorAction); return [pscustomobject]@{ Source = $Name } }
+                function Ensure-ToolsListProxyImage { param([object]$Config) }
+                function Get-HostContainerPublishState {
+                    param([string]$ContainerName)
+                    return $(if ($ContainerName -eq "itl-code-trade") { "running" } else { "missing" })
+                }
+                function Test-HostTcpPortOpen {
+                    param([int]$Port, [int]$TimeoutMilliseconds = 500)
+                    return ($Port -eq 18100)
+                }
+                function Invoke-DockerCommand {
+                    param([string[]]$Arguments, [switch]$Quiet, [int]$TimeoutSec = 300)
+                    $script:ProxyRollbackDockerCalls.Add(($Arguments -join " "))
+                    return 0
+                }
+                function Invoke-DockerCommandChecked {
+                    param([string[]]$Arguments, [int]$TimeoutSec = 300, [string]$Description = "docker")
+                    $script:ProxyRollbackDockerCalls.Add(($Arguments -join " "))
+                }
+                function Invoke-DockerCommandCapture {
+                    param([string[]]$Arguments, [int]$TimeoutSec = 300, [string]$Description = "docker")
+                    return @("qualification failed")
+                }
+                function Start-Sleep { param([int]$Seconds) }
+                function Publish-Registry { param([object]$Config); $script:ProxyRollbackPublished = $true }
+
+                { Enable-TrackedToolsListProxiesAndPublish -Config (Read-JsonFile -Path $configPath) } | Should -Throw "*did not qualify*"
+                $script:ProxyRollbackPublished | Should -BeFalse
+                (@($script:ProxyRollbackDockerCalls) -join "|") | Should -Match "run -d --name itl-code-trade-tools-list-proxy"
+                (@($script:ProxyRollbackDockerCalls) -join "|") | Should -Match "rm -f itl-code-trade-tools-list-proxy"
+                Remove-Variable -Scope Script -Name ProxyRollbackDockerCalls -ErrorAction SilentlyContinue
+                Remove-Variable -Scope Script -Name ProxyRollbackPublished -ErrorAction SilentlyContinue
+            }
+
+            (Get-Content -Raw -LiteralPath $statePath) | Should -BeExactly $before
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "wires standalone MCP host tooling and registry schema" {
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\install-vibecoding1c-mcp-host.ps1") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1") -PathType Leaf) | Should -Be $true
@@ -121,7 +224,9 @@
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\test_server.py") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\Dockerfile") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\mcp-tools-list-proxy.js") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\mcp-tools-list-catalog.js") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\tools-contract.json") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "scripts\export-tools-list-proxy-catalog.ps1") -PathType Leaf) | Should -Be $true
         $bookStackRequirementsText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\requirements.txt")
         $bookStackRequirementsText | Should -Match "fastmcp>=2\.10,<3\.0"
         $bookStackRequirementsText | Should -Match "sentence-transformers"
@@ -176,7 +281,7 @@
         $hostConfig.graphMetadataSearchServer.resetDatabase | Should -Be $false
         $hostConfig.graphMetadataSearchServer.PSObject.Properties["reindexIntervalHours"] | Should -Not -BeNullOrEmpty
         $hostConfig.toolsListProxy.enabled | Should -BeTrue
-        @($hostConfig.toolsListProxy.serverIds) | Should -Be @("codechecker", "code", "graph")
+        @($hostConfig.toolsListProxy.serverIds) | Should -Be @("docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis", "code", "graph")
         $hostConfig.toolsListProxy.portOffset | Should -Be 4000
         $hostConfig.graphMetadataSearchServer.autoUpdateOnStartup | Should -Be $true
         $hostConfig.configurations[0].configId | Should -Be "trade"

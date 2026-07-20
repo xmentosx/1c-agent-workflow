@@ -1,6 +1,12 @@
 [CmdletBinding()]
 param(
+    [string]$DocsUrl = "http://dev-ermakov.itland.local:18000/mcp",
+    [string]$TemplatesUrl = "http://dev-ermakov.itland.local:18001/mcp",
+    [string]$SyntaxUrl = "http://dev-ermakov.itland.local:18002/mcp",
     [string]$CodeCheckerUrl = "http://dev-ermakov.itland.local:18003/mcp",
+    [string]$SslUrl = "http://dev-ermakov.itland.local:18004/mcp",
+    [string]$BookStackUrl = "http://dev-ermakov.itland.local:18005/mcp",
+    [string]$MantisUrl = "http://dev-ermakov.itland.local:18006/mcp",
     [string]$CodeUrl = "http://dev-ermakov.itland.local:18100/mcp",
     [string]$GraphUrl = "http://dev-ermakov.itland.local:18101/mcp"
 )
@@ -13,10 +19,17 @@ $contractPath = Join-Path $repoRoot "vibecoding1c-mcp-host\tools-list-proxy\tool
 $logRoot = Join-Path $repoRoot "build\tools-list-proxy-smoke"
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 $specs = @(
-    [pscustomobject]@{ id = "codechecker"; directUrl = $CodeCheckerUrl; proxyUrl = "http://127.0.0.1:23991/mcp"; port = 23991; smokeTool = "fetch_its" },
-    [pscustomobject]@{ id = "code"; directUrl = $CodeUrl; proxyUrl = "http://127.0.0.1:23992/mcp"; port = 23992; smokeTool = "stats" },
-    [pscustomobject]@{ id = "graph"; directUrl = $GraphUrl; proxyUrl = "http://127.0.0.1:23993/mcp"; port = 23993; smokeTool = "get_indexing_status" }
+    [pscustomobject]@{ id = "docs"; directUrl = $DocsUrl; proxyUrl = "http://127.0.0.1:23981/mcp"; port = 23981; smokeTool = "" },
+    [pscustomobject]@{ id = "templates"; directUrl = $TemplatesUrl; proxyUrl = "http://127.0.0.1:23982/mcp"; port = 23982; smokeTool = "list_templates" },
+    [pscustomobject]@{ id = "syntax"; directUrl = $SyntaxUrl; proxyUrl = "http://127.0.0.1:23983/mcp"; port = 23983; smokeTool = "" },
+    [pscustomobject]@{ id = "codechecker"; directUrl = $CodeCheckerUrl; proxyUrl = "http://127.0.0.1:23984/mcp"; port = 23984; smokeTool = "fetch_its" },
+    [pscustomobject]@{ id = "ssl"; directUrl = $SslUrl; proxyUrl = "http://127.0.0.1:23985/mcp"; port = 23985; smokeTool = "" },
+    [pscustomobject]@{ id = "bookstack"; directUrl = $BookStackUrl; proxyUrl = "http://127.0.0.1:23986/mcp"; port = 23986; smokeTool = "index_status" },
+    [pscustomobject]@{ id = "mantis"; directUrl = $MantisUrl; proxyUrl = "http://127.0.0.1:23987/mcp"; port = 23987; smokeTool = "health" },
+    [pscustomobject]@{ id = "code"; directUrl = $CodeUrl; proxyUrl = "http://127.0.0.1:23988/mcp"; port = 23988; smokeTool = "stats" },
+    [pscustomobject]@{ id = "graph"; directUrl = $GraphUrl; proxyUrl = "http://127.0.0.1:23989/mcp"; port = 23989; smokeTool = "get_indexing_status" }
 )
+$approvedContract = Get-Content -Raw -LiteralPath $contractPath | ConvertFrom-Json
 
 function ConvertFrom-McpResponse {
     param([string]$Text)
@@ -90,6 +103,11 @@ function Get-McpToolContractJson {
     return ($contracts | ConvertTo-Json -Depth 100 -Compress)
 }
 
+function Normalize-McpDescription {
+    param([AllowNull()][object]$Value)
+    return (([string]$Value -replace "\s+", " ").Trim())
+}
+
 $processes = @()
 try {
     foreach ($spec in $specs) {
@@ -103,14 +121,22 @@ try {
         Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
         $processes += Start-Process -FilePath "node" -ArgumentList $arguments -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
     }
-    Start-Sleep -Seconds 3
     for ($index = 0; $index -lt $specs.Count; $index++) {
-        $processes[$index].Refresh()
-        if ($processes[$index].HasExited) {
-            $stderrPath = Join-Path $logRoot "$($specs[$index].id).stderr.log"
-            throw "Proxy process for '$($specs[$index].id)' exited early: $((Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue).Trim())"
+        $health = $null
+        for ($attempt = 0; $attempt -lt 30; $attempt++) {
+            $processes[$index].Refresh()
+            if ($processes[$index].HasExited) {
+                $stderrPath = Join-Path $logRoot "$($specs[$index].id).stderr.log"
+                throw "Proxy process for '$($specs[$index].id)' exited early: $((Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue).Trim())"
+            }
+            try {
+                $health = Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/health" -f $specs[$index].port) -TimeoutSec 2
+                break
+            } catch {
+                Start-Sleep -Seconds 1
+            }
         }
-        $health = Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/health" -f $specs[$index].port) -TimeoutSec 10
+        if ($null -eq $health) { throw "Proxy process for '$($specs[$index].id)' did not become ready." }
         if ($health.serverId -ne $specs[$index].id) { throw "Unexpected proxy health response on port $($specs[$index].port)." }
     }
 
@@ -136,24 +162,36 @@ try {
         [IO.File]::WriteAllText((Join-Path $logRoot "$($spec.id).direct-contract.json"), $directContract, (New-Object Text.UTF8Encoding $false))
         [IO.File]::WriteAllText((Join-Path $logRoot "$($spec.id).proxy-contract.json"), $proxyContract, (New-Object Text.UTF8Encoding $false))
         if ($directContract -cne $proxyContract) { throw "Tool JSON Schema or annotations differ for $($spec.id)." }
-        $overBudget = @($proxyTools | Where-Object { ([string]$_.description).Length -gt 160 })
-        if ($overBudget.Count -gt 0) { throw "Proxy description budget failed for $($spec.id): $(($overBudget | ForEach-Object { $_.name + '=' + ([string]$_.description).Length }) -join ', ')." }
-        $tool = @($proxyTools | Where-Object name -eq $spec.smokeTool | Select-Object -First 1)
-        if ($tool.Count -ne 1) { throw "Smoke tool '$($spec.smokeTool)' was not found for $($spec.id)." }
-        $requiredProperty = $tool[0].inputSchema.PSObject.Properties["required"]
-        if ($null -ne $requiredProperty -and @($requiredProperty.Value).Count -gt 0) { throw "Smoke tool '$($spec.smokeTool)' unexpectedly requires arguments." }
-        $call = Invoke-McpJsonRpc -Connection $proxy -Payload ([ordered]@{ jsonrpc = "2.0"; id = 3; method = "tools/call"; params = [ordered]@{ name = $spec.smokeTool; arguments = [ordered]@{} } })
-        if ($null -ne $call.payload.PSObject.Properties["error"]) { throw "tools/call failed for $($spec.id)/$($spec.smokeTool): $($call.payload.error | ConvertTo-Json -Compress)" }
+        $serverContract = $approvedContract.servers.PSObject.Properties[$spec.id].Value
+        $toolDescriptionsProperty = $serverContract.PSObject.Properties["toolDescriptions"]
+        foreach ($directTool in $directTools) {
+            $proxyTool = @($proxyTools | Where-Object name -eq $directTool.name | Select-Object -First 1)[0]
+            $approvedDescription = $(if ($null -ne $toolDescriptionsProperty) { $toolDescriptionsProperty.Value.PSObject.Properties[[string]$directTool.name] } else { $null })
+            if ($null -ne $approvedDescription) {
+                $expectedDescription = [string]$approvedDescription.Value.compact
+                if ((Normalize-McpDescription $proxyTool.description) -cne (Normalize-McpDescription $expectedDescription)) { throw "Unexpected approved description for $($spec.id)/$($directTool.name)." }
+            } elseif (-not [string]$proxyTool.description) {
+                throw "Unapproved description was lost for $($spec.id)/$($directTool.name)."
+            }
+        }
+        if ($spec.smokeTool) {
+            $tool = @($proxyTools | Where-Object name -eq $spec.smokeTool | Select-Object -First 1)
+            if ($tool.Count -ne 1) { throw "Smoke tool '$($spec.smokeTool)' was not found for $($spec.id)." }
+            $requiredProperty = $tool[0].inputSchema.PSObject.Properties["required"]
+            if ($null -ne $requiredProperty -and @($requiredProperty.Value).Count -gt 0) { throw "Smoke tool '$($spec.smokeTool)' unexpectedly requires arguments." }
+            $call = Invoke-McpJsonRpc -Connection $proxy -Payload ([ordered]@{ jsonrpc = "2.0"; id = 3; method = "tools/call"; params = [ordered]@{ name = $spec.smokeTool; arguments = [ordered]@{} } })
+            if ($null -ne $call.payload.PSObject.Properties["error"]) { throw "tools/call failed for $($spec.id)/$($spec.smokeTool): $($call.payload.error | ConvertTo-Json -Compress)" }
+        }
         $results += [pscustomobject]@{
             server = $spec.id; tools = $proxyTools.Count; directChars = $directJson.Length; proxyChars = $proxyJson.Length
             reductionPercent = [Math]::Round((1 - ($proxyJson.Length / [double]$directJson.Length)) * 100, 1)
-            smokeTool = $spec.smokeTool; call = "passed"
+            smokeTool = $(if ($spec.smokeTool) { $spec.smokeTool } else { "<tools/list only>" }); call = "passed"
         }
     }
     $results += [pscustomobject]@{
         server = "TOTAL"; tools = ($results.tools | Measure-Object -Sum).Sum; directChars = $totalDirect; proxyChars = $totalProxy
         reductionPercent = [Math]::Round((1 - ($totalProxy / [double]$totalDirect)) * 100, 1)
-        smokeTool = "three tools/call requests"; call = "passed"
+        smokeTool = "$(@($specs | Where-Object smokeTool).Count) tools/call requests"; call = "passed"
     }
     $results | Format-Table -AutoSize
 } finally {
