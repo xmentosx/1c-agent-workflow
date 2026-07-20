@@ -27,7 +27,7 @@
         $result.local | Should -Be "unknown"
     }
 
-    It "offers one bulk provider choice and auto-selects a sole remote configuration" {
+    It "offers one bulk provider choice" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:Answers = @("", "each")
@@ -35,81 +35,50 @@
             $defaultMode = Read-Vibecoding1cMcpProviderSelectionMode
             $script:Answers = @("each")
             $eachMode = Read-Vibecoding1cMcpProviderSelectionMode
-            function Ensure-Vibecoding1cMcpRegistry {}
-            function Read-Vibecoding1cMcpRegistry { return [pscustomobject]@{} }
-            function Get-Vibecoding1cMcpRegistryConfigurations {
-                return @([pscustomobject]@{ configId = "only-config"; title = "Only" })
-            }
             [pscustomobject]@{
                 defaultMode = $defaultMode
                 eachMode = $eachMode
-                configId = Read-Vibecoding1cMcpRemoteConfigChoice -Selection ([pscustomobject]@{})
             }
         }
 
         $result.defaultMode | Should -Be "remote"
         $result.eachMode | Should -Be "each"
-        $result.configId | Should -Be "only-config"
     }
 
-    It "auto-selects the project-version remote configuration during init without prompting" {
+    It "requires an explicit configuration choice even for one server option and allows skipping it" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-            $script:McpProvider = ""
-            $script:McpConfigId = ""
-            $script:selectionCalls = 0
-            $script:selectedProvider = ""
-            $script:selectedConfigId = ""
-
-            function Ensure-GitIgnore {}
-            function Invoke-Vibecoding1cMcpSetupSelectionInheritance {}
-            function Read-Vibecoding1cMcpSelection { return [pscustomobject]@{} }
-            function Get-Vibecoding1cMcpSelectionCompleteness { return [pscustomobject]@{ isComplete = $false; reasons = @("selection file is missing") } }
-            function Resolve-Vibecoding1cMcpProjectRemoteConfigId { return "pm5corp" }
-            function Get-BaseConfigurationVersion { return "PM5" }
-            function Set-Vibecoding1cMcpSelection {
-                $script:selectionCalls++
-                $script:selectedProvider = $script:McpProvider
-                $script:selectedConfigId = $script:McpConfigId
-            }
-            function Test-Vibecoding1cMcpSelectionNeedsLocalDistribution { return $false }
-            function Refresh-Vibecoding1cMcpRegistry {}
-            function Start-Vibecoding1cMcp {}
-            function Show-Vibecoding1cMcpStatus {}
-
-            Setup-Vibecoding1cMcp -ForProjectInitialization *> $null
-            [pscustomobject]@{
-                calls = $script:selectionCalls
-                provider = $script:selectedProvider
-                configId = $script:selectedConfigId
-                providerRestored = $script:McpProvider
-                configIdRestored = $script:McpConfigId
-            }
-        }
-
-        $result.calls | Should -Be 1
-        $result.provider | Should -Be "remote"
-        $result.configId | Should -Be "pm5corp"
-        $result.providerRestored | Should -Be ""
-        $result.configIdRestored | Should -Be ""
-    }
-
-    It "resolves one registry configuration matching the project PM version" {
-        $result = & {
-            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-            function Get-EnvValue { param([string]$Name, [object]$Default); return $Default }
-            function Get-ConfigValue { param([string]$Path, [object]$Default); return $Default }
-            function Get-BaseConfigurationVersion { return "PM5" }
-            $registry = [pscustomobject]@{
+            $script:registry = [pscustomobject]@{
                 configurations = @(
-                    [pscustomobject]@{ configId = "pm4corp"; configurationVersion = "4.2.40.2" },
-                    [pscustomobject]@{ configId = "pm5corp"; configurationVersion = "5.0.2.113" }
+                    [pscustomobject]@{ configId = "only-config"; title = "Only"; configurationVersion = "5.0.2.113" },
+                    [pscustomobject]@{ configId = "graph-only"; title = "Graph"; configurationVersion = "5.0.2.114" }
+                )
+                servers = @(
+                    [pscustomobject]@{ id = "code"; scope = "project"; family = "vibecoding1c"; configId = "only-config"; hostId = "host-a"; url = "http://host-a/code"; health = "running" },
+                    [pscustomobject]@{ id = "graph"; scope = "project"; family = "vibecoding1c"; configId = "graph-only"; hostId = "host-a"; url = "http://host-a/graph"; health = "running" }
                 )
             }
-            Resolve-Vibecoding1cMcpProjectRemoteConfigId -Registry $registry
+            $script:answers = @("1", "0")
+            $script:answerIndex = 0
+            function Ensure-Vibecoding1cMcpRegistry {}
+            function Read-Vibecoding1cMcpRegistry { return $script:registry }
+            function Test-InteractiveInputAvailable { return $true }
+            function Read-Host {
+                $answer = $script:answers[$script:answerIndex]
+                $script:answerIndex++
+                return $answer
+            }
+            $server = [pscustomobject]@{ id = "code"; scope = "project" }
+            [pscustomobject]@{
+                selected = Read-Vibecoding1cMcpRemoteConfigChoice -Server $server -Selection ([pscustomobject]@{}) -AllowSkip
+                skipped = Read-Vibecoding1cMcpRemoteConfigChoice -Server $server -Selection ([pscustomobject]@{}) -AllowSkip
+                prompts = $script:answerIndex
+            }
         }
 
-        $result | Should -Be "pm5corp"
+        $result.selected | Should -Be "only-config"
+        $result.skipped | Should -Be ""
+        $result.prompts | Should -Be 2
     }
 
     It "wires the ROCTUP on-demand facade, compatibility catalog, and token guardrails" {
@@ -496,11 +465,13 @@
                 $script:vibecoding1cConfigChoiceIndex = 0
 
                 function Test-InteractiveInputAvailable {
-                    return $false
+                    return $true
                 }
 
+                function Read-Vibecoding1cMcpProviderSelectionMode { return "remote" }
+
                 function Read-Vibecoding1cMcpRemoteConfigChoice {
-                    param([object]$Selection)
+                    param([object]$Server, [object]$Selection, [switch]$AllowSkip)
 
                     $choice = $script:vibecoding1cConfigChoices[$script:vibecoding1cConfigChoiceIndex]
                     $script:vibecoding1cConfigChoiceIndex += 1
@@ -723,6 +694,7 @@
                         [ordered]@{
                             id = $_
                             family = "vibecoding1c"
+                            enabled = $true
                             provider = "remote"
                             configId = $(if ($_ -eq "code" -or $_ -eq "graph") { "trade" } else { "" })
                             hostId = "host-a"
@@ -734,6 +706,15 @@
 
                 $complete = Get-Vibecoding1cMcpSelectionCompleteness -Selection (Read-Vibecoding1cMcpSelection)
                 $complete.isComplete | Should -Be $true
+
+                $disabledCode = $completeSelection["servers"] | Where-Object { $_["id"] -eq "code" } | Select-Object -First 1
+                $disabledCode["enabled"] = $false
+                $disabledCode["configId"] = ""
+                $disabledCode["hostId"] = ""
+                Set-Content -LiteralPath $selectionPath -Encoding UTF8 -Value (($completeSelection | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+                $withExplicitSkip = Read-Vibecoding1cMcpSelection
+                (Test-Vibecoding1cMcpServerEnabled -Server ([pscustomobject]@{ id = "code" }) -Selection $withExplicitSkip) | Should -Be $false
+                (Get-Vibecoding1cMcpSelectionCompleteness -Selection $withExplicitSkip).isComplete | Should -Be $true
             }
         } finally {
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")
@@ -982,6 +963,15 @@
                 Set-Content -LiteralPath $selectionPath -Encoding UTF8 -Value (($selection | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
                 $complete = Get-Vibecoding1cMcpSelectionCompleteness -Selection (Read-Vibecoding1cMcpSelection) -RefreshRegistry
                 $complete.isComplete | Should -Be $true
+
+                $storedSelection = Read-Vibecoding1cMcpSelection
+                $docsServer = Select-Vibecoding1cMcpManifestServers | Where-Object { $_.id -eq "docs" } | Select-Object -First 1
+                @(Get-Vibecoding1cMcpRemoteEndpointCandidates -Server $docsServer -Selection $storedSelection -ConfigId "").Count | Should -Be 1
+                $allHosts = @(Get-Vibecoding1cMcpRemoteEndpointCandidates -Server $docsServer -Selection $storedSelection -ConfigId "" -IgnoreSelectedHost)
+                $allHosts.Count | Should -Be 2
+                function Test-InteractiveInputAvailable { return $true }
+                function Read-Host { return "1" }
+                (Read-Vibecoding1cMcpRemoteHostChoice -Candidates $allHosts -ServerId "docs" -ConfigId "") | Should -Be "host-a"
             }
         } finally {
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")

@@ -529,6 +529,20 @@ function Get-Vibecoding1cMcpSelectionEntry {
     return $null
 }
 
+function Test-Vibecoding1cMcpServerEnabled {
+    param(
+        [object]$Server,
+        [object]$Selection
+    )
+
+    $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
+    $entry = Get-Vibecoding1cMcpSelectionEntry -Selection $Selection -ServerId $id
+    if ($null -eq $entry) {
+        return $true
+    }
+    return (ConvertTo-BoolSetting -Value (Get-Vibecoding1cMcpObjectValue -Object $entry -Name "enabled" -Default $true) -Default $true)
+}
+
 function Test-Vibecoding1cMcpConfigSpecificServerId {
     param([string]$Id)
     return ($Id -eq "code" -or $Id -eq "graph")
@@ -632,7 +646,7 @@ function Get-Vibecoding1cMcpSelectedConfigId {
             return ""
         }
 
-        return (Read-Vibecoding1cMcpRemoteConfigChoice -Selection $Selection)
+        return (Read-Vibecoding1cMcpRemoteConfigChoice -Server $Server -Selection $Selection)
     }
 
     $selectionConfigId = [string](Get-Vibecoding1cMcpObjectValue -Object $Selection -Name "remoteConfigId" -Default "")
@@ -808,12 +822,13 @@ function Get-Vibecoding1cMcpRemoteEndpointCandidates {
     param(
         [object]$Server,
         [object]$Selection,
-        [string]$ConfigId
+        [string]$ConfigId,
+        [switch]$IgnoreSelectedHost
     )
 
     $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
     $scope = Get-Vibecoding1cMcpServerScope -Server $Server
-    $hostId = Get-Vibecoding1cMcpSelectedHostId -Server $Server -Selection $Selection
+    $hostId = if ($IgnoreSelectedHost) { "" } else { Get-Vibecoding1cMcpSelectedHostId -Server $Server -Selection $Selection }
     $registry = Read-Vibecoding1cMcpRegistry
     $candidates = @()
     foreach ($endpoint in Get-Vibecoding1cMcpRegistryServers -Registry $registry) {
@@ -867,6 +882,9 @@ function Get-Vibecoding1cMcpSelectionCompleteness {
                 $reasons += "$id/$scope has no per-server selection"
                 continue
             }
+        }
+        if ($null -ne $entry -and -not (Test-Vibecoding1cMcpServerEnabled -Server $server -Selection $Selection)) {
+            continue
         }
 
         if ($provider -eq "local") {
@@ -928,6 +946,9 @@ function Test-Vibecoding1cMcpSelectionNeedsLocalDistribution {
     param([object]$Selection)
 
     foreach ($server in Select-Vibecoding1cMcpManifestServers) {
+        if (-not (Test-Vibecoding1cMcpServerEnabled -Server $server -Selection $Selection)) {
+            continue
+        }
         if ((Get-Vibecoding1cMcpSelectedProvider -Server $server -Selection $Selection) -eq "local") {
             return $true
         }
@@ -1211,24 +1232,56 @@ function Read-Vibecoding1cMcpRemoteHostChoice {
 }
 
 function Read-Vibecoding1cMcpRemoteConfigChoice {
-    param([object]$Selection)
+    param(
+        [object]$Server,
+        [object]$Selection,
+        [switch]$AllowSkip
+    )
 
     Ensure-Vibecoding1cMcpRegistry | Out-Null
     $registry = Read-Vibecoding1cMcpRegistry
-    $configs = @(Get-Vibecoding1cMcpRegistryConfigurations -Registry $registry)
-    if ($configs.Count -eq 0) {
-        throw "Remote vibecoding1c MCP registry has no configurations. Publish host registry first or choose local vibecoding1c MCP."
+    $serverId = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
+    $serverScope = Get-Vibecoding1cMcpServerScope -Server $Server
+    $publishedConfigIds = @(
+        Get-Vibecoding1cMcpRegistryServers -Registry $registry |
+            Where-Object {
+                [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "id" -Default "") -eq $serverId -and
+                [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "global") -eq $serverScope -and
+                (Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_)
+            } |
+            ForEach-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "configId" -Default "") } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique
+    )
+    $configById = [ordered]@{}
+    foreach ($config in Get-Vibecoding1cMcpRegistryConfigurations -Registry $registry) {
+        $configId = [string](Get-Vibecoding1cMcpObjectValue -Object $config -Name "configId" -Default "")
+        if ($publishedConfigIds -contains $configId -and -not $configById.Contains($configId)) {
+            $configById[$configId] = $config
+        }
     }
-    if ($configs.Count -eq 1) {
-        $configId = [string](Get-Vibecoding1cMcpObjectValue -Object $configs[0] -Name "configId" -Default "")
-        Write-Host ((Get-Agent1cUtf8Text "0J3QsNC50LTQtdC90LAg0LXQtNC40L3RgdGC0LLQtdC90L3QsNGPIHJlbW90ZS3QutC+0L3RhNC40LPRg9GA0LDRhtC40Y8gTUNQOiB7MH0=") -f $configId)
-        return $configId
+    foreach ($configId in $publishedConfigIds) {
+        if (-not $configById.Contains($configId)) {
+            $configById[$configId] = [pscustomobject]@{ configId = $configId; title = $configId }
+        }
+    }
+    $configs = @($configById.Values)
+    if ($configs.Count -eq 0) {
+        if ($AllowSkip) {
+            Write-Host "No usable remote configurations are published for vibecoding1c MCP server '$serverId'."
+            Write-Host "  0. Do not connect this server"
+            return ""
+        }
+        throw "Remote vibecoding1c MCP registry has no usable configurations for server '$serverId'. Publish host registry first or choose local vibecoding1c MCP."
     }
     if (-not (Test-InteractiveInputAvailable)) {
-        throw "Remote vibecoding1c MCP configuration must be selected explicitly. Run vibecoding1c-mcp-select -McpProvider remote -McpConfigId <configId>."
+        throw "Remote vibecoding1c MCP configuration for server '$serverId' must be selected explicitly. Run vibecoding1c-mcp-select -McpServerId $serverId -McpProvider remote -McpConfigId <configId>."
     }
 
-    Write-Host "Available remote vibecoding1c MCP configurations:"
+    Write-Host "Available remote vibecoding1c MCP configurations for server '$serverId':"
+    if ($AllowSkip) {
+        Write-Host "  0. Do not connect this server"
+    }
     for ($i = 0; $i -lt $configs.Count; $i++) {
         $config = $configs[$i]
         $configId = [string](Get-Vibecoding1cMcpObjectValue -Object $config -Name "configId" -Default "")
@@ -1256,6 +1309,9 @@ function Read-Vibecoding1cMcpRemoteConfigChoice {
 
     while ($true) {
         $answer = (Read-Host (Get-Agent1cUtf8Text "0JLRi9Cx0LXRgNC40YLQtSDQutC+0L3RhNC40LPRg9GA0LDRhtC40Y4gTUNQINC/0L4g0L3QvtC80LXRgNGDINC40LvQuCBjb25maWdJZA==")).Trim()
+        if ($AllowSkip -and $answer -in @("0", "skip", "none")) {
+            return ""
+        }
         if (-not $answer) {
             continue
         }
@@ -1271,36 +1327,6 @@ function Read-Vibecoding1cMcpRemoteConfigChoice {
         }
         Write-Host "Unknown vibecoding1c MCP configuration: $answer"
     }
-}
-
-function Resolve-Vibecoding1cMcpProjectRemoteConfigId {
-    param([object]$Registry = $null)
-
-    $configuredConfigId = [string](Get-EnvValue -Name "VIBECODING1C_MCP_CONFIG_ID" -Default (Get-ConfigValue -Path "vibecoding1cMcp.remoteConfigId" -Default ""))
-    if (-not [string]::IsNullOrWhiteSpace($configuredConfigId)) {
-        return $configuredConfigId.Trim()
-    }
-
-    if ($null -eq $Registry) {
-        $Registry = Read-Vibecoding1cMcpRegistry
-    }
-
-    $baseVersion = Get-BaseConfigurationVersion
-    $configurationMajor = if ($baseVersion -eq "PM4") { "4" } else { "5" }
-    $matchingConfigIds = @(
-        Get-Vibecoding1cMcpRegistryConfigurations -Registry $Registry |
-            Where-Object {
-                $version = [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "configurationVersion" -Default "")
-                $version -match ("^" + [regex]::Escape($configurationMajor) + "(?:\.|$)")
-            } |
-            ForEach-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "configId" -Default "") } |
-            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-            Select-Object -Unique
-    )
-    if ($matchingConfigIds.Count -eq 1) {
-        return $matchingConfigIds[0]
-    }
-    return ""
 }
 
 function ConvertTo-Vibecoding1cMcpLocalScopedServer {
@@ -1528,12 +1554,15 @@ function Set-Vibecoding1cMcpSelection {
         $scope = Get-Vibecoding1cMcpServerScope -Server $server
         $title = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "title" -Default $id)
         $existingEntry = Get-Vibecoding1cMcpSelectionEntry -Selection $selection -ServerId $id
+        $existingEnabled = if ($existingEntry) { ConvertTo-BoolSetting -Value (Get-Vibecoding1cMcpObjectValue -Object $existingEntry -Name "enabled" -Default $true) -Default $true } else { $true }
         $existingProvider = if ($existingEntry) { [string](Get-Vibecoding1cMcpObjectValue -Object $existingEntry -Name "provider" -Default "") } else { "" }
         $existingConfigId = if ($existingEntry) { [string](Get-Vibecoding1cMcpObjectValue -Object $existingEntry -Name "configId" -Default "") } else { "" }
         $existingHostId = if ($existingEntry) { [string](Get-Vibecoding1cMcpObjectValue -Object $existingEntry -Name "hostId" -Default "") } else { "" }
         $existingLocalScope = if ($existingEntry) { [string](Get-Vibecoding1cMcpObjectValue -Object $existingEntry -Name "localScope" -Default "") } else { "" }
         Write-Host "vibecoding1c MCP server '$id' [$scope]: $title"
-        if ($existingProvider -or $existingConfigId -or $existingHostId -or $existingLocalScope) {
+        if (-not $existingEnabled) {
+            Write-Host "  current: not connected"
+        } elseif ($existingProvider -or $existingConfigId -or $existingHostId -or $existingLocalScope) {
             Write-Host "  current: provider=$(if ($existingProvider) { $existingProvider } else { '<default>' }) configId=$(if ($existingConfigId) { $existingConfigId } else { '<none>' }) hostId=$(if ($existingHostId) { $existingHostId } else { '<none>' }) localScope=$(if ($existingLocalScope) { $existingLocalScope } else { '<default>' })"
         } else {
             Write-Host "  current: <not selected>"
@@ -1578,8 +1607,15 @@ function Set-Vibecoding1cMcpSelection {
             }
         }
         $requiresRemoteConfig = Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $server
+        $configurationSkipped = $false
         $configId = if ($McpConfigId) {
             $McpConfigId
+        } elseif ($provider -eq "remote" -and $requiresRemoteConfig -and (Test-InteractiveInputAvailable)) {
+            $selectedConfigId = Read-Vibecoding1cMcpRemoteConfigChoice -Server $server -Selection $selection -AllowSkip
+            if (-not $selectedConfigId) {
+                $configurationSkipped = $true
+            }
+            $selectedConfigId
         } elseif ($existingConfigId) {
             $existingConfigId
         } elseif ($requiresRemoteConfig) {
@@ -1588,7 +1624,21 @@ function Set-Vibecoding1cMcpSelection {
             [string](Get-Vibecoding1cMcpObjectValue -Object $selectionHash -Name "remoteConfigId" -Default "")
         }
         if ($provider -eq "remote" -and $requiresRemoteConfig -and -not $configId) {
-            $configId = Read-Vibecoding1cMcpRemoteConfigChoice -Selection $selection
+            if (-not $configurationSkipped) {
+                throw "Remote vibecoding1c MCP configuration for server '$id' must be selected explicitly. Run vibecoding1c-mcp-select interactively or pass -McpServerId $id -McpProvider remote -McpConfigId <configId>."
+            }
+            $servers += [ordered]@{
+                id = $id
+                family = "vibecoding1c"
+                enabled = $false
+                provider = $provider
+                configId = ""
+                hostId = ""
+                localScope = $localScope
+                selectedAt = (Get-Date).ToString("o")
+            }
+            Write-Host "vibecoding1c MCP server '$id' will not be connected."
+            continue
         }
         $hostId = if ($McpHostId) {
             $McpHostId
@@ -1601,12 +1651,12 @@ function Set-Vibecoding1cMcpSelection {
         if ($provider -eq "remote") {
             Ensure-Vibecoding1cMcpRegistry | Out-Null
             $candidateSelection = [pscustomobject]$selectionHash
-            $candidates = @(Get-Vibecoding1cMcpRemoteEndpointCandidates -Server $server -Selection $candidateSelection -ConfigId $configId)
+            $candidates = @(Get-Vibecoding1cMcpRemoteEndpointCandidates -Server $server -Selection $candidateSelection -ConfigId $configId -IgnoreSelectedHost)
             Write-Vibecoding1cMcpRemoteEndpointChoices -Candidates $candidates -ServerId $id -ConfigId $configId
             $usableCandidates = @($candidates | Where-Object { Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_ })
-            if (-not $hostId -and $usableCandidates.Count -eq 1) {
+            if (-not $McpHostId -and $usableCandidates.Count -eq 1) {
                 $hostId = [string](Get-Vibecoding1cMcpObjectValue -Object $usableCandidates[0] -Name "hostId" -Default "")
-            } elseif (-not $hostId -and $usableCandidates.Count -gt 1 -and (Test-InteractiveInputAvailable)) {
+            } elseif (-not $McpHostId -and $usableCandidates.Count -gt 1 -and (Test-InteractiveInputAvailable)) {
                 $hostId = Read-Vibecoding1cMcpRemoteHostChoice -Candidates $usableCandidates -ServerId $id -ConfigId $configId
             }
         }
@@ -1614,6 +1664,7 @@ function Set-Vibecoding1cMcpSelection {
         $servers += [ordered]@{
             id = $id
             family = "vibecoding1c"
+            enabled = $true
             provider = $provider
             configId = $configId
             hostId = $hostId
@@ -2846,6 +2897,9 @@ function Start-Vibecoding1cMcp {
     $needsDistribution = $false
     $needsModel = $false
     foreach ($server in $selectedServers) {
+        if (-not (Test-Vibecoding1cMcpServerEnabled -Server $server -Selection $selection)) {
+            continue
+        }
         $provider = Get-Vibecoding1cMcpSelectedProvider -Server $server -Selection $selection
         if ($provider -eq "remote") {
             $needsRegistry = $true
@@ -2869,6 +2923,9 @@ function Start-Vibecoding1cMcp {
 
     $configContext = Get-Vibecoding1cMcpConfigContext
     foreach ($server in $selectedServers) {
+        if (-not (Test-Vibecoding1cMcpServerEnabled -Server $server -Selection $selection)) {
+            continue
+        }
         $provider = Get-Vibecoding1cMcpSelectedProvider -Server $server -Selection $selection
         if ($provider -eq "remote") {
             $runtime = New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection -AllowPrompt:$AllowPrompt
@@ -3039,8 +3096,6 @@ function Invoke-DevBranchVibecoding1cMcpInheritance {
 }
 
 function Setup-Vibecoding1cMcp {
-    param([switch]$ForProjectInitialization)
-
     Write-Section "Setup vibecoding1c MCP"
 
     Ensure-GitIgnore
@@ -3056,26 +3111,7 @@ function Setup-Vibecoding1cMcp {
                 Write-Host "  - $reason"
             }
         }
-        if ($ForProjectInitialization) {
-            $projectConfigId = Resolve-Vibecoding1cMcpProjectRemoteConfigId
-            if ([string]::IsNullOrWhiteSpace($projectConfigId)) {
-                throw "vibecoding1c MCP remote configuration could not be selected automatically for base configuration $(Get-BaseConfigurationVersion). Set vibecoding1cMcp.remoteConfigId explicitly or run vibecoding1c-mcp-select manually."
-            }
-
-            Write-Host "Automatically selected vibecoding1c MCP remote configId '$projectConfigId' for base configuration $(Get-BaseConfigurationVersion)."
-            $previousProvider = $script:McpProvider
-            $previousConfigId = $script:McpConfigId
-            try {
-                $script:McpProvider = "remote"
-                $script:McpConfigId = $projectConfigId
-                Set-Vibecoding1cMcpSelection
-            } finally {
-                $script:McpProvider = $previousProvider
-                $script:McpConfigId = $previousConfigId
-            }
-        } else {
-            Set-Vibecoding1cMcpSelection
-        }
+        Set-Vibecoding1cMcpSelection
         $selection = Read-Vibecoding1cMcpSelection
     }
 
@@ -3099,6 +3135,7 @@ function Get-Vibecoding1cMcpCurrentEndpoints {
     param([switch]$IncludeGlobal)
 
     $state = Read-Vibecoding1cMcpState
+    $selection = Read-Vibecoding1cMcpSelection
     $context = Get-Vibecoding1cMcpScopeContext
     $endpoints = @()
     foreach ($server in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $state -Name "servers" -Default @())) {
@@ -3106,6 +3143,9 @@ function Get-Vibecoding1cMcpCurrentEndpoints {
             continue
         }
         if (-not (Test-Vibecoding1cMcpEndpointAllowedForProject -Endpoint $server)) {
+            continue
+        }
+        if (-not (Test-Vibecoding1cMcpServerEnabled -Server $server -Selection $selection)) {
             continue
         }
         $url = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "url" -Default "")
@@ -3242,6 +3282,11 @@ function Get-Vibecoding1cMcpStatusSummary {
     foreach ($server in @(Select-Vibecoding1cMcpManifestServers)) {
         $id = [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "id" -Default "")
         if (-not $id) {
+            continue
+        }
+        if (-not (Test-Vibecoding1cMcpServerEnabled -Server $server -Selection $selection)) {
+            $scope = Get-Vibecoding1cMcpServerScope -Server $server
+            $skipped += "$id/$scope/disabled/not-selected"
             continue
         }
         $provider = Get-Vibecoding1cMcpSelectedProvider -Server $server -Selection $selection
