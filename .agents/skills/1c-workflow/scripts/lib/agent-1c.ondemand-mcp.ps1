@@ -51,6 +51,10 @@ function Get-ItlOnDemandMcpFamilyDefinition {
 }
 
 function Get-ItlOnDemandMcpInstallRoot {
+    $override = [Environment]::GetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT")
+    if (-not [string]::IsNullOrWhiteSpace($override)) {
+        return (Resolve-Agent1cFullPath -Path $override)
+    }
     $base = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
     if ([string]::IsNullOrWhiteSpace($base)) {
         throw "LOCALAPPDATA is required for ITL on-demand MCP."

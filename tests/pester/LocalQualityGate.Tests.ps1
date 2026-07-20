@@ -39,6 +39,9 @@ Describe "Local quality gate contract" {
         $text | Should -Match 'invoke-release-e2e\.ps1'
         $text | Should -Match 'test-ai-rules-compatibility\.ps1'
         $text | Should -Match 'invoke-pester-shards\.ps1'
+        $text | Should -Match 'Start-PowerShellChildProcess'
+        $text | Should -Match 'Complete-ParallelGateStage'
+        $text | Should -Match 'forkReadyForParallel'
         $text | Should -Match '\[int\]\$PesterWorkers = 3'
         $text | Should -Match ([regex]::Escape('execution = $Execution'))
         $text | Should -Match 'Add-ReusedStage -Name "pester"'
