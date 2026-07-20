@@ -1735,7 +1735,14 @@ Start-Sleep -Seconds 20
             $oldFinal.stage | Should -Be "launcher.orphaned"
             $oldFinal.resumeStage | Should -Be "init.commit-dump"
             [int]$oldFinal.exitCode | Should -Be 125
-            (Test-Path -LiteralPath $lockPath -PathType Leaf) | Should -Be $false
+            if (Test-Path -LiteralPath $lockPath -PathType Leaf) {
+                # Other shards may legitimately have a Git process alive. The
+                # production guard must then preserve the lock instead of
+                # deleting it while process ownership is uncertain.
+                $oldFinal.errorMessage | Should -Match "process related to the interrupted run may still be active"
+            } else {
+                $oldFinal.errorMessage | Should -Match "Removed Git index lock owned by the interrupted initialization run"
+            }
 
             $capture = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "resume-capture.json") | ConvertFrom-Json
             $capture.initMode | Should -Be "resume"

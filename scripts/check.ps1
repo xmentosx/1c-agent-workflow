@@ -7,6 +7,8 @@ param(
     [string]$E2EProjectRoot = "",
     [string]$OutputDirectory = "build\test-results\local",
     [string]$QualificationPath = "build\test-results\qualification\full.json",
+    [ValidateRange(1, 4)]
+    [int]$PesterWorkers = 3,
     [ValidateSet("Auto", "Restart")]
     [string]$ReleaseResumeMode = "Auto"
 )
@@ -53,6 +55,7 @@ function Get-CanonicalTextSha256 {
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "release-qualification.ps1")
 $outputRoot = Resolve-RepositoryPath -Path $OutputDirectory -Root $repoRoot
 $qualificationFullPath = Resolve-RepositoryPath -Path $QualificationPath -Root $repoRoot
 $summaryPath = Join-Path $outputRoot "check-summary.json"
@@ -70,6 +73,8 @@ $forkQualificationPath = ""
 $forkQualificationSha256 = ""
 $e2eReportPath = ""
 $reuseQualification = $false
+$qualificationReuseKind = ""
+$existingQualification = $null
 
 function Add-StageResult {
     param(
@@ -223,33 +228,105 @@ function Test-ForkQualification {
     } catch { return $false }
 }
 
+function Get-WorkflowGateScriptPaths {
+    $paths = @(
+        (Join-Path $repoRoot "scripts\check.ps1"),
+        (Join-Path $repoRoot "scripts\invoke-release-e2e.ps1"),
+        (Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"),
+        (Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"),
+        (Join-Path $repoRoot "scripts\run-pester-shard.ps1"),
+        (Join-Path $repoRoot "scripts\pester-timings.json"),
+        (Join-Path $repoRoot "scripts\release-qualification.ps1")
+    )
+    $stageRoot = Join-Path $repoRoot "scripts\release-e2e"
+    if (Test-Path -LiteralPath $stageRoot -PathType Container) {
+        $paths += @(Get-ChildItem -LiteralPath $stageRoot -Recurse -File | ForEach-Object { $_.FullName })
+    }
+    return @($paths | Sort-Object -Unique)
+}
+
 function Test-WorkflowQualification {
     param([string]$Path, [string]$Commit, [string]$Tree, [object]$ForkIdentity)
-    if (-not (Test-Path $Path -PathType Leaf)) { return $false }
+    if (-not (Test-Path $Path -PathType Leaf)) { return $null }
     try {
         $q = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ([string]$q.kind -ne "itl-workflow-full-qualification" -or [string]$q.status -ne "passed" -or -not [bool]$q.reusable) { return $false }
-        if ([string]$q.repository.commit -ne $Commit -or [string]$q.repository.tree -ne $Tree -or -not [bool]$q.repository.worktreeClean) { return $false }
+        if ([int]$q.schemaVersion -notin @(1, 2) -or [string]$q.kind -ne "itl-workflow-full-qualification" -or [string]$q.status -ne "passed" -or -not [bool]$q.reusable) { return $null }
+        if ([string]$q.repository.tree -ne $Tree -or -not [bool]$q.repository.worktreeClean) { return $null }
+        $evidenceCommit = if ([int]$q.schemaVersion -ge 2 -and [string]$q.repository.evidenceCommit) { [string]$q.repository.evidenceCommit } else { [string]$q.repository.commit }
+        $reuseKind = Get-WorkflowQualificationReuseKind -RepositoryRoot $repoRoot -SchemaVersion ([int]$q.schemaVersion) -QualifiedCommit ([string]$q.repository.commit) -EvidenceCommit $evidenceCommit -QualifiedTree ([string]$q.repository.tree) -CurrentCommit $Commit -CurrentTree $Tree
+        if (-not $reuseKind) { return $null }
         if ([string]$q.fork.commit -ne [string]$ForkIdentity.commit -or [string]$q.fork.tree -ne [string]$ForkIdentity.tree -or
             [string]$q.fork.tag -ne [string]$ForkIdentity.tag -or [string]$q.fork.upstreamRef -ne [string]$ForkIdentity.upstreamRef -or
-            [string]$q.fork.upstreamCommit -ne [string]$ForkIdentity.upstreamCommit) { return $false }
+            [string]$q.fork.upstreamCommit -ne [string]$ForkIdentity.upstreamCommit) { return $null }
         $forkQualification = [string]$q.fork.qualificationPath
-        if (-not (Test-Path -LiteralPath $forkQualification -PathType Leaf) -or (Get-FileHash -LiteralPath $forkQualification -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$q.fork.qualificationSha256).ToLowerInvariant()) { return $false }
+        if (-not (Test-Path -LiteralPath $forkQualification -PathType Leaf) -or (Get-FileHash -LiteralPath $forkQualification -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$q.fork.qualificationSha256).ToLowerInvariant()) { return $null }
         $currentPester = Get-Module -ListAvailable Pester | Sort-Object Version -Descending | Select-Object -First 1
         $currentPlatform = if ($PSVersionTable.ContainsKey("Platform")) { [string]$PSVersionTable["Platform"] } else { "Win32NT" }
         $currentOs = if ($PSVersionTable.ContainsKey("OS")) { [string]$PSVersionTable["OS"] } else { [string][System.Environment]::OSVersion.VersionString }
         if ([string]$q.environment.powershellVersion -ne [string]$PSVersionTable.PSVersion -or
             [string]$q.environment.powershellEdition -ne [string]$PSVersionTable.PSEdition -or
             [string]$q.environment.pesterVersion -ne [string]$currentPester.Version -or
-            [string]$q.environment.platform -ne $currentPlatform -or [string]$q.environment.os -ne $currentOs) { return $false }
+            [string]$q.environment.platform -ne $currentPlatform -or [string]$q.environment.os -ne $currentOs) { return $null }
         $actualTests = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot "tests\pester") -Recurse -File -Filter "*.ps1" | ForEach-Object { Get-RelativeRepositoryPath -Path $_.FullName -Root $repoRoot })
-        if (-not (Test-HasExactInventory -Entries @($q.inventory.tests) -ActualPaths $actualTests -Root $repoRoot)) { return $false }
-        $requiredScripts = @("scripts/check.ps1", "scripts/invoke-release-e2e.ps1", "scripts/test-ai-rules-compatibility.ps1")
-        if (-not (Test-HasExactInventory -Entries @($q.inventory.scripts) -ActualPaths $requiredScripts -Root $repoRoot)) { return $false }
+        if (-not (Test-HasExactInventory -Entries @($q.inventory.tests) -ActualPaths $actualTests -Root $repoRoot)) { return $null }
+        $requiredScripts = @(Get-WorkflowGateScriptPaths | ForEach-Object { Get-RelativeRepositoryPath -Path $_ -Root $repoRoot })
+        if (-not (Test-HasExactInventory -Entries @($q.inventory.scripts) -ActualPaths $requiredScripts -Root $repoRoot)) { return $null }
         $junit = if ([System.IO.Path]::IsPathRooted([string]$q.junit.path)) { [string]$q.junit.path } else { Join-Path $repoRoot ([string]$q.junit.path).Replace('/', '\') }
-        if (-not (Test-Path $junit -PathType Leaf)) { return $false }
-        return ((Get-FileHash -LiteralPath $junit -Algorithm SHA256).Hash.ToLowerInvariant() -eq ([string]$q.junit.sha256).ToLowerInvariant())
-    } catch { return $false }
+        if (-not (Test-Path $junit -PathType Leaf)) { return $null }
+        if ((Get-FileHash -LiteralPath $junit -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$q.junit.sha256).ToLowerInvariant()) { return $null }
+        return [pscustomobject]@{ qualification = $q; reuseKind = $reuseKind; evidenceCommit = $evidenceCommit }
+    } catch { return $null }
+}
+
+function Write-WorkflowQualification {
+    param(
+        [string]$Commit,
+        [string]$Tree,
+        [object]$Result,
+        [string]$EvidenceCommit,
+        [string]$ReuseKind,
+        [object]$SourceQualification = $null
+    )
+    $qualificationRoot = Split-Path -Parent $qualificationFullPath
+    $qualificationJunitPath = Join-Path $qualificationRoot "pester.xml"
+    New-Item -ItemType Directory -Force -Path $qualificationRoot | Out-Null
+    if (-not $SourceQualification -and (Test-Path -LiteralPath $junitPath -PathType Leaf)) {
+        Copy-Item -LiteralPath $junitPath -Destination $qualificationJunitPath -Force
+    }
+    if (-not (Test-Path -LiteralPath $qualificationJunitPath -PathType Leaf)) { throw "Reusable workflow qualification has no canonical JUnit evidence." }
+    $testInventory = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot "tests\pester") -Recurse -File -Filter "*.ps1" | Sort-Object FullName | ForEach-Object { New-InventoryEntry -Path $_.FullName -Root $repoRoot })
+    $scriptInventory = @(Get-WorkflowGateScriptPaths | ForEach-Object { New-InventoryEntry -Path $_ -Root $repoRoot })
+    $forkRecord = if ($SourceQualification) { $SourceQualification.fork } else {
+        [ordered]@{
+            repo = [string]$aiRulesRelease.repo; tag = [string]$aiRulesRelease.tag; commit = [string]$aiRulesRelease.commit; tree = [string]$aiRulesRelease.tree
+            upstreamRef = [string]$aiRulesRelease.upstreamRef; upstreamCommit = [string]$aiRulesRelease.upstreamCommit
+            qualificationPath = $forkQualificationPath; qualificationSha256 = $forkQualificationSha256
+        }
+    }
+    $qualification = [ordered]@{
+        schemaVersion = 2
+        kind = "itl-workflow-full-qualification"
+        status = "passed"
+        reusable = $true
+        repository = [ordered]@{ name = "1c-agent-workflow"; commit = $Commit; tree = $Tree; worktreeClean = $true; evidenceCommit = $EvidenceCommit; reuseKind = $ReuseKind }
+        fork = $forkRecord
+        environment = [ordered]@{
+            powershellVersion = [string]$PSVersionTable.PSVersion; powershellEdition = [string]$PSVersionTable.PSEdition
+            pesterVersion = $(if ($SourceQualification) { [string]$SourceQualification.environment.pesterVersion } else { $pesterVersion })
+            platform = $(if ($PSVersionTable.ContainsKey("Platform")) { [string]$PSVersionTable["Platform"] } else { "Win32NT" })
+            os = $(if ($PSVersionTable.ContainsKey("OS")) { [string]$PSVersionTable["OS"] } else { [string][System.Environment]::OSVersion.VersionString })
+        }
+        inventory = [ordered]@{ tests = $testInventory; scripts = $scriptInventory }
+        junit = [ordered]@{ path = Get-RelativeRepositoryPath -Path $qualificationJunitPath -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $qualificationJunitPath -Algorithm SHA256).Hash.ToLowerInvariant() }
+        result = $Result
+        stages = @($stages | ForEach-Object { $_ })
+        startedAt = $startedAt.ToString("o")
+        finishedAt = [DateTime]::UtcNow.ToString("o")
+        durationMs = [int64]$overallStopwatch.ElapsedMilliseconds
+        error = $null
+    }
+    [System.IO.File]::WriteAllText($qualificationFullPath, (($qualification | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+    return $qualification
 }
 
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
@@ -279,29 +356,40 @@ try {
 
     $reuseQualification = $false
     if ($Mode -in @("Full", "Release") -and $aiRulesRelease) {
-        $reuseQualification = Test-WorkflowQualification -Path $qualificationFullPath -Commit $commit -Tree $tree -ForkIdentity $aiRulesRelease
-        if ($reuseQualification) {
-            $existingQualification = Get-Content -LiteralPath $qualificationFullPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $qualificationMatch = Test-WorkflowQualification -Path $qualificationFullPath -Commit $commit -Tree $tree -ForkIdentity $aiRulesRelease
+        if ($qualificationMatch) {
+            $reuseQualification = $true
+            $existingQualification = $qualificationMatch.qualification
+            $qualificationReuseKind = [string]$qualificationMatch.reuseKind
             $qualifiedResult = $existingQualification.result
+            $pesterVersion = [string]$existingQualification.environment.pesterVersion
         }
     }
 
     if ($reuseQualification) {
-        Add-ReusedStage -Name "pester" -Reason "exact clean Full qualification" -Detail $qualificationFullPath
+        Add-ReusedStage -Name "pester" -Reason $(if ($qualificationReuseKind -eq "ancestor-same-tree") { "ancestor same-tree Full qualification" } else { "exact clean Full qualification" }) -Detail $qualificationFullPath
     } else {
         Invoke-GateStage -Name "pester" -Reason $(if ($Mode -eq "Fast") { "Fast inventory" } else { "complete workflow inventory" }) -Body {
-            Import-Module Pester -MinimumVersion 5.0.0 -Force
-            $script:pesterVersion = [string](Get-Module Pester | Select-Object -First 1 -ExpandProperty Version)
-            $configuration = New-PesterConfiguration
-            $configuration.Run.Path = if ($Mode -eq "Fast") {
-                @(".\tests\pester\ParserDocsBudgets.Tests.ps1", ".\tests\pester\LifecycleOperationLock.Tests.ps1", ".\tests\pester\DesignerMemoryGuard.Tests.ps1", ".\tests\pester\HostTooling.Tests.ps1", ".\tests\pester\DependencyLocks.Tests.ps1", ".\tests\pester\AiRulesClients.Tests.ps1", ".\tests\pester\ClientAdaptersAndModes.Tests.ps1", ".\tests\pester\AiRulesMigration.Tests.ps1", ".\tests\pester\ReleaseGate.Tests.ps1", ".\tests\pester\LocalQualityGate.Tests.ps1")
-            } else { @(".\tests\pester") }
-            $configuration.Run.PassThru = $true
-            $configuration.Output.Verbosity = $(if ($Mode -eq "Fast") { "Normal" } else { "Detailed" })
-            $configuration.TestResult.Enabled = $true
-            $configuration.TestResult.OutputFormat = "JUnitXml"
-            $configuration.TestResult.OutputPath = $junitPath
-            $script:pesterResult = Invoke-Pester -Configuration $configuration
+            if ($Mode -eq "Fast") {
+                Import-Module Pester -MinimumVersion 5.0.0 -Force
+                $script:pesterVersion = [string](Get-Module Pester | Select-Object -First 1 -ExpandProperty Version)
+                $configuration = New-PesterConfiguration
+                $configuration.Run.Path = @(".\tests\pester\ParserDocsBudgets.Tests.ps1", ".\tests\pester\LifecycleOperationLock.Tests.ps1", ".\tests\pester\DesignerMemoryGuard.Tests.ps1", ".\tests\pester\HostTooling.Tests.ps1", ".\tests\pester\DependencyLocks.Tests.ps1", ".\tests\pester\AiRulesClients.Tests.ps1", ".\tests\pester\ClientAdaptersAndModes.Tests.ps1", ".\tests\pester\AiRulesMigration.Tests.ps1", ".\tests\pester\ReleaseGate.Tests.ps1", ".\tests\pester\LocalQualityGate.Tests.ps1")
+                $configuration.Run.PassThru = $true
+                $configuration.Output.Verbosity = "Normal"
+                $configuration.TestResult.Enabled = $true
+                $configuration.TestResult.OutputFormat = "JUnitXml"
+                $configuration.TestResult.OutputPath = $junitPath
+                $script:pesterResult = Invoke-Pester -Configuration $configuration
+            } else {
+                $shardRunner = Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"
+                Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$PesterWorkers) -TimeoutSeconds 1200 -LogName "pester-shards"
+                $shardSummaryPath = Join-Path $outputRoot "pester-shards\summary.json"
+                if (-not (Test-Path -LiteralPath $shardSummaryPath -PathType Leaf)) { throw "Pester shard summary was not created." }
+                $shardSummary = Get-Content -LiteralPath $shardSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $script:pesterVersion = [string]$shardSummary.pesterVersion
+                $script:pesterResult = [pscustomobject]@{ Result = $(if ([string]$shardSummary.status -eq "passed") { "Passed" } else { "Failed" }); PassedCount = [int]$shardSummary.passed; FailedCount = [int]$shardSummary.failed; SkippedCount = [int]$shardSummary.skipped }
+            }
             if ([string]$script:pesterResult.Result -ne "Passed") { throw "Pester did not pass: result=$($script:pesterResult.Result), failed=$($script:pesterResult.FailedCount)." }
         } | Out-Null
     }
@@ -344,6 +432,28 @@ try {
         }
     }
 
+    if ($Mode -in @("Full", "Release")) {
+        Invoke-GateStage -Name "static-tracked-state" -Reason "static qualification must preserve tracked state" -Body {
+            & git diff --check HEAD -- .
+            if ($LASTEXITCODE -ne 0) { throw "git diff --check failed after static qualification." }
+            $trackedStatic = @(& git status --porcelain --untracked-files=no)
+            if (($trackedBefore -join "`n") -ne ($trackedStatic -join "`n")) { throw "The static gate changed tracked worktree state." }
+        } | Out-Null
+        $staticResult = if ($pesterResult) {
+            [ordered]@{ passed = [int]$pesterResult.PassedCount; failed = [int]$pesterResult.FailedCount; skipped = [int]$pesterResult.SkippedCount }
+        } else {
+            [ordered]@{ passed = [int]$qualifiedResult.passed; failed = [int]$qualifiedResult.failed; skipped = [int]$qualifiedResult.skipped }
+        }
+        if ($aiRulesRelease -and $worktreeCleanAtStart) {
+            if ($reuseQualification) {
+                $evidenceCommit = if ([string]$existingQualification.repository.evidenceCommit) { [string]$existingQualification.repository.evidenceCommit } else { [string]$existingQualification.repository.commit }
+                $existingQualification = Write-WorkflowQualification -Commit $commit -Tree $tree -Result $staticResult -EvidenceCommit $evidenceCommit -ReuseKind $qualificationReuseKind -SourceQualification $existingQualification
+            } else {
+                $existingQualification = Write-WorkflowQualification -Commit $commit -Tree $tree -Result $staticResult -EvidenceCommit $commit -ReuseKind "executed" -SourceQualification $null
+            }
+        }
+    }
+
     if ($Mode -eq "Release") {
         Invoke-GateStage -Name "ondemand-mcp-catalogs" -Reason "real backend catalogs are mandatory for release" -Detail "assets/ondemand-mcp/compatibility.json" -Body {
             $compatibilityPath = Join-Path $repoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json"
@@ -372,6 +482,7 @@ try {
             Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments @("-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode) -TimeoutSeconds 14400 -LogName "release-e2e"
             if (-not (Test-Path -LiteralPath $e2eReportPath -PathType Leaf)) { throw "Release E2E summary was not created: $e2eReportPath" }
             $e2eSummary = Get-Content -LiteralPath $e2eReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([int]$e2eSummary.schemaVersion -ne 3) { throw "Release E2E summary schema must be 3; actual: $($e2eSummary.schemaVersion)." }
             if ([string]$e2eSummary.status -ne "passed") { throw "Release E2E summary reports '$($e2eSummary.status)': $([string]$e2eSummary.error)" }
             if ([bool]$e2eSummary.onDemandMcpTestFixture) { throw "Release E2E used the test-only on-demand MCP fixture." }
             if ([int]$e2eSummary.onDemandRoctupToolCount -ne 13 -or [int]$e2eSummary.onDemandVanessaToolCount -ne 38) { throw "Release E2E did not prove both complete on-demand MCP catalogs." }
@@ -413,6 +524,7 @@ try {
         aiRulesRelease = $aiRulesRelease
         qualificationPath = $qualificationFullPath
         e2eReportPath = $e2eReportPath
+        qualificationReuseKind = $qualificationReuseKind
         tests = $result
         stages = @($stages | ForEach-Object { $_ })
         error = $failure
@@ -420,56 +532,6 @@ try {
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($summaryPath, ($summary | ConvertTo-Json -Depth 12), $utf8NoBom)
 
-    if ($Mode -eq "Full" -and -not $reuseQualification) {
-        $qualificationRoot = Split-Path -Parent $qualificationFullPath
-        $qualificationJunitPath = Join-Path $qualificationRoot "pester.xml"
-        New-Item -ItemType Directory -Force -Path $qualificationRoot | Out-Null
-        if (Test-Path -LiteralPath $junitPath -PathType Leaf) {
-            Copy-Item -LiteralPath $junitPath -Destination $qualificationJunitPath -Force
-        }
-        $testInventory = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot "tests\pester") -Recurse -File -Filter "*.ps1" | Sort-Object FullName | ForEach-Object { New-InventoryEntry -Path $_.FullName -Root $repoRoot })
-        $scriptInventory = @(
-            New-InventoryEntry -Path $PSCommandPath -Root $repoRoot
-            New-InventoryEntry -Path (Join-Path $repoRoot "scripts\invoke-release-e2e.ps1") -Root $repoRoot
-            New-InventoryEntry -Path (Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1") -Root $repoRoot
-        )
-        $qualification = [ordered]@{
-            schemaVersion = 1
-            kind = "itl-workflow-full-qualification"
-            status = $(if ($failure) { "failed" } else { "passed" })
-            reusable = (-not $failure -and -not $dirty -and $null -ne $aiRulesRelease -and $forkQualificationSha256)
-            repository = [ordered]@{ name = "1c-agent-workflow"; commit = $commit; tree = $tree; worktreeClean = (-not $dirty) }
-            fork = [ordered]@{
-                repo = $(if ($aiRulesRelease) { [string]$aiRulesRelease.repo } else { "" })
-                tag = $(if ($aiRulesRelease) { [string]$aiRulesRelease.tag } else { "" })
-                commit = $(if ($aiRulesRelease) { [string]$aiRulesRelease.commit } else { "" })
-                tree = $(if ($aiRulesRelease) { [string]$aiRulesRelease.tree } else { "" })
-                upstreamRef = $(if ($aiRulesRelease) { [string]$aiRulesRelease.upstreamRef } else { "" })
-                upstreamCommit = $(if ($aiRulesRelease) { [string]$aiRulesRelease.upstreamCommit } else { "" })
-                qualificationPath = $forkQualificationPath
-                qualificationSha256 = $forkQualificationSha256
-            }
-            environment = [ordered]@{
-                powershellVersion = [string]$PSVersionTable.PSVersion
-                powershellEdition = [string]$PSVersionTable.PSEdition
-                pesterVersion = $pesterVersion
-                platform = $(if ($PSVersionTable.ContainsKey("Platform")) { [string]$PSVersionTable["Platform"] } else { "Win32NT" })
-                os = $(if ($PSVersionTable.ContainsKey("OS")) { [string]$PSVersionTable["OS"] } else { [string][System.Environment]::OSVersion.VersionString })
-            }
-            inventory = [ordered]@{ tests = $testInventory; scripts = $scriptInventory }
-            junit = [ordered]@{
-                path = Get-RelativeRepositoryPath -Path $qualificationJunitPath -Root $repoRoot
-                sha256 = $(if (Test-Path $qualificationJunitPath -PathType Leaf) { (Get-FileHash -LiteralPath $qualificationJunitPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { "" })
-            }
-            result = $result
-            stages = @($stages | ForEach-Object { $_ })
-            startedAt = $startedAt.ToString("o")
-            finishedAt = [DateTime]::UtcNow.ToString("o")
-            durationMs = [int64]$overallStopwatch.ElapsedMilliseconds
-            error = $failure
-        }
-        [System.IO.File]::WriteAllText($qualificationFullPath, ($qualification | ConvertTo-Json -Depth 14), $utf8NoBom)
-    }
     Pop-Location
 }
 
