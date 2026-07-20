@@ -1889,6 +1889,7 @@ Start-Sleep -Seconds 20
                     function Check-Tools { param([switch]$StopOnMissing); $calls.Add("check-tools") | Out-Null }
                     function Install-RoctupMcp { $calls.Add("install-roctup") | Out-Null }
                     function Install-VanessaMcpArtifacts { $calls.Add("cache-vanessa") | Out-Null; return $null }
+                    function Install-ItlOnDemandMcp { $calls.Add("install-ondemand") | Out-Null; return $null }
                     function Get-DevBranchInfoBaseRoot { return ".agent-1c/infobases/dev-branches" }
                     function Ensure-GitRepository { $calls.Add("ensure-git") | Out-Null }
                     function Ensure-GitIgnore { }
@@ -1911,6 +1912,7 @@ Start-Sleep -Seconds 20
                     function ConvertTo-YesNoBool { param([object]$Value, [bool]$Default); return $false }
                     function Setup-Vibecoding1cMcp { $calls.Add("setup-vibecoding") | Out-Null }
                     function Assert-InitGitClean { $calls.Add("git-clean") | Out-Null }
+                    function Get-ItlActiveClient { return "kilocode" }
 
                     Initialize-Project
                     return @($calls)
