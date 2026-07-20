@@ -90,7 +90,7 @@ Describe "ITL on-demand MCP facade" {
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "writes native stdio facade entries for all five clients and preserves unrelated config" {
+    It "writes native stdio facade entries for all ten clients and preserves unrelated config" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-clients-" + [guid]::NewGuid().ToString("N"))
         $fakeExe = Join-Path $tempRoot "itl-ondemand-mcp.exe"
         try {
@@ -100,14 +100,14 @@ Describe "ITL on-demand MCP facade" {
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $fakeExe, "Process")
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                foreach ($client in @("codex", "kilocode", "claude-code", "cursor", "opencode")) {
+                foreach ($client in @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")) {
                     $adapter = Get-ItlClientAdapter -Client $client
                     $path = Join-Path $tempRoot $adapter.mcpPath
                     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
                     if ($client -eq "codex") {
                         Set-Content -LiteralPath $path -Encoding UTF8 -Value "# unrelated-setting`nmodel = `"keep`"`n"
                     } else {
-                        $container = if ($client -in @("claude-code", "cursor")) { "mcpServers" } else { "mcp" }
+                        $container = [string]$adapter.mcpContainer
                         Set-Content -LiteralPath $path -Encoding UTF8 -Value (([ordered]@{ keep = "value"; $container = [ordered]@{ custom = [ordered]@{ url = "https://example.invalid" }; legacyBranch = [ordered]@{ url = "http://127.0.0.1:9999/mcp"; managedBy = "itl-branch-mcp" } } } | ConvertTo-Json -Depth 8))
                     }
                     Remove-ItlLegacyBranchMcpEntries -Client $client
@@ -125,7 +125,12 @@ Describe "ITL on-demand MCP facade" {
                 [pscustomobject]@{ client = "kilocode"; path = ".kilo\kilo.json"; container = "mcp"; local = $true },
                 [pscustomobject]@{ client = "opencode"; path = "opencode.json"; container = "mcp"; local = $true },
                 [pscustomobject]@{ client = "claude-code"; path = ".mcp.json"; container = "mcpServers"; local = $false },
-                [pscustomobject]@{ client = "cursor"; path = ".cursor\mcp.json"; container = "mcpServers"; local = $false }
+                [pscustomobject]@{ client = "cursor"; path = ".cursor\mcp.json"; container = "mcpServers"; local = $false },
+                [pscustomobject]@{ client = "kimi"; path = ".kimi-code\mcp.json"; container = "mcpServers"; local = $false },
+                [pscustomobject]@{ client = "qwen"; path = ".qwen\settings.json"; container = "mcpServers"; local = $false },
+                [pscustomobject]@{ client = "command-code"; path = ".mcp.json"; container = "mcpServers"; local = $false },
+                [pscustomobject]@{ client = "cline"; path = ".cline\mcp.json"; container = "mcpServers"; local = $false },
+                [pscustomobject]@{ client = "pi"; path = ".pi\mcp.json"; container = "mcpServers"; local = $false; pi = $true }
             )) {
                 $config = Get-Content -LiteralPath (Join-Path $tempRoot $case.path) -Raw -Encoding UTF8 | ConvertFrom-Json
                 $config.keep | Should -Be "value"
@@ -136,6 +141,11 @@ Describe "ITL on-demand MCP facade" {
                     $entry.type | Should -Be "local"
                     @($entry.command)[0] | Should -Be $fakeExe
                     $entry.timeout | Should -Be 600000
+                } elseif ($case.PSObject.Properties.Name -contains "pi" -and $case.pi) {
+                    $entry.transport | Should -Be "stdio"
+                    $entry.lifecycle | Should -Be "eager"
+                    $entry.command | Should -Be $fakeExe
+                    @($entry.args) | Should -Contain "vanessa-ui"
                 } else {
                     $entry.command | Should -Be $fakeExe
                     @($entry.args) | Should -Contain "vanessa-ui"

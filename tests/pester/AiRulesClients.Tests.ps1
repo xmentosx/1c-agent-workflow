@@ -162,7 +162,7 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
         $text = Get-Content -LiteralPath $scriptPath -Raw -Encoding UTF8
 
         (Test-Path -LiteralPath $scriptPath -PathType Leaf) | Should -BeTrue
-        $text | Should -Match "codex.*kilocode.*claude-code.*cursor.*opencode"
+        $text | Should -Match "codex.*kilocode.*claude-code.*cursor.*opencode.*kimi.*qwen.*command-code.*cline.*pi"
         $text | Should -Match "Assert-OpenSpecBundle"
         $text | Should -Match "git clone"
         $text | Should -Match "protocol must be 1.1"

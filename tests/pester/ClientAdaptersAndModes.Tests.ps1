@@ -6,18 +6,28 @@ Describe "ITL client adapters and verification modes" {
         $HelperPath = $context.HelperPath
     }
 
-    It "registers the five native client layouts" {
+    It "registers all ten capability-driven client layouts" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-adapter-registry-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
             $registry = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-ItlClientAdapterRegistry }
-            @($registry.Keys) | Should -Be @("codex", "kilocode", "claude-code", "cursor", "opencode")
+            @($registry.Keys) | Should -Be @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
             $registry.codex.skillsPath | Should -Be ".agents/skills"
             $registry.kilocode.commandsPath | Should -Be ".kilo/commands"
             $registry.opencode.agentsPath | Should -Be ".opencode/agent"
             $registry.opencode.commandsPath | Should -Be ".opencode/command"
             $registry.opencode.mcpPath | Should -Be "opencode.json"
+            $registry.kimi.commandsPath | Should -Be ".kimi-code/skills"
+            $registry.kimi.commandFormat | Should -Be "skill"
+            $registry.kimi.nativeAgents | Should -BeFalse
+            $registry.qwen.mcpPath | Should -Be ".qwen/settings.json"
+            $registry.qwen.mcpRemoteFormat | Should -Be "qwen-http"
+            $registry.'command-code'.executable | Should -Be "command-code"
+            $registry.cline.nativeAgents | Should -BeFalse
+            $registry.cline.mcpPath | Should -Be ".cline/mcp.json"
+            $registry.pi.commandsPath | Should -Be ".pi/prompts"
+            $registry.pi.requiredPackage | Should -Be "npm:pi-mcp-extension@1.5.0"
             foreach ($client in @($registry.Keys)) {
                 [string]$registry[$client].reload | Should -Not -BeNullOrEmpty
             }
@@ -40,7 +50,7 @@ Describe "ITL client adapters and verification modes" {
             $adapted = & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
                 $result = [ordered]@{}
-                foreach ($client in @("kilocode", "claude-code", "cursor", "opencode")) {
+                foreach ($client in @("kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")) {
                     $result[$client] = [ordered]@{}
                     foreach ($fileName in $templates.Keys) {
                         $result[$client][$fileName] = Convert-ItlCommandForClient -Text $templates[$fileName] -Client $client -FileName $fileName
@@ -60,6 +70,107 @@ Describe "ITL client adapters and verification modes" {
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", $previousMode, "Process")
         }
+    }
+
+    It "generates the documented routine surfaces for every new client" {
+        $expected = [ordered]@{
+            kimi = ".kimi-code/skills/itl/SKILL.md"
+            qwen = ".qwen/commands/itl.md"
+            "command-code" = ".commandcode/commands/itl.md"
+            cline = ".cline/skills/itl/SKILL.md"
+            pi = ".pi/prompts/itl.md"
+        }
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $value = [ordered]@{}
+            foreach ($client in $expected.Keys) { $value[$client] = Get-ItlExpectedSurfaceFiles -Client $client -SourceRoot $RepoRoot }
+            $value
+        }
+        foreach ($client in $expected.Keys) {
+            $path = [string]$expected[$client]
+            @($result[$client].Keys) | Should -Contain $path
+            [string]$result[$client][$path] | Should -Not -Match '(?m)^agent:'
+        }
+        [string]$result.kimi[$expected.kimi] | Should -Match '(?m)^name:\s*itl$'
+        [string]$result.cline[$expected.cline] | Should -Match '(?m)^name:\s*itl$'
+    }
+
+    It "renders all new project MCP schemas without replacing user config" {
+        $cases = @(
+            [pscustomobject]@{ client = "kimi"; remoteKey = "url"; remoteType = "type"; remoteValue = "http" },
+            [pscustomobject]@{ client = "qwen"; remoteKey = "httpUrl"; remoteType = ""; remoteValue = "" },
+            [pscustomobject]@{ client = "command-code"; remoteKey = "url"; remoteType = "type"; remoteValue = "http" },
+            [pscustomobject]@{ client = "cline"; remoteKey = "url"; remoteType = "type"; remoteValue = "streamableHttp" },
+            [pscustomobject]@{ client = "pi"; remoteKey = "url"; remoteType = "transport"; remoteValue = "streamable-http" }
+        )
+        foreach ($case in $cases) {
+            $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-new-mcp-$($case.client)-" + [guid]::NewGuid().ToString("N"))
+            try {
+                New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+                Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value (([ordered]@{ aiRules = [ordered]@{ tools = @($case.client) } } | ConvertTo-Json -Depth 5))
+                & {
+                    . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    $adapter = Get-ItlClientAdapter -Client $case.client
+                    $path = Join-Path $tempRoot $adapter.mcpPath
+                    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+                    Write-Vibecoding1cMcpJsonFile -Path $path -Value ([ordered]@{ keep = "user"; $($adapter.mcpContainer) = [ordered]@{ custom = [ordered]@{ url = "https://custom.invalid" } } })
+                    Write-ItlClientMcpEndpoints -Client $case.client -Owner test -Endpoints @([pscustomobject]@{ name = "remote-test"; url = "https://itl.invalid/mcp"; transport = "remote" }) | Out-Null
+                }
+                $adapter = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-ItlClientAdapter -Client $case.client }
+                $config = Get-Content -LiteralPath (Join-Path $tempRoot $adapter.mcpPath) -Raw -Encoding UTF8 | ConvertFrom-Json
+                $config.keep | Should -Be "user"
+                $config.($adapter.mcpContainer).custom.url | Should -Be "https://custom.invalid"
+                $entry = $config.($adapter.mcpContainer).'remote-test'
+                $entry.($case.remoteKey) | Should -Be "https://itl.invalid/mcp"
+                if ($case.remoteType) { $entry.($case.remoteType) | Should -Be $case.remoteValue }
+                if ($case.client -eq "pi") { $entry.lifecycle | Should -Be "eager" }
+            } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It "pins and removes only the managed Pi extension package" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-pi-package-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot ".pi") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["pi"]}}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8)
+            Set-Content -LiteralPath (Join-Path $tempRoot ".pi\settings.json") -Encoding UTF8 -Value '{"theme":"keep","packages":["npm:user-package@2.0.0","npm:pi-mcp-extension@1.4.0"]}'
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Assert-ItlClientRequirements -Client pi; Sync-ItlClientRequiredPackage -Client pi }
+            $installed = Get-Content -LiteralPath (Join-Path $tempRoot ".pi\settings.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $installed.theme | Should -Be "keep"
+            @($installed.packages) | Should -Be @("npm:user-package@2.0.0", "npm:pi-mcp-extension@1.5.0")
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlClientRequiredPackage -Client pi -Remove }
+            $removed = Get-Content -LiteralPath (Join-Path $tempRoot ".pi\settings.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $removed.theme | Should -Be "keep"
+            @($removed.packages) | Should -Be @("npm:user-package@2.0.0")
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "cleans managed routine surfaces for every ordered client switch pair" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-client-pairs-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot branch -M master
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $clients = @(Get-SupportedAgentTargets)
+                foreach ($from in $clients) {
+                    foreach ($to in $clients) {
+                        $fromFiles = Get-ItlExpectedSurfaceFiles -Client $from -SourceRoot $RepoRoot
+                        Sync-ItlManagedSurfaceFiles -Client $from -ExpectedFiles $fromFiles
+                        $toFiles = Get-ItlExpectedSurfaceFiles -Client $to -SourceRoot $RepoRoot
+                        Sync-ItlManagedSurfaceFiles -Client $to -ExpectedFiles $toFiles
+                        foreach ($relative in @($fromFiles.Keys | Where-Object { -not $toFiles.Contains($_) })) {
+                            (Test-Path -LiteralPath (Join-Path $tempRoot $relative) -PathType Leaf) | Should -BeFalse -Because "$from -> $to must remove only the old managed surface"
+                        }
+                        $state = Read-ItlClientSurfaceState
+                        $stateClients = ConvertTo-Vibecoding1cMcpHashtable -Object $state.clients
+                        @($stateClients.Keys) | Should -Be @($to)
+                    }
+                }
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
     It "implements auto manual off trigger semantics including explicit off override" {

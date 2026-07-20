@@ -3183,8 +3183,9 @@ function Assert-InitAnswers {
     param([object]$Answers)
 
     $missing = @()
-    if (-not $Answers.agentTarget) { $missing += "agentTarget(codex|kilocode|claude-code|cursor|opencode)" }
-    if ($Answers.agentTarget -and $Answers.agentTarget -notin (Get-SupportedAgentTargets)) { $missing += "agentTarget(codex|kilocode|claude-code|cursor|opencode)" }
+    $agentTargetContract = "agentTarget(" + ((Get-SupportedAgentTargets) -join "|") + ")"
+    if (-not $Answers.agentTarget) { $missing += $agentTargetContract }
+    if ($Answers.agentTarget -and $Answers.agentTarget -notin (Get-SupportedAgentTargets)) { $missing += $agentTargetContract }
     if (-not $Answers.platformPath) { $missing += "platformPath" }
     if ($Answers.infoBaseKind -ne "file" -and $Answers.infoBaseKind -ne "server") { $missing += "infoBaseKind(file|server)" }
     if ($Answers.infoBaseKind -eq "server") {
@@ -3374,7 +3375,7 @@ function ConvertTo-AgentToolList {
 }
 
 function Get-SupportedAgentTargets {
-    return @("codex", "kilocode", "claude-code", "cursor", "opencode")
+    return @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
 }
 
 function Read-InitAgentTarget {

@@ -145,18 +145,23 @@
         $lockTemplate.mode | Should -Be "fresh"
         $project = $projectTemplate | ConvertFrom-Json
         $project.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $project.aiRules.ref | Should -Be "itl-main-b4d9875b-r11"
+        $project.aiRules.ref | Should -Be "itl-main-72665287-r12"
         @($project.aiRules.tools).Count | Should -Be 0
         $lockTemplate.dependencies.aiRules1c.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-b4d9875b-r11"
+        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-72665287-r12"
         $lockTemplate.dependencies.workflowPackage.commit | Should -Be ""
         $lockTemplate.dependencies.workflowPackage.source | Should -Be "template default"
         $lockTemplate.dependencies.workflowPackage.updatedAt | Should -Be ""
-        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "af82570afca06c40a9588c8a678bf3665bba4870"
+        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "16e9e44318a79d9e82c12b19e6759cdf6492d9a4"
         $lockTemplate.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
-        $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "b4d9875b15c6d93f493035aee51f077126e72a21"
-        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 11
+        $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "72665287e77361aea3aaf866fef163d98f0fabcd"
+        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 12
         $lockTemplate.dependencies.aiRules1c.compatibilityStatus | Should -Be "passed"
+        $lockTemplate.dependencies.piMcpExtension.version | Should -Be "1.5.0"
+        $lockTemplate.dependencies.piMcpExtension.source | Should -Be "npm:pi-mcp-extension@1.5.0"
+        $lockTemplate.dependencies.piMcpExtension.tarball | Should -Be "https://registry.npmjs.org/pi-mcp-extension/-/pi-mcp-extension-1.5.0.tgz"
+        $lockTemplate.dependencies.piMcpExtension.integrity | Should -Be "sha512-tfsgi8qSr3UUKMp4vS9/FwKv+Pn2U4T/rTlAwrZkEIvz616mFrU/Ryp3b69ZDfFdkQVVXriaQmZUj4vlZDV2Uw=="
+        $lockTemplate.dependencies.piMcpExtension.scope | Should -Be "project"
         $lockTemplate.dependencies.roctupMcpToolkit.assetName | Should -Be "MCP_Toolkit.epf"
         $lockTemplate.dependencies.roctupMcpToolkit.sha256 | Should -Be "74bd1d228aa36fda688b34277ede6030ea3b54350c112a680cdce63adb8ac675"
         $lockTemplate.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"
