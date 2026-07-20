@@ -10,11 +10,11 @@ Describe "ITL on-demand MCP facade" {
 
     It "pins hash-verified full catalogs to compatible backend versions" {
         $manifest = Get-Content -LiteralPath (Join-Path $AssetRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.facadeVersion | Should -Be "0.3.0"
-        $manifest.minimumFacadeVersion | Should -Be "0.3.0"
+        $manifest.facadeVersion | Should -Be "0.3.1"
+        $manifest.minimumFacadeVersion | Should -Be "0.3.1"
         $mainSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\main.go") -Raw -Encoding UTF8
         $gatewaySource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\gateway.go") -Raw -Encoding UTF8
-        $mainSource | Should -Match 'const version = "0\.3\.0"'
+        $mainSource | Should -Match 'const version = "0\.3\.1"'
         $mainSource | Should -Match '"gateway"'
         $gatewaySource | Should -Match 'gatewayResolveTool\s*=\s*"resolve_tool"'
         $gatewaySource | Should -Match 'gatewayCallTool\s*=\s*"call_tool"'
@@ -95,6 +95,47 @@ Describe "ITL on-demand MCP facade" {
             $result | Should -Match "ITL_ONDEMAND_BACKEND_UNSUPPORTED"
             $result | Should -Not -Match "must not query latest"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "installs from the cached release asset when the workflow is an installed copy without Git metadata" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-installed-copy-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agents\skills") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow") -Destination (Join-Path $tempRoot ".agents\skills\1c-workflow") -Recurse -Force
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
+            $installedHelper = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+
+            $result = & {
+                . $installedHelper -ProjectRoot $tempRoot -Action help *> $null
+                $installRoot = Join-Path $tempRoot "localapp\ondemand"
+                function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
+
+                $version = "0.3.1"
+                $assetName = "itl-ondemand-mcp-windows-amd64.exe"
+                $targetDirectory = Join-Path $installRoot $version
+                $targetPath = Join-Path $targetDirectory $assetName
+                New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
+                Set-Content -LiteralPath $targetPath -Encoding Byte -Value ([byte[]](1, 2, 3, 4))
+                $sha256 = (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                function Get-DependencyLockEntry {
+                    param([string]$Name)
+                    return [pscustomobject]@{
+                        version = $version
+                        assetName = $assetName
+                        url = "https://example.invalid/itl-ondemand-mcp.exe"
+                        sha256 = $sha256
+                    }
+                }
+
+                Install-ItlOnDemandMcp
+            }
+
+            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.3.1\itl-ondemand-mcp-windows-amd64.exe")
+            $result.sha256 | Should -Match '^[a-f0-9]{64}$'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "writes native stdio facade entries for all ten clients and preserves unrelated config" {

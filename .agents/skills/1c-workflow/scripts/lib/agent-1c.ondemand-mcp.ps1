@@ -90,9 +90,11 @@ function Install-ItlOnDemandMcp {
 
     # Source-repository development may use a locally built, SHA-verified artifact.
     $sourceRepositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $script:Agent1cScriptRoot "..\..\..\.."))
-    $sourceBuild = Join-Path $sourceRepositoryRoot "tools\itl-ondemand-mcp\build\itl-ondemand-mcp-windows-amd64.exe"
-    if (-not (Test-Path -LiteralPath (Join-Path $sourceRepositoryRoot ".git"))) { $sourceBuild = "" }
-    if ((Test-Path -LiteralPath $sourceBuild -PathType Leaf) -and (-not $url -or $ForceDownload -eq $false)) {
+    $sourceBuild = ""
+    if (Test-Path -LiteralPath (Join-Path $sourceRepositoryRoot ".git")) {
+        $sourceBuild = Join-Path $sourceRepositoryRoot "tools\itl-ondemand-mcp\build\itl-ondemand-mcp-windows-amd64.exe"
+    }
+    if ($sourceBuild -and (Test-Path -LiteralPath $sourceBuild -PathType Leaf) -and (-not $url -or $ForceDownload -eq $false)) {
         New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
         Copy-Item -LiteralPath $sourceBuild -Destination $targetPath -Force
     } else {
