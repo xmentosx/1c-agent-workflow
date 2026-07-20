@@ -19,7 +19,7 @@ Do not infer or try `main` for this package unless the user explicitly provides 
 
 ## Supported Agents
 
-This package supports Codex, Kilo Code, Claude Code, Cursor, and OpenCode, with exactly one active client per project. The initialization wizard requires that choice; `other` and multi-client installs are not supported.
+This package supports Codex, Kilo Code, Claude Code, Cursor, OpenCode, Kimi Code, Qwen Code, Command Code, Cline, and Pi, with exactly one active client per project. The initialization wizard requires that choice; `other` and multi-client installs are not supported.
 
 - Common workflow skill: `.agents/skills/1c-workflow`.
 - Fast routine workflow skill: `.agents/skills/1c-workflow-fast`.
@@ -374,11 +374,13 @@ In an `itldev/*` development worktree, show only:
 
 New branch commands create a sibling Git worktree by default and leave the current project folder on `master`. After creation, report the printed worktree path and tell the developer to open a separate window of the selected agent or IDE there. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
 
-`/itl` must present the lifecycle as a process panel, not as a flat command list: current state, recommended next step, lifecycle path, visible slash commands, then grouped additional helper actions. In a fresh clean `itldev/*` branch with `verification missing`, recommend choosing a development mode (`quick-fix`, `/opsx-explore`, or `/opsx-propose`), not `/itl-check`. Recommend `/itl-check` after checkable configuration/extension/Vanessa feature changes or stale/failed/unknown verification.
+`/itl` must present the lifecycle as a process panel, not as a flat command list: current state, recommended next step, lifecycle path, visible client-native commands/skills or natural OpenSpec requests, then grouped additional helper actions. In a fresh clean `itldev/*` branch with `verification missing`, recommend choosing quick-fix or the available OpenSpec invocation mode, not `/itl-check`. Never promise universal `/opsx*`. Recommend `/itl-check` after checkable configuration/extension/Vanessa feature changes or stale/failed/unknown verification.
 
 The native `/itl` command wrapper must return successful helper `-Action help` stdout unchanged inside exactly one fenced `text` block with no content outside it, preserving every line break, blank line, and indentation. It must not summarize, translate, split the panel into custom sections, merge OpenSpec into visible slash commands, omit `Lifecycle:` or `Additional helper actions:`, or append a "no lifecycle actions executed" note; on helper failure it reports the actual error instead of fabricating a panel. Existing open worktrees may have a stale ignored command surface; regenerate it by running `update-workflow` from `master`, `/itl-refresh` in the dev worktree, or `switch-dev-branch` when changing branches.
 
 Advanced/helper actions such as extension setup/dump, project initialization, workflow/rules update, and vibecoding1c MCP remain available through natural-language requests or direct PowerShell helper actions. ROCTUP/Vanessa on-demand backend control is private and is not a user command.
+
+OpenSpec remains owned by the pinned `ai_rules_1c` upstream snapshot. A healthy managed client bundle is reported as `native`; an intentional manifest `bundleSkipped` with a complete `openspec/` workspace, managed `sdd-integrations.md`, and ITL `USER-RULES.md` preflight is reported as `natural`. Missing/damaged managed artifacts are `unavailable` and must not fall back silently. The external `openspec` executable is diagnostic only: its absence does not block natural mode and never triggers `npm install` or `openspec update`.
 
 Typing `/` shows available project commands.
 

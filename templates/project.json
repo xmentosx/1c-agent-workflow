@@ -24,7 +24,7 @@
   "serverBaseCopyScript": "",
   "aiRules": {
     "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
-    "ref": "itl-main-72665287-r12",
+    "ref": "itl-main-72665287-r13",
     "tools": []
   },
   "vibecoding1cMcp": {

@@ -2,9 +2,9 @@
 
 ## Current qualified release
 
-The workflow is pinned to `itl-main-72665287-r12` at fork commit `16e9e44318a79d9e82c12b19e6759cdf6492d9a4`. Its exact upstream provenance is `refs/heads/main@72665287e77361aea3aaf866fef163d98f0fabcd`. `templates/dependency-lock.json` is the single source of this tag, commit, upstream provenance, downstream revision `12`, and `compatibilityStatus=passed`; project templates, code, docs, and tests must agree with it.
+The workflow is pinned to `itl-main-72665287-r13` at fork commit `b66569bebf46e0369efa53983fca69368e16d57a`. Its exact upstream provenance is `refs/heads/main@72665287e77361aea3aaf866fef163d98f0fabcd`. `templates/dependency-lock.json` is the single source of this tag, commit, upstream provenance, downstream revision `13`, and `compatibilityStatus=passed`; project templates, code, docs, and tests must agree with it.
 
-Fork `main` is the clean upstream snapshot. Downstream changes exist only on immutable branch/tag `release/itl-main-72665287-r12` / `itl-main-72665287-r12`, which point to the same qualified commit. Installed projects never consume moving `main`. Older immutable releases remain published only for provenance; `r12` adds all five upstream clients while retaining the r11 compact root contract and reproducible overlay builder.
+Fork `main` is the clean upstream snapshot. Downstream changes exist only on immutable branch/tag `release/itl-main-72665287-r13` / `itl-main-72665287-r13`, which point to the same qualified commit. Installed projects never consume moving `main`. Older immutable releases remain published only for provenance. `r13` retains the OpenSpec `1.2.0` snapshot and its five upstream-native bundles, and documents natural fallback for the other five clients without downstream bundle generation.
 
 ## Intake discipline
 
@@ -22,7 +22,9 @@ Run the fork Full gate, preview publication with `publish-fork-release.ps1 -What
 
 Each project has exactly one of `codex`, `kilocode`, `claude-code`, `cursor`, `opencode`, `kimi`, `qwen`, `command-code`, `cline`, or `pi`. New initialization requires the choice. Legacy `["codex","kilocode"]` normalizes to `["kilocode"]`; every other multi-client set requires an explicit selection. Generic `other` is not supported.
 
-`update-workflow` supports legacy upstream-to-fork and strictly monotonic controlled-fork upgrades, including `r11 -> r12`. Eligibility requires recorded installed commit/provenance, an immutable `itl-*` ref, no `userModified` managed files, supported client state, and upstream ancestry. A custom repository, missing provenance, tracked-config ambiguity, or modified managed file produces a recovery report instead of mutation.
+`update-workflow` supports legacy upstream-to-fork and strictly monotonic controlled-fork upgrades, including `r11 -> r13` and `r12 -> r13` for every supported single-client installation. Eligibility requires recorded installed commit/provenance, an immutable `itl-*` ref, no `userModified` managed files, supported client state, and upstream ancestry. A custom repository, missing provenance, tracked-config ambiguity, or modified managed file produces a recovery report instead of mutation.
+
+OpenSpec remains an upstream-owned dependency. The host reports `native` only when the manifest owns an intact command/SKILL bundle, `natural` when `bundleSkipped` is intentional and the shared workspace/rules are complete, and `unavailable` otherwise. A damaged native bundle never falls back to natural. The external executable is diagnosed separately; the workflow neither installs it nor runs `openspec update`.
 
 The candidate is installed into a temporary project first. The transactional snapshot includes project/lock/manifest, `.dev.env`, `AGENTS.md`, `USER-RULES.md`, `LLM-RULES.md`, OpenSpec, `.agents`, all client directories, and local MCP configs. Failure restores the snapshot and reports recovery evidence. Repeating the update must be byte-idempotent.
 

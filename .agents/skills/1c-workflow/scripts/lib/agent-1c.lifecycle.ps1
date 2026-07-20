@@ -1271,6 +1271,8 @@ function Get-AiRules1cManifestFileEntries {
         [pscustomobject]@{
             target = [string]$_.Name
             source = [string]$_.Value.source
+            installedHash = [string](Get-ConfigValueFromObject -Object $_.Value -Path "installedHash" -Default "")
+            userModified = [bool](Get-ConfigValueFromObject -Object $_.Value -Path "userModified" -Default $false)
         }
     })
 }
@@ -1381,6 +1383,71 @@ function Assert-AiRules1cInstallation {
     return $manifest
 }
 
+function Get-ItlOpenSpecCliStatus {
+    $command = @(Get-Command openspec -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ($command.Count -eq 0) {
+        return [pscustomobject]@{ available = $false; path = "" }
+    }
+    $path = [string]$command[0].Path
+    if ([string]::IsNullOrWhiteSpace($path)) { $path = [string]$command[0].Source }
+    return [pscustomobject]@{ available = $true; path = $path }
+}
+
+function Get-ItlOpenSpecNaturalRequests {
+    function ConvertFrom-ItlUtf8Base64 {
+        param([string]$Value)
+        return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Value))
+    }
+
+    return [pscustomobject]@{
+        explore = ConvertFrom-ItlUtf8Base64 "0JjRgdGB0LvQtdC00YPQuSDQt9Cw0LTQsNGH0YMg0LIg0YDQtdC20LjQvNC1IE9wZW5TcGVjLCDQvdC1INGB0L7Qt9C00LDQstCw0Y8gcHJvcG9zYWwg0Lgg0L3QtSDQvNC10L3Rj9GPINC60L7QtA=="
+        propose = ConvertFrom-ItlUtf8Base64 "0J/QvtC00LPQvtGC0L7QstGMIE9wZW5TcGVjIHByb3Bvc2FsINC00LvRjyA80LjQt9C80LXQvdC10L3QuNC1Pjsg0YHQvtC30LTQsNC5IHByb3Bvc2FsLCBkZXNpZ24sIHRhc2tzLCB0ZXN0LXBsYW4g0Lggc3BlYyBkZWx0YXM7INC60L7QtCDQvdC1INC80LXQvdGP0Lk="
+        apply = ConvertFrom-ItlUtf8Base64 "0KDQtdCw0LvQuNC30YPQuSDRgdC+0LPQu9Cw0YHQvtCy0LDQvdC90YvQuSBPcGVuU3BlYyBjaGFuZ2UgPGNoYW5nZS1pZD4g0L/QviB0YXNrcy5tZCDQuCB0ZXN0LXBsYW4ubWQ="
+        archive = ConvertFrom-ItlUtf8Base64 "0JfQsNCw0YDRhdC40LLQuNGA0YPQuSDQv9GA0LjQvdGP0YLRi9C5IE9wZW5TcGVjIGNoYW5nZSA8Y2hhbmdlLWlkPiDQuCDRgdC40L3RhdGA0L7QvdC40LfQuNGA0YPQuSBzcGVjcw=="
+    }
+}
+
+function Get-ItlOpenSpecNativeInvocation {
+    param(
+        [string]$Stage,
+        [AllowNull()][object]$Entry
+    )
+
+    $target = [string](Get-ConfigValueFromObject -Object $Entry -Path "target" -Default "")
+    $target = $target.Replace('\', '/')
+    if ($target -match '(?i)/skills/([^/]+)/SKILL\.md$') {
+        return "skill $($Matches[1])"
+    }
+    if ($target -match '(?i)/commands/opsx/[^/]+\.md$') {
+        return "/opsx:$Stage"
+    }
+    if ($target -match '(?i)(?:^|/)opsx-[^/]+\.md$') {
+        return "/opsx-$Stage"
+    }
+    return "managed artifact $target"
+}
+
+function New-ItlOpenSpecStatus {
+    param(
+        [ValidateSet("native", "natural", "unavailable")][string]$Mode,
+        [string]$Reason = "",
+        [AllowNull()][object]$Invocations = $null,
+        [AllowNull()][object]$Cli = $null
+    )
+
+    if ($null -eq $Cli) { $Cli = Get-ItlOpenSpecCliStatus }
+    if ($null -eq $Invocations) { $Invocations = [ordered]@{} }
+    return [pscustomobject]@{
+        mode = $Mode
+        isAvailable = ($Mode -ne "unavailable")
+        required = $true
+        reason = $Reason
+        invocations = [pscustomobject]$Invocations
+        cliAvailable = [bool]$Cli.available
+        cliPath = [string]$Cli.path
+    }
+}
+
 function Get-AiRules1cOpenSpecStatus {
     $requiredStages = [ordered]@{
         propose = @("openspec-propose", "opsx-propose")
@@ -1388,27 +1455,83 @@ function Get-AiRules1cOpenSpecStatus {
         apply = @("openspec-apply-change", "opsx-apply")
         archive = @("openspec-archive-change", "opsx-archive")
     }
+    $cli = Get-ItlOpenSpecCliStatus
     try {
         $manifest = Get-AiRules1cProjectManifest
     } catch {
-        return [pscustomobject]@{ isAvailable = $false; reason = $_.Exception.Message }
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason $_.Exception.Message -Cli $cli)
     }
 
     if ($null -eq $manifest) {
-        return [pscustomobject]@{ isAvailable = $false; reason = "ai_rules_1c manifest is missing." }
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "ai_rules_1c manifest is missing." -Cli $cli)
     }
-    try { $client = Get-ItlActiveClient } catch { return [pscustomobject]@{ isAvailable = $false; reason = $_.Exception.Message } }
+    try { $client = Get-ItlActiveClient } catch { return (New-ItlOpenSpecStatus -Mode unavailable -Reason $_.Exception.Message -Cli $cli) }
 
     $entries = @(Get-AiRules1cManifestFileEntries -Manifest $manifest)
+    $requiredWorkspace = @(
+        "openspec/README.md",
+        "openspec/config.yaml",
+        "openspec/project.md",
+        "openspec/specs/README.md",
+        "openspec/changes/README.md"
+    )
+    $missingWorkspace = @($requiredWorkspace | Where-Object {
+        -not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $_) -PathType Leaf)
+    })
+    if ($missingWorkspace.Count -gt 0) {
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "OpenSpec workspace is incomplete: $($missingWorkspace -join ', ')." -Cli $cli)
+    }
+
+    $integrationRuleEntries = @($entries | Where-Object {
+        $_.source.Replace('\', '/') -eq "content/rules/sdd-integrations.md"
+    })
+    if ($integrationRuleEntries.Count -eq 0) {
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "managed OpenSpec integration rule is absent from the ai_rules_1c manifest." -Cli $cli)
+    }
+    $badRules = @($integrationRuleEntries | Where-Object {
+        $path = Join-Path $script:ProjectRoot $_.target
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $true }
+        $expected = [string](Get-ConfigValueFromObject -Object $_ -Path "installedHash" -Default "")
+        return (-not [string]::IsNullOrWhiteSpace($expected) -and (Get-ItlFileSha256 -Path $path) -ne $expected.ToLowerInvariant())
+    })
+    if ($badRules.Count -gt 0) {
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "managed OpenSpec integration rule is missing or damaged." -Cli $cli)
+    }
+
+    $userRulesPath = Join-Path $script:ProjectRoot "USER-RULES.md"
+    if (-not (Test-Path -LiteralPath $userRulesPath -PathType Leaf)) {
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "USER-RULES.md with the ITL OpenSpec preflight is missing." -Cli $cli)
+    }
+    $userRulesText = Get-Content -LiteralPath $userRulesPath -Raw -Encoding UTF8
+    $requiredRuleTokens = @("ITL-WORKFLOW-USER-RULES:START", "Context Sources", "test-plan.md", "fresh")
+    $missingRuleTokens = @($requiredRuleTokens | Where-Object { $userRulesText -notmatch [regex]::Escape($_) })
+    if ($missingRuleTokens.Count -gt 0) {
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "USER-RULES.md does not contain the complete ITL OpenSpec preflight." -Cli $cli)
+    }
+
     $clientBundleEntries = @($entries | Where-Object { $_.source.Replace('\', '/') -like "content/openspec-bundle/$client/*" })
     if ($clientBundleEntries.Count -eq 0) {
-        return [pscustomobject]@{
-            isAvailable = $false
-            required = $false
-            reason = "the pinned upstream adapter for $client does not publish a managed OpenSpec command bundle"
+        $skippedProperty = $manifest.integrations.openspec.PSObject.Properties['bundleSkipped']
+        $skipped = if ($null -eq $skippedProperty) { @() } else { @($skippedProperty.Value) }
+        if ($skipped -contains $client) {
+            return (New-ItlOpenSpecStatus -Mode natural -Reason "the pinned adapter intentionally skipped a native OpenSpec bundle for $client" -Cli $cli)
         }
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "the manifest neither owns a native OpenSpec bundle nor records an intentional bundleSkipped entry for $client." -Cli $cli)
     }
+
+    $damagedBundleEntries = @($clientBundleEntries | Where-Object {
+        $path = Join-Path $script:ProjectRoot $_.target
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $true }
+        $expected = [string](Get-ConfigValueFromObject -Object $_ -Path "installedHash" -Default "")
+        return ([string]::IsNullOrWhiteSpace($expected) -or (Get-ItlFileSha256 -Path $path) -ne $expected.ToLowerInvariant())
+    })
+    if ($damagedBundleEntries.Count -gt 0) {
+        $targets = @($damagedBundleEntries | ForEach-Object { [string]$_.target } | Select-Object -Unique)
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "managed native OpenSpec artifact(s) for $client are missing or damaged: $($targets -join ', ')." -Cli $cli)
+    }
+
     $missing = @()
+    $invocations = [ordered]@{}
     foreach ($stage in $requiredStages.Keys) {
         $tokens = @($requiredStages[$stage])
         $matches = @($entries | Where-Object {
@@ -1419,18 +1542,13 @@ function Get-AiRules1cOpenSpecStatus {
             $missing += $stage
             continue
         }
-        if (@($matches | Where-Object { -not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $_.target) -PathType Leaf) }).Count -gt 0) {
-            $missing += $stage
-        }
+        $invocations[$stage] = Get-ItlOpenSpecNativeInvocation -Stage $stage -Entry $matches[0]
     }
 
     if ($missing.Count -gt 0) {
-        return [pscustomobject]@{
-            isAvailable = $false
-            reason = "managed OpenSpec artifact(s) for $client are missing: $($missing -join ', ')."
-        }
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "managed native OpenSpec phase(s) for $client are absent from the manifest: $($missing -join ', ')." -Cli $cli)
     }
-    return [pscustomobject]@{ isAvailable = $true; required = $true; reason = "" }
+    return (New-ItlOpenSpecStatus -Mode native -Invocations $invocations -Cli $cli)
 }
 
 function Get-AiRules1cRepositoryIdentity {
@@ -6704,10 +6822,12 @@ function Show-Help {
             } elseif ($hasCheckableChanges -or (@("failed", "stale", "unknown") -contains $verification.effectiveStatus)) {
                 Write-Host "Recommended next step: /itl-check"
             } elseif (-not $verification.isFreshPassed) {
-                if ($openSpec.isAvailable) {
-                    Write-Host "Recommended next step: choose development mode: quick-fix, /opsx-explore, or /opsx-propose"
+                if ($openSpec.mode -eq "native") {
+                    Write-Host "Recommended next step: choose development mode: quick-fix, $($openSpec.invocations.explore), or $($openSpec.invocations.propose)"
+                } elseif ($openSpec.mode -eq "natural") {
+                    Write-Host "Recommended next step: choose quick-fix, or ask the agent to explore a task or prepare an OpenSpec proposal in natural language."
                 } else {
-                    Write-Host "Recommended next step: choose quick-fix, or restore the active client's OpenSpec surface from master before starting an OpenSpec change."
+                    Write-Host "Recommended next step: choose quick-fix, or restore the OpenSpec workspace/rules from master before starting an OpenSpec change."
                 }
             } elseif (-not (Get-StateValue -State $state -Name "lastResultPath" -Default "")) {
                 Write-Host "Recommended next step: /itl-result"
@@ -6718,10 +6838,12 @@ function Show-Help {
 
         Write-Host ""
         Write-Host "Lifecycle:"
-        if ($openSpec.isAvailable) {
-            Write-Host "  extension setup when pending -> optional /opsx-explore -> quick-fix or /opsx-propose -> /opsx-apply/work -> /itl-vanessa-author when features change -> /itl-check -> /itl-result"
+        if ($openSpec.mode -eq "native") {
+            Write-Host "  extension setup when pending -> optional $($openSpec.invocations.explore) -> quick-fix or $($openSpec.invocations.propose) -> $($openSpec.invocations.apply)/work -> /itl-vanessa-author when features change -> /itl-check -> /itl-result"
+        } elseif ($openSpec.mode -eq "natural") {
+            Write-Host "  extension setup when pending -> natural explore -> quick-fix or natural propose -> natural apply/work -> /itl-vanessa-author when features change -> /itl-check -> /itl-result -> natural archive"
         } else {
-            Write-Host "  extension setup when pending -> quick-fix -> /itl-vanessa-author when features change -> /itl-check -> /itl-result; restore the active client's OpenSpec surface before an OpenSpec change."
+            Write-Host "  extension setup when pending -> quick-fix -> /itl-vanessa-author when features change -> /itl-check -> /itl-result; restore the OpenSpec workspace/rules before an OpenSpec change."
         }
         Write-Host "  use /itl-refresh when master changes must be merged into this branch."
         Write-Host ""
@@ -6749,13 +6871,29 @@ function Show-Help {
         }
         Write-Host ""
         Write-Host "OpenSpec:"
-        if ($openSpec.isAvailable) {
-            Write-Host "  /opsx-propose  Start the normal OpenSpec flow: proposal, design/tasks/test-plan/spec deltas; no code changes."
-            Write-Host "  /opsx-apply    Implement an approved OpenSpec change from tasks.md."
-            Write-Host "  /opsx-archive  Archive an accepted OpenSpec change."
-            Write-Host "  /opsx-explore  Optional: explore code or task boundaries before proposal when context is unclear."
+        $naturalRequests = Get-ItlOpenSpecNaturalRequests
+        Write-Host "  Mode: $($openSpec.mode)"
+        Write-Host "  External CLI: $(if ($openSpec.cliAvailable) { $openSpec.cliPath } else { 'not detected; no installation is attempted' })"
+        if ($openSpec.mode -eq "native") {
+            Write-Host "  $($openSpec.invocations.propose)  Start proposal/design/tasks/test-plan/spec deltas; no code changes."
+            Write-Host "  $($openSpec.invocations.apply)  Implement an approved OpenSpec change from tasks.md and test-plan.md."
+            Write-Host "  $($openSpec.invocations.archive)  Archive an accepted OpenSpec change."
+            Write-Host "  $($openSpec.invocations.explore)  Optional exploration without proposal or code changes."
+            if (-not $openSpec.cliAvailable) {
+                Write-Host "  If the native prompt cannot invoke the CLI, use the natural requests below; never run npm install or openspec update."
+                Write-Host "  Explore: $($naturalRequests.explore)"
+                Write-Host "  Propose: $($naturalRequests.propose)"
+                Write-Host "  Apply: $($naturalRequests.apply)"
+                Write-Host "  Archive: $($naturalRequests.archive)"
+            }
+        } elseif ($openSpec.mode -eq "natural") {
+            Write-Host "  Explore: $($naturalRequests.explore)"
+            Write-Host "  Propose: $($naturalRequests.propose)"
+            Write-Host "  Apply: $($naturalRequests.apply)"
+            Write-Host "  Archive: $($naturalRequests.archive)"
+            Write-Host "  No native bundle is required; never run npm install or openspec update."
         } else {
-            Write-Host "  Active-client OpenSpec surface is unavailable: $($openSpec.reason)"
+            Write-Host "  OpenSpec is unavailable: $($openSpec.reason)"
             Write-Host "  Recovery: in master run update-ai-rules or update-workflow, merge the update into this branch, then run /itl-refresh."
         }
         Write-Host "  use /itl-verify-fix only to repair omitted coverage or a failing verification cycle."
