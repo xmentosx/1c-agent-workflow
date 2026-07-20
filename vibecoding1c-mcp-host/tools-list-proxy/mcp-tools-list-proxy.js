@@ -146,11 +146,20 @@ function shortenDescription(value) {
   return `${normalized.slice(0, 157).trimEnd()}...`;
 }
 
-function compactTool(tool) {
+function descriptionSha256(value) {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  return crypto.createHash('sha256').update(normalized, 'utf8').digest('hex');
+}
+
+function compactTool(tool, expected = {}) {
   const result = { ...tool };
-  result.description = shortenDescription(tool.description);
-  if (tool.inputSchema) result.inputSchema = withoutDescriptions(tool.inputSchema);
-  if (tool.outputSchema) result.outputSchema = withoutDescriptions(tool.outputSchema);
+  const approved = expected && expected.toolDescriptions && expected.toolDescriptions[tool.name];
+  if (!approved) return result;
+  if (descriptionSha256(tool.description) !== approved.sourceSha256) return result;
+  const compact = String(approved.compact || '').trim();
+  const maximum = Number(expected.descriptionPolicy && expected.descriptionPolicy.maximumApprovedDescriptionCharacters || 240);
+  if (!compact || compact.length > maximum) throw new Error(`Approved description for '${tool.name}' must contain 1..${maximum} characters.`);
+  result.description = compact;
   return result;
 }
 
@@ -161,7 +170,7 @@ function transformPayload(payload, expected) {
   if (actual.toolCount !== expected.toolCount || actual.structuralSha256 !== expected.structuralSha256) {
     throw new Error(`MCP tools contract drift: expected ${expected.toolCount}/${expected.structuralSha256}, got ${actual.toolCount}/${actual.structuralSha256}`);
   }
-  return { ...payload, result: { ...payload.result, tools: payload.result.tools.map(compactTool) } };
+  return { ...payload, result: { ...payload.result, tools: payload.result.tools.map(tool => compactTool(tool, expected)) } };
 }
 
 function transformToolsListResponse(body, contentType, expected) {
@@ -273,11 +282,12 @@ async function main() {
   }
   if (!args['contract-path']) throw new Error('--contract-path is required unless --probe is used.');
   const contract = JSON.parse(fs.readFileSync(args['contract-path'], 'utf8'));
-  const expected = contract.servers && contract.servers[args['server-id']];
-  if (!expected) throw new Error(`No approved contract for server '${args['server-id']}'.`);
-  if (actual.toolCount !== expected.toolCount || actual.structuralSha256 !== expected.structuralSha256) {
-    throw new Error(`MCP tools contract drift for ${args['server-id']}: expected ${expected.toolCount}/${expected.structuralSha256}, got ${actual.toolCount}/${actual.structuralSha256}`);
+  const serverContract = contract.servers && contract.servers[args['server-id']];
+  if (!serverContract) throw new Error(`No approved contract for server '${args['server-id']}'.`);
+  if (actual.toolCount !== serverContract.toolCount || actual.structuralSha256 !== serverContract.structuralSha256) {
+    throw new Error(`MCP tools contract drift for ${args['server-id']}: expected ${serverContract.toolCount}/${serverContract.structuralSha256}, got ${actual.toolCount}/${actual.structuralSha256}`);
   }
+  const expected = { ...serverContract, descriptionPolicy: contract.descriptionPolicy || {} };
   await startProxy(args, expected);
 }
 
@@ -288,4 +298,12 @@ if (require.main === module) {
   });
 }
 
-module.exports = { compactTool, describeContract, shortenDescription, transformToolsListResponse, withoutDescriptions };
+module.exports = {
+  compactTool,
+  describeContract,
+  descriptionSha256,
+  initializeAndList,
+  shortenDescription,
+  transformToolsListResponse,
+  withoutDescriptions,
+};

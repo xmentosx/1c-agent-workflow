@@ -57,7 +57,7 @@
   },
   "toolsListProxy": {
     "enabled": true,
-    "serverIds": [ "codechecker", "code", "graph" ],
+    "serverIds": [ "docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis", "code", "graph" ],
     "portOffset": 4000,
     "image": "itl/mcp-tools-list-proxy:local"
   },

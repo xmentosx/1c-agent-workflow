@@ -45,12 +45,25 @@ Configure `mantisTicketServer.baseUrl`, set read-only `MANTIS_API_TOKEN` in `sec
 and keep `mantis` in `enabledServers.global`. The MCP publishes as
 `itl-mantis-ticket-mcp` and exposes `read_ticket`, `get_attachment`, and `health`.
 
-The optional `toolsListProxy` (enabled in the example config) is built locally from
-`tools-list-proxy/` for `codechecker`, `code`, and `graph`. It forwards MCP sessions and
-`tools/call` unchanged, but caps top-level tool descriptions at 160 characters and removes
-nested schema descriptions from `tools/list`. Before publishing a proxy URL it compares tool
-names, annotations, and description-free JSON Schemas with `tools-contract.json`. Contract
-drift or proxy failure keeps the direct server URL in the registry.
+The optional `toolsListProxy` (enabled in the example config) supports all permanently hosted
+MCP servers and excludes branch-local on-demand MCP. It forwards MCP sessions and `tools/call`
+unchanged. `tools/list` substitutes only reviewed top-level routing cards whose source-description
+hash still matches `tools-contract.json`; nested JSON Schema descriptions and unapproved or
+changed descriptions pass through unchanged. Before publishing a proxy URL it compares tool
+names, annotations, and description-free JSON Schemas with the approved contract.
+
+After the host has already been set up, enable or refresh all tracked proxies without refreshing
+configuration sources, restarting direct MCP servers, or triggering indexing:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action proxy -ConfigPath .\host.config.json
+```
+
+`-Action proxy` qualifies every target before updating host state and publishing the registry.
+On failure it restores prior proxy containers and host state and does not publish the new URLs.
+Use `-ServerId <id>` for one tracked server. Use
+`scripts/export-tools-list-proxy-catalog.ps1` to export the live original/candidate catalog and
+the byte-reduction report before approving description changes.
 `read_ticket` returns comments, issue-level and comment-level attachments, sanitized
 rendered HTML, formatting spans, and prompt-ready markdown. Image originals are always
 represented as attachment resource handles; OCR text is only draft accompaniment and tells
