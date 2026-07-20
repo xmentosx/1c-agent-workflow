@@ -366,6 +366,10 @@ $checkpoint = $null
 $checkpointWasResumed = $false
 $resumedStages = @()
 $executedStages = @()
+$invalidatedStages = @()
+$crossReleaseReuse = $false
+$previousWorkflowCommit = ""
+$stageTimers = @{}
 
 function Write-E2ECheckpoint {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $checkpointPath) | Out-Null
@@ -442,13 +446,47 @@ function Set-E2EStageStatus {
     param([string]$Name, [string]$Status, [string]$ErrorText = "", [string]$EvidencePath = "")
     if (-not $checkpoint["stages"].Contains($Name)) { $checkpoint["stages"][$Name] = [ordered]@{} }
     $record = $checkpoint["stages"][$Name]
+    $now = [DateTime]::UtcNow
+    if (-not $record.Contains("attempts")) { $record["attempts"] = @() }
+    if ($Status -eq "running") {
+        $script:stageTimers[$Name] = [System.Diagnostics.Stopwatch]::StartNew()
+        $record["proofStartedAt"] = $now.ToString("o")
+        $record["execution"] = "executed"
+        $record["reuseReason"] = ""
+        $record["fingerprint"] = Get-E2EStageFingerprint -Name $Name
+    } elseif ($Status -in @("passed", "failed")) {
+        $durationMs = 0
+        if ($script:stageTimers.ContainsKey($Name)) {
+            $script:stageTimers[$Name].Stop()
+            $durationMs = [int64]$script:stageTimers[$Name].ElapsedMilliseconds
+            $script:stageTimers.Remove($Name)
+        }
+        $record["proofFinishedAt"] = $now.ToString("o")
+        $record["proofDurationMs"] = $durationMs
+        $record["currentRunDurationMs"] = $durationMs
+        $record["attempts"] = @($record["attempts"]) + @([ordered]@{
+            status = $Status; startedAt = [string]$record["proofStartedAt"]; finishedAt = $now.ToString("o"); durationMs = $durationMs; error = $ErrorText
+        })
+    }
     $record["status"] = $Status
-    $record["updatedAt"] = [DateTime]::UtcNow.ToString("o")
+    $record["updatedAt"] = $now.ToString("o")
     $record["error"] = $ErrorText
-    $record["evidencePath"] = $EvidencePath
-    $record["evidenceSha256"] = Get-E2EFileSha256 -Path $EvidencePath
+    if ($EvidencePath -or $Status -ne "running") {
+        $record["evidencePath"] = $EvidencePath
+        $record["evidenceSha256"] = Get-E2EFileSha256 -Path $EvidencePath
+    }
     $checkpoint["expectedHead"] = (& git -C $worktreePath rev-parse HEAD).Trim()
     if ($Status -eq "passed") { $checkpoint["lastPassedStage"] = $Name }
+    Write-E2ECheckpoint
+}
+
+function Set-E2EStageReused {
+    param([string]$Name, [string]$Reason)
+    $record = $checkpoint["stages"][$Name]
+    $record["execution"] = "reused"
+    $record["reuseReason"] = $Reason
+    $record["currentRunDurationMs"] = 0
+    $record["updatedAt"] = [DateTime]::UtcNow.ToString("o")
     Write-E2ECheckpoint
 }
 
@@ -457,8 +495,14 @@ function Test-E2EStagePassed {
     if (-not $checkpoint["stages"].Contains($Name)) { return $false }
     $record = $checkpoint["stages"][$Name]
     if ([string]$record.status -ne "passed") { return $false }
+    $expectedFingerprint = Get-E2EStageFingerprint -Name $Name
+    if ([string]$record.fingerprint -ne $expectedFingerprint) {
+        $script:invalidatedStages += $Name
+        return $false
+    }
     if ([string]$record.evidencePath) {
-        Assert-E2ECheckpointFile -Path ([string]$record.evidencePath) -Sha256 ([string]$record.evidenceSha256) -Label "$Name evidence"
+        try { Assert-E2ECheckpointFile -Path ([string]$record.evidencePath) -Sha256 ([string]$record.evidenceSha256) -Label "$Name evidence" }
+        catch { throw "RELEASE_E2E_CACHE_CORRUPT: $($_.Exception.Message)" }
     }
     return $true
 }
@@ -507,6 +551,7 @@ if ($usingLegacyRunRoot -and $ResumeMode -eq "Restart") {
 if ($worktreeStatus.Count -gt 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: E2E worktree must be clean before release verification." }
 $aiRulesCommit = (& git -C $AiRulesSource rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $aiRulesCommit) { throw "Release ai_rules source is not a readable Git checkout: $AiRulesSource" }
+$aiRulesTree = (& git -C $AiRulesSource rev-parse 'HEAD^{tree}').Trim()
 $workflowRoot = Split-Path -Parent $PSScriptRoot
 $workflowCommit = (& git -C $workflowRoot rev-parse HEAD).Trim()
 $workflowTree = (& git -C $workflowRoot rev-parse 'HEAD^{tree}').Trim()
@@ -514,6 +559,63 @@ if ($LASTEXITCODE -ne 0 -or -not $workflowCommit -or -not $workflowTree) { throw
 $runnerSha256 = Get-E2EFileSha256 -Path $PSCommandPath
 $helperSha256 = Get-E2EFileSha256 -Path $HelperPath
 $projectConfigSha256 = Get-E2EFileSha256 -Path (Join-Path $worktreePath ".agent-1c\project.json")
+$stageModuleRoot = Join-Path $PSScriptRoot "release-e2e"
+. (Join-Path $stageModuleRoot "common.ps1")
+foreach ($stageModule in @("config-cadence.ps1", "config-roundtrip.ps1", "extension-smoke.ps1", "ondemand-mcp.ps1", "result-cleanup.ps1")) {
+    . (Join-Path $stageModuleRoot $stageModule)
+}
+
+function Get-E2EStageInputFiles {
+    param([string]$Name)
+    $definition = $script:ReleaseE2EStageDefinitions[$Name]
+    if (-not $definition) { throw "Unknown Release E2E stage definition: $Name" }
+    $allFiles = @(Get-ChildItem -LiteralPath $workflowRoot -Recurse -File)
+    $resolved = New-Object System.Collections.Generic.List[string]
+    foreach ($patternText in @($definition.paths)) {
+        $normalizedPattern = ([string]$patternText).Replace('\', '/')
+        if ($normalizedPattern.IndexOfAny([char[]]'*?') -ge 0) {
+            $pattern = New-Object System.Management.Automation.WildcardPattern($normalizedPattern, [System.Management.Automation.WildcardOptions]::IgnoreCase)
+            $matches = @($allFiles | Where-Object {
+                $relative = $_.FullName.Substring($workflowRoot.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
+                $pattern.IsMatch($relative)
+            })
+            if ($matches.Count -eq 0) { throw "Release E2E stage '$Name' input pattern matched no files: $patternText" }
+            foreach ($match in $matches) { $resolved.Add($match.FullName) | Out-Null }
+        } else {
+            $path = Join-Path $workflowRoot $normalizedPattern.Replace('/', '\')
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Release E2E stage '$Name' input is missing: $patternText" }
+            $resolved.Add([System.IO.Path]::GetFullPath($path)) | Out-Null
+        }
+    }
+    $resolved.Add((Join-Path $stageModuleRoot ([string]$definition.moduleFile))) | Out-Null
+    $resolved.Add((Join-Path $stageModuleRoot "common.ps1")) | Out-Null
+    return @($resolved | Sort-Object -Unique)
+}
+
+function Get-E2EStageFingerprint {
+    param([string]$Name)
+    $definition = $script:ReleaseE2EStageDefinitions[$Name]
+    $inputs = @()
+    foreach ($path in @(Get-E2EStageInputFiles -Name $Name)) {
+        $inputs += [ordered]@{ path = $path.Substring($workflowRoot.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/'); sha256 = Get-E2EFileSha256 -Path $path }
+    }
+    $dependencies = @()
+    foreach ($dependency in @($definition.dependsOn)) { $dependencies += [ordered]@{ name = $dependency; fingerprint = Get-E2EStageFingerprint -Name $dependency } }
+    $baselineSha = if ($checkpoint -and $checkpoint["snapshots"].Contains("baseline")) { [string]$checkpoint["snapshots"]["baseline"].sha256 } else { "" }
+    $baselineState = if ($checkpoint -and $checkpoint["stateFiles"].Contains("baseline")) { $checkpoint["stateFiles"]["baseline"] } else { $null }
+    $identityHead = if ($checkpoint) { [string]$checkpoint["identity"]["initialHead"] } else { "" }
+    $payload = [ordered]@{
+        name = $Name; version = [int]$definition.version; runnerSha256 = $runnerSha256; helperSha256 = $helperSha256
+        aiRulesCommit = $aiRulesCommit; aiRulesTree = $aiRulesTree; projectConfigSha256 = $projectConfigSha256
+        initialHead = $identityHead; baselineSnapshotSha256 = $baselineSha
+        baselineStateSha256 = $(if ($baselineState) { [string]$baselineState.stateSha256 } else { "" })
+        baselineEnvSha256 = $(if ($baselineState) { [string]$baselineState.envSha256 } else { "" })
+        inputs = $inputs; dependencies = $dependencies
+    }
+    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($payload | ConvertTo-Json -Depth 12 -Compress))
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }
+}
 
 if (Test-Path -LiteralPath $checkpointPath -PathType Leaf) {
     try { $checkpoint = ConvertTo-E2EHashtable (Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json) }
@@ -522,11 +624,15 @@ if (Test-Path -LiteralPath $checkpointPath -PathType Leaf) {
 
 if ($checkpoint) {
     $identity = $checkpoint["identity"]
-    $scopeMatches = [int]$checkpoint["schemaVersion"] -eq 1 -and
+    $checkpointSchema = [int]$checkpoint["schemaVersion"]
+    $scopeMatches = $checkpointSchema -in @(1, 2) -and
         [string]$identity.projectRoot -eq $ProjectRoot -and
         [string]$identity.worktreePath -eq $worktreePath -and
         [string]$identity.branch -eq $branch
     if (-not $scopeMatches) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: checkpoint belongs to another project/worktree/branch." }
+    if ($checkpointSchema -eq 1 -and $ResumeMode -eq "Auto") {
+        throw "RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED: checkpoint schema v1 requires one scripted -ResumeMode Restart migration."
+    }
     $releaseIdentityMatches =
         [string]$identity.workflowCommit -eq $workflowCommit -and
         [string]$identity.workflowTree -eq $workflowTree -and
@@ -534,7 +640,10 @@ if ($checkpoint) {
         [string]$identity.aiRulesCommit -eq $aiRulesCommit -and
         [string]$identity.helperSha256 -eq $helperSha256 -and
         [string]$identity.projectConfigSha256 -eq $projectConfigSha256
-    if ($ResumeMode -eq "Auto" -and -not $releaseIdentityMatches) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: checkpoint identity does not match the current workflow/fork/helper/project config. Use -ResumeMode Restart for the scripted baseline rollback." }
+    if ($ResumeMode -eq "Auto" -and -not $releaseIdentityMatches) {
+        $crossReleaseReuse = $true
+        $previousWorkflowCommit = [string]$identity.workflowCommit
+    }
     $currentHead = (& git -C $worktreePath rev-parse HEAD).Trim()
     if ($ResumeMode -eq "Auto" -and $currentHead -ne [string]$checkpoint["expectedHead"]) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: current HEAD '$currentHead' differs from checkpoint HEAD '$($checkpoint['expectedHead'])'." }
 
@@ -578,6 +687,17 @@ if ($checkpoint) {
         $checkpoint = $null
     } else {
         $checkpointWasResumed = $true
+        if ($crossReleaseReuse) {
+            $identity["workflowCommit"] = $workflowCommit
+            $identity["workflowTree"] = $workflowTree
+            $identity["runnerSha256"] = $runnerSha256
+            $identity["aiRulesCommit"] = $aiRulesCommit
+            $identity["aiRulesTree"] = $aiRulesTree
+            $identity["helperSha256"] = $helperSha256
+            $identity["projectConfigSha256"] = $projectConfigSha256
+            $checkpoint["releaseStartedAt"] = $startedAt.ToString("o")
+            Write-E2ECheckpoint
+        }
     }
 }
 
@@ -588,7 +708,7 @@ if (-not $checkpoint) {
     $baselineStateFiles = Save-E2EStateFiles -StateCopyPath $baselineStateCopyPath -EnvCopyPath $baselineEnvCopyPath
     $initialHead = (& git -C $worktreePath rev-parse HEAD).Trim()
     $checkpoint = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         runId = [guid]::NewGuid().ToString("N")
         status = "running"
         identity = [ordered]@{
@@ -600,6 +720,7 @@ if (-not $checkpoint) {
             workflowTree = $workflowTree
             runnerSha256 = $runnerSha256
             aiRulesCommit = $aiRulesCommit
+            aiRulesTree = $aiRulesTree
             helperSha256 = $helperSha256
             projectConfigSha256 = $projectConfigSha256
         }
@@ -611,6 +732,7 @@ if (-not $checkpoint) {
         lastPassedStage = ""
         cleanup = [ordered]@{ status = "pending"; actions = @() }
         createdAt = [DateTime]::UtcNow.ToString("o")
+        releaseStartedAt = $startedAt.ToString("o")
     }
     Write-E2ECheckpoint
     $checkpoint["snapshots"]["baseline"] = Invoke-E2EInfobaseSnapshot -Path $baselineSnapshotPath
@@ -706,6 +828,7 @@ try {
         }
     } else {
         $resumedStages += "config-cadence"
+        Set-E2EStageReused -Name "config-cadence" -Reason $(if ($crossReleaseReuse) { "exact stage fingerprint across workflow release" } else { "same release checkpoint" })
         $configEvidence = $checkpoint["configEvidence"]
         $fixtureCommit = [string]$configEvidence.fixtureCommit; $vanessaFixtureCommit = [string]$configEvidence.vanessaFixtureCommit
         $testOnlyCommit = [string]$configEvidence.testOnlyCommit; $secondMetadataCommit = [string]$configEvidence.secondMetadataCommit
@@ -740,6 +863,7 @@ try {
         }
     } else {
         $resumedStages += "config-roundtrip"
+        Set-E2EStageReused -Name "config-roundtrip" -Reason $(if ($crossReleaseReuse) { "exact stage fingerprint across workflow release" } else { "same release checkpoint" })
         $roundtripEvidence = Get-Content -LiteralPath $roundtripEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
 
@@ -784,6 +908,7 @@ try {
         }
     } else {
         $resumedStages += "extension-smoke"
+        Set-E2EStageReused -Name "extension-smoke" -Reason $(if ($crossReleaseReuse) { "exact stage fingerprint across workflow release" } else { "same release checkpoint" })
         $extensionSmokeEvidence = Get-Content -LiteralPath $extensionSmokeEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
 
@@ -863,10 +988,44 @@ try {
         }
     } else {
         $resumedStages += "ondemand-mcp"
+        Set-E2EStageReused -Name "ondemand-mcp" -Reason $(if ($crossReleaseReuse) { "exact stage fingerprint across workflow release" } else { "same release checkpoint" })
         $onDemandMcpEvidence = Get-Content -LiteralPath $onDemandMcpEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
 
-    if (-not (Test-E2EStagePassed -Name "result-cleanup")) {
+    if ($crossReleaseReuse -and $executedStages -notcontains "config-cadence") {
+        Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
+        Set-E2EStageStatus -Name "verification-refresh" -Status "running"
+        $executedStages += "verification-refresh"
+        try {
+            Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @(
+                "-VanessaFeaturePath", $vanessaFixture.path, "-VanessaFilterTags", "@itl_release_flat"
+            ) | Out-Null
+            $refreshState = (Get-E2EState).value
+            if ([string]$refreshState.lastVerificationStatus -ne "passed" -or -not [string]$refreshState.lastVerifiedAt) {
+                throw "Cross-release verification refresh did not produce a passed verification."
+            }
+            # Result/export deliberately restores post-config state. Promote the
+            # freshly verified state and infobase into that checkpoint first so
+            # the restore cannot resurrect stale verification from the prior
+            # workflow release.
+            $checkpoint["stateFiles"]["postConfig"] = Save-E2EStateFiles -StateCopyPath $postConfigStateCopyPath -EnvCopyPath $postConfigEnvCopyPath
+            $checkpoint["snapshots"]["postConfig"] = Invoke-E2EInfobaseSnapshot -Path $postConfigSnapshotPath
+            Set-E2EStageStatus -Name "verification-refresh" -Status "passed"
+        } catch {
+            Set-E2EStageStatus -Name "verification-refresh" -Status "failed" -ErrorText $_.Exception.Message
+            throw
+        }
+    } elseif ($executedStages -contains "config-cadence") {
+        if (-not $checkpoint["stages"].Contains("verification-refresh")) { $checkpoint["stages"]["verification-refresh"] = [ordered]@{} }
+        $refreshRecord = $checkpoint["stages"]["verification-refresh"]
+        $refreshRecord["status"] = "passed"; $refreshRecord["execution"] = "reused"; $refreshRecord["reuseReason"] = "current config-cadence final passing check"
+        $refreshRecord["fingerprint"] = Get-E2EStageFingerprint -Name "verification-refresh"; $refreshRecord["currentRunDurationMs"] = 0; $refreshRecord["updatedAt"] = [DateTime]::UtcNow.ToString("o")
+        Write-E2ECheckpoint
+    }
+
+    $resultPassed = Test-E2EStagePassed -Name "result-cleanup"
+    if ($crossReleaseReuse) { $resultPassed = $false; $invalidatedStages += "result-cleanup" }
+    if (-not $resultPassed) {
         Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
         Set-E2EStageStatus -Name "result-cleanup" -Status "running"
         $executedStages += "result-cleanup"
@@ -886,7 +1045,7 @@ try {
             }
             $verifiedAt = [string]$state.lastVerifiedAt
             $verifiedCommit = [string]$state.lastVerifiedCommit
-            $verificationFloor = [DateTime]::Parse([string]$checkpoint["createdAt"]).ToUniversalTime()
+            $verificationFloor = $(if ($crossReleaseReuse) { $startedAt.ToUniversalTime() } else { [DateTime]::Parse([string]$checkpoint["createdAt"]).ToUniversalTime() })
             if (-not $verifiedAt -or ([DateTime]::Parse($verifiedAt).ToUniversalTime() -lt $verificationFloor)) {
                 throw "E2E verification is not fresh for the checkpointed Release run."
             }
@@ -924,6 +1083,7 @@ try {
         }
     } else {
         $resumedStages += "result-cleanup"
+        Set-E2EStageReused -Name "result-cleanup" -Reason "same release checkpoint"
         $resultEvidence = $checkpoint["resultEvidence"]
         $verifiedAt = [string]$resultEvidence.verifiedAt
         $verifiedCommit = [string]$resultEvidence.verifiedCommit
@@ -981,16 +1141,21 @@ try {
         if (-not $failure) { $failure = "Could not persist the final E2E checkpoint: $($_.Exception.Message)" }
     }
 
+    $finishedAt = [DateTime]::UtcNow
     $summary = [ordered]@{
-        schemaVersion = 2
+        schemaVersion = 3
         status = $(if ($failure) { "failed" } else { "passed" })
         startedAt = $startedAt.ToString("o")
-        finishedAt = [DateTime]::UtcNow.ToString("o")
+        finishedAt = $finishedAt.ToString("o")
+        durationMs = [int64]($finishedAt - $startedAt).TotalMilliseconds
         resumeMode = $ResumeMode
         checkpointPath = $checkpointPath
         checkpointWasResumed = $checkpointWasResumed
+        crossReleaseReuse = $crossReleaseReuse
+        previousWorkflowCommit = $previousWorkflowCommit
         resumedStages = @($resumedStages)
         executedStages = @($executedStages)
+        invalidatedStages = @($invalidatedStages | Sort-Object -Unique)
         stages = $checkpoint["stages"]
         generatedCommits = $checkpoint["generatedCommits"]
         snapshots = $checkpoint["snapshots"]

@@ -32,12 +32,13 @@ From a clean workflow checkout and a clean fork checkout at the annotated
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
-Run `Full` once on that exact clean workflow/fork pair before `Release`. Its
-`build/test-results/qualification/full.json` inventories the exact tests,
-gate scripts, JUnit, environment, workflow commit/tree and fork qualification.
-`Release` may reuse only that exact proof for Pester, fork Full and compatibility;
-it still runs `git diff --check`, helper parse/help and the complete runtime E2E.
-Every summary stage records whether it was executed, reused or skipped and why.
+Run `Full` once on the clean topic commit before the PR. Qualification v2 records
+the exact tests, gate scripts, merged shard JUnit, environment, workflow tree and
+fork qualification. A merge commit may reuse it only when the evidence commit is
+its ancestor and the tree plus every inventoried SHA remain identical. If no
+valid proof exists, `Release` executes and persists the static prefix before E2E,
+so a runtime retry does not repeat Pester/fork/compatibility. Cheap preflights
+still run every time.
 
 The command runs or exactly reuses the qualified static/fork/compatibility
 stages, then makes two sequential generated commits that each change only the
@@ -117,18 +118,18 @@ release failure.
 
 ## Resume after interruption
 
-The runner checkpoints `config-cadence`, `config-roundtrip`, `extension-smoke`
-and `result-cleanup` under the ignored branch-local
+The runner checkpoints `config-cadence`, `config-roundtrip`, `extension-smoke`,
+`ondemand-mcp`, verification refresh and `result-cleanup` under the ignored branch-local
 `.agent-1c/runs/release-e2e/<branch>/` directory. Baseline and post-config `.dt`
-snapshots, state, `.dev.env`, evidence and expected HEAD are SHA-checked. Repeat
-the same Release command with the default `-ReleaseResumeMode Auto` after a
-transient failure. Passed stages are reused and a failed extension stage starts
-from the exact post-config snapshot, so the three configuration checks are not
-repeated.
+snapshots, state, `.dev.env`, evidence and expected HEAD are SHA-checked.
+Checkpoint v2 records fingerprints, proof/current-run durations and attempts.
+`Auto` resumes the same release and keeps cross-release capability evidence only
+when every input fingerprint matches. A cross-release reuse still executes a
+fresh passing `/itl-check`, export/manifest SHA validation and cleanup.
 
-If workflow/fork/helper/project-config identity changed, `Auto` stops with
-`RELEASE_E2E_RESUME_STATE_MISMATCH`; after inspecting the expected change, use
-`-ReleaseResumeMode Restart`. It validates the checkpoint scope and recorded
+If scope, expected E2E HEAD, evidence or snapshot integrity changed, `Auto` stops
+fail-closed. A schema v1 checkpoint requires one explicit `Restart` migration.
+`-ReleaseResumeMode Restart` validates the checkpoint scope and recorded
 baseline hashes, restores the baseline database and state, and resets only the
 dedicated E2E worktree to the recorded initial commit before beginning a new
 run. A corrupt checkpoint, changed HEAD, damaged evidence/snapshot or different

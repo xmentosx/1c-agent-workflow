@@ -20,10 +20,13 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match "FromBase64String"
         $e2eText | Should -Not -Match "Функционал: Четыре независимых"
         $e2eText | Should -Match '"-VanessaFeaturePath", \$vanessaFixture\.path'
-        ([regex]::Matches($e2eText, 'Invoke-E2EHelper -Action "check-dev-branch"')).Count | Should -Be 3
+        ([regex]::Matches($e2eText, 'Invoke-E2EHelper -Action "check-dev-branch"')).Count | Should -Be 4
         $e2eText | Should -Match 'RELEASE_E2E_RESUME_STATE_MISMATCH'
         $e2eText | Should -Match 'Restore-E2EInfobaseSnapshot'
         $e2eText | Should -Match 'runnerSha256'
+        $e2eText | Should -Match 'Get-E2EStageFingerprint'
+        $e2eText | Should -Match 'RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED'
+        $e2eText | Should -Match 'RELEASE_E2E_CACHE_CORRUPT'
         $e2eText | Should -Match 'workflowTree'
         $e2eText | Should -Match 'Register-E2EGeneratedCommit'
         $e2eText | Should -Match 'Sync-E2EWorktreeFromMaster'
@@ -261,13 +264,16 @@ switch ($Action) {
             $LASTEXITCODE | Should -Be 0
             $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $summary.status | Should -Be "passed"
-            $summary.schemaVersion | Should -Be 2
+            $summary.schemaVersion | Should -Be 3
+            $summary.durationMs | Should -BeGreaterThan 0
             $summary.checkpointWasResumed | Should -BeTrue
             @($summary.resumedStages) | Should -Contain "config-cadence"
             @($summary.resumedStages) | Should -Contain "config-roundtrip"
             @($summary.executedStages) | Should -Contain "extension-smoke"
             @($summary.executedStages) | Should -Contain "ondemand-mcp"
             @($summary.executedStages) | Should -Contain "result-cleanup"
+            $summary.stages.'config-cadence'.proofDurationMs | Should -BeGreaterOrEqual 0
+            @($summary.stages.'config-cadence'.attempts).Count | Should -BeGreaterThan 0
             $summary.sourceSnapshotPath | Should -Be $sourceSnapshot
             $summary.artifactSha256 | Should -Not -BeNullOrEmpty
             $summary.configLoadMode | Should -Be "partial"
@@ -311,20 +317,83 @@ switch ($Action) {
             @($actions | Where-Object { $_ -eq "release-e2e-config-roundtrip" }).Count | Should -Be 1
             @(& git -C $worktreeRoot status --porcelain).Count | Should -Be 0
 
-            # Auto refuses a changed helper identity, while explicit Restart
-            # uses the recorded baseline rollback and starts a new exact run.
-            Add-Content -LiteralPath $helperPath -Encoding UTF8 -Value "# changed helper identity"
+            # Simulate a same-input workflow release: capability proofs reuse,
+            # while verification/export/cleanup execute again and persist fresh
+            # post-config state.
+            $checkpointPath = Join-Path $worktreeRoot ".agent-1c\runs\release-e2e\workflow-release-e2e\checkpoint.json"
+            $promotionCheckpoint = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $promotionCheckpoint.identity.workflowCommit = "1111111111111111111111111111111111111111"
+            [System.IO.File]::WriteAllText($checkpointPath, (($promotionCheckpoint | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+            $promotionSummaryPath = Join-Path $tempRoot "promotion-summary.json"
+            & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
+                -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $promotionSummaryPath -ResumeMode Auto
+            $LASTEXITCODE | Should -Be 0
+            $promotionSummary = Get-Content -LiteralPath $promotionSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $promotionSummary.crossReleaseReuse | Should -BeTrue
+            foreach ($stageName in @("config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
+                $promotionSummary.stages.$stageName.execution | Should -Be "reused"
+            }
+            @($promotionSummary.executedStages) | Should -Contain "verification-refresh"
+            @($promotionSummary.executedStages) | Should -Contain "result-cleanup"
+            @($promotionSummary.invalidatedStages) | Should -Contain "result-cleanup"
+            $promotedActions = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\release-e2e-actions.log") -Encoding UTF8
+            @($promotedActions | Where-Object { $_ -eq "check-dev-branch" }).Count | Should -Be 4
+            @($promotedActions | Where-Object { $_ -eq "release-e2e-config-roundtrip" }).Count | Should -Be 1
+
+            # A declared reusable stage with corrupt evidence must fail closed
+            # before any capability action is invoked.
+            $checkpointBytes = [System.IO.File]::ReadAllBytes($checkpointPath)
+            $checkpointForCorruption = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $evidencePath = [string]$checkpointForCorruption.stages.'config-roundtrip'.evidencePath
+            $evidenceBytes = [System.IO.File]::ReadAllBytes($evidencePath)
+            Add-Content -LiteralPath $evidencePath -Encoding UTF8 -Value "corrupt"
+            $roundtripCountBeforeCorruption = @($actions | Where-Object { $_ -eq "release-e2e-config-roundtrip" }).Count
+            $extensionCountBeforeCorruption = @($actions | Where-Object { $_ -eq "release-e2e-extension-smoke" }).Count
             $previousPreference = $ErrorActionPreference
             $ErrorActionPreference = "Continue"
             try {
-                $identityOutput = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
-                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath (Join-Path $tempRoot "identity-mismatch.json") -ResumeMode Auto 2>&1
-                $identityExitCode = $LASTEXITCODE
+                $corruptEvidenceOutput = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
+                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath (Join-Path $tempRoot "corrupt-evidence-summary.json") -ResumeMode Auto 2>&1
+                $corruptEvidenceExitCode = $LASTEXITCODE
             } finally {
                 $ErrorActionPreference = $previousPreference
+                [System.IO.File]::WriteAllBytes($evidencePath, $evidenceBytes)
+                [System.IO.File]::WriteAllBytes($checkpointPath, $checkpointBytes)
             }
-            $identityExitCode | Should -Not -Be 0
-            ($identityOutput -join [Environment]::NewLine) | Should -Match "RELEASE_E2E_RESUME_STATE_MISMATCH"
+            $corruptEvidenceExitCode | Should -Not -Be 0
+            ($corruptEvidenceOutput -join [Environment]::NewLine) | Should -Match "RELEASE_E2E_CACHE_CORRUPT"
+            $actionsAfterCorruption = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\release-e2e-actions.log") -Encoding UTF8
+            @($actionsAfterCorruption | Where-Object { $_ -eq "release-e2e-config-roundtrip" }).Count | Should -Be $roundtripCountBeforeCorruption
+            @($actionsAfterCorruption | Where-Object { $_ -eq "release-e2e-extension-smoke" }).Count | Should -Be $extensionCountBeforeCorruption
+
+            # Legacy checkpoints require one explicit scripted Restart migration.
+            $checkpointV2Text = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8
+            $legacyCheckpoint = $checkpointV2Text | ConvertFrom-Json
+            $legacyCheckpoint.schemaVersion = 1
+            [System.IO.File]::WriteAllText($checkpointPath, (($legacyCheckpoint | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+            $previousPreference = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                $upgradeOutput = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
+                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath (Join-Path $tempRoot "upgrade-required.json") -ResumeMode Auto 2>&1
+                $upgradeExitCode = $LASTEXITCODE
+            } finally { $ErrorActionPreference = $previousPreference }
+            $upgradeExitCode | Should -Not -Be 0
+            ($upgradeOutput -join [Environment]::NewLine) | Should -Match "RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED"
+            [System.IO.File]::WriteAllText($checkpointPath, $checkpointV2Text, [System.Text.UTF8Encoding]::new($false))
+
+            # Auto keeps only exact stage fingerprints across a new release.
+            Add-Content -LiteralPath $helperPath -Encoding UTF8 -Value "# changed helper identity"
+            $incrementalSummaryPath = Join-Path $tempRoot "incremental-summary.json"
+            & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
+                -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $incrementalSummaryPath -ResumeMode Auto
+            $LASTEXITCODE | Should -Be 0
+            $incrementalSummary = Get-Content -LiteralPath $incrementalSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $incrementalSummary.crossReleaseReuse | Should -BeTrue
+            @($incrementalSummary.invalidatedStages) | Should -Contain "config-cadence"
+            $incrementalSummary.stages.'verification-refresh'.execution | Should -Be "reused"
+            $incrementalSummary.stages.'verification-refresh'.reuseReason | Should -Match "current config-cadence"
+            @($incrementalSummary.executedStages) | Should -Contain "result-cleanup"
 
             # Restart is the explicit destructive rollback path. It must accept
             # a clean externally advanced branch HEAD, while Auto above remains
