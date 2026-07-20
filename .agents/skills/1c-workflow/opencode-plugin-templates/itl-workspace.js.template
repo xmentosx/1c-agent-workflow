@@ -1,0 +1,248 @@
+import { tool } from "@opencode-ai/plugin"
+import { existsSync } from "node:fs"
+import { join } from "node:path"
+
+const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
+function unwrap(result, operation) {
+  if (result?.error) {
+    const detail = typeof result.error === "string" ? result.error : JSON.stringify(result.error)
+    throw new Error(`${operation} failed: ${detail}`)
+  }
+  return result?.data ?? result
+}
+
+async function run(cwd, args) {
+  const options = { stdout: "pipe", stderr: "pipe", stdin: "ignore" }
+  if (cwd) options.cwd = cwd
+  const process = Bun.spawn(args, options)
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ])
+  return { stdout, stderr, exitCode }
+}
+
+async function git(cwd, ...args) {
+  return run(undefined, ["git", "-C", cwd, ...args])
+}
+
+const normalizePath = (value) => value.replaceAll("\\", "/").toLowerCase()
+
+function parsePlan(stdout) {
+  const line = stdout
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .reverse()
+    .find((item) => item.startsWith("{") && item.endsWith("}"))
+  if (!line) throw new Error(`ITL_WORKSPACE_PLAN_INVALID: helper returned no JSON plan. Output: ${stdout.trim()}`)
+  return JSON.parse(line)
+}
+
+async function waitUntilReady(plan, workspace) {
+  const deadline = Date.now() + 60_000
+  const helper = join(workspace.directory, ".agents", "skills", "1c-workflow", "scripts", "agent-1c.ps1")
+  while (Date.now() < deadline) {
+    const branch = await git(workspace.directory, "branch", "--show-current")
+    const head = await git(workspace.directory, "rev-parse", "HEAD")
+    const listed = await git(plan.mainWorktreePath, "worktree", "list", "--porcelain")
+    if (
+      branch.exitCode === 0 && branch.stdout.trim() === plan.branch &&
+      head.exitCode === 0 && head.stdout.trim() === plan.baseCommit &&
+      listed.exitCode === 0 && normalizePath(listed.stdout).includes(`worktree ${normalizePath(workspace.directory)}`) &&
+      existsSync(helper)
+    ) return
+    await delay(250)
+  }
+  throw new Error(`OPENCODE_WORKSPACE_NOT_READY: native workspace did not finish checkout within 60 seconds: ${workspace.directory}`)
+}
+
+async function requireWorktreeAdapter(client, mainRoot) {
+  let adapters
+  try {
+    adapters = unwrap(await client.experimental.workspace.adapter.list({ directory: mainRoot }), "workspace adapter probe")
+  } catch (error) {
+    throw new Error(`OPENCODE_WORKSPACE_API_UNAVAILABLE: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  if (!Array.isArray(adapters) || !adapters.some((item) => item?.type === "worktree")) {
+    throw new Error("OPENCODE_WORKSPACE_API_UNAVAILABLE: native worktree workspace adapter is not available. Update OpenCode, set OPENCODE_EXPERIMENTAL_WORKSPACES=true, and restart OpenCode.")
+  }
+}
+
+async function runHelper(projectRoot, action, args = []) {
+  const helper = join(projectRoot, ".agents", "skills", "1c-workflow", "scripts", "agent-1c.ps1")
+  return run(projectRoot, [
+    "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", helper,
+    "-ProjectRoot", projectRoot, "-Action", action, ...args,
+  ])
+}
+
+async function getClosePlan(worktree, name) {
+  const result = await runHelper(worktree, "get-dev-workspace-close-plan", ["-DevBranchName", name])
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || result.stdout.trim() || "ITL OpenCode close preflight failed")
+  }
+  return parsePlan(result.stdout)
+}
+
+async function setDeregistration(plan, status, workspaceID, error = "") {
+  const args = [
+    "-DevBranchName", plan.safeName, "-DeregistrationStatus", status,
+    "-ClientWorkspaceId", workspaceID,
+  ]
+  if (error) args.push("-DeregistrationError", error)
+  const result = await runHelper(plan.mainWorktreePath, "set-dev-workspace-deregistration", args)
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || result.stdout.trim() || `Unable to record OpenCode deregistration status: ${status}`)
+  }
+}
+
+export const ItlWorkspacePlugin = async ({ client }) => ({
+  tool: {
+    itl_create_dev_workspace: tool({
+      description: "Create a native OpenCode workspace for a new ITL development branch and initialize its branch runtime.",
+      args: {
+        kind: tool.schema.enum(["configuration", "extension"]),
+        name: tool.schema.string().min(1),
+        extensionInitMode: tool.schema.enum(["Empty", "Cfe"]).optional(),
+        extensionName: tool.schema.string().optional(),
+        extensionSourcePath: tool.schema.string().optional(),
+      },
+      async execute(args, context) {
+        const mainRoot = context.worktree
+        const helper = join(mainRoot, ".agents", "skills", "1c-workflow", "scripts", "agent-1c.ps1")
+        const planResult = await run(mainRoot, [
+          "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", helper,
+          "-ProjectRoot", mainRoot, "-Action", "get-dev-workspace-plan",
+          "-DevBranchName", args.name, "-DevBranchKind", args.kind,
+        ])
+        if (planResult.exitCode !== 0) {
+          throw new Error(planResult.stderr.trim() || planResult.stdout.trim() || "ITL workspace preflight failed")
+        }
+        const plan = parsePlan(planResult.stdout)
+
+        await requireWorktreeAdapter(client, mainRoot)
+
+        const list = async () => unwrap(await client.experimental.workspace.list({ directory: mainRoot }), "workspace list")
+        let workspaces = await list()
+        let workspace = Array.isArray(workspaces) ? workspaces.find((item) => item?.branch === plan.branch) : undefined
+        if (!workspace && plan.mode === "resume") {
+          unwrap(await client.experimental.workspace.syncList({ directory: mainRoot }), "workspace registration sync")
+          workspaces = await list()
+          workspace = Array.isArray(workspaces) ? workspaces.find((item) => item?.branch === plan.branch) : undefined
+        }
+        if (!workspace && plan.mode === "create") {
+          workspace = unwrap(await client.experimental.workspace.create({
+            directory: mainRoot,
+            type: "worktree",
+            branch: plan.branch,
+            extra: { itlManaged: true, safeDevBranchName: plan.safeName },
+          }), "workspace create")
+        }
+        if (!workspace?.id || !workspace?.directory) {
+          throw new Error(`OPENCODE_WORKSPACE_API_UNAVAILABLE: no registered native workspace was found for ${plan.branch}`)
+        }
+
+        await waitUntilReady(plan, workspace)
+        const wrapper = join(workspace.directory, ".agents", "skills", "1c-workflow", "scripts", "run-itl-command.ps1")
+        const adoptArgs = [
+          "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", wrapper, "-Windowed", "--",
+          "-Action", "adopt-dev-worktree", "-DevBranchName", args.name, "-DevBranchKind", args.kind,
+          "-WorkspaceProvider", "opencode", "-ClientWorkspaceId", workspace.id,
+          "-MainWorktreePath", plan.mainWorktreePath, "-WorkspaceBaseCommit", plan.baseCommit,
+          "-RuntimeRoot", plan.runtimeRoot,
+        ]
+        if (args.extensionInitMode) adoptArgs.push("-ExtensionInitMode", args.extensionInitMode)
+        if (args.extensionName) adoptArgs.push("-ExtensionName", args.extensionName)
+        if (args.extensionSourcePath) adoptArgs.push("-ExtensionSourcePath", args.extensionSourcePath)
+        const adopted = await run(workspace.directory, adoptArgs)
+        if (adopted.exitCode !== 0) {
+          throw new Error(adopted.stderr.trim() || adopted.stdout.trim() || `ITL adopt failed for ${workspace.directory}`)
+        }
+
+        unwrap(await client.experimental.workspace.warp({
+          directory: mainRoot,
+          id: workspace.id,
+          sessionID: context.sessionID,
+          copyChanges: false,
+        }), "workspace handoff")
+        return {
+          title: `ITL workspace: ${plan.branch}`,
+          output: `Branch: ${plan.branch}\nWorkspace: ${workspace.directory}\nWorkspace ID: ${workspace.id}\nRuntime: ${plan.runtimeRoot}\nStatus: ready`,
+          metadata: { branch: plan.branch, workspace: workspace.directory, workspaceID: workspace.id },
+        }
+      },
+    }),
+    itl_close_dev_workspace: tool({
+      description: "Close a new provider-managed ITL OpenCode workspace, warp the current session to master, and remove the native workspace registration.",
+      args: {
+        name: tool.schema.string().optional(),
+        allowUnverifiedClose: tool.schema.boolean().optional(),
+      },
+      async execute(args, context) {
+        const worktree = context.worktree
+        let name = args.name
+        if (!name) {
+          const branch = await git(worktree, "branch", "--show-current")
+          if (branch.exitCode !== 0 || !branch.stdout.trim().startsWith("itldev/")) {
+            throw new Error("ITL OpenCode workspace close requires an itldev/* workspace or an explicit branch name.")
+          }
+          name = branch.stdout.trim().slice("itldev/".length)
+        }
+
+        let plan = await getClosePlan(worktree, name)
+        await requireWorktreeAdapter(client, plan.mainWorktreePath)
+        if (!plan.closed) {
+          const wrapper = join(worktree, ".agents", "skills", "1c-workflow", "scripts", "run-itl-command.ps1")
+          const closeArgs = [
+            "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", wrapper, "-Windowed", "--",
+            "-Action", "close-dev-branch", "-DevBranchName", name,
+          ]
+          if (args.allowUnverifiedClose) closeArgs.push("-AllowUnverifiedClose")
+          const closed = await run(worktree, closeArgs)
+          if (closed.exitCode !== 0) {
+            throw new Error(closed.stderr.trim() || closed.stdout.trim() || `ITL close failed for ${plan.branch}`)
+          }
+          plan = await getClosePlan(worktree, name)
+          if (!plan.closed) throw new Error(`ITL close completed without closed state for ${plan.branch}`)
+        }
+
+        const list = async () => unwrap(await client.experimental.workspace.list({ directory: plan.mainWorktreePath }), "workspace list")
+        let workspaces = await list()
+        let workspace = Array.isArray(workspaces) ? workspaces.find((item) => item?.branch === plan.branch) : undefined
+        if (!workspace) {
+          unwrap(await client.experimental.workspace.syncList({ directory: plan.mainWorktreePath }), "workspace registration sync")
+          workspaces = await list()
+          workspace = Array.isArray(workspaces) ? workspaces.find((item) => item?.branch === plan.branch) : undefined
+        }
+        if (!workspace?.id) {
+          throw new Error(`OPENCODE_WORKSPACE_DEREGISTRATION_PENDING: native registration cannot be recovered for ${plan.branch}; locked Git worktree and ITL state were preserved.`)
+        }
+
+        unwrap(await client.experimental.workspace.warp({
+          directory: plan.mainWorktreePath,
+          id: null,
+          sessionID: context.sessionID,
+          copyChanges: false,
+        }), "workspace return to main")
+
+        await setDeregistration(plan, "pending", workspace.id)
+        try {
+          unwrap(await client.experimental.workspace.remove({ directory: plan.mainWorktreePath, id: workspace.id }), "workspace remove")
+          await setDeregistration(plan, "complete", workspace.id)
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          await setDeregistration(plan, "failed", workspace.id, message)
+          throw new Error(`OPENCODE_WORKSPACE_DEREGISTRATION_PENDING: ${message}`)
+        }
+
+        return {
+          title: `ITL workspace closed: ${plan.branch}`,
+          output: `Branch: ${plan.branch}\nWorkspace ID: ${workspace.id}\nSession: main workspace\nStatus: closed and deregistered`,
+          metadata: { branch: plan.branch, workspaceID: workspace.id, status: "closed" },
+        }
+      },
+    }),
+  },
+})

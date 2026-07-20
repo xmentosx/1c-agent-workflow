@@ -45,6 +45,10 @@ loadfrom1cbase
 getconfigfiles
 deploy-and-test
 sync-master
+get-dev-workspace-plan
+get-dev-workspace-close-plan
+set-dev-workspace-deregistration
+adopt-dev-worktree
 new-dev-branch
 new-extension-dev-branch
 configure-dev-branch-unsafe-action-protection
@@ -71,6 +75,8 @@ release-e2e-extension-smoke
 ```
 
 Extension helper actions are advanced/helper commands. `new-extension-dev-branch` normally collects and performs extension initialization as its second internal phase. If parameters are unknown, it records `pending`; on first entry the agent collects them in chat and invokes `init-dev-branch-extension` internally. Never expose that PowerShell invocation or generate a visible initialization slash command. Keep recovery-only `set-dev-branch-extension`/`dump-dev-branch-extension` available through helper actions or natural-language requests. `set-dev-branch-extension` records context only and never creates an extension. New development branches register `itl-roctup-data` and `itl-vanessa-ui`; their backend processes are private on-demand runtime, not helper actions.
+
+`get-dev-workspace-plan` and `adopt-dev-worktree` are an internal pair used only by the managed OpenCode project plugin. The first performs a read-only native-workspace preflight; the second accepts the exact new `itldev/*` worktree created by OpenCode. `get-dev-workspace-close-plan` and `set-dev-workspace-deregistration` coordinate provider-aware close after the ordinary ITL verification/export gates have completed. They never migrate legacy development branches and must not be invoked as user-facing slash commands.
 
 `configure-dev-branch-unsafe-action-protection` is an interactive recovery action for an existing development worktree when branch creation used `skip` before protection was actually disabled. Run it through `run-agent-1c-window.ps1`, optionally passing `-InfoBaseUser <name>` for an empty-password local user. It forces the normal visible Designer confirmation flow and records confirmation in branch state; it never disables protection automatically.
 

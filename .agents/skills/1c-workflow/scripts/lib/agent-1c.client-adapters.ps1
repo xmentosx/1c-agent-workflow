@@ -1,5 +1,5 @@
 function Get-ItlClientAdapterRegistry {
-    return [ordered]@{
+    $registry = [ordered]@{
         codex = [ordered]@{
             id = "codex"
             rulesPath = ".codex/rules"
@@ -90,6 +90,13 @@ function Get-ItlClientAdapterRegistry {
             mcpRemoteFormat = "remote"
             trackedMcpConfig = $true
             mcpKeyMode = "letter-prefix"
+            devWorkspaceMode = "client-native-adopt"
+            workspaceProvider = "opencode"
+            handoffMode = "native-workspace"
+            workspacePluginPath = ".opencode/plugins/itl-workspace.js"
+            requiredUserEnvironment = [ordered]@{
+                OPENCODE_EXPERIMENTAL_WORKSPACES = "true"
+            }
             reload = "Restart OpenCode."
         }
         kimi = [ordered]@{
@@ -184,6 +191,15 @@ function Get-ItlClientAdapterRegistry {
             reload = "Trust the project and restart Pi so .pi settings, prompts, skills, and MCP extension are loaded."
         }
     }
+
+    foreach ($client in @($registry.Keys)) {
+        $entry = $registry[$client]
+        if (-not $entry.Contains("devWorkspaceMode")) { $entry["devWorkspaceMode"] = "external-create" }
+        if (-not $entry.Contains("workspaceProvider")) { $entry["workspaceProvider"] = "git" }
+        if (-not $entry.Contains("handoffMode")) { $entry["handoffMode"] = "editor-open" }
+        if (-not $entry.Contains("workspacePluginPath")) { $entry["workspacePluginPath"] = "" }
+    }
+    return $registry
 }
 
 function Get-ItlClientAdapter {
@@ -636,6 +652,24 @@ function Convert-ItlCommandForClient {
     )
 
     $adapter = Get-ItlClientAdapter -Client $Client
+    if ($Client -eq "opencode" -and $FileName -in @("itl-new-config-branch.md", "itl-new-extension-branch.md")) {
+        $kind = if ($FileName -eq "itl-new-extension-branch.md") { "extension" } else { "configuration" }
+        $description = if ($kind -eq "extension") { "Create an ITL extension branch in a native OpenCode workspace" } else { "Create an ITL configuration branch in a native OpenCode workspace" }
+        $extension = if ($kind -eq "extension") { @"
+Before calling the tool, collect the extension initialization mode (`Empty` or `Cfe`), extension name, and CFE path when applicable. If the developer explicitly does not know them yet, omit all extension arguments so initialization remains pending.
+"@ } else { "" }
+        return @"
+---
+description: $description
+agent: build
+---
+
+Use this command only from the `master` workspace. Treat any text after the command as the development branch name; if it is missing, ask for one short value.
+
+$extension
+Call the `itl_create_dev_workspace` tool exactly once with `kind="$kind"` and the collected values. Do not run `git worktree add`, the PowerShell lifecycle helper, or an OpenCode legacy worktree command yourself. The tool creates and registers the native workspace, initializes ITL inside it, and moves this session there. Return its result verbatim. If it reports `OPENCODE_WORKSPACE_API_UNAVAILABLE`, stop without creating an external worktree.
+"@
+    }
     if ($adapter.commandRouting -eq "none") {
         $Text = [regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?\n', '')
     } elseif (Test-ItlRoutineEnabledForCommand -FileName $FileName) {
@@ -674,6 +708,13 @@ function Get-ItlExpectedSurfaceFiles {
     $routinePath = Get-ItlRoutineAgentRelativePath -Client $Client
     $routineNeeded = @($files.Keys | Where-Object { ([string]$files[$_]) -match '(?m)^agent:\s*itl-routine\s*$' }).Count -gt 0
     if ($routinePath -and $routineNeeded) { $files[$routinePath] = New-ItlRoutineAgentText -Client $Client }
+    if ($adapter.workspacePluginPath) {
+        $pluginTemplate = Join-Path $SourceRoot ".agents\skills\1c-workflow\opencode-plugin-templates\itl-workspace.js.template"
+        if (-not (Test-Path -LiteralPath $pluginTemplate -PathType Leaf)) {
+            throw "OpenCode workspace plugin template is missing: $pluginTemplate"
+        }
+        $files[[string]$adapter.workspacePluginPath] = Read-Utf8Text -Path $pluginTemplate
+    }
     return $files
 }
 
@@ -851,6 +892,39 @@ function Sync-ItlClientSurface {
         Untrack-GeneratedKiloItlCommands
     }
     Write-Host "Generated $client ITL command surface: $surface ($($adapter.commandsPath); format=$($adapter.commandFormat))"
+}
+
+function Sync-ItlClientUserEnvironment {
+    param([string]$Client)
+
+    $adapter = Get-ItlClientAdapter -Client $Client
+    if ($adapter.PSObject.Properties.Name -notcontains "requiredUserEnvironment" -or $null -eq $adapter.requiredUserEnvironment) {
+        return
+    }
+
+    $changed = @()
+    foreach ($entry in $adapter.requiredUserEnvironment.GetEnumerator()) {
+        $name = [string]$entry.Key
+        $expected = [string]$entry.Value
+        $current = [Environment]::GetEnvironmentVariable($name, "User")
+        $matches = [string]::Equals([string]$current, $expected, [StringComparison]::OrdinalIgnoreCase)
+        if ($expected -eq "true" -and $current -eq "1") { $matches = $true }
+        if (-not $matches) {
+            try {
+                [Environment]::SetEnvironmentVariable($name, $expected, "User")
+            } catch {
+                throw "ITL_CLIENT_ENVIRONMENT_CONFIG_FAILED: unable to set user environment variable '$name' for '$Client'. $($_.Exception.Message)"
+            }
+            $changed += $name
+            $current = $expected
+        }
+        [Environment]::SetEnvironmentVariable($name, $current, "Process")
+    }
+
+    if ($changed.Count -gt 0) {
+        Write-Host "Configured required $Client user environment: $($changed -join ', ')."
+        Write-Host $adapter.reload
+    }
 }
 
 function Switch-ItlClient {

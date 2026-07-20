@@ -71,7 +71,7 @@ function Find-LauncherRunDirectory {
 }
 
 $allowedActions = @(
-    "new-dev-branch", "new-extension-dev-branch", "check-dev-branch",
+    "new-dev-branch", "new-extension-dev-branch", "adopt-dev-worktree", "close-dev-branch", "check-dev-branch",
     "refresh-dev-branch", "export-dev-branch-result", "update-workflow",
     "itl-switch-client"
 )
@@ -84,7 +84,7 @@ foreach ($reserved in @("-RunStatusPath", "-RunLogPath", "-ProjectRoot")) {
         throw "$reserved is owned by run-itl-command.ps1 and cannot be passed through."
     }
 }
-$branchActions = @("new-dev-branch", "new-extension-dev-branch")
+$branchActions = @("new-dev-branch", "new-extension-dev-branch", "adopt-dev-worktree", "close-dev-branch")
 if ($windowed -ne ($action -in $branchActions)) {
     throw "Branch creation actions require -Windowed; other compact ITL actions must not use it."
 }

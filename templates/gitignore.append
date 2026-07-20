@@ -17,6 +17,7 @@ logs/
 .agent-1c/locks/
 .agent-1c/release-e2e.json
 .agent-1c/infobases/
+.agent-1c/workspaces/
 .agent-1c/tools/event-log-exporter/
 .agent-1c/tools/auto-update/
 .agent-1c/tools/data-mcp/
@@ -36,6 +37,7 @@ build/test-results/
 .cursor/commands/itl*.md
 .opencode/command/itl*.md
 .opencode/agent/itl-routine.md
+.opencode/plugins/itl-workspace.js
 .mcp.json
 .cursor/mcp.json
 opencode.json

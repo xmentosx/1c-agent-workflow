@@ -304,7 +304,7 @@
 
     It "keeps Enterprise normalization as the final resumable branch initialization step" {
         $initStart = $HelperText.IndexOf('function Initialize-DevBranchRuntime')
-        $initBlock = $HelperText.Substring($initStart, $HelperText.IndexOf('function Get-ResumableDevBranchState', $initStart) - $initStart)
+        $initBlock = $HelperText.Substring($initStart, $HelperText.IndexOf('function Get-DevWorkspacePlan', $initStart) - $initStart)
         $repositoryUnboundIndex = $initBlock.LastIndexOf('-Status "repository-unbound"')
         $protectionIndex = $initBlock.LastIndexOf('Resolve-DevBranchUnsafeActionProtectionState')
         $protectionStateIndex = $initBlock.LastIndexOf('-Status "unsafe-action-protection-resolved"')
