@@ -3158,7 +3158,25 @@ function Write-DevBranchWorktreeOpenMessage {
     Write-Host ""
     Write-Host "Чтобы продолжить работу агентом с этой линией разработки, откройте отдельное окно выбранного агента или IDE в этой папке."
     Write-Host "Могу попробовать открыть новое окно агента для этой папки автоматически."
-    Write-Host "Если Kilo показывает устаревший список slash-команд в новом worktree, выполните /reload."
+    Write-Host "Новое окно прочитает контекст этого worktree при открытии; дополнительных действий для перечитывания контекста в нем не требуется."
+
+    $script:RunWorktreePath = $WorktreePath
+    $script:RunRequiredAction = "Open a new selected-client or IDE window at '$WorktreePath'. The newly opened window reads that worktree's project context on startup; no additional client reload is required there."
+}
+
+function Write-PostInitClientReloadHandoff {
+    $client = Get-ItlActiveClient
+    if ($client -eq "kilocode") {
+        $instruction = "In the Kilo Code window that was already open on master before initialization, run /reload now so it rereads the initialized project. Do this before the next master action. A later newly opened worktree window reads its own context on startup."
+    } else {
+        $adapterInstruction = [string](Get-StateValue -State (Get-ItlClientAdapter -Client $client) -Name "reload" -Default "Restart the active client.")
+        $instruction = "If the $client window was already open before initialization, make it reread the initialized master project now: $adapterInstruction A later newly opened worktree window reads its own context on startup."
+    }
+
+    $script:RunRequiredAction = $instruction
+    Write-Host ""
+    Write-Host "Initialization client handoff:"
+    Write-Host $instruction
 }
 
 function Clear-DevBranchContext {
@@ -4425,6 +4443,7 @@ function Initialize-Project {
     }
     Set-RunStage -Stage "init.final-git-clean" -Detail "Checking final Git worktree state"
     Assert-InitGitClean
+    Write-PostInitClientReloadHandoff
     Set-RunStage -Stage "init.complete" -Detail "Initialization completed"
 }
 

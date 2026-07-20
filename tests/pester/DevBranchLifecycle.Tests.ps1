@@ -1996,6 +1996,49 @@ if (`$?) { exit 0 } else { exit 1 }
         $worktreeMessage = -join ([char[]](0x0420, 0x0430, 0x0431, 0x043E, 0x0447, 0x0430, 0x044F, 0x0020, 0x043F, 0x0430, 0x043F, 0x043A, 0x0430, 0x0020, 0x043D, 0x043E, 0x0432, 0x043E, 0x0439, 0x0020, 0x0432, 0x0435, 0x0442, 0x043A, 0x0438))
         $HelperText | Should -Match ([regex]::Escape($createdMessage))
         $HelperText | Should -Match ([regex]::Escape($worktreeMessage))
+
+        $openMessageFunction = [regex]::Match($HelperText, '(?s)function Write-DevBranchWorktreeOpenMessage \{.*?(?=\r?\nfunction )').Value
+        $openMessageFunction | Should -Not -BeNullOrEmpty
+        $openMessageFunction | Should -Not -Match '/reload'
+        $openMessageFunction | Should -Match 'no additional client reload is required there'
+        $openMessageFunction | Should -Match 'RunRequiredAction'
+
+        $handoff = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:RunRequiredAction = ""
+            $script:RunWorktreePath = ""
+            $output = Write-DevBranchWorktreeOpenMessage -MainProjectPath "C:\fixture\main" -WorktreePath "C:\fixture\branch1" 6>&1
+            [pscustomobject]@{
+                output = ($output -join [Environment]::NewLine)
+                requiredAction = $script:RunRequiredAction
+                worktreePath = $script:RunWorktreePath
+            }
+        }
+        $handoff.output | Should -Not -Match '/reload'
+        $handoff.requiredAction | Should -Match 'no additional client reload is required there'
+        $handoff.worktreePath | Should -Be "C:\fixture\branch1"
+    }
+
+    It "requires initial Kilo reload in the existing master window only" {
+        $initHandoffFunction = [regex]::Match($HelperText, '(?s)function Write-PostInitClientReloadHandoff \{.*?(?=\r?\nfunction )').Value
+        $initHandoffFunction | Should -Not -BeNullOrEmpty
+        $initHandoffFunction | Should -Match ([regex]::Escape('run /reload now'))
+        $initHandoffFunction | Should -Match 'already open on master before initialization'
+        $initHandoffFunction | Should -Match 'newly opened worktree window reads its own context on startup'
+        $HelperText | Should -Match 'Assert-InitGitClean\s+Write-PostInitClientReloadHandoff\s+Set-RunStage -Stage "init\.complete"'
+
+        $handoff = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-ItlActiveClient { return "kilocode" }
+            $script:RunRequiredAction = ""
+            $output = Write-PostInitClientReloadHandoff 6>&1
+            [pscustomobject]@{
+                output = ($output -join [Environment]::NewLine)
+                requiredAction = $script:RunRequiredAction
+            }
+        }
+        $handoff.output | Should -Match ([regex]::Escape('run /reload now'))
+        $handoff.requiredAction | Should -Match 'before the next master action'
     }
 
     It "documents and templates the development branch worktree root" {
