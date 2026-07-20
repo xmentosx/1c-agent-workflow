@@ -3321,9 +3321,7 @@ function Get-DevBranchInfoBaseRoot {
 
 function Get-DefaultDevBranchWorktreeRoot {
     $mainWorktreePath = Get-MainWorktreePath
-    $parent = Split-Path -Parent $mainWorktreePath
-    $leaf = Split-Path -Leaf $mainWorktreePath
-    return [System.IO.Path]::GetFullPath((Join-Path $parent ($leaf + "-worktrees")))
+    return [System.IO.Path]::GetFullPath((Split-Path -Parent $mainWorktreePath))
 }
 
 function Get-DevBranchWorktreeRoot {
@@ -3347,7 +3345,10 @@ function Resolve-DevBranchWorktreePath {
         return [System.IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $DevBranchWorktreePath))
     }
 
-    return [System.IO.Path]::GetFullPath((Join-Path (Get-DevBranchWorktreeRoot) $SafeDevBranchName))
+    $mainWorktreePath = Get-MainWorktreePath
+    $projectFolderName = Split-Path -Leaf $mainWorktreePath
+    $worktreeFolderName = "$projectFolderName-$SafeDevBranchName"
+    return [System.IO.Path]::GetFullPath((Join-Path (Get-DevBranchWorktreeRoot) $worktreeFolderName))
 }
 
 function ConvertTo-AgentToolList {

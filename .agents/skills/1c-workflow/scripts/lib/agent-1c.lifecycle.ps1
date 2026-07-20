@@ -3299,13 +3299,12 @@ function Get-LauncherProjectName {
 
 function Get-LauncherInfoBaseName {
     param(
-        [string]$DevBranchName,
+        [string]$SafeDevBranchName,
         [string]$ProjectRootForName = $script:ProjectRoot
     )
 
     $projectName = Get-LauncherProjectName -ProjectRootForName $ProjectRootForName
-    $branchName = ConvertTo-LauncherLabel -Value $DevBranchName
-    return "$projectName - $branchName"
+    return "$projectName-$SafeDevBranchName"
 }
 
 function New-LauncherConnectString {
@@ -3382,7 +3381,7 @@ function Register-DevBranchInLauncher {
     param(
         [string]$InfoBaseKind,
         [string]$InfoBasePath,
-        [string]$DevBranchName,
+        [string]$SafeDevBranchName,
         [string]$ProjectRootForFolder = $script:ProjectRoot,
         [string]$ExistingLauncherId = ""
     )
@@ -3397,7 +3396,7 @@ function Register-DevBranchInLauncher {
     }
 
     $sections = @(Get-LauncherSections -Lines $lines)
-    $displayName = Get-LauncherInfoBaseName -DevBranchName $DevBranchName -ProjectRootForName $ProjectRootForFolder
+    $displayName = Get-LauncherInfoBaseName -SafeDevBranchName $SafeDevBranchName -ProjectRootForName $ProjectRootForFolder
     $folder = Get-LauncherProjectFolder -ProjectRootForFolder $ProjectRootForFolder
     $connect = New-LauncherConnectString -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
 
@@ -4748,7 +4747,7 @@ function Initialize-DevBranchRuntime {
         $launcherRegistration = Register-DevBranchInLauncher `
             -InfoBaseKind $kind `
             -InfoBasePath $DevBranchInfoBasePath `
-            -DevBranchName $DevBranchName `
+            -SafeDevBranchName $SafeDevBranchName `
             -ProjectRootForFolder $MainProjectRoot `
             -ExistingLauncherId ([string]$stateHash["launcherInfoBaseId"])
         $stateHash["launcherRegistered"] = $launcherRegistration.registered

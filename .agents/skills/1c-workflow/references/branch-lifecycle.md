@@ -4,10 +4,11 @@ Use this reference for creating, refreshing, switching, listing, or maintaining 
 
 ## Git And Worktree Rules
 
-- `master` is the source worktree. New work uses sibling Git worktrees by default under `<project-folder>-worktrees/<branch>`. OpenCode 1.18.3 or newer instead uses its native `worktree` workspace adapter through the managed ITL plugin; Kilo and every other client keep the external sibling-worktree flow. Successful init/update/switch for an OpenCode project persists `OPENCODE_EXPERIMENTAL_WORKSPACES=true` in the Windows user environment; restart OpenCode so its server sees the capability flag before creating a branch.
+- `master` is the source worktree. New work uses sibling Git worktrees named `<project-folder>-<safe-branch>` by default, without an intermediate worktrees directory. OpenCode 1.18.3 or newer instead uses its native `worktree` workspace adapter through the managed ITL plugin; Kilo and every other client keep the external sibling-worktree flow. Successful init/update/switch for an OpenCode project persists `OPENCODE_EXPERIMENTAL_WORKSPACES=true` in the Windows user environment; restart OpenCode so its server sees the capability flag before creating a branch.
 - Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder mode.
 - Stop on unexpected dirty tracked Git state before worktree creation, legacy switching, copying bases, dumping config files, refresh, result, or advanced close.
 - Worktree-created `itldev/*` lifecycle commands must run from the branch worktree unless the helper explicitly delegates to the main worktree.
+- Existing branch state remains authoritative: worktrees previously created under `<project-folder>-worktrees/<branch>` are resumed in place and are not moved to the flat layout.
 - Runtime folders such as `.agent-1c/dev-branches/`, `.agent-1c/event-log-baselines/`, `.agent-1c/event-log-signature-cache/`, `.agent-1c/infobases/`, `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/tools/`, `.codex/config.toml`, and `.kilo/kilo.json*` are local ignored state.
 
 ## Lifecycle Operation Lock
@@ -31,7 +32,7 @@ Use the monitored launcher by default when `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_
    - Server base: run configured `serverBaseCopyScript`; do not invent server copy commands.
 6. If `sourceUsesRepository=true`, unbind the development branch copy from 1C configuration repository storage without repository parameters.
 7. Resolve unsafe-action protection immediately after repository unbind. Reuse a context-matching source confirmation from the main worktree; otherwise run the visible Russian confirmation/Configurator loop for the copied base. Persist `unsafe-action-protection-resolved` before continuing so resume never recopies the base or repeats a proven answer.
-8. Register the branch infobase in `%APPDATA%\1C\1CEStart\ibases.v8i` under `/ITL/<project-root-name>` with entry name `<project-root-name> - <development-branch-name>`.
+8. Register the branch infobase in `%APPDATA%\1C\1CEStart\ibases.v8i` under `/ITL/<project-root-name>` with entry name `<project-root-name>-<safe-development-branch-name>`, matching the canonical worktree folder name.
 9. Save branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json` inside the worktree, including `createdWithWorktree`, `worktreePath`, `mainWorktreePath`, launcher metadata, `devBranchKind`, publication status fields, legacy MCP migration fields, and Vanessa Automation verification fields. Provider-marked OpenCode branches are the only exception: their canonical state and non-recoverable runtime live below the main worktree's ignored `.agent-1c`, and their adopted Git worktree is locked after validation.
 10. Activate branch context in `.dev.env`, inherit compatible ROCTUP/Vanessa artifacts, and register the stable `itl-roctup-data` and `itl-vanessa-ui` stdio facades with compact `resolve_tool`/`call_tool` surfaces for the active client. Neither backend nor 1C starts until the first inner call. If `master` has a complete vibecoding1c MCP selection, copy and rematerialize it for the new worktree.
 11. If web publication is enabled, run the helper-owned publication cycle: automatic publication only when `WEB_PUBLISH_AUTO=true`, otherwise manual URL entry or skip. Best-effort legacy branch Data MCP connects only after a publication URL exists.
