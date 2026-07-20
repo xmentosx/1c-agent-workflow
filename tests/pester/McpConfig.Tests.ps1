@@ -51,6 +51,67 @@
         $result.eachMode | Should -Be "each"
         $result.configId | Should -Be "only-config"
     }
+
+    It "auto-selects the project-version remote configuration during init without prompting" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:McpProvider = ""
+            $script:McpConfigId = ""
+            $script:selectionCalls = 0
+            $script:selectedProvider = ""
+            $script:selectedConfigId = ""
+
+            function Ensure-GitIgnore {}
+            function Invoke-Vibecoding1cMcpSetupSelectionInheritance {}
+            function Read-Vibecoding1cMcpSelection { return [pscustomobject]@{} }
+            function Get-Vibecoding1cMcpSelectionCompleteness { return [pscustomobject]@{ isComplete = $false; reasons = @("selection file is missing") } }
+            function Resolve-Vibecoding1cMcpProjectRemoteConfigId { return "pm5corp" }
+            function Get-BaseConfigurationVersion { return "PM5" }
+            function Set-Vibecoding1cMcpSelection {
+                $script:selectionCalls++
+                $script:selectedProvider = $script:McpProvider
+                $script:selectedConfigId = $script:McpConfigId
+            }
+            function Test-Vibecoding1cMcpSelectionNeedsLocalDistribution { return $false }
+            function Refresh-Vibecoding1cMcpRegistry {}
+            function Start-Vibecoding1cMcp {}
+            function Show-Vibecoding1cMcpStatus {}
+
+            Setup-Vibecoding1cMcp -ForProjectInitialization *> $null
+            [pscustomobject]@{
+                calls = $script:selectionCalls
+                provider = $script:selectedProvider
+                configId = $script:selectedConfigId
+                providerRestored = $script:McpProvider
+                configIdRestored = $script:McpConfigId
+            }
+        }
+
+        $result.calls | Should -Be 1
+        $result.provider | Should -Be "remote"
+        $result.configId | Should -Be "pm5corp"
+        $result.providerRestored | Should -Be ""
+        $result.configIdRestored | Should -Be ""
+    }
+
+    It "resolves one registry configuration matching the project PM version" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-EnvValue { param([string]$Name, [object]$Default); return $Default }
+            function Get-ConfigValue { param([string]$Path, [object]$Default); return $Default }
+            function Get-BaseConfigurationVersion { return "PM5" }
+            $registry = [pscustomobject]@{
+                configurations = @(
+                    [pscustomobject]@{ configId = "pm4corp"; configurationVersion = "4.2.40.2" },
+                    [pscustomobject]@{ configId = "pm5corp"; configurationVersion = "5.0.2.113" }
+                )
+            }
+            Resolve-Vibecoding1cMcpProjectRemoteConfigId -Registry $registry
+        }
+
+        $result | Should -Be "pm5corp"
+    }
+
     It "wires the ROCTUP on-demand facade, compatibility catalog, and token guardrails" {
         $entrypoint = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1")
         foreach ($action in @("install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status")) {

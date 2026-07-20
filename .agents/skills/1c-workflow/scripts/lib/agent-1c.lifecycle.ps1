@@ -4417,7 +4417,7 @@ function Initialize-Project {
     $vibecodingAlreadyCompleted = $InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.final-git-clean")
     if ($vibecodingRequested -and -not $vibecodingAlreadyCompleted) {
         Set-RunStage -Stage "init.vibecoding1c-mcp" -Detail "Setting up vibecoding1c MCP"
-        Setup-Vibecoding1cMcp
+        Setup-Vibecoding1cMcp -ForProjectInitialization
     } elseif ($vibecodingAlreadyCompleted) {
         Write-Host "Resume confirmed that vibecoding1c MCP setup completed in the interrupted run."
     } else {

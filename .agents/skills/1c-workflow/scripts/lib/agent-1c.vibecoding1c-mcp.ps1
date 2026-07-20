@@ -1273,6 +1273,36 @@ function Read-Vibecoding1cMcpRemoteConfigChoice {
     }
 }
 
+function Resolve-Vibecoding1cMcpProjectRemoteConfigId {
+    param([object]$Registry = $null)
+
+    $configuredConfigId = [string](Get-EnvValue -Name "VIBECODING1C_MCP_CONFIG_ID" -Default (Get-ConfigValue -Path "vibecoding1cMcp.remoteConfigId" -Default ""))
+    if (-not [string]::IsNullOrWhiteSpace($configuredConfigId)) {
+        return $configuredConfigId.Trim()
+    }
+
+    if ($null -eq $Registry) {
+        $Registry = Read-Vibecoding1cMcpRegistry
+    }
+
+    $baseVersion = Get-BaseConfigurationVersion
+    $configurationMajor = if ($baseVersion -eq "PM4") { "4" } else { "5" }
+    $matchingConfigIds = @(
+        Get-Vibecoding1cMcpRegistryConfigurations -Registry $Registry |
+            Where-Object {
+                $version = [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "configurationVersion" -Default "")
+                $version -match ("^" + [regex]::Escape($configurationMajor) + "(?:\.|$)")
+            } |
+            ForEach-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "configId" -Default "") } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Unique
+    )
+    if ($matchingConfigIds.Count -eq 1) {
+        return $matchingConfigIds[0]
+    }
+    return ""
+}
+
 function ConvertTo-Vibecoding1cMcpLocalScopedServer {
     param(
         [object]$Server,
@@ -3009,6 +3039,8 @@ function Invoke-DevBranchVibecoding1cMcpInheritance {
 }
 
 function Setup-Vibecoding1cMcp {
+    param([switch]$ForProjectInitialization)
+
     Write-Section "Setup vibecoding1c MCP"
 
     Ensure-GitIgnore
@@ -3024,7 +3056,26 @@ function Setup-Vibecoding1cMcp {
                 Write-Host "  - $reason"
             }
         }
-        Set-Vibecoding1cMcpSelection
+        if ($ForProjectInitialization) {
+            $projectConfigId = Resolve-Vibecoding1cMcpProjectRemoteConfigId
+            if ([string]::IsNullOrWhiteSpace($projectConfigId)) {
+                throw "vibecoding1c MCP remote configuration could not be selected automatically for base configuration $(Get-BaseConfigurationVersion). Set vibecoding1cMcp.remoteConfigId explicitly or run vibecoding1c-mcp-select manually."
+            }
+
+            Write-Host "Automatically selected vibecoding1c MCP remote configId '$projectConfigId' for base configuration $(Get-BaseConfigurationVersion)."
+            $previousProvider = $script:McpProvider
+            $previousConfigId = $script:McpConfigId
+            try {
+                $script:McpProvider = "remote"
+                $script:McpConfigId = $projectConfigId
+                Set-Vibecoding1cMcpSelection
+            } finally {
+                $script:McpProvider = $previousProvider
+                $script:McpConfigId = $previousConfigId
+            }
+        } else {
+            Set-Vibecoding1cMcpSelection
+        }
         $selection = Read-Vibecoding1cMcpSelection
     }
 
