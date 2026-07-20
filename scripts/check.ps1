@@ -75,6 +75,7 @@ $e2eReportPath = ""
 $reuseQualification = $false
 $qualificationReuseKind = ""
 $existingQualification = $null
+$parallelCompatibility = $null
 
 function Add-StageResult {
     param(
@@ -135,11 +136,10 @@ function ConvertTo-NativeArgument {
     return '"' + $Value.Replace('"', '\"') + '"'
 }
 
-function Invoke-PowerShellChild {
+function Start-PowerShellChildProcess {
     param(
         [Parameter(Mandatory = $true)][string]$ScriptPath,
         [string[]]$Arguments = @(),
-        [int]$TimeoutSeconds = 300,
         [string]$LogName = "child"
     )
     $stdoutPath = Join-Path $outputRoot ($LogName + ".stdout.log")
@@ -148,12 +148,40 @@ function Invoke-PowerShellChild {
     foreach ($argument in @($Arguments)) { $argumentParts += (ConvertTo-NativeArgument ([string]$argument)) }
     $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($argumentParts -join " ") -WorkingDirectory $repoRoot -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
     $null = $process.Handle
+    return [pscustomobject]@{ process = $process; stdoutPath = $stdoutPath; stderrPath = $stderrPath; logName = $LogName; startedAt = [DateTime]::UtcNow }
+}
+
+function Wait-PowerShellChildProcess {
+    param([Parameter(Mandatory = $true)][object]$Child, [int]$TimeoutSeconds = 300)
+    $process = $Child.process
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
         try { $process.Kill() } catch {}
-        throw "$LogName timed out after $TimeoutSeconds seconds. See $stdoutPath and $stderrPath"
+        throw "$($Child.logName) timed out after $TimeoutSeconds seconds. See $($Child.stdoutPath) and $($Child.stderrPath)"
     }
     $process.WaitForExit(); $process.Refresh()
-    if ([int]$process.ExitCode -ne 0) { throw "$LogName failed with exit code $($process.ExitCode). See $stdoutPath and $stderrPath" }
+    if ([int]$process.ExitCode -ne 0) { throw "$($Child.logName) failed with exit code $($process.ExitCode). See $($Child.stdoutPath) and $($Child.stderrPath)" }
+}
+
+function Invoke-PowerShellChild {
+    param(
+        [Parameter(Mandatory = $true)][string]$ScriptPath,
+        [string[]]$Arguments = @(),
+        [int]$TimeoutSeconds = 300,
+        [string]$LogName = "child"
+    )
+    $child = Start-PowerShellChildProcess -ScriptPath $ScriptPath -Arguments $Arguments -LogName $LogName
+    Wait-PowerShellChildProcess -Child $child -TimeoutSeconds $TimeoutSeconds
+}
+
+function Complete-ParallelGateStage {
+    param([string]$Name, [string]$Reason, [string]$Detail, [object]$Child, [int]$TimeoutSeconds)
+    try {
+        Wait-PowerShellChildProcess -Child $Child -TimeoutSeconds $TimeoutSeconds
+        Add-StageResult -Name $Name -Status "passed" -Execution "executed" -Reason $Reason -Detail $Detail -StartedAt $Child.startedAt -DurationMs ([int64]([DateTime]::UtcNow - $Child.startedAt).TotalMilliseconds)
+    } catch {
+        Add-StageResult -Name $Name -Status "failed" -Execution "executed" -Reason $Reason -Detail $_.Exception.Message -StartedAt $Child.startedAt -DurationMs ([int64]([DateTime]::UtcNow - $Child.startedAt).TotalMilliseconds)
+        throw
+    }
 }
 
 function Resolve-AiRulesSource {
@@ -366,6 +394,17 @@ try {
         }
     }
 
+    $forkReadyForParallel = -not $sourceIsLocal
+    if ($sourceIsLocal -and $aiRulesRelease) {
+        $preflightForkQualificationPath = Join-Path ([string]$aiRulesRelease.sourceRoot) "build\test-results\qualification\full.json"
+        $forkReadyForParallel = Test-ForkQualification -SourceRoot ([string]$aiRulesRelease.sourceRoot) -Path $preflightForkQualificationPath -Identity $aiRulesRelease
+    }
+    if ($Mode -in @("Full", "Release") -and -not $reuseQualification -and -not ($Offline -and -not $sourceIsLocal) -and $forkReadyForParallel) {
+        $compatibilityPath = Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"
+        $compatibilitySource = $(if ($aiRulesRelease -and [string]$aiRulesRelease.sourceRoot) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
+        $parallelCompatibility = Start-PowerShellChildProcess -ScriptPath $compatibilityPath -Arguments @("-AiRulesSource", $compatibilitySource) -LogName "ai-rules-compatibility"
+    }
+
     if ($reuseQualification) {
         Add-ReusedStage -Name "pester" -Reason $(if ($qualificationReuseKind -eq "ancestor-same-tree") { "ancestor same-tree Full qualification" } else { "exact clean Full qualification" }) -Detail $qualificationFullPath
     } else {
@@ -424,11 +463,16 @@ try {
             } else {
                 Add-SkippedStage -Name "fork-check" -Reason "remote aiRules source has no reusable local qualification"
             }
-            $compatibilityPath = Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"
-            Invoke-GateStage -Name "ai-rules-compatibility" -Reason "workflow-to-fork integration boundary" -Detail $resolvedAiRulesSource -Body {
-                $compatibilitySource = $(if ($forkSourceRoot) { $forkSourceRoot } else { $resolvedAiRulesSource })
-                Invoke-PowerShellChild -ScriptPath $compatibilityPath -Arguments @("-AiRulesSource", $compatibilitySource) -TimeoutSeconds 600 -LogName "ai-rules-compatibility"
-            } | Out-Null
+            if ($parallelCompatibility) {
+                Complete-ParallelGateStage -Name "ai-rules-compatibility" -Reason "workflow-to-fork integration boundary" -Detail $resolvedAiRulesSource -Child $parallelCompatibility -TimeoutSeconds 600
+                $parallelCompatibility = $null
+            } else {
+                $compatibilityPath = Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"
+                Invoke-GateStage -Name "ai-rules-compatibility" -Reason "workflow-to-fork integration boundary" -Detail $resolvedAiRulesSource -Body {
+                    $compatibilitySource = $(if ($forkSourceRoot) { $forkSourceRoot } else { $resolvedAiRulesSource })
+                    Invoke-PowerShellChild -ScriptPath $compatibilityPath -Arguments @("-AiRulesSource", $compatibilitySource) -TimeoutSeconds 600 -LogName "ai-rules-compatibility"
+                } | Out-Null
+            }
         }
     }
 
@@ -498,6 +542,9 @@ try {
         if (($trackedBefore -join "`n") -ne ($trackedAfter -join "`n")) { throw "The local gate changed tracked worktree state." }
     } | Out-Null
 } catch {
+    if ($parallelCompatibility -and -not $parallelCompatibility.process.HasExited) {
+        try { $parallelCompatibility.process.Kill(); $parallelCompatibility.process.WaitForExit() } catch {}
+    }
     $failure = $_.Exception.Message
 } finally {
     $overallStopwatch.Stop()

@@ -41,6 +41,15 @@ Describe "ITL on-demand MCP facade" {
         }
     }
 
+    It "keeps parallel worker facade installs in GUID temp roots" {
+        $moduleText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.ondemand-mcp.ps1") -Raw -Encoding UTF8
+        $workerText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\run-pester-shard.ps1") -Raw -Encoding UTF8
+        $moduleText | Should -Match 'ITL_ONDEMAND_MCP_INSTALL_ROOT'
+        $workerText | Should -Match 'itl-pester-worker-'
+        $workerText | Should -Match 'ITL_ONDEMAND_MCP_INSTALL_ROOT'
+        $workerText | Should -Match 'Remove-Item -LiteralPath \$fixtureRuntimeRoot -Recurse'
+    }
+
     It "keeps catalog identity stable across Windows and Unix line endings" {
         $sourcePath = Join-Path $AssetRoot "catalogs\roctup-v1.7.1.json"
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-line-endings-" + [guid]::NewGuid().ToString("N"))

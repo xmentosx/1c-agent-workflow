@@ -10,6 +10,8 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $plan = Get-Content -LiteralPath $PlanPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$fixtureRuntimeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-pester-worker-{0}-{1}" -f [int]$plan.worker, [guid]::NewGuid().ToString("N"))
+$env:ITL_ONDEMAND_MCP_INSTALL_ROOT = Join-Path $fixtureRuntimeRoot "ondemand"
 $startedAt = [DateTime]::UtcNow
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $result = $null
@@ -39,6 +41,10 @@ try {
 } catch {
     $failure = $_.Exception.Message
 } finally {
+    [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $null, "Process")
+    if (Test-Path -LiteralPath $fixtureRuntimeRoot -PathType Container) {
+        Remove-Item -LiteralPath $fixtureRuntimeRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
     $stopwatch.Stop()
     $payload = [ordered]@{
         schemaVersion = 1
