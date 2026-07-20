@@ -7,6 +7,14 @@ function Get-ItlClientAdapterRegistry {
             commandsPath = ""
             skillsPath = ".agents/skills"
             mcpPath = ".codex/config.toml"
+            commandFormat = "none"
+            commandAgentMode = "none"
+            nativeAgents = $true
+            mcpFormat = "toml"
+            mcpContainer = "mcp_servers"
+            mcpStdioFormat = "standard"
+            mcpRemoteFormat = "url"
+            trackedMcpConfig = $false
             reload = "Start a new Codex task so project rules and skills are reread."
         }
         kilocode = [ordered]@{
@@ -16,6 +24,19 @@ function Get-ItlClientAdapterRegistry {
             commandsPath = ".kilo/commands"
             skillsPath = ".kilo/skills"
             mcpPath = ".kilo/kilo.json"
+            commandFormat = "markdown"
+            commandAgentMode = "kilocode"
+            routineAgentPath = ".kilo/agents/itl-routine.md"
+            nativeAgents = $true
+            mcpFormat = "json"
+            mcpContainer = "mcp"
+            mcpStdioFormat = "local-array"
+            mcpRemoteFormat = "remote-timeout"
+            trackedMcpConfig = $false
+            configCollisionCheck = "kilo-jsonc"
+            disableSnapshots = $true
+            legacyKiloCommands = $true
+            untrackGeneratedCommands = $true
             reload = "Run /reload or restart Kilo Code."
         }
         "claude-code" = [ordered]@{
@@ -25,6 +46,14 @@ function Get-ItlClientAdapterRegistry {
             commandsPath = ".claude/commands"
             skillsPath = ".claude/skills"
             mcpPath = ".mcp.json"
+            commandFormat = "markdown"
+            commandAgentMode = "none"
+            nativeAgents = $true
+            mcpFormat = "json"
+            mcpContainer = "mcpServers"
+            mcpStdioFormat = "standard"
+            mcpRemoteFormat = "http"
+            trackedMcpConfig = $false
             reload = "Restart Claude Code."
         }
         cursor = [ordered]@{
@@ -34,6 +63,14 @@ function Get-ItlClientAdapterRegistry {
             commandsPath = ".cursor/commands"
             skillsPath = ".cursor/skills"
             mcpPath = ".cursor/mcp.json"
+            commandFormat = "markdown"
+            commandAgentMode = "none"
+            nativeAgents = $true
+            mcpFormat = "json"
+            mcpContainer = "mcpServers"
+            mcpStdioFormat = "standard"
+            mcpRemoteFormat = "http"
+            trackedMcpConfig = $true
             reload = "Reload the Cursor window."
         }
         opencode = [ordered]@{
@@ -43,7 +80,108 @@ function Get-ItlClientAdapterRegistry {
             commandsPath = ".opencode/command"
             skillsPath = ".claude/skills"
             mcpPath = "opencode.json"
+            commandFormat = "markdown"
+            commandAgentMode = "opencode"
+            routineAgentPath = ".opencode/agent/itl-routine.md"
+            nativeAgents = $true
+            mcpFormat = "json"
+            mcpContainer = "mcp"
+            mcpStdioFormat = "local-array"
+            mcpRemoteFormat = "remote"
+            trackedMcpConfig = $true
+            mcpKeyMode = "letter-prefix"
             reload = "Restart OpenCode."
+        }
+        kimi = [ordered]@{
+            id = "kimi"
+            rulesPath = ".kimi-code/rules-1c"
+            agentsPath = ".kimi-code/rules-1c/agents"
+            commandsPath = ".kimi-code/skills"
+            skillsPath = ".kimi-code/skills"
+            mcpPath = ".kimi-code/mcp.json"
+            commandFormat = "skill"
+            commandAgentMode = "none"
+            nativeAgents = $false
+            mcpFormat = "json"
+            mcpContainer = "mcpServers"
+            mcpStdioFormat = "standard"
+            mcpRemoteFormat = "http"
+            trackedMcpConfig = $false
+            reload = "Restart Kimi Code; invoke ITL routines as /skill:itl-* commands."
+        }
+        qwen = [ordered]@{
+            id = "qwen"
+            rulesPath = ".qwen/rules-1c"
+            agentsPath = ".qwen/agents"
+            commandsPath = ".qwen/commands"
+            skillsPath = ".qwen/skills"
+            mcpPath = ".qwen/settings.json"
+            commandFormat = "markdown"
+            commandAgentMode = "none"
+            nativeAgents = $true
+            mcpFormat = "json"
+            mcpContainer = "mcpServers"
+            mcpStdioFormat = "standard"
+            mcpRemoteFormat = "qwen-http"
+            trackedMcpConfig = $false
+            reload = "Restart Qwen Code."
+        }
+        "command-code" = [ordered]@{
+            id = "command-code"
+            executable = "command-code"
+            rulesPath = ".commandcode/rules-1c"
+            agentsPath = ".commandcode/agents"
+            commandsPath = ".commandcode/commands"
+            skillsPath = ".commandcode/skills"
+            mcpPath = ".mcp.json"
+            commandFormat = "markdown"
+            commandAgentMode = "none"
+            nativeAgents = $true
+            mcpFormat = "json"
+            mcpContainer = "mcpServers"
+            mcpStdioFormat = "standard"
+            mcpRemoteFormat = "http"
+            trackedMcpConfig = $false
+            reload = "Restart Command Code."
+        }
+        cline = [ordered]@{
+            id = "cline"
+            rulesPath = ".cline/rules-1c"
+            agentsPath = ".cline/rules-1c/agents"
+            commandsPath = ".cline/skills"
+            skillsPath = ".cline/skills"
+            mcpPath = ".cline/mcp.json"
+            commandFormat = "skill"
+            commandAgentMode = "none"
+            nativeAgents = $false
+            mcpFormat = "json"
+            mcpContainer = "mcpServers"
+            mcpStdioFormat = "standard"
+            mcpRemoteFormat = "cline-http"
+            trackedMcpConfig = $false
+            reload = "Restart Cline; invoke ITL routines as /itl-* skills."
+        }
+        pi = [ordered]@{
+            id = "pi"
+            rulesPath = ".pi/rules-1c"
+            agentsPath = ".pi/rules-1c/agents"
+            commandsPath = ".pi/prompts"
+            skillsPath = ".pi/skills"
+            mcpPath = ".pi/mcp.json"
+            commandFormat = "prompt"
+            commandAgentMode = "none"
+            nativeAgents = $false
+            mcpFormat = "json"
+            mcpContainer = "mcpServers"
+            mcpStdioFormat = "pi"
+            mcpRemoteFormat = "pi-http"
+            trackedMcpConfig = $false
+            requiredPackagePath = ".pi/settings.json"
+            requiredPackageKey = "packages"
+            requiredPackage = "npm:pi-mcp-extension@1.5.0"
+            requiredPackageIntegrity = "sha512-tfsgi8qSr3UUKMp4vS9/FwKv+Pn2U4T/rTlAwrZkEIvz616mFrU/Ryp3b69ZDfFdkQVVXriaQmZUj4vlZDV2Uw=="
+            minimumNodeMajor = 22
+            reload = "Trust the project and restart Pi so .pi settings, prompts, skills, and MCP extension are loaded."
         }
     }
 }
@@ -99,7 +237,8 @@ function Assert-ItlClientConfigWritable {
         [switch]$ExplicitMigration
     )
 
-    if ($Client -eq "kilocode") {
+    $adapter = Get-ItlClientAdapter -Client $Client
+    if ($adapter.PSObject.Properties.Name -contains "configCollisionCheck" -and $adapter.configCollisionCheck -eq "kilo-jsonc") {
         $json = Join-Path $script:ProjectRoot ".kilo\kilo.json"
         $jsonc = Join-Path $script:ProjectRoot ".kilo\kilo.jsonc"
         if ((Test-Path -LiteralPath $json -PathType Leaf) -and (Test-Path -LiteralPath $jsonc -PathType Leaf)) {
@@ -107,11 +246,7 @@ function Assert-ItlClientConfigWritable {
         }
     }
 
-    $trackedConfig = switch ($Client) {
-        "cursor" { ".cursor/mcp.json" }
-        "opencode" { "opencode.json" }
-        default { "" }
-    }
+    $trackedConfig = $(if ($adapter.trackedMcpConfig) { [string]$adapter.mcpPath } else { "" })
     if ($trackedConfig -and (Test-ItlGitPathTracked -RelativePath $trackedConfig) -and -not $ExplicitMigration) {
         throw "TRACKED_CLIENT_CONFIG: '$trackedConfig' is tracked. ITL will not modify it without an explicit client-config migration."
     }
@@ -214,7 +349,8 @@ function Write-ItlManagedMcpState {
 
 function ConvertTo-ItlClientMcpKey {
     param([string]$Name, [string]$Client)
-    if ($Client -eq "opencode") {
+    $adapter = Get-ItlClientAdapter -Client $Client
+    if ($adapter.PSObject.Properties.Name -contains "mcpKeyMode" -and $adapter.mcpKeyMode -eq "letter-prefix") {
         if ($Name -match '^(?i)1c(?<tail>.*)$') { return "onec$($Matches['tail'])" }
         if ($Name -notmatch '^[A-Za-z]') { return "mcp-$Name" }
     }
@@ -255,7 +391,7 @@ function Write-ItlClientMcpEndpoints {
         }
     })
 
-    if ($Client -eq "codex") {
+    if ($adapter.mcpFormat -eq "toml") {
         $lines = [System.Collections.Generic.List[string]]::new()
         foreach ($endpoint in @($normalized | Sort-Object name)) {
             $lines.Add("[mcp_servers.$(ConvertTo-Vibecoding1cMcpTomlString $endpoint.name)]")
@@ -287,7 +423,7 @@ function Write-ItlClientMcpEndpoints {
     if (Test-Path -LiteralPath $path -PathType Leaf) {
         try { $config = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-Utf8Text -Path $path | ConvertFrom-Json) } catch { throw "Client MCP config is not valid JSON: $path. $($_.Exception.Message)" }
     }
-    $containerName = $(if ($Client -in @("claude-code", "cursor")) { "mcpServers" } else { "mcp" })
+    $containerName = [string]$adapter.mcpContainer
     $container = [ordered]@{}
     if ($config.Contains($containerName)) { $container = ConvertTo-Vibecoding1cMcpHashtable -Object $config[$containerName] }
     if ($Owner -eq "vibecoding1c") {
@@ -307,7 +443,7 @@ function Write-ItlClientMcpEndpoints {
     foreach ($oldKey in @($owners[$stateKey])) { if ($container.Contains([string]$oldKey)) { $container.Remove([string]$oldKey) } }
     $written = @()
     foreach ($endpoint in $normalized) {
-        $entry = if ($endpoint.transport -eq "stdio" -and $Client -in @("opencode", "kilocode")) {
+        $entry = if ($endpoint.transport -eq "stdio" -and $adapter.mcpStdioFormat -eq "local-array") {
             $local = [ordered]@{
                 type = "local"
                 command = @($endpoint.command) + @($endpoint.args)
@@ -317,15 +453,26 @@ function Write-ItlClientMcpEndpoints {
             $environment = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint.env
             if ($environment.Count -gt 0) { $local["environment"] = $environment }
             $local
+        } elseif ($endpoint.transport -eq "stdio" -and $adapter.mcpStdioFormat -eq "pi") {
+            $local = [ordered]@{ lifecycle = "eager"; transport = "stdio"; command = $endpoint.command; args = @($endpoint.args) }
+            $environment = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint.env
+            if ($environment.Count -gt 0) { $local["env"] = $environment }
+            $local
         } elseif ($endpoint.transport -eq "stdio") {
             $local = [ordered]@{ command = $endpoint.command; args = @($endpoint.args) }
             $environment = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint.env
             if ($environment.Count -gt 0) { $local["env"] = $environment }
             $local
-        } elseif ($Client -eq "opencode") {
-            [ordered]@{ type = "remote"; url = $endpoint.url; enabled = $true }
-        } elseif ($Client -eq "kilocode") {
+        } elseif ($adapter.mcpRemoteFormat -eq "remote-timeout") {
             [ordered]@{ type = "remote"; url = $endpoint.url; enabled = $true; timeout = ([int]$endpoint.toolTimeoutSeconds * 1000) }
+        } elseif ($adapter.mcpRemoteFormat -eq "remote") {
+            [ordered]@{ type = "remote"; url = $endpoint.url; enabled = $true }
+        } elseif ($adapter.mcpRemoteFormat -eq "qwen-http") {
+            [ordered]@{ httpUrl = $endpoint.url }
+        } elseif ($adapter.mcpRemoteFormat -eq "cline-http") {
+            [ordered]@{ type = "streamableHttp"; url = $endpoint.url }
+        } elseif ($adapter.mcpRemoteFormat -eq "pi-http") {
+            [ordered]@{ lifecycle = "eager"; transport = "streamable-http"; url = $endpoint.url }
         } else {
             [ordered]@{ type = "http"; url = $endpoint.url }
         }
@@ -346,13 +493,12 @@ function Remove-ItlLegacyBranchMcpEntries {
     # Generic owner cleanup handles Codex managed text blocks and any JSON keys
     # recorded by newer legacy versions.
     Write-ItlClientMcpEndpoints -Endpoints @() -Owner "branch-runtime" -Client $Client | Out-Null
-    if ($Client -eq "codex") { return }
-
     $adapter = Get-ItlClientAdapter -Client $Client
+    if ($adapter.mcpFormat -eq "toml") { return }
     $path = Join-Path $script:ProjectRoot $adapter.mcpPath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
     $config = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-Utf8Text -Path $path | ConvertFrom-Json)
-    $containerName = $(if ($Client -in @("claude-code", "cursor")) { "mcpServers" } else { "mcp" })
+    $containerName = [string]$adapter.mcpContainer
     if (-not $config.Contains($containerName)) { return }
     $container = ConvertTo-Vibecoding1cMcpHashtable -Object $config[$containerName]
     $changed = $false
@@ -441,7 +587,7 @@ function New-ItlRoutineAgentText {
     $frontmatter.Add("---")
     $frontmatter.Add("name: itl-routine")
     $frontmatter.Add("description: Runs deterministic ITL lifecycle helpers and reports their output without editing project code.")
-    $frontmatter.Add($(if ($Client -eq "kilocode") { "mode: subagent" } else { "mode: subagent" }))
+    $frontmatter.Add("mode: subagent")
     $frontmatter.Add("model: $model")
     $frontmatter.Add("steps: 2")
     $frontmatter.Add("permission:")
@@ -467,9 +613,19 @@ function New-ItlRoutineAgentText {
 
 function Get-ItlRoutineAgentRelativePath {
     param([string]$Client)
-    if ($Client -eq "kilocode") { return ".kilo/agents/itl-routine.md" }
-    if ($Client -eq "opencode") { return ".opencode/agent/itl-routine.md" }
-    return ""
+    $adapter = Get-ItlClientAdapter -Client $Client
+    if ($adapter.PSObject.Properties.Name -notcontains "routineAgentPath") { return "" }
+    return [string]$adapter.routineAgentPath
+}
+
+function Get-ItlCommandRelativePath {
+    param([object]$Adapter, [string]$FileName)
+
+    $name = [IO.Path]::GetFileNameWithoutExtension($FileName)
+    switch ([string]$Adapter.commandFormat) {
+        "skill" { return ($Adapter.commandsPath.TrimEnd('/') + "/$name/SKILL.md") }
+        default { return ($Adapter.commandsPath.TrimEnd('/') + "/$FileName") }
+    }
 }
 
 function Convert-ItlCommandForClient {
@@ -479,14 +635,17 @@ function Convert-ItlCommandForClient {
         [string]$FileName
     )
 
-    if ($Client -in @("claude-code", "cursor")) {
-        return ([regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?\n', ''))
-    }
-    if (Test-ItlRoutineEnabledForCommand -FileName $FileName) {
+    $adapter = Get-ItlClientAdapter -Client $Client
+    if ($adapter.commandAgentMode -eq "none") {
+        $Text = [regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?\n', '')
+    } elseif (Test-ItlRoutineEnabledForCommand -FileName $FileName) {
         return ([regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?$', 'agent: itl-routine'))
-    }
-    if ($Client -eq "opencode") {
+    } elseif ($adapter.commandAgentMode -eq "opencode") {
         return ([regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?$', 'agent: build'))
+    }
+    if ($adapter.commandFormat -eq "skill" -and $Text -notmatch '(?m)^name:\s*') {
+        $name = [IO.Path]::GetFileNameWithoutExtension($FileName)
+        $Text = [regex]::Replace($Text, '^---\r?\n', "---`nname: $name`n", 1)
     }
     return $Text
 }
@@ -507,7 +666,7 @@ function Get-ItlExpectedSurfaceFiles {
         foreach ($sourceDir in $sourceDirs) {
             foreach ($source in @(Get-ChildItem -LiteralPath $sourceDir -File -Filter "itl*.md.template" -ErrorAction Stop)) {
                 $name = $source.Name.Substring(0, $source.Name.Length - ".template".Length)
-                $relative = ($adapter.commandsPath.TrimEnd('/') + "/" + $name)
+                $relative = Get-ItlCommandRelativePath -Adapter $adapter -FileName $name
                 $files[$relative] = Convert-ItlCommandForClient -Text (Read-Utf8Text -Path $source.FullName) -Client $Client -FileName $name
             }
         }
@@ -563,7 +722,8 @@ function Sync-ItlManagedSurfaceFiles {
                 $expectedBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($expectedText)
                 $sha = [System.Security.Cryptography.SHA256]::Create()
                 try { $expectedHash = ([BitConverter]::ToString($sha.ComputeHash($expectedBytes))).Replace("-", "").ToLowerInvariant() } finally { $sha.Dispose() }
-                if ($actualHash -ne $expectedHash -and -not ($Client -eq "kilocode" -and (Test-ItlKnownLegacyKiloCommandHash -Hash $actualHash))) {
+                $acceptLegacy = $adapter.PSObject.Properties.Name -contains "legacyKiloCommands" -and $adapter.legacyKiloCommands -and (Test-ItlKnownLegacyKiloCommandHash -Hash $actualHash)
+                if ($actualHash -ne $expectedHash -and -not $acceptLegacy) {
                     throw "ITL_SURFACE_COLLISION: '$relative' exists but is not a hash-matching managed or legacy ITL asset."
                 }
             }
@@ -580,7 +740,8 @@ function Sync-ItlManagedSurfaceFiles {
             $relative = ($adapter.commandsPath.TrimEnd('/') + "/" + $file.Name)
             if ($ExpectedFiles.Contains($relative)) { continue }
             $hash = Get-ItlFileSha256 -Path $file.FullName
-            if ($Client -eq "kilocode" -and (Test-ItlKnownLegacyKiloCommandHash -Hash $hash)) {
+            $acceptLegacy = $adapter.PSObject.Properties.Name -contains "legacyKiloCommands" -and $adapter.legacyKiloCommands -and (Test-ItlKnownLegacyKiloCommandHash -Hash $hash)
+            if ($acceptLegacy) {
                 Remove-Item -LiteralPath $file.FullName -Force
                 continue
             }
@@ -594,6 +755,75 @@ function Sync-ItlManagedSurfaceFiles {
     Write-ItlClientSurfaceState -State $state
 }
 
+function Get-ItlPackageIdentity {
+    param([string]$Source)
+    return ($Source -replace '@[^@/]+$', '')
+}
+
+function Assert-ItlClientRequirements {
+    param([string]$Client)
+
+    $adapter = Get-ItlClientAdapter -Client $Client
+    if ($adapter.PSObject.Properties.Name -notcontains "requiredPackage" -or -not $adapter.requiredPackage) { return }
+    $locked = Get-DependencyLockEntry -Name "piMcpExtension"
+    if ([string]$locked.source -ne [string]$adapter.requiredPackage -or [string]$locked.integrity -ne [string]$adapter.requiredPackageIntegrity) {
+        throw "PI_MCP_EXTENSION_LOCK_MISMATCH: workflow registry and dependency-lock.json disagree about the required Pi MCP extension."
+    }
+    $node = Get-Command node -ErrorAction SilentlyContinue
+    if (-not $node) {
+        throw "PI_NODE_REQUIRED: Pi MCP requires Node.js $($adapter.minimumNodeMajor)+ and project trust; no node executable was found."
+    }
+    $versionText = ((& $node.Source --version 2>&1 | Select-Object -First 1) -join "").Trim()
+    $major = 0
+    if ($versionText -notmatch '^v?(?<major>\d+)\.' -or -not [int]::TryParse($Matches['major'], [ref]$major) -or $major -lt [int]$adapter.minimumNodeMajor) {
+        throw "PI_NODE_INCOMPATIBLE: Pi MCP requires Node.js $($adapter.minimumNodeMajor)+; detected '$versionText'."
+    }
+}
+
+function Sync-ItlClientRequiredPackage {
+    param([string]$Client, [switch]$Remove)
+
+    $adapter = Get-ItlClientAdapter -Client $Client
+    if ($adapter.PSObject.Properties.Name -notcontains "requiredPackage" -or -not $adapter.requiredPackage) { return }
+    $path = Join-Path $script:ProjectRoot ([string]$adapter.requiredPackagePath)
+    $key = [string]$adapter.requiredPackageKey
+    $config = [ordered]@{}
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+        try { $config = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-Utf8Text -Path $path | ConvertFrom-Json) }
+        catch { throw "Client package config is not valid JSON: $path. $($_.Exception.Message)" }
+    }
+    $identity = Get-ItlPackageIdentity -Source ([string]$adapter.requiredPackage)
+    $items = $(if ($config.Contains($key)) { @($config[$key]) } else { @() })
+    $kept = @($items | Where-Object {
+        $candidate = if ($_ -is [string]) { [string]$_ } else { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "source" -Default "") }
+        (Get-ItlPackageIdentity -Source $candidate) -ne $identity
+    })
+    if (-not $Remove) { $kept += [string]$adapter.requiredPackage }
+    if ($kept.Count -gt 0) { $config[$key] = @($kept) } elseif ($config.Contains($key)) { $config.Remove($key) }
+    if ($config.Count -eq 0) {
+        if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
+        return
+    }
+    Write-Vibecoding1cMcpJsonFile -Path $path -Value $config
+}
+
+function Assert-ItlClientRequiredPackageConfigured {
+    param([string]$Client)
+
+    $adapter = Get-ItlClientAdapter -Client $Client
+    if ($adapter.PSObject.Properties.Name -notcontains "requiredPackage" -or -not $adapter.requiredPackage) { return }
+    $path = Join-Path $script:ProjectRoot ([string]$adapter.requiredPackagePath)
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "PI_MCP_EXTENSION_MISSING: '$($adapter.requiredPackage)' is not configured in $($adapter.requiredPackagePath). Run /itl-refresh, trust the project, and restart Pi."
+    }
+    try { $config = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-Utf8Text -Path $path | ConvertFrom-Json) }
+    catch { throw "PI_MCP_EXTENSION_CONFIG_INVALID: $path is not valid JSON. $($_.Exception.Message)" }
+    $items = $(if ($config.Contains([string]$adapter.requiredPackageKey)) { @($config[[string]$adapter.requiredPackageKey]) } else { @() })
+    if ([string]$adapter.requiredPackage -notin @($items | ForEach-Object { if ($_ -is [string]) { [string]$_ } else { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "source" -Default "") } })) {
+        throw "PI_MCP_EXTENSION_INCOMPATIBLE: expected exact project package '$($adapter.requiredPackage)' in $($adapter.requiredPackagePath). Pi without the pinned MCP extension is unsupported."
+    }
+}
+
 function Sync-ItlClientSurface {
     param([string]$SourceRoot = $script:ProjectRoot)
 
@@ -603,22 +833,24 @@ function Sync-ItlClientSurface {
     }
     $client = Get-ItlActiveClient
     Assert-ItlClientConfigWritable -Client $client
+    Assert-ItlClientRequirements -Client $client
     $adapter = Get-ItlClientAdapter -Client $client
     $expectedFiles = Get-ItlExpectedSurfaceFiles -Client $client -SourceRoot $SourceRoot
     Sync-ItlManagedSurfaceFiles -Client $client -ExpectedFiles $expectedFiles
-    if ($client -eq "kilocode") {
+    if ($adapter.PSObject.Properties.Name -contains "disableSnapshots" -and $adapter.disableSnapshots) {
         Set-KiloSnapshotsDisabled
     }
+    Sync-ItlClientRequiredPackage -Client $client
     Write-ItlOnDemandMcpClientConfig -Client $client | Out-Null
     $surface = Get-ItlCommandSurface
-    if (-not $adapter.commandsPath) {
-        Write-Host "Codex uses project-local .agents/skills and natural requests; no project slash prompts were written."
+    if ($adapter.commandFormat -eq "none") {
+        Write-Host "$client uses project-local skills and natural requests; no project slash prompts were written."
         return
     }
-    if ($client -eq "kilocode") {
+    if ($adapter.PSObject.Properties.Name -contains "untrackGeneratedCommands" -and $adapter.untrackGeneratedCommands) {
         Untrack-GeneratedKiloItlCommands
     }
-    Write-Host "Generated $client ITL command surface: $surface ($($adapter.commandsPath)/itl*.md)"
+    Write-Host "Generated $client ITL command surface: $surface ($($adapter.commandsPath); format=$($adapter.commandFormat))"
 }
 
 function Switch-ItlClient {
@@ -645,6 +877,7 @@ function Switch-ItlClient {
     $snapshot = New-AiRulesMigrationSnapshot
     try {
         Write-ItlClientMcpEndpoints -Endpoints @() -Owner "ondemand-facade" -Client $oldClient | Out-Null
+        Sync-ItlClientRequiredPackage -Client $oldClient -Remove
         Set-ProjectAiRulesClient -Client $newClient
         Set-DotEnvValues -Values @{
             SUBAGENT_MODEL_CODING = ""
@@ -688,6 +921,8 @@ function Show-ItlDoctor {
         $client = Get-ItlActiveClient
         $adapter = Get-ItlClientAdapter -Client $client
         Assert-ItlClientConfigWritable -Client $client
+        Assert-ItlClientRequirements -Client $client
+        Assert-ItlClientRequiredPackageConfigured -Client $client
         $checks.Add([pscustomobject]@{ status = "OK"; name = "active-client"; detail = "$client; rules=$($adapter.rulesPath); agents=$($adapter.agentsPath); commands=$(if ($adapter.commandsPath) { $adapter.commandsPath } else { '<skills/natural requests>' }); skills=$($adapter.skillsPath); mcp=$($adapter.mcpPath)" })
     } catch {
         $checks.Add([pscustomobject]@{ status = "FAIL"; name = "active-client"; detail = $_.Exception.Message })
@@ -733,7 +968,8 @@ function Show-ItlDoctor {
     $missingSkills = @($itlSkills | Where-Object { -not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".agents\skills\$_\SKILL.md") -PathType Leaf) })
     $checks.Add([pscustomobject]@{ status = $(if ($missingSkills.Count -eq 0) { "OK" } else { "FAIL" }); name = "itl-skills"; detail = $(if ($missingSkills.Count -eq 0) { "all five installed" } else { "missing: $($missingSkills -join ', ')" }) })
     $openSpec = Get-AiRules1cOpenSpecStatus
-    $checks.Add([pscustomobject]@{ status = $(if ($openSpec.isAvailable) { "OK" } else { "FAIL" }); name = "openspec"; detail = $(if ($openSpec.isAvailable) { "active-client bundle installed" } else { $openSpec.reason }) })
+    $openSpecOptional = $openSpec.PSObject.Properties.Name -contains "required" -and -not [bool]$openSpec.required
+    $checks.Add([pscustomobject]@{ status = $(if ($openSpec.isAvailable) { "OK" } elseif ($openSpecOptional) { "SKIP" } else { "FAIL" }); name = "openspec"; detail = $(if ($openSpec.isAvailable) { "active-client bundle installed" } else { $openSpec.reason }) })
     $devEnvPath = Join-Path $script:ProjectRoot ".dev.env"
     $checks.Add([pscustomobject]@{ status = $(if (Test-Path -LiteralPath $devEnvPath -PathType Leaf) { "OK" } else { "FAIL" }); name = "dev-env"; detail = $(if (Test-Path -LiteralPath $devEnvPath -PathType Leaf) { "present; values inspected without mutation" } else { "missing" }) })
     foreach ($component in @("vanessa", "event-log")) {

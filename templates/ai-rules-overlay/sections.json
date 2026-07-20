@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "baselineUpstreamCommit": "b4d9875b15c6d93f493035aee51f077126e72a21",
-  "baselineReleaseCommit": "af82570afca06c40a9588c8a678bf3665bba4870",
+  "baselineUpstreamCommit": "72665287e77361aea3aaf866fef163d98f0fabcd",
+  "baselineReleaseCommit": "16e9e44318a79d9e82c12b19e6759cdf6492d9a4",
   "targetPath": "AGENTS.md",
   "maximumTargetCharacters": 20000,
   "downstreamPatch": {

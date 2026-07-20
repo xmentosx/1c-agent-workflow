@@ -28,7 +28,7 @@ This package supports Codex, Kilo Code, Claude Code, Cursor, and OpenCode, with 
 - Runtime form investigation skill: `.agents/skills/itl-vanessa-ui-mcp`.
 - Common project guidance: upstream `AGENTS.md` from `ai_rules_1c` plus detailed ITL overlay notes in `USER-RULES.md`.
 - ITL command source templates: `.agents/skills/1c-workflow/kilo-command-templates`; adapters render them to the active client's native command path. Codex uses project-local skills and natural requests because project-local custom slash prompts are not supported.
-- Native discovery paths are registered in the helper: Codex `.codex` plus `.agents/skills`; Kilo `.kilo`; Claude `.claude`; Cursor `.cursor`; OpenCode singular `.opencode/agent` and `.opencode/command`, with `.claude/skills` and root `opencode.json`.
+- Client discovery paths and capabilities are registered in the helper for exactly ten clients: Codex, Kilo, Claude Code, Cursor, OpenCode, Kimi, Qwen, Command Code, Cline, and Pi. Kimi/Cline routines are skills, Pi routines are prompts, Qwen uses shared `.qwen/settings.json`, Command Code uses root `.mcp.json`, and Pi pins its MCP extension project-locally.
 - Local MCP/client runtime state is ignored and written only for the active client. Kilo uses `.kilo/kilo.json`; a neighboring `.kilo/kilo.jsonc` collision blocks writes. Tracked Cursor/OpenCode config requires explicit migration.
 - Codex usage: choose the skill via `/skills`, invoke `$1c-workflow` for detailed workflows or `$1c-workflow-fast` for routine helper-first commands, or use natural language that matches the skill description.
 
@@ -93,7 +93,7 @@ Ask interactively in a human-friendly format:
 Required for initial project setup:
 
 - Current working directory is the project root. Do not ask the developer to confirm initialization in chat before starting the monitored wizard; the wizard owns interactive setup questions and visible confirmations. Print the absolute path only as execution context when useful.
-- Current agent target. Require one explicit choice: `codex`, `kilocode`, `claude-code`, `cursor`, or `opencode`. The running surface may be offered as the recommended choice but must not be silently inferred. JSON/configured init must provide `agentTarget` or an exact-one `aiRules.tools` value.
+- Current agent target. Require one explicit choice: `codex`, `kilocode`, `claude-code`, `cursor`, `opencode`, `kimi`, `qwen`, `command-code`, `cline`, or `pi`. The running surface may be offered as the recommended choice but must not be silently inferred. JSON/configured init must provide `agentTarget` or an exact-one `aiRules.tools` value.
 - Directory for development branch infobase copies: do not ask during normal initialization. Use `.agent-1c/infobases/dev-branches` inside the active branch worktree and ensure `.agent-1c/infobases/` is ignored by Git. Ask only if the developer explicitly wants a custom location.
 - Directory for development branch Git worktrees: do not ask during normal initialization. By default, create sibling worktrees under `<project-folder>-worktrees/<branch>`. Use `DEV_BRANCH_WORKTREE_ROOT` or `devBranchWorktreeRoot` only as an explicit override.
 - Development branch infobase copies must be registered automatically in the user's 1C launcher list `%APPDATA%\1C\1CEStart\ibases.v8i` under `/ITL/<project-root-name>`, with the launcher entry name equal to the development branch name. Write that file as UTF-8 with BOM and create a timestamped backup before changing it.

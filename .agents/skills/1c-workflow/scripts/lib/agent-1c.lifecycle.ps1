@@ -1400,6 +1400,14 @@ function Get-AiRules1cOpenSpecStatus {
     try { $client = Get-ItlActiveClient } catch { return [pscustomobject]@{ isAvailable = $false; reason = $_.Exception.Message } }
 
     $entries = @(Get-AiRules1cManifestFileEntries -Manifest $manifest)
+    $clientBundleEntries = @($entries | Where-Object { $_.source.Replace('\', '/') -like "content/openspec-bundle/$client/*" })
+    if ($clientBundleEntries.Count -eq 0) {
+        return [pscustomobject]@{
+            isAvailable = $false
+            required = $false
+            reason = "the pinned upstream adapter for $client does not publish a managed OpenSpec command bundle"
+        }
+    }
     $missing = @()
     foreach ($stage in $requiredStages.Keys) {
         $tokens = @($requiredStages[$stage])
@@ -1422,7 +1430,7 @@ function Get-AiRules1cOpenSpecStatus {
             reason = "managed OpenSpec artifact(s) for $client are missing: $($missing -join ', ')."
         }
     }
-    return [pscustomobject]@{ isAvailable = $true; reason = "" }
+    return [pscustomobject]@{ isAvailable = $true; required = $true; reason = "" }
 }
 
 function Get-AiRules1cRepositoryIdentity {

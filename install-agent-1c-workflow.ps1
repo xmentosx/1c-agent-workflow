@@ -7,7 +7,7 @@ param(
     [string]$InitMode = "wizard",
     [string]$InitAnswersPath = "",
     [string]$ResumeRunStatusPath = "",
-    [ValidateSet("codex", "kilocode", "claude-code", "cursor", "opencode")]
+    [ValidateSet("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")]
     [string]$AgentTarget = "",
     [int]$InitMaxWaitSeconds = 3600,
     [switch]$KeepWindowOnFailure

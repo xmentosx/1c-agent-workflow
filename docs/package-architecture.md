@@ -10,7 +10,7 @@ This source-only document describes the package layout for maintainers. It is no
 - `install-agent-1c-workflow.ps1` installs the managed package and starts monitored initialization.
 - `scripts/check.ps1` and `scripts/test-ai-rules-compatibility.ps1` own source-repository qualification.
 
-Client command files are generated from `.agents/skills/1c-workflow/kilo-command-templates`; generated `.kilo/commands/itl*.md`, `.claude/commands`, `.cursor/commands`, and `.opencode/command` assets are installed-project runtime state, not source files.
+Client routine files are generated from `.agents/skills/1c-workflow/kilo-command-templates`. The capability registry maps them to native commands for Kilo, Claude Code, Cursor, OpenCode, Qwen, and Command Code; to skills for Kimi and Cline; and to prompts for Pi. Generated client surfaces are installed-project runtime state, not source files.
 
 The controlled `ai_rules_1c` fork owns general rules, OpenSpec commands, agents, and its installer manifest. ITL owns bootstrap, lifecycle, local MCP configuration, executable verification, result export, and the five ITL skills. See `ai-rules-fork-upgrades.md` for the release boundary.
 

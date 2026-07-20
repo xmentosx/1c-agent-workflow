@@ -8,7 +8,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-$clients = @("codex", "kilocode", "claude-code", "cursor", "opencode")
+$clients = @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
 
 if ([string]::IsNullOrWhiteSpace($AiRulesRef)) {
     $lockPath = Join-Path (Split-Path -Parent $PSScriptRoot) "templates\dependency-lock.json"
@@ -29,7 +29,7 @@ function Get-ManifestEntries {
 function Assert-OpenSpecBundle {
     param([string]$RulesRoot, [string]$ProjectRoot, [object]$Manifest, [string]$Tool)
     $bundleRoot = Join-Path $RulesRoot ("content\openspec-bundle\$Tool")
-    if (-not (Test-Path -LiteralPath $bundleRoot -PathType Container)) { throw "OpenSpec bundle was not found for ${Tool}: $bundleRoot" }
+    if (-not (Test-Path -LiteralPath $bundleRoot -PathType Container)) { return }
     $basePath = (Resolve-Path -LiteralPath $bundleRoot).Path.TrimEnd('\', '/')
     $entries = @(Get-ManifestEntries -Manifest $Manifest)
     $missing = @()
@@ -124,7 +124,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "ai_rules_1c doctor failed for $client with exit code $LASTEXITCODE" }
     }
     Assert-CodexPromptSnapshotUnchanged -Before $promptBefore -After (Get-CodexPromptSnapshot -RulesRoot $rulesRoot)
-    Write-Host "ai_rules_1c compatibility passed for codex, kilocode, claude-code, cursor, and opencode. Protocol 1.1; McpMode delegated."
+    Write-Host "ai_rules_1c compatibility passed for all ten supported clients. Protocol 1.1; McpMode delegated."
 } finally {
     if (-not $KeepArtifacts -and (Test-Path -LiteralPath $workRoot)) { Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue }
     elseif ($KeepArtifacts) { Write-Host "Compatibility artifacts retained: $workRoot" }

@@ -339,6 +339,12 @@ function New-AiRulesMigrationSnapshot {
         ".claude",
         ".cursor",
         ".opencode",
+        ".kimi-code",
+        ".qwen",
+        ".commandcode",
+        ".cline",
+        ".pi",
+        "QWEN.md",
         ".mcp.json",
         "opencode.json",
         ".agents"
