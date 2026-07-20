@@ -375,6 +375,7 @@ try {
             if ([string]$e2eSummary.status -ne "passed") { throw "Release E2E summary reports '$($e2eSummary.status)': $([string]$e2eSummary.error)" }
             if ([bool]$e2eSummary.onDemandMcpTestFixture) { throw "Release E2E used the test-only on-demand MCP fixture." }
             if ([int]$e2eSummary.onDemandRoctupToolCount -ne 13 -or [int]$e2eSummary.onDemandVanessaToolCount -ne 38) { throw "Release E2E did not prove both complete on-demand MCP catalogs." }
+            if ([int]$e2eSummary.onDemandRoctupPublicToolCount -ne 2 -or [int]$e2eSummary.onDemandVanessaPublicToolCount -ne 2) { throw "Release E2E did not prove both compact on-demand MCP gateway surfaces." }
             if ([int]$e2eSummary.onDemandVanessaInstances -ne 2 -or -not [bool]$e2eSummary.onDemandVanessaSecondSurvived) { throw "Release E2E did not prove isolated concurrent Vanessa facade instances." }
         } | Out-Null
     }

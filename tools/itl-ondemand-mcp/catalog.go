@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -20,9 +21,11 @@ type catalogFile struct {
 }
 
 type loadedCatalog struct {
-	Path   string
-	SHA256 string
-	Data   catalogFile
+	Path       string
+	SHA256     string
+	Data       catalogFile
+	tools      map[string]*mcp.Tool
+	validators map[string]*jsonschema.Resolved
 }
 
 func loadCatalog(path, family string) (*loadedCatalog, error) {
@@ -42,6 +45,8 @@ func loadCatalog(path, family string) (*loadedCatalog, error) {
 		return nil, fmt.Errorf("catalog family %q does not match %q", data.Family, family)
 	}
 	seen := map[string]bool{}
+	tools := make(map[string]*mcp.Tool, len(data.Tools))
+	validators := make(map[string]*jsonschema.Resolved, len(data.Tools))
 	for _, tool := range data.Tools {
 		if tool == nil || tool.Name == "" || tool.InputSchema == nil {
 			return nil, fmt.Errorf("catalog contains an invalid tool")
@@ -50,12 +55,64 @@ func loadCatalog(path, family string) (*loadedCatalog, error) {
 			return nil, fmt.Errorf("catalog contains duplicate tool %q", tool.Name)
 		}
 		seen[tool.Name] = true
+		tools[tool.Name] = tool
+		validator, err := resolveInputSchema(tool.InputSchema)
+		if err != nil {
+			return nil, fmt.Errorf("catalog tool %q has an invalid input schema: %w", tool.Name, err)
+		}
+		validators[tool.Name] = validator
 	}
 	if len(data.Tools) == 0 {
 		return nil, fmt.Errorf("catalog contains no tools")
 	}
 	hash := sha256.Sum256(canonicalCatalogBytes(raw))
-	return &loadedCatalog{Path: path, SHA256: hex.EncodeToString(hash[:]), Data: data}, nil
+	return &loadedCatalog{Path: path, SHA256: hex.EncodeToString(hash[:]), Data: data, tools: tools, validators: validators}, nil
+}
+
+func resolveInputSchema(value any) (*jsonschema.Resolved, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var schema jsonschema.Schema
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return nil, err
+	}
+	return schema.Resolve(nil)
+}
+
+func (c *loadedCatalog) tool(name string) *mcp.Tool {
+	if c == nil {
+		return nil
+	}
+	if c.tools == nil {
+		c.tools = make(map[string]*mcp.Tool, len(c.Data.Tools))
+		for _, tool := range c.Data.Tools {
+			if tool != nil {
+				c.tools[tool.Name] = tool
+			}
+		}
+	}
+	return c.tools[name]
+}
+
+func (c *loadedCatalog) validate(name string, arguments any) error {
+	if c.tool(name) == nil {
+		return fmt.Errorf("unknown catalog tool %q", name)
+	}
+	validator := c.validators[name]
+	if validator == nil {
+		var err error
+		validator, err = resolveInputSchema(c.tools[name].InputSchema)
+		if err != nil {
+			return err
+		}
+		if c.validators == nil {
+			c.validators = make(map[string]*jsonschema.Resolved)
+		}
+		c.validators[name] = validator
+	}
+	return validator.Validate(arguments)
 }
 
 func canonicalCatalogBytes(raw []byte) []byte {

@@ -296,6 +296,8 @@ switch ($Action) {
             $summary.extensionUiJunitTests | Should -Be 1
             $summary.onDemandRoctupToolCount | Should -Be 13
             $summary.onDemandVanessaToolCount | Should -Be 38
+            $summary.onDemandRoctupPublicToolCount | Should -Be 2
+            $summary.onDemandVanessaPublicToolCount | Should -Be 2
             $summary.onDemandVanessaInstances | Should -Be 2
             $summary.onDemandVanessaSecondSurvived | Should -BeTrue
             $summary.onDemandMcpTestFixture | Should -BeTrue

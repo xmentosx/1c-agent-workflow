@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -37,11 +37,15 @@ func run(args []string) error {
 	catalogPath := flags.String("catalog", "", "compatibility catalog")
 	helperPath := flags.String("helper", "", "agent-1c.ps1 path")
 	idle := flags.Duration("idle-timeout", 10*time.Minute, "backend idle timeout")
+	surface := flags.String("surface", "gateway", "public tool surface: gateway or full")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 	if *family != "roctup" && *family != "vanessa-ui" {
 		return fmt.Errorf("invalid --family %q", *family)
+	}
+	if *surface != "gateway" && *surface != "full" {
+		return fmt.Errorf("invalid --surface %q", *surface)
 	}
 	root, err := filepath.Abs(*projectRoot)
 	if err != nil || !filepath.IsAbs(root) {
@@ -77,11 +81,15 @@ func run(args []string) error {
 		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{ListChanged: false}},
 		Logger:       logger,
 	})
-	for _, definition := range catalog.Data.Tools {
-		tool := definition
-		server.AddTool(tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			return rt.call(ctx, req)
-		})
+	if *surface == "gateway" {
+		addGatewayTools(server, rt)
+	} else {
+		for _, definition := range catalog.Data.Tools {
+			tool := definition
+			server.AddTool(tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return rt.call(ctx, req)
+			})
+		}
 	}
 	err = server.Run(context.Background(), &mcp.StdioTransport{})
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)

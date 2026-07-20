@@ -4,7 +4,7 @@ Read this together with `vanessa-tests.md` only while creating or editing `.feat
 
 ## Flow
 
-Run `/itl-vanessa-author`. The helper updates the copied branch infobase, validates the pre-registered `itl-vanessa-ui` facade, and records authoring state schema v2 without starting a backend. The first semantic tool call starts it automatically. For every changed feature use:
+Run `/itl-vanessa-author`. The helper updates the copied branch infobase, validates the pre-registered `itl-vanessa-ui` facade, and records authoring state schema v2 without starting a backend. Pass the following known inner names to `call_tool`; the first inner call starts the backend automatically:
 
 `search_for_steps_by_keywords → open_feature_file → check_syntax → get_info_about_line_scenario → run_scenario → get_test_results`.
 

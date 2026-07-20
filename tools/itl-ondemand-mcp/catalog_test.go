@@ -55,6 +55,33 @@ func TestLoadCatalogHashIgnoresLineEndingsAndBOM(t *testing.T) {
 	}
 }
 
+func TestReleaseCatalogSchemasResolveAndIndex(t *testing.T) {
+	root := filepath.Join("..", "..", ".agents", "skills", "1c-workflow", "assets", "ondemand-mcp", "catalogs")
+	for _, test := range []struct {
+		family string
+		file   string
+		count  int
+	}{
+		{family: "roctup", file: "roctup-v1.7.1.json", count: 13},
+		{family: "vanessa-ui", file: "vanessa-ui-v0.6.5-va-1.2.043.28.json", count: 38},
+	} {
+		t.Run(test.family, func(t *testing.T) {
+			catalog, err := loadCatalog(filepath.Join(root, test.file), test.family)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(catalog.Data.Tools) != test.count || len(catalog.validators) != test.count {
+				t.Fatalf("catalog tools=%d validators=%d", len(catalog.Data.Tools), len(catalog.validators))
+			}
+			for _, tool := range catalog.Data.Tools {
+				if catalog.tool(tool.Name) == nil {
+					t.Fatalf("tool %q was not indexed", tool.Name)
+				}
+			}
+		})
+	}
+}
+
 func TestParseBrokerOutputUsesLastMarker(t *testing.T) {
 	info, err := parseBrokerOutput("noise\n" + brokerMarker + `{"schemaVersion":1,"status":"running","url":"http://127.0.0.1:6003/mcp"}` + "\n")
 	if err != nil {

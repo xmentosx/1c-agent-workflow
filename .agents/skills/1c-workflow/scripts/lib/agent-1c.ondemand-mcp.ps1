@@ -135,7 +135,7 @@ function Get-ItlOnDemandMcpEndpointDescriptors {
             name = $definition.serverName
             transport = "stdio"
             command = $executable
-            args = @("serve", "--family", $family, "--project-root", $root, "--catalog", $definition.catalogPath, "--helper", $helper, "--idle-timeout", "10m")
+            args = @("serve", "--family", $family, "--project-root", $root, "--catalog", $definition.catalogPath, "--helper", $helper, "--surface", "gateway", "--idle-timeout", "10m")
             startupTimeoutSeconds = 20
             toolTimeoutSeconds = 600
         }
