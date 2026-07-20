@@ -8,7 +8,7 @@ function Get-ItlClientAdapterRegistry {
             skillsPath = ".agents/skills"
             mcpPath = ".codex/config.toml"
             commandFormat = "none"
-            commandAgentMode = "none"
+            commandRouting = "none"
             nativeAgents = $true
             mcpFormat = "toml"
             mcpContainer = "mcp_servers"
@@ -25,7 +25,7 @@ function Get-ItlClientAdapterRegistry {
             skillsPath = ".kilo/skills"
             mcpPath = ".kilo/kilo.json"
             commandFormat = "markdown"
-            commandAgentMode = "kilocode"
+            commandRouting = "kilocode"
             routineAgentPath = ".kilo/agents/itl-routine.md"
             nativeAgents = $true
             mcpFormat = "json"
@@ -47,7 +47,7 @@ function Get-ItlClientAdapterRegistry {
             skillsPath = ".claude/skills"
             mcpPath = ".mcp.json"
             commandFormat = "markdown"
-            commandAgentMode = "none"
+            commandRouting = "none"
             nativeAgents = $true
             mcpFormat = "json"
             mcpContainer = "mcpServers"
@@ -64,7 +64,7 @@ function Get-ItlClientAdapterRegistry {
             skillsPath = ".cursor/skills"
             mcpPath = ".cursor/mcp.json"
             commandFormat = "markdown"
-            commandAgentMode = "none"
+            commandRouting = "none"
             nativeAgents = $true
             mcpFormat = "json"
             mcpContainer = "mcpServers"
@@ -81,7 +81,7 @@ function Get-ItlClientAdapterRegistry {
             skillsPath = ".claude/skills"
             mcpPath = "opencode.json"
             commandFormat = "markdown"
-            commandAgentMode = "opencode"
+            commandRouting = "opencode"
             routineAgentPath = ".opencode/agent/itl-routine.md"
             nativeAgents = $true
             mcpFormat = "json"
@@ -100,7 +100,7 @@ function Get-ItlClientAdapterRegistry {
             skillsPath = ".kimi-code/skills"
             mcpPath = ".kimi-code/mcp.json"
             commandFormat = "skill"
-            commandAgentMode = "none"
+            commandRouting = "none"
             nativeAgents = $false
             mcpFormat = "json"
             mcpContainer = "mcpServers"
@@ -117,7 +117,7 @@ function Get-ItlClientAdapterRegistry {
             skillsPath = ".qwen/skills"
             mcpPath = ".qwen/settings.json"
             commandFormat = "markdown"
-            commandAgentMode = "none"
+            commandRouting = "none"
             nativeAgents = $true
             mcpFormat = "json"
             mcpContainer = "mcpServers"
@@ -135,7 +135,7 @@ function Get-ItlClientAdapterRegistry {
             skillsPath = ".commandcode/skills"
             mcpPath = ".mcp.json"
             commandFormat = "markdown"
-            commandAgentMode = "none"
+            commandRouting = "none"
             nativeAgents = $true
             mcpFormat = "json"
             mcpContainer = "mcpServers"
@@ -152,7 +152,7 @@ function Get-ItlClientAdapterRegistry {
             skillsPath = ".cline/skills"
             mcpPath = ".cline/mcp.json"
             commandFormat = "skill"
-            commandAgentMode = "none"
+            commandRouting = "none"
             nativeAgents = $false
             mcpFormat = "json"
             mcpContainer = "mcpServers"
@@ -169,7 +169,7 @@ function Get-ItlClientAdapterRegistry {
             skillsPath = ".pi/skills"
             mcpPath = ".pi/mcp.json"
             commandFormat = "prompt"
-            commandAgentMode = "none"
+            commandRouting = "none"
             nativeAgents = $false
             mcpFormat = "json"
             mcpContainer = "mcpServers"
@@ -636,11 +636,11 @@ function Convert-ItlCommandForClient {
     )
 
     $adapter = Get-ItlClientAdapter -Client $Client
-    if ($adapter.commandAgentMode -eq "none") {
+    if ($adapter.commandRouting -eq "none") {
         $Text = [regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?\n', '')
     } elseif (Test-ItlRoutineEnabledForCommand -FileName $FileName) {
         return ([regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?$', 'agent: itl-routine'))
-    } elseif ($adapter.commandAgentMode -eq "opencode") {
+    } elseif ($adapter.commandRouting -eq "opencode") {
         return ([regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?$', 'agent: build'))
     }
     if ($adapter.commandFormat -eq "skill" -and $Text -notmatch '(?m)^name:\s*') {
