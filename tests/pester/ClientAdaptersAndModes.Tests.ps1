@@ -65,6 +65,11 @@ Describe "ITL client adapters and verification modes" {
             $registry.opencode.agentsPath | Should -Be ".opencode/agent"
             $registry.opencode.commandsPath | Should -Be ".opencode/command"
             $registry.opencode.mcpPath | Should -Be "opencode.json"
+            $registry.opencode.devWorkspaceMode | Should -Be "client-native-adopt"
+            $registry.opencode.workspaceProvider | Should -Be "opencode"
+            $registry.opencode.handoffMode | Should -Be "native-workspace"
+            $registry.opencode.workspacePluginPath | Should -Be ".opencode/plugins/itl-workspace.js"
+            $registry.opencode.requiredUserEnvironment.OPENCODE_EXPERIMENTAL_WORKSPACES | Should -Be "true"
             $registry.kimi.commandsPath | Should -Be ".kimi-code/skills"
             $registry.kimi.commandFormat | Should -Be "skill"
             $registry.kimi.nativeAgents | Should -BeFalse
@@ -77,11 +82,49 @@ Describe "ITL client adapters and verification modes" {
             $registry.pi.requiredPackage | Should -Be "npm:pi-mcp-extension@1.5.0"
             foreach ($client in @($registry.Keys)) {
                 [string]$registry[$client].reload | Should -Not -BeNullOrEmpty
+                if ($client -ne "opencode") {
+                    $registry[$client].devWorkspaceMode | Should -Be "external-create"
+                    $registry[$client].workspaceProvider | Should -Be "git"
+                    $registry[$client].workspacePluginPath | Should -Be ""
+                    $registry[$client].PSObject.Properties.Name | Should -Not -Contain "requiredUserEnvironment"
+                }
             }
             $vanessaSource = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
             $vanessaSource | Should -Match 'Vanessa authoring state: ready'
             $vanessaSource | Should -Not -Match 'reloadInstruction'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "configures the OpenCode native workspace user flag idempotently" {
+        $name = "OPENCODE_EXPERIMENTAL_WORKSPACES"
+        $originalUser = [Environment]::GetEnvironmentVariable($name, "User")
+        $originalProcess = [Environment]::GetEnvironmentVariable($name, "Process")
+        try {
+            [Environment]::SetEnvironmentVariable($name, "false", "User")
+            [Environment]::SetEnvironmentVariable($name, $null, "Process")
+            $first = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                Sync-ItlClientUserEnvironment -Client opencode
+                [pscustomobject]@{
+                    user = [Environment]::GetEnvironmentVariable("OPENCODE_EXPERIMENTAL_WORKSPACES", "User")
+                    process = [Environment]::GetEnvironmentVariable("OPENCODE_EXPERIMENTAL_WORKSPACES", "Process")
+                }
+            }
+            $first.user | Should -Be "true"
+            $first.process | Should -Be "true"
+
+            [Environment]::SetEnvironmentVariable($name, "1", "User")
+            [Environment]::SetEnvironmentVariable($name, $null, "Process")
+            & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                Sync-ItlClientUserEnvironment -Client opencode
+            } | Should -BeNullOrEmpty
+            [Environment]::GetEnvironmentVariable($name, "User") | Should -Be "1"
+            [Environment]::GetEnvironmentVariable($name, "Process") | Should -Be "1"
+        } finally {
+            [Environment]::SetEnvironmentVariable($name, $originalUser, "User")
+            [Environment]::SetEnvironmentVariable($name, $originalProcess, "Process")
+        }
     }
 
     It "reports native mode only for an intact managed bundle" {
@@ -353,7 +396,13 @@ Describe "ITL client adapters and verification modes" {
                 $longText = Get-Content -LiteralPath (Join-Path $commandRoot "itl-new-config-branch.md") -Raw
                 $primaryAgent = $(if ($client -eq "opencode") { 'agent: build' } else { 'agent: code' })
                 $shortText | Should -Match $(if ($case.shortRoutine) { 'agent: itl-routine' } else { $primaryAgent })
-                $longText | Should -Match $(if ($case.longRoutine) { 'agent: itl-routine' } else { $primaryAgent })
+                if ($client -eq "opencode") {
+                    $longText | Should -Match 'agent: build'
+                    $longText | Should -Match 'itl_create_dev_workspace'
+                    $longText | Should -Not -Match 'run-itl-command\.ps1'
+                } else {
+                    $longText | Should -Match $(if ($case.longRoutine) { 'agent: itl-routine' } else { $primaryAgent })
+                }
                 if ($client -eq "opencode") {
                     $shortText | Should -Not -Match '(?m)^agent:\s*code\s*$'
                     $longText | Should -Not -Match '(?m)^agent:\s*code\s*$'
@@ -431,6 +480,27 @@ Describe "ITL client adapters and verification modes" {
             [Environment]::SetEnvironmentVariable("SUBAGENT_MODEL_LIGHT", $null, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It "generates the managed OpenCode native workspace plugin only for OpenCode" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            [pscustomobject]@{
+                opencode = Get-ItlExpectedSurfaceFiles -Client opencode -SourceRoot $RepoRoot
+                kilocode = Get-ItlExpectedSurfaceFiles -Client kilocode -SourceRoot $RepoRoot
+            }
+        }
+        $pluginPath = ".opencode/plugins/itl-workspace.js"
+        @($result.opencode.Keys) | Should -Contain $pluginPath
+        @($result.kilocode.Keys) | Should -Not -Contain $pluginPath
+        $plugin = [string]$result.opencode[$pluginPath]
+        $plugin | Should -Match 'itl_create_dev_workspace'
+        $plugin | Should -Match 'client\.experimental\.workspace\.create'
+        $plugin | Should -Match 'client\.experimental\.workspace\.warp'
+        $plugin | Should -Match 'workspace\.syncList'
+        $plugin | Should -Match 'OPENCODE_EXPERIMENTAL_WORKSPACES=true'
+        $plugin.IndexOf('waitUntilReady(plan, workspace)') | Should -BeLessThan $plugin.IndexOf('"-Action", "adopt-dev-worktree"')
+        $plugin.IndexOf('"-Action", "adopt-dev-worktree"') | Should -BeLessThan $plugin.IndexOf('workspace.warp')
     }
 
     It "removes only an unchanged inactive routine agent" {

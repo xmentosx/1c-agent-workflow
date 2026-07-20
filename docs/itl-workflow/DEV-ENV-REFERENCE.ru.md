@@ -47,6 +47,7 @@
 | `SUBAGENT_MODEL_ANALYSIS` | Модель analysis tier | model id; пусто = модель клиента | user/installer |
 | `SUBAGENT_MODEL_LIGHT` | Модель light tier | model id; пусто = модель клиента | user/installer |
 | `ITL_ROUTINE_MODE` | Делегирование `/itl*` в Kilo/OpenCode routine | `off`/`auto`/`on`, default `off`; `auto` и `on` требуют явный `SUBAGENT_MODEL_LIGHT` для делегирования | user |
+| `OPENCODE_EXPERIMENTAL_WORKSPACES` | Native worktree workspace API OpenCode | workflow идемпотентно задаёт `true` на уровне пользователя после успешного init/update/switch на OpenCode; требуется перезапуск OpenCode | user |
 | `CAVEMAN` | Автоактивация краткого стиля | `on`/`auto`/`off`, default `on` | user/`/caveman` |
 
 ## ITL verification

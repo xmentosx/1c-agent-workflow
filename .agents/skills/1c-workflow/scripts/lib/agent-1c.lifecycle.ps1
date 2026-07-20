@@ -4472,7 +4472,12 @@ function Initialize-DevBranchRuntime {
         [string]$GitBranch,
         [string]$MainProjectRoot,
         [string]$WorktreePath,
-        [bool]$CreatedWithWorktree = $false
+        [bool]$CreatedWithWorktree = $false,
+        [string]$StateProjectRoot = $script:ProjectRoot,
+        [string]$WorkspaceProvider = "",
+        [string]$ClientWorkspaceId = "",
+        [string]$RuntimeRoot = "",
+        [bool]$WorktreeLocked = $false
     )
 
     $kind = Get-InfoBaseKind
@@ -4489,7 +4494,8 @@ function Initialize-DevBranchRuntime {
     $publicationStatus = if ($publicationEnabled) { "pending" } else { "disabled" }
     $publicationMode = if ($publicationAuto) { "auto" } elseif ($publicationEnabled) { "manual" } else { "none" }
 
-    $statePath = Join-Path $script:ProjectRoot ".agent-1c\dev-branches\$SafeDevBranchName.json"
+    $stateProjectRoot = Resolve-Agent1cFullPath -Path $StateProjectRoot
+    $statePath = Join-Path $stateProjectRoot ".agent-1c\dev-branches\$SafeDevBranchName.json"
     $existingState = $null
     if (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue) {
         $existingState = Read-DevBranchStateFile -Path $statePath
@@ -4518,6 +4524,12 @@ function Initialize-DevBranchRuntime {
     $stateHash["createdWithWorktree"] = $CreatedWithWorktree
     $stateHash["worktreePath"] = $WorktreePath
     $stateHash["mainWorktreePath"] = $MainProjectRoot
+    if ($WorkspaceProvider) {
+        $stateHash["workspaceProvider"] = $WorkspaceProvider
+        $stateHash["clientWorkspaceId"] = $ClientWorkspaceId
+        $stateHash["runtimeRoot"] = $RuntimeRoot
+        $stateHash["worktreeLocked"] = $WorktreeLocked
+    }
     if (-not $stateHash.ContainsKey("createdFromCommit") -or -not $stateHash["createdFromCommit"]) {
         $stateHash["createdFromCommit"] = $currentCommit
     }
@@ -4604,7 +4616,7 @@ function Initialize-DevBranchRuntime {
         $currentStatus = "initializing"
     }
     if ($currentStatus -eq "initializing") {
-        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "initializing"
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "initializing" -ProjectRootOverride $stateProjectRoot
     }
 
     $copyPerformed = $false
@@ -4621,7 +4633,7 @@ function Initialize-DevBranchRuntime {
                 -InfoBasePath $DevBranchInfoBasePath `
                 -BranchName $DevBranchName `
                 -MainProjectRoot $MainProjectRoot
-            $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $normalizedHash -Status "enterprise-normalization-pending"
+            $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $normalizedHash -Status "enterprise-normalization-pending" -ProjectRootOverride $stateProjectRoot
             $state = Read-DevBranchStateFile -Path $statePath
             Ensure-DevBranchEnterpriseNormalized -State $state -Reason "branch-copy" | Out-Null
             $state = Read-DevBranchStateFile -Path $statePath
@@ -4633,7 +4645,7 @@ function Initialize-DevBranchRuntime {
             $normalizedHash = ConvertTo-Agent1cHashtable $state
             [void]$normalizedHash.Remove("statePath")
             [void]$normalizedHash.Remove("stateProjectRoot")
-            $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $normalizedHash -Status "ready"
+            $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $normalizedHash -Status "ready" -ProjectRootOverride $stateProjectRoot
             return
         }
 
@@ -4687,7 +4699,7 @@ function Initialize-DevBranchRuntime {
             $stateHash["designerInvoked"] = $false
             $stateHash["enterpriseInvoked"] = $false
         }
-        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "infobase-copied"
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "infobase-copied" -ProjectRootOverride $stateProjectRoot
         $currentStatus = "infobase-copied"
 
         $repositoryUnbound = ConvertTo-BoolSetting -Value $stateHash["repositoryUnbound"] -Default $false
@@ -4702,7 +4714,7 @@ function Initialize-DevBranchRuntime {
         }
         $stateHash["repositoryUnbound"] = $repositoryUnbound
         $stateHash["lastLogPath"] = $script:LastLogPath
-        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "repository-unbound"
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "repository-unbound" -ProjectRootOverride $stateProjectRoot
         $currentStatus = "repository-unbound"
 
         $stateHash = Resolve-DevBranchUnsafeActionProtectionState `
@@ -4711,7 +4723,7 @@ function Initialize-DevBranchRuntime {
             -InfoBasePath $DevBranchInfoBasePath `
             -BranchName $DevBranchName `
             -MainProjectRoot $MainProjectRoot
-        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "unsafe-action-protection-resolved"
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "unsafe-action-protection-resolved" -ProjectRootOverride $stateProjectRoot
         $currentStatus = "unsafe-action-protection-resolved"
 
         $launcherRegistration = Register-DevBranchInLauncher `
@@ -4725,7 +4737,7 @@ function Initialize-DevBranchRuntime {
         $stateHash["launcherFolder"] = $launcherRegistration.folder
         $stateHash["launcherInfoBaseId"] = $launcherRegistration.id
         $stateHash["launcherListPath"] = $launcherRegistration.listPath
-        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "launcher-registered"
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "launcher-registered" -ProjectRootOverride $stateProjectRoot
         $currentStatus = "launcher-registered"
 
         Write-Host "Development branch: $GitBranch"
@@ -4759,7 +4771,7 @@ function Initialize-DevBranchRuntime {
         $pendingHash["enterpriseNormalizationStatus"] = "pending"
         $pendingHash["enterpriseNormalizationReason"] = "branch-copy"
         $pendingHash["enterpriseNormalizationError"] = ""
-        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $pendingHash -Status "enterprise-normalization-pending"
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $pendingHash -Status "enterprise-normalization-pending" -ProjectRootOverride $stateProjectRoot
         $currentStatus = "enterprise-normalization-pending"
         $state = Read-DevBranchStateFile -Path $statePath
         Ensure-DevBranchEnterpriseNormalized -State $state -Reason "branch-copy" | Out-Null
@@ -4777,7 +4789,7 @@ function Initialize-DevBranchRuntime {
             }
             $finalHash[$key] = $finalStateHash[$key]
         }
-        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $finalHash -Status "ready"
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $finalHash -Status "ready" -ProjectRootOverride $stateProjectRoot
     } catch {
         $message = $_.Exception.Message
         $statusForError = if ($currentStatus -and @("infobase-copied", "repository-unbound", "unsafe-action-protection-resolved", "launcher-registered", "enterprise-normalization-pending") -contains $currentStatus) { $currentStatus } else { "failed" }
@@ -4797,8 +4809,235 @@ function Initialize-DevBranchRuntime {
                 $failureHash = $stateHash
             }
         }
-        Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $failureHash -Status $statusForError -ErrorMessage $message | Out-Null
+        Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $failureHash -Status $statusForError -ErrorMessage $message -ProjectRootOverride $stateProjectRoot | Out-Null
         throw
+    }
+}
+
+function Get-DevWorkspacePlan {
+    Require-Value "DevBranchName" $DevBranchName | Out-Null
+    Assert-MasterWorktreeContext -Operation "get-dev-workspace-plan"
+    Assert-CleanGit
+
+    $safe = ConvertTo-SafeName $DevBranchName
+    $branch = if ($DevBranch) { $DevBranch } else { "itldev/$safe" }
+    if ($branch -ne "itldev/$safe") {
+        throw "OpenCode native workspaces require the exact development branch 'itldev/$safe'."
+    }
+    $mainRoot = Get-MainWorktreePath
+    $statePath = Join-Path $mainRoot ".agent-1c\dev-branches\$safe.json"
+    $branchExists = Test-GitBranchExists -Branch $branch
+    $mode = "create"
+    $worktreePath = ""
+    $expectedWorkspaceCommit = Get-CurrentCommit
+    if ($branchExists) {
+        if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
+            throw "Development branch already exists without OpenCode ITL state and will not be adopted: $branch"
+        }
+        $state = Read-DevBranchStateFile -Path $statePath
+        if ((Get-StateValue -State $state -Name "workspaceProvider" -Default "external") -ne "opencode") {
+            throw "Existing legacy development branch will not be migrated to an OpenCode workspace: $branch"
+        }
+        if ((Get-StateValue -State $state -Name "devBranch" -Default "") -ne $branch) {
+            throw "Existing OpenCode state belongs to another branch: $(Get-StateValue -State $state -Name 'devBranch' -Default '<unknown>')."
+        }
+        if ((Get-DevBranchKind -State $state) -ne $DevBranchKind) {
+            throw "Existing OpenCode state has another development branch kind: $(Get-DevBranchKind -State $state)."
+        }
+        $worktree = Find-GitWorktreeByBranch -Branch $branch
+        if ($null -eq $worktree -or -not $worktree.path) {
+            throw "OpenCode development branch state exists but its Git worktree is missing: $branch"
+        }
+        $mode = "resume"
+        $worktreePath = Resolve-Agent1cFullPath -Path $worktree.path
+        $expectedWorkspaceCommit = [string]$worktree.head
+    } elseif (Test-Path -LiteralPath $statePath -PathType Leaf) {
+        throw "Development branch state exists but the Git branch is missing: $statePath"
+    }
+
+    $plan = [ordered]@{
+        mode = $mode
+        kind = $DevBranchKind
+        safeName = $safe
+        branch = $branch
+        baseCommit = $expectedWorkspaceCommit
+        mainWorktreePath = $mainRoot
+        worktreePath = $worktreePath
+        runtimeRoot = Join-Path $mainRoot ".agent-1c\workspaces\$safe"
+    }
+    Write-Output ($plan | ConvertTo-Json -Compress)
+}
+
+function Lock-OpenCodeDevWorktree {
+    param([string]$MainRoot, [string]$WorktreePath, [string]$Branch)
+
+    $worktree = Find-GitWorktreeByBranch -Branch $Branch
+    if ($null -eq $worktree) { throw "OpenCode worktree is not registered in Git: $Branch" }
+    if ($worktree.PSObject.Properties.Name -contains "locked" -and $worktree.locked) { return }
+    & git -C $MainRoot worktree lock --reason "ITL managed OpenCode workspace" $WorktreePath
+    if ($LASTEXITCODE -ne 0) { throw "Unable to lock OpenCode worktree: $WorktreePath" }
+}
+
+function Adopt-DevWorktree {
+    Require-Value "DevBranchName" $DevBranchName | Out-Null
+    if ($WorkspaceProvider -ne "opencode") { throw "adopt-dev-worktree accepts only WorkspaceProvider=opencode." }
+    Require-Value "ClientWorkspaceId" $ClientWorkspaceId | Out-Null
+    Require-Value "MainWorktreePath" $MainWorktreePath | Out-Null
+    Require-Value "WorkspaceBaseCommit" $WorkspaceBaseCommit | Out-Null
+    Require-Value "RuntimeRoot" $RuntimeRoot | Out-Null
+
+    $safe = ConvertTo-SafeName $DevBranchName
+    $branch = if ($DevBranch) { $DevBranch } else { "itldev/$safe" }
+    $currentRoot = Resolve-Agent1cFullPath -Path $script:ProjectRoot
+    $mainRoot = Resolve-Agent1cFullPath -Path $MainWorktreePath
+    if ($currentRoot -eq $mainRoot) { throw "The main worktree cannot be adopted as an OpenCode development workspace." }
+    if ((Resolve-Agent1cFullPath -Path (Get-MainWorktreePath)) -ne $mainRoot) { throw "The supplied main worktree does not belong to the current Git repository." }
+    if ((Get-CurrentBranch) -ne $branch) { throw "OpenCode workspace branch mismatch. Expected: $branch. Actual: $(Get-CurrentBranch)." }
+    if ((Get-CurrentCommit) -ne $WorkspaceBaseCommit) { throw "OpenCode workspace base commit mismatch. Expected: $WorkspaceBaseCommit. Actual: $(Get-CurrentCommit)." }
+    $gitWorktree = Find-GitWorktreeByBranch -Branch $branch
+    if ($null -eq $gitWorktree -or (Resolve-Agent1cFullPath -Path $gitWorktree.path) -ne $currentRoot) {
+        throw "The current directory is not the registered additional worktree for $branch."
+    }
+
+    $statePath = Join-Path $mainRoot ".agent-1c\dev-branches\$safe.json"
+    $otherStatePath = Find-DevBranchStateFile -SafeDevBranchName $safe
+    if ($otherStatePath -and (Resolve-Agent1cFullPath -Path $otherStatePath) -ne (Resolve-Agent1cFullPath -Path $statePath)) {
+        throw "Existing legacy development branch state will not be migrated: $otherStatePath"
+    }
+    Assert-DevBranchUnsafeActionProtectionPromptAvailable
+    Lock-OpenCodeDevWorktree -MainRoot $mainRoot -WorktreePath $currentRoot -Branch $branch
+
+    $resolvedRuntimeRoot = Resolve-Agent1cFullPath -Path $RuntimeRoot
+    $expectedRuntimeRoot = Resolve-Agent1cFullPath -Path (Join-Path $mainRoot ".agent-1c\workspaces\$safe")
+    if ($resolvedRuntimeRoot -ne $expectedRuntimeRoot) {
+        throw "OpenCode workspace runtime root mismatch. Expected: $expectedRuntimeRoot. Actual: $resolvedRuntimeRoot."
+    }
+    $script:DevBranchInfoBasePath = Join-Path $resolvedRuntimeRoot "infobase"
+    if (Test-Path -LiteralPath $statePath -PathType Leaf) {
+        $existing = Read-DevBranchStateFile -Path $statePath
+        if ((Get-StateValue -State $existing -Name "workspaceProvider" -Default "external") -ne "opencode") {
+            throw "Existing legacy development branch state will not be migrated: $statePath"
+        }
+        if ((Get-DevBranchInitializationStatus -State $existing) -eq "ready") {
+            Update-DevBranchState -State $existing -Updates @{ clientWorkspaceId = $ClientWorkspaceId; worktreeLocked = $true }
+            $existing = Read-DevBranchStateFile -Path $statePath
+            Sync-DevBranchContextToDotEnv -State $existing -AllowIncompleteExtension
+            Sync-KiloItlCommandSurface
+            Write-Host "OpenCode development workspace already ready: $branch"
+            return
+        }
+    }
+
+    Initialize-DevBranchRuntime `
+        -DevBranchKind $DevBranchKind `
+        -SafeDevBranchName $safe `
+        -GitBranch $branch `
+        -MainProjectRoot $mainRoot `
+        -WorktreePath $currentRoot `
+        -CreatedWithWorktree $true `
+        -StateProjectRoot $mainRoot `
+        -WorkspaceProvider "opencode" `
+        -ClientWorkspaceId $ClientWorkspaceId `
+        -RuntimeRoot $resolvedRuntimeRoot `
+        -WorktreeLocked $true
+
+    if ($DevBranchKind -eq "extension") {
+        $hasProvisioningInput = Resolve-NewExtensionProvisioningInput
+        if ($hasProvisioningInput) {
+            Init-DevBranchExtension
+        } else {
+            Write-Host "Extension initialization: pending"
+        }
+    }
+}
+
+function Get-DevWorkspaceClosePlan {
+    $state = Read-DevBranchState -Name $DevBranchName
+    if ((Get-StateValue -State $state -Name "workspaceProvider" -Default "external") -ne "opencode") {
+        throw "Existing legacy development branch is not an OpenCode managed workspace and will use the unchanged close lifecycle."
+    }
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "get-dev-workspace-close-plan"
+
+    $plan = [ordered]@{
+        branch = [string]$state.devBranch
+        safeName = [string](Get-StateValue -State $state -Name "safeDevBranchName" -Default (ConvertTo-SafeName $state.devBranchName))
+        clientWorkspaceId = [string](Get-StateValue -State $state -Name "clientWorkspaceId" -Default "")
+        mainWorktreePath = [string](Get-StateValue -State $state -Name "mainWorktreePath" -Default "")
+        worktreePath = [string](Get-StateValue -State $state -Name "worktreePath" -Default "")
+        runtimeRoot = [string](Get-StateValue -State $state -Name "runtimeRoot" -Default "")
+        closed = [bool](Get-StateValue -State $state -Name "closedAt" -Default "")
+        pendingDeregistration = ConvertTo-BoolSetting -Value (Get-StateValue -State $state -Name "pendingDeregistration" -Default $false) -Default $false
+    }
+    Write-Output ($plan | ConvertTo-Json -Compress)
+}
+
+function Unlock-OpenCodeDevWorktree {
+    param([string]$MainRoot, [string]$WorktreePath, [string]$Branch)
+
+    $worktree = Find-GitWorktreeByBranch -Branch $Branch
+    if ($null -eq $worktree) { return }
+    if ((Resolve-Agent1cFullPath -Path $worktree.path) -ne (Resolve-Agent1cFullPath -Path $WorktreePath)) {
+        throw "OpenCode workspace worktree path changed unexpectedly. State: $WorktreePath. Git: $($worktree.path)."
+    }
+    if ($worktree.PSObject.Properties.Name -notcontains "locked" -or -not $worktree.locked) { return }
+    & git -C $MainRoot worktree unlock $WorktreePath
+    if ($LASTEXITCODE -ne 0) { throw "Unable to unlock OpenCode worktree before native removal: $WorktreePath" }
+}
+
+function Set-DevWorkspaceDeregistration {
+    Require-Value "DevBranchName" $DevBranchName | Out-Null
+    Require-Value "DeregistrationStatus" $DeregistrationStatus | Out-Null
+    Assert-MasterWorktreeContext -Operation "set-dev-workspace-deregistration"
+    $state = Read-DevBranchState -Name $DevBranchName
+    if ((Get-StateValue -State $state -Name "workspaceProvider" -Default "external") -ne "opencode") {
+        throw "Legacy development branch state cannot be changed by OpenCode workspace deregistration."
+    }
+    if (-not (Get-StateValue -State $state -Name "closedAt" -Default "")) {
+        throw "OpenCode workspace deregistration is allowed only after close-dev-branch completed."
+    }
+
+    $branch = [string]$state.devBranch
+    $mainRoot = Resolve-Agent1cFullPath -Path (Get-StateValue -State $state -Name "mainWorktreePath" -Default "")
+    $worktreePath = Resolve-Agent1cFullPath -Path (Get-StateValue -State $state -Name "worktreePath" -Default "")
+    if ($mainRoot -ne (Resolve-Agent1cFullPath -Path $script:ProjectRoot)) {
+        throw "OpenCode deregistration must run from the state-owned main worktree: $mainRoot"
+    }
+
+    switch ($DeregistrationStatus) {
+        "pending" {
+            Unlock-OpenCodeDevWorktree -MainRoot $mainRoot -WorktreePath $worktreePath -Branch $branch
+            Update-DevBranchState -State $state -Updates @{
+                clientWorkspaceId = $ClientWorkspaceId
+                pendingDeregistration = $true
+                pendingDeregistrationAt = (Get-Date).ToString("o")
+                pendingDeregistrationError = ""
+                worktreeLocked = $false
+            }
+        }
+        "failed" {
+            $worktree = Find-GitWorktreeByBranch -Branch $branch
+            if ($null -ne $worktree) {
+                Lock-OpenCodeDevWorktree -MainRoot $mainRoot -WorktreePath $worktreePath -Branch $branch
+            }
+            Update-DevBranchState -State $state -Updates @{
+                clientWorkspaceId = $ClientWorkspaceId
+                pendingDeregistration = $true
+                pendingDeregistrationError = $DeregistrationError
+                worktreeLocked = [bool]($null -ne $worktree)
+            }
+        }
+        "complete" {
+            if ($null -ne (Find-GitWorktreeByBranch -Branch $branch)) {
+                throw "OpenCode reported workspace removal complete but Git still registers its worktree: $branch"
+            }
+            Update-DevBranchState -State $state -Updates @{
+                clientWorkspaceId = $ClientWorkspaceId
+                pendingDeregistration = $false
+                pendingDeregistrationError = ""
+                workspaceDeregisteredAt = (Get-Date).ToString("o")
+                worktreeLocked = $false
+            }
+        }
     }
 }
 

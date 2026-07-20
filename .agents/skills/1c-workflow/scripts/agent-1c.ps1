@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "prepare-vanessa-authoring", "complete-vanessa-authoring", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "run-dev-branch-tests", "stop-dev-branch-test-clients", "init-project", "sync-master", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "prepare-vanessa-authoring", "complete-vanessa-authoring", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "run-dev-branch-tests", "stop-dev-branch-test-clients", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -9,6 +9,17 @@ param(
     [string]$DevBranch,
     [string]$DevBranchInfoBasePath,
     [string]$DevBranchWorktreePath,
+    [ValidateSet("configuration", "extension")]
+    [string]$DevBranchKind = "configuration",
+    [ValidateSet("", "opencode")]
+    [string]$WorkspaceProvider = "",
+    [string]$ClientWorkspaceId = "",
+    [string]$MainWorktreePath = "",
+    [string]$WorkspaceBaseCommit = "",
+    [string]$RuntimeRoot = "",
+    [ValidateSet("", "pending", "failed", "complete")]
+    [string]$DeregistrationStatus = "",
+    [string]$DeregistrationError = "",
     [string]$InfoBaseUser = "",
     [string]$ExtensionName,
     [ValidateSet("", "Empty", "Cfe")]
@@ -312,6 +323,13 @@ foreach ($moduleFile in $script:Agent1cModuleFiles) {
 Initialize-GitIndexLockTracking
 
 try {
+    if ($Action -eq "adopt-dev-worktree" -and $MainWorktreePath) {
+        $sourceDotEnv = Join-Path ([System.IO.Path]::GetFullPath($MainWorktreePath)) ".dev.env"
+        $targetDotEnv = Join-Path $script:ProjectRoot ".dev.env"
+        if (-not (Test-Path -LiteralPath $targetDotEnv -PathType Leaf) -and (Test-Path -LiteralPath $sourceDotEnv -PathType Leaf)) {
+            Copy-Item -LiteralPath $sourceDotEnv -Destination $targetDotEnv
+        }
+    }
     Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env")
     Read-ProjectConfig
     $requestedLifecycleAction = $(if ($InternalOnDemandOperation) { "internal-ondemand-$InternalOnDemandOperation" } else { $Action })
@@ -352,10 +370,10 @@ try {
         "vibecoding1c-mcp-rotate-keys" { Rotate-Vibecoding1cMcpKeys }
         "vibecoding1c-mcp-ensure-model" { Ensure-Vibecoding1cMcpModel | Out-Null }
         "vibecoding1c-mcp-write-client-config" { Write-Vibecoding1cMcpClientConfig }
-        "update-workflow" { Update-WorkflowPackage }
+        "update-workflow" { Update-WorkflowPackage; Sync-ItlClientUserEnvironment -Client (Get-ItlActiveClient) }
         "update-ai-rules" { Update-AiRules1c }
         "itl-litemode" { Set-ItlLiteMode -Mode $Mode }
-        "itl-switch-client" { Switch-ItlClient -Client $Client }
+        "itl-switch-client" { Switch-ItlClient -Client $Client; Sync-ItlClientUserEnvironment -Client (Get-ItlActiveClient) }
         "update1cbase" { Invoke-ItlUpdate1cBaseBridge }
         "loadfrom1cbase" { Invoke-ItlLoadFrom1cBaseBridge }
         "getconfigfiles" { Invoke-ItlGetConfigFilesBridge }
@@ -365,8 +383,12 @@ try {
         "stop-dev-branch-test-clients" { Stop-DevBranchTestClients }
         "check-dev-branch" { Check-DevBranch }
         "verify-dev-branch" { Verify-DevBranch }
-        "init-project" { Initialize-Project }
+        "init-project" { Initialize-Project; Sync-ItlClientUserEnvironment -Client (Get-ItlActiveClient) }
         "sync-master" { Sync-Master }
+        "get-dev-workspace-plan" { Get-DevWorkspacePlan }
+        "get-dev-workspace-close-plan" { Get-DevWorkspaceClosePlan }
+        "set-dev-workspace-deregistration" { Set-DevWorkspaceDeregistration }
+        "adopt-dev-worktree" { Adopt-DevWorktree }
         "new-dev-branch" { New-DevBranch }
         "new-extension-dev-branch" { New-ExtensionDevBranch }
         "configure-dev-branch-unsafe-action-protection" { Configure-DevBranchUnsafeActionProtection }

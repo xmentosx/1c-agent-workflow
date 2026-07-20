@@ -325,6 +325,8 @@ function Test-Agent1cActionRequiresLifecycleLock {
         "doctor",
         "status",
         "list-dev-branches",
+        "get-dev-workspace-plan",
+        "get-dev-workspace-close-plan",
         "validate",
         "check-tools",
         "list-platforms",
@@ -1449,6 +1451,7 @@ function Get-GitWorktrees {
                 branch = ""
                 bare = $false
                 detached = $false
+                locked = $false
             }
             continue
         }
@@ -1466,6 +1469,8 @@ function Get-GitWorktrees {
             $current.bare = $true
         } elseif ($line -eq "detached") {
             $current.detached = $true
+        } elseif ($line -eq "locked" -or $line -like "locked *") {
+            $current.locked = $true
         }
     }
 
@@ -1663,6 +1668,7 @@ function Ensure-GitIgnore {
         ".cursor/commands/itl*.md",
         ".opencode/command/itl*.md",
         ".opencode/agent/itl-routine.md",
+        ".opencode/plugins/itl-workspace.js",
         ".mcp.json",
         ".cursor/mcp.json",
         "opencode.json"
