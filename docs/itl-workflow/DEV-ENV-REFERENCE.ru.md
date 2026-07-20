@@ -67,7 +67,7 @@
 | `ITL_PORT_REGISTRY_SCOPE` | Область реестра портов | `machine`/`user`, default `machine` | user |
 | `ITL_PORT_REGISTRY_HOME` | Общий writable-каталог реестра | путь или пусто | user |
 | `DEV_BRANCH_INFOBASE_ROOT` | Корень копий баз | пусто = `.agent-1c/infobases/dev-branches` | user |
-| `DEV_BRANCH_WORKTREE_ROOT` | Корень worktree | пусто = соседний `<project>-worktrees` | user |
+| `DEV_BRANCH_WORKTREE_ROOT` | Родительский каталог worktree | пусто = рядом с проектом; папка `<project>-<safe-branch>` | user |
 | `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP` | Fallback-подтверждение для копии при отсутствии master-маркера | `manual-confirm`/`skip`, default `manual-confirm` | user/init |
 
 ## Web publication

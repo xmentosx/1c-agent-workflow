@@ -2371,10 +2371,49 @@ if (`$?) { exit 0 } else { exit 1 }
         $match.Groups["body"].Value | Should -Not -Match "WindowStyle"
     }
 
+    It "resolves flat project-qualified worktree paths for default and custom parents" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-worktree-path-test-" + [guid]::NewGuid().ToString("N"))
+        $customRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-worktree-custom-root-" + [guid]::NewGuid().ToString("N"))
+        $oldWorktreeRoot = [Environment]::GetEnvironmentVariable("DEV_BRANCH_WORKTREE_ROOT", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Value "fixture" -Encoding ASCII
+            & git -C $tempRoot init | Out-Null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add README.md
+            & git -C $tempRoot commit -m init | Out-Null
+            & git -C $tempRoot branch -M master
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $projectName = Split-Path -Leaf $tempRoot
+
+                [Environment]::SetEnvironmentVariable("DEV_BRANCH_WORKTREE_ROOT", $null, "Process")
+                $defaultExpected = Join-Path (Split-Path -Parent $tempRoot) "$projectName-feature-one"
+                Resolve-DevBranchWorktreePath -SafeDevBranchName "feature-one" | Should -Be ([System.IO.Path]::GetFullPath($defaultExpected))
+                Get-LauncherInfoBaseName -SafeDevBranchName "feature-one" -ProjectRootForName $tempRoot | Should -Be "$projectName-feature-one"
+
+                [Environment]::SetEnvironmentVariable("DEV_BRANCH_WORKTREE_ROOT", $customRoot, "Process")
+                $customExpected = Join-Path $customRoot "$projectName-feature-two"
+                Resolve-DevBranchWorktreePath -SafeDevBranchName "feature-two" | Should -Be ([System.IO.Path]::GetFullPath($customExpected))
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("DEV_BRANCH_WORKTREE_ROOT", $oldWorktreeRoot, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $customRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $customRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "stops direct non-interactive manual unsafe action confirmation before creating a worktree" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-manual-confirm-test-" + [guid]::NewGuid().ToString("N"))
-        $worktreeRoot = "$tempRoot-worktrees"
-        $worktreePath = Join-Path $worktreeRoot "needs-confirmation"
+        $legacyWorktreeRoot = "$tempRoot-worktrees"
+        $worktreePath = "$tempRoot-needs-confirmation"
         $sourceBase = Join-Path $tempRoot "source-base"
         $oldAppData = $env:APPDATA
         $oldUnsafeSetup = [Environment]::GetEnvironmentVariable("DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP", "Process")
@@ -2430,16 +2469,16 @@ if (`$?) { exit 0 } else { exit 1 }
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
-            if (Test-Path -LiteralPath $worktreeRoot -ErrorAction SilentlyContinue) {
-                Remove-Item -LiteralPath $worktreeRoot -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $legacyWorktreeRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $legacyWorktreeRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
 
     It "creates a sibling worktree branch without starting branch MCP even when legacy auto-start is true" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-worktree-test-" + [guid]::NewGuid().ToString("N"))
-        $worktreeRoot = "$tempRoot-worktrees"
-        $worktreePath = Join-Path $worktreeRoot "fixture-branch"
+        $legacyWorktreeRoot = "$tempRoot-worktrees"
+        $worktreePath = "$tempRoot-fixture-branch"
         $sourceBase = Join-Path $tempRoot "source-base"
         $projectName = Split-Path -Leaf $tempRoot
         $oldAppData = $env:APPDATA
@@ -2487,6 +2526,7 @@ if (`$?) { exit 0 } else { exit 1 }
 
             ((& git -C $tempRoot branch --show-current).Trim()) | Should -Be "master"
             (Test-Path -LiteralPath $worktreePath -PathType Container) | Should -Be $true
+            (Test-Path -LiteralPath $legacyWorktreeRoot -ErrorAction SilentlyContinue) | Should -Be $false
             (Test-Path -LiteralPath (Join-Path $worktreePath ".dev.env") -PathType Leaf) | Should -Be $true
             (Get-Content -Encoding UTF8 -Raw (Join-Path $worktreePath ".dev.env")) | Should -Match ([regex]::Escape("SOURCE_INFOBASE_PATH=$sourceBase"))
             $statePath = Join-Path $worktreePath ".agent-1c\dev-branches\fixture-branch.json"
@@ -2496,7 +2536,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $state.worktreePath | Should -Be ([System.IO.Path]::GetFullPath($worktreePath))
             $state.mainWorktreePath | Should -Be ([System.IO.Path]::GetFullPath($tempRoot))
             $expectedLauncherFolder = "/ITL/" + (Split-Path -Leaf $tempRoot)
-            $expectedLauncherName = "$projectName - Fixture Branch"
+            $expectedLauncherName = "$projectName-fixture-branch"
             $state.launcherInfoBaseName | Should -Be $expectedLauncherName
             $state.launcherFolder | Should -Be $expectedLauncherFolder
             $state.unsafeActionProtectionSetupMode | Should -Be "skip"
@@ -2564,8 +2604,8 @@ if (`$?) { exit 0 } else { exit 1 }
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
-            if (Test-Path -LiteralPath $worktreeRoot -ErrorAction SilentlyContinue) {
-                Remove-Item -LiteralPath $worktreeRoot -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $legacyWorktreeRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $legacyWorktreeRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
@@ -2616,7 +2656,7 @@ if (`$?) { exit 0 } else { exit 1 }
             Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value "{}" -Encoding ASCII
 
             $env:APPDATA = Join-Path $tempRoot "appdata"
-            $firstResult = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "new-dev-branch", "-DevBranchName", "Partial Branch")
+            $firstResult = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "new-dev-branch", "-DevBranchName", "Partial Branch", "-DevBranchWorktreePath", $worktreePath)
             $firstResult.exitCode | Should -Not -Be 0
             $firstResult.combinedText | Should -Match "Unsupported DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP value"
 
@@ -2648,13 +2688,14 @@ if (`$?) { exit 0 } else { exit 1 }
             $resumeResult = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "new-dev-branch", "-DevBranchName", "Partial Branch")
             $resumeResult.exitCode | Should -Be 0
             $resumeResult.combinedText | Should -Match "Resuming development branch initialization: itldev/partial-branch"
+            (Test-Path -LiteralPath "$tempRoot-partial-branch" -ErrorAction SilentlyContinue) | Should -Be $false
 
             $resumedState = Get-Content -Encoding UTF8 -Raw $statePath | ConvertFrom-Json
             $resumedState.initializationStatus | Should -Be "ready"
             $resumedState.initializationError | Should -Be ""
             $resumedState.unsafeActionProtectionSetupMode | Should -Be "skip"
             $resumedState.unsafeActionProtectionResolution | Should -Be "skip"
-            $expectedLauncherName = "$projectName - Partial Branch"
+            $expectedLauncherName = "$projectName-partial-branch"
             $launcherTextAfter = Get-Content -Encoding UTF8 -Raw $launcherPath
             ([regex]::Matches($launcherTextAfter, ("(?m)^\[{0}\]\r?$" -f [regex]::Escape($expectedLauncherName)))).Count | Should -Be 1
         } finally {
@@ -2673,8 +2714,8 @@ if (`$?) { exit 0 } else { exit 1 }
 
     It "inherits complete vibecoding1c MCP selection into a sibling worktree" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-worktree-mcp-test-" + [guid]::NewGuid().ToString("N"))
-        $worktreeRoot = "$tempRoot-worktrees"
-        $worktreePath = Join-Path $worktreeRoot "mcp-branch"
+        $legacyWorktreeRoot = "$tempRoot-worktrees"
+        $worktreePath = "$tempRoot-mcp-branch"
         $sourceBase = Join-Path $tempRoot "source-base"
         $registryRoot = Join-Path $tempRoot "registry"
         $oldAppData = $env:APPDATA
@@ -2763,7 +2804,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $projectStatePath = Join-Path $worktreePath ".agent-1c\mcp\state.json"
             (Test-Path -LiteralPath $projectStatePath -PathType Leaf) | Should -Be $true
             $projectState = Get-Content -Encoding UTF8 -Raw $projectStatePath | ConvertFrom-Json
-            $projectState.projectSlug | Should -Be "mcp-branch"
+            $projectState.projectSlug | Should -Be (Split-Path -Leaf $worktreePath).ToLowerInvariant()
             $projectState.branchSlug | Should -Be "mcp-branch"
             (@($projectState.servers | Where-Object { $_.id -eq "code" }).Count) | Should -Be 1
             ($projectState.servers | Where-Object { $_.id -eq "code" } | Select-Object -First 1).url | Should -Be "http://host-a:18100/mcp"
@@ -2785,8 +2826,8 @@ if (`$?) { exit 0 } else { exit 1 }
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
-            if (Test-Path -LiteralPath $worktreeRoot -ErrorAction SilentlyContinue) {
-                Remove-Item -LiteralPath $worktreeRoot -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $legacyWorktreeRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $legacyWorktreeRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
