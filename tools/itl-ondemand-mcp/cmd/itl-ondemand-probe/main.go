@@ -32,6 +32,8 @@ type probeSession struct {
 	state   *runtimeState
 }
 
+const gatewayCallTool = "call_tool"
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -85,11 +87,11 @@ func run() error {
 			return err
 		}
 		connected = append(connected, item)
-		if item.count != expectedCount {
-			return fmt.Errorf("facade tools/list count=%d, catalog count=%d", item.count, expectedCount)
+		if item.count != 2 {
+			return fmt.Errorf("facade gateway tools/list count=%d, expected=2; internal catalog count=%d", item.count, expectedCount)
 		}
 		stopHeartbeat := keepSessionsAlive(ctx, connected[:len(connected)-1], *idleTimeout, *tool, arguments)
-		result, err := item.session.CallTool(ctx, &mcp.CallToolParams{Name: *tool, Arguments: arguments})
+		result, err := callInnerTool(ctx, item.session, *tool, arguments)
 		if err != nil {
 			stopHeartbeat()
 			return fmt.Errorf("call %s: %w", *tool, err)
@@ -151,7 +153,7 @@ func run() error {
 		if _, err := waitForStateCount(runtimeRoot, 1, 30*time.Second); err != nil {
 			return fmt.Errorf("first facade cleanup: %w", err)
 		}
-		result, err := connected[0].session.CallTool(ctx, &mcp.CallToolParams{Name: *tool, Arguments: arguments})
+		result, err := callInnerTool(ctx, connected[0].session, *tool, arguments)
 		if err != nil || result.IsError {
 			return fmt.Errorf("second facade stopped with the first: err=%v result=%#v", err, result)
 		}
@@ -163,7 +165,7 @@ func run() error {
 			return fmt.Errorf("idle cleanup: %w", err)
 		}
 		idleCleanupPassed = true
-		result, err := connected[0].session.CallTool(ctx, &mcp.CallToolParams{Name: *tool, Arguments: arguments})
+		result, err := callInnerTool(ctx, connected[0].session, *tool, arguments)
 		if err != nil || result.IsError {
 			return fmt.Errorf("facade did not restart after idle cleanup: err=%v result=%#v", err, result)
 		}
@@ -182,7 +184,7 @@ func run() error {
 	}
 
 	evidence := map[string]any{
-		"schemaVersion": 1, "family": *family, "toolCount": expectedCount,
+		"schemaVersion": 1, "family": *family, "publicToolCount": 2, "catalogToolCount": expectedCount,
 		"tool": *tool, "instances": initial, "secondSurvivedFirstClose": secondSurvived,
 		"cleanupPassed": true, "idleCleanupPassed": idleCleanupPassed, "vanessaUiSmokePassed": *vanessaSmoke,
 		"capturedAt": time.Now().UTC().Format(time.RFC3339Nano),
@@ -223,7 +225,7 @@ func keepSessionsAlive(ctx context.Context, sessions []*probeSession, idleTimeou
 				case <-stop:
 					return
 				case <-ticker.C:
-					_, _ = session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: arguments})
+					_, _ = callInnerTool(ctx, session, tool, arguments)
 				}
 			}
 		}(item.session)
@@ -233,6 +235,13 @@ func keepSessionsAlive(ctx context.Context, sessions []*probeSession, idleTimeou
 		once.Do(func() { close(stop) })
 		workers.Wait()
 	}
+}
+
+func callInnerTool(ctx context.Context, session *mcp.ClientSession, name string, arguments any) (*mcp.CallToolResult, error) {
+	return session.CallTool(ctx, &mcp.CallToolParams{
+		Name:      gatewayCallTool,
+		Arguments: map[string]any{"name": name, "arguments": arguments},
+	})
 }
 
 func connect(ctx context.Context, exe, family, projectRoot, catalog, helper string, idleTimeout time.Duration) (*probeSession, error) {
@@ -348,7 +357,7 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 		{name: "get_window_list_testclient", arguments: map[string]any{}},
 		{name: "get_window_list_os", arguments: map[string]any{}},
 	} {
-		result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: call.name, Arguments: call.arguments})
+		result, err := callInnerTool(ctx, session, call.name, call.arguments)
 		if err != nil {
 			return fmt.Errorf("Vanessa smoke %s: %w", call.name, err)
 		}
@@ -367,7 +376,7 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 			return err
 		}
 	}
-	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "get_window_screenshot_os", Arguments: map[string]any{"window_title": title, "color_mode": "grayscale"}})
+	result, err := callInnerTool(ctx, session, "get_window_screenshot_os", map[string]any{"window_title": title, "color_mode": "grayscale"})
 	if err != nil {
 		return fmt.Errorf("Vanessa smoke get_window_screenshot_os: %w", err)
 	}

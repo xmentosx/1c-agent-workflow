@@ -51,7 +51,7 @@ Use direct `agent-1c.ps1` for branch creation only when the master source confir
 
 New branches use sibling worktrees from `master`. Use the path and helper opening; never make the developer copy lifecycle commands. `-UseCurrentWorktree` is explicit-only.
 
-New branch commands register stable `itl-roctup-data` and `itl-vanessa-ui` stdio facades without opening the branch infobase. Their first tool call starts a client-owned backend automatically. For runtime UI research, recording, or debugging follow `.agents/skills/itl-vanessa-ui-mcp/SKILL.md`. Static form/source questions do not call Vanessa UI MCP. `/itl-check` is separate Vanessa Automation verification, not MCP.
+New branch commands register stable `itl-roctup-data` and `itl-vanessa-ui` stdio facades with compact `resolve_tool`/`call_tool` surfaces without opening the branch infobase. Resolution is local; their first inner call starts a client-owned backend automatically. For runtime UI research, recording, or debugging follow `.agents/skills/itl-vanessa-ui-mcp/SKILL.md`. Static form/source questions do not call Vanessa UI MCP. `/itl-check` is separate Vanessa Automation verification, not MCP.
 
 For `check-dev-branch`, `update-dev-branch-base`, `verify-dev-branch`, `refresh-dev-branch`, `export-dev-branch-result`, and explicit `close-dev-branch`, do not ask for a branch name; the helper infers current `itldev/<name>`.
 

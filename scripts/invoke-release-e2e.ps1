@@ -797,8 +797,8 @@ try {
                     facadeSha256 = ("0" * 64)
                     testFixture = $true
                     families = [ordered]@{
-                        roctup = [ordered]@{ toolCount = 13; instances = @([ordered]@{ pid = 101; port = 6003 }); cleanupPassed = $true; idleCleanupPassed = $true; secondSurvivedFirstClose = $false }
-                        "vanessa-ui" = [ordered]@{ toolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151 }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152 }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; secondSurvivedFirstClose = $true }
+                        roctup = [ordered]@{ publicToolCount = 2; catalogToolCount = 13; instances = @([ordered]@{ pid = 101; port = 6003 }); cleanupPassed = $true; idleCleanupPassed = $true; secondSurvivedFirstClose = $false }
+                        "vanessa-ui" = [ordered]@{ publicToolCount = 2; catalogToolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151 }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152 }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; secondSurvivedFirstClose = $true }
                     }
                     capturedAt = [DateTime]::UtcNow.ToString("o")
                 }
@@ -1039,8 +1039,10 @@ try {
         extensionUiJunitTests = $(if ($extensionSmokeEvidence) { [int]$extensionSmokeEvidence.extensionUiJunitTests } else { 0 })
         extensionUiReportPath = $(if ($extensionSmokeEvidence) { [string]$extensionSmokeEvidence.extensionUiReportPath } else { "" })
         onDemandMcpEvidencePath = $onDemandMcpEvidencePath
-        onDemandRoctupToolCount = $(if ($onDemandMcpEvidence) { [int]$onDemandMcpEvidence.families.roctup.toolCount } else { 0 })
-        onDemandVanessaToolCount = $(if ($onDemandMcpEvidence) { [int]$onDemandMcpEvidence.families.'vanessa-ui'.toolCount } else { 0 })
+        onDemandRoctupToolCount = $(if ($onDemandMcpEvidence) { [int]$onDemandMcpEvidence.families.roctup.catalogToolCount } else { 0 })
+        onDemandVanessaToolCount = $(if ($onDemandMcpEvidence) { [int]$onDemandMcpEvidence.families.'vanessa-ui'.catalogToolCount } else { 0 })
+        onDemandRoctupPublicToolCount = $(if ($onDemandMcpEvidence) { [int]$onDemandMcpEvidence.families.roctup.publicToolCount } else { 0 })
+        onDemandVanessaPublicToolCount = $(if ($onDemandMcpEvidence) { [int]$onDemandMcpEvidence.families.'vanessa-ui'.publicToolCount } else { 0 })
         onDemandVanessaInstances = $(if ($onDemandMcpEvidence) { @($onDemandMcpEvidence.families.'vanessa-ui'.instances).Count } else { 0 })
         onDemandVanessaSecondSurvived = $(if ($onDemandMcpEvidence) { [bool]$onDemandMcpEvidence.families.'vanessa-ui'.secondSurvivedFirstClose } else { $false })
         onDemandMcpTestFixture = $(if ($onDemandMcpEvidence) { [bool]$onDemandMcpEvidence.testFixture } else { $false })

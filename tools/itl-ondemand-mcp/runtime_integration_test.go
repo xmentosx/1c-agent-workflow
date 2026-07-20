@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -131,6 +133,39 @@ func newFacadeSessionForFamily(t *testing.T, family string, tools []*mcp.Tool, b
 	return rt, clientSession
 }
 
+func newGatewayFacadeSession(t *testing.T, family string, tools []*mcp.Tool, broker *fakeBroker, progress chan *mcp.ProgressNotificationParams) (*runtime, *mcp.ClientSession) {
+	t.Helper()
+	rt := &runtime{
+		catalog: &loadedCatalog{SHA256: "catalog", Data: catalogFile{SchemaVersion: 1, Family: family, Tools: tools}},
+		broker:  broker, projectRoot: t.TempDir(), family: family, instanceID: "0123456789abcdef0123456789abcdef",
+		idle: time.Minute, logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), progress: make(map[string]*mcp.ServerSession),
+	}
+	server := mcp.NewServer(&mcp.Implementation{Name: "itl-" + family, Version: version}, nil)
+	addGatewayTools(server, rt)
+	client := mcp.NewClient(&mcp.Implementation{Name: "gateway-test-client", Version: "1"}, &mcp.ClientOptions{
+		ProgressNotificationHandler: func(_ context.Context, req *mcp.ProgressNotificationClientRequest) {
+			if progress != nil {
+				progress <- req.Params
+			}
+		},
+	})
+	left, right := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(context.Background(), left, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientSession, err := client.Connect(context.Background(), right, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = clientSession.Close()
+		_ = serverSession.Close()
+		_ = rt.close(context.Background())
+	})
+	return rt, clientSession
+}
+
 func vanessaIntegrationTools() []*mcp.Tool {
 	object := map[string]any{"type": "object"}
 	return []*mcp.Tool{
@@ -208,6 +243,102 @@ func TestRuntimeLazyHTTPPaginationCallAndProgress(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("progress was not forwarded")
+	}
+}
+
+func TestGatewayListsTwoToolsAndResolvesWithoutStartingBackend(t *testing.T) {
+	tools := integrationTools()
+	broker := &fakeBroker{info: &backendInfo{}}
+	_, session := newGatewayFacadeSession(t, "roctup", tools, broker, nil)
+
+	listed, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(listed.Tools))
+	for _, tool := range listed.Tools {
+		names = append(names, tool.Name)
+	}
+	sort.Strings(names)
+	if len(names) != 2 || names[0] != gatewayCallTool || names[1] != gatewayResolveTool {
+		t.Fatalf("unexpected gateway surface: %#v", listed.Tools)
+	}
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayResolveTool, Arguments: map[string]any{"query": "echo", "limit": 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError || !strings.Contains(resultText(result), `"name":"echo"`) || !strings.Contains(resultText(result), `"inputSchema"`) {
+		t.Fatalf("unexpected resolve result: %s", resultText(result))
+	}
+	if ensures, _ := broker.counts(); ensures != 0 {
+		t.Fatalf("resolve_tool started backend: %d", ensures)
+	}
+}
+
+func TestGatewayDefinitionsStayCompactAndDoNotEmbedInnerCatalog(t *testing.T) {
+	definitions := []*mcp.Tool{gatewayResolveDefinition("roctup"), gatewayCallDefinition("roctup"), gatewayResolveDefinition("vanessa-ui"), gatewayCallDefinition("vanessa-ui")}
+	raw, err := json.Marshal(definitions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) > 6000 {
+		t.Fatalf("four gateway definitions are too large: %d bytes", len(raw))
+	}
+	for _, innerName := range []string{"get_metadata", "execute_query", "run_scenario", "get_test_results"} {
+		if strings.Contains(string(raw), innerName) {
+			t.Fatalf("gateway surface embeds inner tool %q", innerName)
+		}
+	}
+}
+
+func TestGatewayValidatesBeforeStartupAndForwardsExactTool(t *testing.T) {
+	tools := integrationTools()
+	_, backend := newBackend(t, tools, false)
+	broker := &fakeBroker{info: &backendInfo{URL: backend.URL, BackendVersion: "test"}}
+	_, session := newGatewayFacadeSession(t, "roctup", tools, broker, nil)
+
+	invalid, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayCallTool, Arguments: map[string]any{"name": "echo", "arguments": map[string]any{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertToolErrorCode(t, invalid, "ITL_ONDEMAND_ARGUMENTS_INVALID")
+	if ensures, _ := broker.counts(); ensures != 0 {
+		t.Fatalf("invalid inner arguments started backend: %d", ensures)
+	}
+
+	valid, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayCallTool, Arguments: map[string]any{"name": "echo", "arguments": map[string]any{"value": "x"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if valid.IsError || resultText(valid) != "echo" {
+		t.Fatalf("gateway did not forward exact tool: %#v", valid)
+	}
+	if ensures, _ := broker.counts(); ensures != 1 {
+		t.Fatalf("valid gateway call ensure count=%d", ensures)
+	}
+}
+
+func TestGatewayRejectsUnknownToolBeforeStartup(t *testing.T) {
+	broker := &fakeBroker{info: &backendInfo{}}
+	_, session := newGatewayFacadeSession(t, "roctup", integrationTools(), broker, nil)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayCallTool, Arguments: map[string]any{"name": "missing", "arguments": map[string]any{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertToolErrorCode(t, result, "ITL_ONDEMAND_TOOL_UNKNOWN")
+	if ensures, _ := broker.counts(); ensures != 0 {
+		t.Fatalf("unknown inner tool started backend: %d", ensures)
+	}
+}
+
+func TestGatewayResolvesRussianRoctupAlias(t *testing.T) {
+	catalog := &loadedCatalog{Data: catalogFile{Family: "roctup", Tools: []*mcp.Tool{
+		{Name: "get_metadata", Description: "Get metadata", InputSchema: map[string]any{"type": "object"}},
+		{Name: "execute_query", Description: "Execute query", InputSchema: map[string]any{"type": "object"}},
+	}}}
+	matches := searchCatalogTools(catalog, "roctup", "структура метаданных", 1)
+	if len(matches) != 1 || matches[0].Name != "get_metadata" {
+		t.Fatalf("Russian alias did not resolve metadata tool: %#v", matches)
 	}
 }
 

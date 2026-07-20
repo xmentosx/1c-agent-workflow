@@ -501,7 +501,7 @@ function Prepare-VanessaAuthoring {
     $authoring.updatedAt = (Get-Date).ToString("o")
     Write-VanessaAuthoringState -State $authoring | Out-Null
     Write-Host "Vanessa authoring state: ready"
-    Write-Host "Use the itl-vanessa-ui MCP tools. The backend starts on the first tool call; no client reload or raw HTTP call is required."
+    Write-Host "Use itl-vanessa-ui call_tool with exact inner names. The backend starts on the first inner call; no client reload or raw HTTP call is required."
 }
 
 function Get-VanessaAuthoringOnDemandEvidence {

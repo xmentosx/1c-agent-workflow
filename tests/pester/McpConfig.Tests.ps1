@@ -106,6 +106,8 @@
         $skillText | Should -Match "restart_1c_session"
         $skillText | Should -Match "close_1c_session"
         $skillText | Should -Match "on-demand"
+        $skillText | Should -Match "resolve_tool"
+        $skillText | Should -Match "call_tool"
     }
 
     It "wires vibecoding1c MCP actions, scopes, ports, registry, selection, and client config" {
@@ -1291,6 +1293,8 @@ VANESSA_MCP_VA_EXTENSION_CFE_URL=$extensionUri
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_MCP_CLIENT_CFE_PATH"
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md") -PathType Leaf) | Should -Be $true
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md")) | Should -Match "Do \*\*not\*\* start Vanessa UI MCP merely because a request mentions a form"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md")) | Should -Match "resolve_tool"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md")) | Should -Match "call_tool"
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-vanessa-mcp.md") -PathType Leaf) | Should -Be $false
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")) | Should -Not -Match "start-vanessa-mcp"
         $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine

@@ -91,6 +91,13 @@ Windows amd64 EXE built by `scripts/Build-ItlOnDemandMcp.ps1`, then copy that
 exact asset SHA256 into `templates/dependency-lock.json`. A source-extracted
 candidate catalog is never release evidence.
 
+The public facade `tools/list` must contain exactly `resolve_tool` and
+`call_tool` for each family while the release probe still qualifies every tool
+in the complete internal catalog. Prove that `resolve_tool` does not start the
+backend and that a resolved exact name plus arguments reaches the intended
+backend tool through `call_tool`. Do not replace the gateway count with the
+internal ROCTUP/Vanessa catalog count in client-facing evidence.
+
 The Vanessa live gate must also confirm silent VanessaExt readiness, connect
 TestClient through the reserved `itl-ondemand` profile, call a TestClient UI
 tool, and call an OS-window/screenshot tool. Two simultaneous facade clients

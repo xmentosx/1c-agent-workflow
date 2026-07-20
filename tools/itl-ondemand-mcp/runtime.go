@@ -49,6 +49,20 @@ func (r *runtime) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.Call
 			return toolError("ITL_ONDEMAND_ARGUMENTS_INVALID", err.Error(), nil), nil
 		}
 	}
+	return r.callNamed(ctx, req, req.Params.Name, arguments)
+}
+
+func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolName string, arguments any) (*mcp.CallToolResult, error) {
+	tool := r.catalog.tool(toolName)
+	if tool == nil {
+		return toolError("ITL_ONDEMAND_TOOL_UNKNOWN", "tool is not present in the verified compatibility catalog", map[string]any{"name": toolName, "repair": "Call resolve_tool with an exact name or short operation description."}), nil
+	}
+	if err := r.catalog.validate(toolName, arguments); err != nil {
+		return toolError("ITL_ONDEMAND_ARGUMENTS_INVALID", err.Error(), map[string]any{
+			"name": toolName, "inputSchema": tool.InputSchema,
+			"repair": "Retry with only explicitly intended fields; omit absent optional fields.",
+		}), nil
+	}
 
 	// Calls, including lazy ensure/start, hold a shared lease. Lifecycle writers
 	// acquire lifecycle -> runtime exclusively and therefore wait for the whole
@@ -100,7 +114,7 @@ func (r *runtime) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.Call
 		r.mu.Unlock()
 		return toolError("ITL_ONDEMAND_CATALOG_MISMATCH", "backend tool catalog changed", diff), nil
 	}
-	if guarded := r.validateManagedVanessaRequest(arguments, req.Params.Name); guarded != nil {
+	if guarded := r.validateManagedVanessaRequest(arguments, toolName); guarded != nil {
 		r.armIdleLocked()
 		r.mu.Unlock()
 		return guarded, nil
@@ -109,7 +123,7 @@ func (r *runtime) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.Call
 	r.active++
 	r.mu.Unlock()
 
-	params := &mcp.CallToolParams{Name: req.Params.Name, Arguments: arguments, Meta: req.Params.Meta}
+	params := &mcp.CallToolParams{Name: toolName, Arguments: arguments, Meta: req.Params.Meta}
 	progressKey := progressTokenKey(req.Params.GetProgressToken())
 	if progressKey != "" {
 		r.progressMu.Lock()
@@ -125,7 +139,7 @@ func (r *runtime) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.Call
 	r.mu.Lock()
 	r.active--
 	if err == nil && result != nil && !result.IsError {
-		r.writeEvidenceLocked(req.Params.Name)
+		r.writeEvidenceLocked(toolName)
 	}
 	r.lastCallCompleted = time.Now()
 	if r.active == 0 {

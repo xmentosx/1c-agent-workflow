@@ -10,7 +10,14 @@ Describe "ITL on-demand MCP facade" {
 
     It "pins hash-verified full catalogs to compatible backend versions" {
         $manifest = Get-Content -LiteralPath (Join-Path $AssetRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.facadeVersion | Should -Be "0.2.0"
+        $manifest.facadeVersion | Should -Be "0.3.0"
+        $manifest.minimumFacadeVersion | Should -Be "0.3.0"
+        $mainSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\main.go") -Raw -Encoding UTF8
+        $gatewaySource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\gateway.go") -Raw -Encoding UTF8
+        $mainSource | Should -Match 'const version = "0\.3\.0"'
+        $mainSource | Should -Match '"gateway"'
+        $gatewaySource | Should -Match 'gatewayResolveTool\s*=\s*"resolve_tool"'
+        $gatewaySource | Should -Match 'gatewayCallTool\s*=\s*"call_tool"'
         $manifest.families.roctup.backendVersions.roctup | Should -Be "v1.7.1"
         $manifest.families.'vanessa-ui'.backendVersions.clientMcp | Should -Be "v0.6.5"
         $manifest.families.'vanessa-ui'.backendVersions.vaExtension | Should -Be "1.2.043.28"
@@ -120,6 +127,8 @@ Describe "ITL on-demand MCP facade" {
             $codex | Should -Match '\[mcp_servers\."itl-roctup-data"\]'
             $codex | Should -Match ([regex]::Escape($fakeExe.Replace('\', '\\')))
             $codex | Should -Match 'tool_timeout_sec = 600'
+            $codex | Should -Match '"--surface"'
+            $codex | Should -Match '"gateway"'
 
             foreach ($case in @(
                 [pscustomobject]@{ client = "kilocode"; path = ".kilo\kilo.json"; container = "mcp"; local = $true },
@@ -141,14 +150,20 @@ Describe "ITL on-demand MCP facade" {
                     $entry.type | Should -Be "local"
                     @($entry.command)[0] | Should -Be $fakeExe
                     $entry.timeout | Should -Be 600000
+                    @($entry.command) | Should -Contain "--surface"
+                    @($entry.command) | Should -Contain "gateway"
                 } elseif ($case.PSObject.Properties.Name -contains "pi" -and $case.pi) {
                     $entry.transport | Should -Be "stdio"
                     $entry.lifecycle | Should -Be "eager"
                     $entry.command | Should -Be $fakeExe
                     @($entry.args) | Should -Contain "vanessa-ui"
+                    @($entry.args) | Should -Contain "--surface"
+                    @($entry.args) | Should -Contain "gateway"
                 } else {
                     $entry.command | Should -Be $fakeExe
                     @($entry.args) | Should -Contain "vanessa-ui"
+                    @($entry.args) | Should -Contain "--surface"
+                    @($entry.args) | Should -Contain "gateway"
                 }
                 @($config.($case.container).PSObject.Properties.Name) | Should -Contain "itl-roctup-data"
             }
