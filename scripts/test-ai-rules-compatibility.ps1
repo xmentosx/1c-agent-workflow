@@ -45,6 +45,44 @@ function Assert-OpenSpecBundle {
     if ($missing.Count -gt 0) { throw "OpenSpec bundle for $Tool is incomplete: $($missing -join ', ')" }
 }
 
+function Assert-WorkflowExtensionTools {
+    param(
+        [string]$HelperPath,
+        [string]$ProjectRoot,
+        [object]$Manifest,
+        [string]$Client
+    )
+
+    $resolved = @(& {
+        . $HelperPath -ProjectRoot $ProjectRoot -Action help -AgentTarget $Client *> $null
+        Get-ExtensionLifecycleToolPaths
+    })
+    if ($resolved.Count -ne 1) {
+        throw "Workflow extension tool resolver returned $($resolved.Count) results for $Client."
+    }
+
+    $entries = @(Get-ManifestEntries -Manifest $Manifest)
+    $required = [ordered]@{
+        init = "1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-init.ps1"
+        validate = "1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-validate.ps1"
+    }
+    foreach ($name in @($required.Keys)) {
+        $suffix = [string]$required[$name]
+        $matches = @($entries | Where-Object { $_.target.Replace('\', '/').EndsWith($suffix, [StringComparison]::OrdinalIgnoreCase) })
+        if ($matches.Count -ne 1) {
+            throw "ai_rules_1c manifest must contain exactly one $suffix target for $Client; actual: $($matches.Count)."
+        }
+        $manifestPath = [IO.Path]::GetFullPath((Join-Path $ProjectRoot ([string]$matches[0].target)))
+        $resolvedPath = [IO.Path]::GetFullPath([string]$resolved[0].$name)
+        if (-not [string]::Equals($manifestPath, $resolvedPath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Workflow resolved $name outside the installed $Client manifest target. Manifest: $manifestPath. Workflow: $resolvedPath."
+        }
+        if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf)) {
+            throw "Workflow resolved missing $Client extension tool: $resolvedPath"
+        }
+    }
+}
+
 function Get-CodexPromptSnapshot {
     param([string]$RulesRoot)
     $commandsRoot = Join-Path $RulesRoot "content\commands"
@@ -84,6 +122,8 @@ try {
     }
     $installScript = Join-Path $rulesRoot "install.ps1"
     if (-not (Test-Path -LiteralPath $installScript -PathType Leaf)) { throw "ai_rules_1c install.ps1 was not found: $installScript" }
+    $workflowHelper = Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+    if (-not (Test-Path -LiteralPath $workflowHelper -PathType Leaf)) { throw "Workflow helper was not found: $workflowHelper" }
     $promptBefore = Get-CodexPromptSnapshot -RulesRoot $rulesRoot
 
     foreach ($client in $clients) {
@@ -107,6 +147,7 @@ try {
         if ([string]$manifest.protocol -ne "1.1") { throw "ai_rules_1c manifest protocol must be 1.1 for $client" }
         if (@($manifest.tools).Count -ne 1 -or [string]$manifest.tools[0] -ne $client) { throw "Exact-one-client manifest failed for $client" }
         Assert-OpenSpecBundle -RulesRoot $rulesRoot -ProjectRoot $projectRoot -Manifest $manifest -Tool $client
+        Assert-WorkflowExtensionTools -HelperPath $workflowHelper -ProjectRoot $projectRoot -Manifest $manifest -Client $client
         foreach ($itlSkill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")) {
             if (-not (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\$itlSkill\SKILL.md") -PathType Leaf)) { throw "ITL skill was removed for ${client}: $itlSkill" }
         }

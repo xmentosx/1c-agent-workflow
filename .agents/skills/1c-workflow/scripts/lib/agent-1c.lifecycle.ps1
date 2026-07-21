@@ -5342,15 +5342,20 @@ function Get-ExtensionInitDumpPath {
 
 function Get-ExtensionLifecycleToolPaths {
     $override = Get-Variable -Name ExtensionLifecycleToolRootOverride -Scope Script -ErrorAction SilentlyContinue
+    $activeClient = ""
     $toolRoot = if ($null -ne $override -and -not [string]::IsNullOrWhiteSpace([string]$override.Value)) {
         [System.IO.Path]::GetFullPath([string]$override.Value)
     } else {
-        Join-Path $script:ProjectRoot ".agents\skills\1c-metadata-manage\tools\1c-cfe-manage\scripts"
+        $activeClient = Get-ItlActiveClient
+        $skillRoot = Get-AiRules1cInstalledSkillRoot -SkillName "1c-metadata-manage" -Client $activeClient
+        Join-Path $skillRoot "tools\1c-cfe-manage\scripts"
     }
     $initPath = Join-Path $toolRoot "cfe-init.ps1"
     $validatePath = Join-Path $toolRoot "cfe-validate.ps1"
-    if (-not (Test-Path -LiteralPath $initPath -PathType Leaf) -or -not (Test-Path -LiteralPath $validatePath -PathType Leaf)) {
-        throw "Extension lifecycle tools are missing. Run update-ai-rules, then retry init-dev-branch-extension. Expected: $initPath and $validatePath"
+    $missing = @(@($initPath, $validatePath) | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+    if ($missing.Count -gt 0) {
+        $source = if ($activeClient) { "active ai_rules_1c client '$activeClient'" } else { "the Release tool override" }
+        throw "Extension lifecycle tools are missing for $source. Checked: $initPath and $validatePath. Missing: $($missing -join ', '). If these managed files are absent, run pinned update-ai-rules from master, then retry init-dev-branch-extension."
     }
     return [pscustomobject]@{
         init = $initPath

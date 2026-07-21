@@ -237,6 +237,28 @@ function Get-ItlActiveClient {
     return [string]$configured[0]
 }
 
+function Get-AiRules1cInstalledSkillRoot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SkillName,
+        [string]$Client = ""
+    )
+
+    if ($SkillName -notmatch '^[a-z0-9][a-z0-9-]*$') {
+        throw "Invalid ai_rules_1c skill name: '$SkillName'."
+    }
+    if ([string]::IsNullOrWhiteSpace($Client)) {
+        $Client = Get-ItlActiveClient
+    }
+    $adapter = Get-ItlClientAdapter -Client $Client
+    $skillsPath = [string]$adapter.skillsPath
+    if ([string]::IsNullOrWhiteSpace($skillsPath)) {
+        throw "ITL client '$Client' does not define an ai_rules_1c skills path."
+    }
+
+    return (Join-Path (Join-Path $script:ProjectRoot $skillsPath) $SkillName)
+}
+
 function Test-ItlGitPathTracked {
     param([string]$RelativePath)
 
