@@ -33,6 +33,6 @@ For changed feature authoring, prefer `/itl-vanessa-author`. Pass the known inne
 
 ## Failure Handling
 
-If a call fails, report the structured facade error and its log path when present. Then use static analysis only as an explicitly labelled fallback: it cannot prove the missing runtime behavior.
+If a call fails, report the structured facade error and its log path when present. Then use static analysis only as an explicitly labelled diagnostic fallback: it cannot prove the missing runtime behavior. During `/itl-vanessa-author`, finish with `complete-vanessa-authoring -AuthoringResult failed -AuthoringErrorCategory runner`; do not relabel unsupported steps, scenario failures, or product assertions as runner failures.
 
-Do not turn a Vanessa UI MCP failure into an `/itl-check` failure. Run `/itl-check` only as the ordinary Vanessa Automation verification gate after configuration or test changes.
+Run `/itl-check` only as the ordinary Vanessa Automation verification gate after configuration or test changes. The helper may admit a fresh feature-bound infrastructure failure as `runner-fallback-pending`; only its unfiltered `TESTMANAGER -> TESTCLIENT` JUnit proof can complete that fallback. Never bypass or manually edit the authoring state.

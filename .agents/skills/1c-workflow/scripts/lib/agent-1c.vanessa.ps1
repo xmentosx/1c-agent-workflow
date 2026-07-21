@@ -373,11 +373,37 @@ function Get-VanessaChangedFeatureFiles {
 
 function Get-VanessaAuthoringFeatureRecords {
     return @(Get-VanessaChangedFeatureFiles | ForEach-Object {
+        $contract = Get-VanessaFeatureContract -Path $_
         [pscustomobject][ordered]@{
             path = ConvertTo-ProjectRelativePath -Path $_
             sha256 = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
+            title = $contract.title
+            scenarios = @($contract.scenarios)
         }
     } | Sort-Object path)
+}
+
+function Get-VanessaFeatureContract {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $title = ""
+    $scenarios = [System.Collections.Generic.List[object]]::new()
+    $featureKeyword = [regex]::Escape((ConvertFrom-Utf8Base64 "0KTRg9C90LrRhtC40L7QvdCw0Ls="))
+    $scenarioKeyword = [regex]::Escape((ConvertFrom-Utf8Base64 "0KHRhtC10L3QsNGA0LjQuQ=="))
+    $scenarioOutlineKeyword = [regex]::Escape((ConvertFrom-Utf8Base64 "0KHRgtGA0YPQutGC0YPRgNCwINGB0YbQtdC90LDRgNC40Y8="))
+    $featurePattern = "^\s*(?:$featureKeyword|Feature)\s*:\s*(?<name>.+?)\s*$"
+    $scenarioPattern = "^\s*(?:$scenarioKeyword|$scenarioOutlineKeyword|Scenario|Scenario\s+Outline)\s*:\s*(?<name>.+?)\s*$"
+    $lines = @((Read-Utf8Text -Path $Path) -split "`r?`n")
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        $line = [string]$lines[$index]
+        if (-not $title -and $line -match $featurePattern) {
+            $title = [string]$Matches.name
+        }
+        if ($line -match $scenarioPattern) {
+            $scenarios.Add([pscustomobject][ordered]@{ line = $index + 1; name = [string]$Matches.name })
+        }
+    }
+    return [pscustomobject][ordered]@{ title = $title; scenarios = @($scenarios) }
 }
 
 function Get-VanessaItlLibraryFingerprint {
@@ -420,7 +446,7 @@ function Test-VanessaAuthoringStateMatches {
     param([object]$State, [object[]]$FeatureRecords, [string]$LibraryFingerprint)
 
     if ($null -eq $State) { return $false }
-    if ((ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "schemaVersion" -Default 0) -Default 0) -ne 2) { return $false }
+    if ((ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "schemaVersion" -Default 0) -Default 0) -ne 3) { return $false }
     if ((Get-FullPathNormalized (Get-StateValue -State $State -Name "projectRoot" -Default "")) -ne (Get-FullPathNormalized $script:ProjectRoot)) { return $false }
     if ([string](Get-StateValue -State $State -Name "branch" -Default "") -ne (Get-CurrentBranch)) { return $false }
     if ([string](Get-StateValue -State $State -Name "libraryFingerprint" -Default "") -ne $LibraryFingerprint) { return $false }
@@ -437,7 +463,7 @@ function New-VanessaAuthoringState {
     param([string]$Phase, [object[]]$FeatureRecords, [string]$LibraryFingerprint)
 
     return [pscustomobject][ordered]@{
-        schemaVersion = 2
+        schemaVersion = 3
         projectRoot = $script:ProjectRoot
         branch = (Get-CurrentBranch)
         productEdition = (Get-BaseConfigurationVersion)
@@ -450,6 +476,8 @@ function New-VanessaAuthoringState {
         libraryFingerprint = $LibraryFingerprint
         resultsPath = ""
         errorCategory = ""
+        completionMode = ""
+        verificationFallback = $null
         createdAt = (Get-Date).ToString("o")
         updatedAt = (Get-Date).ToString("o")
         passedAt = ""
@@ -515,14 +543,80 @@ function Get-VanessaAuthoringOnDemandEvidence {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
             try {
                 $item = $line | ConvertFrom-Json
-                $succeededAt = [DateTimeOffset]::Parse([string]$item.succeededAt)
-                if ($succeededAt -ge $createdAt -and [string]$item.family -eq "vanessa-ui" -and [string]$item.catalogSha256 -eq [string]$AuthoringState.catalogSha256) {
+                if ((ConvertTo-IntOrDefault -Value (Get-StateValue -State $item -Name "schemaVersion" -Default 0) -Default 0) -ne 2) { continue }
+                $recordedAt = [DateTimeOffset]::Parse([string]$item.recordedAt)
+                if ($recordedAt -ge $createdAt -and [string]$item.family -eq "vanessa-ui" -and [string]$item.catalogSha256 -eq [string]$AuthoringState.catalogSha256) {
                     $evidence += $item
                 }
             } catch { }
         }
     }
-    return @($evidence | Sort-Object succeededAt)
+    return @($evidence | Sort-Object recordedAt)
+}
+
+function Test-VanessaEvidenceFeatureIdentity {
+    param([object]$Evidence, [object]$Feature)
+
+    return ([string](Get-StateValue -State $Evidence -Name "featurePath" -Default "")).Replace("\", "/") -ieq [string]$Feature.path -and
+        [string](Get-StateValue -State $Evidence -Name "featureSha256" -Default "") -eq [string]$Feature.sha256
+}
+
+function Get-VanessaAuthoringEvidenceValidation {
+    param([object[]]$Evidence, [object[]]$Features)
+
+    $passed = @($Evidence | Where-Object { [string]$_.outcome -eq "passed" })
+    foreach ($feature in $Features) {
+        if (-not [string](Get-StateValue -State $feature -Name "title" -Default "") -or @($feature.scenarios).Count -eq 0) {
+            return [pscustomobject]@{ valid = $false; reason = "Feature '$($feature.path)' has no parseable title/scenario contract." }
+        }
+        $validated = $false
+        $featureReason = "no single Vanessa instance contains the required chain"
+        foreach ($instance in @($passed | Select-Object -ExpandProperty instanceId -Unique)) {
+            $items = @($passed | Where-Object { [string]$_.instanceId -eq [string]$instance } | Sort-Object recordedAt)
+            $search = @($items | Where-Object { [string]$_.tool -eq "search_for_steps_by_keywords" } | Select-Object -First 1)
+            if ($search.Count -eq 0) { $featureReason = "search_for_steps_by_keywords is missing"; continue }
+            $open = @($items | Where-Object { [string]$_.tool -eq "open_feature_file" -and (Test-VanessaEvidenceFeatureIdentity -Evidence $_ -Feature $feature) } | Select-Object -First 1)
+            if ($open.Count -eq 0) { $featureReason = "feature-bound open_feature_file is missing"; continue }
+            $openAt = [DateTimeOffset]::Parse([string]$open[0].recordedAt)
+            $syntax = @($items | Where-Object { [string]$_.tool -eq "check_syntax" -and (Test-VanessaEvidenceFeatureIdentity -Evidence $_ -Feature $feature) -and [DateTimeOffset]::Parse([string]$_.recordedAt) -gt $openAt } | Select-Object -First 1)
+            if ($syntax.Count -eq 0) { $featureReason = "ordered feature-bound check_syntax is missing"; continue }
+            $cursor = [DateTimeOffset]::Parse([string]$syntax[0].recordedAt)
+            $complete = $true
+            foreach ($scenario in @($feature.scenarios)) {
+                $line = [int]$scenario.line
+                $info = @($items | Where-Object { [string]$_.tool -eq "get_info_about_line_scenario" -and (Test-VanessaEvidenceFeatureIdentity -Evidence $_ -Feature $feature) -and [int]$_.scenarioLine -eq $line -and [DateTimeOffset]::Parse([string]$_.recordedAt) -gt $cursor } | Select-Object -First 1)
+                if ($info.Count -eq 0) { $featureReason = "scenario line $line is missing ordered get_info_about_line_scenario"; $complete = $false; break }
+                $infoAt = [DateTimeOffset]::Parse([string]$info[0].recordedAt)
+                $run = @($items | Where-Object { [string]$_.tool -eq "run_scenario" -and (Test-VanessaEvidenceFeatureIdentity -Evidence $_ -Feature $feature) -and [int]$_.scenarioLine -eq $line -and [DateTimeOffset]::Parse([string]$_.recordedAt) -gt $infoAt } | Select-Object -First 1)
+                if ($run.Count -eq 0) { $featureReason = "scenario line $line is missing ordered run_scenario"; $complete = $false; break }
+                $runAt = [DateTimeOffset]::Parse([string]$run[0].recordedAt)
+                $results = @($items | Where-Object { [string]$_.tool -eq "get_test_results" -and (Test-VanessaEvidenceFeatureIdentity -Evidence $_ -Feature $feature) -and [int]$_.scenarioLine -eq $line -and [DateTimeOffset]::Parse([string]$_.recordedAt) -gt $runAt } | Select-Object -First 1)
+                if ($results.Count -eq 0) { $featureReason = "scenario line $line is missing ordered get_test_results"; $complete = $false; break }
+                $cursor = [DateTimeOffset]::Parse([string]$results[0].recordedAt)
+            }
+            if ($complete) { $validated = $true; break }
+        }
+        if (-not $validated) {
+            return [pscustomobject]@{ valid = $false; reason = "Feature '$($feature.path)' does not have a complete ordered Vanessa authoring evidence chain: $featureReason." }
+        }
+    }
+    return [pscustomobject]@{ valid = $true; reason = "All changed features have complete ordered Vanessa authoring evidence." }
+}
+
+function Test-VanessaAuthoringRunnerFallbackEligible {
+    param([object]$State, [object[]]$FeatureRecords, [string]$LibraryFingerprint)
+
+    if (-not (Test-VanessaAuthoringStateMatches -State $State -FeatureRecords $FeatureRecords -LibraryFingerprint $LibraryFingerprint)) { return $false }
+    if ([string](Get-StateValue -State $State -Name "phase" -Default "") -ne "failed" -or [string](Get-StateValue -State $State -Name "errorCategory" -Default "") -ne "runner") { return $false }
+    $failureTools = @("open_feature_file", "check_syntax", "get_info_about_line_scenario", "run_scenario", "get_test_results", "get_editor_state", "load_features")
+    $failureCodes = @("ITL_ONDEMAND_BACKEND_CALL_FAILED", "ITL_VANESSA_TOOL_RESULT_FAILED", "ITL_ONDEMAND_EMPTY_RESULT")
+    foreach ($item in @($State.backendEvidence)) {
+        if ([string]$item.outcome -ne "failed" -or [string]$item.tool -notin $failureTools -or [string]$item.resultCode -notin $failureCodes) { continue }
+        foreach ($feature in $FeatureRecords) {
+            if (Test-VanessaEvidenceFeatureIdentity -Evidence $item -Feature $feature) { return $true }
+        }
+    }
+    return $false
 }
 
 function Complete-VanessaAuthoring {
@@ -543,16 +637,17 @@ function Complete-VanessaAuthoring {
         [string](Get-StateValue -State $authoring -Name "branch" -Default "") -ne (Get-CurrentBranch)) {
         throw "Vanessa authoring state belongs to another branch/worktree or is missing. Rerun /itl-vanessa-author."
     }
-    if ((ConvertTo-IntOrDefault -Value (Get-StateValue -State $authoring -Name "schemaVersion" -Default 0) -Default 0) -ne 2 -or [string]$authoring.phase -ne "ready") {
-        throw "Vanessa authoring state is not schema v2 ready. Rerun /itl-vanessa-author."
+    if ((ConvertTo-IntOrDefault -Value (Get-StateValue -State $authoring -Name "schemaVersion" -Default 0) -Default 0) -ne 3 -or [string]$authoring.phase -ne "ready") {
+        throw "Vanessa authoring state is not schema v3 ready. Rerun /itl-vanessa-author."
     }
     if ($features.Count -eq 0) {
         throw "No changed .feature files remain to complete Vanessa authoring."
     }
 
     $evidence = @(Get-VanessaAuthoringOnDemandEvidence -AuthoringState $authoring)
-    if ($Result -eq "passed" -and $evidence.Count -eq 0) {
-        throw "Vanessa authoring cannot pass: no successful itl-vanessa-ui tool call was recorded for this authoring run."
+    if ($Result -eq "passed") {
+        $validation = Get-VanessaAuthoringEvidenceValidation -Evidence $evidence -Features $features
+        if (-not $validation.valid) { throw "Vanessa authoring cannot pass: $($validation.reason)" }
     }
     Stop-ItlOnDemandBackends -Family "vanessa-ui"
     $authoring.features = @($features)
@@ -561,6 +656,7 @@ function Complete-VanessaAuthoring {
     $authoring.backendEvidence = @($evidence)
     $authoring.resultsPath = $ResultsPath
     $authoring.errorCategory = $(if ($Result -eq "failed") { $(if ($ErrorCategory) { $ErrorCategory } else { "runner" }) } else { "" })
+    $authoring.completionMode = $(if ($Result -eq "passed") { "mcp" } else { "" })
     $authoring.updatedAt = (Get-Date).ToString("o")
     if ($Result -eq "passed") { $authoring.passedAt = $authoring.updatedAt }
     Write-VanessaAuthoringState -State $authoring | Out-Null
@@ -612,14 +708,24 @@ function Assert-VanessaAuthoringPreflight {
     if ($changed.Count -eq 0) { return }
     $authoring = Read-VanessaAuthoringState
     $libraryFingerprint = Get-VanessaItlLibraryFingerprint
-    if (-not (Test-VanessaAuthoringStateMatches -State $authoring -FeatureRecords $changed -LibraryFingerprint $libraryFingerprint) -or [string](Get-StateValue -State $authoring -Name "phase" -Default "") -ne "passed") {
+    $matches = Test-VanessaAuthoringStateMatches -State $authoring -FeatureRecords $changed -LibraryFingerprint $libraryFingerprint
+    if ($matches -and [string](Get-StateValue -State $authoring -Name "phase" -Default "") -eq "passed") {
+        $script:RunAuthoringStatus = "passed"
+        $script:RunAuthoringStatePath = Get-VanessaAuthoringStatePath
+        return
+    }
+    if ($matches -and (Test-VanessaAuthoringRunnerFallbackEligible -State $authoring -FeatureRecords $changed -LibraryFingerprint $libraryFingerprint)) {
+        $script:RunAuthoringStatus = "runner-fallback-pending"
+        $script:RunAuthoringStatePath = Get-VanessaAuthoringStatePath
+        Write-Host "[WARN] Vanessa MCP authoring runner failed with feature-bound infrastructure evidence; /itl-check will require canonical JUnit fallback proof."
+        return
+    }
+    if (-not $matches -or [string](Get-StateValue -State $authoring -Name "phase" -Default "") -ne "passed") {
         Set-RunFailureContext -Category "unsupported-step" -RequiredAction "/itl-vanessa-author"
         $script:RunAuthoringStatus = [string](Get-StateValue -State $authoring -Name "phase" -Default "missing")
         $script:RunAuthoringStatePath = Get-VanessaAuthoringStatePath
         throw "Vanessa authoring pass is missing or stale for changed .feature files. Run /itl-vanessa-author before /itl-check."
     }
-    $script:RunAuthoringStatus = "passed"
-    $script:RunAuthoringStatePath = Get-VanessaAuthoringStatePath
 }
 
 function Test-VanessaAuthoringRequired {
@@ -1902,6 +2008,9 @@ function Get-VanessaJunitSummary {
         tests = 0
         failures = 0
         errors = 0
+        skipped = 0
+        testCases = @()
+        files = @()
     }
 
     if (-not (Test-Path -LiteralPath $RunDirectory -PathType Container -ErrorAction SilentlyContinue)) {
@@ -1931,12 +2040,99 @@ function Get-VanessaJunitSummary {
                     $summary.found = $true
                 }
             }
+            foreach ($case in @($xml.SelectNodes('//*[local-name()="testcase"]'))) {
+                $caseSkipped = @($case.SelectNodes('./*[local-name()="skipped"]')).Count -gt 0
+                $caseFailure = @($case.SelectNodes('./*[local-name()="failure"]')).Count -gt 0
+                $caseError = @($case.SelectNodes('./*[local-name()="error"]')).Count -gt 0
+                if ($caseSkipped) { $summary.skipped++ }
+                $summary.testCases += [pscustomobject][ordered]@{
+                    name = $(if ($case.Attributes["name"]) { [string]$case.Attributes["name"].Value } else { "" })
+                    className = $(if ($case.Attributes["classname"]) { [string]$case.Attributes["classname"].Value } else { "" })
+                    skipped = $caseSkipped
+                    failure = $caseFailure
+                    error = $caseError
+                    source = $file.FullName
+                }
+            }
+            $summary.files += [pscustomobject][ordered]@{
+                path = $file.FullName
+                sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
         } catch {
             Write-Host "[WARN] Could not parse Vanessa JUnit report: $($file.FullName)"
         }
     }
 
     return [pscustomobject]$summary
+}
+
+function Complete-VanessaAuthoringVerificationFallback {
+    param([Parameter(Mandatory = $true)][string]$RunDirectory)
+
+    if ($script:RunAuthoringStatus -ne "runner-fallback-pending") { return }
+    $features = @(Get-VanessaAuthoringFeatureRecords)
+    $libraryFingerprint = Get-VanessaItlLibraryFingerprint
+    $authoring = Read-VanessaAuthoringState
+    if (-not (Test-VanessaAuthoringRunnerFallbackEligible -State $authoring -FeatureRecords $features -LibraryFingerprint $libraryFingerprint)) {
+        throw "Vanessa authoring runner fallback is no longer eligible for the current feature/library fingerprint."
+    }
+    if ($VanessaFilterTags) {
+        throw "Vanessa authoring runner fallback cannot accept a tag-filtered verification run."
+    }
+
+    $allTitles = @{}
+    foreach ($path in @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaFeaturesPath))) {
+        $title = [string](Get-VanessaFeatureContract -Path $path).title
+        if (-not $title) { continue }
+        $key = $title.ToLowerInvariant()
+        if (-not $allTitles.ContainsKey($key)) { $allTitles[$key] = 0 }
+        $allTitles[$key]++
+    }
+    $junit = Get-VanessaJunitSummary -RunDirectory $RunDirectory
+    if (-not $junit.found -or $junit.tests -le 0 -or ($junit.failures + $junit.errors) -gt 0) {
+        throw "Vanessa authoring runner fallback requires a passing JUnit report with executed tests."
+    }
+    $matched = @()
+    foreach ($feature in $features) {
+        $title = [string]$feature.title
+        if (-not $title -or -not $allTitles.ContainsKey($title.ToLowerInvariant()) -or [int]$allTitles[$title.ToLowerInvariant()] -ne 1) {
+            throw "Vanessa authoring runner fallback requires a unique feature title for '$($feature.path)'."
+        }
+        $cases = @($junit.testCases | Where-Object {
+            ([string]$_.className -ieq $title -or ([string]$_.className).EndsWith(".$title", [System.StringComparison]::OrdinalIgnoreCase))
+        })
+        if ($cases.Count -eq 0) {
+            throw "Vanessa JUnit did not prove execution of changed feature '$($feature.path)' (title '$title')."
+        }
+        if (@($cases | Where-Object { $_.skipped -or $_.failure -or $_.error }).Count -gt 0) {
+            throw "Vanessa JUnit contains skipped/failed/error testcases for changed feature '$($feature.path)'."
+        }
+        $matched += [pscustomobject][ordered]@{
+            featurePath = [string]$feature.path
+            featureSha256 = [string]$feature.sha256
+            title = $title
+            testCases = @($cases | ForEach-Object { [pscustomobject]@{ name = $_.name; className = $_.className } })
+        }
+    }
+    $junitDigestInput = @($junit.files | Sort-Object path | ForEach-Object { "$($_.path):$($_.sha256)" }) -join "`n"
+    $now = (Get-Date).ToString("o")
+    $authoring.features = @($features)
+    $authoring.libraryFingerprint = $libraryFingerprint
+    $authoring.phase = "passed"
+    $authoring.completionMode = "verification-fallback"
+    $authoring.resultsPath = $RunDirectory
+    $authoring.passedAt = $now
+    $authoring.updatedAt = $now
+    $authoring.verificationFallback = [pscustomobject][ordered]@{
+        runId = Split-Path -Leaf $RunDirectory
+        junitSha256 = Get-StringSha256 -Value $junitDigestInput
+        junitFiles = @($junit.files)
+        matchedFeatures = @($matched)
+        completedAt = $now
+    }
+    Write-VanessaAuthoringState -State $authoring | Out-Null
+    $script:RunAuthoringStatus = "passed"
+    Write-Host "Vanessa authoring: passed via canonical verification fallback for $($matched.Count) changed feature(s)."
 }
 
 function Get-VanessaVerificationStatus {
@@ -2237,6 +2433,7 @@ function Run-DevBranchTests {
     $runStartedAt = Get-Date
     $runFinishedAt = $null
     $eventLogVerification = $null
+    $authoringFallbackError = ""
     $runnerStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $cleanupDurationMs = [int64]0
     $eventLogDurationMs = [int64]0
@@ -2379,6 +2576,21 @@ function Run-DevBranchTests {
             reason = "$($verification.reason) Event log: $($eventLogVerification.reason)"
         }
     }
+    if ($verification.status -eq "passed" -and $script:RunAuthoringStatus -eq "runner-fallback-pending") {
+        try {
+            Complete-VanessaAuthoringVerificationFallback -RunDirectory $runDirectory
+            $verification = [pscustomobject]@{
+                status = "passed"
+                reason = "$($verification.reason) Changed feature execution matched the Vanessa authoring runner fallback contract."
+            }
+        } catch {
+            $authoringFallbackError = $_.Exception.Message
+            $verification = [pscustomobject]@{
+                status = "failed"
+                reason = "Vanessa authoring runner fallback proof failed: $authoringFallbackError"
+            }
+        }
+    }
 
     Update-DevBranchState -State $state -Updates @{
         lastVanessaTestAt = (Get-Date).ToString("o")
@@ -2426,7 +2638,9 @@ function Run-DevBranchTests {
     }
     if ($verification.status -ne "passed") {
         Set-RunStage -Stage "vanessa.failed" -Detail $verification.reason
-        if ($verification.status -eq "unknown") {
+        if ($authoringFallbackError) {
+            Set-RunFailureContext -Category "unsupported-step" -RequiredAction "/itl-vanessa-author"
+        } elseif ($verification.status -eq "unknown") {
             Set-RunFailureContext -Category "runner"
             Write-OneCVanessaProcessDiagnostics -State $state -TestPort $testPort -Context "Vanessa verify produced no reliable JUnit/status; active 1C process diagnostics"
             Stop-OwnHungVanessaTestClients -State $state -TestPort $testPort

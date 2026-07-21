@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -173,6 +174,7 @@ func vanessaIntegrationTools() []*mcp.Tool {
 		{Name: "connect_test_client", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"profileName": map[string]any{"type": "string"}}}},
 		{Name: "get_window_list_testclient", InputSchema: object},
 		{Name: "manage_test_client_profiles", InputSchema: object},
+		{Name: "open_feature_file", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"filePath": map[string]any{"type": "string"}}, "required": []string{"filePath"}}},
 	}
 }
 
@@ -548,6 +550,57 @@ func TestRuntimeVanessaWritesEvidenceOnlyAfterConnectionPostcondition(t *testing
 	}
 	if !strings.Contains(string(raw), `"tool":"connect_test_client"`) {
 		t.Fatalf("connection evidence missing: %s", raw)
+	}
+}
+
+func TestRuntimeVanessaSemanticFailureWritesBoundFailedEvidence(t *testing.T) {
+	tools := vanessaIntegrationTools()
+	server := mcp.NewServer(&mcp.Implementation{Name: "fake-vanessa", Version: "1"}, nil)
+	for _, definition := range tools {
+		tool := definition
+		server.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			text := tool.Name
+			if tool.Name == "get_environment_data" {
+				text = "VanessaExt: true"
+			}
+			if tool.Name == "open_feature_file" {
+				text = "Internal error: Ошибка при вызове конструктора (Файл)"
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil
+		})
+	}
+	backend := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
+	t.Cleanup(backend.Close)
+	broker := &fakeBroker{info: &backendInfo{URL: backend.URL, BackendVersion: "test"}}
+	rt, session := newFacadeSessionForFamily(t, "vanessa-ui", tools, broker, time.Minute, nil)
+	featurePath := filepath.Join(rt.projectRoot, "tests", "features", "demo.feature")
+	if err := os.MkdirAll(filepath.Dir(featurePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(featurePath, []byte("Feature: Demo\nScenario: Check\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "open_feature_file", Arguments: map[string]any{"filePath": featurePath}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertToolErrorCode(t, result, "ITL_VANESSA_TOOL_RESULT_FAILED")
+
+	evidencePath := filepath.Join(rt.projectRoot, ".agent-1c", "mcp", "ondemand", "vanessa-ui", rt.instanceID+".evidence.jsonl")
+	raw, err := os.ReadFile(evidencePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(raw), &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence["schemaVersion"] != float64(2) || evidence["outcome"] != "failed" || evidence["resultCode"] != "ITL_VANESSA_TOOL_RESULT_FAILED" {
+		t.Fatalf("unexpected failure evidence: %#v", evidence)
+	}
+	if evidence["featurePath"] != "tests/features/demo.feature" || len(evidence["featureSha256"].(string)) != 64 || len(evidence["argumentsSha256"].(string)) != 64 {
+		t.Fatalf("failure evidence was not feature-bound: %#v", evidence)
 	}
 }
 

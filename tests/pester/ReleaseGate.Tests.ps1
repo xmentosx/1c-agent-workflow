@@ -141,7 +141,7 @@ switch ($Action) {
         $releaseCheckCount = $previousCheckCount + 1
         $isStopOnErrorProbe = ($releaseCheckCount -eq 2)
         if ($firstRun -and $ConfigLoadMode -ne "Partial") { throw "first release E2E check must request Partial" }
-        if ($VanessaFilterTags -ne "@itl_release_flat") { throw "release E2E must filter the four flat scenarios" }
+        if (($releaseCheckCount -lt 3 -and $VanessaFilterTags -ne "@itl_release_flat") -or ($releaseCheckCount -eq 3 -and $VanessaFilterTags)) { throw "release E2E must leave only the final canonical recovery run unfiltered" }
         if ([System.IO.Path]::GetFileName($VanessaFeaturePath) -ne "ITLReleaseFourFlat.feature") { throw "release E2E must run the dedicated four-scenario feature file" }
         $listPath = Join-Path $ProjectRoot ".agent-1c\release-e2e-partial-list.txt"
         Set-Content -LiteralPath $listPath -Encoding UTF8 -Value "Configuration.xml"

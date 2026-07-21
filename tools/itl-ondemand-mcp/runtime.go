@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -40,6 +41,8 @@ type runtime struct {
 	idleDeadline      time.Time
 	mismatch          *catalogDiff
 	closed            bool
+	authoringFeature  string
+	authoringLine     int
 }
 
 func (r *runtime) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -138,9 +141,22 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	result, err := r.callUpstream(ctx, session, params)
 	r.mu.Lock()
 	r.active--
-	if err == nil && result != nil && !result.IsError {
-		r.writeEvidenceLocked(toolName)
+	outcome := "passed"
+	resultCode := "ITL_OK"
+	if err != nil {
+		outcome = "failed"
+		resultCode = "ITL_ONDEMAND_BACKEND_CALL_FAILED"
+	} else if result == nil {
+		outcome = "failed"
+		resultCode = "ITL_ONDEMAND_EMPTY_RESULT"
+	} else if result.IsError {
+		outcome = "failed"
+		resultCode = toolResultCode(result)
+		if resultCode == "" {
+			resultCode = "ITL_ONDEMAND_TOOL_ERROR"
+		}
 	}
+	r.writeEvidenceLocked(toolName, arguments, outcome, resultCode)
 	r.lastCallCompleted = time.Now()
 	if r.active == 0 {
 		r.armIdleLocked()
@@ -148,6 +164,9 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	r.mu.Unlock()
 	if err != nil {
 		return toolError("ITL_ONDEMAND_BACKEND_CALL_FAILED", err.Error(), nil), nil
+	}
+	if result == nil {
+		return toolError("ITL_ONDEMAND_EMPTY_RESULT", "backend returned no tool result", nil), nil
 	}
 	return result, nil
 }
@@ -511,7 +530,13 @@ func confirmsVanessaExt(text string) bool {
 }
 
 func (r *runtime) validateVanessaResult(ctx context.Context, name string, result *mcp.CallToolResult, session *mcp.ClientSession) *mcp.CallToolResult {
-	if r.family != "vanessa-ui" || name != "connect_test_client" {
+	if r.family != "vanessa-ui" {
+		return result
+	}
+	if marker := vanessaSemanticFailureMarker(name, resultText(result)); marker != "" {
+		return toolError("ITL_VANESSA_TOOL_RESULT_FAILED", "Vanessa returned a runtime/editor failure", map[string]any{"tool": name, "marker": marker})
+	}
+	if name != "connect_test_client" {
 		return result
 	}
 	text := strings.ToLower(resultText(result))
@@ -535,6 +560,35 @@ func (r *runtime) validateVanessaResult(ctx context.Context, name string, result
 		return toolError("ITL_VANESSA_TESTCLIENT_CONNECT_FAILED", message, nil)
 	}
 	return result
+}
+
+func vanessaSemanticFailureMarker(name, text string) string {
+	if !isVanessaAuthoringTool(name) {
+		return ""
+	}
+	normalized := strings.ToLower(text)
+	markers := []string{
+		"ошибка при вызове конструктора (файл)",
+		"значение не является значением объектного типа",
+		"ошибка доступа к редактору",
+		"internal error:",
+		"внутренняя ошибка",
+	}
+	for _, marker := range markers {
+		if strings.Contains(normalized, marker) {
+			return marker
+		}
+	}
+	return ""
+}
+
+func isVanessaAuthoringTool(name string) bool {
+	switch name {
+	case "search_for_steps_by_keywords", "open_feature_file", "check_syntax", "get_info_about_line_scenario", "run_scenario", "get_test_results", "get_editor_state", "load_features":
+		return true
+	default:
+		return false
+	}
 }
 
 func resultText(result *mcp.CallToolResult) string {
@@ -570,7 +624,7 @@ func (r *runtime) close(ctx context.Context) error {
 	return fmt.Errorf("cleanup owned backend after stdio EOF after 3 attempts: %w", lastErr)
 }
 
-func (r *runtime) writeEvidenceLocked(toolName string) {
+func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, resultCode string) {
 	if r.backend == nil {
 		return
 	}
@@ -579,10 +633,16 @@ func (r *runtime) writeEvidenceLocked(toolName string) {
 		r.logger.Error("create evidence directory", "error", err)
 		return
 	}
+	argumentsRaw, _ := json.Marshal(arguments)
+	argumentsHash := sha256.Sum256(argumentsRaw)
+	featurePath, featureSHA, scenarioLine := r.authoringEvidenceContextLocked(toolName, arguments, outcome)
 	entry := map[string]any{
-		"schemaVersion": 1, "family": r.family, "instanceId": r.instanceID,
+		"schemaVersion": 2, "family": r.family, "instanceId": r.instanceID,
 		"backendVersion": r.backend.BackendVersion, "catalogSha256": r.catalog.SHA256,
-		"tool": toolName, "succeededAt": time.Now().UTC().Format(time.RFC3339Nano),
+		"tool": toolName, "outcome": outcome, "resultCode": resultCode,
+		"argumentsSha256": fmt.Sprintf("%x", argumentsHash[:]),
+		"featurePath":     featurePath, "featureSha256": featureSHA, "scenarioLine": scenarioLine,
+		"recordedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	raw, _ := json.Marshal(entry)
 	path := filepath.Join(directory, r.instanceID+".evidence.jsonl")
@@ -590,6 +650,79 @@ func (r *runtime) writeEvidenceLocked(toolName string) {
 	if err == nil {
 		_, _ = file.Write(append(raw, '\n'))
 		_ = file.Close()
+	}
+}
+
+func (r *runtime) authoringEvidenceContextLocked(toolName string, arguments any, outcome string) (string, string, int) {
+	if r.family != "vanessa-ui" || !isVanessaAuthoringTool(toolName) {
+		return "", "", 0
+	}
+	if toolName == "search_for_steps_by_keywords" {
+		return "", "", 0
+	}
+	args, _ := arguments.(map[string]any)
+	pathValue, _ := args["filePath"].(string)
+	if pathValue == "" && toolName == "load_features" {
+		pathValue, _ = args["path"].(string)
+	}
+	featurePath := r.projectRelativeFeature(pathValue)
+	if featurePath == "" {
+		featurePath = r.authoringFeature
+	}
+	line := integerArgument(args["lineNumber"])
+	if line == 0 {
+		line = r.authoringLine
+	}
+	if outcome == "passed" {
+		if featurePath != "" && toolName != "search_for_steps_by_keywords" {
+			r.authoringFeature = featurePath
+		}
+		if line > 0 && (toolName == "get_info_about_line_scenario" || toolName == "run_scenario") {
+			r.authoringLine = line
+		}
+	}
+	featureSHA := ""
+	if featurePath != "" {
+		if raw, err := os.ReadFile(filepath.Join(r.projectRoot, filepath.FromSlash(featurePath))); err == nil {
+			hash := sha256.Sum256(raw)
+			featureSHA = fmt.Sprintf("%x", hash[:])
+		}
+	}
+	return featurePath, featureSHA, line
+}
+
+func (r *runtime) projectRelativeFeature(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	full := value
+	if !filepath.IsAbs(full) {
+		full = filepath.Join(r.projectRoot, full)
+	}
+	abs, err := filepath.Abs(full)
+	if err != nil || !strings.EqualFold(filepath.Ext(abs), ".feature") {
+		return ""
+	}
+	relative, err := filepath.Rel(r.projectRoot, abs)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return filepath.ToSlash(relative)
+}
+
+func integerArgument(value any) int {
+	switch typed := value.(type) {
+	case float64:
+		return int(typed)
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case json.Number:
+		parsed, _ := typed.Int64()
+		return int(parsed)
+	default:
+		return 0
 	}
 }
 
