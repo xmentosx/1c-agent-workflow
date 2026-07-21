@@ -19,6 +19,7 @@ from urllib import error, parse, request
 DEFAULT_SEARCH_LIMIT = 5
 MAX_SEARCH_LIMIT = 20
 MAX_SEMANTIC_CANDIDATES = 20
+DEFAULT_SEMANTIC_MIN_SCORE = 0.82
 SEARCH_PREVIEW_CHARS = 180
 DEFAULT_PAGE_MAX_CHARS = 12000
 MAX_PAGE_MAX_CHARS = 50000
@@ -108,6 +109,7 @@ class Settings:
     reindex_interval_hours: float
     index_on_startup: bool
     max_index_pages: int
+    semantic_min_score: float
     reset_database: bool
     embedding_api_base: str
     embedding_api_key: str
@@ -127,6 +129,7 @@ class Settings:
             reindex_interval_hours=float_env("BOOKSTACK_REINDEX_INTERVAL_HOURS", 24.0),
             index_on_startup=truthy(os.environ.get("BOOKSTACK_INDEX_ON_STARTUP", "false")),
             max_index_pages=int_env("BOOKSTACK_MAX_INDEX_PAGES", 0),
+            semantic_min_score=float_env("BOOKSTACK_SEMANTIC_MIN_SCORE", DEFAULT_SEMANTIC_MIN_SCORE),
             reset_database=truthy(os.environ.get("RESET_DATABASE", os.environ.get("BOOKSTACK_RESET_DATABASE", "false"))),
             embedding_api_base=os.environ.get("BOOKSTACK_EMBEDDING_API_BASE", os.environ.get("OPENAI_API_BASE", "")).strip().rstrip("/"),
             embedding_api_key=os.environ.get("BOOKSTACK_EMBEDDING_API_KEY", os.environ.get("OPENAI_API_KEY", "")).strip(),
@@ -522,7 +525,7 @@ class DocsCache:
 
     def search(self, query: str, limit: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
         tokens = re.findall(r"[\w-]+", query, flags=re.UNICODE)
-        fts_query = " OR ".join(f'"{token}"' for token in tokens if token.strip())
+        fts_query = " AND ".join(f'"{token}"' for token in tokens if token.strip())
         rows: List[sqlite3.Row] = []
         with self.connect() as conn:
             if fts_query:
@@ -635,7 +638,7 @@ class ProductDocsService:
         results = merge_results(results, semantic)
         live_used = False
         requested_end = cursor + limit
-        if len(results) < requested_end or truthy(str(effective_filters.get("live", "false"))):
+        if not results or truthy(str(effective_filters.get("live", "false"))):
             live_used = True
             live_query = build_bookstack_search_query(query, effective_filters)
             live_limit = min(max(requested_end + 1, limit), 100)
@@ -669,7 +672,7 @@ class ProductDocsService:
             if not matches_filters(page, filters):
                 continue
             score = cosine_similarity(query_vector, vector)
-            if score > 0:
+            if score >= self.settings.semantic_min_score:
                 page["semantic_score"] = score
                 page["source"] = "cache-semantic"
                 scored.append(page)
@@ -807,6 +810,7 @@ class ProductDocsService:
                 "reindex_interval_hours": self.settings.reindex_interval_hours,
                 "index_on_startup": self.settings.index_on_startup,
                 "max_index_pages": self.settings.max_index_pages,
+                "semantic_min_score": self.settings.semantic_min_score,
             }
         )
         return status

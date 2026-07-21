@@ -626,6 +626,7 @@ function Get-BookStackProductDocsServerDefinition {
             [ordered]@{ name = "BOOKSTACK_REINDEX_INTERVAL_HOURS"; from = "BOOKSTACK_REINDEX_INTERVAL_HOURS"; default = "24"; required = $false },
             [ordered]@{ name = "BOOKSTACK_INDEX_ON_STARTUP"; from = "BOOKSTACK_INDEX_ON_STARTUP"; default = "true"; required = $false },
             [ordered]@{ name = "BOOKSTACK_MAX_INDEX_PAGES"; from = "BOOKSTACK_MAX_INDEX_PAGES"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_SEMANTIC_MIN_SCORE"; from = "BOOKSTACK_SEMANTIC_MIN_SCORE"; default = "0.82"; required = $false },
             [ordered]@{ name = "RESET_DATABASE"; from = "BOOKSTACK_RESET_DATABASE"; default = "false"; required = $false },
             [ordered]@{ name = "BOOKSTACK_EMBEDDING_API_BASE"; embedding = "base"; required = $false },
             [ordered]@{ name = "BOOKSTACK_EMBEDDING_API_KEY"; embedding = "key"; required = $false },
@@ -1546,6 +1547,7 @@ function Get-HostLocalValues {
         BOOKSTACK_REINDEX_INTERVAL_HOURS = [string](Get-ObjectValue -Object $bookstack -Name "reindexIntervalHours" -Default "24")
         BOOKSTACK_INDEX_ON_STARTUP = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $bookstack -Name "indexOnStartup" -Default $true) -Default $true)
         BOOKSTACK_MAX_INDEX_PAGES = [string](Get-ObjectValue -Object $bookstack -Name "maxIndexPages" -Default "")
+        BOOKSTACK_SEMANTIC_MIN_SCORE = [string](Get-ObjectValue -Object $bookstack -Name "semanticMinScore" -Default "0.82")
         BOOKSTACK_RESET_DATABASE = $bookStackResetDatabase
         MANTIS_BASE_URL = [string](Get-ObjectValue -Object $mantis -Name "baseUrl" -Default "")
         MANTIS_TIMEOUT_SECONDS = [string](Get-ObjectValue -Object $mantis -Name "timeoutSeconds" -Default "20")
