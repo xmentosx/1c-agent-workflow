@@ -162,6 +162,15 @@
         $lockTemplate.dependencies.piMcpExtension.tarball | Should -Be "https://registry.npmjs.org/pi-mcp-extension/-/pi-mcp-extension-1.5.0.tgz"
         $lockTemplate.dependencies.piMcpExtension.integrity | Should -Be "sha512-tfsgi8qSr3UUKMp4vS9/FwKv+Pn2U4T/rTlAwrZkEIvz616mFrU/Ryp3b69ZDfFdkQVVXriaQmZUj4vlZDV2Uw=="
         $lockTemplate.dependencies.piMcpExtension.scope | Should -Be "project"
+        $lockTemplate.dependencies.opencodePlugin.version | Should -Be "1.18.4"
+        $lockTemplate.dependencies.opencodePlugin.source | Should -Be "npm:@opencode-ai/plugin@1.18.4"
+        $lockTemplate.dependencies.opencodePlugin.tarball | Should -Be "https://registry.npmjs.org/@opencode-ai/plugin/-/plugin-1.18.4.tgz"
+        $lockTemplate.dependencies.opencodePlugin.integrity | Should -Be "sha512-Mkq128aLJo4E8Sb2bX8zrRlQ+I2WPaJ/n1kzaor8nTi/K/zNP4t8LGKwyMbuRoD/lhw4veSbzDOASSSypv3mcQ=="
+        $lockTemplate.dependencies.opencodePlugin.scope | Should -Be "project-runtime"
+        $lockTemplate.dependencies.opencodePlugin.minimumNodeMajor | Should -Be 22
+        $lockTemplate.dependencies.opencodePlugin.qualifiedOpenCodeDesktop | Should -Be "1.18.4"
+        $lockTemplate.dependencies.opencodePlugin.compatibilityStatus | Should -Be "passed"
+        $lockTemplate.dependencies.opencodePlugin.compatibilityCheckedAt | Should -Not -BeNullOrEmpty
         $lockTemplate.dependencies.roctupMcpToolkit.assetName | Should -Be "MCP_Toolkit.epf"
         $lockTemplate.dependencies.roctupMcpToolkit.sha256 | Should -Be "74bd1d228aa36fda688b34277ede6030ea3b54350c112a680cdce63adb8ac675"
         $lockTemplate.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"

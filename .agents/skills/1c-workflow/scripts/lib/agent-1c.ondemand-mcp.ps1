@@ -99,8 +99,16 @@ function Install-ItlOnDemandMcp {
         $sourceBuild = Join-Path $sourceRepositoryRoot "tools\itl-ondemand-mcp\build\itl-ondemand-mcp-windows-amd64.exe"
     }
     if ($sourceBuild -and (Test-Path -LiteralPath $sourceBuild -PathType Leaf) -and (-not $url -or $ForceDownload -eq $false)) {
-        New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
-        Copy-Item -LiteralPath $sourceBuild -Destination $targetPath -Force
+        $copySourceBuild = $true
+        if (Test-Path -LiteralPath $targetPath -PathType Leaf) {
+            $sourceHash = (Get-FileHash -LiteralPath $sourceBuild -Algorithm SHA256).Hash.ToLowerInvariant()
+            $targetHash = (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $copySourceBuild = $sourceHash -cne $targetHash
+        }
+        if ($copySourceBuild) {
+            New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
+            Copy-Item -LiteralPath $sourceBuild -Destination $targetPath -Force
+        }
     } else {
         $needsDownload = $ForceDownload -or -not (Test-Path -LiteralPath $targetPath -PathType Leaf)
         if (-not $needsDownload -and $sha256) {

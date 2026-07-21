@@ -50,6 +50,8 @@
 | `OPENCODE_EXPERIMENTAL_WORKSPACES` | Native worktree workspace API OpenCode | workflow идемпотентно задаёт `true` на уровне пользователя после успешного init/update/switch на OpenCode; требуется перезапуск OpenCode | user |
 | `CAVEMAN` | Автоактивация краткого стиля | `on`/`auto`/`off`, default `on` | user/`/caveman` |
 
+Для native workspace OpenCode workflow также готовит игнорируемый project-local runtime `.opencode/node_modules` из записи `opencodePlugin` в `.agent-1c/dependency-lock.json`. Требуются Node.js 22+ и npm; после init/update/switch OpenCode Desktop нужно полностью перезапустить, чтобы зарегистрировать ITL workspace tools.
+
 ## ITL verification
 
 | Ключ | Назначение | Значения/default | Владелец |
