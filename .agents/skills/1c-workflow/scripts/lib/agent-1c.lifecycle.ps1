@@ -4443,6 +4443,7 @@ function Initialize-Project {
     Set-RunStage -Stage "init.final-git-clean" -Detail "Checking final Git worktree state"
     Assert-InitGitClean
     Write-PostInitClientReloadHandoff
+    Write-KiloBrowserAutomationAdvisory -ProjectRoot $script:ProjectRoot
     Set-RunStage -Stage "init.complete" -Detail "Initialization completed"
 }
 
@@ -5185,6 +5186,8 @@ function New-DevBranchCore {
 
 function New-DevBranch {
     New-DevBranchCore -DevBranchKind "configuration"
+    $advisoryRoot = if ($script:RunWorktreePath) { $script:RunWorktreePath } else { $script:ProjectRoot }
+    Write-KiloBrowserAutomationAdvisory -ProjectRoot $advisoryRoot
 }
 
 function Resolve-NewExtensionProvisioningInput {
@@ -5316,6 +5319,8 @@ function New-ExtensionDevBranch {
             Open-AgentWorktreeBestEffort -WorktreePath $worktreePath
         }
     }
+    $advisoryRoot = if ($worktreePath) { $worktreePath } else { $script:ProjectRoot }
+    Write-KiloBrowserAutomationAdvisory -ProjectRoot $advisoryRoot
 }
 
 function Assert-ExtensionInitName {
@@ -6383,6 +6388,7 @@ function Show-WorkflowStatus {
     Write-WorkflowPackageStatusLines
     Write-AiRules1cStatusLines
     Write-ItlOnDemandMcpStatusLines
+    Write-KiloBrowserAutomationAdvisory -ProjectRoot $script:ProjectRoot
 
     if ($currentBranch -notlike "itldev/*") {
         Write-Vibecoding1cMcpStatusLines

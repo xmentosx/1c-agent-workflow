@@ -2025,7 +2025,7 @@ if (`$?) { exit 0 } else { exit 1 }
         $initHandoffFunction | Should -Match ([regex]::Escape('run /reload now'))
         $initHandoffFunction | Should -Match 'already open on master before initialization'
         $initHandoffFunction | Should -Match 'newly opened worktree window reads its own context on startup'
-        $HelperText | Should -Match 'Assert-InitGitClean\s+Write-PostInitClientReloadHandoff\s+Set-RunStage -Stage "init\.complete"'
+        $HelperText | Should -Match 'Assert-InitGitClean\s+Write-PostInitClientReloadHandoff\s+Write-KiloBrowserAutomationAdvisory -ProjectRoot \$script:ProjectRoot\s+Set-RunStage -Stage "init\.complete"'
 
         $handoff = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

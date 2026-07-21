@@ -14,6 +14,7 @@ logs/
 .agent-1c/source-infobase-unsafe-action-protection.json
 .agent-1c/vanessa-authoring/
 .agent-1c/verification-repair/
+.agent-1c/diagnostics/context-benchmark/
 .agent-1c/locks/
 .agent-1c/release-e2e.json
 .agent-1c/infobases/
