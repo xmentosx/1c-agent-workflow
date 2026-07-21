@@ -73,7 +73,7 @@
         $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\test_server.py"
         $output = & python $testPath 2>&1
         $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 11 tests"
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 13 tests"
     }
 
     It "falls back to the direct endpoint when the qualified proxy is unavailable" {
@@ -251,6 +251,7 @@
         $bookStackServerText | Should -Match "total_matches"
         $bookStackServerText | Should -Match "has_more"
         $bookStackServerText | Should -Match "next_cursor"
+        $bookStackServerText | Should -Match "semantic_min_score"
         $mantisRequirementsText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\requirements.txt")
         $mantisRequirementsText | Should -Match "pytesseract"
         $mantisRequirementsText | Should -Match "Pillow"
@@ -294,6 +295,7 @@
         $hostConfig.secrets.MANTIS_API_TOKEN | Should -Match "^<"
         $hostConfig.bookStackProductDocsServer.baseUrl | Should -Match "^http"
         $hostConfig.bookStackProductDocsServer.reindexIntervalHours | Should -Be 24
+        $hostConfig.bookStackProductDocsServer.semanticMinScore | Should -Be 0.82
         $hostConfig.mantisTicketServer.baseUrl | Should -Match "^http"
         $hostConfig.mantisTicketServer.attachmentCachePath | Should -Match "mantis-ticket"
         $hostConfig.mantisTicketServer.maxAttachmentBytes | Should -Be 26214400

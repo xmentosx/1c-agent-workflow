@@ -21,6 +21,7 @@ def make_settings(cache_path, embedding_model=""):
         reindex_interval_hours=0,
         index_on_startup=False,
         max_index_pages=0,
+        semantic_min_score=server.DEFAULT_SEMANTIC_MIN_SCORE,
         reset_database=False,
         embedding_api_base="",
         embedding_api_key="",
@@ -48,6 +49,7 @@ def page(page_id, body):
 class FakeClient:
     def __init__(self, pages):
         self.pages = {item["id"]: item for item in pages}
+        self.search_calls = []
 
     def read_page(self, page_id):
         return self.pages[page_id]
@@ -56,6 +58,7 @@ class FakeClient:
         return self.pages[page_id]["markdown"]
 
     def search(self, query, limit):
+        self.search_calls.append((query, limit))
         return []
 
     def list_pages(self, max_items=0):
@@ -104,6 +107,12 @@ class FakeEmbeddings:
         self.passage_inputs.append(text)
         page_id = int(text.split("\n", 1)[0].rsplit(" ", 1)[-1])
         return [1.0, page_id / 100.0]
+
+
+class LowConfidenceEmbeddings(FakeEmbeddings):
+    def embed_passage(self, text):
+        self.passage_inputs.append(text)
+        return [0.8, 0.6]
 
 
 class BookStackClientStructureTests(unittest.TestCase):
@@ -212,6 +221,34 @@ class ProductDocsServiceTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertIn("cursor", result["error"])
+
+    def test_multi_term_search_requires_every_term_and_does_not_fill_partial_results_live(self):
+        pages = [
+            page(1, "Обмен знаниями."),
+            page(2, "Модель данных."),
+            page(3, "Обмен данными между системами."),
+        ]
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, pages)
+            for item in pages:
+                service.index_page(item)
+            result = service.search_docs("обмен данными", filters=None, limit=5)
+
+        self.assertEqual([item["id"] for item in result["results"]], [3])
+        self.assertEqual(service.client.search_calls, [])
+
+    def test_low_confidence_semantic_results_are_not_returned_as_matches(self):
+        pages = [page(index, f"Product detail {index}.") for index in range(1, 6)]
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, pages)
+            service.embeddings = LowConfidenceEmbeddings()
+            for item in pages:
+                service.index_page(item)
+            result = service.search_docs("unrelated semantic query", filters=None, limit=5)
+
+        self.assertEqual(result["total_matches"], 0)
+        self.assertEqual(result["results"], [])
+        self.assertEqual(len(service.client.search_calls), 1)
 
     def test_semantic_search_uses_a_bounded_candidate_set(self):
         pages = [page(index, f"Product detail {index}.") for index in range(1, 31)]

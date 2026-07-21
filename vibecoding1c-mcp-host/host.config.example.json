@@ -31,6 +31,7 @@
     "reindexIntervalHours": 24,
     "indexOnStartup": true,
     "maxIndexPages": null,
+    "semanticMinScore": 0.82,
     "timeoutSeconds": 20
   },
   "mantisTicketServer": {

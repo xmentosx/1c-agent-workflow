@@ -32,9 +32,10 @@ Configure `bookStackProductDocsServer.baseUrl`, set read-only `BOOKSTACK_TOKEN_I
 The MCP publishes as `BookStack-product-docs-mcp` and exposes `search_docs`, `read_page`,
 `list_structure`, `index_status`, and `reindex_docs`.
 Search defaults to five compact results and exposes `total_matches`, `has_more`, and
-`next_cursor` for bounded pagination. Exact FTS matches stay first and semantic fallback is
-bounded to the best 20 candidates, so embedding similarity cannot turn every cached page into
-a reported match. `read_page` returns at most 12,000 characters by
+`next_cursor` for bounded pagination. Multi-term FTS requires every term, exact matches stay
+first, and semantic fallback is bounded to the best 20 candidates above the configured
+`bookStackProductDocsServer.semanticMinScore` (`0.82` by default). A healthy cache is not padded
+with weaker live or semantic results merely to reach the requested limit. `read_page` returns at most 12,000 characters by
 default and supports `query`, `heading`, and cursor continuation; use `max_chars=0` only for
 an explicit full-page read. `list_structure` returns compact entries and treats its default
 limit of 30 as a total budget across the requested scopes.
