@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import server
 
 
-def make_settings(cache_path):
+def make_settings(cache_path, embedding_model=""):
     return server.Settings(
         base_url="http://bookstack.local",
         token_id="token-id",
@@ -24,7 +24,7 @@ def make_settings(cache_path):
         reset_database=False,
         embedding_api_base="",
         embedding_api_key="",
-        embedding_model="",
+        embedding_model=embedding_model,
         embedding_cache_dir=str(cache_path.parent / "models"),
     )
 
@@ -58,6 +58,10 @@ class FakeClient:
     def search(self, query, limit):
         return []
 
+    def list_pages(self, max_items=0):
+        pages = list(self.pages.values())
+        return pages[:max_items] if max_items else pages
+
     def structure(self, scope, limit):
         values = []
         for index in range(limit):
@@ -73,6 +77,33 @@ class FakeClient:
             )
         key = "pages" if scope == "all" else scope
         return {key: [server.compact_structure_item(item, key) for item in values]}
+
+
+class FakeEmbeddings:
+    def __init__(self, profile="fake-model::retrieval-v2"):
+        self.model = "fake-model"
+        self.profile = profile
+        self.cache_dir = "/fake/model-cache"
+        self.query_inputs = []
+        self.passage_inputs = []
+
+    def enabled(self):
+        return True
+
+    def mode(self):
+        return "fake"
+
+    def storage_model(self):
+        return self.profile
+
+    def embed_query(self, text):
+        self.query_inputs.append(text)
+        return [1.0, 0.0]
+
+    def embed_passage(self, text):
+        self.passage_inputs.append(text)
+        page_id = int(text.split("\n", 1)[0].rsplit(" ", 1)[-1])
+        return [1.0, page_id / 100.0]
 
 
 class BookStackClientStructureTests(unittest.TestCase):
@@ -101,6 +132,27 @@ class BookStackClientStructureTests(unittest.TestCase):
         self.assertEqual(list(result), ["shelves", "books", "chapters", "pages"])
         self.assertNotIn("description", result["shelves"][0])
         self.assertNotIn("books", result["shelves"][0])
+
+
+class EmbeddingClientTests(unittest.TestCase):
+    def test_multilingual_e5_uses_retrieval_prefixes_and_versioned_storage_key(self):
+        with tempfile.TemporaryDirectory() as temp_root:
+            settings = make_settings(
+                Path(temp_root) / "cache.sqlite",
+                embedding_model="intfloat/multilingual-e5-base",
+            )
+            client = server.EmbeddingClient(settings)
+            inputs = []
+            client.embed = lambda text: inputs.append(text) or [1.0]
+
+            client.embed_query("заказ")
+            client.embed_passage("Документ заказа")
+
+        self.assertEqual(inputs, ["query: заказ", "passage: Документ заказа"])
+        self.assertEqual(
+            client.storage_model(),
+            "intfloat/multilingual-e5-base::retrieval-v2::e5-prefixed",
+        )
 
 
 class ProductDocsServiceTests(unittest.TestCase):
@@ -160,6 +212,51 @@ class ProductDocsServiceTests(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertIn("cursor", result["error"])
+
+    def test_semantic_search_uses_a_bounded_candidate_set(self):
+        pages = [page(index, f"Product detail {index}.") for index in range(1, 31)]
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, pages)
+            service.embeddings = FakeEmbeddings()
+            for item in pages:
+                service.index_page(item)
+            first = service.search_docs("term absent from every page", filters=None, limit=5)
+            final = service.search_docs("term absent from every page", filters=None, limit=5, cursor=15)
+
+        self.assertEqual(first["total_matches"], server.MAX_SEMANTIC_CANDIDATES)
+        self.assertEqual(first["result_count"], 5)
+        self.assertEqual(first["next_cursor"], 5)
+        self.assertEqual(final["result_count"], 5)
+        self.assertIsNone(final["next_cursor"])
+        self.assertFalse(final["has_more"])
+
+    def test_exact_search_match_stays_ahead_of_semantic_only_candidates(self):
+        pages = [page(index, f"Product detail {index}.") for index in range(1, 31)]
+        pages[-1]["markdown"] += " unique-needle"
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, pages)
+            service.embeddings = FakeEmbeddings()
+            for item in pages:
+                service.index_page(item)
+            result = service.search_docs("unique-needle", filters=None, limit=5)
+
+        self.assertEqual(result["results"][0]["id"], 30)
+        self.assertIn("unique-needle", result["results"][0]["preview"])
+
+    def test_reindex_refreshes_unchanged_pages_when_embedding_profile_changes(self):
+        pages = [page(1, "Architecture decision.")]
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, pages)
+            service.embeddings = FakeEmbeddings(profile="fake-model::old-profile")
+            service.index_page(pages[0])
+            service.embeddings.profile = "fake-model::retrieval-v2"
+            result = service.reindex_docs(force=False)
+            status = service.index_status()
+
+        self.assertEqual(result["indexed"], 1)
+        self.assertEqual(result["skipped"], 0)
+        self.assertEqual(status["embedded_pages"], 1)
+        self.assertEqual(status["embedding_profile"], "fake-model::retrieval-v2")
 
     def test_read_page_returns_query_window_and_cursor_instead_of_full_page(self):
         body = "# Intro\n" + ("intro text\n" * 2500) + "\n# Critical section\nneedle decision\n" + ("detail\n" * 2500)

@@ -18,11 +18,13 @@ from urllib import error, parse, request
 
 DEFAULT_SEARCH_LIMIT = 5
 MAX_SEARCH_LIMIT = 20
+MAX_SEMANTIC_CANDIDATES = 20
 SEARCH_PREVIEW_CHARS = 180
 DEFAULT_PAGE_MAX_CHARS = 12000
 MAX_PAGE_MAX_CHARS = 50000
 DEFAULT_STRUCTURE_LIMIT = 30
 MAX_STRUCTURE_LIMIT = 100
+EMBEDDING_PROFILE_VERSION = "retrieval-v2"
 
 
 class BookStackApiError(RuntimeError):
@@ -254,6 +256,24 @@ class EmbeddingClient:
     def enabled(self) -> bool:
         return self.mode() != "disabled"
 
+    def uses_e5_retrieval_prefixes(self) -> bool:
+        model_name = self.model.lower().rsplit("/", 1)[-1]
+        return re.search(r"(^|[-_])e5($|[-_])", model_name) is not None
+
+    def storage_model(self) -> str:
+        if not self.enabled():
+            return ""
+        input_profile = "e5-prefixed" if self.uses_e5_retrieval_prefixes() else "plain"
+        return f"{self.model}::{EMBEDDING_PROFILE_VERSION}::{input_profile}"
+
+    def embed_query(self, text: str) -> List[float]:
+        prefix = "query: " if self.uses_e5_retrieval_prefixes() else ""
+        return self.embed(prefix + text)
+
+    def embed_passage(self, text: str) -> List[float]:
+        prefix = "passage: " if self.uses_e5_retrieval_prefixes() else ""
+        return self.embed(prefix + text)
+
     def embed(self, text: str) -> List[float]:
         if not self.enabled():
             return []
@@ -400,6 +420,21 @@ class DocsCache:
             "oldest_indexed_at": page_row["oldest_indexed_at"] if page_row else None,
             "newest_indexed_at": page_row["newest_indexed_at"] if page_row else None,
         }
+
+    def has_embedding(self, page_id: int, embedding_model: str, content_hash: str) -> bool:
+        if not embedding_model or not content_hash:
+            return False
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM embeddings
+                WHERE page_id = ? AND model = ? AND content_hash = ?
+                LIMIT 1
+                """,
+                (page_id, embedding_model, content_hash),
+            ).fetchone()
+        return row is not None
 
     def get_page(self, page_id: int) -> Optional[Dict[str, Any]]:
         with self.connect() as conn:
@@ -563,6 +598,7 @@ class DocsCache:
             "markdown": row["markdown"],
             "html": row["html"],
             "content_text": row["content_text"],
+            "content_hash": row["content_hash"],
             "indexed_at": row["indexed_at"],
             "source": "cache",
         }
@@ -595,7 +631,7 @@ class ProductDocsService:
             return {"ok": False, "error": "cursor must be zero or greater", "results": []}
         cache_pages = self.cache.count_pages()
         results = self.cache.search(query, cache_pages, effective_filters) if cache_pages > 0 else []
-        semantic = self.semantic_results(query, cache_pages, effective_filters)
+        semantic = self.semantic_results(query, min(cache_pages, MAX_SEMANTIC_CANDIDATES), effective_filters)
         results = merge_results(results, semantic)
         live_used = False
         requested_end = cursor + limit
@@ -624,12 +660,12 @@ class ProductDocsService:
         if not self.embeddings.enabled() or self.cache.count_pages() == 0:
             return []
         try:
-            query_vector = self.embeddings.embed(query)
+            query_vector = self.embeddings.embed_query(query)
         except Exception as exc:
             self.last_embedding_error = str(exc)
             return []
         scored = []
-        for page, vector in self.cache.all_embeddings(self.embeddings.model):
+        for page, vector in self.cache.all_embeddings(self.embeddings.storage_model()):
             if not matches_filters(page, filters):
                 continue
             score = cosine_similarity(query_vector, vector)
@@ -657,7 +693,11 @@ class ProductDocsService:
             return {"ok": False, "error": "page_id is required, or url must exist in the local cache"}
         page = self.client.read_page(int(resolved_id))
         cached = self.cache.get_page(int(resolved_id))
-        if not cached or str(cached.get("updated_at", "")) != str(page.get("updated_at", "")):
+        if (
+            not cached
+            or str(cached.get("updated_at", "")) != str(page.get("updated_at", ""))
+            or not self.embedding_is_current(cached)
+        ):
             self.index_page(page)
             cached = self.cache.get_page(int(resolved_id))
         content_format = (fmt or "markdown").lower()
@@ -728,7 +768,12 @@ class ProductDocsService:
             if not page_id:
                 continue
             cached = self.cache.get_page(page_id)
-            if cached and not force and str(cached.get("updated_at", "")) == str(page_summary.get("updated_at", "")):
+            if (
+                cached
+                and not force
+                and str(cached.get("updated_at", "")) == str(page_summary.get("updated_at", ""))
+                and self.embedding_is_current(cached)
+            ):
                 skipped += 1
                 continue
             try:
@@ -748,7 +793,7 @@ class ProductDocsService:
         }
 
     def index_status(self) -> Dict[str, Any]:
-        status = self.cache.index_status(self.embeddings.model)
+        status = self.cache.index_status(self.embeddings.storage_model())
         status.update(
             {
                 "ok": True,
@@ -756,6 +801,7 @@ class ProductDocsService:
                 "embedding_enabled": self.embeddings.enabled(),
                 "embedding_mode": self.embeddings.mode(),
                 "embedding_model": self.embeddings.model,
+                "embedding_profile": self.embeddings.storage_model(),
                 "embedding_cache_dir": self.embeddings.cache_dir,
                 "last_embedding_error": self.last_embedding_error,
                 "reindex_interval_hours": self.settings.reindex_interval_hours,
@@ -772,11 +818,20 @@ class ProductDocsService:
         content_hash = self.cache.upsert_page(page, markdown=markdown, html=html, content_text=content_text)
         if self.embeddings.enabled() and content_text:
             try:
-                vector = self.embeddings.embed(f"{page.get('name', '')}\n\n{content_text}")
-                self.cache.upsert_embedding(int(page["id"]), self.embeddings.model, content_hash, vector)
+                vector = self.embeddings.embed_passage(f"{page.get('name', '')}\n\n{content_text}")
+                self.cache.upsert_embedding(int(page["id"]), self.embeddings.storage_model(), content_hash, vector)
                 self.last_embedding_error = ""
             except Exception as exc:
                 self.last_embedding_error = str(exc)
+
+    def embedding_is_current(self, page: Dict[str, Any]) -> bool:
+        if not self.embeddings.enabled():
+            return True
+        return self.cache.has_embedding(
+            int(page.get("id", 0)),
+            self.embeddings.storage_model(),
+            str(page.get("content_hash", "")),
+        )
 
     def start_background_reindex(self, force: bool = False) -> None:
         thread = threading.Thread(target=lambda: self.reindex_docs(force=force), name="bookstack-reindex", daemon=True)

@@ -32,7 +32,9 @@ Configure `bookStackProductDocsServer.baseUrl`, set read-only `BOOKSTACK_TOKEN_I
 The MCP publishes as `BookStack-product-docs-mcp` and exposes `search_docs`, `read_page`,
 `list_structure`, `index_status`, and `reindex_docs`.
 Search defaults to five compact results and exposes `total_matches`, `has_more`, and
-`next_cursor` for bounded pagination. `read_page` returns at most 12,000 characters by
+`next_cursor` for bounded pagination. Exact FTS matches stay first and semantic fallback is
+bounded to the best 20 candidates, so embedding similarity cannot turn every cached page into
+a reported match. `read_page` returns at most 12,000 characters by
 default and supports `query`, `heading`, and cursor continuation; use `max_chars=0` only for
 an explicit full-page read. `list_structure` returns compact entries and treats its default
 limit of 30 as a total budget across the requested scopes.
@@ -79,6 +81,9 @@ For local CPU semantic search, keep the shared embedding setting:
 
 BookStack MCP receives `EMBEDDING_MODEL`, uses the shared `<stateRoot>/model-cache`
 mounted as `/app/model_cache`, and loads the model locally through `sentence-transformers`.
+Retrieval inputs for E5 models use the required `query:` and `passage:` prefixes. The indexed
+embedding profile is versioned; a changed profile makes unchanged pages eligible for automatic
+reindexing instead of silently reusing incompatible vectors.
 When `embedding.apiKey` is configured instead, the server uses the existing
 OpenAI-compatible `/embeddings` endpoint path.
 
