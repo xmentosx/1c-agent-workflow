@@ -35,6 +35,7 @@ vibecoding1c-mcp-refresh-registry
 vibecoding1c-mcp-rotate-keys
 vibecoding1c-mcp-ensure-model
 vibecoding1c-mcp-write-client-config
+context-benchmark
 update-workflow
 update-ai-rules
 doctor
@@ -89,6 +90,10 @@ Extension helper actions are advanced/helper commands. `new-extension-dev-branch
 `release-e2e-extension-smoke` is also reserved for the Release runner. It uses the public extension initialization lifecycle to create an Empty extension, produce and reload a CFE, validate both normalized dumps, and restore the disposable infobase and worktree from a snapshot. It is not a project command and must not have a slash wrapper.
 
 ROCTUP and Vanessa dependencies are cached by init/update. Agents call the stable `itl-roctup-data` and `itl-vanessa-ui` servers; private backends start on first use, stop on idle/client exit, and appear in general `status`/`doctor` diagnostics.
+
+`context-benchmark` is a Kilo-only read-only diagnostic exposed through natural-language requests such as "measure context" or "замерь контекст"; it has no slash command. `-BenchmarkMode run` requires an explicit `-BenchmarkModel provider/model` and `-ConfirmTokenSpend`, then creates one fixed no-tool `OK` request through the Kilo CLI. `analyze` reads one real IDE session by `-BenchmarkSessionId`; `compare` accepts session ids or saved summaries through `-BenchmarkBaseline` and `-BenchmarkCandidate`. Summaries under ignored `.agent-1c/diagnostics/context-benchmark/` contain counters and provenance only, never transcript text, tool arguments, URLs, or secrets.
+
+To measure Browser Automation, switch it manually in Kilo Settings, reload Kilo, create a fresh one-message session with `ITL_CONTEXT_BENCHMARK_V1: Reply with only OK. Do not call tools.`, analyze it with a `browser-off` or `browser-on` label, and repeat for the other state. Compare only the resulting compatible summaries. ITL reports the setting but never changes it. CLI `run` measures project rules and normal MCP configuration; it does not include the extension-only Browser Automation service.
 
 vibecoding1c MCP actions (`vibecoding1c-mcp-setup`, `vibecoding1c-mcp-select`, `vibecoding1c-mcp-refresh-registry`, `vibecoding1c-mcp-update`, `vibecoding1c-mcp-status`, `vibecoding1c-mcp-start`, `vibecoding1c-mcp-stop`, `vibecoding1c-mcp-rotate-keys`, `vibecoding1c-mcp-ensure-model`, `vibecoding1c-mcp-write-client-config`) are exposed through helper actions or natural-language requests. They manage remote LAN registry discovery, per-server remote/local selection, private vibecoding1c MCP distribution, local key rotation, embedding model bootstrap, port allocation, Docker containers, and managed MCP entries for the single active client. Setup applies saved selection and runs selection first when it is missing or incomplete; use `vibecoding1c-mcp-select` or `vibecoding1c-mcp-setup -Force` for an explicit reselect. Remote is the default provider; config-specific remote vibecoding1c MCP always needs an explicit per-server `configId`, and `code`/`graph` selections do not inherit `configId` or `hostId` from each other. Local `code`/`graph` can be selected for project or branch scope. Vanessa UI MCP is managed separately by the on-demand facade and is always branch-local.
 

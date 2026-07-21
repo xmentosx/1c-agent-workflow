@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "prepare-vanessa-authoring", "complete-vanessa-authoring", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "run-dev-branch-tests", "stop-dev-branch-test-clients", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "prepare-vanessa-authoring", "complete-vanessa-authoring", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "run-dev-branch-tests", "stop-dev-branch-test-clients", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -58,6 +58,14 @@ param(
     [string]$AgentTarget = "",
     [string]$Client = "",
     [string]$Mode = "status",
+    [ValidateSet("run", "analyze", "compare")]
+    [string]$BenchmarkMode = "analyze",
+    [string]$BenchmarkModel = "",
+    [string]$BenchmarkVariant = "",
+    [string]$BenchmarkLabel = "",
+    [string]$BenchmarkSessionId = "",
+    [string]$BenchmarkBaseline = "",
+    [string]$BenchmarkCandidate = "",
     [ValidateSet("", "implicit", "command", "repair", "explicit")]
     [string]$VerificationTrigger = "",
     [ValidateSet("", "vanessa", "event-log", "all")]
@@ -77,6 +85,7 @@ param(
     [switch]$AllowUnverifiedClose,
     [switch]$UseCurrentWorktree,
     [switch]$OfferOpenAgent,
+    [switch]$ConfirmTokenSpend,
     [ValidateSet("Auto", "Partial", "Full")]
     [string]$ConfigLoadMode = "Auto",
     [string]$RunStatusPath,
@@ -307,6 +316,7 @@ $script:Agent1cModuleFiles = @(
     "agent-1c.roctup-mcp.ps1",
     "agent-1c.lifecycle.ps1",
     "agent-1c.client-adapters.ps1",
+    "agent-1c.context-diagnostics.ps1",
     "agent-1c.ondemand-mcp.ps1",
     "agent-1c.verification-modes.ps1",
     "agent-1c.legacy-bridges.ps1",
@@ -363,6 +373,7 @@ try {
         "vibecoding1c-mcp-setup" { Setup-Vibecoding1cMcp }
         "vibecoding1c-mcp-update" { Update-Vibecoding1cMcp }
         "vibecoding1c-mcp-status" { Show-Vibecoding1cMcpStatus }
+        "context-benchmark" { Invoke-KiloContextBenchmark }
         "vibecoding1c-mcp-start" { Start-Vibecoding1cMcp }
         "vibecoding1c-mcp-stop" { Stop-Vibecoding1cMcp }
         "vibecoding1c-mcp-select" { Set-Vibecoding1cMcpSelection }

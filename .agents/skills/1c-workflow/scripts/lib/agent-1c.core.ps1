@@ -324,6 +324,7 @@ function Test-Agent1cActionRequiresLifecycleLock {
         "help",
         "doctor",
         "status",
+        "context-benchmark",
         "list-dev-branches",
         "get-dev-workspace-plan",
         "get-dev-workspace-close-plan",
