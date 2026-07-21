@@ -94,6 +94,9 @@ function Get-ItlClientAdapterRegistry {
             workspaceProvider = "opencode"
             handoffMode = "native-workspace"
             workspacePluginPath = ".opencode/plugins/itl-workspace.js"
+            workspacePluginPackageLockKey = "opencodePlugin"
+            workspacePluginPackageName = "@opencode-ai/plugin"
+            workspacePluginRuntimePath = ".opencode"
             requiredUserEnvironment = [ordered]@{
                 OPENCODE_EXPERIMENTAL_WORKSPACES = "true"
             }
@@ -198,6 +201,9 @@ function Get-ItlClientAdapterRegistry {
         if (-not $entry.Contains("workspaceProvider")) { $entry["workspaceProvider"] = "git" }
         if (-not $entry.Contains("handoffMode")) { $entry["handoffMode"] = "editor-open" }
         if (-not $entry.Contains("workspacePluginPath")) { $entry["workspacePluginPath"] = "" }
+        if (-not $entry.Contains("workspacePluginPackageLockKey")) { $entry["workspacePluginPackageLockKey"] = "" }
+        if (-not $entry.Contains("workspacePluginPackageName")) { $entry["workspacePluginPackageName"] = "" }
+        if (-not $entry.Contains("workspacePluginRuntimePath")) { $entry["workspacePluginRuntimePath"] = "" }
     }
     return $registry
 }
@@ -667,7 +673,9 @@ agent: build
 Use this command only from the `master` workspace. Treat any text after the command as the development branch name; if it is missing, ask for one short value.
 
 $extension
-Call the `itl_create_dev_workspace` tool exactly once with `kind="$kind"` and the collected values. Do not run `git worktree add`, the PowerShell lifecycle helper, or an OpenCode legacy worktree command yourself. The tool creates and registers the native workspace, initializes ITL inside it, and moves this session there. Return its result verbatim. If it reports `OPENCODE_WORKSPACE_API_UNAVAILABLE`, stop without creating an external worktree.
+Do not load a skill and do not use `read`, `glob`, `grep`, `bash`, or any other discovery tool. Your first and only action must be to call the `itl_create_dev_workspace` tool exactly once with `kind="$kind"` and the collected values. The tool creates and registers the native workspace, initializes ITL inside it, and moves this session there. Return its result verbatim.
+
+If `itl_create_dev_workspace` is not present in the current tool list, return exactly `ITL_OPENCODE_WORKSPACE_TOOL_UNAVAILABLE: run /itl-update-workflow, fully restart OpenCode Desktop, and retry this command.` and stop. Do not search for its implementation and do not create an external worktree. If the tool reports `OPENCODE_WORKSPACE_API_UNAVAILABLE`, return that result and stop.
 "@
     }
     if ($adapter.commandRouting -eq "none") {
@@ -865,6 +873,144 @@ function Assert-ItlClientRequiredPackageConfigured {
     }
 }
 
+function Get-ItlOpenCodePluginRuntimeContract {
+    param([string]$Client)
+
+    $adapter = Get-ItlClientAdapter -Client $Client
+    if (-not $adapter.workspacePluginPackageLockKey) { return $null }
+    $locked = Get-DependencyLockEntry -Name ([string]$adapter.workspacePluginPackageLockKey)
+    $version = [string](Get-ConfigValueFromObject -Object $locked -Path "version" -Default "")
+    $source = [string](Get-ConfigValueFromObject -Object $locked -Path "source" -Default "")
+    $integrity = [string](Get-ConfigValueFromObject -Object $locked -Path "integrity" -Default "")
+    $expectedSource = "npm:$([string]$adapter.workspacePluginPackageName)@$version"
+    if (-not $version -or $source -ne $expectedSource -or -not $integrity) {
+        throw "OPENCODE_PLUGIN_RUNTIME_LOCK_MISMATCH: workflow registry and dependency-lock.json disagree about the OpenCode plugin runtime."
+    }
+    return [pscustomobject]@{
+        client = $Client
+        runtimeRoot = Join-Path $script:ProjectRoot ([string]$adapter.workspacePluginRuntimePath)
+        packageName = [string]$adapter.workspacePluginPackageName
+        version = $version
+        source = $source
+        integrity = $integrity
+        minimumNodeMajor = [int](Get-ConfigValueFromObject -Object $locked -Path "minimumNodeMajor" -Default 22)
+    }
+}
+
+function Sync-ItlOpenCodePluginRuntimeLockEntry {
+    param([string]$Client)
+
+    $adapter = Get-ItlClientAdapter -Client $Client
+    if (-not $adapter.workspacePluginPackageLockKey) { return }
+    $template = New-DefaultDependencyLockManifest
+    $templateEntry = Get-ConfigValueFromObject -Object $template -Path "dependencies.$([string]$adapter.workspacePluginPackageLockKey)" -Default $null
+    if ($null -eq $templateEntry) {
+        throw "OPENCODE_PLUGIN_RUNTIME_TEMPLATE_LOCK_MISSING: templates/dependency-lock.json has no '$([string]$adapter.workspacePluginPackageLockKey)' entry."
+    }
+    $values = ConvertTo-Agent1cHashtable -Object $templateEntry
+    Update-DependencyLockEntry -Name ([string]$adapter.workspacePluginPackageLockKey) -Values $values
+}
+
+function Get-ItlOpenCodePluginRuntimeStatus {
+    param([string]$Client)
+
+    $contract = Get-ItlOpenCodePluginRuntimeContract -Client $Client
+    if ($null -eq $contract) {
+        return [pscustomobject]@{ required = $false; ready = $true; detail = "not required for $Client" }
+    }
+    $packageManifestPath = Join-Path $contract.runtimeRoot "package.json"
+    $installedManifestPath = Join-Path $contract.runtimeRoot "node_modules\@opencode-ai\plugin\package.json"
+    $packageLockPath = Join-Path $contract.runtimeRoot "package-lock.json"
+    if (-not (Test-Path -LiteralPath $packageManifestPath -PathType Leaf)) {
+        return [pscustomobject]@{ required = $true; ready = $false; detail = "package manifest missing: $packageManifestPath" }
+    }
+    if (-not (Test-Path -LiteralPath $installedManifestPath -PathType Leaf)) {
+        return [pscustomobject]@{ required = $true; ready = $false; detail = "installed package missing: $installedManifestPath" }
+    }
+    if (-not (Test-Path -LiteralPath $packageLockPath -PathType Leaf)) {
+        return [pscustomobject]@{ required = $true; ready = $false; detail = "package lock missing: $packageLockPath" }
+    }
+    try {
+        $packageManifest = Read-Utf8Text -Path $packageManifestPath | ConvertFrom-Json
+        $installedManifest = Read-Utf8Text -Path $installedManifestPath | ConvertFrom-Json
+        # Windows PowerShell 5 ConvertFrom-Json rejects npm lockfile v3's required packages[""] root entry.
+        $packageLockText = (Read-Utf8Text -Path $packageLockPath).Replace('"":', '"_itl_root":')
+        $packageLock = $packageLockText | ConvertFrom-Json
+    } catch {
+        return [pscustomobject]@{ required = $true; ready = $false; detail = "runtime package metadata is invalid JSON: $($_.Exception.Message)" }
+    }
+    $declared = [string](Get-ConfigValueFromObject -Object $packageManifest -Path "dependencies.$($contract.packageName)" -Default "")
+    $installed = [string](Get-ConfigValueFromObject -Object $installedManifest -Path "version" -Default "")
+    $lockedPackage = Get-ConfigValueFromObject -Object $packageLock -Path "packages.node_modules/@opencode-ai/plugin" -Default $null
+    $lockVersion = [string](Get-ConfigValueFromObject -Object $lockedPackage -Path "version" -Default "")
+    $lockIntegrity = [string](Get-ConfigValueFromObject -Object $lockedPackage -Path "integrity" -Default "")
+    $ready = $declared -eq $contract.version -and $installed -eq $contract.version -and
+        $lockVersion -eq $contract.version -and $lockIntegrity -eq $contract.integrity
+    return [pscustomobject]@{
+        required = $true
+        ready = $ready
+        detail = "expected=$($contract.version); declared=$(if ($declared) { $declared } else { '<missing>' }); installed=$(if ($installed) { $installed } else { '<missing>' }); lock=$(if ($lockVersion) { $lockVersion } else { '<missing>' }); integrity=$(if ($lockIntegrity -eq $contract.integrity) { 'matched' } else { 'mismatch' })"
+    }
+}
+
+function Set-ItlOpenCodePluginPackageManifest {
+    param([object]$Contract)
+
+    New-Item -ItemType Directory -Force -Path $Contract.runtimeRoot | Out-Null
+    $gitIgnorePath = Join-Path $Contract.runtimeRoot ".gitignore"
+    $ignoreLines = @(if (Test-Path -LiteralPath $gitIgnorePath -PathType Leaf) { Read-Utf8Lines -Path $gitIgnorePath })
+    foreach ($entry in @("node_modules", "package.json", "package-lock.json", "bun.lock", ".gitignore")) {
+        if ($entry -notin $ignoreLines) { $ignoreLines += $entry }
+    }
+    $ignoreText = [string]::Join([Environment]::NewLine, [string[]]$ignoreLines) + [Environment]::NewLine
+    Write-Utf8Text -Path $gitIgnorePath -Value $ignoreText
+
+    $packageManifestPath = Join-Path $Contract.runtimeRoot "package.json"
+    $manifest = [ordered]@{ private = $true; dependencies = [ordered]@{} }
+    if (Test-Path -LiteralPath $packageManifestPath -PathType Leaf) {
+        try { $manifest = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-Utf8Text -Path $packageManifestPath | ConvertFrom-Json) }
+        catch { throw "OPENCODE_PLUGIN_RUNTIME_MANIFEST_INVALID: $packageManifestPath is not valid JSON. $($_.Exception.Message)" }
+        if (-not $manifest.Contains("dependencies") -or $null -eq $manifest["dependencies"]) { $manifest["dependencies"] = [ordered]@{} }
+        else { $manifest["dependencies"] = ConvertTo-Vibecoding1cMcpHashtable -Object $manifest["dependencies"] }
+        $manifest["private"] = $true
+    }
+    $manifest["dependencies"][$Contract.packageName] = $Contract.version
+    Write-Vibecoding1cMcpJsonFile -Path $packageManifestPath -Value $manifest
+}
+
+function Sync-ItlOpenCodePluginRuntime {
+    param([string]$Client, [string]$NpmCommand = "")
+
+    Sync-ItlOpenCodePluginRuntimeLockEntry -Client $Client
+    $contract = Get-ItlOpenCodePluginRuntimeContract -Client $Client
+    if ($null -eq $contract) { return }
+    $status = Get-ItlOpenCodePluginRuntimeStatus -Client $Client
+    if ($status.ready) { return }
+
+    Set-ItlOpenCodePluginPackageManifest -Contract $contract
+    $node = Get-Command node -ErrorAction SilentlyContinue
+    $npm = if ($NpmCommand) { Get-Command $NpmCommand -ErrorAction SilentlyContinue } else { Get-Command npm.cmd -ErrorAction SilentlyContinue }
+    if (-not $npm -and -not $NpmCommand) { $npm = Get-Command npm -ErrorAction SilentlyContinue }
+    if (-not $node -or -not $npm) {
+        throw "OPENCODE_PLUGIN_RUNTIME_NPM_REQUIRED: OpenCode Desktop needs Node.js $($contract.minimumNodeMajor)+ with npm so ITL can prepare its project-local plugin runtime."
+    }
+    $versionText = ((& $node.Source --version 2>&1 | Select-Object -First 1) -join "").Trim()
+    $major = 0
+    if ($versionText -notmatch '^v?(?<major>\d+)\.' -or -not [int]::TryParse($Matches['major'], [ref]$major) -or $major -lt $contract.minimumNodeMajor) {
+        throw "OPENCODE_PLUGIN_RUNTIME_NODE_INCOMPATIBLE: OpenCode Desktop needs Node.js $($contract.minimumNodeMajor)+ with npm; detected '$versionText'."
+    }
+    $output = @(& $npm.Source "install" "--prefix" $contract.runtimeRoot "--ignore-scripts" "--no-audit" "--no-fund" "--package-lock=true" 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "OPENCODE_PLUGIN_RUNTIME_INSTALL_FAILED: npm could not install $($contract.source). $((@($output | Select-Object -Last 8) -join ' ').Trim())"
+    }
+    $status = Get-ItlOpenCodePluginRuntimeStatus -Client $Client
+    if (-not $status.ready) {
+        throw "OPENCODE_PLUGIN_RUNTIME_VERIFY_FAILED: $($status.detail)"
+    }
+    Write-Host "Prepared OpenCode plugin runtime: $($contract.source)."
+    Write-Host "Restart OpenCode so it registers the ITL native workspace tools."
+}
+
 function Sync-ItlClientSurface {
     param([string]$SourceRoot = $script:ProjectRoot)
 
@@ -878,6 +1024,9 @@ function Sync-ItlClientSurface {
     $adapter = Get-ItlClientAdapter -Client $client
     $expectedFiles = Get-ItlExpectedSurfaceFiles -Client $client -SourceRoot $SourceRoot
     Sync-ItlManagedSurfaceFiles -Client $client -ExpectedFiles $expectedFiles
+    if ((Get-FullPathNormalized $SourceRoot) -eq (Get-FullPathNormalized $script:ProjectRoot)) {
+        Sync-ItlOpenCodePluginRuntime -Client $client
+    }
     if ($adapter.PSObject.Properties.Name -contains "disableSnapshots" -and $adapter.disableSnapshots) {
         Set-KiloSnapshotsDisabled
     }
@@ -1064,6 +1213,16 @@ function Show-ItlDoctor {
             $checks.Add([pscustomobject]@{ status = "FAIL"; name = "mcp"; detail = "managed endpoints exist but active config is missing: $($adapter.mcpPath)" })
         } else {
             $checks.Add([pscustomobject]@{ status = $(if ($ownedCount -gt 0) { "OK" } else { "SKIP" }); name = "mcp"; detail = "active=$client; managedEndpoints=$ownedCount; config=$($adapter.mcpPath)" })
+        }
+        try {
+            $pluginRuntime = Get-ItlOpenCodePluginRuntimeStatus -Client $client
+            $checks.Add([pscustomobject]@{
+                status = $(if (-not $pluginRuntime.required) { "SKIP" } elseif ($pluginRuntime.ready) { "OK" } else { "FAIL" })
+                name = "opencode-plugin-runtime"
+                detail = $pluginRuntime.detail
+            })
+        } catch {
+            $checks.Add([pscustomobject]@{ status = "FAIL"; name = "opencode-plugin-runtime"; detail = $_.Exception.Message })
         }
     }
     try {

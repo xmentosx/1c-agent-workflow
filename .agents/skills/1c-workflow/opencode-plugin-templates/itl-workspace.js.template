@@ -1,4 +1,5 @@
 import { tool } from "@opencode-ai/plugin"
+import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 
@@ -15,13 +16,32 @@ function unwrap(result, operation) {
 async function run(cwd, args) {
   const options = { stdout: "pipe", stderr: "pipe", stdin: "ignore" }
   if (cwd) options.cwd = cwd
-  const process = Bun.spawn(args, options)
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
-    process.exited,
-  ])
-  return { stdout, stderr, exitCode }
+  if (globalThis.Bun?.spawn) {
+    const process = globalThis.Bun.spawn(args, options)
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(process.stdout).text(),
+      new Response(process.stderr).text(),
+      process.exited,
+    ])
+    return { stdout, stderr, exitCode }
+  }
+
+  const [command, ...commandArgs] = args
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, commandArgs, {
+      cwd: cwd || undefined,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    let stdout = ""
+    let stderr = ""
+    child.stdout.setEncoding("utf8")
+    child.stderr.setEncoding("utf8")
+    child.stdout.on("data", (chunk) => { stdout += chunk })
+    child.stderr.on("data", (chunk) => { stderr += chunk })
+    child.once("error", reject)
+    child.once("close", (code) => resolve({ stdout, stderr, exitCode: Number.isInteger(code) ? code : 1 }))
+  })
 }
 
 async function git(cwd, ...args) {

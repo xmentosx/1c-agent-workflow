@@ -147,6 +147,38 @@ Describe "ITL on-demand MCP facade" {
         }
     }
 
+    It "does not overwrite an identical source-build facade that another project is using" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-shared-binary-" + [guid]::NewGuid().ToString("N"))
+        $handle = $null
+        try {
+            $sourceBuild = Join-Path $RepoRoot "tools\itl-ondemand-mcp\build\itl-ondemand-mcp-windows-amd64.exe"
+            if (-not (Test-Path -LiteralPath $sourceBuild -PathType Leaf)) {
+                & (Join-Path $RepoRoot "scripts\Build-ItlOnDemandMcp.ps1") -SkipTests | Out-Null
+            }
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["opencode"]}}'
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Destination (Join-Path $tempRoot ".agent-1c\dependency-lock.json")
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $installRoot = Join-Path $tempRoot "shared-ondemand"
+                function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
+                $entry = Get-DependencyLockEntry -Name "itlOndemandMcp"
+                $targetDirectory = Join-Path $installRoot ([string]$entry.version)
+                $targetPath = Join-Path $targetDirectory ([string]$entry.assetName)
+                New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
+                Copy-Item -LiteralPath $sourceBuild -Destination $targetPath
+                $script:sharedFacadeHandle = [IO.File]::Open($targetPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+                Install-ItlOnDemandMcp
+            }
+            $handle = $script:sharedFacadeHandle
+            $result.sha256 | Should -Be ((Get-FileHash -LiteralPath $sourceBuild -Algorithm SHA256).Hash.ToLowerInvariant())
+        } finally {
+            if ($null -ne $handle) { $handle.Dispose() }
+            $script:sharedFacadeHandle = $null
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "writes native stdio facade entries for all ten clients and preserves unrelated config" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-clients-" + [guid]::NewGuid().ToString("N"))
         $fakeExe = Join-Path $tempRoot "itl-ondemand-mcp.exe"

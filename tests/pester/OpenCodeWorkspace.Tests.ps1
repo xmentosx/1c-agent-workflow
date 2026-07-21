@@ -219,6 +219,8 @@ Describe "OpenCode native ITL workspaces" {
         $PluginText | Should -Match 'OPENCODE_WORKSPACE_DEREGISTRATION_PENDING'
         $PluginText | Should -Match 'set-dev-workspace-deregistration'
         $PluginText | Should -Match '60_000'
+        $PluginText | Should -Match 'from "node:child_process"'
+        $PluginText | Should -Match 'globalThis\.Bun\?\.spawn'
         $PluginText | Should -Not -Match 'experimental\.worktree\.create'
         $syntaxPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-opencode-plugin-" + [guid]::NewGuid().ToString("N") + ".mjs")
         try {
@@ -226,6 +228,95 @@ Describe "OpenCode native ITL workspaces" {
             & node --check $syntaxPath
             $LASTEXITCODE | Should -Be 0
         } finally { Remove-Item -LiteralPath $syntaxPath -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "runs helper processes through the Node fallback when Bun is unavailable" {
+        $mockRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-opencode-node-runner-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $packageRoot = Join-Path $mockRoot "node_modules\@opencode-ai\plugin"
+            New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $packageRoot "package.json") -Encoding UTF8 -Value '{"type":"module","exports":"./index.js"}'
+            Set-Content -LiteralPath (Join-Path $packageRoot "index.js") -Encoding UTF8 -Value @'
+export const tool = (config) => config
+const schema = () => ({ optional() { return this }, min() { return this } })
+tool.schema = { enum: schema, string: schema, boolean: schema }
+'@
+            $pluginCopy = Join-Path $mockRoot "itl-workspace.mjs"
+            $testablePlugin = $PluginText.Replace('async function run(cwd, args)', 'export async function run(cwd, args)')
+            Set-Content -LiteralPath $pluginCopy -Encoding UTF8 -Value $testablePlugin
+            $harness = Join-Path $mockRoot "harness.mjs"
+            Set-Content -LiteralPath $harness -Encoding UTF8 -Value @'
+import { pathToFileURL } from "node:url"
+const { run } = await import(pathToFileURL(process.env.ITL_PLUGIN))
+const result = await run(undefined, [process.execPath, "-e", "process.stdout.write('node-ok'); process.stderr.write('node-err'); process.exit(7)"])
+process.stdout.write(JSON.stringify(result))
+'@
+            $oldPlugin = $env:ITL_PLUGIN
+            try {
+                $env:ITL_PLUGIN = $pluginCopy
+                $result = (& node $harness) | ConvertFrom-Json
+                $LASTEXITCODE | Should -Be 0
+                $result.stdout | Should -Be "node-ok"
+                $result.stderr | Should -Be "node-err"
+                $result.exitCode | Should -Be 7
+            } finally { $env:ITL_PLUGIN = $oldPlugin }
+        } finally { Remove-Item -LiteralPath $mockRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "prepares and verifies the pinned project-local OpenCode plugin runtime" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-opencode-runtime-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            $legacyLock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $legacyLock.dependencies.PSObject.Properties.Remove("opencodePlugin")
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value (($legacyLock | ConvertTo-Json -Depth 10) + "`n")
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["opencode"]}}'
+            $fakeNpmScript = Join-Path $tempRoot "fake-npm.ps1"
+            $fakeNpmCommand = Join-Path $tempRoot "npm.cmd"
+            Set-Content -LiteralPath $fakeNpmCommand -Encoding ASCII -Value '@echo off
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0fake-npm.ps1" %*
+exit /b %ERRORLEVEL%'
+            Set-Content -LiteralPath $fakeNpmScript -Encoding UTF8 -Value @'
+$prefixIndex = [Array]::IndexOf($args, "--prefix")
+if ($prefixIndex -lt 0) { exit 2 }
+$runtimeRoot = [string]$args[$prefixIndex + 1]
+$packageRoot = Join-Path $runtimeRoot "node_modules\@opencode-ai\plugin"
+New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+Set-Content -LiteralPath (Join-Path $packageRoot "package.json") -Encoding UTF8 -Value '{"name":"@opencode-ai/plugin","version":"1.18.4"}'
+$lock = [ordered]@{
+    lockfileVersion = 3
+    packages = [ordered]@{
+        "" = [ordered]@{ dependencies = [ordered]@{ "@opencode-ai/plugin" = "1.18.4" } }
+        "node_modules/@opencode-ai/plugin" = [ordered]@{
+            version = "1.18.4"
+            integrity = "sha512-Mkq128aLJo4E8Sb2bX8zrRlQ+I2WPaJ/n1kzaor8nTi/K/zNP4t8LGKwyMbuRoD/lhw4veSbzDOASSSypv3mcQ=="
+        }
+    }
+}
+Set-Content -LiteralPath (Join-Path $runtimeRoot "package-lock.json") -Encoding UTF8 -Value (($lock | ConvertTo-Json -Depth 8) + "`n")
+'@
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Sync-ItlOpenCodePluginRuntime -Client opencode -NpmCommand $fakeNpmCommand
+                $ready = Get-ItlOpenCodePluginRuntimeStatus -Client opencode
+                $manifest = Get-Content -LiteralPath (Join-Path $tempRoot ".opencode\package.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                $lock = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                [pscustomobject]@{ status = $ready; declared = $manifest.dependencies.'@opencode-ai/plugin'; locked = $lock.dependencies.opencodePlugin.version }
+            }
+            $result.status.required | Should -BeTrue
+            $result.status.ready | Should -BeTrue
+            $result.declared | Should -Be "1.18.4"
+            $result.locked | Should -Be "1.18.4"
+            $ignore = Get-Content -LiteralPath (Join-Path $tempRoot ".opencode\.gitignore") -Raw -Encoding UTF8
+            $ignore | Should -Match '(?m)^node_modules\r?$'
+            $ignore | Should -Match '(?m)^package-lock\.json\r?$'
+
+            $manifestPath = Join-Path $tempRoot ".opencode\package.json"
+            Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value '{"private":true,"dependencies":{"@opencode-ai/plugin":"local"}}'
+            $drift = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-ItlOpenCodePluginRuntimeStatus -Client opencode }
+            $drift.ready | Should -BeFalse
+            $drift.detail | Should -Match 'declared=local'
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
     It "runs create readiness adopt and warp against the mock native API contract" {
