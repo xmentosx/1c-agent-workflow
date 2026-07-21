@@ -2025,7 +2025,7 @@ if (`$?) { exit 0 } else { exit 1 }
         $initHandoffFunction | Should -Match ([regex]::Escape('run /reload now'))
         $initHandoffFunction | Should -Match 'already open on master before initialization'
         $initHandoffFunction | Should -Match 'newly opened worktree window reads its own context on startup'
-        $HelperText | Should -Match 'Assert-InitGitClean\s+Write-PostInitClientReloadHandoff\s+Write-KiloBrowserAutomationAdvisory -ProjectRoot \$script:ProjectRoot\s+Set-RunStage -Stage "init\.complete"'
+        $HelperText | Should -Match 'Assert-InitGitClean\s+Write-PostInitClientReloadHandoff\s+Write-KiloBrowserAutomationSummary -ProjectRoot \$script:ProjectRoot\s+Write-InitRunUserReport.*?\s+Set-RunStage -Stage "init\.complete"'
 
         $handoff = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -2039,6 +2039,43 @@ if (`$?) { exit 0 } else { exit 1 }
         }
         $handoff.output | Should -Match ([regex]::Escape('run /reload now'))
         $handoff.requiredAction | Should -Match 'before the next master action'
+    }
+
+    It "builds a complete safe branch user report with MCP Browser and advice" {
+        $report = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-Vibecoding1cMcpStatusSummary {
+                return [pscustomobject]@{ active = @("docs/remote"); skipped = @(); staleServers = @(); missingConfigId = @() }
+            }
+            function Format-Vibecoding1cMcpStatusList { param([object[]]$Items); if (@($Items).Count -eq 0) { return "<none>" }; return (@($Items) -join ", ") }
+            function Get-KiloBrowserAutomationDisplay {
+                return [pscustomobject]@{ statusLine = "Kilo Browser Automation: enabled (source: workspace)."; adviceLine = "Browser advice fixture." }
+            }
+            $script:RunRequiredAction = "Open the new worktree; no additional client reload is required there."
+            $state = [pscustomobject]@{
+                devBranchKind = "extension"
+                devBranch = "itldev/report-fixture"
+                mainWorktreePath = "C:\fixture\main"
+                worktreePath = "C:\fixture\branch"
+                devBranchInfoBasePath = "C:\fixture\ib"
+                launcherInfoBaseName = "fixture-branch"
+                launcherFolder = "/ITL/fixture"
+                publicationStatus = "disabled"
+                extensionInitializationStatus = "pending"
+                roctupMcpStatus = "stopped"
+                vanessaMcpStatus = "stopped"
+            }
+            Write-DevBranchRunUserReport -State $state -AdvisoryRoot $state.worktreePath 6>$null
+            $script:RunUserReport
+        }
+
+        $report | Should -Match "Branch: itldev/report-fixture"
+        $report | Should -Match "1C launcher infobase: fixture-branch"
+        $report | Should -Match "ROCTUP MCP: stopped"
+        $report | Should -Match "Kilo Browser Automation: enabled"
+        $report | Should -Match "Extension initialization: pending"
+        $report | Should -Match "Browser advice fixture"
+        $report | Should -Match "no additional client reload is required"
     }
 
     It "documents and templates the development branch worktree root" {

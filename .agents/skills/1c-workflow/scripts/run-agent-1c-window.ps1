@@ -751,6 +751,12 @@ while ($true) {
             }
             exit $exitCode
         }
+        $userReport = [string](Get-RunStatusProperty -Status $status -Name "userReport" -Default "")
+        if (-not [string]::IsNullOrWhiteSpace($userReport)) {
+            Write-Host ""
+            Write-Host "Agent user report:"
+            Write-Host $userReport
+        }
         exit 0
     }
 

@@ -56,7 +56,7 @@ The monitored launcher opens the wizard in an external PowerShell window and wri
 
 Agents must run this command in the foreground and wait for it to exit. Do not wrap it in a background PowerShell process, do not keep the launched PowerShell session open after the script exits, and do not call `agent-1c.ps1 -Action init-project -InitMode wizard` directly as the default agent path.
 
-After successful initialization, relay the helper's structured client handoff before starting another `master` lifecycle action. If Kilo Code was already open before initialization, run `/reload` once in that existing `master` window. A later newly opened development-worktree window reads its own project context on startup and does not need another reload.
+After successful initialization, relay the helper's complete `userReport` before starting another `master` lifecycle action. Preserve every safe settings, MCP/Browser, instruction, and advice line; do not replace the report with only `requiredAction`, and do not read or reproduce the full `console.log` on success. If Kilo Code was already open before initialization, run `/reload` once in that existing `master` window. A later newly opened development-worktree window reads its own project context on startup and does not need another reload.
 
 Do not run a separate `Test-Path` preflight before this launcher. The launcher validates the helper path itself and reports a clear error if it is missing. Raw PowerShell probes can emit serialized `CLIXML` progress records such as module preparation messages; those records are not the result of the check. The launcher has a built-in 60 minute limit (`-MaxWaitSeconds 3600`, or `0` to disable explicitly); the bootstrap forwards `-InitMaxWaitSeconds 3600` by default. If the agent shell tool accepts a timeout, use a positive long timeout greater than the launcher limit, such as `3900000` ms, for this interactive wizard; never use `timeout: 0` or an infinite timeout sentinel.
 
@@ -374,7 +374,7 @@ In an `itldev/*` development worktree, show only:
 /itl-result
 ```
 
-New branch commands create a sibling Git worktree by default and leave the current project folder on `master`. After creation, report the printed worktree path and tell the developer to open a separate window of the selected agent or IDE there. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
+New branch commands create a sibling Git worktree by default and leave the current project folder on `master`. After creation, relay the complete helper `userReport`, including branch paths, MCP/Browser state, instructions, and advice, then tell the developer to open a separate window of the selected agent or IDE there. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
 
 `/itl` must present the lifecycle as a process panel, not as a flat command list: current state, recommended next step, lifecycle path, visible client-native commands/skills or natural OpenSpec requests, then grouped additional helper actions. In a fresh clean `itldev/*` branch with `verification missing`, recommend choosing quick-fix or the available OpenSpec invocation mode, not `/itl-check`. Never promise universal `/opsx*`. Recommend `/itl-check` after checkable configuration/extension/Vanessa feature changes or stale/failed/unknown verification.
 

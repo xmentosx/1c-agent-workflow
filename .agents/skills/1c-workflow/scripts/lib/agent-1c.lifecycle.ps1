@@ -3179,6 +3179,204 @@ function Write-PostInitClientReloadHandoff {
     Write-Host $instruction
 }
 
+function ConvertTo-RunUserReportValue {
+    param(
+        [AllowNull()][object]$Value,
+        [string]$Default = "<not set>"
+    )
+
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) {
+        return $Default
+    }
+    return (([string]$Value) -replace '[\r\n]+', ' ').Trim()
+}
+
+function Add-RunUserReportLine {
+    param(
+        [System.Collections.Generic.List[string]]$Lines,
+        [string]$Label,
+        [AllowNull()][object]$Value,
+        [string]$Default = "<not set>"
+    )
+
+    $Lines.Add("- ${Label}: $(ConvertTo-RunUserReportValue -Value $Value -Default $Default)")
+}
+
+function Get-RunUserReportObservedValue {
+    param(
+        [scriptblock]$Read,
+        [AllowNull()][object]$Default = $null
+    )
+
+    try {
+        return (& $Read)
+    } catch {
+        return $Default
+    }
+}
+
+function Add-Vibecoding1cRunUserReportLines {
+    param(
+        [System.Collections.Generic.List[string]]$Lines,
+        [System.Collections.Generic.List[string]]$AdviceLines
+    )
+
+    try {
+        $summary = Get-Vibecoding1cMcpStatusSummary
+        Add-RunUserReportLine -Lines $Lines -Label "vibecoding1c active" -Value (Format-Vibecoding1cMcpStatusList -Items $summary.active) -Default "<none>"
+        Add-RunUserReportLine -Lines $Lines -Label "vibecoding1c skipped" -Value (Format-Vibecoding1cMcpStatusList -Items $summary.skipped) -Default "<none>"
+        Add-RunUserReportLine -Lines $Lines -Label "vibecoding1c stale" -Value (Format-Vibecoding1cMcpStatusList -Items $summary.staleServers) -Default "<none>"
+        Add-RunUserReportLine -Lines $Lines -Label "vibecoding1c missing configId" -Value (Format-Vibecoding1cMcpStatusList -Items $summary.missingConfigId) -Default "<none>"
+        if ($null -ne $AdviceLines -and @($summary.missingConfigId).Count -gt 0) {
+            $AdviceLines.Add("- vibecoding1c MCP selection is incomplete. Ask the agent to complete the explicit per-server configuration selection.")
+        }
+    } catch {
+        Add-RunUserReportLine -Lines $Lines -Label "vibecoding1c status" -Value "unknown"
+    }
+}
+
+function Add-KiloBrowserRunUserReportLines {
+    param(
+        [System.Collections.Generic.List[string]]$McpLines,
+        [System.Collections.Generic.List[string]]$AdviceLines,
+        [string]$ProjectRoot
+    )
+
+    $display = Get-KiloBrowserAutomationDisplay -ProjectRoot $ProjectRoot
+    if ($null -eq $display) { return }
+    $McpLines.Add("- $($display.statusLine.TrimEnd('.'))")
+    if ($display.adviceLine) {
+        $AdviceLines.Add("- $($display.adviceLine)")
+    }
+}
+
+function Write-AndSetRunUserReport {
+    param([System.Collections.Generic.List[string]]$Lines)
+
+    $report = (@($Lines) -join [Environment]::NewLine).Trim()
+    Set-RunUserReport -Report $report
+    Write-Host ""
+    Write-Host "Agent user report:"
+    Write-Host $report
+}
+
+function Write-InitRunUserReport {
+    param([bool]$VibecodingDeferred)
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $advice = [System.Collections.Generic.List[string]]::new()
+    $lines.Add("## Initialization")
+    Add-RunUserReportLine -Lines $lines -Label "Project root" -Value $script:ProjectRoot
+    Add-RunUserReportLine -Lines $lines -Label "Agent client" -Value (Get-RunUserReportObservedValue -Read { Get-ItlActiveClient } -Default "unknown")
+    Add-RunUserReportLine -Lines $lines -Label "Platform" -Value (Get-RunUserReportObservedValue -Read { Get-PlatformPath })
+    Add-RunUserReportLine -Lines $lines -Label "Base configuration" -Value (Get-RunUserReportObservedValue -Read { Get-BaseConfigurationVersion })
+    Add-RunUserReportLine -Lines $lines -Label "Source infobase kind" -Value (Get-RunUserReportObservedValue -Read { Get-InfoBaseKind })
+    Add-RunUserReportLine -Lines $lines -Label "Source infobase" -Value (Get-RunUserReportObservedValue -Read { Get-SourceInfoBasePath })
+    Add-RunUserReportLine -Lines $lines -Label "Infobase user" -Value (Get-RunUserReportObservedValue -Read { Get-EnvValue -Name "IB_USER" }) -Default "<empty>"
+    $usesRepository = [bool](Get-RunUserReportObservedValue -Read { Get-SourceUsesRepository } -Default $false)
+    Add-RunUserReportLine -Lines $lines -Label "Configuration repository" -Value $(if ($usesRepository) { "enabled" } else { "disabled" })
+    if ($usesRepository) {
+        Add-RunUserReportLine -Lines $lines -Label "Repository path" -Value (Get-RunUserReportObservedValue -Read { Get-RepositoryPath })
+        Add-RunUserReportLine -Lines $lines -Label "Repository user" -Value (Get-RunUserReportObservedValue -Read { Get-EnvValue -Name "REPOSITORY_USER" }) -Default "<empty>"
+    }
+    Add-RunUserReportLine -Lines $lines -Label "Dependency mode" -Value (Get-RunUserReportObservedValue -Read { Get-DependencyMode })
+    $publishDefault = [bool](Get-RunUserReportObservedValue -Read { Get-WebPublishByDefault } -Default $false)
+    $publishAuto = [bool](Get-RunUserReportObservedValue -Read { Get-WebPublishAuto } -Default $false)
+    $publishMode = if (-not $publishDefault) { "disabled" } elseif ($publishAuto) { "automatic" } else { "manual" }
+    Add-RunUserReportLine -Lines $lines -Label "Branch web publication" -Value $publishMode
+
+    $lines.Add("")
+    $lines.Add("## MCP")
+    $facadeExecutable = [string](Get-RunUserReportObservedValue -Read { Get-ItlOnDemandMcpExecutablePath -AllowMissing } -Default "")
+    Add-RunUserReportLine -Lines $lines -Label "ITL on-demand MCP facade" -Value $(if ($facadeExecutable -and (Test-Path -LiteralPath $facadeExecutable -PathType Leaf)) { "ready" } else { "missing" })
+    Add-Vibecoding1cRunUserReportLines -Lines $lines -AdviceLines $advice
+    Add-KiloBrowserRunUserReportLines -McpLines $lines -AdviceLines $advice -ProjectRoot $script:ProjectRoot
+
+    if (-not $usesRepository) {
+        $advice.Add("- No repository update was performed; the master dump uses the current source infobase state.")
+    }
+    if (-not $facadeExecutable -or -not (Test-Path -LiteralPath $facadeExecutable -PathType Leaf)) {
+        $advice.Add("- ITL on-demand MCP facade is missing. Inspect the initialization log before using branch-local MCP tools.")
+    }
+    if ($VibecodingDeferred) {
+        $advice.Add("- vibecoding1c MCP setup was deferred. Ask the agent to configure it when needed.")
+    }
+    if ($script:RunRequiredAction) {
+        $advice.Add("- $($script:RunRequiredAction)")
+    }
+    if ($advice.Count -gt 0) {
+        $lines.Add("")
+        $lines.Add("## Instructions and advice")
+        foreach ($item in $advice) { $lines.Add($item) }
+    }
+    Write-AndSetRunUserReport -Lines $lines
+}
+
+function Set-RunDevBranchState {
+    param([object]$State)
+
+    $script:RunDevBranch = Get-StateValue -State $State -Name "devBranch" -Default ""
+    $script:RunWorktreePath = Get-StateValue -State $State -Name "worktreePath" -Default (Get-StateValue -State $State -Name "stateProjectRoot" -Default "")
+    $script:RunExtensionInitializationStatus = Get-DevBranchExtensionInitializationStatus -State $State
+}
+
+function Write-DevBranchRunUserReport {
+    param(
+        [object]$State,
+        [string]$AdvisoryRoot
+    )
+
+    Set-RunDevBranchState -State $State
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $advice = [System.Collections.Generic.List[string]]::new()
+    $lines.Add("## Development branch")
+    Add-RunUserReportLine -Lines $lines -Label "Type" -Value (Get-DevBranchKind -State $State)
+    Add-RunUserReportLine -Lines $lines -Label "Branch" -Value (Get-StateValue -State $State -Name "devBranch" -Default "")
+    Add-RunUserReportLine -Lines $lines -Label "Main worktree" -Value (Get-StateValue -State $State -Name "mainWorktreePath" -Default "")
+    Add-RunUserReportLine -Lines $lines -Label "Development worktree" -Value (Get-StateValue -State $State -Name "worktreePath" -Default $AdvisoryRoot)
+    Add-RunUserReportLine -Lines $lines -Label "Infobase" -Value (Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
+    Add-RunUserReportLine -Lines $lines -Label "1C launcher infobase" -Value (Get-StateValue -State $State -Name "launcherInfoBaseName" -Default "")
+    Add-RunUserReportLine -Lines $lines -Label "1C launcher folder" -Value (Get-StateValue -State $State -Name "launcherFolder" -Default "")
+    $publicationUrl = Get-StateValue -State $State -Name "publicationUrl" -Default ""
+    if ($publicationUrl) {
+        Add-RunUserReportLine -Lines $lines -Label "Publication URL" -Value $publicationUrl
+    } else {
+        Add-RunUserReportLine -Lines $lines -Label "Publication" -Value (Get-StateValue -State $State -Name "publicationStatus" -Default "<not set>")
+    }
+    $publicationError = [string](Get-StateValue -State $State -Name "publicationError" -Default "")
+    if ((Get-DevBranchKind -State $State) -eq "extension") {
+        Add-RunUserReportLine -Lines $lines -Label "Extension initialization" -Value (Get-DevBranchExtensionInitializationStatus -State $State)
+    }
+
+    $lines.Add("")
+    $lines.Add("## MCP")
+    Add-RunUserReportLine -Lines $lines -Label "ROCTUP MCP" -Value (Get-StateValue -State $State -Name "roctupMcpStatus" -Default "unknown")
+    Add-RunUserReportLine -Lines $lines -Label "Vanessa UI MCP" -Value (Get-StateValue -State $State -Name "vanessaMcpStatus" -Default "unknown")
+    Add-Vibecoding1cRunUserReportLines -Lines $lines -AdviceLines $advice
+    Add-KiloBrowserRunUserReportLines -McpLines $lines -AdviceLines $advice -ProjectRoot $AdvisoryRoot
+
+    $extensionStatus = Get-DevBranchExtensionInitializationStatus -State $State
+    if ((Get-DevBranchKind -State $State) -eq "extension") {
+        if ($extensionStatus -eq "pending") {
+            $advice.Add("- In the extension worktree, ask the developer whether to create an Empty extension or load a CFE, then collect the extension name and CFE path when applicable.")
+        } elseif ($extensionStatus -eq "ready") {
+            $advice.Add("- Run /itl-check before reporting the development task complete.")
+        }
+    }
+    if ($publicationError) {
+        $advice.Add("- Web publication did not complete. Ask the agent to retry or finish branch publication when needed.")
+    }
+    if ($script:RunRequiredAction) {
+        $advice.Add("- $($script:RunRequiredAction)")
+    }
+    if ($advice.Count -gt 0) {
+        $lines.Add("")
+        $lines.Add("## Instructions and advice")
+        foreach ($item in $advice) { $lines.Add($item) }
+    }
+    Write-AndSetRunUserReport -Lines $lines
+}
+
 function Clear-DevBranchContext {
     Set-DotEnvValues -Values @{
         INFOBASE_PATH = ""
@@ -4443,7 +4641,8 @@ function Initialize-Project {
     Set-RunStage -Stage "init.final-git-clean" -Detail "Checking final Git worktree state"
     Assert-InitGitClean
     Write-PostInitClientReloadHandoff
-    Write-KiloBrowserAutomationAdvisory -ProjectRoot $script:ProjectRoot
+    Write-KiloBrowserAutomationSummary -ProjectRoot $script:ProjectRoot
+    Write-InitRunUserReport -VibecodingDeferred (-not $vibecodingRequested -and -not $vibecodingAlreadyCompleted)
     Set-RunStage -Stage "init.complete" -Detail "Initialization completed"
 }
 
@@ -5187,7 +5386,10 @@ function New-DevBranchCore {
 function New-DevBranch {
     New-DevBranchCore -DevBranchKind "configuration"
     $advisoryRoot = if ($script:RunWorktreePath) { $script:RunWorktreePath } else { $script:ProjectRoot }
-    Write-KiloBrowserAutomationAdvisory -ProjectRoot $advisoryRoot
+    $state = Read-DevBranchState -Name $DevBranchName
+    Set-RunDevBranchState -State $state
+    Write-KiloBrowserAutomationSummary -ProjectRoot $advisoryRoot
+    Write-DevBranchRunUserReport -State $state -AdvisoryRoot $advisoryRoot
 }
 
 function Resolve-NewExtensionProvisioningInput {
@@ -5243,9 +5445,7 @@ function Get-PreparedExtensionDevBranchState {
 function Set-RunExtensionProvisioningState {
     param([object]$State)
 
-    $script:RunDevBranch = Get-StateValue -State $State -Name "devBranch" -Default ""
-    $script:RunWorktreePath = Get-StateValue -State $State -Name "worktreePath" -Default (Get-StateValue -State $State -Name "stateProjectRoot" -Default "")
-    $script:RunExtensionInitializationStatus = Get-DevBranchExtensionInitializationStatus -State $State
+    Set-RunDevBranchState -State $State
 }
 
 function Invoke-ExtensionInitializationInWorktree {
@@ -5320,7 +5520,8 @@ function New-ExtensionDevBranch {
         }
     }
     $advisoryRoot = if ($worktreePath) { $worktreePath } else { $script:ProjectRoot }
-    Write-KiloBrowserAutomationAdvisory -ProjectRoot $advisoryRoot
+    Write-KiloBrowserAutomationSummary -ProjectRoot $advisoryRoot
+    Write-DevBranchRunUserReport -State $state -AdvisoryRoot $advisoryRoot
 }
 
 function Assert-ExtensionInitName {
@@ -6393,7 +6594,7 @@ function Show-WorkflowStatus {
     Write-WorkflowPackageStatusLines
     Write-AiRules1cStatusLines
     Write-ItlOnDemandMcpStatusLines
-    Write-KiloBrowserAutomationAdvisory -ProjectRoot $script:ProjectRoot
+    Write-KiloBrowserAutomationSummary -ProjectRoot $script:ProjectRoot
 
     if ($currentBranch -notlike "itldev/*") {
         Write-Vibecoding1cMcpStatusLines

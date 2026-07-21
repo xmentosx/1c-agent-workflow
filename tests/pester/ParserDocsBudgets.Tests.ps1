@@ -410,10 +410,28 @@
         $statusText | Should -Match 'one `- Label: value` field per line'
         $statusText | Should -Match "Use only helper values"
         $statusText | Should -Match "omit unavailable sections"
+        $statusText | Should -Match "always include its state, source"
+        $statusText | Should -Match "never omit it during summarization"
         $litemodeText | Should -Match "complete helper stdout unchanged"
         $litemodeText | Should -Match 'exactly one fenced `text` code block'
         $litemodeText | Should -Match "mode-change confirmation"
         $litemodeText | Should -Match "nothing outside it"
+    }
+
+    It "requires complete user reports after init and branch creation" {
+        $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
+        $workflowSkill = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\SKILL.md")
+        $fastSkill = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md")
+        $configBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template")
+        $extensionBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template")
+
+        foreach ($text in @($installText, $workflowSkill, $fastSkill, $configBranch, $extensionBranch)) {
+            $text | Should -Match "userReport"
+            $text | Should -Match "complet"
+            $text | Should -Match "MCP/Browser"
+            $text | Should -Match "advice"
+            $text | Should -Match "console\.log"
+        }
     }
 
     It "keeps the native /itl contract compact and consistent" {

@@ -53,6 +53,7 @@ $status = [ordered]@{
     gitIndexLockPreExisted = $false
     resumedFrom = $ResumeRunStatusPath
     recoveryReason = $RecoveryReason
+    userReport = "## Initialization`n- Agent client: kilocode`n- Kilo Browser Automation: disabled`n`n## Instructions and advice`n- Run /reload now."
 }
 [System.IO.File]::WriteAllText($RunStatusPath, (($status | ConvertTo-Json -Depth 6) + [Environment]::NewLine), $utf8)
 exit 0
@@ -70,6 +71,7 @@ exit 0
         $HelperText | Should -Match 'ValidateSet\("configured", "wizard", "json", "resume"\)'
         $HelperText | Should -Match "ResumeRunStatusPath"
         $LauncherText | Should -Match 'Get-AgentAction\) -ne "init-project"'
+        $text | Should -Match 'complete `userReport`'
     }
 
     It "documents the one-step bootstrap as the normal install path" {
@@ -1496,6 +1498,7 @@ exit 0
             [bool]$status.gitIndexLockPreExisted | Should -Be $false
             [string]$status.resumedFrom | Should -Be ""
             [string]$status.recoveryReason | Should -Be ""
+            [string]$status.userReport | Should -Be ""
             $bytes = [System.IO.File]::ReadAllBytes($statusPath)
             ($bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) | Should -Be $false
         } finally {
@@ -1503,6 +1506,50 @@ exit 0
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
+    }
+
+    It "builds a safe initialization user report without reading secret settings" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-ItlActiveClient { return "kilocode" }
+            function Get-PlatformPath { return "C:\fixture\1cv8.exe" }
+            function Get-BaseConfigurationVersion { return "PM5" }
+            function Get-InfoBaseKind { return "file" }
+            function Get-SourceInfoBasePath { return "C:\fixture\source" }
+            function Get-SourceUsesRepository { return $true }
+            function Get-RepositoryPath { return "C:\fixture\repository" }
+            function Get-DependencyMode { return "locked" }
+            function Get-WebPublishByDefault { return $true }
+            function Get-WebPublishAuto { return $false }
+            function Get-ItlOnDemandMcpExecutablePath { return $PSCommandPath }
+            function Get-Vibecoding1cMcpStatusSummary {
+                return [pscustomobject]@{ active = @("docs/remote"); skipped = @(); staleServers = @(); missingConfigId = @() }
+            }
+            function Format-Vibecoding1cMcpStatusList { param([object[]]$Items); if (@($Items).Count -eq 0) { return "<none>" }; return (@($Items) -join ", ") }
+            function Get-KiloBrowserAutomationDisplay {
+                return [pscustomobject]@{ statusLine = "Kilo Browser Automation: unknown (source: fixture)."; adviceLine = "Check Kilo Settings -> Browser." }
+            }
+            function Get-EnvValue {
+                param([string]$Name, [object]$Default = $null)
+                if ($Name -match "PASSWORD|TOKEN|KEY") { throw "secret setting was read: $Name" }
+                if ($Name -eq "IB_USER") { return "ib-user" }
+                if ($Name -eq "REPOSITORY_USER") { return "repo-user" }
+                return $Default
+            }
+            $script:RunRequiredAction = "Run /reload now."
+            Write-InitRunUserReport -VibecodingDeferred $true 6>$null
+            [pscustomobject]@{ report = $script:RunUserReport }
+        }
+
+        $result.report | Should -Match "Agent client: kilocode"
+        $result.report | Should -Match "Source infobase: C:\\fixture\\source"
+        $result.report | Should -Match "Dependency mode: locked"
+        $result.report | Should -Match "Branch web publication: manual"
+        $result.report | Should -Match "vibecoding1c active: docs/remote"
+        $result.report | Should -Match "Kilo Browser Automation: unknown"
+        $result.report | Should -Match "vibecoding1c MCP setup was deferred"
+        $result.report | Should -Match "Run /reload now"
+        $result.report | Should -Not -Match "PASSWORD|TOKEN|SECRET"
     }
 
     It "rejects init success before the completion stage" {
@@ -1756,6 +1803,10 @@ Start-Sleep -Seconds 20
             $newStatus.stage | Should -Be "init.complete"
             [int]$newStatus.exitCode | Should -Be 0
             $newStatus.projectRoot | Should -Be ([System.IO.Path]::GetFullPath($tempRoot))
+            $newStatus.userReport | Should -Match "Kilo Browser Automation: disabled"
+            $launcherOutput = Get-Content -Encoding UTF8 -Raw $stdoutPath
+            $launcherOutput | Should -Match "Agent user report:"
+            $launcherOutput | Should -Match "Run /reload now"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

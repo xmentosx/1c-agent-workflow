@@ -148,6 +148,7 @@ $worktreePath = [string](Get-ObjectValue -Object $status -Name "worktreePath" -D
 $extensionInitializationStatus = [string](Get-ObjectValue -Object $status -Name "extensionInitializationStatus" -Default "")
 $authoringStatus = [string](Get-ObjectValue -Object $status -Name "authoringStatus" -Default "")
 $authoringStatePath = [string](Get-ObjectValue -Object $status -Name "authoringStatePath" -Default "")
+$userReport = [string](Get-ObjectValue -Object $status -Name "userReport" -Default "")
 $logTail = ""
 if ($exitCode -ne 0 -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
     $logTail = ((Get-Content -LiteralPath $logPath -Tail 80 -Encoding UTF8 -ErrorAction SilentlyContinue) -join [Environment]::NewLine)
@@ -192,6 +193,7 @@ $summary = [ordered]@{
     extensionInitializationStatus = $extensionInitializationStatus
     authoringStatus = $authoringStatus
     authoringStatePath = $authoringStatePath
+    userReport = $userReport
     logPath = $logPath
     statusPath = $statusPath
 }
@@ -204,6 +206,9 @@ $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
 if ($summaryText.Length -gt 4000) {
     $summary.error = Limit-Text -Value $summary.error -Length 400
     $summary.stageDetail = Limit-Text -Value $summary.stageDetail -Length 300
+    if ([string]$summary.status -eq "succeeded" -and $summary.userReport) {
+        $summary.artifacts = @($statusPath)
+    }
     $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
 }
 if ($summaryText.Length -gt 4000) { throw "Compact ITL summary exceeded 4000 characters." }
