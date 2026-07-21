@@ -923,7 +923,7 @@ try {
                     testFixture = $true
                     families = [ordered]@{
                         roctup = [ordered]@{ publicToolCount = 2; catalogToolCount = 13; instances = @([ordered]@{ pid = 101; port = 6003 }); cleanupPassed = $true; idleCleanupPassed = $true; secondSurvivedFirstClose = $false }
-                        "vanessa-ui" = [ordered]@{ publicToolCount = 2; catalogToolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151 }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152 }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; vanessaFileAuthoringOutcome = "passed"; vanessaFileAuthoringCodes = @(); vanessaFeature = $vanessaFixture.path; secondSurvivedFirstClose = $true }
+                        "vanessa-ui" = [ordered]@{ publicToolCount = 2; catalogToolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151 }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152 }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; vanessaFileAuthoringOutcome = "runner-fallback-required"; vanessaFileAuthoringCodes = @("ITL_ONDEMAND_BACKEND_CALL_FAILED"); vanessaFeature = $vanessaFixture.path; secondSurvivedFirstClose = $true }
                     }
                     capturedAt = [DateTime]::UtcNow.ToString("o")
                 }
@@ -975,8 +975,8 @@ try {
                         if ($authoringOutcome -notin @("passed", "runner-fallback-required")) {
                             throw "Vanessa file authoring smoke returned an unsupported outcome: $authoringOutcome"
                         }
-                        $reportedAuthoringFeature = Get-FullPathNormalized ([string]$familyEvidence.vanessaFeature)
-                        $expectedAuthoringFeature = Get-FullPathNormalized ([string]$vanessaFixture.path)
+                        $reportedAuthoringFeature = [System.IO.Path]::GetFullPath([string]$familyEvidence.vanessaFeature)
+                        $expectedAuthoringFeature = [System.IO.Path]::GetFullPath([string]$vanessaFixture.path)
                         if ($reportedAuthoringFeature -ne $expectedAuthoringFeature) {
                             throw "Vanessa file authoring smoke did not target the release feature."
                         }
