@@ -115,6 +115,13 @@ class LowConfidenceEmbeddings(FakeEmbeddings):
         return [0.8, 0.6]
 
 
+class RankingEmbeddings(FakeEmbeddings):
+    def embed_passage(self, text):
+        self.passage_inputs.append(text)
+        page_id = int(text.split("\n", 1)[0].rsplit(" ", 1)[-1])
+        return [0.8, 0.6] if page_id == 1 else [1.0, 0.0]
+
+
 class BookStackClientStructureTests(unittest.TestCase):
     def test_all_scope_uses_one_balanced_total_limit_and_compacts_items(self):
         client = object.__new__(server.BookStackClient)
@@ -249,6 +256,21 @@ class ProductDocsServiceTests(unittest.TestCase):
         self.assertEqual(result["total_matches"], 0)
         self.assertEqual(result["results"], [])
         self.assertEqual(len(service.client.search_calls), 1)
+
+    def test_confident_semantic_match_outranks_distributed_lexical_terms(self):
+        pages = [
+            page(1, "Обмен знаниями и модель с данными проекта."),
+            page(2, "Трансляция экономической информации между системами."),
+        ]
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, pages)
+            service.embeddings = RankingEmbeddings()
+            for item in pages:
+                service.index_page(item)
+            result = service.search_docs("обмен данными", filters=None, limit=5)
+
+        self.assertEqual([item["id"] for item in result["results"]], [2, 1])
+        self.assertGreater(result["results"][0]["semantic_score"], server.DEFAULT_SEMANTIC_MIN_SCORE)
 
     def test_semantic_search_uses_a_bounded_candidate_set(self):
         pages = [page(index, f"Product detail {index}.") for index in range(1, 31)]
