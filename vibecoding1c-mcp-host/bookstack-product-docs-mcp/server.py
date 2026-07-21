@@ -635,14 +635,17 @@ class ProductDocsService:
         cache_pages = self.cache.count_pages()
         results = self.cache.search(query, cache_pages, effective_filters) if cache_pages > 0 else []
         semantic = self.semantic_results(query, min(cache_pages, MAX_SEMANTIC_CANDIDATES), effective_filters)
-        results = merge_results(results, semantic)
+        results = rank_search_results(merge_results(results, semantic), query)
         live_used = False
         requested_end = cursor + limit
         if not results or truthy(str(effective_filters.get("live", "false"))):
             live_used = True
             live_query = build_bookstack_search_query(query, effective_filters)
             live_limit = min(max(requested_end + 1, limit), 100)
-            results = merge_results(results, [normalize_search_item(item) for item in self.client.search(live_query, live_limit)])
+            results = rank_search_results(
+                merge_results(results, [normalize_search_item(item) for item in self.client.search(live_query, live_limit)]),
+                query,
+            )
         total_matches = len(results)
         page_results = results[cursor:requested_end]
         next_cursor = cursor + len(page_results) if requested_end < total_matches else None
@@ -1121,6 +1124,28 @@ def merge_results(*result_sets: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
             if item.get("semantic_score"):
                 current["semantic_score"] = item["semantic_score"]
     return list(by_key.values())
+
+
+def rank_search_results(results: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
+    phrase = clean_text(query).casefold()
+    indexed_results = list(enumerate(results))
+
+    def rank(item: Tuple[int, Dict[str, Any]]) -> Tuple[int, int, float, int]:
+        original_index, page = item
+        searchable_text = clean_text(
+            f"{page.get('title') or page.get('name') or ''}\n{page.get('content_text') or page.get('preview') or ''}"
+        ).casefold()
+        exact_phrase = bool(phrase and phrase in searchable_text)
+        semantic_score = page.get("semantic_score")
+        has_semantic_score = semantic_score is not None
+        return (
+            0 if exact_phrase else 1,
+            0 if has_semantic_score else 1,
+            -float(semantic_score or 0.0),
+            original_index,
+        )
+
+    return [page for _, page in sorted(indexed_results, key=rank)]
 
 
 def cosine_similarity(left: List[float], right: List[float]) -> float:

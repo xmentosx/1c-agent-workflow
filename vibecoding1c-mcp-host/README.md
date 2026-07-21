@@ -33,7 +33,8 @@ The MCP publishes as `BookStack-product-docs-mcp` and exposes `search_docs`, `re
 `list_structure`, `index_status`, and `reindex_docs`.
 Search defaults to five compact results and exposes `total_matches`, `has_more`, and
 `next_cursor` for bounded pagination. Multi-term FTS requires every term, exact matches stay
-first, and semantic fallback is bounded to the best 20 candidates above the configured
+first, confident semantic matches rank ahead of pages where query terms only occur separately,
+and semantic fallback is bounded to the best 20 candidates above the configured
 `bookStackProductDocsServer.semanticMinScore` (`0.82` by default). A healthy cache is not padded
 with weaker live or semantic results merely to reach the requested limit. `read_page` returns at most 12,000 characters by
 default and supports `query`, `heading`, and cursor continuation; use `max_chars=0` only for

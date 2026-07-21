@@ -73,7 +73,7 @@
         $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\test_server.py"
         $output = & python $testPath 2>&1
         $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 13 tests"
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 14 tests"
     }
 
     It "falls back to the direct endpoint when the qualified proxy is unavailable" {
