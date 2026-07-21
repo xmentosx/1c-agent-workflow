@@ -262,9 +262,16 @@ function Write-RunStatus {
         extensionInitializationStatus = $(if ($script:RunExtensionInitializationStatus) { [string]$script:RunExtensionInitializationStatus } else { "" })
         authoringStatus = $(if ($script:RunAuthoringStatus) { [string]$script:RunAuthoringStatus } else { "" })
         authoringStatePath = $(if ($script:RunAuthoringStatePath) { [string]$script:RunAuthoringStatePath } else { "" })
+        userReport = $(if ($script:RunUserReport) { [string]$script:RunUserReport } else { "" })
     }
 
     Write-Utf8Text -Path $script:ResolvedRunStatusPath -Value (($payload | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+}
+
+function Set-RunUserReport {
+    param([AllowEmptyString()][string]$Report)
+
+    $script:RunUserReport = $Report.Trim()
 }
 
 function Set-RunFailureContext {

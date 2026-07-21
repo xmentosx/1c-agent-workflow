@@ -287,6 +287,7 @@ $script:RunWorktreePath = ""
 $script:RunExtensionInitializationStatus = ""
 $script:RunAuthoringStatus = ""
 $script:RunAuthoringStatePath = ""
+$script:RunUserReport = ""
 $script:ProjectRoot = Resolve-Agent1cFullPath -Path $ProjectRoot
 $script:ConfigPath = Resolve-Agent1cFullPath -Path $ConfigPath
 $script:Config = $null

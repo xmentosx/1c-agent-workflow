@@ -212,6 +212,8 @@ Describe "ITL client adapters and verification modes" {
                 $adapted[$client]["itl.md"] | Should -Match 'fenced `text` code block'
                 $adapted[$client]["itl-status.md"] | Should -Match "structured Markdown report"
                 $adapted[$client]["itl-status.md"] | Should -Match 'one `- Label: value` field per line'
+                $adapted[$client]["itl-status.md"] | Should -Match "Kilo Browser Automation"
+                $adapted[$client]["itl-status.md"] | Should -Match "never omit it during summarization"
                 $adapted[$client]["itl-litemode.md"] | Should -Match "complete helper stdout unchanged"
                 $adapted[$client]["itl-litemode.md"] | Should -Match 'exactly one fenced `text` code block'
             }

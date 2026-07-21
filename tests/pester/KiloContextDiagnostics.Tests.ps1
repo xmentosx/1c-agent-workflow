@@ -75,7 +75,7 @@ Describe "Kilo context diagnostics" {
                 function Get-ItlActiveClient { return "kilocode" }
                 function Get-KiloUserSettingsCandidates { return @($userPath) }
                 function Get-KiloExtensionBrowserDefault { return [pscustomobject]@{ state = "disabled"; source = "extension-default"; version = "test" } }
-                $output = Write-KiloBrowserAutomationAdvisory -ProjectRoot $tempRoot 6>&1
+                $output = Write-KiloBrowserAutomationSummary -ProjectRoot $tempRoot 6>&1
                 [pscustomobject]@{ status = Get-KiloBrowserAutomationStatus -ProjectRoot $tempRoot; output = ($output -join "`n") }
             }
 
@@ -124,26 +124,48 @@ Describe "Kilo context diagnostics" {
         $nonKilo = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             function Get-ItlActiveClient { return "codex" }
-            @(Write-KiloBrowserAutomationAdvisory 6>&1)
+            @(Write-KiloBrowserAutomationSummary 6>&1)
         }
         @($nonKilo).Count | Should -Be 0
 
         $failure = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             function Get-KiloBrowserAutomationStatus { throw "fixture" }
-            (Write-KiloBrowserAutomationAdvisory 6>&1) -join "`n"
+            (Write-KiloBrowserAutomationSummary 6>&1) -join "`n"
         }
         $failure | Should -Match "unknown"
         $failure | Should -Match "does not change this setting"
     }
 
-    It "wires one advisory into init configuration branch extension branch and status" {
+    It "wires one Browser summary into init configuration branch extension branch and status" {
         $text = Get-Content -LiteralPath $LifecyclePath -Raw -Encoding UTF8
         foreach ($functionName in @("Initialize-Project", "New-DevBranch", "New-ExtensionDevBranch", "Show-WorkflowStatus")) {
             $block = [regex]::Match($text, "(?s)function $functionName \{.*?(?=\r?\nfunction )").Value
             $block | Should -Not -BeNullOrEmpty
-            ([regex]::Matches($block, 'Write-KiloBrowserAutomationAdvisory')).Count | Should -Be 1 -Because $functionName
+            ([regex]::Matches($block, 'Write-KiloBrowserAutomationSummary')).Count | Should -Be 1 -Because $functionName
         }
+    }
+
+    It "separates the stable Browser status line from enabled and unknown advice" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $states = [ordered]@{}
+            foreach ($state in @("enabled", "disabled", "unknown")) {
+                function Get-KiloBrowserAutomationStatus { return [pscustomobject]@{ applicable = $true; state = $state; source = "fixture" } }
+                $states[$state] = [pscustomobject]@{
+                    status = (Write-KiloBrowserAutomationStatusLine 6>&1) -join "`n"
+                    advice = (Write-KiloBrowserAutomationAdvisory 6>&1) -join "`n"
+                }
+            }
+            $states
+        }
+
+        $result.enabled.status | Should -Match "Kilo Browser Automation: enabled \(source: fixture\)"
+        $result.enabled.advice | Should -Match "thousands of context tokens"
+        $result.disabled.status | Should -Match "Kilo Browser Automation: disabled \(source: fixture\)"
+        $result.disabled.advice | Should -BeNullOrEmpty
+        $result.unknown.status | Should -Match "Kilo Browser Automation: unknown \(source: fixture\)"
+        $result.unknown.advice | Should -Match "Kilo Settings -> Browser"
     }
 
     It "calculates prompt-side context tokens for GPT and DeepSeek fixtures" {

@@ -236,23 +236,59 @@ function Get-KiloBrowserAutomationStatus {
     }
 }
 
-function Write-KiloBrowserAutomationAdvisory {
+function Get-KiloBrowserAutomationDisplay {
     param([string]$ProjectRoot = $script:ProjectRoot)
 
     try {
         $status = Get-KiloBrowserAutomationStatus -ProjectRoot $ProjectRoot
-        if (-not $status.applicable) { return }
+        if (-not $status.applicable) { return $null }
         if ($status.state -eq "enabled") {
-            Write-Host "Kilo Browser Automation: enabled (source: $($status.source))."
-            Write-Host "The hidden Playwright MCP adds thousands of context tokens even when it is not used. Enable it only for web-browser tasks. ITL does not change this setting."
+            return [pscustomobject]@{
+                statusLine = "Kilo Browser Automation: enabled (source: $($status.source))."
+                adviceLine = "The hidden Playwright MCP adds thousands of context tokens even when it is not used. Enable it only for web-browser tasks. ITL does not change this setting."
+            }
         } elseif ($status.state -eq "disabled") {
-            Write-Host "Kilo Browser Automation: disabled (source: $($status.source)). ITL does not change this setting."
+            return [pscustomobject]@{
+                statusLine = "Kilo Browser Automation: disabled (source: $($status.source))."
+                adviceLine = ""
+            }
         } else {
-            Write-Host "Kilo Browser Automation: unknown (source: $($status.source)). Check Kilo Settings -> Browser. ITL does not change this setting."
+            return [pscustomobject]@{
+                statusLine = "Kilo Browser Automation: unknown (source: $($status.source))."
+                adviceLine = "Check Kilo Settings -> Browser. ITL does not change this setting."
+            }
         }
     } catch {
-        Write-Host "Kilo Browser Automation: unknown (source: advisory-error). Check Kilo Settings -> Browser. ITL does not change this setting."
+        return [pscustomobject]@{
+            statusLine = "Kilo Browser Automation: unknown (source: advisory-error)."
+            adviceLine = "Check Kilo Settings -> Browser. ITL does not change this setting."
+        }
     }
+}
+
+function Write-KiloBrowserAutomationStatusLine {
+    param([string]$ProjectRoot = $script:ProjectRoot)
+
+    $display = Get-KiloBrowserAutomationDisplay -ProjectRoot $ProjectRoot
+    if ($null -ne $display) {
+        Write-Host $display.statusLine
+    }
+}
+
+function Write-KiloBrowserAutomationAdvisory {
+    param([string]$ProjectRoot = $script:ProjectRoot)
+
+    $display = Get-KiloBrowserAutomationDisplay -ProjectRoot $ProjectRoot
+    if ($null -ne $display -and $display.adviceLine) {
+        Write-Host $display.adviceLine
+    }
+}
+
+function Write-KiloBrowserAutomationSummary {
+    param([string]$ProjectRoot = $script:ProjectRoot)
+
+    Write-KiloBrowserAutomationStatusLine -ProjectRoot $ProjectRoot
+    Write-KiloBrowserAutomationAdvisory -ProjectRoot $ProjectRoot
 }
 
 function Resolve-KiloExecutable {
