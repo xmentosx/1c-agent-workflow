@@ -41,6 +41,77 @@ Describe "1C workflow ai_rules_1c client checks" {
         }
     }
 
+    It "resolves ai_rules skills through every active client adapter" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-skill-roots-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $records = @()
+                foreach ($client in @(Get-SupportedAgentTargets)) {
+                    $AgentTarget = $client
+                    Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value (([ordered]@{ tools = @($client); files = [ordered]@{} } | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
+                    $adapter = Get-ItlClientAdapter -Client $client
+                    $expectedSkillRoot = Join-Path (Join-Path $tempRoot ([string]$adapter.skillsPath)) "1c-metadata-manage"
+                    $toolRoot = Join-Path $expectedSkillRoot "tools\1c-cfe-manage\scripts"
+                    New-Item -ItemType Directory -Force -Path $toolRoot | Out-Null
+                    Set-Content -LiteralPath (Join-Path $toolRoot "cfe-init.ps1") -Encoding ASCII -Value "# fixture"
+                    Set-Content -LiteralPath (Join-Path $toolRoot "cfe-validate.ps1") -Encoding ASCII -Value "# fixture"
+
+                    $resolvedSkillRoot = Get-AiRules1cInstalledSkillRoot -SkillName "1c-metadata-manage"
+                    $resolvedTools = Get-ExtensionLifecycleToolPaths
+                    $records += [pscustomobject]@{
+                        client = $client
+                        expectedSkillRoot = [System.IO.Path]::GetFullPath($expectedSkillRoot)
+                        resolvedSkillRoot = [System.IO.Path]::GetFullPath($resolvedSkillRoot)
+                        init = [System.IO.Path]::GetFullPath([string]$resolvedTools.init)
+                        validate = [System.IO.Path]::GetFullPath([string]$resolvedTools.validate)
+                    }
+                }
+
+                $AgentTarget = "kilocode"
+                Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value '{"tools":["kilocode"],"files":{}}'
+                $kiloInit = Join-Path $tempRoot ".kilo\skills\1c-metadata-manage\tools\1c-cfe-manage\scripts\cfe-init.ps1"
+                Remove-Item -LiteralPath $kiloInit -Force
+                $missingError = ""
+                try { Get-ExtensionLifecycleToolPaths | Out-Null } catch { $missingError = $_.Exception.Message }
+
+                [pscustomobject]@{ records = $records; missingError = $missingError }
+            }
+
+            @($result.records).Count | Should -Be 10
+            foreach ($record in @($result.records)) {
+                $record.resolvedSkillRoot | Should -Be $record.expectedSkillRoot
+                $record.init | Should -Be (Join-Path $record.expectedSkillRoot "tools\1c-cfe-manage\scripts\cfe-init.ps1")
+                $record.validate | Should -Be (Join-Path $record.expectedSkillRoot "tools\1c-cfe-manage\scripts\cfe-validate.ps1")
+            }
+            $result.missingError | Should -Match "active ai_rules_1c client 'kilocode'"
+            $result.missingError | Should -Match "Checked: .*cfe-init\.ps1 and .*cfe-validate\.ps1"
+            $result.missingError | Should -Match "Missing: .*\.kilo.*cfe-init\.ps1"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps hardcoded shared skill paths limited to workflow-owned skills" {
+        $allowed = @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")
+        $violations = @()
+        $scriptsRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts"
+        foreach ($file in @(Get-ChildItem -LiteralPath $scriptsRoot -Recurse -File -Filter "*.ps1")) {
+            $text = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
+            foreach ($match in [regex]::Matches($text, '(?i)\.agents[\\/]+skills[\\/]+(?<skill>[a-z0-9][a-z0-9-]*)')) {
+                $skill = [string]$match.Groups["skill"].Value
+                if ($skill -notin $allowed) {
+                    $relative = $file.FullName.Substring($RepoRoot.Length + 1)
+                    $violations += "${relative}:$skill"
+                }
+            }
+        }
+        @($violations).Count | Should -Be 0 -Because ($violations -join ", ")
+    }
+
     It "replaces a legacy client set instead of adding another client" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-add-" + [guid]::NewGuid().ToString("N"))
         $projectRoot = Join-Path $tempRoot "project"
@@ -172,6 +243,7 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
         $text | Should -Match 'Repeated ai_rules update was not byte-idempotent'
         $text | Should -Match 'Exact-one-client manifest failed'
         $text | Should -Match 'templates\\dependency-lock\.json'
+        $text | Should -Match 'Assert-WorkflowExtensionTools'
     }
 
     It "validates shared OpenSpec destinations independently of the winning source owner" {

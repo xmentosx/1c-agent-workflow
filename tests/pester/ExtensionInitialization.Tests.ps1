@@ -19,8 +19,16 @@ Describe "1C workflow extension initialization" {
             )
 
             $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-extension-init-" + [guid]::NewGuid().ToString("N"))
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            $kiloToolRoot = Join-Path $tempRoot ".kilo\skills\1c-metadata-manage\tools\1c-cfe-manage\scripts"
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf"), (Join-Path $tempRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value '<Configuration />'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value '{"tools":["kilocode"],"files":{}}'
+            if (-not $FailTools) {
+                New-Item -ItemType Directory -Force -Path $kiloToolRoot | Out-Null
+                Set-Content -LiteralPath (Join-Path $kiloToolRoot "cfe-init.ps1") -Encoding ASCII -Value "# fixture"
+                Set-Content -LiteralPath (Join-Path $kiloToolRoot "cfe-validate.ps1") -Encoding ASCII -Value "# fixture"
+            }
             $cfePath = Join-Path $tempRoot "input.cfe"
             Set-Content -LiteralPath $cfePath -Encoding Byte -Value ([byte[]](1, 2, 3))
             if ($PrepopulateTarget) {
@@ -43,16 +51,13 @@ Describe "1C workflow extension initialization" {
                     }
                     $script:extensionInitUpdatesCaptured = $null
                     $script:extensionInitDesignerCalls = @()
+                    $script:extensionLifecycleToolCalls = @()
                     $script:extensionInitRollbackCalled = $false
 
                     function Read-DevBranchState { return $fakeState }
                     function Assert-DevelopmentBranchWorktreeContext {}
                     function Assert-DevBranchKind {}
                     function Assert-SingleManagedExtensionArtifact {}
-                    function Get-ExtensionLifecycleToolPaths {
-                        if ($FailTools) { throw "mock lifecycle tools missing" }
-                        return [pscustomobject]@{ init = "cfe-init.ps1"; validate = "cfe-validate.ps1" }
-                    }
                     function Test-DevBranchExtensionExists { return [bool]$ExistingExtension }
                     function Get-RoctupMcpRuntimeInfo { return [pscustomobject]@{ processAlive = $false } }
                     function Get-VanessaMcpRuntimeInfo { return [pscustomobject]@{ processAlive = $false } }
@@ -62,6 +67,7 @@ Describe "1C workflow extension initialization" {
                     function Restore-ExtensionInitMcpRuntime {}
                     function Invoke-ExtensionLifecycleTool {
                         param([string]$ScriptPath, [string[]]$Arguments)
+                        $script:extensionLifecycleToolCalls += $ScriptPath
                         if ($FailValidate -and $ScriptPath -like "*cfe-validate.ps1") { throw "mock validation failure" }
                     }
                     function Add-VerificationStaleIfNeeded {}
@@ -106,6 +112,7 @@ Describe "1C workflow extension initialization" {
                     [pscustomobject]@{
                         updates = $script:extensionInitUpdatesCaptured
                         calls = @($script:extensionInitDesignerCalls)
+                        toolCalls = @($script:extensionLifecycleToolCalls)
                         rollbackCalled = $script:extensionInitRollbackCalled
                         error = $errorText
                         targetExists = Test-Path -LiteralPath (Join-Path $tempRoot "src\cfe\ShipModel")
@@ -140,6 +147,7 @@ Describe "1C workflow extension initialization" {
         $result.updates.extensionExportPath | Should -Be "src/cfe/ShipModel"
         $result.updates.extensionInitializedAt | Should -Not -BeNullOrEmpty
         $result.updates.extensionInitializationStatus | Should -Be "ready"
+        ($result.toolCalls -join "`n") | Should -Match ([regex]::Escape(".kilo\skills\1c-metadata-manage\tools\1c-cfe-manage\scripts"))
         ($result.calls | ForEach-Object { $_ -join " " }) -join "`n" | Should -Match "/LoadConfigFromFiles.*-Extension ShipModel.*-Format Hierarchical.*\/UpdateDBCfg"
     }
 
@@ -195,9 +203,10 @@ Describe "1C workflow extension initialization" {
     It "persists failed state when setup fails before the snapshot" {
         $result = Invoke-MockedExtensionInitialization -Mode Empty -FailTools
         $result.error | Should -Match "before a snapshot was created"
-        $result.error | Should -Match "mock lifecycle tools missing"
+        $result.error | Should -Match "active ai_rules_1c client 'kilocode'"
+        $result.error | Should -Match "\.kilo.*cfe-init\.ps1"
         $result.updates.extensionInitializationStatus | Should -Be "failed"
-        $result.updates.extensionInitializationError | Should -Match "mock lifecycle tools missing"
+        $result.updates.extensionInitializationError | Should -Match "active ai_rules_1c client 'kilocode'"
         $result.rollbackCalled | Should -BeFalse
     }
 
