@@ -4,11 +4,13 @@ Read this together with `vanessa-tests.md` only while creating or editing `.feat
 
 ## Flow
 
-Run `/itl-vanessa-author`. The helper updates the copied branch infobase, validates the pre-registered `itl-vanessa-ui` facade, and records authoring state schema v2 without starting a backend. Pass the following known inner names to `call_tool`; the first inner call starts the backend automatically:
+Run `/itl-vanessa-author`. The helper updates the copied branch infobase, validates the pre-registered `itl-vanessa-ui` facade, and records authoring state schema v3 without starting a backend. Pass the following known inner names to `call_tool`; the first inner call starts the backend automatically:
 
 `search_for_steps_by_keywords → open_feature_file → check_syntax → get_info_about_line_scenario → run_scenario → get_test_results`.
 
-The search schema is `search_name`, `search_description`, `search_type`, `exclude_name`, `exclude_description`, `exclude_type`, and `limit`. Never invent `keywords`, call the private endpoint through raw HTTP, or treat KB/reference text as proof that the current runtime exposes a step. `complete-vanessa-authoring` requires successful current-run evidence from `itl-vanessa-ui`, stops every Vanessa instance for the branch, and persists that evidence. Then run `/itl-check` for `TESTMANAGER → TESTCLIENT`, JUnit, and event-log evidence.
+The search schema is `search_name`, `search_description`, `search_type`, `exclude_name`, `exclude_description`, `exclude_type`, and `limit`. Never invent `keywords`, call the private endpoint through raw HTTP, or treat KB/reference text as proof that the current runtime exposes a step. `complete-vanessa-authoring` requires schema-v2 evidence for the complete ordered chain: search once, open and syntax-check every changed feature, then inspect, run, and read results for every scenario. Evidence is bound to facade instance, project-relative feature path, feature SHA, scenario line, and call arguments SHA; semantic runtime/editor errors are failed calls even if upstream sets `IsError=false`.
+
+A fresh `failed/runner` state may enter `runner-fallback-pending` only with feature-bound failed evidence carrying a recognized facade/backend infrastructure code. `/itl-check` still runs the normal unfiltered `TESTMANAGER → TESTCLIENT` verification. The fallback becomes passed only when a zero-error, zero-skip JUnit report uniquely matches every changed feature by `testcase@classname`; state records `completionMode=verification-fallback` and retains the original runner failure. Unsupported steps, scenario/product failures, stale hashes, tag filters, legacy schemas, and ambiguous or missing JUnit matches remain blocked.
 
 ## Libraries And References
 

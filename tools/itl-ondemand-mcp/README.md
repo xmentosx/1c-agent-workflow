@@ -6,6 +6,8 @@ The executable is registered once in the active client's project MCP config. Its
 
 For Vanessa, the broker leases separate MCP-manager and TestClient ports, creates the reserved `itl-ondemand` TestClient profile, and starts Vanessa Automation with silent/fail-closed VanessaExt installation. The facade confirms VanessaExt before forwarding, rejects other profiles, verifies `connect_test_client` with a real postcondition, and stops both owned processes on idle or stdio EOF. It never edits unsafe-action protection automatically.
 
+Every forwarded call appends schema-v2 evidence under `.agent-1c/mcp/ondemand/<family>/`. Evidence stores outcome/result code, catalog and instance identity, argument SHA, and—when applicable—the project-relative feature path, feature SHA, and scenario line. Vanessa runtime/editor exception text is returned as `ITL_VANESSA_TOOL_RESULT_FAILED` even when the upstream MCP response incorrectly reports `IsError=false`; raw arguments and scenario content are never persisted.
+
 Build the release asset from the repository root:
 
 ```powershell

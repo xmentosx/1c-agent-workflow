@@ -797,7 +797,7 @@ try {
             $expectedComment = $secondFixture.comment
             $stopOnErrorRecoveryCommit = Set-E2EVanessaFailureProbeCommit -FeaturePath $vanessaFixture.path -Fail $false
             Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @(
-                "-VanessaFeaturePath", $vanessaFixture.path, "-VanessaFilterTags", "@itl_release_flat"
+                "-VanessaFeaturePath", $vanessaFixture.path
             ) | Out-Null
             $recoveryState = (Get-E2EState).value
             if (-not [bool]$recoveryState.designerInvoked -or -not [bool]$recoveryState.enterpriseInvoked -or [string]$recoveryState.lastConfigDesignerLoadedAt -eq $designerLoadedAt) { throw "Release E2E second metadata plus feature recovery did not invoke Designer and Enterprise." }
@@ -923,7 +923,7 @@ try {
                     testFixture = $true
                     families = [ordered]@{
                         roctup = [ordered]@{ publicToolCount = 2; catalogToolCount = 13; instances = @([ordered]@{ pid = 101; port = 6003 }); cleanupPassed = $true; idleCleanupPassed = $true; secondSurvivedFirstClose = $false }
-                        "vanessa-ui" = [ordered]@{ publicToolCount = 2; catalogToolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151 }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152 }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; secondSurvivedFirstClose = $true }
+                        "vanessa-ui" = [ordered]@{ publicToolCount = 2; catalogToolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151 }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152 }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; vanessaFileAuthoringOutcome = "passed"; vanessaFileAuthoringCodes = @(); vanessaFeature = $vanessaFixture.path; secondSurvivedFirstClose = $true }
                     }
                     capturedAt = [DateTime]::UtcNow.ToString("o")
                 }
@@ -955,7 +955,7 @@ try {
                             "-verify-idle",
                             "-output", $familyEvidencePath
                         )
-                        if ([bool]$spec.vanessaSmoke) { $probeArguments += "-vanessa-ui-smoke" }
+                        if ([bool]$spec.vanessaSmoke) { $probeArguments += @("-vanessa-ui-smoke", "-vanessa-feature", $vanessaFixture.path) }
                         & go @probeArguments
                         if ($LASTEXITCODE -ne 0) { throw "On-demand MCP live probe failed for $($spec.family)." }
                     } finally {
@@ -969,6 +969,20 @@ try {
                     }
                     if ([bool]$spec.vanessaSmoke -and -not [bool]$familyEvidence.vanessaUiSmokePassed) {
                         throw "VanessaExt/TestClient/UI/screenshot smoke was not proven."
+                    }
+                    if ([bool]$spec.vanessaSmoke) {
+                        $authoringOutcome = [string]$familyEvidence.vanessaFileAuthoringOutcome
+                        if ($authoringOutcome -notin @("passed", "runner-fallback-required")) {
+                            throw "Vanessa file authoring smoke returned an unsupported outcome: $authoringOutcome"
+                        }
+                        $reportedAuthoringFeature = Get-FullPathNormalized ([string]$familyEvidence.vanessaFeature)
+                        $expectedAuthoringFeature = Get-FullPathNormalized ([string]$vanessaFixture.path)
+                        if ($reportedAuthoringFeature -ne $expectedAuthoringFeature) {
+                            throw "Vanessa file authoring smoke did not target the release feature."
+                        }
+                        if ($authoringOutcome -eq "runner-fallback-required" -and [int]$vanessaJUnitTests -ne 4) {
+                            throw "Vanessa authoring runner fallback was not backed by the four-test canonical JUnit run."
+                        }
                     }
                     $families[[string]$spec.family] = $familyEvidence
                 }

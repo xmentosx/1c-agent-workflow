@@ -10,11 +10,11 @@ Describe "ITL on-demand MCP facade" {
 
     It "pins hash-verified full catalogs to compatible backend versions" {
         $manifest = Get-Content -LiteralPath (Join-Path $AssetRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.facadeVersion | Should -Be "0.3.1"
-        $manifest.minimumFacadeVersion | Should -Be "0.3.1"
+        $manifest.facadeVersion | Should -Be "0.3.2"
+        $manifest.minimumFacadeVersion | Should -Be "0.3.2"
         $mainSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\main.go") -Raw -Encoding UTF8
         $gatewaySource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\gateway.go") -Raw -Encoding UTF8
-        $mainSource | Should -Match 'const version = "0\.3\.1"'
+        $mainSource | Should -Match 'const version = "0\.3\.2"'
         $mainSource | Should -Match '"gateway"'
         $gatewaySource | Should -Match 'gatewayResolveTool\s*=\s*"resolve_tool"'
         $gatewaySource | Should -Match 'gatewayCallTool\s*=\s*"call_tool"'
@@ -120,7 +120,7 @@ Describe "ITL on-demand MCP facade" {
                 $installRoot = Join-Path $tempRoot "localapp\ondemand"
                 function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
 
-                $version = "0.3.1"
+                $version = "0.3.2"
                 $assetName = "itl-ondemand-mcp-windows-amd64.exe"
                 $targetDirectory = Join-Path $installRoot $version
                 $targetPath = Join-Path $targetDirectory $assetName
@@ -140,7 +140,7 @@ Describe "ITL on-demand MCP facade" {
                 Install-ItlOnDemandMcp
             }
 
-            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.3.1\itl-ondemand-mcp-windows-amd64.exe")
+            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.3.2\itl-ondemand-mcp-windows-amd64.exe")
             $result.sha256 | Should -Match '^[a-f0-9]{64}$'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

@@ -54,6 +54,7 @@ func run() error {
 	idleTimeout := flag.Duration("idle-timeout", 10*time.Minute, "facade backend idle timeout")
 	verifyIdle := flag.Bool("verify-idle", false, "keep stdio open and prove idle cleanup")
 	vanessaSmoke := flag.Bool("vanessa-ui-smoke", false, "connect the managed TestClient and call UI/OS screenshot tools")
+	vanessaFeature := flag.String("vanessa-feature", "", "release feature file for Vanessa open/check authoring smoke")
 	flag.Parse()
 	if *exe == "" || *projectRoot == "" || *catalog == "" || *helper == "" || *tool == "" {
 		return fmt.Errorf("--exe, --project-root, --catalog, --helper, and --tool are required")
@@ -76,6 +77,8 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	connected := make([]*probeSession, 0, *instances)
+	vanessaFileAuthoringOutcome := ""
+	var vanessaFileAuthoringCodes []string
 	defer func() {
 		for _, item := range connected {
 			_ = item.session.Close()
@@ -126,9 +129,18 @@ func run() error {
 			if *family != "vanessa-ui" {
 				return fmt.Errorf("--vanessa-ui-smoke requires --family vanessa-ui")
 			}
-			if err := runVanessaSmoke(ctx, item.session, item.state.TestClientPort); err != nil {
+			outcome, code, err := runVanessaSmoke(ctx, item.session, item.state.TestClientPort, *vanessaFeature)
+			if err != nil {
 				stopHeartbeat()
 				return err
+			}
+			if outcome == "runner-fallback-required" {
+				vanessaFileAuthoringOutcome = outcome
+			} else if vanessaFileAuthoringOutcome == "" {
+				vanessaFileAuthoringOutcome = outcome
+			}
+			if code != "" {
+				vanessaFileAuthoringCodes = append(vanessaFileAuthoringCodes, code)
 			}
 		}
 		stopHeartbeat()
@@ -188,6 +200,11 @@ func run() error {
 		"tool": *tool, "instances": initial, "secondSurvivedFirstClose": secondSurvived,
 		"cleanupPassed": true, "idleCleanupPassed": idleCleanupPassed, "vanessaUiSmokePassed": *vanessaSmoke,
 		"capturedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if *vanessaSmoke {
+		evidence["vanessaFileAuthoringOutcome"] = vanessaFileAuthoringOutcome
+		evidence["vanessaFileAuthoringCodes"] = vanessaFileAuthoringCodes
+		evidence["vanessaFeature"] = *vanessaFeature
 	}
 	raw, _ := json.MarshalIndent(evidence, "", "  ")
 	if *output != "" {
@@ -346,7 +363,10 @@ func distinctInstances(family string, states []runtimeState) error {
 	return nil
 }
 
-func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClientPort int) error {
+func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClientPort int, featurePath string) (string, string, error) {
+	if featurePath == "" {
+		return "", "", fmt.Errorf("Vanessa authoring smoke requires --vanessa-feature")
+	}
 	var osWindows *mcp.CallToolResult
 	for _, call := range []struct {
 		name      string
@@ -359,10 +379,10 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 	} {
 		result, err := callInnerTool(ctx, session, call.name, call.arguments)
 		if err != nil {
-			return fmt.Errorf("Vanessa smoke %s: %w", call.name, err)
+			return "", "", fmt.Errorf("Vanessa smoke %s: %w", call.name, err)
 		}
 		if result == nil || result.IsError {
-			return fmt.Errorf("Vanessa smoke %s returned a tool error: %#v", call.name, result)
+			return "", "", fmt.Errorf("Vanessa smoke %s returned a tool error: %#v", call.name, result)
 		}
 		if call.name == "get_window_list_os" {
 			osWindows = result
@@ -373,17 +393,45 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 		var err error
 		title, err = waitForTestClientWindowTitle(ctx, testClientPort, time.Minute)
 		if err != nil {
-			return err
+			return "", "", err
 		}
 	}
 	result, err := callInnerTool(ctx, session, "get_window_screenshot_os", map[string]any{"window_title": title, "color_mode": "grayscale"})
 	if err != nil {
-		return fmt.Errorf("Vanessa smoke get_window_screenshot_os: %w", err)
+		return "", "", fmt.Errorf("Vanessa smoke get_window_screenshot_os: %w", err)
 	}
 	if result == nil || result.IsError || len(result.Content) == 0 {
-		return fmt.Errorf("Vanessa smoke screenshot returned no content: %#v", result)
+		return "", "", fmt.Errorf("Vanessa smoke screenshot returned no content: %#v", result)
 	}
-	return nil
+	for _, name := range []string{"open_feature_file", "check_syntax"} {
+		result, err := callInnerTool(ctx, session, name, map[string]any{"filePath": featurePath})
+		if err != nil {
+			return "", "", fmt.Errorf("Vanessa authoring smoke %s: %w", name, err)
+		}
+		if result == nil {
+			return "", "", fmt.Errorf("Vanessa authoring smoke %s returned no result", name)
+		}
+		if result.IsError {
+			code := probeToolResultCode(result)
+			if code == "ITL_ONDEMAND_BACKEND_CALL_FAILED" || code == "ITL_VANESSA_TOOL_RESULT_FAILED" || code == "ITL_ONDEMAND_EMPTY_RESULT" {
+				return "runner-fallback-required", code, nil
+			}
+			return "", code, fmt.Errorf("Vanessa authoring smoke %s returned an unsupported tool error: %#v", name, result.StructuredContent)
+		}
+	}
+	return "passed", "", nil
+}
+
+func probeToolResultCode(result *mcp.CallToolResult) string {
+	if result == nil || !result.IsError {
+		return ""
+	}
+	structured, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		return ""
+	}
+	code, _ := structured["code"].(string)
+	return code
 }
 
 func firstOSWindowTitle(result *mcp.CallToolResult) string {
