@@ -1049,6 +1049,8 @@ exit 0
                 function Update-UserRules { $script:postCalls++ }
                 function Update-RoctupMcp { $script:postCalls++ }
                 function Update-VanessaMcpArtifacts { $script:postCalls++ }
+                function Sync-ItlOnDemandMcpDependencyLock { $script:postCalls++; $script:syncOrder = $script:postCalls }
+                function Install-ItlOnDemandMcp { $script:postCalls++; $script:installOrder = $script:postCalls }
                 function Invoke-AiRulesBaselineMigration { [pscustomobject]@{ migrated = $true; suppressRegularUpdate = $true } }
                 function Write-WorkflowUpdateFollowUp { $script:postCalls++ }
                 function Read-DependencyLockManifest { @{ dependencies = @{ workflowPackage = @{ source = "path"; commit = "commit" } } } }
@@ -1061,6 +1063,8 @@ exit 0
                     finalCopyCalls = $script:copyCalls
                     reexecArgs = @($script:reexecArgs)
                     postCalls = $script:postCalls
+                    syncOrder = $script:syncOrder
+                    installOrder = $script:installOrder
                 }
             }
             $result.preError | Should -Be "reexec-stop"
@@ -1068,6 +1072,7 @@ exit 0
             $result.finalCopyCalls | Should -Be $result.preCopyCalls
             $result.reexecArgs | Should -Be @("-LifecyclePhase", "post-copy")
             $result.postCalls | Should -BeGreaterThan 4
+            $result.syncOrder | Should -BeLessThan $result.installOrder
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
