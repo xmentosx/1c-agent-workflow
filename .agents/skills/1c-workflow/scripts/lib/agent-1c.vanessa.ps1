@@ -532,6 +532,38 @@ function Prepare-VanessaAuthoring {
     Write-Host "Use itl-vanessa-ui call_tool with exact inner names. The backend starts on the first inner call; no client reload or raw HTTP call is required."
 }
 
+function Approve-ReleaseE2EVanessaFixtureAuthoring {
+    param([Parameter(Mandatory = $true)][string]$FeaturePath)
+
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "release-e2e-approve-vanessa-fixture"
+    $relativePath = ConvertTo-ProjectRelativePath -Path $FeaturePath
+    if ($relativePath -cne "tests/features/ITLReleaseFourFlat.feature") {
+        throw "Release E2E Vanessa approval is restricted to tests/features/ITLReleaseFourFlat.feature."
+    }
+
+    $features = @(Get-VanessaAuthoringFeatureRecords)
+    $allowedPaths = @($relativePath, "tests/features/workflow-release-e2e.feature")
+    $unexpected = @($features | Where-Object { [string]$_.path -cnotin $allowedPaths })
+    $fixture = @($features | Where-Object { [string]$_.path -ceq $relativePath })
+    if ($fixture.Count -ne 1 -or $unexpected.Count -gt 0) {
+        throw "Release E2E Vanessa approval is restricted to the canonical release feature set."
+    }
+    $featureText = Read-Utf8Text -Path (Resolve-ProjectPath $relativePath)
+    if ($featureText -notmatch '(?m)^\s*@itl_release_flat\s*$' -or -not [string]$fixture[0].title -or @($fixture[0].scenarios).Count -ne 4) {
+        throw "Release E2E Vanessa approval requires the tagged four-scenario fixture contract."
+    }
+
+    $authoring = New-VanessaAuthoringState -Phase "passed" -FeatureRecords $features -LibraryFingerprint (Get-VanessaItlLibraryFingerprint)
+    $definition = Get-ItlOnDemandMcpFamilyDefinition -Family "vanessa-ui"
+    $authoring.catalogSha256 = [string]$definition.catalogSha256
+    $authoring.completionMode = "release-e2e-fixture"
+    $authoring.updatedAt = (Get-Date).ToString("o")
+    $authoring.passedAt = $authoring.updatedAt
+    Write-VanessaAuthoringState -State $authoring | Out-Null
+    Write-Host "Release E2E Vanessa fixture authoring: approved."
+}
+
 function Get-VanessaAuthoringOnDemandEvidence {
     param([object]$AuthoringState)
     $createdAt = [DateTimeOffset]::Parse([string]$AuthoringState.createdAt)

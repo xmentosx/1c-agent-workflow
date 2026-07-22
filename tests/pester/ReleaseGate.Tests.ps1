@@ -21,6 +21,7 @@ Describe "Release gate scripts" {
         $e2eText | Should -Not -Match "Функционал: Четыре независимых"
         $e2eText | Should -Match '"-VanessaFeaturePath", \$vanessaFixture\.path'
         ([regex]::Matches($e2eText, 'Invoke-E2EHelper -Action "check-dev-branch"')).Count | Should -Be 4
+        ([regex]::Matches($e2eText, 'Invoke-E2EHelper -Action "release-e2e-approve-vanessa-fixture"')).Count | Should -Be 3
         $e2eText | Should -Match 'RELEASE_E2E_RESUME_STATE_MISMATCH'
         $e2eText | Should -Match 'Restore-E2EInfobaseSnapshot'
         $e2eText | Should -Match 'runnerSha256'
@@ -175,6 +176,9 @@ switch ($Action) {
         $snapshotPath = Join-Path $ProjectRoot $ReleaseSnapshotPath
         if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { throw "mock snapshot is missing" }
     }
+    "release-e2e-approve-vanessa-fixture" {
+        if ([System.IO.Path]::GetFileName($VanessaFeaturePath) -ne "ITLReleaseFourFlat.feature") { throw "release E2E approval must use the dedicated four-scenario feature file" }
+    }
     "release-e2e-config-roundtrip" {
         [xml]$configuration = Get-Content -LiteralPath (Join-Path $ProjectRoot "src\cf\Configuration.xml") -Raw -Encoding UTF8
         $comment = [string]$configuration.MetaDataObject.Configuration.Properties.Comment
@@ -314,6 +318,7 @@ switch ($Action) {
             $actions | Should -Contain "release-e2e-extension-smoke"
             $actions | Should -Contain "stop-dev-branch-test-clients"
             @($actions | Where-Object { $_ -eq "check-dev-branch" }).Count | Should -Be 3
+            @($actions | Where-Object { $_ -eq "release-e2e-approve-vanessa-fixture" }).Count | Should -Be 3
             @($actions | Where-Object { $_ -eq "release-e2e-config-roundtrip" }).Count | Should -Be 1
             @(& git -C $worktreeRoot status --porcelain).Count | Should -Be 0
 
