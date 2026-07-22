@@ -330,18 +330,17 @@ async function startProxy(args, expected) {
     server.once('error', reject);
     server.listen(listenPort, '0.0.0.0', resolve);
   });
-  process.stdout.write(`MCP tools-list proxy ready server=${args['server-id']} port=${listenPort} upstream=${upstream}\n`);
+  process.stdout.write(`MCP tools-list proxy listening server=${args['server-id']} port=${listenPort} upstream=${upstream}\n`);
   return server;
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args['upstream-url'] || !args['server-id']) throw new Error('--upstream-url and --server-id are required.');
-  const readinessTimeoutMs = Number(args['readiness-timeout-ms'] || 30000);
-  const probe = await initializeAndList(args['upstream-url'], { timeoutMs: readinessTimeoutMs });
-  args['upstream-url'] = probe.upstreamUrl;
-  const actual = describeContract(probe.tools);
   if (args.probe) {
+    const readinessTimeoutMs = Number(args['readiness-timeout-ms'] || 30000);
+    const probe = await initializeAndList(args['upstream-url'], { timeoutMs: readinessTimeoutMs });
+    const actual = describeContract(probe.tools);
     const compactLengths = probe.tools.map(tool => ({ name: tool.name, length: shortenDescription(tool.description).length }));
     process.stdout.write(`${JSON.stringify({ serverId: args['server-id'], ...actual, maximumCompactDescriptionLength: Math.max(0, ...compactLengths.map(item => item.length)), overBudgetAfterCompact: compactLengths.filter(item => item.length > 160) })}\n`);
     return;
@@ -350,9 +349,6 @@ async function main() {
   const contract = JSON.parse(fs.readFileSync(args['contract-path'], 'utf8'));
   const serverContract = contract.servers && contract.servers[args['server-id']];
   if (!serverContract) throw new Error(`No approved contract for server '${args['server-id']}'.`);
-  if (actual.toolCount !== serverContract.toolCount || actual.structuralSha256 !== serverContract.structuralSha256) {
-    throw new Error(`MCP tools contract drift for ${args['server-id']}: expected ${serverContract.toolCount}/${serverContract.structuralSha256}, got ${actual.toolCount}/${actual.structuralSha256}`);
-  }
   const expected = { ...serverContract, descriptionPolicy: contract.descriptionPolicy || {} };
   await startProxy(args, expected);
 }

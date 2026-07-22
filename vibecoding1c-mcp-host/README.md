@@ -57,7 +57,8 @@ changed descriptions pass through unchanged. Before publishing a proxy URL it co
 names, annotations, and description-free JSON Schemas with the approved contract.
 `GET /health` reports only proxy-process liveness. `GET /ready` opens a bounded MCP probe,
 validates the live upstream tool contract, and terminates any diagnostic stateful session;
-the installer publishes a proxy URL only after this readiness check passes.
+the proxy starts listening before the upstream is ready, and the installer retries readiness
+during upstream warm-up before it publishes the proxy URL.
 
 The locally owned BookStack and Mantis HTTP MCP servers run in stateless mode. Restarting or
 recreating either container therefore does not invalidate an already connected client's

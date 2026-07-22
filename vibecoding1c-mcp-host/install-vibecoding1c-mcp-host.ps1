@@ -2018,6 +2018,27 @@ function Test-ToolsListProxyReady {
     }
 }
 
+function Wait-ToolsListProxyReady {
+    param(
+        [int]$Port,
+        [int]$Attempts = 18,
+        [int]$DelaySeconds = 1,
+        [int]$ProbeTimeoutSec = 5
+    )
+
+    if ($Port -le 0 -or $Attempts -le 0) { return $false }
+    for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
+        if ((Test-HostTcpPortOpen -Port $Port -TimeoutMilliseconds 500) -and
+            (Test-ToolsListProxyReady -Port $Port -TimeoutSec $ProbeTimeoutSec)) {
+            return $true
+        }
+        if ($attempt -lt ($Attempts - 1)) {
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+    return $false
+}
+
 function Get-ToolsListProxySettings {
     param([object]$Config)
 
@@ -2093,12 +2114,7 @@ function Enable-ToolsListProxyForRuntime {
             "--listen-port", "8080", "--upstream-url", $upstreamUrl,
             "--server-id", $id, "--contract-path", "/app/tools-contract.json"
         ) -TimeoutSec 180 -Description "docker run $proxyContainerName"
-        $listening = $false
-        for ($attempt = 0; $attempt -lt 30; $attempt++) {
-            if (Test-HostTcpPortOpen -Port $proxyPort -TimeoutMilliseconds 500) { $listening = $true; break }
-            Start-Sleep -Seconds 1
-        }
-        $ready = $listening -and (Test-ToolsListProxyReady -Port $proxyPort)
+        $ready = Wait-ToolsListProxyReady -Port $proxyPort
         if (-not $ready) {
             $logs = @(Invoke-DockerCommandCapture -Arguments @("logs", "--tail", "40", $proxyContainerName) -TimeoutSec 60 -Description "docker logs $proxyContainerName")
             throw "proxy did not become ready. $($logs -join ' ')"
@@ -2232,12 +2248,7 @@ function Enable-TrackedToolsListProxiesAndPublish {
                 "--listen-port", "8080", "--upstream-url", $upstreamUrl,
                 "--server-id", $id, "--contract-path", "/app/tools-contract.json"
             ) -TimeoutSec 180 -Description "docker run $proxyContainerName"
-            $listening = $false
-            for ($attempt = 0; $attempt -lt 30; $attempt++) {
-                if (Test-HostTcpPortOpen -Port $proxyPort -TimeoutMilliseconds 500) { $listening = $true; break }
-                Start-Sleep -Seconds 1
-            }
-            $ready = $listening -and (Test-ToolsListProxyReady -Port $proxyPort)
+            $ready = Wait-ToolsListProxyReady -Port $proxyPort
             if (-not $ready) {
                 $logs = @(Invoke-DockerCommandCapture -Arguments @("logs", "--tail", "40", $proxyContainerName) -TimeoutSec 60 -Description "docker logs $proxyContainerName")
                 throw "Proxy for '$id' did not qualify. $($logs -join ' ')"

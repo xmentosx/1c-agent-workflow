@@ -150,7 +150,19 @@
                 $script:ReadinessResult = "throw"
                 (Test-ToolsListProxyReady -Port 22005) | Should -BeFalse
                 (Test-ToolsListProxyReady -Port 0) | Should -BeFalse
+
+                $script:ReadinessAttempts = 0
+                function Test-HostTcpPortOpen { param([int]$Port, [int]$TimeoutMilliseconds = 500); return $true }
+                function Test-ToolsListProxyReady {
+                    param([int]$Port, [int]$TimeoutSec = 35)
+                    $script:ReadinessAttempts++
+                    return ($script:ReadinessAttempts -ge 3)
+                }
+                function Start-Sleep { param([int]$Seconds) }
+                (Wait-ToolsListProxyReady -Port 22005 -Attempts 4 -DelaySeconds 0 -ProbeTimeoutSec 1) | Should -BeTrue
+                $script:ReadinessAttempts | Should -Be 3
                 Remove-Variable -Scope Script -Name ReadinessResult -ErrorAction SilentlyContinue
+                Remove-Variable -Scope Script -Name ReadinessAttempts -ErrorAction SilentlyContinue
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
@@ -230,7 +242,7 @@
                     param([int]$Port, [int]$TimeoutMilliseconds = 500)
                     return ($Port -in @(18100, 22100))
                 }
-                function Test-ToolsListProxyReady { param([int]$Port, [int]$TimeoutSec = 35); return $false }
+                function Wait-ToolsListProxyReady { param([int]$Port); return $false }
                 function Invoke-DockerCommand {
                     param([string[]]$Arguments, [switch]$Quiet, [int]$TimeoutSec = 300)
                     $script:ProxyRollbackDockerCalls.Add(($Arguments -join " "))
