@@ -14,6 +14,7 @@ if (-not $OutputPath) {
 }
 $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $OutputPath) | Out-Null
+$temporaryOutputPath = "{0}.{1}.tmp" -f $OutputPath, [guid]::NewGuid().ToString("N")
 
 Push-Location $sourceRoot
 try {
@@ -32,8 +33,9 @@ try {
         $env:GOARCH = "amd64"
         $env:GOAMD64 = "v1"
         $env:CGO_ENABLED = "0"
-        & go build -trimpath -buildvcs=false -ldflags "-s -w -buildid=" -o $OutputPath .
+        & go build -trimpath -buildvcs=false -ldflags "-s -w -buildid=" -o $temporaryOutputPath .
         if ($LASTEXITCODE -ne 0) { throw "itl-ondemand-mcp build failed." }
+        Move-Item -LiteralPath $temporaryOutputPath -Destination $OutputPath -Force
     } finally {
         $env:GOOS = $oldGoOs
         $env:GOARCH = $oldGoArch
@@ -42,6 +44,7 @@ try {
     }
 } finally {
     Pop-Location
+    Remove-Item -LiteralPath $temporaryOutputPath -Force -ErrorAction SilentlyContinue
 }
 
 $hash = (Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256).Hash.ToLowerInvariant()
