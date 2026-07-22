@@ -186,6 +186,12 @@ async function runIntegration() {
     const chunks = [];
     request.on('data', chunk => chunks.push(chunk));
     request.on('end', () => {
+      if (request.url === '/mcp') {
+        response.writeHead(307, { location: '/mcp/' });
+        response.end();
+        return;
+      }
+      assert.strictEqual(request.url, '/mcp/');
       const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
       const sessionId = request.headers['mcp-session-id'];
       if (request.method === 'DELETE') {
@@ -246,6 +252,8 @@ async function runIntegration() {
     assert.strictEqual(initialized, 1);
     assert.strictEqual(deleted, 1);
     assert.strictEqual(sessions.size, 0);
+    const normalizedHealth = await fetch(`${proxyUrl}/health`);
+    assert.match((await normalizedHealth.json()).upstream, /\/mcp\/$/);
 
     const init = await fetch(`${proxyUrl}/mcp`, {
       method: 'POST', headers: commonHeaders,

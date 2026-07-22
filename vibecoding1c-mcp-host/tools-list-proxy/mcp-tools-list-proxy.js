@@ -255,7 +255,7 @@ function safeErrorMessage(error) {
 }
 
 async function startProxy(args, expected) {
-  const upstream = new URL(args['upstream-url']);
+  let upstream = new URL(args['upstream-url']);
   const listenPort = Number(args['listen-port'] || 8080);
   const readinessTimeoutMs = Number(args['readiness-timeout-ms'] || 30000);
   const server = http.createServer((incoming, outgoing) => {
@@ -266,6 +266,7 @@ async function startProxy(args, expected) {
     }
     if (incoming.method === 'GET' && incoming.url === '/ready') {
       probeReadiness(upstream.toString(), expected, { timeoutMs: readinessTimeoutMs }).then(result => {
+        upstream = new URL(result.upstreamUrl);
         outgoing.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         outgoing.end(JSON.stringify({ status: 'ready', serverId: args['server-id'], upstream: result.upstreamUrl, toolCount: result.toolCount }));
       }, error => {
