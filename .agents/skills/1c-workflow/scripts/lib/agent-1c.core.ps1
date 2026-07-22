@@ -926,6 +926,38 @@ function Get-DesignerMaxWorkingSetMb {
     return $parsed
 }
 
+function Get-DesignerOperationTimeoutSeconds {
+    $rawValue = Get-Setting `
+        -EnvName "DESIGNER_OPERATION_TIMEOUT_SECONDS" `
+        -ConfigName "designerOperationTimeoutSeconds" `
+        -Default 3600
+    $text = ([string]$rawValue).Trim()
+    $parsed = 0
+    if ($text -notmatch '^\d+$' -or
+        -not [int]::TryParse($text, [ref]$parsed) -or
+        $parsed -lt 1 -or
+        $parsed -gt 86400) {
+        throw "DESIGNER_OPERATION_TIMEOUT_SECONDS or project.designerOperationTimeoutSeconds must be an integer between 1 and 86400. Actual: '$rawValue'."
+    }
+    return $parsed
+}
+
+function Get-DesignerDumpStabilitySeconds {
+    $rawValue = Get-Setting `
+        -EnvName "DESIGNER_DUMP_STABILITY_SECONDS" `
+        -ConfigName "designerDumpStabilitySeconds" `
+        -Default 5
+    $text = ([string]$rawValue).Trim()
+    $parsed = 0
+    if ($text -notmatch '^\d+$' -or
+        -not [int]::TryParse($text, [ref]$parsed) -or
+        $parsed -lt 0 -or
+        $parsed -gt 300) {
+        throw "DESIGNER_DUMP_STABILITY_SECONDS or project.designerDumpStabilitySeconds must be an integer between 0 and 300. Actual: '$rawValue'."
+    }
+    return $parsed
+}
+
 function Write-DesignerMemoryLimitStatusLine {
     $limitMb = Get-DesignerMaxWorkingSetMb
     if ($limitMb -eq 0) {
@@ -3796,6 +3828,137 @@ function Format-SafeCommandLine {
     return ($parts -join " ")
 }
 
+function Get-DesignerLogTerminalState {
+    param(
+        [string]$LogPath,
+        [string]$SuccessPattern
+    )
+
+    if (-not $LogPath -or -not (Test-Path -LiteralPath $LogPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return [pscustomobject]@{ state = "pending"; detail = "" }
+    }
+
+    try {
+        $text = Get-Content -LiteralPath $LogPath -Raw -Encoding UTF8 -ErrorAction Stop
+    } catch {
+        return [pscustomobject]@{ state = "pending"; detail = "" }
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$text)) {
+        return [pscustomobject]@{ state = "pending"; detail = "" }
+    }
+
+    $lockErrorText = -join ([char[]](1086, 1096, 1080, 1073, 1082, 1072, 32, 1073, 1083, 1086, 1082, 1080, 1088, 1086, 1074, 1082, 1080, 32, 1080, 1085, 1092, 1086, 1088, 1084, 1072, 1094, 1080, 1086, 1085, 1085, 1086, 1081, 32, 1073, 1072, 1079, 1099))
+    $couldNotText = -join ([char[]](1085, 1077, 32, 1091, 1076, 1072, 1083, 1086, 1089, 1100))
+    $impossibleText = -join ([char[]](1085, 1077, 1074, 1086, 1079, 1084, 1086, 1078, 1085, 1086))
+    $errorText = -join ([char[]](1086, 1096, 1080, 1073, 1082, 1072))
+    $errorsText = -join ([char[]](1086, 1096, 1080, 1073, 1082, 1080))
+    $failurePattern = '(?im)^.*(?:{0}|{1}|{2}|{3}|{4}|\berror\b|\bfailed\b).*$' -f `
+        [regex]::Escape($lockErrorText),
+        [regex]::Escape($couldNotText),
+        [regex]::Escape($impossibleText),
+        [regex]::Escape($errorText),
+        [regex]::Escape($errorsText)
+    $noFailurePattern = '(?i)(?:\u043e\u0448\u0438\u0431\u043a\u0438\s+\u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442|\u043e\u0448\u0438\u0431\u043e\u043a\s+\u043d\u0435\s+\u043e\u0431\u043d\u0430\u0440\u0443\u0436\u0435\u043d\u043e|\u0431\u0435\u0437\s+\u043e\u0448\u0438\u0431\u043e\u043a|\b0\s+errors?\b|\bno\s+errors?\b)'
+    foreach ($line in @([string]$text -split '[\r\n]+')) {
+        if ([regex]::IsMatch($line, $noFailurePattern)) {
+            continue
+        }
+        $failureMatch = [regex]::Match($line, $failurePattern)
+        if ($failureMatch.Success) {
+            return [pscustomobject]@{
+                state = "failure"
+                detail = (($failureMatch.Value -replace '[\r\n]+', ' ').Trim())
+            }
+        }
+    }
+
+    if ($SuccessPattern -and [regex]::IsMatch([string]$text, $SuccessPattern)) {
+        return [pscustomobject]@{ state = "success"; detail = "" }
+    }
+
+    return [pscustomobject]@{ state = "pending"; detail = "" }
+}
+
+function Get-DesignerDumpArtifactState {
+    param([string]$Path)
+
+    try {
+        if (-not (Test-Path -LiteralPath (Join-Path $Path "Configuration.xml") -PathType Leaf -ErrorAction Stop) -or
+            -not (Test-Path -LiteralPath (Join-Path $Path "ConfigDumpInfo.xml") -PathType Leaf -ErrorAction Stop)) {
+            return [pscustomobject]@{ ready = $false; signature = ""; fileCount = 0 }
+        }
+
+        $root = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+        $files = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force -ErrorAction Stop | Sort-Object FullName)
+        if ($files.Count -lt 2) {
+            return [pscustomobject]@{ ready = $false; signature = ""; fileCount = $files.Count }
+        }
+
+        $parts = foreach ($file in $files) {
+            $relativePath = $file.FullName.Substring($root.Length).TrimStart('\')
+            "{0}|{1}|{2}" -f $relativePath, $file.Length, $file.LastWriteTimeUtc.Ticks
+        }
+        return [pscustomobject]@{
+            ready = $true
+            signature = ($parts -join "`n")
+            fileCount = $files.Count
+        }
+    } catch {
+        return [pscustomobject]@{ ready = $false; signature = ""; fileCount = 0 }
+    }
+}
+
+function Get-DesignerFileArtifactState {
+    param(
+        [string]$Path,
+        [switch]$AllowEmpty
+    )
+
+    try {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction Stop)) {
+            return [pscustomobject]@{ ready = $false; signature = "" }
+        }
+        $file = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        if (-not $AllowEmpty -and $file.Length -le 0) {
+            return [pscustomobject]@{ ready = $false; signature = "" }
+        }
+        return [pscustomobject]@{
+            ready = $true
+            signature = ("{0}|{1}" -f $file.Length, $file.LastWriteTimeUtc.Ticks)
+        }
+    } catch {
+        return [pscustomobject]@{ ready = $false; signature = "" }
+    }
+}
+
+function Test-DesignerInfoBaseReleased {
+    param(
+        [string]$InfoBaseKind,
+        [string]$InfoBasePath
+    )
+
+    if ($InfoBaseKind -ne "file") {
+        return $true
+    }
+
+    try {
+        $databasePath = Join-Path (Resolve-InfoBasePath $InfoBasePath) "1Cv8.1CD"
+        if (-not (Test-Path -LiteralPath $databasePath -PathType Leaf -ErrorAction Stop)) {
+            return $false
+        }
+        $stream = [System.IO.File]::Open(
+            $databasePath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::None
+        )
+        $stream.Dispose()
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Stop-NativeProcessForSafety {
     param([Parameter(Mandatory = $true)][object]$Process)
 
@@ -3869,16 +4032,28 @@ function Invoke-NativeProcessAndWaitResult {
     $script:LastProcessPeakWorkingSetMb = 0
     $script:LastProcessWorkingSetLimitMb = $MaxWorkingSetMb
     $completedByProbe = $false
+    $launcherExited = $false
+    $launcherExitCode = $null
     $memoryMonitorFailed = $false
     $memoryMonitorError = ""
     $terminationConfirmed = $true
     $terminationError = ""
-    if ($TimeoutSeconds -gt 0 -or $MaxWorkingSetMb -gt 0) {
+    if ($TimeoutSeconds -gt 0 -or $MaxWorkingSetMb -gt 0 -or $null -ne $CompletionProbe) {
         $deadline = if ($TimeoutSeconds -gt 0) { [DateTime]::UtcNow.AddSeconds($TimeoutSeconds) } else { [DateTime]::MaxValue }
         $probeObservedAt = $null
-        $finished = $process.HasExited
+        $finished = $false
         while (-not $finished -and [DateTime]::UtcNow -lt $deadline) {
-            if ($MaxWorkingSetMb -gt 0) {
+            try {
+                $launcherExited = [bool]$process.HasExited
+                if ($launcherExited -and $null -eq $launcherExitCode) {
+                    $process.Refresh()
+                    $launcherExitCode = [int]$process.ExitCode
+                }
+            } catch {
+                $launcherExited = $false
+            }
+
+            if ($MaxWorkingSetMb -gt 0 -and -not $launcherExited) {
                 $workingSetMb = 0
                 $sampleError = $null
                 try {
@@ -3922,7 +4097,12 @@ function Invoke-NativeProcessAndWaitResult {
             if ($null -ne $CompletionProbe) {
                 $probeComplete = $false
                 try {
-                    $probeComplete = [bool](& $CompletionProbe)
+                    $probeContext = [pscustomobject]@{
+                        launcherExited = $launcherExited
+                        launcherExitCode = $launcherExitCode
+                        processId = $process.Id
+                    }
+                    $probeComplete = [bool](& $CompletionProbe $probeContext)
                 } catch {
                     $probeComplete = $false
                 }
@@ -3932,7 +4112,9 @@ function Invoke-NativeProcessAndWaitResult {
                     }
                     if (([DateTime]::UtcNow - $probeObservedAt).TotalSeconds -ge $CompletionGraceSeconds) {
                         $completedByProbe = $true
-                        Write-Host "Process result artifacts are complete; stopping lingering process PID $($process.Id)."
+                        if (-not $launcherExited) {
+                            Write-Host "Process result artifacts are complete; stopping lingering process PID $($process.Id)."
+                        }
                         try {
                             if (-not $process.HasExited) {
                                 Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
@@ -3949,8 +4131,20 @@ function Invoke-NativeProcessAndWaitResult {
                 } else {
                     $probeObservedAt = $null
                 }
+                if ($launcherExited -and $null -ne $launcherExitCode -and $launcherExitCode -ne 0) {
+                    $finished = $true
+                    break
+                }
+            } elseif ($launcherExited) {
+                $finished = $true
+                break
             }
-            $finished = $process.WaitForExit(250)
+
+            if (-not $launcherExited) {
+                $process.WaitForExit(250) | Out-Null
+            } else {
+                [System.Threading.Thread]::Sleep(250)
+            }
         }
         if (-not $finished -and $TimeoutSeconds -gt 0) {
             $script:LastProcessTimedOut = $true
@@ -3972,7 +4166,13 @@ function Invoke-NativeProcessAndWaitResult {
         $process.WaitForExit()
     }
 
-    try { $process.Refresh() } catch {}
+    try {
+        $process.Refresh()
+        $launcherExited = [bool]$process.HasExited
+        if ($launcherExited) {
+            $launcherExitCode = [int]$process.ExitCode
+        }
+    } catch {}
     return [pscustomobject]@{
         processId = $process.Id
         exitCode = $(
@@ -3980,6 +4180,7 @@ function Invoke-NativeProcessAndWaitResult {
             elseif ($memoryMonitorFailed) { -3 }
             elseif ($script:LastProcessTimedOut) { -1 }
             elseif ($completedByProbe) { 0 }
+            elseif ($null -ne $launcherExitCode) { $launcherExitCode }
             else { $process.ExitCode }
         )
         timedOut = $script:LastProcessTimedOut
@@ -3991,6 +4192,8 @@ function Invoke-NativeProcessAndWaitResult {
         terminationConfirmed = $terminationConfirmed
         terminationError = $terminationError
         completedByProbe = $completedByProbe
+        launcherExited = $launcherExited
+        launcherExitCode = $launcherExitCode
     }
 }
 
@@ -4079,10 +4282,124 @@ function Invoke-Designer {
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
 
+    $operationKind = "process"
+    $operationTarget = ""
+    $completionProbe = $null
+    $completionTimeoutSeconds = 0
+    $completionGraceSeconds = 0
+    $repositoryUpdateIndex = [Array]::IndexOf($DesignerArgs, "/ConfigurationRepositoryUpdateCfg")
+    $dumpIndex = [Array]::IndexOf($DesignerArgs, "/DumpConfigToFiles")
+    $dumpCfgIndex = [Array]::IndexOf($DesignerArgs, "/DumpCfg")
+    $dumpIbIndex = [Array]::IndexOf($DesignerArgs, "/DumpIB")
+    $externalProcessorIndex = [Array]::IndexOf($DesignerArgs, "/LoadExternalDataProcessorOrReportFromFiles")
+    if ($repositoryUpdateIndex -ge 0) {
+        $operationKind = "repository-update"
+        $completionTimeoutSeconds = Get-DesignerOperationTimeoutSeconds
+        $repositorySuccessText = -join ([char[]](1054, 1073, 1085, 1086, 1074, 1083, 1077, 1085, 1080, 1077, 32, 1082, 1086, 1085, 1092, 1080, 1075, 1091, 1088, 1072, 1094, 1080, 1080, 32, 1080, 1079, 32, 1093, 1088, 1072, 1085, 1080, 1083, 1080, 1097, 1072, 32, 1091, 1089, 1087, 1077, 1096, 1085, 1086, 32, 1079, 1072, 1074, 1077, 1088, 1096, 1077, 1085, 1086))
+        $repositorySuccessPattern = "(?i)" + [regex]::Escape($repositorySuccessText)
+        $completionProbe = {
+            $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern $repositorySuccessPattern
+            return ($terminalState.state -ne "pending")
+        }
+    } elseif ($dumpIndex -ge 0 -and ($dumpIndex + 1) -lt $DesignerArgs.Count) {
+        $operationKind = "dump-config-to-files"
+        $operationTarget = [string]$DesignerArgs[$dumpIndex + 1]
+        $completionTimeoutSeconds = Get-DesignerOperationTimeoutSeconds
+        $stabilitySeconds = Get-DesignerDumpStabilitySeconds
+        $initialDumpState = Get-DesignerDumpArtifactState -Path $operationTarget
+        $initialSignature = [string]$initialDumpState.signature
+        $lastSignature = ""
+        $stableSince = $null
+        $completionProbe = {
+            $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
+            if ($terminalState.state -eq "failure") {
+                return $true
+            }
+            $dumpState = Get-DesignerDumpArtifactState -Path $operationTarget
+            if (-not $dumpState.ready -or [string]$dumpState.signature -eq $initialSignature) {
+                $lastSignature = ""
+                $stableSince = $null
+                return $false
+            }
+            if ([string]$dumpState.signature -ne $lastSignature) {
+                $lastSignature = [string]$dumpState.signature
+                $stableSince = [DateTime]::UtcNow
+                return ($stabilitySeconds -eq 0)
+            }
+            return ($null -ne $stableSince -and ([DateTime]::UtcNow - $stableSince).TotalSeconds -ge $stabilitySeconds)
+        }
+    } elseif (($dumpCfgIndex -ge 0 -and ($dumpCfgIndex + 1) -lt $DesignerArgs.Count) -or
+              ($dumpIbIndex -ge 0 -and ($dumpIbIndex + 1) -lt $DesignerArgs.Count) -or
+              ($externalProcessorIndex -ge 0 -and ($externalProcessorIndex + 2) -lt $DesignerArgs.Count)) {
+        $operationKind = if ($dumpCfgIndex -ge 0) { "dump-cfg" } elseif ($dumpIbIndex -ge 0) { "dump-ib" } else { "build-external-processor" }
+        $targetIndex = if ($dumpCfgIndex -ge 0) { $dumpCfgIndex + 1 } elseif ($dumpIbIndex -ge 0) { $dumpIbIndex + 1 } else { $externalProcessorIndex + 2 }
+        $operationTarget = [string]$DesignerArgs[$targetIndex]
+        $completionTimeoutSeconds = Get-DesignerOperationTimeoutSeconds
+        $stabilitySeconds = Get-DesignerDumpStabilitySeconds
+        $initialFileState = Get-DesignerFileArtifactState -Path $operationTarget
+        $initialSignature = [string]$initialFileState.signature
+        $lastSignature = ""
+        $stableSince = $null
+        $completionProbe = {
+            $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
+            if ($terminalState.state -eq "failure") {
+                return $true
+            }
+            $fileState = Get-DesignerFileArtifactState -Path $operationTarget
+            if (-not $fileState.ready -or [string]$fileState.signature -eq $initialSignature) {
+                $lastSignature = ""
+                $stableSince = $null
+                return $false
+            }
+            if ([string]$fileState.signature -ne $lastSignature) {
+                $lastSignature = [string]$fileState.signature
+                $stableSince = [DateTime]::UtcNow
+                return ($stabilitySeconds -eq 0)
+            }
+            return ($null -ne $stableSince -and ([DateTime]::UtcNow - $stableSince).TotalSeconds -ge $stabilitySeconds)
+        }
+    } else {
+        $operationKind = "designer-command"
+        $completionTimeoutSeconds = Get-DesignerOperationTimeoutSeconds
+        $stabilitySeconds = Get-DesignerDumpStabilitySeconds
+        $initialLogState = Get-DesignerFileArtifactState -Path $logPath -AllowEmpty
+        $initialSignature = [string]$initialLogState.signature
+        $lastSignature = ""
+        $stableSince = $null
+        $completionProbe = {
+            param($probeContext)
+            $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
+            if ($terminalState.state -eq "failure") {
+                return $true
+            }
+            if ($null -eq $probeContext -or -not $probeContext.launcherExited) {
+                return $false
+            }
+            if (-not (Test-DesignerInfoBaseReleased -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath)) {
+                return $false
+            }
+            $logState = Get-DesignerFileArtifactState -Path $logPath
+            if (-not $logState.ready -or [string]$logState.signature -eq $initialSignature) {
+                $lastSignature = ""
+                $stableSince = $null
+                return $false
+            }
+            if ([string]$logState.signature -ne $lastSignature) {
+                $lastSignature = [string]$logState.signature
+                $stableSince = [DateTime]::UtcNow
+                return ($stabilitySeconds -eq 0)
+            }
+            return ($null -ne $stableSince -and ([DateTime]::UtcNow - $stableSince).TotalSeconds -ge $stabilitySeconds)
+        }
+    }
+
     $maxWorkingSetMb = Get-DesignerMaxWorkingSetMb
     $result = Invoke-NativeProcessAndWaitResult `
         -FilePath $platformPath `
         -Arguments $args `
+        -TimeoutSeconds $completionTimeoutSeconds `
+        -CompletionProbe $completionProbe `
+        -CompletionGraceSeconds $completionGraceSeconds `
         -MaxWorkingSetMb $maxWorkingSetMb
     if ($result.memoryMonitorFailed) {
         $detail = (([string]$result.memoryMonitorError + " " + [string]$result.terminationError).Trim() -replace '[\r\n]+', ' ')
@@ -4092,8 +4409,35 @@ function Invoke-Designer {
         $terminationDetail = if ($result.terminationError) { " terminationError='$(([string]$result.terminationError) -replace '[\r\n]+', ' ')'" } else { "" }
         throw "DESIGNER_MEMORY_LIMIT_EXCEEDED pid=$($result.processId) limitMb=$maxWorkingSetMb peakWorkingSetMb=$($result.peakWorkingSetMb) terminationConfirmed=$($result.terminationConfirmed) log=$logPath$terminationDetail"
     }
+    if ($result.timedOut) {
+        $targetDetail = if ($operationTarget) { " target='$operationTarget'" } else { "" }
+        throw "DESIGNER_OPERATION_TIMEOUT operation=$operationKind timeoutSeconds=$completionTimeoutSeconds pid=$($result.processId) log=$logPath$targetDetail"
+    }
     if ($result.exitCode -ne 0) {
         throw "1C Designer failed with exit code $($result.exitCode). Log: $logPath"
+    }
+
+    $operationLogState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
+    if ($operationLogState.state -eq "failure") {
+        $failureLabel = if ($operationKind -eq "repository-update") { "repository update" } else { $operationKind }
+        throw "1C Designer $failureLabel failed: $($operationLogState.detail). Log: $logPath"
+    }
+
+    if ($operationKind -eq "repository-update") {
+        $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern $repositorySuccessPattern
+        if ($terminalState.state -ne "success") {
+            throw "1C Designer repository update ended without terminal success evidence. Log: $logPath"
+        }
+    } elseif ($operationKind -eq "dump-config-to-files") {
+        $dumpState = Get-DesignerDumpArtifactState -Path $operationTarget
+        if (-not $dumpState.ready) {
+            throw "1C Designer dump ended without complete artifacts in '$operationTarget'. Log: $logPath"
+        }
+    } elseif ($operationKind -in @("dump-cfg", "dump-ib", "build-external-processor")) {
+        $fileState = Get-DesignerFileArtifactState -Path $operationTarget
+        if (-not $fileState.ready) {
+            throw "1C Designer $operationKind ended without a complete output file '$operationTarget'. Log: $logPath"
+        }
     }
 
     return $logPath
