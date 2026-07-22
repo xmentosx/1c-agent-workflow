@@ -351,7 +351,7 @@ function Get-VanessaChangedFeatureFiles {
         $ErrorActionPreference = "Continue"
         $master = Get-MasterBranch
         $base = (& git -C $script:ProjectRoot merge-base HEAD $master 2>$null | Select-Object -First 1)
-        if ($LASTEXITCODE -ne 0 -or -not $base) { $base = "HEAD" }
+        if (-not $base) { $base = "HEAD" }
         $names = @(& git -C $script:ProjectRoot -c core.quotepath=false -c core.safecrlf=false diff --name-only --diff-filter=ACMR $base -- 2>$null)
         $names += @(& git -C $script:ProjectRoot -c core.quotepath=false ls-files --others --exclude-standard 2>$null)
     } finally {
