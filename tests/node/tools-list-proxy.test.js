@@ -1,9 +1,13 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
 const http = require('http');
+const os = require('os');
 const path = require('path');
-const proxy = require(path.resolve(__dirname, '../../vibecoding1c-mcp-host/tools-list-proxy/mcp-tools-list-proxy.js'));
+const { spawn } = require('child_process');
+const proxyPath = path.resolve(__dirname, '../../vibecoding1c-mcp-host/tools-list-proxy/mcp-tools-list-proxy.js');
+const proxy = require(proxyPath);
 
 const tools = [
   {
@@ -65,6 +69,112 @@ function listen(server) {
 
 function close(server) {
   return new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+}
+
+function listenOn(server, port) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', resolve);
+  });
+}
+
+async function reservePort() {
+  const server = http.createServer();
+  const port = await listen(server);
+  await close(server);
+  return port;
+}
+
+async function waitFor(check, message) {
+  let lastError;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    try {
+      if (await check()) return;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error(`${message}${lastError ? `: ${lastError.message}` : ''}`);
+}
+
+function stopChild(child) {
+  if (child.exitCode !== null) return Promise.resolve();
+  return new Promise(resolve => {
+    child.once('exit', resolve);
+    child.kill();
+  });
+}
+
+async function runCliStartupIntegration() {
+  const proxyPort = await reservePort();
+  const upstreamPort = await reservePort();
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'itl-proxy-startup-'));
+  const contractPath = path.join(tempRoot, 'tools-contract.json');
+  fs.writeFileSync(contractPath, JSON.stringify({
+    schemaVersion: 2,
+    descriptionPolicy: { mode: 'approved-top-level-only' },
+    servers: { fixture: originalContract },
+  }));
+  const child = spawn(process.execPath, [
+    proxyPath,
+    '--listen-port', String(proxyPort),
+    '--upstream-url', `http://127.0.0.1:${upstreamPort}/mcp`,
+    '--server-id', 'fixture',
+    '--contract-path', contractPath,
+    '--readiness-timeout-ms', '1000',
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let childOutput = '';
+  child.stdout.on('data', chunk => { childOutput += chunk.toString('utf8'); });
+  child.stderr.on('data', chunk => { childOutput += chunk.toString('utf8'); });
+  let upstream;
+
+  try {
+    await waitFor(async () => {
+      if (child.exitCode !== null) throw new Error(`proxy exited early: ${childOutput}`);
+      const response = await fetch(`http://127.0.0.1:${proxyPort}/health`);
+      return response.status === 200;
+    }, 'proxy did not expose process liveness before upstream startup');
+    assert.match(childOutput, /proxy listening/);
+
+    const unready = await fetch(`http://127.0.0.1:${proxyPort}/ready`);
+    assert.strictEqual(unready.status, 503);
+    assert.strictEqual((await unready.json()).status, 'unready');
+
+    upstream = http.createServer((request, response) => {
+      const chunks = [];
+      request.on('data', chunk => chunks.push(chunk));
+      request.on('end', () => {
+        const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
+        if (body && body.method === 'initialize') {
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1.0' } } }));
+          return;
+        }
+        if (body && body.method === 'notifications/initialized') {
+          response.writeHead(202);
+          response.end();
+          return;
+        }
+        if (body && body.method === 'tools/list') {
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { tools } }));
+          return;
+        }
+        response.writeHead(400);
+        response.end();
+      });
+    });
+    await listenOn(upstream, upstreamPort);
+    await waitFor(async () => {
+      const response = await fetch(`http://127.0.0.1:${proxyPort}/ready`);
+      return response.status === 200 && (await response.json()).status === 'ready';
+    }, 'proxy readiness did not recover after upstream startup');
+  } finally {
+    if (upstream?.listening) await close(upstream);
+    await stopChild(child);
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 }
 
 async function runIntegration() {
@@ -178,7 +288,7 @@ async function runIntegration() {
   }
 }
 
-runIntegration().then(() => {
+runCliStartupIntegration().then(runIntegration).then(() => {
   process.stdout.write('tools-list proxy unit contract passed\n');
 }, error => {
   process.stderr.write(`${error.stack || error.message}\n`);
