@@ -889,41 +889,72 @@ function Ensure-DevBranchEnterpriseNormalized {
 function Dump-ConfigToFiles {
     $exportPath = Get-ExportPath
     $absoluteExportPath = Assert-ExportPathInsideProject $exportPath
-    New-Item -ItemType Directory -Force -Path $absoluteExportPath | Out-Null
+    $transactionRoot = Assert-ExportPathInsideProject -ExportPath (".agent-1c/config-dump/" + [guid]::NewGuid().ToString("N"))
+    $stagedPath = Join-Path $transactionRoot "staged"
+    $backupPath = Join-Path $transactionRoot "backup"
+    $targetExisted = Test-Path -LiteralPath $absoluteExportPath -PathType Container -ErrorAction SilentlyContinue
+    $targetMoved = $false
+    $stageInstalled = $false
 
-    $dumpInfoPath = Join-Path $absoluteExportPath "ConfigDumpInfo.xml"
-    $children = @(Get-ChildItem -LiteralPath $absoluteExportPath -Force)
-    $isIncremental = Test-Path -LiteralPath $dumpInfoPath -PathType Leaf
-    $designerArgs = @()
-    if (Get-SourceUsesRepository) {
-        $designerArgs += New-RepositoryConnectionArgs
-    }
-    $designerArgs += @("/DumpConfigToFiles", $absoluteExportPath, "-Format", "Hierarchical")
-    if ($isIncremental) {
-        $designerArgs += @("-update", "-force")
-    } elseif ($children.Count -gt 0) {
-        throw "Export path '$absoluteExportPath' is not empty and ConfigDumpInfo.xml is missing. Clean the folder manually or restore ConfigDumpInfo.xml before dumping config files."
+    if (-not $targetExisted -and (Test-Path -LiteralPath $absoluteExportPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "Configuration dump target is a file: $absoluteExportPath"
     }
 
-    Invoke-Designer `
-        -InfoBasePath (Get-SourceInfoBasePath) `
-        -InfoBaseKind (Get-InfoBaseKind) `
-        -DesignerArgs $designerArgs | Out-Null
+    try {
+        New-Item -ItemType Directory -Force -Path $stagedPath | Out-Null
+        $designerArgs = @()
+        if (Get-SourceUsesRepository) {
+            $designerArgs += New-RepositoryConnectionArgs
+        }
+        $designerArgs += @("/DumpConfigToFiles", $stagedPath, "-Format", "Hierarchical")
 
-    if (-not (Test-Path -LiteralPath $dumpInfoPath -PathType Leaf)) {
-        throw "1C configuration dump did not create ConfigDumpInfo.xml in '$absoluteExportPath'. Check the 1C log: $script:LastLogPath"
-    }
+        Invoke-Designer `
+            -InfoBasePath (Get-SourceInfoBasePath) `
+            -InfoBaseKind (Get-InfoBaseKind) `
+            -DesignerArgs $designerArgs | Out-Null
 
-    $dumpedFiles = @(Get-ChildItem -LiteralPath $absoluteExportPath -Force)
-    if ($dumpedFiles.Count -eq 0) {
-        throw "1C configuration dump produced no files in '$absoluteExportPath'. Check the 1C log: $script:LastLogPath"
-    }
+        $dumpState = Get-DesignerDumpArtifactState -Path $stagedPath
+        if (-not $dumpState.ready) {
+            throw "1C configuration dump did not create complete Configuration.xml and ConfigDumpInfo.xml artifacts. Check the 1C log: $script:LastLogPath"
+        }
 
-    return [pscustomobject]@{
-        exportPath = $exportPath
-        absoluteExportPath = $absoluteExportPath
-        incremental = $isIncremental
-        logPath = $script:LastLogPath
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $absoluteExportPath) | Out-Null
+        if ($targetExisted) {
+            Move-Item -LiteralPath $absoluteExportPath -Destination $backupPath
+            $targetMoved = $true
+        }
+        Move-Item -LiteralPath $stagedPath -Destination $absoluteExportPath
+        $stageInstalled = $true
+
+        if ($targetMoved -and (Test-Path -LiteralPath $backupPath -PathType Container)) {
+            Remove-Item -LiteralPath $backupPath -Recurse -Force
+        }
+        if (Test-Path -LiteralPath $transactionRoot -PathType Container) {
+            Remove-Item -LiteralPath $transactionRoot -Recurse -Force
+        }
+
+        return [pscustomobject]@{
+            exportPath = $exportPath
+            absoluteExportPath = $absoluteExportPath
+            incremental = $false
+            transactional = $true
+            logPath = $script:LastLogPath
+        }
+    } catch {
+        $originalError = $_.Exception.Message
+        try {
+            if ($stageInstalled -and (Test-Path -LiteralPath $absoluteExportPath -ErrorAction SilentlyContinue)) {
+                Remove-Item -LiteralPath $absoluteExportPath -Recurse -Force
+            }
+            if ($targetMoved -and (Test-Path -LiteralPath $backupPath -PathType Container)) {
+                Move-Item -LiteralPath $backupPath -Destination $absoluteExportPath
+            }
+        } catch {
+            throw "1C configuration dump failed and rollback also failed. Original error: $originalError. Rollback error: $($_.Exception.Message). Diagnostic staging: $transactionRoot"
+        }
+
+        Write-Warning "1C configuration dump failed. Diagnostic staging was preserved: $transactionRoot"
+        throw "1C configuration dump failed. $originalError Diagnostic staging: $transactionRoot"
     }
 }
 

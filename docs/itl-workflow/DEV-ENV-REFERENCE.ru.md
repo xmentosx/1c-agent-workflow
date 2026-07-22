@@ -8,6 +8,8 @@
 |---|---|---|---|
 | `PLATFORM_PATH` | Путь к `1cv8.exe` | определяется init или задается вручную | init/user |
 | `DESIGNER_MAX_WORKING_SET_MB` | Лимит памяти автоматического Designer | default `10240`; `0` отключает guard | user |
+| `DESIGNER_OPERATION_TIMEOUT_SECONDS` | Максимальное ожидание подтвержденного завершения автоматической операции Designer | default `3600`; `1..86400` | user |
+| `DESIGNER_DUMP_STABILITY_SECONDS` | Интервал стабильности файлов результата или `/Out` перед приемкой операции Designer | default `5`; `0..300` | user |
 | `INFOBASE_KIND` | Тип исходной базы | `file`/`server`, default `file` | user |
 | `SOURCE_USES_REPOSITORY` | Используется ли хранилище 1С | `true`/`false` | init/user |
 | `SOURCE_INFOBASE_PATH` | Путь к файловой исходной базе | путь | init/user |

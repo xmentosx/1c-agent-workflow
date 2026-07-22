@@ -9,6 +9,8 @@
   "testResultsPath": "build/test-results/vanessa",
   "logsPath": "logs/1c",
   "designerMaxWorkingSetMb": 10240,
+  "designerOperationTimeoutSeconds": 3600,
+  "designerDumpStabilitySeconds": 5,
   "platformPath": "",
   "infoBaseKind": "file",
   "sourceUsesRepository": true,
