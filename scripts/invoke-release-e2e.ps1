@@ -755,6 +755,9 @@ try {
             $expectedComment = $fixture.comment
             $vanessaFixture = New-E2EVanessaFixtureCommit
             $vanessaFixtureCommit = $vanessaFixture.commit
+            Invoke-E2EHelper -Action "release-e2e-approve-vanessa-fixture" -TimeoutSeconds 300 -AdditionalArguments @(
+                "-VanessaFeaturePath", $vanessaFixture.path
+            ) | Out-Null
 
             # Configuration check 1/3: metadata changed, all four flat scenarios pass.
             Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @(
@@ -778,6 +781,9 @@ try {
             # scenario; Designer and Enterprise must remain skipped.
             $stopOnErrorProbeCommit = Set-E2EVanessaFailureProbeCommit -FeaturePath $vanessaFixture.path -Fail $true
             $testOnlyCommit = $stopOnErrorProbeCommit
+            Invoke-E2EHelper -Action "release-e2e-approve-vanessa-fixture" -TimeoutSeconds 300 -AdditionalArguments @(
+                "-VanessaFeaturePath", $vanessaFixture.path
+            ) | Out-Null
             $stopOnErrorProbe = Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AllowFailure -AdditionalArguments @(
                 "-VanessaFeaturePath", $vanessaFixture.path, "-VanessaFilterTags", "@itl_release_flat"
             )
@@ -796,6 +802,9 @@ try {
             $secondMetadataCommit = $secondFixture.commit
             $expectedComment = $secondFixture.comment
             $stopOnErrorRecoveryCommit = Set-E2EVanessaFailureProbeCommit -FeaturePath $vanessaFixture.path -Fail $false
+            Invoke-E2EHelper -Action "release-e2e-approve-vanessa-fixture" -TimeoutSeconds 300 -AdditionalArguments @(
+                "-VanessaFeaturePath", $vanessaFixture.path
+            ) | Out-Null
             Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @(
                 "-VanessaFeaturePath", $vanessaFixture.path
             ) | Out-Null

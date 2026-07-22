@@ -71,6 +71,7 @@ list-dev-branches
 status
 release-e2e-snapshot
 release-e2e-restore
+release-e2e-approve-vanessa-fixture
 release-e2e-config-roundtrip
 release-e2e-extension-smoke
 ```
@@ -86,6 +87,8 @@ Extension helper actions are advanced/helper commands. `new-extension-dev-branch
 `release-e2e-config-roundtrip` is reserved for `scripts/invoke-release-e2e.ps1`. It dumps the dedicated branch infobase into ignored local state, writes evidence under ignored `build/test-results`, and proves that a root `Configuration.xml` `Comment` loaded in strict `Partial` mode roundtrips while `Ext/ParentConfigurations.bin` is present. Do not expose it as a slash command or use it for ordinary project work.
 
 `release-e2e-snapshot` and `release-e2e-restore` are internal checkpoint actions for the same runner. They accept only a project-local ignored `.dt`; restore invalidates both configuration and extension fingerprints. Do not expose them as slash commands or use them as a general backup interface.
+
+`release-e2e-approve-vanessa-fixture` is restricted to the runner-owned `ITLReleaseFourFlat.feature` and the dedicated stand's existing release feature. It records the exact current feature hashes before each synthetic verification iteration so the ordinary Vanessa authoring preflight remains fail-closed for every other feature. It is not a project command and must not have a slash wrapper.
 
 `release-e2e-extension-smoke` is also reserved for the Release runner. It uses the public extension initialization lifecycle to create an Empty extension, produce and reload a CFE, validate both normalized dumps, and restore the disposable infobase and worktree from a snapshot. It is not a project command and must not have a slash wrapper.
 
