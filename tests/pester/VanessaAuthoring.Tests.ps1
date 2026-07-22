@@ -95,6 +95,33 @@ Describe "Vanessa authoring gate" {
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "detects a feature committed on the development branch" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-authoring-committed-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot "tests\features") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"tests/features"}'
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot branch -M master
+            & git -C $tempRoot config core.autocrlf false
+            & git -C $tempRoot config core.safecrlf false
+            & git -C $tempRoot config user.email "tests@example.invalid"
+            & git -C $tempRoot config user.name "ITL Tests"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m baseline *> $null
+            & git -C $tempRoot switch -q -c itldev/demo
+            Set-Content -LiteralPath (Join-Path $tempRoot "tests\features\committed.feature") -Encoding UTF8 -Value "Feature: Committed`nScenario: Works`n"
+            & git -C $tempRoot add tests/features/committed.feature
+            & git -C $tempRoot commit -m feature *> $null
+            $records = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                @(Get-VanessaAuthoringFeatureRecords)
+            }
+            @($records).Count | Should -Be 1
+            $records[0].path | Should -Be 'tests/features/committed.feature'
+            $records[0].title | Should -Be 'Committed'
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "records final feature hashes after edits made during authoring" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-authoring-complete-" + [guid]::NewGuid().ToString("N"))
         try {
