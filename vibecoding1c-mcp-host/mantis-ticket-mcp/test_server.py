@@ -1,12 +1,32 @@
 import base64
+import os
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import server
+
+
+class FakeFastMCP:
+    def __init__(self, name, **kwargs):
+        self.name = name
+        self.options = kwargs
+        self.registered_tools = []
+
+    def tool(self, function):
+        self.registered_tools.append(function.__name__)
+        return function
+
+
+def fake_fastmcp_module():
+    fastmcp = types.ModuleType("fastmcp")
+    fastmcp.FastMCP = FakeFastMCP
+    return fastmcp
 
 
 class FakeClient:
@@ -47,6 +67,20 @@ class FakeClient:
 
 
 class MantisTicketServerTests(unittest.TestCase):
+    def test_create_mcp_enables_stateless_http(self):
+        with tempfile.TemporaryDirectory() as temp_root:
+            environment = {
+                "MANTIS_BASE_URL": "http://mantis.local",
+                "MANTIS_API_TOKEN": "token",
+                "MANTIS_ATTACHMENT_CACHE_PATH": temp_root,
+            }
+            with mock.patch.dict(os.environ, environment), mock.patch.dict(sys.modules, {"fastmcp": fake_fastmcp_module()}):
+                mcp, _ = server.create_mcp()
+
+        self.assertEqual(mcp.name, "mantis-ticket")
+        self.assertIs(mcp.options.get("stateless_http"), True)
+        self.assertEqual(mcp.registered_tools, ["read_ticket", "get_attachment", "health"])
+
     def test_extract_issue_id_from_common_urls(self):
         self.assertEqual(server.extract_issue_id("123"), 123)
         self.assertEqual(server.extract_issue_id("http://mantis/view.php?id=456"), 456)

@@ -55,6 +55,13 @@ unchanged. `tools/list` substitutes only reviewed top-level routing cards whose 
 hash still matches `tools-contract.json`; nested JSON Schema descriptions and unapproved or
 changed descriptions pass through unchanged. Before publishing a proxy URL it compares tool
 names, annotations, and description-free JSON Schemas with the approved contract.
+`GET /health` reports only proxy-process liveness. `GET /ready` opens a bounded MCP probe,
+validates the live upstream tool contract, and terminates any diagnostic stateful session;
+the installer publishes a proxy URL only after this readiness check passes.
+
+The locally owned BookStack and Mantis HTTP MCP servers run in stateless mode. Restarting or
+recreating either container therefore does not invalidate an already connected client's
+transport session. The proxy remains transparent and never replays `tools/call`.
 
 After the host has already been set up, enable or refresh all tracked proxies without refreshing
 configuration sources, restarting direct MCP servers, or triggering indexing:

@@ -68,9 +68,10 @@ function parseJsonRpcBody(body, contentType) {
   return JSON.parse(text);
 }
 
-function requestBuffer(target, method, headers, body, redirectCount = 0) {
+function requestBuffer(target, method, headers, body, options = {}, redirectCount = 0) {
   return new Promise((resolve, reject) => {
     const transport = target.protocol === 'https:' ? https : http;
+    const timeoutMs = Number(options.timeoutMs || 30000);
     const requestHeaders = { ...headers };
     if (body) requestHeaders['content-length'] = Buffer.byteLength(body);
     const request = transport.request({
@@ -84,7 +85,7 @@ function requestBuffer(target, method, headers, body, redirectCount = 0) {
       if ([301, 302, 307, 308].includes(response.statusCode || 0) && response.headers.location && redirectCount < 3) {
         response.resume();
         const redirected = new URL(response.headers.location, target);
-        requestBuffer(redirected, method, headers, body, redirectCount + 1).then(resolve, reject);
+        requestBuffer(redirected, method, headers, body, options, redirectCount + 1).then(resolve, reject);
         return;
       }
       const chunks = [];
@@ -97,45 +98,84 @@ function requestBuffer(target, method, headers, body, redirectCount = 0) {
       }));
     });
     request.on('error', reject);
+    request.setTimeout(timeoutMs, () => request.destroy(new Error(`HTTP request timed out after ${timeoutMs} ms.`)));
     if (body) request.write(body);
     request.end();
   });
 }
 
-async function initializeAndList(upstreamUrl) {
+async function initializeAndList(upstreamUrl, options = {}) {
   let target = new URL(upstreamUrl);
   const commonHeaders = { accept: 'application/json, text/event-stream', 'content-type': 'application/json' };
   const initializeBody = JSON.stringify({
     jsonrpc: '2.0', id: 1, method: 'initialize',
     params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'itl-tools-contract-probe', version: '1.0.0' } },
   });
-  const initialized = await requestBuffer(target, 'POST', commonHeaders, initializeBody);
-  target = new URL(initialized.finalUrl);
-  if (initialized.statusCode < 200 || initialized.statusCode >= 300) {
-    throw new Error(`initialize failed with HTTP ${initialized.statusCode}: ${initialized.body.toString('utf8').slice(0, 500)}`);
-  }
-  parseJsonRpcBody(initialized.body, initialized.headers['content-type']);
-  const sessionId = initialized.headers['mcp-session-id'];
-  const sessionHeaders = { ...commonHeaders };
-  if (sessionId) sessionHeaders['mcp-session-id'] = sessionId;
-  await requestBuffer(target, 'POST', sessionHeaders, JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }));
-
-  const tools = [];
-  let cursor;
-  let requestId = 2;
-  do {
-    const params = cursor ? { cursor } : {};
-    const response = await requestBuffer(target, 'POST', sessionHeaders, JSON.stringify({ jsonrpc: '2.0', id: requestId++, method: 'tools/list', params }));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw new Error(`tools/list failed with HTTP ${response.statusCode}: ${response.body.toString('utf8').slice(0, 500)}`);
+  let sessionId;
+  let sessionHeaders;
+  let primaryError;
+  try {
+    const initialized = await requestBuffer(target, 'POST', commonHeaders, initializeBody, options);
+    target = new URL(initialized.finalUrl);
+    if (initialized.statusCode < 200 || initialized.statusCode >= 300) {
+      throw new Error(`initialize failed with HTTP ${initialized.statusCode}: ${initialized.body.toString('utf8').slice(0, 500)}`);
     }
-    const payload = parseJsonRpcBody(response.body, response.headers['content-type']);
-    if (payload.error) throw new Error(`tools/list failed: ${JSON.stringify(payload.error)}`);
-    const result = payload.result || {};
-    tools.push(...(Array.isArray(result.tools) ? result.tools : []));
-    cursor = result.nextCursor || null;
-  } while (cursor);
-  return { tools, upstreamUrl: target.toString() };
+    const initializePayload = parseJsonRpcBody(initialized.body, initialized.headers['content-type']);
+    if (initializePayload.error) throw new Error(`initialize failed: ${JSON.stringify(initializePayload.error)}`);
+    sessionId = initialized.headers['mcp-session-id'];
+    sessionHeaders = { ...commonHeaders };
+    if (sessionId) sessionHeaders['mcp-session-id'] = sessionId;
+    const protocolVersion = initializePayload.result && initializePayload.result.protocolVersion;
+    if (protocolVersion) sessionHeaders['mcp-protocol-version'] = protocolVersion;
+
+    const notification = await requestBuffer(
+      target,
+      'POST',
+      sessionHeaders,
+      JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+      options,
+    );
+    if (notification.statusCode < 200 || notification.statusCode >= 300) {
+      throw new Error(`notifications/initialized failed with HTTP ${notification.statusCode}: ${notification.body.toString('utf8').slice(0, 500)}`);
+    }
+
+    const tools = [];
+    let cursor;
+    let requestId = 2;
+    do {
+      const params = cursor ? { cursor } : {};
+      const response = await requestBuffer(
+        target,
+        'POST',
+        sessionHeaders,
+        JSON.stringify({ jsonrpc: '2.0', id: requestId++, method: 'tools/list', params }),
+        options,
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw new Error(`tools/list failed with HTTP ${response.statusCode}: ${response.body.toString('utf8').slice(0, 500)}`);
+      }
+      const payload = parseJsonRpcBody(response.body, response.headers['content-type']);
+      if (payload.error) throw new Error(`tools/list failed: ${JSON.stringify(payload.error)}`);
+      const result = payload.result || {};
+      tools.push(...(Array.isArray(result.tools) ? result.tools : []));
+      cursor = result.nextCursor || null;
+    } while (cursor);
+    return { tools, upstreamUrl: target.toString() };
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    if (sessionId && sessionHeaders) {
+      try {
+        const terminated = await requestBuffer(target, 'DELETE', sessionHeaders, '', options);
+        if (terminated.statusCode < 200 || terminated.statusCode >= 300) {
+          throw new Error(`session DELETE failed with HTTP ${terminated.statusCode}: ${terminated.body.toString('utf8').slice(0, 500)}`);
+        }
+      } catch (error) {
+        if (!primaryError) throw error;
+      }
+    }
+  }
 }
 
 function shortenDescription(value) {
@@ -201,13 +241,37 @@ function filteredHeaders(headers) {
   return result;
 }
 
+async function probeReadiness(upstreamUrl, expected, options = {}) {
+  const probe = await initializeAndList(upstreamUrl, options);
+  const actual = describeContract(probe.tools);
+  if (actual.toolCount !== expected.toolCount || actual.structuralSha256 !== expected.structuralSha256) {
+    throw new Error(`MCP tools contract drift: expected ${expected.toolCount}/${expected.structuralSha256}, got ${actual.toolCount}/${actual.structuralSha256}`);
+  }
+  return { upstreamUrl: probe.upstreamUrl, toolCount: actual.toolCount, structuralSha256: actual.structuralSha256 };
+}
+
+function safeErrorMessage(error) {
+  return String(error && error.message || error || 'Unknown readiness error.').replace(/[\r\n]+/g, ' ').slice(0, 500);
+}
+
 async function startProxy(args, expected) {
   const upstream = new URL(args['upstream-url']);
   const listenPort = Number(args['listen-port'] || 8080);
+  const readinessTimeoutMs = Number(args['readiness-timeout-ms'] || 30000);
   const server = http.createServer((incoming, outgoing) => {
     if (incoming.method === 'GET' && incoming.url === '/health') {
       outgoing.writeHead(200, { 'content-type': 'application/json' });
       outgoing.end(JSON.stringify({ status: 'ok', serverId: args['server-id'], upstream: upstream.toString() }));
+      return;
+    }
+    if (incoming.method === 'GET' && incoming.url === '/ready') {
+      probeReadiness(upstream.toString(), expected, { timeoutMs: readinessTimeoutMs }).then(result => {
+        outgoing.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        outgoing.end(JSON.stringify({ status: 'ready', serverId: args['server-id'], upstream: result.upstreamUrl, toolCount: result.toolCount }));
+      }, error => {
+        outgoing.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        outgoing.end(JSON.stringify({ status: 'unready', serverId: args['server-id'], error: safeErrorMessage(error) }));
+      });
       return;
     }
     const chunks = [];
@@ -267,12 +331,14 @@ async function startProxy(args, expected) {
     server.listen(listenPort, '0.0.0.0', resolve);
   });
   process.stdout.write(`MCP tools-list proxy ready server=${args['server-id']} port=${listenPort} upstream=${upstream}\n`);
+  return server;
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args['upstream-url'] || !args['server-id']) throw new Error('--upstream-url and --server-id are required.');
-  const probe = await initializeAndList(args['upstream-url']);
+  const readinessTimeoutMs = Number(args['readiness-timeout-ms'] || 30000);
+  const probe = await initializeAndList(args['upstream-url'], { timeoutMs: readinessTimeoutMs });
   args['upstream-url'] = probe.upstreamUrl;
   const actual = describeContract(probe.tools);
   if (args.probe) {
@@ -303,7 +369,10 @@ module.exports = {
   describeContract,
   descriptionSha256,
   initializeAndList,
+  probeReadiness,
+  requestBuffer,
   shortenDescription,
+  startProxy,
   transformToolsListResponse,
   withoutDescriptions,
 };

@@ -1,12 +1,43 @@
 import json
+import os
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import server
+
+
+class FakeFastMCP:
+    def __init__(self, name, **kwargs):
+        self.name = name
+        self.options = kwargs
+        self.registered_tools = []
+
+    def tool(self, function):
+        self.registered_tools.append(function.__name__)
+        return function
+
+
+class FakeToolResult:
+    def __init__(self, content=None, structured_content=None):
+        self.content = content
+        self.structured_content = structured_content
+
+
+def fake_fastmcp_modules():
+    fastmcp = types.ModuleType("fastmcp")
+    fastmcp.__path__ = []
+    fastmcp.FastMCP = FakeFastMCP
+    tools = types.ModuleType("fastmcp.tools")
+    tools.__path__ = []
+    tool = types.ModuleType("fastmcp.tools.tool")
+    tool.ToolResult = FakeToolResult
+    return {"fastmcp": fastmcp, "fastmcp.tools": tools, "fastmcp.tools.tool": tool}
 
 
 def make_settings(cache_path, embedding_model=""):
@@ -44,6 +75,28 @@ def page(page_id, body):
         "markdown": body,
         "html": "",
     }
+
+
+class ProductDocsTransportTests(unittest.TestCase):
+    def test_create_mcp_enables_stateless_http(self):
+        with tempfile.TemporaryDirectory() as temp_root:
+            environment = {
+                "BOOKSTACK_BASE_URL": "http://bookstack.local",
+                "BOOKSTACK_TOKEN_ID": "token-id",
+                "BOOKSTACK_TOKEN_SECRET": "token-secret",
+                "BOOKSTACK_CACHE_PATH": str(Path(temp_root) / "cache.sqlite"),
+                "BOOKSTACK_REINDEX_INTERVAL_HOURS": "0",
+                "BOOKSTACK_INDEX_ON_STARTUP": "false",
+            }
+            with mock.patch.dict(os.environ, environment), mock.patch.dict(sys.modules, fake_fastmcp_modules()):
+                mcp, _ = server.create_mcp()
+
+        self.assertEqual(mcp.name, "bookstack-product-docs")
+        self.assertIs(mcp.options.get("stateless_http"), True)
+        self.assertEqual(
+            mcp.registered_tools,
+            ["search_docs", "read_page", "list_structure", "reindex_docs", "index_status"],
+        )
 
 
 class FakeClient:

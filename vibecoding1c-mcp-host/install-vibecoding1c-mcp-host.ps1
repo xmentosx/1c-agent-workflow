@@ -2003,6 +2003,21 @@ function Test-HostTcpPortOpen {
     }
 }
 
+function Test-ToolsListProxyReady {
+    param(
+        [int]$Port,
+        [int]$TimeoutSec = 35
+    )
+
+    if ($Port -le 0) { return $false }
+    try {
+        $response = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/ready" -Method Get -TimeoutSec $TimeoutSec -ErrorAction Stop
+        return ([string](Get-ObjectValue -Object $response -Name "status" -Default "") -eq "ready")
+    } catch {
+        return $false
+    }
+}
+
 function Get-ToolsListProxySettings {
     param([object]$Config)
 
@@ -2078,11 +2093,12 @@ function Enable-ToolsListProxyForRuntime {
             "--listen-port", "8080", "--upstream-url", $upstreamUrl,
             "--server-id", $id, "--contract-path", "/app/tools-contract.json"
         ) -TimeoutSec 180 -Description "docker run $proxyContainerName"
-        $ready = $false
+        $listening = $false
         for ($attempt = 0; $attempt -lt 30; $attempt++) {
-            if (Test-HostTcpPortOpen -Port $proxyPort -TimeoutMilliseconds 500) { $ready = $true; break }
+            if (Test-HostTcpPortOpen -Port $proxyPort -TimeoutMilliseconds 500) { $listening = $true; break }
             Start-Sleep -Seconds 1
         }
+        $ready = $listening -and (Test-ToolsListProxyReady -Port $proxyPort)
         if (-not $ready) {
             $logs = @(Invoke-DockerCommandCapture -Arguments @("logs", "--tail", "40", $proxyContainerName) -TimeoutSec 60 -Description "docker logs $proxyContainerName")
             throw "proxy did not become ready. $($logs -join ' ')"
@@ -2106,7 +2122,7 @@ function Update-ToolsListProxyPublishEndpoint {
     if (-not $directUrl -or -not $proxyUrl) { return $hash }
     $proxyContainer = [string](Get-ObjectValue -Object $hash -Name "proxyContainerName" -Default "")
     $proxyPort = [int](Get-ObjectValue -Object $hash -Name "proxyPort" -Default 0)
-    $qualified = (Get-HostContainerPublishState -ContainerName $proxyContainer) -eq "running" -and (Test-HostTcpPortOpen -Port $proxyPort)
+    $qualified = (Get-HostContainerPublishState -ContainerName $proxyContainer) -eq "running" -and (Test-ToolsListProxyReady -Port $proxyPort)
     $hash["url"] = $(if ($qualified) { $proxyUrl } else { $directUrl })
     $hash["toolsContractStatus"] = $(if ($qualified) { "qualified" } else { "fallback-direct" })
     return $hash
@@ -2216,11 +2232,12 @@ function Enable-TrackedToolsListProxiesAndPublish {
                 "--listen-port", "8080", "--upstream-url", $upstreamUrl,
                 "--server-id", $id, "--contract-path", "/app/tools-contract.json"
             ) -TimeoutSec 180 -Description "docker run $proxyContainerName"
-            $ready = $false
+            $listening = $false
             for ($attempt = 0; $attempt -lt 30; $attempt++) {
-                if (Test-HostTcpPortOpen -Port $proxyPort -TimeoutMilliseconds 500) { $ready = $true; break }
+                if (Test-HostTcpPortOpen -Port $proxyPort -TimeoutMilliseconds 500) { $listening = $true; break }
                 Start-Sleep -Seconds 1
             }
+            $ready = $listening -and (Test-ToolsListProxyReady -Port $proxyPort)
             if (-not $ready) {
                 $logs = @(Invoke-DockerCommandCapture -Arguments @("logs", "--tail", "40", $proxyContainerName) -TimeoutSec 60 -Description "docker logs $proxyContainerName")
                 throw "Proxy for '$id' did not qualify. $($logs -join ' ')"
