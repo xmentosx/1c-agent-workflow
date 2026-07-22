@@ -2000,7 +2000,7 @@ if (`$?) { exit 0 } else { exit 1 }
         $openMessageFunction = [regex]::Match($HelperText, '(?s)function Write-DevBranchWorktreeOpenMessage \{.*?(?=\r?\nfunction )').Value
         $openMessageFunction | Should -Not -BeNullOrEmpty
         $openMessageFunction | Should -Not -Match '/reload'
-        $openMessageFunction | Should -Match 'no additional client reload is required there'
+        $openMessageFunction | Should -Match 'дополнительная перезагрузка клиента.*не требуется'
         $openMessageFunction | Should -Match 'RunRequiredAction'
 
         $handoff = & {
@@ -2015,16 +2015,16 @@ if (`$?) { exit 0 } else { exit 1 }
             }
         }
         $handoff.output | Should -Not -Match '/reload'
-        $handoff.requiredAction | Should -Match 'no additional client reload is required there'
+        $handoff.requiredAction | Should -Match 'дополнительная перезагрузка клиента.*не требуется'
         $handoff.worktreePath | Should -Be "C:\fixture\branch1"
     }
 
     It "requires initial Kilo reload in the existing master window only" {
         $initHandoffFunction = [regex]::Match($HelperText, '(?s)function Write-PostInitClientReloadHandoff \{.*?(?=\r?\nfunction )').Value
         $initHandoffFunction | Should -Not -BeNullOrEmpty
-        $initHandoffFunction | Should -Match ([regex]::Escape('run /reload now'))
-        $initHandoffFunction | Should -Match 'already open on master before initialization'
-        $initHandoffFunction | Should -Match 'newly opened worktree window reads its own context on startup'
+        $initHandoffFunction | Should -Match ([regex]::Escape('выполните /reload'))
+        $initHandoffFunction | Should -Match 'открыто на master до инициализации'
+        $initHandoffFunction | Should -Match 'прочитает собственный контекст при запуске'
         $HelperText | Should -Match 'Assert-InitGitClean\s+Write-PostInitClientReloadHandoff\s+Write-KiloBrowserAutomationSummary -ProjectRoot \$script:ProjectRoot\s+Write-InitRunUserReport.*?\s+Set-RunStage -Stage "init\.complete"'
 
         $handoff = & {
@@ -2037,8 +2037,8 @@ if (`$?) { exit 0 } else { exit 1 }
                 requiredAction = $script:RunRequiredAction
             }
         }
-        $handoff.output | Should -Match ([regex]::Escape('run /reload now'))
-        $handoff.requiredAction | Should -Match 'before the next master action'
+        $handoff.output | Should -Match ([regex]::Escape('выполните /reload'))
+        $handoff.requiredAction | Should -Match 'до следующего действия в master'
     }
 
     It "builds a complete safe branch user report with MCP Browser and advice" {
@@ -2049,9 +2049,9 @@ if (`$?) { exit 0 } else { exit 1 }
             }
             function Format-Vibecoding1cMcpStatusList { param([object[]]$Items); if (@($Items).Count -eq 0) { return "<none>" }; return (@($Items) -join ", ") }
             function Get-KiloBrowserAutomationDisplay {
-                return [pscustomobject]@{ statusLine = "Kilo Browser Automation: enabled (source: workspace)."; adviceLine = "Browser advice fixture." }
+                return [pscustomobject]@{ statusLine = "Kilo Browser Automation: включена (источник: настройки проекта)."; adviceLine = "Рекомендация Browser fixture." }
             }
-            $script:RunRequiredAction = "Open the new worktree; no additional client reload is required there."
+            $script:RunRequiredAction = "Откройте новый worktree; дополнительная перезагрузка клиента в нём не требуется."
             $state = [pscustomobject]@{
                 devBranchKind = "extension"
                 devBranch = "itldev/report-fixture"
@@ -2069,13 +2069,51 @@ if (`$?) { exit 0 } else { exit 1 }
             $script:RunUserReport
         }
 
-        $report | Should -Match "Branch: itldev/report-fixture"
-        $report | Should -Match "1C launcher infobase: fixture-branch"
-        $report | Should -Match "ROCTUP MCP: stopped"
-        $report | Should -Match "Kilo Browser Automation: enabled"
-        $report | Should -Match "Extension initialization: pending"
-        $report | Should -Match "Browser advice fixture"
-        $report | Should -Match "no additional client reload is required"
+        $report | Should -Match "## Ветка разработки"
+        $report | Should -Match "Тип: расширение"
+        $report | Should -Match "Ветка: itldev/report-fixture"
+        $report | Should -Match "База в launcher 1С: fixture-branch"
+        $report | Should -Match "Публикация: отключена"
+        $report | Should -Match "ROCTUP MCP: остановлен"
+        $report | Should -Match "Kilo Browser Automation: включена"
+        $report | Should -Match "Инициализация расширения: ожидает настройки"
+        $report | Should -Match "Рекомендация Browser fixture"
+        $report | Should -Match "дополнительная перезагрузка клиента.*не требуется"
+        $report | Should -Not -Match "## Development branch|Extension initialization:|Instructions and advice"
+        $report | Should -Not -Match "password|token|secret"
+    }
+
+    It "builds a Russian configuration branch report without extension setup" {
+        $report = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-Vibecoding1cMcpStatusSummary {
+                return [pscustomobject]@{ active = @(); skipped = @(); staleServers = @(); missingConfigId = @() }
+            }
+            function Format-Vibecoding1cMcpStatusList { param([object[]]$Items); if (@($Items).Count -eq 0) { return "<none>" }; return (@($Items) -join ", ") }
+            function Get-KiloBrowserAutomationDisplay { return $null }
+            $script:RunRequiredAction = "Откройте новое окно клиента в worktree."
+            $state = [pscustomobject]@{
+                devBranchKind = "configuration"
+                devBranch = "itldev/config-report"
+                mainWorktreePath = "C:\fixture\main"
+                worktreePath = "C:\fixture\config-report"
+                devBranchInfoBasePath = "C:\fixture\ib-config"
+                launcherInfoBaseName = "fixture-config"
+                launcherFolder = "/ITL/fixture"
+                publicationUrl = "http://localhost/config-report"
+                roctupMcpStatus = "running"
+                vanessaMcpStatus = "disabled"
+            }
+            Write-DevBranchRunUserReport -State $state -AdvisoryRoot $state.worktreePath 6>$null
+            $script:RunUserReport
+        }
+
+        $report | Should -Match "Тип: конфигурация"
+        $report | Should -Match "URL публикации: http://localhost/config-report"
+        $report | Should -Match "ROCTUP MCP: работает"
+        $report | Should -Match "Vanessa UI MCP: отключён"
+        $report | Should -Not -Match "Инициализация расширения"
+        $report | Should -Match "Откройте новое окно клиента в worktree"
     }
 
     It "documents and templates the development branch worktree root" {

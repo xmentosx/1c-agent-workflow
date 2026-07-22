@@ -1,4 +1,4 @@
-Describe "compact ITL command runner" {
+﻿Describe "compact ITL command runner" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -14,7 +14,7 @@ Describe "compact ITL command runner" {
             Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
-$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport="## Result`n- Browser: enabled`n- Advice: reload" }
+$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport="## Результат`n- Browser: включён`n- Рекомендация: выполните /reload" }
 [IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
 Write-Output ('x' * 12000)
 exit 0
@@ -27,8 +27,7 @@ exit 0
             $summary.action | Should -Be "check-dev-branch"
             $summary.status | Should -Be "succeeded"
             $summary.confirmationRequired | Should -BeFalse
-            $summary.userReport | Should -Match "Browser: enabled"
-            $summary.userReport | Should -Match "Advice: reload"
+            $summary.userReport | Should -Be "## Результат`n- Browser: включён`n- Рекомендация: выполните /reload"
             (Get-Item -LiteralPath $summary.logPath).Length | Should -BeGreaterThan 10000
             $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $status.nextAction | Should -Be "none"
@@ -64,7 +63,7 @@ exit 1
             New-Item -ItemType Directory -Force -Path $scriptRoot, $runRoot | Out-Null
             Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "run-agent-1c-window.ps1") -Encoding UTF8 -Value @"
-`$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action='new-dev-branch'; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport="## Development branch`n- Branch: itldev/demo`n- Kilo Browser Automation: disabled`n- Advice: open worktree" }
+`$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action='new-dev-branch'; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport="## Ветка разработки`n- Ветка: itldev/demo`n- Kilo Browser Automation: отключена`n- Рекомендация: откройте worktree" }
 [IO.File]::WriteAllText('$($runRoot.Replace("'", "''"))\status.json',((`$payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding `$false))
 [IO.File]::WriteAllText('$($runRoot.Replace("'", "''"))\console.log','full branch log',(New-Object Text.UTF8Encoding `$false))
 Write-Output 'Run directory: $runRoot'
@@ -75,8 +74,7 @@ exit 0
             $summary = ($output -join "`n") | ConvertFrom-Json
             $summary.action | Should -Be "new-dev-branch"
             $summary.logPath | Should -Be (Join-Path $runRoot "console.log")
-            $summary.userReport | Should -Match "Kilo Browser Automation: disabled"
-            $summary.userReport | Should -Match "Advice: open worktree"
+            $summary.userReport | Should -Be "## Ветка разработки`n- Ветка: itldev/demo`n- Kilo Browser Automation: отключена`n- Рекомендация: откройте worktree"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
@@ -89,7 +87,7 @@ exit 0
             New-Item -ItemType Directory -Force -Path $scriptRoot, $runRoot | Out-Null
             Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "run-agent-1c-window.ps1") -Encoding UTF8 -Value @"
-`$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action='new-extension-dev-branch'; stage='extension-init.pending'; stageDetail='waiting'; errorMessage=''; exitCode=0; lastLogPath=''; requiredAction='Ask in chat; do not expose PowerShell.'; devBranch='itldev/demo'; worktreePath='$($worktree.Replace("'", "''"))'; extensionInitializationStatus='pending' }
+`$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action='new-extension-dev-branch'; stage='extension-init.pending'; stageDetail='waiting'; errorMessage=''; exitCode=0; lastLogPath=''; requiredAction='Уточните режим расширения в чате; не показывайте PowerShell.'; devBranch='itldev/demo'; worktreePath='$($worktree.Replace("'", "''"))'; extensionInitializationStatus='pending'; userReport="## Ветка разработки`n- Тип: расширение`n- Инициализация расширения: ожидает настройки`n`n## Инструкции и рекомендации`n- Уточните режим расширения в чате." }
 [IO.File]::WriteAllText('$($runRoot.Replace("'", "''"))\status.json',((`$payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding `$false))
 [IO.File]::WriteAllText('$($runRoot.Replace("'", "''"))\console.log','pending branch log',(New-Object Text.UTF8Encoding `$false))
 Write-Output 'Run directory: $runRoot'
@@ -99,10 +97,11 @@ exit 0
             $LASTEXITCODE | Should -Be 0
             $summary = ($output -join "`n") | ConvertFrom-Json
             $summary.status | Should -Be "succeeded"
-            $summary.nextAction | Should -Be "Ask in chat; do not expose PowerShell."
+            $summary.nextAction | Should -Be "Уточните режим расширения в чате; не показывайте PowerShell."
             $summary.devBranch | Should -Be "itldev/demo"
             $summary.worktreePath | Should -Be $worktree
             $summary.extensionInitializationStatus | Should -Be "pending"
+            $summary.userReport | Should -Be "## Ветка разработки`n- Тип: расширение`n- Инициализация расширения: ожидает настройки`n`n## Инструкции и рекомендации`n- Уточните режим расширения в чате."
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 

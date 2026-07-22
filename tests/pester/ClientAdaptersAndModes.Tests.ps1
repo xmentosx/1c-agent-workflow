@@ -1,4 +1,4 @@
-Describe "ITL client adapters and verification modes" {
+﻿Describe "ITL client adapters and verification modes" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -210,16 +210,34 @@ Describe "ITL client adapters and verification modes" {
             foreach ($client in $adapted.Keys) {
                 $adapted[$client]["itl.md"] | Should -Match "entire final response"
                 $adapted[$client]["itl.md"] | Should -Match 'fenced `text` code block'
-                $adapted[$client]["itl-status.md"] | Should -Match "structured Markdown report"
-                $adapted[$client]["itl-status.md"] | Should -Match 'one `- Label: value` field per line'
+                $adapted[$client]["itl-status.md"] | Should -Match "structured Russian Markdown report"
+                $adapted[$client]["itl-status.md"] | Should -Match 'one `- Подпись: значение` field per line'
                 $adapted[$client]["itl-status.md"] | Should -Match "Kilo Browser Automation"
-                $adapted[$client]["itl-status.md"] | Should -Match "never omit it during summarization"
+                $adapted[$client]["itl-status.md"] | Should -Match "never omit, reword, or move"
+                $adapted[$client]["itl-status.md"] | Should -Match "Контекст разработки"
                 $adapted[$client]["itl-litemode.md"] | Should -Match "complete helper stdout unchanged"
                 $adapted[$client]["itl-litemode.md"] | Should -Match 'exactly one fenced `text` code block'
             }
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", $previousMode, "Process")
         }
+    }
+
+    It "provides a Russian initialization reload instruction for every client" {
+        $instructions = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $registry = Get-ItlClientAdapterRegistry
+            $result = [ordered]@{}
+            foreach ($client in $registry.Keys) { $result[$client] = [string]$registry[$client].reloadUserReport }
+            $result
+        }
+
+        $instructions.Keys.Count | Should -Be 10
+        foreach ($client in $instructions.Keys) {
+            $instructions[$client] | Should -Not -BeNullOrEmpty -Because $client
+            $instructions[$client] | Should -Not -Match '^(Start|Run|Restart|Reload|Trust)\b' -Because $client
+        }
+        $instructions.kilocode | Should -Match '/reload'
     }
 
     It "generates the documented routine surfaces for every new client" {

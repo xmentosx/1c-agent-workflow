@@ -1,4 +1,4 @@
-function Get-ItlClientAdapterRegistry {
+﻿function Get-ItlClientAdapterRegistry {
     $registry = [ordered]@{
         codex = [ordered]@{
             id = "codex"
@@ -16,6 +16,7 @@ function Get-ItlClientAdapterRegistry {
             mcpRemoteFormat = "url"
             trackedMcpConfig = $false
             reload = "Start a new Codex task so project rules and skills are reread."
+            reloadUserReport = "Откройте новую задачу Codex, чтобы заново прочитать правила и skills проекта."
         }
         kilocode = [ordered]@{
             id = "kilocode"
@@ -38,6 +39,7 @@ function Get-ItlClientAdapterRegistry {
             legacyKiloCommands = $true
             untrackGeneratedCommands = $true
             reload = "Run /reload or restart Kilo Code."
+            reloadUserReport = "Выполните /reload или перезапустите Kilo Code."
         }
         "claude-code" = [ordered]@{
             id = "claude-code"
@@ -55,6 +57,7 @@ function Get-ItlClientAdapterRegistry {
             mcpRemoteFormat = "http"
             trackedMcpConfig = $false
             reload = "Restart Claude Code."
+            reloadUserReport = "Перезапустите Claude Code."
         }
         cursor = [ordered]@{
             id = "cursor"
@@ -72,6 +75,7 @@ function Get-ItlClientAdapterRegistry {
             mcpRemoteFormat = "http"
             trackedMcpConfig = $true
             reload = "Reload the Cursor window."
+            reloadUserReport = "Перезагрузите окно Cursor."
         }
         opencode = [ordered]@{
             id = "opencode"
@@ -101,6 +105,7 @@ function Get-ItlClientAdapterRegistry {
                 OPENCODE_EXPERIMENTAL_WORKSPACES = "true"
             }
             reload = "Restart OpenCode."
+            reloadUserReport = "Перезапустите OpenCode."
         }
         kimi = [ordered]@{
             id = "kimi"
@@ -118,6 +123,7 @@ function Get-ItlClientAdapterRegistry {
             mcpRemoteFormat = "http"
             trackedMcpConfig = $false
             reload = "Restart Kimi Code; invoke ITL routines as /skill:itl-* commands."
+            reloadUserReport = "Перезапустите Kimi Code; вызывайте ITL-команды как /skill:itl-*."
         }
         qwen = [ordered]@{
             id = "qwen"
@@ -135,6 +141,7 @@ function Get-ItlClientAdapterRegistry {
             mcpRemoteFormat = "qwen-http"
             trackedMcpConfig = $false
             reload = "Restart Qwen Code."
+            reloadUserReport = "Перезапустите Qwen Code."
         }
         "command-code" = [ordered]@{
             id = "command-code"
@@ -153,6 +160,7 @@ function Get-ItlClientAdapterRegistry {
             mcpRemoteFormat = "http"
             trackedMcpConfig = $false
             reload = "Restart Command Code."
+            reloadUserReport = "Перезапустите Command Code."
         }
         cline = [ordered]@{
             id = "cline"
@@ -170,6 +178,7 @@ function Get-ItlClientAdapterRegistry {
             mcpRemoteFormat = "cline-http"
             trackedMcpConfig = $false
             reload = "Restart Cline; invoke ITL routines as /itl-* skills."
+            reloadUserReport = "Перезапустите Cline; вызывайте ITL-команды как skills /itl-*."
         }
         pi = [ordered]@{
             id = "pi"
@@ -192,6 +201,7 @@ function Get-ItlClientAdapterRegistry {
             requiredPackageIntegrity = "sha512-tfsgi8qSr3UUKMp4vS9/FwKv+Pn2U4T/rTlAwrZkEIvz616mFrU/Ryp3b69ZDfFdkQVVXriaQmZUj4vlZDV2Uw=="
             minimumNodeMajor = 22
             reload = "Trust the project and restart Pi so .pi settings, prompts, skills, and MCP extension are loaded."
+            reloadUserReport = "Подтвердите доверие к проекту и перезапустите Pi, чтобы загрузить настройки .pi, prompts, skills и MCP-расширение."
         }
     }
 
