@@ -1,4 +1,4 @@
-Describe "Kilo context diagnostics" {
+﻿Describe "Kilo context diagnostics" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -81,7 +81,7 @@ Describe "Kilo context diagnostics" {
 
             $status.status.state | Should -Be "enabled"
             $status.status.source | Should -Be "workspace"
-            $status.output | Should -Match "thousands of context tokens"
+            $status.output | Should -Match "тысячи токенов контекста"
             (Get-FileHash -LiteralPath $workspacePath -Algorithm SHA256).Hash | Should -Be $beforeWorkspace
             (Get-FileHash -LiteralPath $userPath -Algorithm SHA256).Hash | Should -Be $beforeUser
         } finally {
@@ -133,8 +133,8 @@ Describe "Kilo context diagnostics" {
             function Get-KiloBrowserAutomationStatus { throw "fixture" }
             (Write-KiloBrowserAutomationSummary 6>&1) -join "`n"
         }
-        $failure | Should -Match "unknown"
-        $failure | Should -Match "does not change this setting"
+            $failure | Should -Match "состояние не определено"
+            $failure | Should -Match "не изменяет эту настройку"
     }
 
     It "wires one Browser summary into init configuration branch extension branch and status" {
@@ -160,12 +160,43 @@ Describe "Kilo context diagnostics" {
             $states
         }
 
-        $result.enabled.status | Should -Match "Kilo Browser Automation: enabled \(source: fixture\)"
-        $result.enabled.advice | Should -Match "thousands of context tokens"
-        $result.disabled.status | Should -Match "Kilo Browser Automation: disabled \(source: fixture\)"
+        $result.enabled.status | Should -Match "Kilo Browser Automation: включена \(источник: fixture\)"
+        $result.enabled.advice | Should -Match "тысячи токенов контекста"
+        $result.disabled.status | Should -Match "Kilo Browser Automation: отключена \(источник: fixture\)"
         $result.disabled.advice | Should -BeNullOrEmpty
-        $result.unknown.status | Should -Match "Kilo Browser Automation: unknown \(source: fixture\)"
+        $result.unknown.status | Should -Match "Kilo Browser Automation: состояние не определено \(источник: fixture\)"
         $result.unknown.advice | Should -Match "Kilo Settings -> Browser"
+    }
+
+    It "localizes every Kilo Browser source while preserving unknown source identifiers" {
+        $sources = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            [ordered]@{
+                workspace = Get-KiloBrowserAutomationSourceDisplay -Source "workspace"
+                user = Get-KiloBrowserAutomationSourceDisplay -Source "user"
+                extensionDefault = Get-KiloBrowserAutomationSourceDisplay -Source "extension-default" -Version "5.0.0"
+                workspaceInvalid = Get-KiloBrowserAutomationSourceDisplay -Source "workspace-invalid"
+                userInvalid = Get-KiloBrowserAutomationSourceDisplay -Source "user-settings-invalid"
+                ambiguous = Get-KiloBrowserAutomationSourceDisplay -Source "user-profile-ambiguous"
+                defaultMissing = Get-KiloBrowserAutomationSourceDisplay -Source "extension-default-missing"
+                defaultConflict = Get-KiloBrowserAutomationSourceDisplay -Source "extension-default-conflict"
+                detectionError = Get-KiloBrowserAutomationSourceDisplay -Source "detection-error"
+                advisoryError = Get-KiloBrowserAutomationSourceDisplay -Source "advisory-error"
+                future = Get-KiloBrowserAutomationSourceDisplay -Source "future-source"
+            }
+        }
+
+        $sources.workspace | Should -Be "настройки проекта"
+        $sources.user | Should -Be "настройки пользователя"
+        $sources.extensionDefault | Should -Be "значение по умолчанию расширения Kilo Code 5.0.0"
+        $sources.workspaceInvalid | Should -Match "некорректные настройки проекта"
+        $sources.userInvalid | Should -Match "некорректные настройки пользователя"
+        $sources.ambiguous | Should -Match "неоднозначные настройки"
+        $sources.defaultMissing | Should -Match "не найдено"
+        $sources.defaultConflict | Should -Match "конфликт"
+        $sources.detectionError | Should -Match "ошибка определения"
+        $sources.advisoryError | Should -Match "ошибка подготовки"
+        $sources.future | Should -Be "future-source"
     }
 
     It "calculates prompt-side context tokens for GPT and DeepSeek fixtures" {

@@ -1,4 +1,4 @@
-function New-RepositoryConnectionArgs {
+﻿function New-RepositoryConnectionArgs {
     $repositoryUser = Require-Value "REPOSITORY_USER" (Get-EnvValue -Name "REPOSITORY_USER")
     $repositoryPassword = ConvertFrom-OptionalPasswordAnswer ([string](Get-EnvValue -Name "REPOSITORY_PASSWORD" -Default ""))
     $repositoryPath = Get-RepositoryPath
@@ -3162,16 +3162,16 @@ function Write-DevBranchWorktreeOpenMessage {
     Write-Host "Новое окно прочитает контекст этого worktree при открытии; дополнительных действий для перечитывания контекста в нем не требуется."
 
     $script:RunWorktreePath = $WorktreePath
-    $script:RunRequiredAction = "Open a new selected-client or IDE window at '$WorktreePath'. The newly opened window reads that worktree's project context on startup; no additional client reload is required there."
+    $script:RunRequiredAction = "Откройте новое окно выбранного клиента или IDE в папке '$WorktreePath'. Новое окно прочитает контекст этого worktree при запуске; дополнительная перезагрузка клиента в нём не требуется."
 }
 
 function Write-PostInitClientReloadHandoff {
     $client = Get-ItlActiveClient
     if ($client -eq "kilocode") {
-        $instruction = "In the Kilo Code window that was already open on master before initialization, run /reload now so it rereads the initialized project. Do this before the next master action. A later newly opened worktree window reads its own context on startup."
+        $instruction = "В окне Kilo Code, которое было открыто на master до инициализации, сейчас выполните /reload, чтобы клиент перечитал инициализированный проект. Сделайте это до следующего действия в master. Новое окно worktree, открытое позднее, прочитает собственный контекст при запуске."
     } else {
-        $adapterInstruction = [string](Get-StateValue -State (Get-ItlClientAdapter -Client $client) -Name "reload" -Default "Restart the active client.")
-        $instruction = "If the $client window was already open before initialization, make it reread the initialized master project now: $adapterInstruction A later newly opened worktree window reads its own context on startup."
+        $adapterInstruction = [string](Get-StateValue -State (Get-ItlClientAdapter -Client $client) -Name "reloadUserReport" -Default "Перезапустите активный клиент.")
+        $instruction = "Если окно клиента $client было открыто до инициализации, сейчас заставьте его перечитать инициализированный проект master: $adapterInstruction Новое окно worktree, открытое позднее, прочитает собственный контекст при запуске."
     }
 
     $script:RunRequiredAction = $instruction
@@ -3183,7 +3183,7 @@ function Write-PostInitClientReloadHandoff {
 function ConvertTo-RunUserReportValue {
     param(
         [AllowNull()][object]$Value,
-        [string]$Default = "<not set>"
+        [string]$Default = "<не задано>"
     )
 
     if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) {
@@ -3192,12 +3192,93 @@ function ConvertTo-RunUserReportValue {
     return (([string]$Value) -replace '[\r\n]+', ' ').Trim()
 }
 
+function ConvertTo-RunUserReportStateDisplay {
+    param(
+        [AllowNull()][object]$Value,
+        [ValidateSet("InfoBaseKind", "BranchKind", "PublicationMode", "PublicationStatus", "ExtensionStatus", "McpStatus", "Toggle", "Availability")]
+        [string]$Kind
+    )
+
+    $text = ([string]$Value).Trim().ToLowerInvariant()
+    switch ($Kind) {
+        "InfoBaseKind" {
+            switch ($text) {
+                "file" { return "файловая" }
+                "server" { return "серверная" }
+                default { return (ConvertTo-RunUserReportValue -Value $Value) }
+            }
+        }
+        "BranchKind" {
+            switch ($text) {
+                "configuration" { return "конфигурация" }
+                "extension" { return "расширение" }
+                default { return (ConvertTo-RunUserReportValue -Value $Value) }
+            }
+        }
+        "PublicationMode" {
+            switch ($text) {
+                "disabled" { return "отключена" }
+                "automatic" { return "автоматическая" }
+                "manual" { return "ручная" }
+                default { return (ConvertTo-RunUserReportValue -Value $Value) }
+            }
+        }
+        "PublicationStatus" {
+            switch ($text) {
+                "disabled" { return "отключена" }
+                "pending" { return "ожидает настройки" }
+                "published" { return "опубликована" }
+                "skipped" { return "пропущена" }
+                "failed" { return "ошибка" }
+                default { return (ConvertTo-RunUserReportValue -Value $Value) }
+            }
+        }
+        "ExtensionStatus" {
+            switch ($text) {
+                "pending" { return "ожидает настройки" }
+                "running" { return "выполняется" }
+                "ready" { return "готово" }
+                "failed" { return "ошибка" }
+                "not-required" { return "не требуется" }
+                default { return (ConvertTo-RunUserReportValue -Value $Value) }
+            }
+        }
+        "McpStatus" {
+            switch ($text) {
+                "pending" { return "ожидает запуска" }
+                "starting" { return "запускается" }
+                "running" { return "работает" }
+                "stopped" { return "остановлен" }
+                "disabled" { return "отключён" }
+                "failed" { return "ошибка" }
+                "unknown" { return "состояние не определено" }
+                default { return (ConvertTo-RunUserReportValue -Value $Value) }
+            }
+        }
+        "Toggle" {
+            switch ($text) {
+                "enabled" { return "включено" }
+                "disabled" { return "отключено" }
+                default { return (ConvertTo-RunUserReportValue -Value $Value) }
+            }
+        }
+        "Availability" {
+            switch ($text) {
+                "ready" { return "готов" }
+                "missing" { return "не найден" }
+                "unknown" { return "состояние не определено" }
+                default { return (ConvertTo-RunUserReportValue -Value $Value) }
+            }
+        }
+    }
+}
+
 function Add-RunUserReportLine {
     param(
         [System.Collections.Generic.List[string]]$Lines,
         [string]$Label,
         [AllowNull()][object]$Value,
-        [string]$Default = "<not set>"
+        [string]$Default = "<не задано>"
     )
 
     $Lines.Add("- ${Label}: $(ConvertTo-RunUserReportValue -Value $Value -Default $Default)")
@@ -3216,6 +3297,14 @@ function Get-RunUserReportObservedValue {
     }
 }
 
+function Format-Vibecoding1cRunUserReportList {
+    param([object[]]$Items)
+
+    $value = Format-Vibecoding1cMcpStatusList -Items $Items
+    if ($value -in @("none", "<none>")) { return "<нет>" }
+    return $value
+}
+
 function Add-Vibecoding1cRunUserReportLines {
     param(
         [System.Collections.Generic.List[string]]$Lines,
@@ -3224,15 +3313,15 @@ function Add-Vibecoding1cRunUserReportLines {
 
     try {
         $summary = Get-Vibecoding1cMcpStatusSummary
-        Add-RunUserReportLine -Lines $Lines -Label "vibecoding1c active" -Value (Format-Vibecoding1cMcpStatusList -Items $summary.active) -Default "<none>"
-        Add-RunUserReportLine -Lines $Lines -Label "vibecoding1c skipped" -Value (Format-Vibecoding1cMcpStatusList -Items $summary.skipped) -Default "<none>"
-        Add-RunUserReportLine -Lines $Lines -Label "vibecoding1c stale" -Value (Format-Vibecoding1cMcpStatusList -Items $summary.staleServers) -Default "<none>"
-        Add-RunUserReportLine -Lines $Lines -Label "vibecoding1c missing configId" -Value (Format-Vibecoding1cMcpStatusList -Items $summary.missingConfigId) -Default "<none>"
+        Add-RunUserReportLine -Lines $Lines -Label "Активные vibecoding1c" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.active) -Default "<нет>"
+        Add-RunUserReportLine -Lines $Lines -Label "Пропущенные vibecoding1c" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.skipped) -Default "<нет>"
+        Add-RunUserReportLine -Lines $Lines -Label "Устаревшие vibecoding1c" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.staleServers) -Default "<нет>"
+        Add-RunUserReportLine -Lines $Lines -Label "vibecoding1c без configId" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.missingConfigId) -Default "<нет>"
         if ($null -ne $AdviceLines -and @($summary.missingConfigId).Count -gt 0) {
-            $AdviceLines.Add("- vibecoding1c MCP selection is incomplete. Ask the agent to complete the explicit per-server configuration selection.")
+            $AdviceLines.Add("- Выбор vibecoding1c MCP не завершён. Попросите агента явно выбрать конфигурацию для каждого сервера.")
         }
     } catch {
-        Add-RunUserReportLine -Lines $Lines -Label "vibecoding1c status" -Value "unknown"
+        Add-RunUserReportLine -Lines $Lines -Label "Состояние vibecoding1c" -Value "не удалось определить"
     }
 }
 
@@ -3266,48 +3355,50 @@ function Write-InitRunUserReport {
 
     $lines = [System.Collections.Generic.List[string]]::new()
     $advice = [System.Collections.Generic.List[string]]::new()
-    $lines.Add("## Initialization")
-    Add-RunUserReportLine -Lines $lines -Label "Project root" -Value $script:ProjectRoot
-    Add-RunUserReportLine -Lines $lines -Label "Agent client" -Value (Get-RunUserReportObservedValue -Read { Get-ItlActiveClient } -Default "unknown")
-    Add-RunUserReportLine -Lines $lines -Label "Platform" -Value (Get-RunUserReportObservedValue -Read { Get-PlatformPath })
-    Add-RunUserReportLine -Lines $lines -Label "Base configuration" -Value (Get-RunUserReportObservedValue -Read { Get-BaseConfigurationVersion })
-    Add-RunUserReportLine -Lines $lines -Label "Source infobase kind" -Value (Get-RunUserReportObservedValue -Read { Get-InfoBaseKind })
-    Add-RunUserReportLine -Lines $lines -Label "Source infobase" -Value (Get-RunUserReportObservedValue -Read { Get-SourceInfoBasePath })
-    Add-RunUserReportLine -Lines $lines -Label "Infobase user" -Value (Get-RunUserReportObservedValue -Read { Get-EnvValue -Name "IB_USER" }) -Default "<empty>"
+    $lines.Add("## Инициализация проекта")
+    Add-RunUserReportLine -Lines $lines -Label "Корень проекта" -Value $script:ProjectRoot
+    Add-RunUserReportLine -Lines $lines -Label "Клиент агента" -Value (Get-RunUserReportObservedValue -Read { Get-ItlActiveClient } -Default "состояние не определено")
+    Add-RunUserReportLine -Lines $lines -Label "Платформа 1С" -Value (Get-RunUserReportObservedValue -Read { Get-PlatformPath })
+    Add-RunUserReportLine -Lines $lines -Label "Базовая конфигурация" -Value (Get-RunUserReportObservedValue -Read { Get-BaseConfigurationVersion })
+    $infoBaseKind = Get-RunUserReportObservedValue -Read { Get-InfoBaseKind }
+    Add-RunUserReportLine -Lines $lines -Label "Тип исходной информационной базы" -Value (ConvertTo-RunUserReportStateDisplay -Value $infoBaseKind -Kind InfoBaseKind)
+    Add-RunUserReportLine -Lines $lines -Label "Исходная информационная база" -Value (Get-RunUserReportObservedValue -Read { Get-SourceInfoBasePath })
+    Add-RunUserReportLine -Lines $lines -Label "Пользователь информационной базы" -Value (Get-RunUserReportObservedValue -Read { Get-EnvValue -Name "IB_USER" }) -Default "<пусто>"
     $usesRepository = [bool](Get-RunUserReportObservedValue -Read { Get-SourceUsesRepository } -Default $false)
-    Add-RunUserReportLine -Lines $lines -Label "Configuration repository" -Value $(if ($usesRepository) { "enabled" } else { "disabled" })
+    Add-RunUserReportLine -Lines $lines -Label "Хранилище конфигурации" -Value $(if ($usesRepository) { "используется" } else { "не используется" })
     if ($usesRepository) {
-        Add-RunUserReportLine -Lines $lines -Label "Repository path" -Value (Get-RunUserReportObservedValue -Read { Get-RepositoryPath })
-        Add-RunUserReportLine -Lines $lines -Label "Repository user" -Value (Get-RunUserReportObservedValue -Read { Get-EnvValue -Name "REPOSITORY_USER" }) -Default "<empty>"
+        Add-RunUserReportLine -Lines $lines -Label "Адрес хранилища" -Value (Get-RunUserReportObservedValue -Read { Get-RepositoryPath })
+        Add-RunUserReportLine -Lines $lines -Label "Пользователь хранилища" -Value (Get-RunUserReportObservedValue -Read { Get-EnvValue -Name "REPOSITORY_USER" }) -Default "<пусто>"
     }
-    Add-RunUserReportLine -Lines $lines -Label "Dependency mode" -Value (Get-RunUserReportObservedValue -Read { Get-DependencyMode })
+    Add-RunUserReportLine -Lines $lines -Label "Режим зависимостей" -Value (Get-RunUserReportObservedValue -Read { Get-DependencyMode })
     $publishDefault = [bool](Get-RunUserReportObservedValue -Read { Get-WebPublishByDefault } -Default $false)
     $publishAuto = [bool](Get-RunUserReportObservedValue -Read { Get-WebPublishAuto } -Default $false)
     $publishMode = if (-not $publishDefault) { "disabled" } elseif ($publishAuto) { "automatic" } else { "manual" }
-    Add-RunUserReportLine -Lines $lines -Label "Branch web publication" -Value $publishMode
+    Add-RunUserReportLine -Lines $lines -Label "Web-публикация веток" -Value (ConvertTo-RunUserReportStateDisplay -Value $publishMode -Kind PublicationMode)
 
     $lines.Add("")
     $lines.Add("## MCP")
     $facadeExecutable = [string](Get-RunUserReportObservedValue -Read { Get-ItlOnDemandMcpExecutablePath -AllowMissing } -Default "")
-    Add-RunUserReportLine -Lines $lines -Label "ITL on-demand MCP facade" -Value $(if ($facadeExecutable -and (Test-Path -LiteralPath $facadeExecutable -PathType Leaf)) { "ready" } else { "missing" })
+    $facadeStatus = if ($facadeExecutable -and (Test-Path -LiteralPath $facadeExecutable -PathType Leaf)) { "ready" } else { "missing" }
+    Add-RunUserReportLine -Lines $lines -Label "Шлюз ITL on-demand MCP" -Value (ConvertTo-RunUserReportStateDisplay -Value $facadeStatus -Kind Availability)
     Add-Vibecoding1cRunUserReportLines -Lines $lines -AdviceLines $advice
     Add-KiloBrowserRunUserReportLines -McpLines $lines -AdviceLines $advice -ProjectRoot $script:ProjectRoot
 
     if (-not $usesRepository) {
-        $advice.Add("- No repository update was performed; the master dump uses the current source infobase state.")
+        $advice.Add("- Обновление из хранилища не выполнялось; выгрузка master использует текущее состояние исходной информационной базы.")
     }
     if (-not $facadeExecutable -or -not (Test-Path -LiteralPath $facadeExecutable -PathType Leaf)) {
-        $advice.Add("- ITL on-demand MCP facade is missing. Inspect the initialization log before using branch-local MCP tools.")
+        $advice.Add("- Шлюз ITL on-demand MCP не найден. Перед использованием branch-local MCP проверьте журнал инициализации.")
     }
     if ($VibecodingDeferred) {
-        $advice.Add("- vibecoding1c MCP setup was deferred. Ask the agent to configure it when needed.")
+        $advice.Add("- Настройка vibecoding1c MCP отложена. Попросите агента настроить её, когда она понадобится.")
     }
     if ($script:RunRequiredAction) {
         $advice.Add("- $($script:RunRequiredAction)")
     }
     if ($advice.Count -gt 0) {
         $lines.Add("")
-        $lines.Add("## Instructions and advice")
+        $lines.Add("## Инструкции и рекомендации")
         foreach ($item in $advice) { $lines.Add($item) }
     }
     Write-AndSetRunUserReport -Lines $lines
@@ -3330,49 +3421,50 @@ function Write-DevBranchRunUserReport {
     Set-RunDevBranchState -State $State
     $lines = [System.Collections.Generic.List[string]]::new()
     $advice = [System.Collections.Generic.List[string]]::new()
-    $lines.Add("## Development branch")
-    Add-RunUserReportLine -Lines $lines -Label "Type" -Value (Get-DevBranchKind -State $State)
-    Add-RunUserReportLine -Lines $lines -Label "Branch" -Value (Get-StateValue -State $State -Name "devBranch" -Default "")
-    Add-RunUserReportLine -Lines $lines -Label "Main worktree" -Value (Get-StateValue -State $State -Name "mainWorktreePath" -Default "")
-    Add-RunUserReportLine -Lines $lines -Label "Development worktree" -Value (Get-StateValue -State $State -Name "worktreePath" -Default $AdvisoryRoot)
-    Add-RunUserReportLine -Lines $lines -Label "Infobase" -Value (Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
-    Add-RunUserReportLine -Lines $lines -Label "1C launcher infobase" -Value (Get-StateValue -State $State -Name "launcherInfoBaseName" -Default "")
-    Add-RunUserReportLine -Lines $lines -Label "1C launcher folder" -Value (Get-StateValue -State $State -Name "launcherFolder" -Default "")
+    $lines.Add("## Ветка разработки")
+    Add-RunUserReportLine -Lines $lines -Label "Тип" -Value (ConvertTo-RunUserReportStateDisplay -Value (Get-DevBranchKind -State $State) -Kind BranchKind)
+    Add-RunUserReportLine -Lines $lines -Label "Ветка" -Value (Get-StateValue -State $State -Name "devBranch" -Default "")
+    Add-RunUserReportLine -Lines $lines -Label "Основной worktree" -Value (Get-StateValue -State $State -Name "mainWorktreePath" -Default "")
+    Add-RunUserReportLine -Lines $lines -Label "Worktree разработки" -Value (Get-StateValue -State $State -Name "worktreePath" -Default $AdvisoryRoot)
+    Add-RunUserReportLine -Lines $lines -Label "Информационная база" -Value (Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
+    Add-RunUserReportLine -Lines $lines -Label "База в launcher 1С" -Value (Get-StateValue -State $State -Name "launcherInfoBaseName" -Default "")
+    Add-RunUserReportLine -Lines $lines -Label "Папка в launcher 1С" -Value (Get-StateValue -State $State -Name "launcherFolder" -Default "")
     $publicationUrl = Get-StateValue -State $State -Name "publicationUrl" -Default ""
     if ($publicationUrl) {
-        Add-RunUserReportLine -Lines $lines -Label "Publication URL" -Value $publicationUrl
+        Add-RunUserReportLine -Lines $lines -Label "URL публикации" -Value $publicationUrl
     } else {
-        Add-RunUserReportLine -Lines $lines -Label "Publication" -Value (Get-StateValue -State $State -Name "publicationStatus" -Default "<not set>")
+        $publicationStatus = Get-StateValue -State $State -Name "publicationStatus" -Default ""
+        Add-RunUserReportLine -Lines $lines -Label "Публикация" -Value (ConvertTo-RunUserReportStateDisplay -Value $publicationStatus -Kind PublicationStatus)
     }
     $publicationError = [string](Get-StateValue -State $State -Name "publicationError" -Default "")
     if ((Get-DevBranchKind -State $State) -eq "extension") {
-        Add-RunUserReportLine -Lines $lines -Label "Extension initialization" -Value (Get-DevBranchExtensionInitializationStatus -State $State)
+        Add-RunUserReportLine -Lines $lines -Label "Инициализация расширения" -Value (ConvertTo-RunUserReportStateDisplay -Value (Get-DevBranchExtensionInitializationStatus -State $State) -Kind ExtensionStatus)
     }
 
     $lines.Add("")
     $lines.Add("## MCP")
-    Add-RunUserReportLine -Lines $lines -Label "ROCTUP MCP" -Value (Get-StateValue -State $State -Name "roctupMcpStatus" -Default "unknown")
-    Add-RunUserReportLine -Lines $lines -Label "Vanessa UI MCP" -Value (Get-StateValue -State $State -Name "vanessaMcpStatus" -Default "unknown")
+    Add-RunUserReportLine -Lines $lines -Label "ROCTUP MCP" -Value (ConvertTo-RunUserReportStateDisplay -Value (Get-StateValue -State $State -Name "roctupMcpStatus" -Default "unknown") -Kind McpStatus)
+    Add-RunUserReportLine -Lines $lines -Label "Vanessa UI MCP" -Value (ConvertTo-RunUserReportStateDisplay -Value (Get-StateValue -State $State -Name "vanessaMcpStatus" -Default "unknown") -Kind McpStatus)
     Add-Vibecoding1cRunUserReportLines -Lines $lines -AdviceLines $advice
     Add-KiloBrowserRunUserReportLines -McpLines $lines -AdviceLines $advice -ProjectRoot $AdvisoryRoot
 
     $extensionStatus = Get-DevBranchExtensionInitializationStatus -State $State
     if ((Get-DevBranchKind -State $State) -eq "extension") {
         if ($extensionStatus -eq "pending") {
-            $advice.Add("- In the extension worktree, ask the developer whether to create an Empty extension or load a CFE, then collect the extension name and CFE path when applicable.")
+            $advice.Add("- В worktree расширения уточните у разработчика, нужно создать пустое расширение или загрузить CFE, затем получите имя расширения и, при необходимости, путь к CFE.")
         } elseif ($extensionStatus -eq "ready") {
-            $advice.Add("- Run /itl-check before reporting the development task complete.")
+            $advice.Add("- Перед завершением задачи разработки выполните /itl-check.")
         }
     }
     if ($publicationError) {
-        $advice.Add("- Web publication did not complete. Ask the agent to retry or finish branch publication when needed.")
+        $advice.Add("- Web-публикация не завершена. При необходимости попросите агента повторить или завершить публикацию ветки.")
     }
     if ($script:RunRequiredAction) {
         $advice.Add("- $($script:RunRequiredAction)")
     }
     if ($advice.Count -gt 0) {
         $lines.Add("")
-        $lines.Add("## Instructions and advice")
+        $lines.Add("## Инструкции и рекомендации")
         foreach ($item in $advice) { $lines.Add($item) }
     }
     Write-AndSetRunUserReport -Lines $lines
@@ -5501,7 +5593,7 @@ function New-ExtensionDevBranch {
             Set-RunExtensionProvisioningState -State $state
         } else {
             Set-RunStage -Stage "extension-init.pending" -Detail "The extension branch is ready for agent-guided extension initialization."
-            Set-RunFailureContext -RequiredAction "In the extension worktree, ask the developer whether to create an Empty extension or load a CFE, collect the extension name and CFE path when applicable, then run the internal init-dev-branch-extension helper. Do not ask the developer to run PowerShell."
+            Set-RunFailureContext -RequiredAction "В worktree расширения уточните у разработчика, нужно создать пустое расширение или загрузить CFE, получите имя расширения и, при необходимости, путь к CFE, затем запустите внутренний helper init-dev-branch-extension. Не просите разработчика запускать PowerShell."
             Write-Host "Extension initialization: pending"
             Write-Host "The agent will ask for Empty or CFE, extension name, and optional CFE path in the extension worktree."
         }

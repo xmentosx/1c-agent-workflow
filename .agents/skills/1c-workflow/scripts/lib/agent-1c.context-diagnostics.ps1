@@ -1,4 +1,4 @@
-$script:KiloBrowserAutomationSettingName = "kilo-code.new.browserAutomation.enabled"
+﻿$script:KiloBrowserAutomationSettingName = "kilo-code.new.browserAutomation.enabled"
 $script:KiloContextBenchmarkPrompt = "ITL_CONTEXT_BENCHMARK_V1: Reply with only OK. Do not call tools."
 $script:KiloContextBenchmarkTimeoutSeconds = 180
 
@@ -236,32 +236,62 @@ function Get-KiloBrowserAutomationStatus {
     }
 }
 
+function Get-KiloBrowserAutomationSourceDisplay {
+    param(
+        [string]$Source,
+        [string]$Version = ""
+    )
+
+    switch ($Source) {
+        "workspace" { return "настройки проекта" }
+        "user" { return "настройки пользователя" }
+        "extension-default" {
+            if ($Version) { return "значение по умолчанию расширения Kilo Code $Version" }
+            return "значение по умолчанию расширения Kilo Code"
+        }
+        "workspace-invalid" { return "некорректные настройки проекта" }
+        "user-settings-invalid" { return "некорректные настройки пользователя" }
+        "user-profile-ambiguous" { return "неоднозначные настройки профилей пользователя" }
+        "extension-default-missing" { return "значение по умолчанию расширения Kilo Code не найдено" }
+        "extension-default-conflict" { return "конфликт значений по умолчанию расширения Kilo Code" }
+        "detection-error" { return "ошибка определения состояния" }
+        "advisory-error" { return "ошибка подготовки рекомендации" }
+        default {
+            if ($Source) { return $Source }
+            return "источник не определён"
+        }
+    }
+}
+
 function Get-KiloBrowserAutomationDisplay {
     param([string]$ProjectRoot = $script:ProjectRoot)
 
     try {
         $status = Get-KiloBrowserAutomationStatus -ProjectRoot $ProjectRoot
         if (-not $status.applicable) { return $null }
+        $source = Get-KiloBrowserAutomationSourceDisplay `
+            -Source ([string](Get-ItlObjectPropertyValue -Object $status -Name "source" -Default "")) `
+            -Version ([string](Get-ItlObjectPropertyValue -Object $status -Name "version" -Default ""))
         if ($status.state -eq "enabled") {
             return [pscustomobject]@{
-                statusLine = "Kilo Browser Automation: enabled (source: $($status.source))."
-                adviceLine = "The hidden Playwright MCP adds thousands of context tokens even when it is not used. Enable it only for web-browser tasks. ITL does not change this setting."
+                statusLine = "Kilo Browser Automation: включена (источник: $source)."
+                adviceLine = "Скрытый Playwright MCP добавляет тысячи токенов контекста, даже когда не используется. Включайте его только для задач в веб-браузере. ITL не изменяет эту настройку."
             }
         } elseif ($status.state -eq "disabled") {
             return [pscustomobject]@{
-                statusLine = "Kilo Browser Automation: disabled (source: $($status.source))."
+                statusLine = "Kilo Browser Automation: отключена (источник: $source)."
                 adviceLine = ""
             }
         } else {
             return [pscustomobject]@{
-                statusLine = "Kilo Browser Automation: unknown (source: $($status.source))."
-                adviceLine = "Check Kilo Settings -> Browser. ITL does not change this setting."
+                statusLine = "Kilo Browser Automation: состояние не определено (источник: $source)."
+                adviceLine = "Проверьте Kilo Settings -> Browser. ITL не изменяет эту настройку."
             }
         }
     } catch {
         return [pscustomobject]@{
-            statusLine = "Kilo Browser Automation: unknown (source: advisory-error)."
-            adviceLine = "Check Kilo Settings -> Browser. ITL does not change this setting."
+            statusLine = "Kilo Browser Automation: состояние не определено (источник: ошибка подготовки рекомендации)."
+            adviceLine = "Проверьте Kilo Settings -> Browser. ITL не изменяет эту настройку."
         }
     }
 }

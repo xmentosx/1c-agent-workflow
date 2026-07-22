@@ -53,7 +53,7 @@ $status = [ordered]@{
     gitIndexLockPreExisted = $false
     resumedFrom = $ResumeRunStatusPath
     recoveryReason = $RecoveryReason
-    userReport = "## Initialization`n- Agent client: kilocode`n- Kilo Browser Automation: disabled`n`n## Instructions and advice`n- Run /reload now."
+    userReport = "## Инициализация проекта`n- Клиент агента: kilocode`n- Kilo Browser Automation: отключена`n`n## Инструкции и рекомендации`n- Выполните /reload сейчас."
 }
 [System.IO.File]::WriteAllText($RunStatusPath, (($status | ConvertTo-Json -Depth 6) + [Environment]::NewLine), $utf8)
 exit 0
@@ -71,7 +71,9 @@ exit 0
         $HelperText | Should -Match 'ValidateSet\("configured", "wizard", "json", "resume"\)'
         $HelperText | Should -Match "ResumeRunStatusPath"
         $LauncherText | Should -Match 'Get-AgentAction\) -ne "init-project"'
-        $text | Should -Match 'complete `userReport`'
+        $text | Should -Match 'final response must be exactly that report'
+        $text | Should -Match 'convert it to a table'
+        $text | Should -Match 'rename or merge fields'
     }
 
     It "documents the one-step bootstrap as the normal install path" {
@@ -1532,7 +1534,7 @@ exit 0
             }
             function Format-Vibecoding1cMcpStatusList { param([object[]]$Items); if (@($Items).Count -eq 0) { return "<none>" }; return (@($Items) -join ", ") }
             function Get-KiloBrowserAutomationDisplay {
-                return [pscustomobject]@{ statusLine = "Kilo Browser Automation: unknown (source: fixture)."; adviceLine = "Check Kilo Settings -> Browser." }
+                return [pscustomobject]@{ statusLine = "Kilo Browser Automation: состояние не определено (источник: fixture)."; adviceLine = "Проверьте Kilo Settings -> Browser." }
             }
             function Get-EnvValue {
                 param([string]$Name, [object]$Default = $null)
@@ -1541,19 +1543,23 @@ exit 0
                 if ($Name -eq "REPOSITORY_USER") { return "repo-user" }
                 return $Default
             }
-            $script:RunRequiredAction = "Run /reload now."
+            $script:RunRequiredAction = "Выполните /reload сейчас."
             Write-InitRunUserReport -VibecodingDeferred $true 6>$null
             [pscustomobject]@{ report = $script:RunUserReport }
         }
 
-        $result.report | Should -Match "Agent client: kilocode"
-        $result.report | Should -Match "Source infobase: C:\\fixture\\source"
-        $result.report | Should -Match "Dependency mode: locked"
-        $result.report | Should -Match "Branch web publication: manual"
-        $result.report | Should -Match "vibecoding1c active: docs/remote"
-        $result.report | Should -Match "Kilo Browser Automation: unknown"
-        $result.report | Should -Match "vibecoding1c MCP setup was deferred"
-        $result.report | Should -Match "Run /reload now"
+        $result.report | Should -Match "## Инициализация проекта"
+        $result.report | Should -Match "Клиент агента: kilocode"
+        $result.report | Should -Match "Тип исходной информационной базы: файловая"
+        $result.report | Should -Match "Исходная информационная база: C:\\fixture\\source"
+        $result.report | Should -Match "Режим зависимостей: locked"
+        $result.report | Should -Match "Web-публикация веток: ручная"
+        $result.report | Should -Match "Активные vibecoding1c: docs/remote"
+        $result.report | Should -Match "Пропущенные vibecoding1c: <нет>"
+        $result.report | Should -Match "Kilo Browser Automation: состояние не определено"
+        $result.report | Should -Match "Настройка vibecoding1c MCP отложена"
+        $result.report | Should -Match "Выполните /reload сейчас"
+        $result.report | Should -Not -Match "## Initialization|Agent client:|Source infobase:|Instructions and advice"
         $result.report | Should -Not -Match "PASSWORD|TOKEN|SECRET"
     }
 
@@ -1808,10 +1814,10 @@ Start-Sleep -Seconds 20
             $newStatus.stage | Should -Be "init.complete"
             [int]$newStatus.exitCode | Should -Be 0
             $newStatus.projectRoot | Should -Be ([System.IO.Path]::GetFullPath($tempRoot))
-            $newStatus.userReport | Should -Match "Kilo Browser Automation: disabled"
+            $newStatus.userReport | Should -Be "## Инициализация проекта`n- Клиент агента: kilocode`n- Kilo Browser Automation: отключена`n`n## Инструкции и рекомендации`n- Выполните /reload сейчас."
             $launcherOutput = Get-Content -Encoding UTF8 -Raw $stdoutPath
             $launcherOutput | Should -Match "Agent user report:"
-            $launcherOutput | Should -Match "Run /reload now"
+            $launcherOutput | Should -Match "Выполните /reload сейчас"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

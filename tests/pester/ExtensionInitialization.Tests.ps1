@@ -1,4 +1,4 @@
-Describe "1C workflow extension initialization" {
+﻿Describe "1C workflow extension initialization" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -324,8 +324,8 @@ Describe "1C workflow extension initialization" {
 
         $result.initCalled | Should -BeFalse
         $result.runStatus | Should -Be "pending"
-        $result.requiredAction | Should -Match "In the extension worktree"
-        $result.requiredAction | Should -Match "Do not ask the developer to run PowerShell"
+        $result.requiredAction | Should -Match "В worktree расширения"
+        $result.requiredAction | Should -Match "Не просите разработчика запускать PowerShell"
     }
 
     It "resumes a prepared pending branch without copying its infobase again" {

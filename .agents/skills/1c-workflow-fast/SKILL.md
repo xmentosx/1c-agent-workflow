@@ -49,7 +49,7 @@ For CFE, replace `Empty` with `Cfe` and append `-ExtensionSourcePath "<absolute-
 
 Use direct `agent-1c.ps1` for branch creation only when the master source confirmation matches the current base/user or non-interactive automation explicitly sets `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip`.
 
-New branches use sibling worktrees from `master`. After success, relay the complete `userReport` with paths, MCP/Browser state, instructions, and advice; do not reduce it to `requiredAction` or read `console.log`. Use the path and helper opening; never make the developer copy lifecycle commands. `-UseCurrentWorktree` is explicit-only.
+On success, the final response must be exactly the non-empty `userReport` Markdown. Do not translate it, use a code fence, convert it to a table, rename or merge fields, reorder or omit lines, summarize, or use `requiredAction`. Russian MCP/Browser and advice are included; do not read `console.log`. `-UseCurrentWorktree` explicit-only.
 
 New branch commands register stable `itl-roctup-data` and `itl-vanessa-ui` stdio facades with compact `resolve_tool`/`call_tool` surfaces without opening the branch infobase. Resolution is local; their first inner call starts a client-owned backend automatically. For runtime UI research, recording, or debugging follow `.agents/skills/itl-vanessa-ui-mcp/SKILL.md`. Static form/source questions do not call Vanessa UI MCP. `/itl-check` is separate Vanessa Automation verification, not MCP.
 

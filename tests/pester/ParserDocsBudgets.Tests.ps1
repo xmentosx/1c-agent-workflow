@@ -406,12 +406,12 @@
         $statusText = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "itl-status.md.template")
         $litemodeText = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "itl-litemode.md.template")
 
-        $statusText | Should -Match "structured Markdown report with no prose paragraphs"
-        $statusText | Should -Match 'one `- Label: value` field per line'
-        $statusText | Should -Match "Use only helper values"
-        $statusText | Should -Match "omit unavailable sections"
-        $statusText | Should -Match "always include its state, source"
-        $statusText | Should -Match "never omit it during summarization"
+        $statusText | Should -Match "structured Russian Markdown report with no prose paragraphs"
+        $statusText | Should -Match 'one `- Подпись: значение` field per line'
+        $statusText | Should -Match "preserve concrete helper values"
+        $statusText | Should -Match "Omit unavailable sections"
+        $statusText | Should -Match "copy its Russian state/source line"
+        $statusText | Should -Match "never omit, reword, or move"
         $litemodeText | Should -Match "complete helper stdout unchanged"
         $litemodeText | Should -Match 'exactly one fenced `text` code block'
         $litemodeText | Should -Match "mode-change confirmation"
@@ -427,9 +427,14 @@
 
         foreach ($text in @($installText, $workflowSkill, $fastSkill, $configBranch, $extensionBranch)) {
             $text | Should -Match "userReport"
-            $text | Should -Match "complet"
+            $text | Should -Match "final response must be exactly|make the final response exactly"
             $text | Should -Match "MCP/Browser"
             $text | Should -Match "advice"
+            $text | Should -Match "Do not translate it"
+            $text | Should -Match "convert it to a table"
+            $text | Should -Match "rename or merge fields"
+            $text | Should -Match "reorder or omit lines"
+            $text | Should -Match "code fence"
             $text | Should -Match "console\.log"
         }
     }
