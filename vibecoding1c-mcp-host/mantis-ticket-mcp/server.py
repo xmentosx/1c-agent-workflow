@@ -1007,7 +1007,7 @@ def create_mcp() -> Tuple[Any, MantisTicketService]:
 
     settings = Settings.from_env()
     service = MantisTicketService(settings)
-    mcp = FastMCP("mantis-ticket")
+    mcp = FastMCP("mantis-ticket", stateless_http=True)
 
     @mcp.tool
     def read_ticket(

@@ -71,9 +71,30 @@
 
     It "bounds BookStack MCP responses and keeps explicit continuation" {
         $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\test_server.py"
-        $output = & python $testPath 2>&1
-        $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 14 tests"
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            $output = & python $testPath 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 15 tests"
+    }
+
+    It "keeps the Mantis MCP transport stateless" {
+        $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\test_server.py"
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            $output = & python $testPath 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 4 tests"
     }
 
     It "falls back to the direct endpoint when the qualified proxy is unavailable" {
@@ -90,6 +111,7 @@
                 (Test-ToolsListProxyTarget -Config $hostConfig -ServerId "graph") | Should -BeFalse
                 function Get-HostContainerPublishState { param([string]$ContainerName); return "running" }
                 function Test-HostTcpPortOpen { param([int]$Port, [int]$TimeoutMilliseconds = 500); return ($script:ProxyReady -and $Port -eq 22100) }
+                function Test-ToolsListProxyReady { param([int]$Port, [int]$TimeoutSec = 35); return ($script:ProxyReady -and $Port -eq 22100) }
                 $server = [ordered]@{
                     id = "code"; url = "http://host:22100/mcp"; directUrl = "http://host:18100/mcp"; proxyUrl = "http://host:22100/mcp"
                     proxyPort = 22100; proxyContainerName = "itl-code-tools-list-proxy"; toolsContractStatus = "qualified"
@@ -102,6 +124,33 @@
                 $fallback = Update-ToolsListProxyPublishEndpoint -Server $server
                 $fallback.url | Should -Be "http://host:18100/mcp"
                 $fallback.toolsContractStatus | Should -Be "fallback-direct"
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "qualifies proxy readiness from the MCP-aware endpoint" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-tools-proxy-readiness-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{ schemaVersion = 1; stateRoot = (Join-Path $tempRoot "state") }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function Invoke-RestMethod {
+                    param($Uri, $Method, $TimeoutSec, $ErrorAction)
+                    if ($script:ReadinessResult -eq "throw") { throw "fixture upstream failure" }
+                    return [pscustomobject]@{ status = $script:ReadinessResult }
+                }
+
+                $script:ReadinessResult = "ready"
+                (Test-ToolsListProxyReady -Port 22005) | Should -BeTrue
+                $script:ReadinessResult = "unready"
+                (Test-ToolsListProxyReady -Port 22005) | Should -BeFalse
+                $script:ReadinessResult = "throw"
+                (Test-ToolsListProxyReady -Port 22005) | Should -BeFalse
+                (Test-ToolsListProxyReady -Port 0) | Should -BeFalse
+                Remove-Variable -Scope Script -Name ReadinessResult -ErrorAction SilentlyContinue
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
@@ -179,8 +228,9 @@
                 }
                 function Test-HostTcpPortOpen {
                     param([int]$Port, [int]$TimeoutMilliseconds = 500)
-                    return ($Port -eq 18100)
+                    return ($Port -in @(18100, 22100))
                 }
+                function Test-ToolsListProxyReady { param([int]$Port, [int]$TimeoutSec = 35); return $false }
                 function Invoke-DockerCommand {
                     param([string[]]$Arguments, [switch]$Quiet, [int]$TimeoutSec = 300)
                     $script:ProxyRollbackDockerCalls.Add(($Arguments -join " "))
@@ -231,6 +281,7 @@
         $bookStackRequirementsText | Should -Match "fastmcp>=2\.10,<3\.0"
         $bookStackRequirementsText | Should -Match "sentence-transformers"
         $bookStackServerText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\bookstack-product-docs-mcp\server.py")
+        $bookStackServerText | Should -Match 'FastMCP\("bookstack-product-docs", stateless_http=True\)'
         foreach ($toolName in @("search_docs", "read_page", "list_structure", "index_status", "reindex_docs")) {
             $bookStackServerText | Should -Match "def $toolName"
         }
@@ -256,6 +307,7 @@
         $mantisRequirementsText | Should -Match "pytesseract"
         $mantisRequirementsText | Should -Match "Pillow"
         $mantisServerText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\server.py")
+        $mantisServerText | Should -Match 'FastMCP\("mantis-ticket", stateless_http=True\)'
         foreach ($toolName in @("read_ticket", "get_attachment", "health")) {
             $mantisServerText | Should -Match "def $toolName"
         }

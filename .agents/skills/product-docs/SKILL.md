@@ -36,7 +36,7 @@ For 1C objects, queries, forms, registers, procedures, modules, dependencies, an
 
 For platform APIs and standard 1C mechanisms, use `1C-docs-mcp`, `1c-syntax-checker-mcp`, `1c-ssl-mcp`, and other relevant MCP tools when connected.
 
-If relevant MCP tools are unavailable, continue with files and tests when safe, and explicitly mention that MCP verification was not performed.
+If relevant MCP tools are unavailable, continue with files and tests when safe, and explicitly mention that MCP verification was not performed. For `Session not found`, tell the user to run `/reload` before retrying the MCP call; do not imply that a repeated call on the same stale session restored verification.
 
 ## Conflict Handling
 

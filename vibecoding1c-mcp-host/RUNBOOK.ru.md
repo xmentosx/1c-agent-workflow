@@ -117,6 +117,9 @@ notepad .\host.config.json
   routing-card при совпадении хеша исходного описания. Вложенные описания JSON Schema, а также
   неутверждённые или изменившиеся описания передаются без изменений. `tools/call`, сессии, имена,
   annotations и ограничения JSON Schema не меняются.
+  `GET /health` проверяет только процесс proxy, а `GET /ready` выполняет ограниченный MCP probe,
+  проверяет upstream tool contract и закрывает созданную диагностическую stateful-сессию.
+  Proxy публикуется только после успешного `/ready`; вызовы `tools/call` он не повторяет.
   После первоначального setup используйте `-Action proxy`: действие работает по сохранённому
   host-state, не обновляет конфигурации, не перезапускает прямые MCP и не запускает индексацию.
   Все цели сначала квалифицируются; при любой ошибке контейнеры и host-state откатываются,
@@ -227,6 +230,9 @@ BookStack MCP получит `EMBEDDING_MODEL`, использует общий 
 смонтированный в контейнер как `/app/model_cache`, и загрузит модель локально через
 `sentence-transformers`. Если в `embedding` задан `apiKey`, BookStack MCP вместо этого
 использует OpenAI-compatible `/embeddings` endpoint.
+
+BookStack и Mantis MCP работают в stateless HTTP mode. После пересоздания их контейнеров
+существующий клиент может продолжить вызовы без `/reload`; proxy при этом остаётся прозрачным.
 
 `setup` делает полный цикл:
 

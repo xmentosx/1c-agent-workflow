@@ -1165,7 +1165,7 @@ def create_mcp() -> Tuple[Any, ProductDocsService]:
 
     settings = Settings.from_env()
     service = ProductDocsService(settings)
-    mcp = FastMCP("bookstack-product-docs")
+    mcp = FastMCP("bookstack-product-docs", stateless_http=True)
 
     def wrap_result(operation: str, result: Dict[str, Any]) -> Any:
         return ToolResult(content=tool_result_summary(operation, result), structured_content=result)
