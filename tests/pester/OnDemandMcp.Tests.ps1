@@ -106,6 +106,31 @@ Describe "ITL on-demand MCP facade" {
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "synchronizes an installed fresh lock to the canonical facade release" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-lock-sync-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"dependencyMode":"fresh","aiRules":{"tools":["kilocode"]}}'
+            $oldLock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $oldLock.dependencies.itlOndemandMcp.version = "0.3.1"
+            $oldLock.dependencies.itlOndemandMcp.url = "https://example.invalid/itl-ondemand-mcp-v0.3.1.exe"
+            $oldLock.dependencies.itlOndemandMcp.sha256 = ("b" * 64)
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value ($oldLock | ConvertTo-Json -Depth 10)
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Sync-ItlOnDemandMcpDependencyLock *> $null
+                Read-DependencyLockManifest
+            }
+            $canonical = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $result.dependencies.itlOndemandMcp.version | Should -Be $canonical.dependencies.itlOndemandMcp.version
+            $result.dependencies.itlOndemandMcp.url | Should -Be $canonical.dependencies.itlOndemandMcp.url
+            $result.dependencies.itlOndemandMcp.sha256 | Should -Be $canonical.dependencies.itlOndemandMcp.sha256
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "installs from the cached release asset when the workflow is an installed copy without Git metadata" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-installed-copy-" + [guid]::NewGuid().ToString("N"))
         try {

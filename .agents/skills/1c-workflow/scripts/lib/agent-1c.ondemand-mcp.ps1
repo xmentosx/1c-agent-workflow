@@ -10,6 +10,28 @@ function Get-ItlOnDemandMcpCompatibility {
     return (Read-Utf8Text -Path $path | ConvertFrom-Json)
 }
 
+function Sync-ItlOnDemandMcpDependencyLock {
+    if ((Get-DependencyMode) -ne "fresh") {
+        return $false
+    }
+
+    $template = New-DefaultDependencyLockManifest
+    $entry = Get-ConfigValueFromObject -Object $template -Path "dependencies.itlOndemandMcp" -Default $null
+    if ($null -eq $entry) {
+        throw "templates/dependency-lock.json has no itlOndemandMcp entry."
+    }
+
+    $compatibility = Get-ItlOnDemandMcpCompatibility
+    $templateVersion = [string](Get-ConfigValueFromObject -Object $entry -Path "version" -Default "")
+    if (-not $templateVersion -or $templateVersion -cne [string]$compatibility.facadeVersion) {
+        throw "ITL_ONDEMAND_TEMPLATE_COMPATIBILITY_MISMATCH: template='$templateVersion' compatibility='$($compatibility.facadeVersion)'."
+    }
+
+    Update-DependencyLockEntry -Name "itlOndemandMcp" -Values (ConvertTo-Agent1cHashtable -Object $entry)
+    Write-Host "ITL on-demand MCP fresh lock synchronized to facade $templateVersion."
+    return $true
+}
+
 function Get-ItlOnDemandCatalogCanonicalSha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
 

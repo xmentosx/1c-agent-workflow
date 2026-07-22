@@ -2733,6 +2733,7 @@ function Update-WorkflowPackage {
     Update-UserRules
     Update-RoctupMcp
     Update-VanessaMcpArtifacts
+    Sync-ItlOnDemandMcpDependencyLock | Out-Null
     Install-ItlOnDemandMcp | Out-Null
 
     if ($SkipAiRules) {
