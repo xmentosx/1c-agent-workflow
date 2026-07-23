@@ -999,6 +999,23 @@
         }
     }
 
+    It "accepts the main-helper lifecycle phase emitted by a stale branch helper" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-main-helper-phase-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $args = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help -LifecyclePhase main-helper *> $null
+                Get-Agent1cReexecArguments
+            }
+
+            $args | Should -Contain "-LifecyclePhase"
+            $args | Should -Contain "main-helper"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "seeds fingerprints only after a real branch copy and invalidates both kinds after restore" {
         $lifecycleText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
         $lifecycleText | Should -Match '(?s)if \(\$copyPerformed\)\s*\{.*?lastConfigDesignerFingerprint.*?loadReason"\] = "branch-copy-seed"'
