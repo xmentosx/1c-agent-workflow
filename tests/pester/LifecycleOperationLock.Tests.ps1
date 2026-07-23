@@ -237,11 +237,12 @@ Describe "1C workflow lifecycle operation lock" {
         try {
             Initialize-LifecycleLockTestRepository -Path $tempRoot
             $statePath = Join-Path $tempRoot ".agent-1c\locks\lifecycle-operation.json"
+            $staleOperationId = [guid]::NewGuid().ToString("N")
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $statePath) | Out-Null
             [ordered]@{
                 schemaVersion = 1
                 status = "running"
-                operationId = "stale-operation"
+                operationId = $staleOperationId
                 action = "run-dev-branch-tests"
                 projectRoot = $tempRoot
                 worktreePath = $tempRoot
@@ -271,8 +272,16 @@ Describe "1C workflow lifecycle operation lock" {
             $normal.exitCode | Should -Be 1
             $normal.combinedText | Should -Not -Match "LIFECYCLE_OPERATION_CONFLICT"
             $record = Get-Content -Encoding UTF8 -Raw -LiteralPath $statePath | ConvertFrom-Json
-            $record.operationId | Should -Not -Be "stale-operation"
+            $record.operationId | Should -Not -Be $staleOperationId
             $record.status | Should -Be "failed"
+            $record.recoveredOperationId | Should -Be $staleOperationId
+            $archivePath = [string]$record.recoveredOperationArchivePath
+            Test-Path -LiteralPath $archivePath -PathType Leaf | Should -BeTrue
+            $archive = Get-Content -Encoding UTF8 -Raw -LiteralPath $archivePath | ConvertFrom-Json
+            $archive.operationId | Should -Be $staleOperationId
+            $archive.status | Should -Be "failed"
+            $archive.phase | Should -Be "orphaned"
+            $archive.errorCode | Should -Be "LIFECYCLE_OPERATION_ORPHANED"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

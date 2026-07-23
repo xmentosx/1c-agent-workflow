@@ -385,4 +385,76 @@ Describe "ITL on-demand MCP facade" {
             $owned | Should -BeFalse
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
+
+    It "drains only on-demand runtime records that target the selected infobase" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-target-drain-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $runtimeRoot = Join-Path $tempRoot "runtime"
+                function Get-ItlOnDemandRuntimeRoot { return $runtimeRoot }
+                function Release-ItlManagedPortAllocation { }
+                $baseA = Join-Path $tempRoot "base-a"
+                $baseB = Join-Path $tempRoot "base-b"
+                foreach ($item in @(
+                    [pscustomobject]@{ family = "roctup"; instanceId = ("a" * 32); infoBasePath = $baseA; portFamily = "roctup"; portKey = "a" },
+                    [pscustomobject]@{ family = "vanessa-ui"; instanceId = ("b" * 32); infoBasePath = $baseA; portFamily = "vanessa"; portKey = "b" },
+                    [pscustomobject]@{ family = "roctup"; instanceId = ("c" * 32); infoBasePath = $baseB; portFamily = "roctup"; portKey = "c" }
+                )) {
+                    Write-ItlOnDemandRuntimeState -RuntimeState ([pscustomobject][ordered]@{
+                        schemaVersion = 2
+                        status = "running"
+                        family = $item.family
+                        instanceId = $item.instanceId
+                        pid = 0
+                        processStartTime = ""
+                        executablePath = ""
+                        ownershipMarkers = @()
+                        portFamily = $item.portFamily
+                        portKey = $item.portKey
+                        port = 0
+                        infoBasePath = $item.infoBasePath
+                        testClientPid = 0
+                        testClientPort = 0
+                        testClientPortFamily = ""
+                        testClientPortKey = ""
+                        vanessaParamsPath = ""
+                    }) | Out-Null
+                }
+
+                Stop-ItlOnDemandBackends -InfoBasePath $baseA -Strict
+                [pscustomobject]@{
+                    baseA = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object { Test-ItlOnDemandInfoBaseMatch $_.infoBasePath $baseA }).Count
+                    baseB = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object { Test-ItlOnDemandInfoBaseMatch $_.infoBasePath $baseB }).Count
+                }
+            }
+            $result.baseA | Should -Be 0
+            $result.baseB | Should -Be 1
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "fails closed when strict runtime drain encounters unreadable ownership state" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-invalid-state-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $message = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $runtimeRoot = Join-Path $tempRoot "runtime"
+                function Get-ItlOnDemandRuntimeRoot { return $runtimeRoot }
+                $invalidPath = Join-Path $runtimeRoot ("roctup\" + ("d" * 32) + ".json")
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $invalidPath) | Out-Null
+                Set-Content -LiteralPath $invalidPath -Encoding UTF8 -Value "{not-json"
+                try {
+                    Stop-ItlOnDemandBackends -InfoBasePath (Join-Path $tempRoot "base") -Strict
+                } catch {
+                    return $_.Exception.Message
+                }
+                return ""
+            }
+            $message | Should -Match "^ITL_ONDEMAND_RUNTIME_STATE_INVALID "
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
 }
