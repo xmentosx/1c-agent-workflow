@@ -774,6 +774,24 @@
         $HelperText | Should -Match ([regex]::Escape($requiredPath))
     }
 
+    It "ignores transactional runtime staging in every package surface" {
+        $requiredPaths = @(
+            ".agent-1c/branch-dumps/",
+            ".agent-1c/config-dump/",
+            ".agent-1c/extension-dump/",
+            ".agent-1c/extension-init/",
+            ".agent-1c/snapshots/",
+            ".agent-1c/release-e2e-roundtrip/",
+            ".agent-1c/release-e2e-extension/",
+            ".agent-1c/tmp/"
+        )
+        foreach ($requiredPath in $requiredPaths) {
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))
+            (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
+            $HelperText | Should -Match ([regex]::Escape($requiredPath))
+        }
+    }
+
     It "ignores local agent client and MCP runtime state without blocking branch creation" {
         $requiredPaths = @(
             ".agent-1c/mcp/",
