@@ -3465,26 +3465,49 @@ function Set-RunDevBranchState {
 function Write-DevBranchRunUserReport {
     param(
         [object]$State,
-        [string]$AdvisoryRoot
+        [string]$AdvisoryRoot,
+        [ValidateSet("created", "refreshed")]
+        [string]$Operation = "created",
+        [AllowNull()][object]$LoadResult = $null
     )
 
     Set-RunDevBranchState -State $State
     $lines = [System.Collections.Generic.List[string]]::new()
     $advice = [System.Collections.Generic.List[string]]::new()
-    $lines.Add("## Ветка разработки")
+    $isRefresh = $Operation -eq "refreshed"
+    $lines.Add($(if ($isRefresh) { "## Обновление ветки разработки" } else { "## Ветка разработки" }))
+    if ($isRefresh) {
+        Add-RunUserReportLine -Lines $lines -Label "Результат" -Value "успешно"
+    }
     Add-RunUserReportLine -Lines $lines -Label "Тип" -Value (ConvertTo-RunUserReportStateDisplay -Value (Get-DevBranchKind -State $State) -Kind BranchKind)
     Add-RunUserReportLine -Lines $lines -Label "Ветка" -Value (Get-StateValue -State $State -Name "devBranch" -Default "")
     Add-RunUserReportLine -Lines $lines -Label "Основной worktree" -Value (Get-StateValue -State $State -Name "mainWorktreePath" -Default "")
     Add-RunUserReportLine -Lines $lines -Label "Worktree разработки" -Value (Get-StateValue -State $State -Name "worktreePath" -Default $AdvisoryRoot)
     Add-RunUserReportLine -Lines $lines -Label "Информационная база" -Value (Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
-    Add-RunUserReportLine -Lines $lines -Label "База в launcher 1С" -Value (Get-StateValue -State $State -Name "launcherInfoBaseName" -Default "")
-    Add-RunUserReportLine -Lines $lines -Label "Папка в launcher 1С" -Value (Get-StateValue -State $State -Name "launcherFolder" -Default "")
-    $publicationUrl = Get-StateValue -State $State -Name "publicationUrl" -Default ""
-    if ($publicationUrl) {
-        Add-RunUserReportLine -Lines $lines -Label "URL публикации" -Value $publicationUrl
+    if ($isRefresh) {
+        Add-RunUserReportLine -Lines $lines -Label "Коммит ветки" -Value (Get-StateValue -State $LoadResult -Name "currentCommit" -Default (Get-StateValue -State $State -Name "lastConfigBaseUpdatedCommit" -Default ""))
+        $configurationUpdate = if ($null -ne $LoadResult -and [bool](Get-StateValue -State $LoadResult -Name "loaded" -Default $false)) { "выполнено" } else { "не требовалось" }
+        Add-RunUserReportLine -Lines $lines -Label "Обновление конфигурации базы" -Value $configurationUpdate
+        $loadMode = [string](Get-StateValue -State $LoadResult -Name "loadModeUsed" -Default "")
+        $loadModeDisplay = switch ($loadMode) {
+            "partial" { "частичная загрузка" }
+            "full" { "полная загрузка" }
+            "full-fallback" { "полная загрузка после ошибки частичной" }
+            default { "не применялся" }
+        }
+        Add-RunUserReportLine -Lines $lines -Label "Режим загрузки" -Value $loadModeDisplay
+        $enterpriseUpdate = if ($null -ne $LoadResult -and [bool](Get-StateValue -State $LoadResult -Name "enterpriseInvoked" -Default $false)) { "выполнено" } else { "не требовалось" }
+        Add-RunUserReportLine -Lines $lines -Label "Enterprise-автообновление" -Value $enterpriseUpdate
     } else {
-        $publicationStatus = Get-StateValue -State $State -Name "publicationStatus" -Default ""
-        Add-RunUserReportLine -Lines $lines -Label "Публикация" -Value (ConvertTo-RunUserReportStateDisplay -Value $publicationStatus -Kind PublicationStatus)
+        Add-RunUserReportLine -Lines $lines -Label "База в launcher 1С" -Value (Get-StateValue -State $State -Name "launcherInfoBaseName" -Default "")
+        Add-RunUserReportLine -Lines $lines -Label "Папка в launcher 1С" -Value (Get-StateValue -State $State -Name "launcherFolder" -Default "")
+        $publicationUrl = Get-StateValue -State $State -Name "publicationUrl" -Default ""
+        if ($publicationUrl) {
+            Add-RunUserReportLine -Lines $lines -Label "URL публикации" -Value $publicationUrl
+        } else {
+            $publicationStatus = Get-StateValue -State $State -Name "publicationStatus" -Default ""
+            Add-RunUserReportLine -Lines $lines -Label "Публикация" -Value (ConvertTo-RunUserReportStateDisplay -Value $publicationStatus -Kind PublicationStatus)
+        }
     }
     $publicationError = [string](Get-StateValue -State $State -Name "publicationError" -Default "")
     if ((Get-DevBranchKind -State $State) -eq "extension") {
@@ -3499,7 +3522,21 @@ function Write-DevBranchRunUserReport {
     Add-KiloBrowserRunUserReportLines -McpLines $lines -AdviceLines $advice -ProjectRoot $AdvisoryRoot
 
     $extensionStatus = Get-DevBranchExtensionInitializationStatus -State $State
-    if ((Get-DevBranchKind -State $State) -eq "extension") {
+    if ($isRefresh) {
+        $client = [string](Get-RunUserReportObservedValue -Read { Get-ItlActiveClient } -Default "")
+        if ($client -eq "kilocode") {
+            $advice.Add("- Выполните /reload в текущем окне Kilo Code, чтобы клиент перечитал обновлённые правила, навыки и команды ветки.")
+        } else {
+            $reloadInstruction = [string](Get-RunUserReportObservedValue -Read {
+                Get-StateValue -State (Get-ItlClientAdapter -Client $client) -Name "reloadUserReport" -Default "Перезапустите активный клиент."
+            } -Default "Перезапустите активный клиент.")
+            $advice.Add("- Заставьте текущий клиент перечитать обновлённый проект: $reloadInstruction")
+        }
+        $advice.Add("- Перед продолжением разработки выполните /itl-check.")
+        if ((Get-DevBranchKind -State $State) -eq "extension") {
+            $advice.Add("- Файлы расширения при обновлении ветки не загружались; /itl-check обновит расширение в базе перед проверкой.")
+        }
+    } elseif ((Get-DevBranchKind -State $State) -eq "extension") {
         if ($extensionStatus -eq "pending") {
             $advice.Add("- В worktree расширения уточните у разработчика, нужно создать пустое расширение или загрузить CFE, затем получите имя расширения и, при необходимости, путь к CFE.")
         } elseif ($extensionStatus -eq "ready") {
@@ -6183,6 +6220,8 @@ function Refresh-DevBranch {
     }
     Sync-KiloItlCommandSurface
     Invoke-AiRules1cManagedMcpConfigReconcile -Operation "refresh-dev-branch MCP reconcile" | Out-Null
+    $updatedState = Read-DevBranchState -Name $DevBranchName
+    Write-DevBranchRunUserReport -State $updatedState -AdvisoryRoot $script:ProjectRoot -Operation refreshed -LoadResult $loadResult
 }
 
 function Dump-DevBranchExtension {

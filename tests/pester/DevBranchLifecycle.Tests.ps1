@@ -874,6 +874,18 @@
         }
     }
 
+    It "writes the refresh user report only after MCP reconciliation" {
+        $match = [regex]::Match($HelperText, "(?s)function\s+Refresh-DevBranch\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
+        $match.Success | Should -Be $true
+        $body = $match.Groups["body"].Value
+        $reconcileIndex = $body.IndexOf('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "refresh-dev-branch MCP reconcile"')
+        $reportIndex = $body.IndexOf('Write-DevBranchRunUserReport -State $updatedState')
+
+        $reconcileIndex | Should -BeGreaterOrEqual 0
+        $reportIndex | Should -BeGreaterThan $reconcileIndex
+        $body | Should -Match ([regex]::Escape("-Operation refreshed -LoadResult `$loadResult"))
+    }
+
     It "routes branch master synchronization through the main worktree helper first" {
         $match = [regex]::Match($HelperText, "(?s)function\s+Sync-Master\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
         $match.Success | Should -Be $true
@@ -2164,6 +2176,94 @@ if (`$?) { exit 0 } else { exit 1 }
         $report | Should -Match "Vanessa UI MCP: отключён"
         $report | Should -Not -Match "Инициализация расширения"
         $report | Should -Match "Откройте новое окно клиента в worktree"
+    }
+
+    It "builds a complete safe Russian refresh report with an explicit successful result" {
+        $report = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-ItlActiveClient { return "kilocode" }
+            function Get-Vibecoding1cMcpStatusSummary {
+                return [pscustomobject]@{ active = @("docs/remote"); skipped = @(); staleServers = @(); missingConfigId = @() }
+            }
+            function Format-Vibecoding1cMcpStatusList { param([object[]]$Items); if (@($Items).Count -eq 0) { return "<none>" }; return (@($Items) -join ", ") }
+            function Get-KiloBrowserAutomationDisplay {
+                return [pscustomobject]@{ statusLine = "Kilo Browser Automation: включена (источник: настройки проекта)."; adviceLine = "Browser Automation использует платный скрытый Playwright MCP." }
+            }
+            $state = [pscustomobject]@{
+                devBranchKind = "configuration"
+                devBranch = "itldev/refresh-report"
+                mainWorktreePath = "C:\fixture\main"
+                worktreePath = "C:\fixture\refresh-report"
+                devBranchInfoBasePath = "C:\fixture\ib-refresh"
+                roctupMcpStatus = "stopped"
+                vanessaMcpStatus = "stopped"
+                password = "PASSWORD_SHOULD_NOT_LEAK"
+                token = "TOKEN_SHOULD_NOT_LEAK"
+            }
+            $loadResult = [pscustomobject]@{
+                loaded = $true
+                currentCommit = "0123456789abcdef"
+                loadModeUsed = "partial"
+                enterpriseInvoked = $true
+                secretKey = "SECRET_SHOULD_NOT_LEAK"
+            }
+            Write-DevBranchRunUserReport -State $state -AdvisoryRoot $state.worktreePath -Operation refreshed -LoadResult $loadResult 6>$null
+            $script:RunUserReport
+        }
+
+        $report | Should -Match "## Обновление ветки разработки"
+        $report | Should -Match "Результат: успешно"
+        $report | Should -Match "Тип: конфигурация"
+        $report | Should -Match "Ветка: itldev/refresh-report"
+        $report | Should -Match "Коммит ветки: 0123456789abcdef"
+        $report | Should -Match "Обновление конфигурации базы: выполнено"
+        $report | Should -Match "Режим загрузки: частичная загрузка"
+        $report | Should -Match "Enterprise-автообновление: выполнено"
+        $report | Should -Match "ROCTUP MCP: остановлен"
+        $report | Should -Match "Kilo Browser Automation: включена"
+        $report | Should -Match "Browser Automation использует платный скрытый Playwright MCP"
+        $report | Should -Match "Выполните /reload"
+        $report | Should -Match "выполните /itl-check"
+        $report | Should -Not -Match "Development branch|successful|Configuration update|Instructions and advice"
+        $report | Should -Not -Match "PASSWORD_SHOULD_NOT_LEAK|TOKEN_SHOULD_NOT_LEAK|SECRET_SHOULD_NOT_LEAK"
+    }
+
+    It "reports an extension refresh without pretending that extension files were loaded" {
+        $report = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-ItlActiveClient { return "kilocode" }
+            function Get-Vibecoding1cMcpStatusSummary {
+                return [pscustomobject]@{ active = @(); skipped = @(); staleServers = @(); missingConfigId = @() }
+            }
+            function Format-Vibecoding1cMcpStatusList { param([object[]]$Items); return "<none>" }
+            function Get-KiloBrowserAutomationDisplay { return $null }
+            $state = [pscustomobject]@{
+                devBranchKind = "extension"
+                devBranch = "itldev/extension-refresh"
+                mainWorktreePath = "C:\fixture\main"
+                worktreePath = "C:\fixture\extension-refresh"
+                devBranchInfoBasePath = "C:\fixture\ib-extension"
+                extensionInitializationStatus = "ready"
+                roctupMcpStatus = "stopped"
+                vanessaMcpStatus = "disabled"
+            }
+            $loadResult = [pscustomobject]@{
+                loaded = $false
+                currentCommit = "fedcba9876543210"
+                loadModeUsed = ""
+                enterpriseInvoked = $false
+            }
+            Write-DevBranchRunUserReport -State $state -AdvisoryRoot $state.worktreePath -Operation refreshed -LoadResult $loadResult 6>$null
+            $script:RunUserReport
+        }
+
+        $report | Should -Match "Результат: успешно"
+        $report | Should -Match "Тип: расширение"
+        $report | Should -Match "Инициализация расширения: готово"
+        $report | Should -Match "Обновление конфигурации базы: не требовалось"
+        $report | Should -Match "Режим загрузки: не применялся"
+        $report | Should -Match "Enterprise-автообновление: не требовалось"
+        $report | Should -Match "Файлы расширения при обновлении ветки не загружались"
     }
 
     It "documents and templates the development branch worktree root" {
