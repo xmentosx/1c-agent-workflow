@@ -91,7 +91,7 @@ param(
     [string]$RunStatusPath,
     [string]$RunLogPath,
     [switch]$PauseOnFailure,
-    [ValidateSet("", "pre-copy", "post-copy", "post-merge")]
+    [ValidateSet("", "pre-copy", "post-copy", "post-merge", "main-helper")]
     [string]$LifecyclePhase = "",
     [string]$OperationId = "",
     [int]$OperationOwnerPid = 0,
