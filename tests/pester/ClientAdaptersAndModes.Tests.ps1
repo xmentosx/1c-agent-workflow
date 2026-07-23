@@ -296,6 +296,30 @@
         }
     }
 
+    It "does not rewrite an unchanged Kilo MCP config" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-kilo-mcp-idempotent-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $endpoints = @([pscustomobject]@{ name = "remote-test"; url = "https://itl.invalid/mcp"; transport = "remote" })
+                Write-ItlClientMcpEndpoints -Client kilocode -Owner test -Endpoints $endpoints | Out-Null
+                $path = Join-Path $tempRoot ".kilo\kilo.json"
+                $sentinel = [DateTime]::UtcNow.AddHours(-2)
+                [System.IO.File]::SetLastWriteTimeUtc($path, $sentinel)
+                Write-ItlClientMcpEndpoints -Client kilocode -Owner test -Endpoints $endpoints | Out-Null
+                [pscustomobject]@{
+                    expected = $sentinel
+                    actual = [System.IO.File]::GetLastWriteTimeUtc($path)
+                }
+            }
+            $result.actual | Should -Be $result.expected
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "pins and removes only the managed Pi extension package" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-pi-package-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -573,7 +597,10 @@
             "960430f846cc2f9bcb412336e28f284e04ade925ca0bbd98262a6feca42c9115",
             "f654eaaef1535f99781a45fa8fdff926623164b7e1eb5e7c35fa7eaa3ce5d93b",
             "4329c97b3798efe87e75f5cdd8f7a86a60039ea946206507a072700d198f0ccc",
-            "df5150b2383d145028670f7a770d3c396e211910fd353cd4e5209a047442d6d9"
+            "df5150b2383d145028670f7a770d3c396e211910fd353cd4e5209a047442d6d9",
+            "782efb40f1db49711747401644f19f523606c384a7c9b739dc13a25ffed9b6c7",
+            "4e48bfb2991a1661cea3283536e69185252b51ab1273b62b8d2371c7742b5746",
+            "5ef04f1afe7e2203e46879fc28b0741d6a4624eae4e53dbc022a479064d31adf"
         )) {
             & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

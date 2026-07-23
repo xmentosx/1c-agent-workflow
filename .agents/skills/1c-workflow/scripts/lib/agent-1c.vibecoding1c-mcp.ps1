@@ -107,7 +107,7 @@ function Write-Vibecoding1cMcpJsonFile {
         [object]$Value
     )
 
-    Write-Utf8Text -Path $Path -Value (($Value | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+    Write-Utf8TextIfChanged -Path $Path -Value (($Value | ConvertTo-Json -Depth 20) + [Environment]::NewLine) | Out-Null
 }
 
 function Read-Vibecoding1cMcpState {
@@ -3514,7 +3514,7 @@ function Set-Vibecoding1cMcpManagedTextBlock {
     if ($text -and -not $text.EndsWith([Environment]::NewLine)) {
         $text += [Environment]::NewLine
     }
-    Write-Utf8Text -Path $Path -Value ($text + $block)
+    Write-Utf8TextIfChanged -Path $Path -Value ($text + $block) | Out-Null
 }
 
 function Get-Vibecoding1cMcpTomlSectionValue {

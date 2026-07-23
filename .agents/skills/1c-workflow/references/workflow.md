@@ -50,7 +50,7 @@ Use `scripts/agent-1c.ps1` when PowerShell is available; it owns Git, 1C, worktr
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action <action>
 ```
 
-Long lifecycle actions may run 1C Designer/Enterprise. Use `timeout_ms >= 1800000`; for monitored init, set the outer timeout above 3600 seconds. `status` and `help` can stay short.
+Long actions default to `timeout_ms >= 3900000`, above Designer's 3600-second limit; raise it with a higher configured limit. `status` and `help` stay short.
 
 Fresh target bootstrap:
 

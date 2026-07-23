@@ -14,7 +14,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 1. Identify the current agent-made configuration/extension change from the user request, Git status/diff, and configured `exportPath`/`extensionsPath`. A Git-only refresh or merge from `master` is not an agent-made behavior change by itself.
 2. Search configured `testsPath` for scenarios that exercise the changed observable behavior. Name the matching scenarios. If coverage is relevant and sufficient, reuse it unchanged: do not add or edit a test merely because this command was invoked.
 3. Only when relevant coverage is missing, read `.agents/skills/1c-workflow/references/vanessa-tests.md` and add the smallest reliable scenario. A quick-fix normally needs one focused scenario; add another only for a separate meaningful boundary. If any `.feature` changes, run `/itl-vanessa-author` before the full repair check.
-4. Run the existing helper directly from the current project directory with `timeout_ms >= 1800000` when supported:
+4. Run the existing helper directly from the current project directory with `timeout_ms >= 3900000` by default when supported; if the configured Designer timeout is higher than 3600 seconds, raise the outer timeout too. Do not use `120000 ms` or another short default because the helper may launch 1C Designer/Enterprise operations:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action check-dev-branch -VerificationTrigger repair -RepairSessionId <session-id>

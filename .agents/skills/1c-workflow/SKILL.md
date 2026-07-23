@@ -40,7 +40,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ru
 
 Do not call the wizard helper directly, preflight with `Test-Path` (raw probes may emit CLIXML), use background PowerShell or `timeout: 0`. If terminal input is unavailable, do not collect the questionnaire in chat and do not continue the lifecycle manually. The launcher owns status and needs a positive long timeout (`MaxWaitSeconds 3600`); use `-KeepWindowOnFailure` only for debugging.
 
-Long lifecycle runs need `timeout_ms >= 1800000`; monitored init needs an outer timeout above 3600s. Do not use `120000 ms`: 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`; status/help do not need it.
+Long actions default to `timeout_ms >= 3900000`, above Designer's 3600-second limit; raise it with a higher configured limit. Do not use `120000 ms`; status/help do not need it. 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`.
 
 If monitored bootstrap is interrupted, repeat the same command with `timeout_ms >= 3900000`; the launcher owns orphan detection and resume. Do not delete Git locks, continue init manually, or edit run status.
 
@@ -56,7 +56,7 @@ Use `/itl-check` or `check-dev-branch` for the final executable gate. It runs Va
 
 Run `/itl-vanessa-author` for new/changed `.feature`; it owns authoring evidence through `itl-vanessa-ui` and stays outside `itl-routine`.
 
-ROCTUP MCP is the preferred branch-local data channel in `itldev/*` and does not require web publication. Vanessa UI MCP is separate branch runtime tooling; use `.agents/skills/itl-vanessa-ui-mcp/SKILL.md` only when static analysis cannot answer the required UI question. Vanessa Automation verification is the separate `/itl-check` runner. vibecoding1c MCP is helper-managed; External MCP is unmanaged. Do not paste keys into chat or tracked files.
+ROCTUP MCP is the preferred branch-local data channel in `itldev/*` and needs no web publication. Use Vanessa UI MCP only when static analysis cannot answer the UI question; `/itl-check` remains the separate verification runner. vibecoding1c MCP is helper-managed; External MCP is unmanaged. Never paste keys into chat or tracked files.
 
 Read ignored runtime folders only when diagnosing a specific helper run or artifact.
 
