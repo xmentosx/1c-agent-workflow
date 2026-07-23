@@ -156,6 +156,7 @@ function Install-DataMcpExtension {
         throw "Data MCP CFE was not found: $CfePath"
     }
 
+    Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason "Data MCP extension installation"
     Write-Host "Installing Data MCP extension '$(Get-DataMcpExtensionName)' from: $CfePath"
     return (Invoke-Designer `
         -InfoBasePath $State.devBranchInfoBasePath `

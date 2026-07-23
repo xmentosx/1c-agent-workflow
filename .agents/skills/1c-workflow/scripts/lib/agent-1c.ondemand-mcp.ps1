@@ -360,14 +360,28 @@ function Test-ItlOnDemandOwnedProcess {
 }
 
 function Stop-ItlOnDemandBackendInstance {
-    param([string]$Family, [string]$InstanceId)
+    param(
+        [string]$Family,
+        [string]$InstanceId,
+        [switch]$StrictOwnership
+    )
     $runtimeState = Read-ItlOnDemandRuntimeState -Family $Family -InstanceId $InstanceId
     if ($null -eq $runtimeState) { return [pscustomobject]@{ status = "stopped"; family = $Family; instanceId = $InstanceId } }
     $ownedChildren = @(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $runtimeState)
+    $managerPid = ConvertTo-IntOrDefault -Value $runtimeState.pid -Default 0
+    $managerProcess = $(if ($managerPid -gt 0) { Get-Process -Id $managerPid -ErrorAction SilentlyContinue } else { $null })
+    $testClientPid = ConvertTo-IntOrDefault -Value (Get-ConfigValueFromObject -Object $runtimeState -Path "testClientPid" -Default 0) -Default 0
+    $testClientProcess = $(if ($testClientPid -gt 0) { Get-Process -Id $testClientPid -ErrorAction SilentlyContinue } else { $null })
+    $ownedManager = Test-ItlOnDemandOwnedProcess -RuntimeState $runtimeState
+    if ($StrictOwnership -and $null -ne $managerProcess -and -not $ownedManager) {
+        throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: refusing to stop unverified backend PID $managerPid for $Family/$InstanceId."
+    }
+    if ($StrictOwnership -and $null -ne $testClientProcess -and $ownedChildren.Count -eq 0) {
+        throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: refusing to stop unverified TestClient PID $testClientPid for $Family/$InstanceId."
+    }
     foreach ($child in $ownedChildren) {
         Stop-Process -Id $child.process.Id -Force -ErrorAction SilentlyContinue
     }
-    $ownedManager = Test-ItlOnDemandOwnedProcess -RuntimeState $runtimeState
     if ($ownedManager) {
         Stop-Process -Id ([int]$runtimeState.pid) -Force -ErrorAction SilentlyContinue
     }
@@ -538,22 +552,71 @@ function Invoke-ItlOnDemandBackendBroker {
     Write-Output "ITL_ONDEMAND_RESULT=$json"
 }
 
+function Test-ItlOnDemandInfoBaseMatch {
+    param(
+        [AllowNull()][string]$First,
+        [AllowNull()][string]$Second
+    )
+    if ([string]::IsNullOrWhiteSpace($First) -or [string]::IsNullOrWhiteSpace($Second)) {
+        return $false
+    }
+    $firstText = $First.Trim().TrimEnd('\', '/')
+    $secondText = $Second.Trim().TrimEnd('\', '/')
+    if ([string]::Equals($firstText, $secondText, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+    if ([System.IO.Path]::IsPathRooted($firstText) -and [System.IO.Path]::IsPathRooted($secondText)) {
+        try {
+            return [string]::Equals(
+                (Resolve-Agent1cFullPath -Path $firstText),
+                (Resolve-Agent1cFullPath -Path $secondText),
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        } catch {
+            return $false
+        }
+    }
+    return $false
+}
+
 function Get-ItlOnDemandRuntimeInstances {
+    param([switch]$Strict)
     $root = Get-ItlOnDemandRuntimeRoot
     if (-not (Test-Path -LiteralPath $root -PathType Container)) { return @() }
     $items = @()
     foreach ($file in Get-ChildItem -LiteralPath $root -Recurse -File -Filter "*.json" -ErrorAction SilentlyContinue) {
         if ($file.Name -notmatch '^[a-f0-9]{32}\.json$') { continue }
-        try { $items += (Read-Utf8Text -Path $file.FullName | ConvertFrom-Json) } catch { }
+        try {
+            $items += (Read-Utf8Text -Path $file.FullName | ConvertFrom-Json)
+        } catch {
+            if ($Strict) {
+                throw "ITL_ONDEMAND_RUNTIME_STATE_INVALID path='$($file.FullName)' error='$($_.Exception.Message)'"
+            }
+        }
     }
     return @($items)
 }
 
 function Stop-ItlOnDemandBackends {
-    param([string]$Family = "")
-    foreach ($item in @(Get-ItlOnDemandRuntimeInstances)) {
+    param(
+        [string]$Family = "",
+        [string]$InfoBasePath = "",
+        [switch]$Strict
+    )
+    foreach ($item in @(Get-ItlOnDemandRuntimeInstances -Strict:$Strict)) {
         if ($Family -and [string]$item.family -ne $Family) { continue }
-        Stop-ItlOnDemandBackendInstance -Family ([string]$item.family) -InstanceId ([string]$item.instanceId) | Out-Null
+        if ($InfoBasePath -and -not (Test-ItlOnDemandInfoBaseMatch -First ([string]$item.infoBasePath) -Second $InfoBasePath)) { continue }
+        Stop-ItlOnDemandBackendInstance -Family ([string]$item.family) -InstanceId ([string]$item.instanceId) -StrictOwnership:$Strict | Out-Null
+    }
+    if ($Strict) {
+        $remaining = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+            (-not $Family -or [string]$_.family -eq $Family) -and
+            (-not $InfoBasePath -or (Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $InfoBasePath))
+        })
+        if ($remaining.Count -gt 0) {
+            $identities = @($remaining | ForEach-Object { "$([string]$_.family)/$([string]$_.instanceId)" })
+            throw "ITL_ONDEMAND_DRAIN_FAILED remaining='$($identities -join ',')' infoBasePath='$InfoBasePath'"
+        }
     }
 }
 

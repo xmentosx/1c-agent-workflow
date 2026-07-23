@@ -517,6 +517,87 @@
         $result | Should -Contain "/UpdateDBCfg"
     }
 
+    It "drains workflow-owned runtime for the target infobase before starting Designer" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            $script:Sequence = @()
+            $script:DrainPath = ""
+            $script:DrainReason = ""
+            function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-drain"; fileCount = 1; absoluteExportPath = "C:\project\src\cf" } }
+            function Get-ConfigLoadChangeSet {
+                [pscustomobject]@{
+                    files = @("CommonModules\WorkflowE2E.xml")
+                    baseCommit = "base"
+                    currentCommit = "head"
+                    absoluteExportPath = "C:\project\src\cf"
+                }
+            }
+            function New-ConfigLoadListFile { "C:\logs\changed-files.txt" }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation {
+                param([object]$State, [string]$Reason, [string]$InfoBasePath)
+                $script:Sequence += "drain"
+                $script:DrainPath = $InfoBasePath
+                $script:DrainReason = $Reason
+            }
+            function Invoke-Designer {
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                $script:Sequence += "designer"
+            }
+
+            Load-ConfigFromFiles `
+                -InfoBasePath "C:\base" `
+                -InfoBaseKind "file" `
+                -State ([pscustomobject]@{}) `
+                -ExportPath "src/cf" 6>$null | Out-Null
+
+            [pscustomobject]@{
+                sequence = @($script:Sequence)
+                drainPath = $script:DrainPath
+                drainReason = $script:DrainReason
+            }
+        }
+
+        $result.sequence | Should -Be @("drain", "designer")
+        $result.drainPath | Should -Be "C:\base"
+        $result.drainReason | Should -Be "configuration source load"
+    }
+
+    It "fails closed before Designer when runtime drain cannot prove cleanup" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            $script:DesignerCallCount = 0
+            function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-drain-failed"; fileCount = 1; absoluteExportPath = "C:\project\src\cf" } }
+            function Get-ConfigLoadChangeSet {
+                [pscustomobject]@{
+                    files = @("CommonModules\WorkflowE2E.xml")
+                    baseCommit = "base"
+                    currentCommit = "head"
+                    absoluteExportPath = "C:\project\src\cf"
+                }
+            }
+            function New-ConfigLoadListFile { "C:\logs\changed-files.txt" }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation { throw "ITL_INFOBASE_RUNTIME_DRAIN_FAILED: ownership mismatch" }
+            function Invoke-Designer { $script:DesignerCallCount++ }
+
+            $message = ""
+            try {
+                Load-ConfigFromFiles `
+                    -InfoBasePath "C:\base" `
+                    -InfoBaseKind "file" `
+                    -State ([pscustomobject]@{}) `
+                    -ExportPath "src/cf" 6>$null | Out-Null
+            } catch {
+                $message = $_.Exception.Message
+            }
+            [pscustomobject]@{ calls = $script:DesignerCallCount; message = $message }
+        }
+
+        $result.calls | Should -Be 0
+        $result.message | Should -Match "^ITL_INFOBASE_RUNTIME_DRAIN_FAILED"
+    }
+
     It "falls back once to full load only after a partial Designer failure" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -655,27 +736,33 @@
         $noOpCalls = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:DesignerCallCount = 0
+            $script:DrainCallCount = 0
             function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-f"; fileCount = 1; absoluteExportPath = "C:\src" } }
             function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @(); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" } }
             function Invoke-Designer { $script:DesignerCallCount++ }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation { $script:DrainCallCount++ }
             $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -ExportPath "src/cf" 6>$null
-            [pscustomobject]@{ calls = $script:DesignerCallCount; loaded = $load.loaded }
+            [pscustomobject]@{ calls = $script:DesignerCallCount; drains = $script:DrainCallCount; loaded = $load.loaded }
         }
         $noOpCalls.calls | Should -Be 0
+        $noOpCalls.drains | Should -Be 0
         $noOpCalls.loaded | Should -BeFalse
 
         $prep = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:DesignerCallCount = 0
+            $script:DrainCallCount = 0
             function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-g"; fileCount = 1; absoluteExportPath = "C:\src" } }
             function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" } }
             function New-ConfigLoadListFile { throw "list preparation failed" }
             function Invoke-Designer { $script:DesignerCallCount++ }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation { $script:DrainCallCount++ }
             $message = ""
             try { Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -ExportPath "src/cf" 6>$null | Out-Null } catch { $message = $_.Exception.Message }
-            [pscustomobject]@{ calls = $script:DesignerCallCount; message = $message }
+            [pscustomobject]@{ calls = $script:DesignerCallCount; drains = $script:DrainCallCount; message = $message }
         }
         $prep.calls | Should -Be 0
+        $prep.drains | Should -Be 0
         $prep.message | Should -Match "list preparation failed"
     }
 
@@ -1650,7 +1737,7 @@
         }
     }
 
-    It "matches own Vanessa TESTCLIENT without matching another worktree" {
+    It "matches the branch TestManager and only its reserved-port TestClient" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-process-match-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
@@ -1663,6 +1750,7 @@
                     devBranch = "itldev/current-branch"
                     devBranchInfoBasePath = $ibPath
                     worktreePath = $tempRoot
+                    vanessaTestPort = 48051
                 }
                 $own = [pscustomobject]@{
                     processId = 1001
@@ -1676,10 +1764,25 @@
                     commandLine = "1cv8c.exe /TESTCLIENT -TPort 48052 /F `"D:\worktrees\branch1\.agent-1c\infobases\dev-branches\branch1`""
                     workingSetMb = 10
                 }
+                $manager = [pscustomobject]@{
+                    processId = 1003
+                    name = "1cv8c.exe"
+                    commandLine = "1cv8c.exe ENTERPRISE /TESTMANAGER /F `"$ibPath`""
+                    workingSetMb = 10
+                }
+                $wrongPort = [pscustomobject]@{
+                    processId = 1004
+                    name = "1cv8c.exe"
+                    commandLine = "1cv8c.exe /TESTCLIENT -TPort 48052 /F `"$ibPath`""
+                    workingSetMb = 10
+                }
+                function Get-OneCProcessInfo { @($own, $foreign, $manager, $wrongPort) }
 
                 (Test-OneCVanessaTestProcess -ProcessInfo $own) | Should -Be $true
                 (Test-OneCProcessBelongsToState -ProcessInfo $own -State $state -TestPort 48051 -RequireTestPort) | Should -Be $true
                 (Test-OneCProcessBelongsToState -ProcessInfo $foreign -State $state -TestPort 48051 -RequireTestPort) | Should -Be $false
+                $owned = @(Get-OwnVanessaTestProcesses -State $state)
+                @($owned.processId) | Should -Be @(1001, 1003)
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {

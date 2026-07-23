@@ -432,6 +432,38 @@ function Write-Agent1cLifecycleOperationRecord {
     Write-Utf8Text -Path $Path -Value (($Record | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
 }
 
+function Archive-StaleAgent1cLifecycleOperation {
+    param([string]$Path)
+
+    $record = Read-Agent1cLifecycleOperationRecord -Path $Path
+    if ($null -eq $record -or [string]$record["status"] -cne "running") {
+        return $null
+    }
+
+    $now = (Get-Date).ToString("o")
+    $operationId = [string]$record["operationId"]
+    if ([string]::IsNullOrWhiteSpace($operationId) -or $operationId -notmatch '^[a-fA-F0-9]{32}$') {
+        $operationId = [guid]::NewGuid().ToString("N")
+    }
+    $record["status"] = "failed"
+    $record["phase"] = "orphaned"
+    $record["detail"] = "A later lifecycle operation acquired the lock after the previous owner disappeared."
+    $record["updatedAt"] = $now
+    $record["finishedAt"] = $now
+    $record["exitCode"] = -1
+    $record["errorCode"] = "LIFECYCLE_OPERATION_ORPHANED"
+    $record["errorMessage"] = "The previous lifecycle owner no longer holds the lifecycle lock."
+
+    $archivePath = Join-Path (Split-Path -Parent $Path) ("lifecycle-operation-orphaned-{0}.json" -f $operationId)
+    Write-Agent1cLifecycleOperationRecord -Path $archivePath -Record $record
+    return [pscustomobject]@{
+        operationId = $operationId
+        action = [string]$record["action"]
+        phase = [string]$record["phase"]
+        archivePath = $archivePath
+    }
+}
+
 function Get-Agent1cLifecycleOperationLockScopes {
     param([string]$RequestedAction)
 
@@ -632,6 +664,7 @@ function Enter-Agent1cLifecycleOperation {
         throw
     }
 
+    $recoveredOperation = Archive-StaleAgent1cLifecycleOperation -Path $primaryStatePath
     $now = (Get-Date).ToString("o")
     $branch = ""
     if (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git") -ErrorAction SilentlyContinue) {
@@ -663,6 +696,8 @@ function Enter-Agent1cLifecycleOperation {
         exitCode = $null
         errorCode = ""
         errorMessage = ""
+        recoveredOperationId = $(if ($null -ne $recoveredOperation) { [string]$recoveredOperation.operationId } else { "" })
+        recoveredOperationArchivePath = $(if ($null -ne $recoveredOperation) { [string]$recoveredOperation.archivePath } else { "" })
     }
 
     $script:LifecycleOperationHandles = @($handles)
@@ -3944,6 +3979,20 @@ function Get-DesignerLogTerminalState {
     return [pscustomobject]@{ state = "pending"; detail = "" }
 }
 
+function Get-DesignerConfigurationUpdateSuccessText {
+    return (-join ([char[]](
+        1054, 1073, 1085, 1086, 1074, 1083, 1077, 1085, 1080, 1077, 32,
+        1082, 1086, 1085, 1092, 1080, 1075, 1091, 1088, 1072, 1094, 1080, 1080,
+        32, 1091, 1089, 1087, 1077, 1096, 1085, 1086, 32, 1079, 1072, 1074, 1077,
+        1088, 1096, 1077, 1085, 1086
+    )))
+}
+
+function Get-DesignerConfigurationUpdateSuccessPattern {
+    $successText = Get-DesignerConfigurationUpdateSuccessText
+    return ("(?im)^\s*" + [regex]::Escape($successText) + "\s*$")
+}
+
 function Get-DesignerDumpArtifactState {
     param([string]$Path)
 
@@ -4195,6 +4244,8 @@ function Invoke-NativeProcessAndWaitResult {
     $completedByProbe = $false
     $launcherExited = $false
     $launcherExitCode = $null
+    $launcherExitedAtUtc = $null
+    $postExitProbeTimedOut = $false
     $memoryMonitorFailed = $false
     $memoryMonitorError = ""
     $terminationConfirmed = $true
@@ -4210,8 +4261,9 @@ function Invoke-NativeProcessAndWaitResult {
                 if ($launcherExited -and $null -eq $launcherExitCode) {
                     $process.Refresh()
                     $launcherExitCode = [int]$process.ExitCode
+                    $launcherExitedAtUtc = [DateTime]::UtcNow
                     if ($PostExitProbeSeconds -gt 0) {
-                        $postExitProbeDeadlineUtc = [DateTime]::UtcNow.AddSeconds($PostExitProbeSeconds)
+                        $postExitProbeDeadlineUtc = $launcherExitedAtUtc.AddSeconds($PostExitProbeSeconds)
                     }
                 }
             } catch {
@@ -4266,6 +4318,15 @@ function Invoke-NativeProcessAndWaitResult {
                         launcherExited = $launcherExited
                         launcherExitCode = $launcherExitCode
                         processId = $process.Id
+                        launcherExitedAtUtc = $launcherExitedAtUtc
+                        postExitProbeDeadlineUtc = $postExitProbeDeadlineUtc
+                        postExitElapsedSeconds = $(
+                            if ($null -ne $launcherExitedAtUtc) {
+                                [int][Math]::Floor(([DateTime]::UtcNow - [DateTime]$launcherExitedAtUtc).TotalSeconds)
+                            } else {
+                                0
+                            }
+                        )
                     }
                     $probeComplete = [bool](& $CompletionProbe $probeContext)
                 } catch {
@@ -4301,6 +4362,9 @@ function Invoke-NativeProcessAndWaitResult {
                         $null -eq $postExitProbeDeadlineUtc -or
                         [DateTime]::UtcNow -ge [DateTime]$postExitProbeDeadlineUtc
                     if ($launcherExitCode -ne 0 -or $postExitProbeExpired) {
+                        if ($launcherExitCode -eq 0 -and $postExitProbeExpired -and -not $completedByProbe) {
+                            $postExitProbeTimedOut = $true
+                        }
                         $finished = $true
                         break
                     }
@@ -4365,6 +4429,8 @@ function Invoke-NativeProcessAndWaitResult {
         terminationConfirmed = $terminationConfirmed
         terminationError = $terminationError
         completedByProbe = $completedByProbe
+        postExitProbeTimedOut = $postExitProbeTimedOut
+        postExitProbeSeconds = $PostExitProbeSeconds
         launcherExited = $launcherExited
         launcherExitCode = $launcherExitCode
     }
@@ -4468,6 +4534,7 @@ function Invoke-Designer {
     $completionGraceSeconds = 0
     $artifactProbeState = $null
     $repositoryUpdateIndex = [Array]::IndexOf($DesignerArgs, "/ConfigurationRepositoryUpdateCfg")
+    $updateDbIndex = [Array]::IndexOf($DesignerArgs, "/UpdateDBCfg")
     $dumpIndex = [Array]::IndexOf($DesignerArgs, "/DumpConfigToFiles")
     $dumpCfgIndex = [Array]::IndexOf($DesignerArgs, "/DumpCfg")
     $dumpIbIndex = [Array]::IndexOf($DesignerArgs, "/DumpIB")
@@ -4543,22 +4610,37 @@ function Invoke-Designer {
                 -ObservedAtUtc ([DateTime]::UtcNow))
         }
     } else {
-        $operationKind = "designer-command"
+        $operationKind = $(if ($updateDbIndex -ge 0) { "configuration-update" } else { "designer-command" })
         $completionTimeoutSeconds = Get-DesignerOperationTimeoutSeconds
         $stabilitySeconds = Get-DesignerDumpStabilitySeconds
         $initialLogState = Get-DesignerFileArtifactState -Path $logPath -AllowEmpty
         $initialSignature = [string]$initialLogState.signature
         $artifactProbeState = New-DesignerArtifactProbeState
+        $configurationSuccessPattern = $(if ($operationKind -eq "configuration-update") { Get-DesignerConfigurationUpdateSuccessPattern } else { "" })
+        $postExitProbeState = [pscustomobject]@{
+            stagePublished = $false
+            lastDiagnosticSecond = -1
+        }
         $completionProbe = {
             param($probeContext)
-            $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
+            $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern $configurationSuccessPattern
             if ($terminalState.state -eq "failure") {
                 return $true
             }
             if ($null -eq $probeContext -or -not $probeContext.launcherExited) {
                 return $false
             }
-            if (-not (Test-DesignerInfoBaseReleased -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath)) {
+            if (-not $postExitProbeState.stagePublished) {
+                $postExitProbeState.stagePublished = $true
+                $stage = $(if ([string]$script:RunStage -like "config-load.*") { "config-load.post-exit-probe" } else { "designer.post-exit-probe" })
+                Set-RunStage -Stage $stage -Detail "Designer exited with code $($probeContext.launcherExitCode); waiting for $operationKind completion evidence."
+            }
+            $elapsed = ConvertTo-IntOrDefault -Value (Get-StateValue -State $probeContext -Name "postExitElapsedSeconds" -Default 0) -Default 0
+            if ($elapsed -gt 0 -and $elapsed % 10 -eq 0 -and $elapsed -ne $postExitProbeState.lastDiagnosticSecond) {
+                $postExitProbeState.lastDiagnosticSecond = $elapsed
+                Write-Host "Designer PID $($probeContext.processId) exited with code $($probeContext.launcherExitCode); post-exit probe pending for $operationKind (${elapsed}s)."
+            }
+            if ($operationKind -eq "configuration-update" -and $terminalState.state -ne "success") {
                 return $false
             }
             $observedAtUtc = [DateTime]::UtcNow
@@ -4576,7 +4658,7 @@ function Invoke-Designer {
     }
 
     $maxWorkingSetMb = Get-DesignerMaxWorkingSetMb
-    $postExitProbeSeconds = if ($operationKind -eq "repository-update") {
+    $postExitProbeSeconds = if ($operationKind -in @("repository-update", "configuration-update")) {
         Get-CompletionPostExitTimeoutSeconds
     } else {
         $completionTimeoutSeconds
@@ -4600,6 +4682,9 @@ function Invoke-Designer {
     if ($result.timedOut) {
         $targetDetail = if ($operationTarget) { " target='$operationTarget'" } else { "" }
         throw "DESIGNER_OPERATION_TIMEOUT operation=$operationKind timeoutSeconds=$completionTimeoutSeconds pid=$($result.processId) log=$logPath$targetDetail"
+    }
+    if ([bool](Get-StateValue -State $result -Name "postExitProbeTimedOut" -Default $false)) {
+        throw "DESIGNER_POST_EXIT_PROBE_TIMEOUT operation=$operationKind timeoutSeconds=$postExitProbeSeconds pid=$($result.processId) log=$logPath"
     }
     if ($result.exitCode -ne 0) {
         throw "1C Designer failed with exit code $($result.exitCode). Log: $logPath"

@@ -2834,6 +2834,11 @@ function Format-OneCProcessInfo {
     $name = Get-StateValue -State $ProcessInfo -Name "name" -Default ""
     $workingSetMb = Get-StateValue -State $ProcessInfo -Name "workingSetMb" -Default ""
     $commandLine = Get-StateValue -State $ProcessInfo -Name "commandLine" -Default ""
+    $commandLine = [regex]::Replace(
+        [string]$commandLine,
+        '(?i)(/(?:P|ConfigurationRepositoryP)\s+)(?:"(?:[^"]|"")*"|\S+)',
+        '$1<hidden>'
+    )
     return "PID=$pidValue NAME=$name WS=${workingSetMb}MB CMD=$commandLine"
 }
 
@@ -3304,9 +3309,16 @@ function Resolve-VanessaMcpPort {
 function Get-OwnVanessaTestProcesses {
     param([object]$State)
 
+    $testPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaTestPort" -Default 0) -Default 0
     return @(Get-OneCProcessInfo | Where-Object {
-        (Test-OneCVanessaTestProcess -ProcessInfo $_) -and
-        (Test-OneCProcessBelongsToState -ProcessInfo $_ -State $State)
+        $isVanessaTestProcess = Test-OneCVanessaTestProcess -ProcessInfo $_
+        $isTestClient = [string](Get-StateValue -State $_ -Name "commandLine" -Default "") -match '(?i)/TESTCLIENT(?:\s|$)'
+        $isVanessaTestProcess -and
+        (Test-OneCProcessBelongsToState `
+            -ProcessInfo $_ `
+            -State $State `
+            -TestPort $testPort `
+            -RequireTestPort:($isTestClient -and $testPort -gt 0))
     })
 }
 
@@ -3754,6 +3766,7 @@ function Install-VanessaMcpExtensionCfe {
     }
 
     Write-Host "Installing 1C extension '$ExtensionName' from: $CfePath"
+    Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason "Vanessa UI MCP extension installation"
     Invoke-Designer `
         -InfoBasePath $State.devBranchInfoBasePath `
         -InfoBaseKind $State.infoBaseKind `
@@ -3970,7 +3983,9 @@ function Write-VanessaMcpStatusLines {
 function Stop-VanessaMcpForState {
     param(
         [object]$State,
-        [switch]$Quiet
+        [switch]$Quiet,
+        [switch]$RequireOwnership,
+        [switch]$SkipClientConfig
     )
 
     $runtime = Get-VanessaMcpRuntimeInfo -State $State
@@ -3982,22 +3997,39 @@ function Stop-VanessaMcpForState {
     }
 
     if ($runtime.processAlive) {
+        if ($RequireOwnership) {
+            $processInfo = @(Get-OneCProcessInfo | Where-Object { [int]$_.processId -eq [int]$runtime.pid } | Select-Object -First 1)
+            $owned = $processInfo.Count -eq 1 -and
+                (Test-OneCProcessBelongsToState -ProcessInfo $processInfo[0] -State $State) -and
+                ([string]$processInfo[0].commandLine -match '(?i)runMcp\s*;\s*mcpPort=') -and
+                (Test-CommandLineContainsPort -CommandLine ([string]$processInfo[0].commandLine) -Port ([int]$runtime.port))
+            if (-not $owned) {
+                throw "ITL_LEGACY_MCP_OWNERSHIP_MISMATCH: refusing to stop unverified Vanessa UI PID $($runtime.pid)."
+            }
+        }
         if (-not $Quiet) {
             Write-Host "Stopping Vanessa UI MCP process: PID $($runtime.pid)"
         }
         Stop-Process -Id $runtime.pid -Force -ErrorAction Stop
         Start-Sleep -Milliseconds 500
+        if ($null -ne (Get-Process -Id $runtime.pid -ErrorAction SilentlyContinue)) {
+            throw "ITL_LEGACY_MCP_STOP_FAILED: Vanessa UI PID $($runtime.pid) is still running."
+        }
         Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $State) -Status "stopped"
         Update-DevBranchState -State $State -Updates $updates
         $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
-        Write-VanessaMcpClientConfig -State $state
+        if (-not $SkipClientConfig) {
+            Write-VanessaMcpClientConfig -State $state
+        }
         return $true
     }
 
     Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $State) -Status "stopped"
     Update-DevBranchState -State $State -Updates $updates
     $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
-    Write-VanessaMcpClientConfig -State $state
+    if (-not $SkipClientConfig) {
+        Write-VanessaMcpClientConfig -State $state
+    }
     if (-not $Quiet) {
         Write-Host "Vanessa UI MCP is not running for this branch."
     }

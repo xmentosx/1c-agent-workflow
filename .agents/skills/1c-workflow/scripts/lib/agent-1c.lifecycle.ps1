@@ -1045,6 +1045,65 @@ function Dump-ExtensionToFiles {
     }
 }
 
+function Stop-DevBranchRuntimeBeforeInfobaseMutation {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [string]$Reason = "managed infobase mutation",
+        [string]$InfoBasePath = ""
+    )
+
+    $infoBasePath = if ([string]::IsNullOrWhiteSpace($InfoBasePath)) {
+        [string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
+    } else {
+        $InfoBasePath
+    }
+    if ([string]::IsNullOrWhiteSpace($infoBasePath)) {
+        throw "ITL_INFOBASE_RUNTIME_DRAIN_FAILED: development branch infobase path is missing."
+    }
+
+    Set-RunStage -Stage "config-load.stop-runtime" -Detail "Stopping workflow-owned 1C runtime before $Reason."
+    try {
+        Stop-ItlOnDemandBackends -InfoBasePath $infoBasePath -Strict
+        Stop-OwnVanessaTestProcessesAndAssert -State $State
+
+        $roctupRuntime = Get-RoctupMcpRuntimeInfo -State $State
+        if ($roctupRuntime.processAlive) {
+            Stop-RoctupMcpForState -State $State -Quiet -RequireOwnership -SkipClientConfig | Out-Null
+        }
+
+        $vanessaRuntime = Get-VanessaMcpRuntimeInfo -State $State
+        if ($vanessaRuntime.processAlive) {
+            Stop-VanessaMcpForState -State $State -Quiet -RequireOwnership -SkipClientConfig | Out-Null
+        }
+
+        $remainingTests = @(Get-OwnVanessaTestProcesses -State $State)
+        $remainingOnDemand = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+            Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $infoBasePath
+        })
+        if ($remainingTests.Count -gt 0 -or $remainingOnDemand.Count -gt 0) {
+            throw "workflow-owned processes remain after cleanup (tests=$($remainingTests.Count), ondemand=$($remainingOnDemand.Count))."
+        }
+    } catch {
+        throw "ITL_INFOBASE_RUNTIME_DRAIN_FAILED reason='$Reason' infoBasePath='$infoBasePath' detail='$($_.Exception.Message)'"
+    }
+
+    Write-Host "Workflow-owned 1C runtime stopped before $Reason."
+}
+
+function Restore-DevBranchInfobaseFromSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][string]$SnapshotPath,
+        [string]$Reason = "infobase snapshot restore"
+    )
+
+    Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason $Reason
+    Invoke-Designer `
+        -InfoBasePath $State.devBranchInfoBasePath `
+        -InfoBaseKind $State.infoBaseKind `
+        -DesignerArgs @("/RestoreIB", $SnapshotPath) | Out-Null
+}
+
 function Load-ConfigFromFiles {
     param(
         [string]$InfoBasePath,
@@ -1127,6 +1186,7 @@ function Load-ConfigFromFiles {
     if ($Mode -ne "Full") {
         $listFilePath = New-ConfigLoadListFile -State $State -Files $changeSet.files
     }
+    Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason "$ContentKind source load" -InfoBasePath $InfoBasePath
     Set-RunStage -Stage "config-load.designer" -Detail "Loading $ContentKind source through Designer in $Mode mode."
     $orchestration = Invoke-ConfigLoadWithFallback `
         -InfoBasePath $InfoBasePath `
@@ -5910,7 +5970,7 @@ function Init-DevBranchExtension {
         $roctupWasRunning = [bool](Get-RoctupMcpRuntimeInfo -State $state).processAlive
         $vanessaWasRunning = [bool](Get-VanessaMcpRuntimeInfo -State $state).processAlive
         Stop-OwnVanessaTestProcessesAndAssert -State $state
-        Stop-ItlOnDemandBackends
+        Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "extension initialization"
         Stop-RoctupMcpForState -State $state -Quiet | Out-Null
         $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
         Stop-VanessaMcpForState -State $state -Quiet | Out-Null
@@ -6002,7 +6062,7 @@ function Init-DevBranchExtension {
         if ($snapshotCreated) {
             try {
                 Set-RunStage -Stage "extension-init.rollback" -Detail "Restoring the branch infobase snapshot after extension initialization failure."
-                Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @("/RestoreIB", $snapshotPath) | Out-Null
+                Restore-DevBranchInfobaseFromSnapshot -State $state -SnapshotPath $snapshotPath -Reason "extension initialization rollback"
                 Update-DevBranchState -State $state -Updates @{
                     lastConfigDesignerFingerprint = ""
                     lastConfigDesignerLoadedAt = ""
@@ -6453,7 +6513,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
     try {
         New-Item -ItemType Directory -Force -Path $smokeRoot, $snapshotDir | Out-Null
         Stop-OwnVanessaTestProcessesAndAssert -State $state
-        Stop-ItlOnDemandBackends
+        Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "Release E2E extension smoke"
         Stop-RoctupMcpForState -State $state -Quiet | Out-Null
         $state = Read-DevBranchState -Name $DevBranchName
         Stop-VanessaMcpForState -State $state -Quiet | Out-Null
@@ -6654,7 +6714,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
         }
         $cfeSha256 = (Get-FileHash -LiteralPath $cfePath -Algorithm SHA256).Hash.ToLowerInvariant()
 
-        Invoke-Designer -InfoBasePath $emptyState.devBranchInfoBasePath -InfoBaseKind $emptyState.infoBaseKind -DesignerArgs @("/RestoreIB", $snapshotPath) | Out-Null
+        Restore-DevBranchInfobaseFromSnapshot -State $emptyState -SnapshotPath $snapshotPath -Reason "Release E2E Empty extension restore"
         $databaseRestored = $true
         Enable-ReleaseE2EExtensionState
         $databaseRestored = $false
@@ -6673,7 +6733,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
             throw "Release extension CFE roundtrip changed specialized child registrations: forms=$($roundtripFixtureCounts.forms), templates=$($roundtripFixtureCounts.templates)."
         }
 
-        Invoke-Designer -InfoBasePath $cfeState.devBranchInfoBasePath -InfoBaseKind $cfeState.infoBaseKind -DesignerArgs @("/RestoreIB", $snapshotPath) | Out-Null
+        Restore-DevBranchInfobaseFromSnapshot -State $cfeState -SnapshotPath $snapshotPath -Reason "Release E2E CFE restore"
         $databaseRestored = $true
         Restore-ReleaseE2EExtensionLocalState
         if (Test-Path -LiteralPath $smokeRoot -PathType Container -ErrorAction SilentlyContinue) {
@@ -6716,7 +6776,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
         if ($snapshotCreated -and -not $databaseRestored) {
             try {
                 $rollbackState = Read-DevBranchState -Name $DevBranchName
-                Invoke-Designer -InfoBasePath $rollbackState.devBranchInfoBasePath -InfoBaseKind $rollbackState.infoBaseKind -DesignerArgs @("/RestoreIB", $snapshotPath) | Out-Null
+                Restore-DevBranchInfobaseFromSnapshot -State $rollbackState -SnapshotPath $snapshotPath -Reason "Release E2E extension smoke rollback"
                 $databaseRestored = $true
             } catch {
                 $rollbackFailure = $_.Exception.Message
@@ -6920,7 +6980,7 @@ function Restore-ReleaseE2EInfobaseSnapshot {
     $snapshotPath = Assert-ExportPathInsideProject -ExportPath $ReleaseSnapshotPath
     if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { throw "Release E2E snapshot is missing: $snapshotPath" }
     Stop-OwnVanessaTestProcessesAndAssert -State $state
-    Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @("/RestoreIB", $snapshotPath) | Out-Null
+    Restore-DevBranchInfobaseFromSnapshot -State $state -SnapshotPath $snapshotPath -Reason "Release E2E checkpoint restore"
     Update-DevBranchState -State $state -Updates @{
         lastConfigDesignerFingerprint = ""
         lastConfigDesignerLoadedAt = ""

@@ -574,7 +574,9 @@ function Start-RoctupMcp {
 function Stop-RoctupMcpForState {
     param(
         [object]$State,
-        [switch]$Quiet
+        [switch]$Quiet,
+        [switch]$RequireOwnership,
+        [switch]$SkipClientConfig
     )
 
     $runtime = Get-RoctupMcpRuntimeInfo -State $State
@@ -586,22 +588,39 @@ function Stop-RoctupMcpForState {
     }
 
     if ($runtime.processAlive) {
+        if ($RequireOwnership) {
+            $processInfo = @(Get-OneCProcessInfo | Where-Object { [int]$_.processId -eq [int]$runtime.pid } | Select-Object -First 1)
+            $owned = $processInfo.Count -eq 1 -and
+                (Test-OneCProcessBelongsToState -ProcessInfo $processInfo[0] -State $State) -and
+                ([string]$processInfo[0].commandLine -match '(?i)startup\s*;\s*mode=embedded') -and
+                (Test-CommandLineContainsPort -CommandLine ([string]$processInfo[0].commandLine) -Port ([int]$runtime.port))
+            if (-not $owned) {
+                throw "ITL_LEGACY_MCP_OWNERSHIP_MISMATCH: refusing to stop unverified ROCTUP PID $($runtime.pid)."
+            }
+        }
         if (-not $Quiet) {
             Write-Host "Stopping ROCTUP MCP process: PID $($runtime.pid)"
         }
         Stop-Process -Id $runtime.pid -Force -ErrorAction Stop
         Start-Sleep -Milliseconds 500
+        if ($null -ne (Get-Process -Id $runtime.pid -ErrorAction SilentlyContinue)) {
+            throw "ITL_LEGACY_MCP_STOP_FAILED: ROCTUP PID $($runtime.pid) is still running."
+        }
         Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $State) -Status "stopped"
         Update-DevBranchState -State $State -Updates $updates
         $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
-        Write-ItlBranchMcpClientConfig -State $state
+        if (-not $SkipClientConfig) {
+            Write-ItlBranchMcpClientConfig -State $state
+        }
         return $true
     }
 
     Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $State) -Status "stopped"
     Update-DevBranchState -State $State -Updates $updates
     $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
-    Write-ItlBranchMcpClientConfig -State $state
+    if (-not $SkipClientConfig) {
+        Write-ItlBranchMcpClientConfig -State $state
+    }
     if (-not $Quiet) {
         Write-Host "ROCTUP MCP is not running for this branch."
     }
