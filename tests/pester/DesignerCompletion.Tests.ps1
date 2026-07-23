@@ -274,6 +274,61 @@ Describe "1C Designer completion evidence" {
         $result.postExitProbeSeconds | Should -Be 9
     }
 
+    It "accepts a stable empty log after an extension configuration update exits successfully" {
+        $fixtureRoot = Join-Path $TestDrive "extension-update-empty-log"
+        $basePath = Join-Path $fixtureRoot "base"
+        $platformPath = Join-Path $fixtureRoot "1cv8.exe"
+        New-Item -ItemType Directory -Force -Path $basePath | Out-Null
+        New-Item -ItemType File -Force -Path $platformPath, (Join-Path $basePath "1Cv8.1CD") | Out-Null
+
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:Config = [pscustomobject]@{
+                platformPath = $platformPath
+                logsPath = "logs"
+                designerMaxWorkingSetMb = 0
+                designerOperationTimeoutSeconds = 30
+                designerDumpStabilitySeconds = 0
+                completionPostExitTimeoutSeconds = 9
+            }
+            $script:ProbePassed = $false
+            function Invoke-NativeProcessAndWaitResult {
+                param(
+                    [string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 0,
+                    [scriptblock]$OnTimeout = $null, [scriptblock]$CompletionProbe = $null,
+                    [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
+                    [int]$MaxWorkingSetMb = 0
+                )
+                $outIndex = [Array]::IndexOf($Arguments, "/Out")
+                $logPath = [string]$Arguments[$outIndex + 1]
+                [System.IO.File]::WriteAllText($logPath, "", (Get-Utf8Encoding))
+                $context = [pscustomobject]@{
+                    launcherExited = $true
+                    launcherExitCode = 0
+                    processId = 7007
+                    postExitElapsedSeconds = 0
+                }
+                $script:ProbePassed = [bool](& $CompletionProbe $context)
+                return [pscustomobject]@{
+                    processId = 7007; exitCode = 0; timedOut = $false; postExitProbeTimedOut = $false
+                    memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
+                    peakWorkingSetMb = 0; workingSetLimitMb = 0
+                    terminationConfirmed = $true; terminationError = ""; completedByProbe = $script:ProbePassed
+                    launcherExited = $true; launcherExitCode = 0
+                }
+            }
+
+            Invoke-Designer `
+                -InfoBasePath $basePath `
+                -InfoBaseKind "file" `
+                -DesignerArgs @("/LoadConfigFromFiles", (Join-Path $fixtureRoot "src"), "-Extension", "Smoke", "/UpdateDBCfg") `
+                6>$null | Out-Null
+            $script:ProbePassed
+        }
+
+        $result | Should -BeTrue
+    }
+
     It "reports a configuration post-exit evidence timeout instead of accepting exit code zero" {
         $fixtureRoot = Join-Path $TestDrive "configuration-post-exit-timeout"
         $basePath = Join-Path $fixtureRoot "base"
