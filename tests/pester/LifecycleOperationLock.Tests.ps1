@@ -232,6 +232,87 @@ Describe "1C workflow lifecycle operation lock" {
         }
     }
 
+    It "writes terminal run status when a fresh child fails before entering its body" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lifecycle-child-binding-" + [guid]::NewGuid().ToString("N"))
+        $childPath = Join-Path $tempRoot "invalid-child.ps1"
+        $wrapperPath = Join-Path $tempRoot "invoke-parent.ps1"
+        $statusPath = Join-Path $tempRoot "status.json"
+        $logPath = Join-Path $tempRoot "console.log"
+        try {
+            Initialize-LifecycleLockTestRepository -Path $tempRoot
+            Set-Content -LiteralPath $childPath -Encoding UTF8 -Value @'
+param(
+    [string]$Action,
+    [string]$ProjectRoot,
+    [string]$RunStatusPath,
+    [string]$RunLogPath,
+    [ValidateSet("accepted")][string]$LifecyclePhase,
+    [string]$OperationId,
+    [int]$OperationOwnerPid,
+    [switch]$OperationContinuation
+)
+Write-Output "CHILD_BODY_MUST_NOT_RUN"
+exit 0
+'@
+            Set-Content -LiteralPath $wrapperPath -Encoding UTF8 -Value @'
+param(
+    [string]$HelperPath,
+    [string]$ProjectRoot,
+    [string]$ChildPath,
+    [string]$StatusPath,
+    [string]$LogPath
+)
+. $HelperPath -ProjectRoot $ProjectRoot -Action help *> $null
+$Action = "run-dev-branch-tests"
+$RunStatusPath = $StatusPath
+$RunLogPath = $LogPath
+$script:RunStartedAt = Get-Date
+$script:Agent1cReexecArguments = @(
+    "-Action", $Action,
+    "-ProjectRoot", $ProjectRoot,
+    "-RunStatusPath", $RunStatusPath,
+    "-RunLogPath", $RunLogPath
+)
+Enter-Agent1cLifecycleOperation -RequestedAction $Action
+try {
+    Invoke-Agent1cFreshProcess -ScriptPath $ChildPath -AdditionalArguments @("-LifecyclePhase", "rejected")
+} finally {
+    Exit-Agent1cLifecycleOperation
+}
+'@
+
+            $result = Invoke-TestPowerShellFile -FilePath $wrapperPath -Arguments @(
+                "-HelperPath", $HelperPath,
+                "-ProjectRoot", $tempRoot,
+                "-ChildPath", $childPath,
+                "-StatusPath", $statusPath,
+                "-LogPath", $logPath
+            )
+
+            $result.exitCode | Should -Be 1
+            $result.combinedText | Should -Match "LIFECYCLE_OPERATION_CONTINUATION_INVALID"
+            $result.combinedText | Should -Match "childExitCode='1'"
+            $result.combinedText | Should -Match ([regex]::Escape($childPath))
+            $result.combinedText | Should -Not -Match "CHILD_BODY_MUST_NOT_RUN"
+
+            $status = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $status.status | Should -Be "failed"
+            [int]$status.exitCode | Should -Be 1
+            $status.stage | Should -Be "reexec"
+            $status.errorCategory | Should -Be "runner"
+            $status.finishedAt | Should -Not -BeNullOrEmpty
+            $status.errorMessage | Should -Match "fresh process did not write terminal operation state"
+
+            $lifecyclePath = Join-Path $tempRoot ".agent-1c\locks\lifecycle-operation.json"
+            $lifecycle = Get-Content -LiteralPath $lifecyclePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $lifecycle.status | Should -Be "failed"
+            [int]$lifecycle.exitCode | Should -Be 1
+            $lifecycle.errorMessage | Should -Match "fresh process did not write terminal operation state"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "rejects forged continuation arguments and treats unlocked running JSON as orphaned" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lifecycle-lock-orphan-" + [guid]::NewGuid().ToString("N"))
         try {

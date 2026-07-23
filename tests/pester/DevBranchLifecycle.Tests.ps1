@@ -955,6 +955,7 @@
             $loadIndex = $body.IndexOf('Load-ConfigFromFiles')
 
             $mergeIndex | Should -BeGreaterOrEqual 0
+            $body | Should -Match 'if \(\$LifecyclePhase -ne "post-merge"\)'
             $body | Should -Not -Match "Restart-Agent1cIfWorkflowHelperChangedSince"
             $phaseRestartIndex | Should -BeGreaterThan $mergeIndex
             $loadIndex | Should -BeGreaterThan $phaseRestartIndex
@@ -1100,6 +1101,70 @@
             $args | Should -Contain "main-helper"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "does not reexec again after the action is already running through the main helper" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-main-helper-no-loop-" + [guid]::NewGuid().ToString("N"))
+        $mainRoot = Join-Path $tempRoot "main"
+        try {
+            $mainHelperPath = Join-Path $mainRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $mainHelperPath) | Out-Null
+            Set-Content -LiteralPath $mainHelperPath -Encoding UTF8 -Value "# main helper"
+            $calls = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help -LifecyclePhase main-helper *> $null
+                $script:Agent1cScriptPath = $mainHelperPath
+                $script:FreshProcessCalls = 0
+                function Invoke-Agent1cFreshProcess { $script:FreshProcessCalls++ }
+                Restart-Agent1cFromMainWorktreeIfNeeded -MainWorktreePath $mainRoot
+                $script:FreshProcessCalls
+            }
+
+            $calls | Should -Be 0
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps every emitted lifecycle phase inside the entrypoint ValidateSet contract" {
+        $tokens = $null
+        $parseErrors = $null
+        $entryAst = [System.Management.Automation.Language.Parser]::ParseFile($HelperPath, [ref]$tokens, [ref]$parseErrors)
+        @($parseErrors).Count | Should -Be 0
+        $phaseParameter = @($entryAst.ParamBlock.Parameters | Where-Object {
+            $_.Name.VariablePath.UserPath -eq "LifecyclePhase"
+        })[0]
+        $validateSet = @($phaseParameter.Attributes | Where-Object {
+            $_.TypeName.Name -eq "ValidateSet"
+        })[0]
+        $allowedPhases = @($validateSet.PositionalArguments | ForEach-Object { [string]$_.SafeGetValue() })
+
+        $emittedPhases = [System.Collections.Generic.List[string]]::new()
+        $scriptsRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts"
+        $phasePattern = '["'']-LifecyclePhase["'']\s*,\s*["''](?<phase>[^"'']+)["'']'
+        foreach ($file in @(Get-ChildItem -LiteralPath $scriptsRoot -Recurse -File -Filter "*.ps1")) {
+            $fileTokens = $null
+            $fileErrors = $null
+            $fileAst = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$fileTokens, [ref]$fileErrors)
+            @($fileErrors).Count | Should -Be 0
+            $commands = $fileAst.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.CommandAst] -and
+                    $node.GetCommandName() -eq "Invoke-Agent1cFreshProcess"
+            }, $true)
+            foreach ($command in @($commands)) {
+                foreach ($match in @([regex]::Matches($command.Extent.Text, $phasePattern))) {
+                    $phase = [string]$match.Groups["phase"].Value
+                    if (-not $emittedPhases.Contains($phase)) {
+                        $emittedPhases.Add($phase) | Out-Null
+                    }
+                }
+            }
+        }
+
+        @($emittedPhases | Sort-Object) | Should -Be @("main-helper", "post-copy", "post-merge")
+        foreach ($phase in $emittedPhases) {
+            $allowedPhases | Should -Contain $phase
         }
     }
 
