@@ -11,6 +11,7 @@
   "designerMaxWorkingSetMb": 10240,
   "designerOperationTimeoutSeconds": 3600,
   "designerDumpStabilitySeconds": 5,
+  "completionPostExitTimeoutSeconds": 60,
   "platformPath": "",
   "infoBaseKind": "file",
   "sourceUsesRepository": true,

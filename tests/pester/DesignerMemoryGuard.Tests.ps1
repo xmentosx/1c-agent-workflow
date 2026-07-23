@@ -176,6 +176,7 @@ while ($true) {
                     [scriptblock]$OnTimeout = $null,
                     [scriptblock]$CompletionProbe = $null,
                     [int]$CompletionGraceSeconds = 10,
+                    [int]$PostExitProbeSeconds = 0,
                     [int]$MaxWorkingSetMb = 0
                 )
                 $script:CapturedLimit = $MaxWorkingSetMb

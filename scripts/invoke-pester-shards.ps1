@@ -26,11 +26,14 @@ $timingPath = Join-Path $PSScriptRoot "pester-timings.json"
 $timings = Get-Content -LiteralPath $timingPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $testFiles = @(Get-ChildItem -LiteralPath (Join-Path $RepositoryRoot "tests\pester") -File -Filter "*.Tests.ps1" | Sort-Object Name)
 if ($testFiles.Count -eq 0) { throw "No Pester test files were discovered." }
+$serialTestNames = @("ReleaseGate.Tests.ps1")
+$serialTestFiles = @($testFiles | Where-Object { $serialTestNames -contains $_.Name })
+$parallelTestFiles = @($testFiles | Where-Object { $serialTestNames -notcontains $_.Name })
 $weights = @{}
 foreach ($property in $timings.files.PSObject.Properties) { $weights[$property.Name] = [double]$property.Value }
 $defaultSeconds = [double]$timings.defaultSeconds
 
-$items = @($testFiles | ForEach-Object {
+$items = @($parallelTestFiles | ForEach-Object {
     [pscustomobject]@{
         name = $_.Name
         path = $_.FullName
@@ -49,7 +52,7 @@ foreach ($item in $items) {
 }
 
 $assigned = @($plans | ForEach-Object { @($_.paths) })
-if (($assigned | Sort-Object -Unique).Count -ne $testFiles.Count -or $assigned.Count -ne $testFiles.Count) {
+if (($assigned | Sort-Object -Unique).Count -ne $parallelTestFiles.Count -or $assigned.Count -ne $parallelTestFiles.Count) {
     throw "Pester shard assignment omitted or duplicated test files."
 }
 
@@ -87,7 +90,58 @@ foreach ($entry in $processes) {
     }
     if ([int]$entry.process.ExitCode -ne 0) { $failures += "worker $($entry.worker) exit=$($entry.process.ExitCode): $($entry.stderrPath)" }
 }
-if ($results.Count -ne $WorkerCount) { $failures += "expected $WorkerCount worker results, got $($results.Count)" }
+
+# ReleaseGate owns a process-heavy release-E2E fixture. Running it beside the
+# lifecycle shards makes unrelated child-process tests contend for the same
+# Windows host resources, so execute it only after all parallel workers finish.
+if ($serialTestFiles.Count -gt 0) {
+    $serialWorker = $WorkerCount + 1
+    $serialPlanPath = Join-Path $workerRoot ("worker-{0}.plan.json" -f $serialWorker)
+    $serialResultPath = Join-Path $workerRoot ("worker-{0}.result.json" -f $serialWorker)
+    $serialJunit = Join-Path $workerRoot ("worker-{0}.xml" -f $serialWorker)
+    $serialStdoutPath = Join-Path $workerRoot ("worker-{0}.stdout.log" -f $serialWorker)
+    $serialStderrPath = Join-Path $workerRoot ("worker-{0}.stderr.log" -f $serialWorker)
+    Remove-Item -LiteralPath $serialResultPath, $serialJunit, $serialStdoutPath, $serialStderrPath -Force -ErrorAction SilentlyContinue
+    $serialWeight = [double](($serialTestFiles | ForEach-Object {
+        if ($weights.ContainsKey($_.Name)) { [double]$weights[$_.Name] } else { $defaultSeconds }
+    } | Measure-Object -Sum).Sum)
+    $serialPayload = [ordered]@{
+        schemaVersion = 1
+        worker = $serialWorker
+        estimatedSeconds = $serialWeight
+        paths = @($serialTestFiles.FullName)
+    }
+    [System.IO.File]::WriteAllText($serialPlanPath, (($serialPayload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+    $serialArgs = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (ConvertTo-NativeArgument $workerScript), "-PlanPath", (ConvertTo-NativeArgument $serialPlanPath), "-JunitPath", (ConvertTo-NativeArgument $serialJunit), "-ResultPath", (ConvertTo-NativeArgument $serialResultPath))
+    $serialProcess = Start-Process -FilePath "powershell.exe" -ArgumentList ($serialArgs -join " ") -WorkingDirectory $RepositoryRoot -WindowStyle Hidden -RedirectStandardOutput $serialStdoutPath -RedirectStandardError $serialStderrPath -PassThru
+    $serialEntry = [pscustomobject]@{
+        worker = $serialWorker
+        process = $serialProcess
+        resultPath = $serialResultPath
+        junitPath = $serialJunit
+        stdoutPath = $serialStdoutPath
+        stderrPath = $serialStderrPath
+    }
+    $processes += $serialEntry
+    $null = $serialProcess.Handle
+    if (-not $serialProcess.WaitForExit(900000)) {
+        try { $serialProcess.Kill() } catch {}
+        $failures += "worker $serialWorker timed out"
+    } else {
+        $serialProcess.WaitForExit()
+        $serialProcess.Refresh()
+        if (Test-Path -LiteralPath $serialResultPath -PathType Leaf) {
+            $results += Get-Content -LiteralPath $serialResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        } else {
+            $failures += "worker $serialWorker produced no result: $serialStderrPath"
+        }
+        if ([int]$serialProcess.ExitCode -ne 0) {
+            $failures += "worker $serialWorker exit=$($serialProcess.ExitCode): $serialStderrPath"
+        }
+    }
+}
+
+if ($results.Count -ne $processes.Count) { $failures += "expected $($processes.Count) worker results, got $($results.Count)" }
 $reportedPaths = @($results | ForEach-Object { @($_.paths) })
 $expectedPaths = @($testFiles | ForEach-Object { $_.FullName })
 if ($reportedPaths.Count -ne $expectedPaths.Count -or @($reportedPaths | Sort-Object -Unique).Count -ne $expectedPaths.Count -or
@@ -126,7 +180,7 @@ try { $document.Save($writer) } finally { $writer.Dispose() }
 $summary = [ordered]@{
     schemaVersion = 1
     status = $(if ($failures.Count -eq 0 -and $failed -eq 0 -and $errors -eq 0) { "passed" } else { "failed" })
-    workerCount = $WorkerCount
+    workerCount = $processes.Count
     workers = @($results | Sort-Object worker)
     junitPath = $JunitPath
     passed = [int](($results | Measure-Object -Property passed -Sum).Sum)

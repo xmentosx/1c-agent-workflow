@@ -994,6 +994,22 @@ function Get-DesignerDumpStabilitySeconds {
     return $parsed
 }
 
+function Get-CompletionPostExitTimeoutSeconds {
+    $rawValue = Get-Setting `
+        -EnvName "COMPLETION_POST_EXIT_TIMEOUT_SECONDS" `
+        -ConfigName "completionPostExitTimeoutSeconds" `
+        -Default 60
+    $text = ([string]$rawValue).Trim()
+    $parsed = 0
+    if ([string]::IsNullOrWhiteSpace($text) -or
+        -not [int]::TryParse($text, [ref]$parsed) -or
+        $parsed -lt 1 -or
+        $parsed -gt 300) {
+        throw "COMPLETION_POST_EXIT_TIMEOUT_SECONDS or project.completionPostExitTimeoutSeconds must be an integer between 1 and 300. Actual: '$rawValue'."
+    }
+    return $parsed
+}
+
 function Write-DesignerMemoryLimitStatusLine {
     $limitMb = Get-DesignerMaxWorkingSetMb
     if ($limitMb -eq 0) {
@@ -4142,6 +4158,7 @@ function Invoke-NativeProcessAndWaitResult {
         [scriptblock]$OnTimeout = $null,
         [scriptblock]$CompletionProbe = $null,
         [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10,
+        [ValidateRange(0, 300)][int]$PostExitProbeSeconds = 0,
         [ValidateRange(0, 1048576)][int]$MaxWorkingSetMb = 0
     )
 
@@ -4179,6 +4196,7 @@ function Invoke-NativeProcessAndWaitResult {
     $terminationError = ""
     if ($TimeoutSeconds -gt 0 -or $MaxWorkingSetMb -gt 0 -or $null -ne $CompletionProbe) {
         $deadline = if ($TimeoutSeconds -gt 0) { [DateTime]::UtcNow.AddSeconds($TimeoutSeconds) } else { [DateTime]::MaxValue }
+        $postExitProbeDeadlineUtc = $null
         $probeObservedAt = $null
         $finished = $false
         while (-not $finished -and [DateTime]::UtcNow -lt $deadline) {
@@ -4187,6 +4205,9 @@ function Invoke-NativeProcessAndWaitResult {
                 if ($launcherExited -and $null -eq $launcherExitCode) {
                     $process.Refresh()
                     $launcherExitCode = [int]$process.ExitCode
+                    if ($PostExitProbeSeconds -gt 0) {
+                        $postExitProbeDeadlineUtc = [DateTime]::UtcNow.AddSeconds($PostExitProbeSeconds)
+                    }
                 }
             } catch {
                 $launcherExited = $false
@@ -4271,8 +4292,13 @@ function Invoke-NativeProcessAndWaitResult {
                     $probeObservedAt = $null
                 }
                 if ($launcherExited -and $null -ne $launcherExitCode) {
-                    $finished = $true
-                    break
+                    $postExitProbeExpired = $PostExitProbeSeconds -le 0 -or
+                        $null -eq $postExitProbeDeadlineUtc -or
+                        [DateTime]::UtcNow -ge [DateTime]$postExitProbeDeadlineUtc
+                    if ($launcherExitCode -ne 0 -or $postExitProbeExpired) {
+                        $finished = $true
+                        break
+                    }
                 }
             } elseif ($launcherExited) {
                 $finished = $true
@@ -4284,6 +4310,9 @@ function Invoke-NativeProcessAndWaitResult {
             } else {
                 [System.Threading.Thread]::Sleep(250)
             }
+        }
+        if (-not $finished -and $launcherExited -and $null -ne $launcherExitCode) {
+            $finished = $true
         }
         if (-not $finished -and $TimeoutSeconds -gt 0) {
             $script:LastProcessTimedOut = $true
@@ -4542,12 +4571,14 @@ function Invoke-Designer {
     }
 
     $maxWorkingSetMb = Get-DesignerMaxWorkingSetMb
+    $postExitProbeSeconds = if ($operationKind -eq "repository-update") { Get-CompletionPostExitTimeoutSeconds } else { 0 }
     $result = Invoke-NativeProcessAndWaitResult `
         -FilePath $platformPath `
         -Arguments $args `
         -TimeoutSeconds $completionTimeoutSeconds `
         -CompletionProbe $completionProbe `
         -CompletionGraceSeconds $completionGraceSeconds `
+        -PostExitProbeSeconds $postExitProbeSeconds `
         -MaxWorkingSetMb $maxWorkingSetMb
     if ($result.memoryMonitorFailed) {
         $detail = (([string]$result.memoryMonitorError + " " + [string]$result.terminationError).Trim() -replace '[\r\n]+', ' ')
@@ -4730,13 +4761,15 @@ function Invoke-Enterprise {
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
 
+    $postExitProbeSeconds = if ($null -ne $CompletionProbe) { Get-CompletionPostExitTimeoutSeconds } else { 0 }
     $result = Invoke-NativeProcessAndWaitResult `
         -FilePath $platformPath `
         -Arguments $args `
         -TimeoutSeconds $TimeoutSeconds `
         -OnTimeout $OnTimeout `
         -CompletionProbe $CompletionProbe `
-        -CompletionGraceSeconds $CompletionGraceSeconds
+        -CompletionGraceSeconds $CompletionGraceSeconds `
+        -PostExitProbeSeconds $postExitProbeSeconds
     if ($result.timedOut) {
         throw "1C Enterprise timed out after $TimeoutSeconds seconds. PID: $($result.processId). Log: $logPath"
     }

@@ -67,6 +67,38 @@ Describe "1C Designer completion evidence" {
         $result.exitCode | Should -Be 0
     }
 
+    It "allows only an explicit bounded probe window after launcher exit" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:ProbeCalls = 0
+            $fakeProcess = [pscustomobject]@{
+                Id = 4244
+                HasExited = $true
+                ExitCode = 0
+            }
+            $fakeProcess | Add-Member -MemberType ScriptMethod -Name Refresh -Value { }
+            $fakeProcess | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param([int]$Milliseconds); return $true }
+            function Start-Process { return $fakeProcess }
+
+            $processResult = Invoke-NativeProcessAndWaitResult `
+                -FilePath "fake.exe" `
+                -Arguments @() `
+                -TimeoutSeconds 5 `
+                -CompletionGraceSeconds 0 `
+                -PostExitProbeSeconds 2 `
+                -CompletionProbe {
+                    $script:ProbeCalls++
+                    return ($script:ProbeCalls -ge 3)
+                }
+            [pscustomobject]@{ processResult = $processResult; probeCalls = $script:ProbeCalls }
+        }
+
+        $result.probeCalls | Should -Be 3
+        $result.processResult.completedByProbe | Should -BeTrue
+        $result.processResult.timedOut | Should -BeFalse
+        $result.processResult.exitCode | Should -Be 0
+    }
+
     It "requires repository terminal evidence and keeps secrets out of command output" {
         $fixtureRoot = Join-Path $TestDrive "repository-evidence"
         $basePath = Join-Path $fixtureRoot "base"
@@ -82,10 +114,12 @@ Describe "1C Designer completion evidence" {
                 logsPath = "logs"
                 designerMaxWorkingSetMb = 0
                 designerOperationTimeoutSeconds = 30
+                completionPostExitTimeoutSeconds = 75
             }
             $script:ProbeBeforeEvidence = $null
             $script:ProbeAfterEvidence = $null
             $script:CapturedTimeout = 0
+            $script:CapturedPostExitProbeSeconds = 0
             function Invoke-NativeProcessAndWaitResult {
                 param(
                     [string]$FilePath,
@@ -94,9 +128,11 @@ Describe "1C Designer completion evidence" {
                     [scriptblock]$OnTimeout = $null,
                     [scriptblock]$CompletionProbe = $null,
                     [int]$CompletionGraceSeconds = 10,
+                    [int]$PostExitProbeSeconds = 0,
                     [int]$MaxWorkingSetMb = 0
                 )
                 $script:CapturedTimeout = $TimeoutSeconds
+                $script:CapturedPostExitProbeSeconds = $PostExitProbeSeconds
                 $outIndex = [Array]::IndexOf($Arguments, "/Out")
                 $logPath = [string]$Arguments[$outIndex + 1]
                 $context = [pscustomobject]@{ launcherExited = $true; launcherExitCode = 0; processId = 7001 }
@@ -131,12 +167,14 @@ Describe "1C Designer completion evidence" {
                 before = $script:ProbeBeforeEvidence
                 after = $script:ProbeAfterEvidence
                 timeout = $script:CapturedTimeout
+                postExitProbeSeconds = $script:CapturedPostExitProbeSeconds
             }
         }
 
         $result.before | Should -BeFalse
         $result.after | Should -BeTrue
         $result.timeout | Should -Be 30
+        $result.postExitProbeSeconds | Should -Be 75
         $result.output | Should -Not -Match "ib-secret"
         $result.output | Should -Not -Match "repo-secret"
         $result.output | Should -Match ([regex]::Escape("<hidden>"))
@@ -168,6 +206,7 @@ Describe "1C Designer completion evidence" {
                     [scriptblock]$OnTimeout = $null,
                     [scriptblock]$CompletionProbe = $null,
                     [int]$CompletionGraceSeconds = 10,
+                    [int]$PostExitProbeSeconds = 0,
                     [int]$MaxWorkingSetMb = 0
                 )
                 $outIndex = [Array]::IndexOf($Arguments, "/Out")
@@ -191,7 +230,7 @@ Describe "1C Designer completion evidence" {
                     [System.IO.File]::WriteAllText($logPath, "completed", (Get-Utf8Encoding))
                 }
                 $probePassed = [bool](& $CompletionProbe ([pscustomobject]@{ launcherExited = $true; launcherExitCode = 0; processId = 7002 }))
-                $script:Observed.Add([pscustomobject]@{ operation = $operation; timeout = $TimeoutSeconds; probePassed = $probePassed }) | Out-Null
+                $script:Observed.Add([pscustomobject]@{ operation = $operation; timeout = $TimeoutSeconds; postExitProbeSeconds = $PostExitProbeSeconds; probePassed = $probePassed }) | Out-Null
                 return [pscustomobject]@{
                     processId = 7002; exitCode = 0; timedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
@@ -221,6 +260,7 @@ Describe "1C Designer completion evidence" {
 
         @($result).Count | Should -Be 9
         @($result | Where-Object { $_.timeout -ne 30 }).Count | Should -Be 0
+        @($result | Where-Object { $_.postExitProbeSeconds -ne 0 }).Count | Should -Be 0
         @($result | Where-Object { -not $_.probePassed }).Count | Should -Be 0
     }
 
@@ -273,6 +313,7 @@ Describe "1C Designer completion evidence" {
                     [scriptblock]$OnTimeout = $null,
                     [scriptblock]$CompletionProbe = $null,
                     [int]$CompletionGraceSeconds = 10,
+                    [int]$PostExitProbeSeconds = 0,
                     [int]$MaxWorkingSetMb = 0
                 )
                 $runningContext = [pscustomobject]@{ launcherExited = $false; launcherExitCode = $null; processId = 7004 }
@@ -344,7 +385,8 @@ Describe "1C Designer completion evidence" {
                 param(
                     [string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 0,
                     [scriptblock]$OnTimeout = $null, [scriptblock]$CompletionProbe = $null,
-                    [int]$CompletionGraceSeconds = 10, [int]$MaxWorkingSetMb = 0
+                    [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
+                    [int]$MaxWorkingSetMb = 0
                 )
                 $outIndex = [Array]::IndexOf($Arguments, "/Out")
                 $logPath = [string]$Arguments[$outIndex + 1]
