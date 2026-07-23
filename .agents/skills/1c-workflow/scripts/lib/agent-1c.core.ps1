@@ -4640,14 +4640,15 @@ function Invoke-Designer {
                 $postExitProbeState.lastDiagnosticSecond = $elapsed
                 Write-Host "Designer PID $($probeContext.processId) exited with code $($probeContext.launcherExitCode); post-exit probe pending for $operationKind (${elapsed}s)."
             }
-            if ($operationKind -eq "configuration-update" -and $terminalState.state -ne "success") {
-                return $false
-            }
             $observedAtUtc = [DateTime]::UtcNow
             if ($observedAtUtc -lt [DateTime]$artifactProbeState.nextCheckAtUtc) {
                 return $false
             }
-            $logState = Get-DesignerFileArtifactState -Path $logPath
+            $logState = if ($operationKind -eq "configuration-update") {
+                Get-DesignerFileArtifactState -Path $logPath -AllowEmpty
+            } else {
+                Get-DesignerFileArtifactState -Path $logPath
+            }
             return (Test-DesignerArtifactStability `
                 -ProbeState $artifactProbeState `
                 -ArtifactState $logState `
