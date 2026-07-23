@@ -54,6 +54,15 @@ function Get-ObjectValue {
     return $property.Value
 }
 
+function Set-ObjectValue {
+    param(
+        [object]$Object,
+        [string]$Name,
+        [AllowNull()][object]$Value
+    )
+    $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
+}
+
 function Find-LauncherRunDirectory {
     param([object[]]$Output, [datetime]$StartedAt, [string]$RunsRoot)
     foreach ($line in @($Output)) {
@@ -127,17 +136,37 @@ if ($windowed) {
 }
 
 $status = Read-JsonFile -Path $statusPath
-if ($null -eq $status) {
-    $status = [pscustomobject][ordered]@{
-        schemaVersion = 1
-        status = $(if ($exitCode -eq 0) { "succeeded" } else { "failed" })
-        action = $action
-        stage = ""
-        stageDetail = ""
-        errorMessage = $(if ($exitCode -eq 0) { "" } else { "ITL helper did not produce status.json; inspect console.log." })
-        exitCode = $exitCode
-        lastLogPath = ""
+if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status" -Default "") -notin @("succeeded", "failed")) {
+    $now = Get-Date
+    $effectiveExitCode = if ($exitCode -ne 0) { $exitCode } else { 1 }
+    $previousStage = [string](Get-ObjectValue -Object $status -Name "stage" -Default "")
+    $message = "ITL helper exited with code $exitCode before writing a terminal status. Log: $logPath"
+    $detail = if ($previousStage) { "$message Last recorded stage: $previousStage." } else { $message }
+    if ($null -eq $status) {
+        $status = [pscustomobject][ordered]@{
+            schemaVersion = 1
+            action = $action
+            projectRoot = $projectRoot
+            pid = 0
+            launcherPid = 0
+            startedAt = $startedAt.ToString("o")
+            lastLogPath = ""
+            runLogPath = $logPath
+        }
     }
+    Set-ObjectValue -Object $status -Name "schemaVersion" -Value 1
+    Set-ObjectValue -Object $status -Name "status" -Value "failed"
+    Set-ObjectValue -Object $status -Name "action" -Value $action
+    Set-ObjectValue -Object $status -Name "updatedAt" -Value $now.ToString("o")
+    Set-ObjectValue -Object $status -Name "finishedAt" -Value $now.ToString("o")
+    Set-ObjectValue -Object $status -Name "exitCode" -Value $effectiveExitCode
+    Set-ObjectValue -Object $status -Name "runLogPath" -Value $logPath
+    Set-ObjectValue -Object $status -Name "errorMessage" -Value $message
+    Set-ObjectValue -Object $status -Name "errorCategory" -Value "runner"
+    Set-ObjectValue -Object $status -Name "requiredAction" -Value ""
+    Set-ObjectValue -Object $status -Name "stage" -Value "runner.helper-exited"
+    Set-ObjectValue -Object $status -Name "stageDetail" -Value $detail
+    $exitCode = $effectiveExitCode
 }
 
 $errorText = Limit-Text -Value (Get-ObjectValue -Object $status -Name "errorMessage" -Default "") -Length 1400

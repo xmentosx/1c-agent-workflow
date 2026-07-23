@@ -61,6 +61,8 @@
                     function Test-DevBranchExtensionExists { return [bool]$ExistingExtension }
                     function Get-RoctupMcpRuntimeInfo { return [pscustomobject]@{ processAlive = $false } }
                     function Get-VanessaMcpRuntimeInfo { return [pscustomobject]@{ processAlive = $false } }
+                    function Get-OwnVanessaTestProcesses { return @() }
+                    function Get-ItlOnDemandRuntimeInstances { return @() }
                     function Stop-OwnVanessaTestProcessesAndAssert {}
                     function Stop-RoctupMcpForState { return $false }
                     function Stop-VanessaMcpForState { return $false }
