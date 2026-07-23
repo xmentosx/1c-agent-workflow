@@ -223,6 +223,106 @@ Describe "1C Designer completion evidence" {
         @($result | Where-Object { -not $_.probePassed }).Count | Should -Be 0
     }
 
+    It "checks a staged dump only after launcher exit and retains stability across probe calls" {
+        $fixtureRoot = Join-Path $TestDrive "stable-staged-dump"
+        $basePath = Join-Path $fixtureRoot "base"
+        $platformPath = Join-Path $fixtureRoot "1cv8.exe"
+        $dumpPath = Join-Path $fixtureRoot "staged"
+        New-Item -ItemType Directory -Force -Path $basePath, $dumpPath | Out-Null
+        New-Item -ItemType File -Force -Path $platformPath | Out-Null
+        New-Item -ItemType File -Force -Path (Join-Path $basePath "1Cv8.1CD") | Out-Null
+
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:Config = [pscustomobject]@{
+                platformPath = $platformPath
+                logsPath = "logs"
+                designerMaxWorkingSetMb = 0
+                designerOperationTimeoutSeconds = 30
+                designerDumpStabilitySeconds = 1
+            }
+            $script:DumpArtifactReady = $false
+            $script:DumpArtifactCalls = 0
+            $script:DumpArtifactWrittenAtTicks = 0
+            function Get-DesignerDumpArtifactState {
+                param([string]$Path)
+                $script:DumpArtifactCalls++
+                if (-not $script:DumpArtifactReady) {
+                    return [pscustomobject]@{
+                        ready = $false
+                        signature = ""
+                        fileCount = 0
+                        totalBytes = [int64]0
+                        latestWriteTimeUtcTicks = [int64]0
+                    }
+                }
+                return [pscustomobject]@{
+                    ready = $true
+                    signature = "19409|664534671|$script:DumpArtifactWrittenAtTicks"
+                    fileCount = 19409
+                    totalBytes = [int64]664534671
+                    latestWriteTimeUtcTicks = [int64]$script:DumpArtifactWrittenAtTicks
+                }
+            }
+            function Invoke-NativeProcessAndWaitResult {
+                param(
+                    [string]$FilePath,
+                    [string[]]$Arguments,
+                    [int]$TimeoutSeconds = 0,
+                    [scriptblock]$OnTimeout = $null,
+                    [scriptblock]$CompletionProbe = $null,
+                    [int]$CompletionGraceSeconds = 10,
+                    [int]$MaxWorkingSetMb = 0
+                )
+                $runningContext = [pscustomobject]@{ launcherExited = $false; launcherExitCode = $null; processId = 7004 }
+                foreach ($index in 1..8) {
+                    (& $CompletionProbe $runningContext) | Should -BeFalse
+                }
+                $script:CallsWhileRunning = $script:DumpArtifactCalls
+
+                $script:DumpArtifactReady = $true
+                $script:DumpArtifactWrittenAtTicks = [DateTime]::UtcNow.Ticks
+                $exitedContext = [pscustomobject]@{ launcherExited = $true; launcherExitCode = 0; processId = 7004 }
+                $script:FirstExitedResult = [bool](& $CompletionProbe $exitedContext)
+                $script:CallsAfterFirstExitProbe = $script:DumpArtifactCalls
+                foreach ($index in 1..8) {
+                    (& $CompletionProbe $exitedContext) | Should -BeFalse
+                }
+                $script:CallsAfterImmediateProbes = $script:DumpArtifactCalls
+
+                Start-Sleep -Milliseconds 1100
+                $script:StableExitedResult = [bool](& $CompletionProbe $exitedContext)
+                return [pscustomobject]@{
+                    processId = 7004; exitCode = 0; timedOut = $false
+                    memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
+                    peakWorkingSetMb = 0; workingSetLimitMb = 0
+                    terminationConfirmed = $true; terminationError = ""; completedByProbe = $script:StableExitedResult
+                    launcherExited = $true; launcherExitCode = 0
+                }
+            }
+
+            Invoke-Designer `
+                -InfoBasePath $basePath `
+                -InfoBaseKind "file" `
+                -DesignerArgs @("/DumpConfigToFiles", $dumpPath, "-Format", "Hierarchical") 6>$null | Out-Null
+            [pscustomobject]@{
+                callsWhileRunning = $script:CallsWhileRunning
+                firstExitedResult = $script:FirstExitedResult
+                callsAfterFirstExitProbe = $script:CallsAfterFirstExitProbe
+                callsAfterImmediateProbes = $script:CallsAfterImmediateProbes
+                stableExitedResult = $script:StableExitedResult
+                finalArtifactCalls = $script:DumpArtifactCalls
+            }
+        }
+
+        $result.callsWhileRunning | Should -Be 1
+        $result.firstExitedResult | Should -BeFalse
+        $result.callsAfterFirstExitProbe | Should -Be 2
+        $result.callsAfterImmediateProbes | Should -Be 2
+        $result.stableExitedResult | Should -BeTrue
+        $result.finalArtifactCalls | Should -Be 3
+    }
+
     It "turns a repository lock error into a failing Designer result" {
         $fixtureRoot = Join-Path $TestDrive "repository-lock-error"
         $basePath = Join-Path $fixtureRoot "base"
