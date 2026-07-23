@@ -1376,7 +1376,11 @@
                         [string]$FilePath,
                         [string[]]$Arguments,
                         [int]$TimeoutSeconds = 0,
-                        [scriptblock]$OnTimeout = $null
+                        [scriptblock]$OnTimeout = $null,
+                        [scriptblock]$CompletionProbe = $null,
+                        [int]$CompletionGraceSeconds = 10,
+                        [int]$PostExitProbeSeconds = 0,
+                        [int]$MaxWorkingSetMb = 0
                     )
                     $script:LastNativeProcessArguments = @($Arguments)
                     return [pscustomobject]@{
