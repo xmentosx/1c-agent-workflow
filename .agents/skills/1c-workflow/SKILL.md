@@ -46,6 +46,8 @@ If monitored bootstrap is interrupted, repeat the same command with `timeout_ms 
 
 After successful initialization with a non-empty `userReport`, the final response must be exactly that Markdown and nothing else. Do not translate it, use a code fence, convert it to a table, rename or merge fields, reorder or omit lines, summarize, or substitute `requiredAction`. It already contains Russian settings, MCP/Browser state, advice, `/reload`, and next actions; do not read `console.log`. New worktree windows need no reload.
 
+After successful branch creation or `refresh-dev-branch` with a non-empty `userReport`, use the same exact-response contract. The Russian refresh report is the complete result: do not read or reproduce `console.log`, improvise a success summary, or omit the stated result, load, Enterprise, MCP/Browser, `/reload`, `/itl-check`, or extension lines.
+
 With default `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=manual-confirm`, create branches through `scripts/run-agent-1c-window.ps1`: a valid source confirmation makes the run question-free, otherwise the copied base is confirmed immediately after repository unbind. Direct helper calls require that source confirmation or explicit automation with `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip`.
 
 Ask setup questions only when the helper cannot collect them. Store secrets only in `.dev.env` or environment variables. Keep ITL overlay rules in `USER-RULES.md`.

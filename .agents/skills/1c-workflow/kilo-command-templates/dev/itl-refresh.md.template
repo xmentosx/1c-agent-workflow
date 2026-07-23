@@ -14,3 +14,5 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ru
 ```
 
 The helper refreshes `master` from storage or the current source infobase state, merges fresh `master` into the current branch, regenerates the context-specific Kilo command surface if workflow files changed, and updates the branch infobase from configuration files. Use the bounded JSON summary as the result; read only the last 80 lines of its `logPath` on failure.
+
+On success with a non-empty `userReport`, make the final response exactly that report rendered as Markdown, with no introduction, conclusion, or separate success summary. Do not translate it, convert it to a table, rename or merge fields, reorder or omit lines, summarize it, or replace it with `requiredAction` or a generic success sentence. The helper report already states the successful outcome and includes the branch, infobase update, Enterprise auto-update, MCP/Browser state, `/reload`, `/itl-check`, and extension advice in Russian. Do not wrap it in a code fence or read `console.log` on success.

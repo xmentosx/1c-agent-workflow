@@ -418,14 +418,15 @@
         $litemodeText | Should -Match "nothing outside it"
     }
 
-    It "requires complete user reports after init and branch creation" {
+    It "requires complete user reports after init branch creation and refresh" {
         $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
         $workflowSkill = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\SKILL.md")
         $fastSkill = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md")
         $configBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template")
         $extensionBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template")
+        $refreshBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template")
 
-        foreach ($text in @($installText, $workflowSkill, $fastSkill, $configBranch, $extensionBranch)) {
+        foreach ($text in @($installText, $workflowSkill, $fastSkill, $configBranch, $extensionBranch, $refreshBranch)) {
             $text | Should -Match "userReport"
             $text | Should -Match "final response must be exactly|make the final response exactly"
             $text | Should -Match "MCP/Browser"
@@ -437,6 +438,8 @@
             $text | Should -Match "code fence"
             $text | Should -Match "console\.log"
         }
+        $refreshBranch | Should -Match "states the successful outcome"
+        $refreshBranch | Should -Match "/itl-check"
     }
 
     It "keeps the native /itl contract compact and consistent" {
