@@ -3883,28 +3883,65 @@ function Get-DesignerDumpArtifactState {
     param([string]$Path)
 
     try {
-        if (-not (Test-Path -LiteralPath (Join-Path $Path "Configuration.xml") -PathType Leaf -ErrorAction Stop) -or
-            -not (Test-Path -LiteralPath (Join-Path $Path "ConfigDumpInfo.xml") -PathType Leaf -ErrorAction Stop)) {
-            return [pscustomobject]@{ ready = $false; signature = ""; fileCount = 0 }
+        $configurationPath = Join-Path $Path "Configuration.xml"
+        $dumpInfoPath = Join-Path $Path "ConfigDumpInfo.xml"
+        if (-not (Test-Path -LiteralPath $configurationPath -PathType Leaf -ErrorAction Stop) -or
+            -not (Test-Path -LiteralPath $dumpInfoPath -PathType Leaf -ErrorAction Stop)) {
+            return [pscustomobject]@{
+                ready = $false
+                signature = ""
+                fileCount = 0
+                totalBytes = [int64]0
+                latestWriteTimeUtcTicks = [int64]0
+            }
         }
 
         $root = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
-        $files = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force -ErrorAction Stop | Sort-Object FullName)
-        if ($files.Count -lt 2) {
-            return [pscustomobject]@{ ready = $false; signature = ""; fileCount = $files.Count }
+        $fileCount = 0
+        [int64]$totalBytes = 0
+        [int64]$latestWriteTimeUtcTicks = 0
+        foreach ($file in Get-ChildItem -LiteralPath $root -Recurse -File -Force -ErrorAction Stop) {
+            $fileCount++
+            $totalBytes += [int64]$file.Length
+            if ($file.LastWriteTimeUtc.Ticks -gt $latestWriteTimeUtcTicks) {
+                $latestWriteTimeUtcTicks = [int64]$file.LastWriteTimeUtc.Ticks
+            }
+        }
+        if ($fileCount -lt 2) {
+            return [pscustomobject]@{
+                ready = $false
+                signature = ""
+                fileCount = $fileCount
+                totalBytes = $totalBytes
+                latestWriteTimeUtcTicks = $latestWriteTimeUtcTicks
+            }
         }
 
-        $parts = foreach ($file in $files) {
-            $relativePath = $file.FullName.Substring($root.Length).TrimStart('\')
-            "{0}|{1}|{2}" -f $relativePath, $file.Length, $file.LastWriteTimeUtc.Ticks
-        }
+        $configuration = Get-Item -LiteralPath $configurationPath -Force -ErrorAction Stop
+        $dumpInfo = Get-Item -LiteralPath $dumpInfoPath -Force -ErrorAction Stop
+        $signature = "{0}|{1}|{2}|{3}|{4}|{5}|{6}" -f `
+            $fileCount,
+            $totalBytes,
+            $latestWriteTimeUtcTicks,
+            $configuration.Length,
+            $configuration.LastWriteTimeUtc.Ticks,
+            $dumpInfo.Length,
+            $dumpInfo.LastWriteTimeUtc.Ticks
         return [pscustomobject]@{
             ready = $true
-            signature = ($parts -join "`n")
-            fileCount = $files.Count
+            signature = $signature
+            fileCount = $fileCount
+            totalBytes = $totalBytes
+            latestWriteTimeUtcTicks = $latestWriteTimeUtcTicks
         }
     } catch {
-        return [pscustomobject]@{ ready = $false; signature = ""; fileCount = 0 }
+        return [pscustomobject]@{
+            ready = $false
+            signature = ""
+            fileCount = 0
+            totalBytes = [int64]0
+            latestWriteTimeUtcTicks = [int64]0
+        }
     }
 }
 
@@ -3925,10 +3962,62 @@ function Get-DesignerFileArtifactState {
         return [pscustomobject]@{
             ready = $true
             signature = ("{0}|{1}" -f $file.Length, $file.LastWriteTimeUtc.Ticks)
+            latestWriteTimeUtcTicks = [int64]$file.LastWriteTimeUtc.Ticks
         }
     } catch {
-        return [pscustomobject]@{ ready = $false; signature = "" }
+        return [pscustomobject]@{ ready = $false; signature = ""; latestWriteTimeUtcTicks = [int64]0 }
     }
+}
+
+function New-DesignerArtifactProbeState {
+    return [pscustomobject]@{
+        lastSignature = ""
+        stableSinceUtc = $null
+        nextCheckAtUtc = [DateTime]::MinValue
+        confirmedState = $null
+    }
+}
+
+function Test-DesignerArtifactStability {
+    param(
+        [Parameter(Mandatory = $true)][object]$ProbeState,
+        [Parameter(Mandatory = $true)][object]$ArtifactState,
+        [string]$InitialSignature,
+        [ValidateRange(0, 300)][int]$StabilitySeconds,
+        [DateTime]$ObservedAtUtc = [DateTime]::UtcNow
+    )
+
+    if (-not $ArtifactState.ready -or [string]$ArtifactState.signature -eq $InitialSignature) {
+        $ProbeState.lastSignature = ""
+        $ProbeState.stableSinceUtc = $null
+        $ProbeState.nextCheckAtUtc = $ObservedAtUtc.AddSeconds(1)
+        $ProbeState.confirmedState = $null
+        return $false
+    }
+
+    $signature = [string]$ArtifactState.signature
+    if ($signature -ne [string]$ProbeState.lastSignature) {
+        $ProbeState.lastSignature = $signature
+        [int64]$lastWriteTicks = 0
+        if ($ArtifactState.PSObject.Properties.Name -contains "latestWriteTimeUtcTicks") {
+            $lastWriteTicks = [int64]$ArtifactState.latestWriteTimeUtcTicks
+        }
+        $ProbeState.stableSinceUtc = if ($lastWriteTicks -gt 0) {
+            [DateTime]::new($lastWriteTicks, [DateTimeKind]::Utc)
+        } else {
+            $ObservedAtUtc
+        }
+    }
+
+    $stableAtUtc = ([DateTime]$ProbeState.stableSinceUtc).AddSeconds($StabilitySeconds)
+    if ($StabilitySeconds -eq 0 -or $ObservedAtUtc -ge $stableAtUtc) {
+        $ProbeState.nextCheckAtUtc = [DateTime]::MaxValue
+        $ProbeState.confirmedState = $ArtifactState
+        return $true
+    }
+
+    $ProbeState.nextCheckAtUtc = $stableAtUtc
+    return $false
 }
 
 function Test-DesignerInfoBaseReleased {
@@ -4287,6 +4376,7 @@ function Invoke-Designer {
     $completionProbe = $null
     $completionTimeoutSeconds = 0
     $completionGraceSeconds = 0
+    $artifactProbeState = $null
     $repositoryUpdateIndex = [Array]::IndexOf($DesignerArgs, "/ConfigurationRepositoryUpdateCfg")
     $dumpIndex = [Array]::IndexOf($DesignerArgs, "/DumpConfigToFiles")
     $dumpCfgIndex = [Array]::IndexOf($DesignerArgs, "/DumpCfg")
@@ -4308,25 +4398,27 @@ function Invoke-Designer {
         $stabilitySeconds = Get-DesignerDumpStabilitySeconds
         $initialDumpState = Get-DesignerDumpArtifactState -Path $operationTarget
         $initialSignature = [string]$initialDumpState.signature
-        $lastSignature = ""
-        $stableSince = $null
+        $artifactProbeState = New-DesignerArtifactProbeState
         $completionProbe = {
+            param($probeContext)
             $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
             if ($terminalState.state -eq "failure") {
                 return $true
             }
-            $dumpState = Get-DesignerDumpArtifactState -Path $operationTarget
-            if (-not $dumpState.ready -or [string]$dumpState.signature -eq $initialSignature) {
-                $lastSignature = ""
-                $stableSince = $null
+            if ($null -eq $probeContext -or -not $probeContext.launcherExited) {
                 return $false
             }
-            if ([string]$dumpState.signature -ne $lastSignature) {
-                $lastSignature = [string]$dumpState.signature
-                $stableSince = [DateTime]::UtcNow
-                return ($stabilitySeconds -eq 0)
+            $observedAtUtc = [DateTime]::UtcNow
+            if ($observedAtUtc -lt [DateTime]$artifactProbeState.nextCheckAtUtc) {
+                return $false
             }
-            return ($null -ne $stableSince -and ([DateTime]::UtcNow - $stableSince).TotalSeconds -ge $stabilitySeconds)
+            $dumpState = Get-DesignerDumpArtifactState -Path $operationTarget
+            return (Test-DesignerArtifactStability `
+                -ProbeState $artifactProbeState `
+                -ArtifactState $dumpState `
+                -InitialSignature $initialSignature `
+                -StabilitySeconds $stabilitySeconds `
+                -ObservedAtUtc ([DateTime]::UtcNow))
         }
     } elseif (($dumpCfgIndex -ge 0 -and ($dumpCfgIndex + 1) -lt $DesignerArgs.Count) -or
               ($dumpIbIndex -ge 0 -and ($dumpIbIndex + 1) -lt $DesignerArgs.Count) -or
@@ -4338,25 +4430,27 @@ function Invoke-Designer {
         $stabilitySeconds = Get-DesignerDumpStabilitySeconds
         $initialFileState = Get-DesignerFileArtifactState -Path $operationTarget
         $initialSignature = [string]$initialFileState.signature
-        $lastSignature = ""
-        $stableSince = $null
+        $artifactProbeState = New-DesignerArtifactProbeState
         $completionProbe = {
+            param($probeContext)
             $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
             if ($terminalState.state -eq "failure") {
                 return $true
             }
-            $fileState = Get-DesignerFileArtifactState -Path $operationTarget
-            if (-not $fileState.ready -or [string]$fileState.signature -eq $initialSignature) {
-                $lastSignature = ""
-                $stableSince = $null
+            if ($null -eq $probeContext -or -not $probeContext.launcherExited) {
                 return $false
             }
-            if ([string]$fileState.signature -ne $lastSignature) {
-                $lastSignature = [string]$fileState.signature
-                $stableSince = [DateTime]::UtcNow
-                return ($stabilitySeconds -eq 0)
+            $observedAtUtc = [DateTime]::UtcNow
+            if ($observedAtUtc -lt [DateTime]$artifactProbeState.nextCheckAtUtc) {
+                return $false
             }
-            return ($null -ne $stableSince -and ([DateTime]::UtcNow - $stableSince).TotalSeconds -ge $stabilitySeconds)
+            $fileState = Get-DesignerFileArtifactState -Path $operationTarget
+            return (Test-DesignerArtifactStability `
+                -ProbeState $artifactProbeState `
+                -ArtifactState $fileState `
+                -InitialSignature $initialSignature `
+                -StabilitySeconds $stabilitySeconds `
+                -ObservedAtUtc ([DateTime]::UtcNow))
         }
     } else {
         $operationKind = "designer-command"
@@ -4364,8 +4458,7 @@ function Invoke-Designer {
         $stabilitySeconds = Get-DesignerDumpStabilitySeconds
         $initialLogState = Get-DesignerFileArtifactState -Path $logPath -AllowEmpty
         $initialSignature = [string]$initialLogState.signature
-        $lastSignature = ""
-        $stableSince = $null
+        $artifactProbeState = New-DesignerArtifactProbeState
         $completionProbe = {
             param($probeContext)
             $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
@@ -4378,18 +4471,17 @@ function Invoke-Designer {
             if (-not (Test-DesignerInfoBaseReleased -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath)) {
                 return $false
             }
-            $logState = Get-DesignerFileArtifactState -Path $logPath
-            if (-not $logState.ready -or [string]$logState.signature -eq $initialSignature) {
-                $lastSignature = ""
-                $stableSince = $null
+            $observedAtUtc = [DateTime]::UtcNow
+            if ($observedAtUtc -lt [DateTime]$artifactProbeState.nextCheckAtUtc) {
                 return $false
             }
-            if ([string]$logState.signature -ne $lastSignature) {
-                $lastSignature = [string]$logState.signature
-                $stableSince = [DateTime]::UtcNow
-                return ($stabilitySeconds -eq 0)
-            }
-            return ($null -ne $stableSince -and ([DateTime]::UtcNow - $stableSince).TotalSeconds -ge $stabilitySeconds)
+            $logState = Get-DesignerFileArtifactState -Path $logPath
+            return (Test-DesignerArtifactStability `
+                -ProbeState $artifactProbeState `
+                -ArtifactState $logState `
+                -InitialSignature $initialSignature `
+                -StabilitySeconds $stabilitySeconds `
+                -ObservedAtUtc ([DateTime]::UtcNow))
         }
     }
 
@@ -4429,12 +4521,20 @@ function Invoke-Designer {
             throw "1C Designer repository update ended without terminal success evidence. Log: $logPath"
         }
     } elseif ($operationKind -eq "dump-config-to-files") {
-        $dumpState = Get-DesignerDumpArtifactState -Path $operationTarget
+        $dumpState = if ($null -ne $artifactProbeState -and $null -ne $artifactProbeState.confirmedState) {
+            $artifactProbeState.confirmedState
+        } else {
+            Get-DesignerDumpArtifactState -Path $operationTarget
+        }
         if (-not $dumpState.ready) {
             throw "1C Designer dump ended without complete artifacts in '$operationTarget'. Log: $logPath"
         }
     } elseif ($operationKind -in @("dump-cfg", "dump-ib", "build-external-processor")) {
-        $fileState = Get-DesignerFileArtifactState -Path $operationTarget
+        $fileState = if ($null -ne $artifactProbeState -and $null -ne $artifactProbeState.confirmedState) {
+            $artifactProbeState.confirmedState
+        } else {
+            Get-DesignerFileArtifactState -Path $operationTarget
+        }
         if (-not $fileState.ready) {
             throw "1C Designer $operationKind ended without a complete output file '$operationTarget'. Log: $logPath"
         }
