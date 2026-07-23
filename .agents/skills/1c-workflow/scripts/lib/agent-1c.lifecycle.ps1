@@ -341,6 +341,7 @@ function Test-WorkflowHelperChangedSince {
 
 function Invoke-Agent1cFreshProcess {
     param(
+        [string]$ScriptPath = $script:Agent1cScriptPath,
         [string[]]$AdditionalArguments = @()
     )
 
@@ -374,7 +375,7 @@ function Invoke-Agent1cFreshProcess {
     $arguments = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
-        "-File", $script:Agent1cScriptPath
+        "-File", $ScriptPath
     ) + @($reexecArguments.ToArray()) + @($AdditionalArguments)
 
     & powershell @arguments
@@ -396,6 +397,24 @@ function Invoke-Agent1cFreshProcess {
         }
     }
     exit $exitCode
+}
+
+function Restart-Agent1cFromMainWorktreeIfNeeded {
+    param([string]$MainWorktreePath)
+
+    if ([string]::IsNullOrWhiteSpace($MainWorktreePath)) {
+        return
+    }
+    $mainHelperPath = Join-Path (Resolve-Agent1cFullPath -Path $MainWorktreePath) ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+    if (-not (Test-Path -LiteralPath $mainHelperPath -PathType Leaf)) {
+        throw "Main worktree ITL helper was not found: $mainHelperPath"
+    }
+    if ((Get-FullPathNormalized $mainHelperPath) -eq (Get-FullPathNormalized $script:Agent1cScriptPath)) {
+        return
+    }
+
+    Write-Host "Development worktree helper may be stale. Restarting the current action through the main worktree helper before master synchronization: $mainHelperPath"
+    Invoke-Agent1cFreshProcess -ScriptPath $mainHelperPath -AdditionalArguments @("-LifecyclePhase", "main-helper")
 }
 
 function Restart-Agent1cAfterWorkflowHelperUpdate {
@@ -4786,6 +4805,7 @@ function Sync-Master {
             $state = Read-DevBranchState -Name ""
             $mainWorktreePath = Get-StateValue -State $state -Name "mainWorktreePath" -Default ""
             if ($mainWorktreePath -and ((Get-FullPathNormalized $mainWorktreePath) -ne (Get-FullPathNormalized $script:ProjectRoot))) {
+                Restart-Agent1cFromMainWorktreeIfNeeded -MainWorktreePath $mainWorktreePath
                 Write-Host "Syncing master in main worktree: $mainWorktreePath"
                 Invoke-InProjectContext -Root $mainWorktreePath -ScriptBlock {
                     Sync-Master -NoDelegate
@@ -6694,7 +6714,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
 
 function Show-WorkflowStatus {
     Write-Section "ITL status"
-    Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 1800000."
+    Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 3900000 by default and exceed the configured Designer timeout."
     Write-DesignerMemoryLimitStatusLine
     Write-Agent1cLifecycleOperationStatusLines
 
@@ -7322,7 +7342,7 @@ function Show-Help {
     }
     Write-Host "Context: $surface"
     Write-Host "Git branch: $(if ($currentBranch) { $currentBranch } else { '<none>' })"
-    Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 1800000."
+    Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 3900000 by default and exceed the configured Designer timeout."
 
     if ($surface -eq "master") {
         Write-Host ""

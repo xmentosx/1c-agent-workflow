@@ -6,7 +6,7 @@ Describe "1C Designer completion evidence" {
         $HelperPath = $context.HelperPath
     }
 
-    It "continues polling a completion probe after the launcher exits" {
+    It "checks completion evidence once and stops after the launcher exits" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:ProbeCalls = 0
@@ -27,19 +27,20 @@ Describe "1C Designer completion evidence" {
                 -CompletionProbe {
                     param($Context)
                     $script:ProbeCalls++
-                    return ($Context.launcherExited -and $script:ProbeCalls -ge 3)
+                    return $false
                 }
             [pscustomobject]@{ processResult = $processResult; probeCalls = $script:ProbeCalls }
         }
 
-        $result.probeCalls | Should -BeGreaterOrEqual 3
+        $result.probeCalls | Should -Be 1
         $result.processResult.launcherExited | Should -BeTrue
         $result.processResult.launcherExitCode | Should -Be 0
-        $result.processResult.completedByProbe | Should -BeTrue
+        $result.processResult.completedByProbe | Should -BeFalse
         $result.processResult.timedOut | Should -BeFalse
+        $result.processResult.exitCode | Should -Be 0
     }
 
-    It "fails with a bounded timeout when the launcher exits without completion evidence" {
+    It "accepts completion evidence observed on the launcher exit poll" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $fakeProcess = [pscustomobject]@{
@@ -54,16 +55,16 @@ Describe "1C Designer completion evidence" {
             Invoke-NativeProcessAndWaitResult `
                 -FilePath "fake.exe" `
                 -Arguments @() `
-                -TimeoutSeconds 1 `
+                -TimeoutSeconds 5 `
                 -CompletionGraceSeconds 0 `
-                -CompletionProbe { return $false }
+                -CompletionProbe { return $true }
         }
 
         $result.launcherExited | Should -BeTrue
         $result.launcherExitCode | Should -Be 0
-        $result.completedByProbe | Should -BeFalse
-        $result.timedOut | Should -BeTrue
-        $result.exitCode | Should -Be -1
+        $result.completedByProbe | Should -BeTrue
+        $result.timedOut | Should -BeFalse
+        $result.exitCode | Should -Be 0
     }
 
     It "requires repository terminal evidence and keeps secrets out of command output" {

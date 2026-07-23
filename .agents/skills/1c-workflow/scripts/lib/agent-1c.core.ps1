@@ -36,6 +36,20 @@ function Write-Utf8Text {
     [System.IO.File]::WriteAllText($Path, $Value, (Get-Utf8Encoding))
 }
 
+function Write-Utf8TextIfChanged {
+    param(
+        [string]$Path,
+        [string]$Value
+    )
+
+    if ((Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction SilentlyContinue) -and
+        [string]::Equals((Read-Utf8Text -Path $Path), $Value, [StringComparison]::Ordinal)) {
+        return $false
+    }
+    Write-Utf8Text -Path $Path -Value $Value
+    return $true
+}
+
 function Add-Utf8Text {
     param(
         [string]$Path,
@@ -694,6 +708,28 @@ function Update-Agent1cLifecycleOperationStage {
     }
     $record["phase"] = $Stage
     $record["detail"] = $Detail
+    $record["updatedAt"] = (Get-Date).ToString("o")
+    $record["lastProcessId"] = $script:LastProcessId
+    $record["lastLogPath"] = $(if ($script:LastLogPath) { [string]$script:LastLogPath } else { "" })
+    $record["lastProcessMemoryLimitExceeded"] = [bool]$script:LastProcessMemoryLimitExceeded
+    $record["lastProcessPeakWorkingSetMb"] = [int]$script:LastProcessPeakWorkingSetMb
+    $record["lastProcessWorkingSetLimitMb"] = [int]$script:LastProcessWorkingSetLimitMb
+    if ($script:LifecycleOperationIsContinuation) {
+        $record["continuationPid"] = $PID
+    }
+    $script:LifecycleOperationRecord = $record
+    Write-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -Record $record
+}
+
+function Publish-Agent1cLifecycleOperationProcessEvidence {
+    if ($null -eq $script:LifecycleOperationRecord -or [string]::IsNullOrWhiteSpace($script:LifecycleOperationStatePath)) {
+        return
+    }
+    Assert-Agent1cLifecycleContinuationOwner
+    $record = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
+    if ($null -eq $record -or [string]$record["operationId"] -cne $script:LifecycleOperationId) {
+        throw "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='operation record disappeared or changed' operationId='$($script:LifecycleOperationId)' statePath='$($script:LifecycleOperationStatePath)'"
+    }
     $record["updatedAt"] = (Get-Date).ToString("o")
     $record["lastProcessId"] = $script:LastProcessId
     $record["lastLogPath"] = $(if ($script:LastLogPath) { [string]$script:LastLogPath } else { "" })
@@ -4128,6 +4164,12 @@ function Invoke-NativeProcessAndWaitResult {
     $script:LastProcessMemoryLimitExceeded = $false
     $script:LastProcessPeakWorkingSetMb = 0
     $script:LastProcessWorkingSetLimitMb = $MaxWorkingSetMb
+    try {
+        Publish-Agent1cLifecycleOperationProcessEvidence
+    } catch {
+        Stop-NativeProcessForSafety -Process $process | Out-Null
+        throw
+    }
     $completedByProbe = $false
     $launcherExited = $false
     $launcherExitCode = $null
@@ -4228,7 +4270,7 @@ function Invoke-NativeProcessAndWaitResult {
                 } else {
                     $probeObservedAt = $null
                 }
-                if ($launcherExited -and $null -ne $launcherExitCode -and $launcherExitCode -ne 0) {
+                if ($launcherExited -and $null -ne $launcherExitCode) {
                     $finished = $true
                     break
                 }
@@ -4326,6 +4368,12 @@ function Invoke-VisibleNativeProcessAndWait {
     $script:LastProcessMemoryLimitExceeded = $false
     $script:LastProcessPeakWorkingSetMb = 0
     $script:LastProcessWorkingSetLimitMb = 0
+    try {
+        Publish-Agent1cLifecycleOperationProcessEvidence
+    } catch {
+        Stop-NativeProcessForSafety -Process $process | Out-Null
+        throw
+    }
     $process.WaitForExit()
     $process.Refresh()
     return $process.ExitCode

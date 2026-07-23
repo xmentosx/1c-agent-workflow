@@ -1089,7 +1089,7 @@ exit 0
 
         foreach ($path in $instructionPaths) {
             $text = Get-Content -Encoding UTF8 -Raw $path
-            $text | Should -Match "timeout_ms\s*>=\s*1800000"
+            $text | Should -Match "timeout_ms\s*>=\s*3900000"
             $text | Should -Match 'Do not use\s+`?120000 ms'
             $text | Should -Match "1C Designer/Enterprise"
             $text | Should -Match "LoadConfigFromFiles.*UpdateDBCfg"
@@ -1108,7 +1108,7 @@ exit 0
         foreach ($path in $longTemplatePaths) {
             $text = Get-Content -Encoding UTF8 -Raw $path
             $text | Should -Match "agent shell tool supports"
-            $text | Should -Match "timeout_ms\s*>=\s*1800000"
+            $text | Should -Match "timeout_ms\s*>=\s*3900000"
             $text | Should -Match 'do not use\s+`?120000 ms'
             $text | Should -Match "1C Designer/Enterprise"
         }
@@ -1120,11 +1120,11 @@ exit 0
 
         foreach ($path in $shortTemplatePaths) {
             $text = Get-Content -Encoding UTF8 -Raw $path
-            $text | Should -Not -Match "timeout_ms\s*>=\s*1800000"
+            $text | Should -Not -Match "timeout_ms\s*>=\s*3900000"
         }
 
         $HelperText | Should -Match "Long lifecycle actions may run 1C Designer/Enterprise"
-        $HelperText | Should -Match "agent shell timeout_ms must be >= 1800000"
+        $HelperText | Should -Match "agent shell timeout_ms must be >= 3900000"
     }
 
     It "keeps helper path validation inside the monitored launcher" {

@@ -874,6 +874,16 @@
         }
     }
 
+    It "routes branch master synchronization through the main worktree helper first" {
+        $match = [regex]::Match($HelperText, "(?s)function\s+Sync-Master\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
+        $match.Success | Should -Be $true
+        $body = $match.Groups["body"].Value
+        $reexecIndex = $body.IndexOf("Restart-Agent1cFromMainWorktreeIfNeeded")
+        $delegateIndex = $body.IndexOf("Invoke-InProjectContext")
+        $reexecIndex | Should -BeGreaterOrEqual 0
+        $delegateIndex | Should -BeGreaterThan $reexecIndex
+    }
+
     It "preserves helper arguments needed for automatic reexec" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-reexec-args-test-" + [guid]::NewGuid().ToString("N"))
         $statusPath = Join-Path $tempRoot "status.json"
@@ -938,6 +948,42 @@
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "reexecs a branch action through the main helper before master synchronization" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-main-helper-reexec-" + [guid]::NewGuid().ToString("N"))
+        $mainRoot = Join-Path $tempRoot "main"
+        $branchRoot = Join-Path $tempRoot "branch"
+        try {
+            $mainHelperPath = Join-Path $mainRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $mainHelperPath), $branchRoot | Out-Null
+            Set-Content -LiteralPath $mainHelperPath -Encoding UTF8 -Value "# main helper"
+            $result = & {
+                . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
+                $script:Agent1cScriptPath = Join-Path $branchRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+                $script:CapturedScriptPath = ""
+                $script:CapturedArguments = @()
+                function Invoke-Agent1cFreshProcess {
+                    param([string]$ScriptPath, [string[]]$AdditionalArguments)
+                    $script:CapturedScriptPath = $ScriptPath
+                    $script:CapturedArguments = @($AdditionalArguments)
+                    throw "reexec-stop"
+                }
+                try {
+                    Restart-Agent1cFromMainWorktreeIfNeeded -MainWorktreePath $mainRoot
+                } catch {
+                    if ($_.Exception.Message -ne "reexec-stop") { throw }
+                }
+                [pscustomobject]@{
+                    scriptPath = $script:CapturedScriptPath
+                    arguments = @($script:CapturedArguments)
+                }
+            }
+            $result.scriptPath | Should -Be $mainHelperPath
+            $result.arguments | Should -Be @("-LifecyclePhase", "main-helper")
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 

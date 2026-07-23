@@ -38,6 +38,37 @@ Describe "1C workflow lifecycle operation lock" {
         }
     }
 
+    It "publishes native process evidence without waiting for a phase transition" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lifecycle-evidence-" + [guid]::NewGuid().ToString("N"))
+        try {
+            Initialize-LifecycleLockTestRepository -Path $tempRoot
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Enter-Agent1cLifecycleOperation -RequestedAction "run-dev-branch-tests"
+                try {
+                    Update-Agent1cLifecycleOperationStage -Stage "config-load.designer" -Detail "Loading configuration."
+                    $script:LastProcessId = 43210
+                    $script:LastLogPath = Join-Path $tempRoot "logs\1c\designer.log"
+                    $script:LastProcessWorkingSetLimitMb = 6144
+                    Publish-Agent1cLifecycleOperationProcessEvidence
+
+                    $record = Get-Content -Encoding UTF8 -Raw -LiteralPath $script:LifecycleOperationStatePath | ConvertFrom-Json
+                    $record.status | Should -Be "running"
+                    $record.phase | Should -Be "config-load.designer"
+                    $record.detail | Should -Be "Loading configuration."
+                    [int]$record.lastProcessId | Should -Be 43210
+                    $record.lastLogPath | Should -Be $script:LastLogPath
+                    [int]$record.lastProcessWorkingSetLimitMb | Should -Be 6144
+                } finally {
+                    Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
+                    Exit-Agent1cLifecycleOperation
+                }
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "blocks a second mutating action but keeps help and status observable" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lifecycle-lock-conflict-" + [guid]::NewGuid().ToString("N"))
         try {
