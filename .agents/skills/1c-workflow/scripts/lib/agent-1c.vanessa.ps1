@@ -3309,16 +3309,9 @@ function Resolve-VanessaMcpPort {
 function Get-OwnVanessaTestProcesses {
     param([object]$State)
 
-    $testPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaTestPort" -Default 0) -Default 0
     return @(Get-OneCProcessInfo | Where-Object {
-        $isVanessaTestProcess = Test-OneCVanessaTestProcess -ProcessInfo $_
-        $isTestClient = [string](Get-StateValue -State $_ -Name "commandLine" -Default "") -match '(?i)/TESTCLIENT(?:\s|$)'
-        $isVanessaTestProcess -and
-        (Test-OneCProcessBelongsToState `
-            -ProcessInfo $_ `
-            -State $State `
-            -TestPort $testPort `
-            -RequireTestPort:($isTestClient -and $testPort -gt 0))
+        (Test-OneCVanessaTestProcess -ProcessInfo $_) -and
+        (Test-OneCProcessBelongsToState -ProcessInfo $_ -State $State)
     })
 }
 
