@@ -57,6 +57,8 @@ Describe "Local quality gate contract" {
         $runner | Should -Match 'Sort-Object.*weight'
         $runner | Should -Match 'Start-Process'
         $runner | Should -Match 'assignment omitted or duplicated'
+        $runner | Should -Match 'ReleaseGate\.Tests\.ps1'
+        $runner | Should -Match 'only after all parallel workers finish'
         $runner | Should -Match 'CreateElement\("testsuites"\)'
         $worker | Should -Match 'Invoke-Pester -Configuration'
     }
