@@ -565,6 +565,11 @@ function Enter-Agent1cLifecycleOperation {
         $script:LifecycleOperationOwnerPid = $RequestedOwnerPid
         $script:LifecycleOperationIsContinuation = $true
         Assert-Agent1cLifecycleContinuationOwner
+        $script:LastProcessId = if ($record.Contains("lastProcessId")) { [int]$record["lastProcessId"] } else { 0 }
+        $script:LastLogPath = if ($record.Contains("lastLogPath")) { [string]$record["lastLogPath"] } else { "" }
+        $script:LastProcessMemoryLimitExceeded = $record.Contains("lastProcessMemoryLimitExceeded") -and [bool]$record["lastProcessMemoryLimitExceeded"]
+        $script:LastProcessPeakWorkingSetMb = if ($record.Contains("lastProcessPeakWorkingSetMb")) { [int]$record["lastProcessPeakWorkingSetMb"] } else { 0 }
+        $script:LastProcessWorkingSetLimitMb = if ($record.Contains("lastProcessWorkingSetLimitMb")) { [int]$record["lastProcessWorkingSetLimitMb"] } else { 0 }
         $record["continuationPid"] = $PID
         $record["updatedAt"] = (Get-Date).ToString("o")
         $record["phase"] = "continuation"

@@ -200,6 +200,11 @@ Describe "1C workflow lifecycle operation lock" {
                 Enter-Agent1cLifecycleOperation -RequestedAction "run-dev-branch-tests"
                 $operationId = $script:LifecycleOperationId
                 try {
+                    $script:LastProcessId = 54321
+                    $script:LastLogPath = Join-Path $tempRoot "logs\1c\designer.log"
+                    $script:LastProcessPeakWorkingSetMb = 512
+                    $script:LastProcessWorkingSetLimitMb = 6144
+                    Publish-Agent1cLifecycleOperationProcessEvidence
                     $continued = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
                         "-ProjectRoot", $tempRoot,
                         "-Action", "run-dev-branch-tests",
@@ -214,6 +219,10 @@ Describe "1C workflow lifecycle operation lock" {
                     $record.operationId | Should -Be $operationId
                     $record.status | Should -Be "failed"
                     [int]$record.continuationPid | Should -BeGreaterThan 0
+                    [int]$record.lastProcessId | Should -Be 54321
+                    $record.lastLogPath | Should -Be $script:LastLogPath
+                    [int]$record.lastProcessPeakWorkingSetMb | Should -Be 512
+                    [int]$record.lastProcessWorkingSetLimitMb | Should -Be 6144
                 } finally {
                     Exit-Agent1cLifecycleOperation
                 }
