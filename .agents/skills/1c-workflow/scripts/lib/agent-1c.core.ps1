@@ -4158,7 +4158,7 @@ function Invoke-NativeProcessAndWaitResult {
         [scriptblock]$OnTimeout = $null,
         [scriptblock]$CompletionProbe = $null,
         [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10,
-        [ValidateRange(0, 300)][int]$PostExitProbeSeconds = 0,
+        [ValidateRange(0, 86400)][int]$PostExitProbeSeconds = 0,
         [ValidateRange(0, 1048576)][int]$MaxWorkingSetMb = 0
     )
 
@@ -4571,7 +4571,11 @@ function Invoke-Designer {
     }
 
     $maxWorkingSetMb = Get-DesignerMaxWorkingSetMb
-    $postExitProbeSeconds = if ($operationKind -eq "repository-update") { Get-CompletionPostExitTimeoutSeconds } else { 0 }
+    $postExitProbeSeconds = if ($operationKind -eq "repository-update") {
+        Get-CompletionPostExitTimeoutSeconds
+    } else {
+        $completionTimeoutSeconds
+    }
     $result = Invoke-NativeProcessAndWaitResult `
         -FilePath $platformPath `
         -Arguments $args `

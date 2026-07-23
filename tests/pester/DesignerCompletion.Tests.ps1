@@ -260,7 +260,7 @@ Describe "1C Designer completion evidence" {
 
         @($result).Count | Should -Be 9
         @($result | Where-Object { $_.timeout -ne 30 }).Count | Should -Be 0
-        @($result | Where-Object { $_.postExitProbeSeconds -ne 0 }).Count | Should -Be 0
+        @($result | Where-Object { $_.postExitProbeSeconds -ne 30 }).Count | Should -Be 0
         @($result | Where-Object { -not $_.probePassed }).Count | Should -Be 0
     }
 
@@ -316,6 +316,7 @@ Describe "1C Designer completion evidence" {
                     [int]$PostExitProbeSeconds = 0,
                     [int]$MaxWorkingSetMb = 0
                 )
+                $script:CapturedDumpPostExitProbeSeconds = $PostExitProbeSeconds
                 $runningContext = [pscustomobject]@{ launcherExited = $false; launcherExitCode = $null; processId = 7004 }
                 foreach ($index in 1..8) {
                     (& $CompletionProbe $runningContext) | Should -BeFalse
@@ -354,6 +355,7 @@ Describe "1C Designer completion evidence" {
                 callsAfterImmediateProbes = $script:CallsAfterImmediateProbes
                 stableExitedResult = $script:StableExitedResult
                 finalArtifactCalls = $script:DumpArtifactCalls
+                postExitProbeSeconds = $script:CapturedDumpPostExitProbeSeconds
             }
         }
 
@@ -363,6 +365,7 @@ Describe "1C Designer completion evidence" {
         $result.callsAfterImmediateProbes | Should -Be 2
         $result.stableExitedResult | Should -BeTrue
         $result.finalArtifactCalls | Should -Be 3
+        $result.postExitProbeSeconds | Should -Be 30
     }
 
     It "turns a repository lock error into a failing Designer result" {
