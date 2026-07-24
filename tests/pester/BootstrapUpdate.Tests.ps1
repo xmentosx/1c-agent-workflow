@@ -650,11 +650,19 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $previousRepo = $env:ITL_WORKFLOW_REPO
         $previousRef = $env:ITL_WORKFLOW_REF
         $previousVanessaSourceBuild = $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE
-        $qualifiedVanessaSourceBuild = "C:\Users\xment\.codex\worktrees\d22b\1c-agent-workflow\build\third-party\vanessa-automation\1.2.043.28-itl-r1\vanessa-automation-single.1.2.043.28-itl-r1.zip"
+        $qualifiedVanessaSourceBuild = if ([string]::IsNullOrWhiteSpace($previousVanessaSourceBuild)) {
+            Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.28-itl-r2\vanessa-automation-single.1.2.043.28-itl-r2.zip"
+        } else {
+            [System.IO.Path]::GetFullPath($previousVanessaSourceBuild)
+        }
+        $qualifiedVanessaSourceBuildSha = (
+            Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 |
+                ConvertFrom-Json
+        ).dependencies.vanessaAutomation.sha256
 
         try {
             (Test-Path -LiteralPath $qualifiedVanessaSourceBuild -PathType Leaf) | Should -BeTrue
-            (Get-FileHash -LiteralPath $qualifiedVanessaSourceBuild -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be "fae6ff06a66e5fa3fe315585ec5c5e678724edcd75fff97069f6dd224b86b9b6"
+            (Get-FileHash -LiteralPath $qualifiedVanessaSourceBuild -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $qualifiedVanessaSourceBuildSha
             New-Item -ItemType Directory -Force -Path $projectRoot | Out-Null
             New-Item -ItemType Directory -Force -Path `
                 (Join-Path $projectRoot ".agents\skills\1c-workflow"),

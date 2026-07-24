@@ -1,7 +1,7 @@
 Describe "Controlled Vanessa Automation patched artifact" {
     BeforeAll {
         $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-        $assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.28-itl-r1"
+        $assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.28-itl-r2"
         $manifestPath = Join-Path $assetRoot "manifest.json"
         $patchPath = Join-Path $assetRoot "file-operations.patch"
         $licensePath = Join-Path $assetRoot "LICENSE.upstream"
@@ -17,7 +17,7 @@ Describe "Controlled Vanessa Automation patched artifact" {
         $manifest.upstream.commit | Should -Be "f3a01778a14d29b38204685deea0131274d438ff"
         $manifest.upstream.sourceArchive.sha256 | Should -Be "3581a8d6bb675426b6555fd0b0f2e612c7c9ea0b704123129256a89f1f8f2f81"
         $manifest.compatibilityVersion | Should -Be "1.2.043.28"
-        $manifest.downstreamRevision | Should -Be "itl-r1"
+        $manifest.downstreamRevision | Should -Be "itl-r2"
         $manifest.build.platform.version | Should -Be "8.3.27.2130"
         $manifest.build.oneScript.version | Should -Be "1.9.4.16"
         $manifest.build.oneScript.packages.v8runner | Should -Be "1.8.2"
@@ -25,8 +25,39 @@ Describe "Controlled Vanessa Automation patched artifact" {
 
         $patchSha = (Get-FileHash -LiteralPath $patchPath -Algorithm SHA256).Hash.ToLowerInvariant()
         $patchSha | Should -Be $manifest.patch.sha256
-        @($manifest.patch.expectedChangedPaths) | Should -HaveCount 1
+        @($manifest.patch.expectedChangedPaths) | Should -HaveCount 2
         $manifest.patch.expectedChangedPaths[0] | Should -Be "VanessaAutomation/Forms/MCPVA/Ext/Form/Module.bsl"
+        $managedFormPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("VmFuZXNzYUF1dG9tYXRpb24vRm9ybXMv0KPQv9GA0LDQstC70Y/QtdC80LDRj9Ck0L7RgNC80LAvRXh0L0Zvcm0vTW9kdWxlLmJzbA=="))
+        $manifest.patch.expectedChangedPaths[1] | Should -Be $managedFormPath
+    }
+
+    It "keeps run-scenario progress file operations outside the active MCP path" {
+        $mcpGuard = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JXRgdC70Lgg0J3QlSDQl9C90LDRh9C10L3QuNC10JfQsNC/0L7Qu9C90LXQvdC+KNCY0LTQtdC90YLQuNGE0LjQutCw0YLQvtGA0JfQsNC00LDRh9C4TUNQKCkp"))
+        $mcpActive = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JXRgdC70Lgg0JfQvdCw0YfQtdC90LjQtdCX0LDQv9C+0LvQvdC10L3QvijQmNC00LXQvdGC0LjRhNC40LrQsNGC0L7RgNCX0LDQtNCw0YfQuE1DUCgpKSDQotC+0LPQtNCw"))
+        $guardedProbe = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0Jgg0J3QlSDQpNCw0LnQu9Ch0YPRidC10YHRgtCy0YPQtdGC0JrQvtC80LDQvdC00LDQodC40YHRgtC10LzRiyhWYW5lc3NhVGFicy5jdXJyZW50LmZpbGVuYW1lKSDQotC+0LPQtNCw"))
+        $originalProbe = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JXRgdC70Lgg0J3QlSDQpNCw0LnQu9Ch0YPRidC10YHRgtCy0YPQtdGC0JrQvtC80LDQvdC00LDQodC40YHRgtC10LzRiyhWYW5lc3NhVGFicy5jdXJyZW50LmZpbGVuYW1lKSDQotC+0LPQtNCw"))
+        $globalFunction = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0KTRg9C90LrRhtC40Y8g0KTQsNC50LvQodGD0YnQtdGB0YLQstGD0LXRgtCa0L7QvNCw0L3QtNCw0KHQuNGB0YLQtdC80Yso"))
+        $patchText | Should -Match ("(?m)^\+\s*" + [regex]::Escape($mcpGuard) + "$")
+        $patchText | Should -Match ("(?m)^\+\s*" + [regex]::Escape($mcpActive) + "$")
+        $patchText | Should -Match ("(?m)^\+\s*" + [regex]::Escape($guardedProbe) + "$")
+        $patchText | Should -Match ("(?m)^-\s*" + [regex]::Escape($originalProbe) + "$")
+        $patchText | Should -Not -Match ("(?m)^[+-]\s*" + [regex]::Escape($globalFunction))
+        $testClientOwnershipComment = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("VGVzdENsaWVudCDQtNC70Y8gTUNQINGD0L/RgNCw0LLQu9GP0LXRgiBmYWNhZGU="))
+        $mcpActiveGuard = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JXRgdC70Lgg0JfQvdCw0YfQtdC90LjQtdCX0LDQv9C+0LvQvdC10L3QvijQmNC00LXQvdGC0LjRhNC40LrQsNGC0L7RgNCX0LDQtNCw0YfQuE1DUCgpKSDQotC+0LPQtNCw"))
+        $returnFalse = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JLQvtC30LLRgNCw0YIg0JvQvtC20Yw7"))
+        $patchText | Should -Match ([regex]::Escape($testClientOwnershipComment))
+        $patchText | Should -Match ("(?s)" +
+            [regex]::Escape($testClientOwnershipComment) +
+            ".*?\+\s*" + [regex]::Escape($mcpActiveGuard) +
+            ".*?\+\s*" + [regex]::Escape($returnFalse))
+        $mcpMarker = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JTQvtC/0J/QsNGA0LDQvNC10YLRgNGLLtCS0YHRgtCw0LLQuNGC0YwoItCt0YLQvtCS0YvQt9C+0LJNQ1AiLCDQl9C90LDRh9C10L3QuNC10JfQsNC/0L7Qu9C90LXQvdC+KNCY0LTQtdC90YLQuNGE0LjQutCw0YLQvtGA0JfQsNC00LDRh9C4TUNQKCkpKTs="))
+        $serverMarker = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JTQsNC90L3Ri9C1LtCU0L7Qv9Cf0LDRgNCw0LzQtdGC0YDRiy7QodCy0L7QudGB0YLQstC+KCLQrdGC0L7QktGL0LfQvtCyTUNQIiwg0K3RgtC+0JLRi9C30L7Qsk1DUCk7"))
+        $serverGuard = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JXRgdC70Lgg0K3RgtC+0JLRi9C30L7Qsk1DUCDQotC+0LPQtNCw"))
+        $stepDefinitionPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0KTQsNC50LtFUEYgPSDQmtCw0YLQsNC70L7Qs9Ck0LjRh9C4ICsgInN0ZXBfZGVmaW5pdGlvbnMi"))
+        $patchText | Should -Match ("(?m)^\+\s*" + [regex]::Escape($mcpMarker) + "$")
+        $patchText | Should -Match ("(?m)^\+\s*" + [regex]::Escape($serverMarker) + "$")
+        $patchText | Should -Match ("(?m)^\+\s*" + [regex]::Escape($serverGuard) + "$")
+        $patchText | Should -Match ("(?m)^\+\s*" + [regex]::Escape($stepDefinitionPath) + "$")
     }
 
     It "implements one shared path probe with distinct structured errors" {
@@ -63,7 +94,18 @@ Describe "Controlled Vanessa Automation patched artifact" {
         $buildScriptText | Should -Match ([regex]::Escape('"tools\onescript\MakeVASingle.os"'))
         $buildScriptText | Should -Match ([regex]::Escape("expectedChangedPaths"))
         $buildScriptText | Should -Match ([regex]::Escape("manifest.license.upstreamSha256"))
-        $manifest.artifact.fileName | Should -Be "vanessa-automation-single.1.2.043.28-itl-r1.zip"
+        $buildScriptText | Should -Match ([regex]::Escape("Enter-ScopedUnsafeActionProtectionBypass"))
+        $buildScriptText | Should -Match ([regex]::Escape('$settingPattern = "(?m)^(DisableUnsafeActionProtection=)([^\r\n]*)"'))
+        $buildScriptText | Should -Match ([regex]::Escape('$existingPatterns + ";" + $ownedPattern + ";"'))
+        $buildScriptText | Should -Match ([regex]::Escape('Join-Path $env:LOCALAPPDATA "1C\1cv8\conf\conf.cfg"'))
+        $buildScriptText | Should -Match ([regex]::Escape("Exit-ScopedUnsafeActionProtectionBypass"))
+        $buildScriptText | Should -Match ([regex]::Escape("[System.IO.File]::WriteAllBytes"))
+        $buildScriptText | Should -Not -Match "DisableUnsafeActionProtection=\.\*;"
+        $buildScriptText | Should -Match ([regex]::Escape("New-DeterministicZip"))
+        $buildScriptText | Should -Match ([regex]::Escape("[Array]::Sort"))
+        $buildScriptText | Should -Match ([regex]::Escape("2000, 1, 1, 0, 0, 0"))
+        $buildScriptText | Should -Not -Match ([regex]::Escape("[System.IO.Compression.ZipFile]::CreateFromDirectory"))
+        $manifest.artifact.fileName | Should -Be "vanessa-automation-single.1.2.043.28-itl-r2.zip"
     }
 
     It "retains the complete BSD 3-Clause binary redistribution notice" {

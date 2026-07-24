@@ -17,11 +17,13 @@ Describe "GitHub dependency rate-limit fallback" {
 
         $script:SavedGitHubToken = [Environment]::GetEnvironmentVariable("GITHUB_TOKEN", "Process")
         $script:SavedGhToken = [Environment]::GetEnvironmentVariable("GH_TOKEN", "Process")
+        $script:SavedVanessaSourceBuild = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
     }
 
     AfterEach {
         [Environment]::SetEnvironmentVariable("GITHUB_TOKEN", $script:SavedGitHubToken, "Process")
         [Environment]::SetEnvironmentVariable("GH_TOKEN", $script:SavedGhToken, "Process")
+        [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $script:SavedVanessaSourceBuild, "Process")
     }
 
     AfterAll {
@@ -65,11 +67,12 @@ Describe "GitHub dependency rate-limit fallback" {
 
     It "never resolves Vanessa Automation through releases latest even in fresh mode" {
         Mock Invoke-RestMethod { throw "must not query GitHub" }
+        [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $null, "Process")
 
         $info = Get-VanessaAutomationDownloadInfo
         $info.source | Should -Be "workflow-pinned"
-        $info.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r1/vanessa-automation-single.1.2.043.28-itl-r1.zip"
-        $info.expectedSha256 | Should -Be "fae6ff06a66e5fa3fe315585ec5c5e678724edcd75fff97069f6dd224b86b9b6"
+        $info.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r2/vanessa-automation-single.1.2.043.28-itl-r2.zip"
+        $info.expectedSha256 | Should -Be "494ecd46bcca4b7c2e420bd49a5be9ed266b8a12b767947d697ecfe555a7f0b8"
         Assert-MockCalled Invoke-RestMethod -Times 0
     }
 
