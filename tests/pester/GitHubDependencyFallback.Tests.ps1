@@ -66,7 +66,10 @@ Describe "GitHub dependency rate-limit fallback" {
     It "never resolves Vanessa Automation through releases latest even in fresh mode" {
         Mock Invoke-RestMethod { throw "must not query GitHub" }
 
-        { Get-VanessaAutomationDownloadInfo } | Should -Throw "*ITL_VANESSA_ARTIFACT_NOT_PUBLISHED*"
+        $info = Get-VanessaAutomationDownloadInfo
+        $info.source | Should -Be "workflow-pinned"
+        $info.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r1/vanessa-automation-single.1.2.043.28-itl-r1.zip"
+        $info.expectedSha256 | Should -Be "fae6ff06a66e5fa3fe315585ec5c5e678724edcd75fff97069f6dd224b86b9b6"
         Assert-MockCalled Invoke-RestMethod -Times 0
     }
 

@@ -60,7 +60,7 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         $entry.manifestSha256 | Should -Be "6711c0373a60ec58d4adfb1d917a646f6a1ca8612c7492c5e97bcaf4b768aee3"
         $entry.patchSha256 | Should -Be "32455c8f917d098a1eb218c249790fadaf62bf2bda3470af2f71586ffd6168c3"
         $entry.upstreamCommit | Should -Be "f3a01778a14d29b38204685deea0131274d438ff"
-        $entry.publicationStatus | Should -Be "contract-only"
+        $entry.publicationStatus | Should -Be "published"
     }
 
     It "installs from the exact SHA-verified source-build override without mutating the fresh lock" {

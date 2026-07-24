@@ -66,7 +66,7 @@
       "manifestSha256": "6711c0373a60ec58d4adfb1d917a646f6a1ca8612c7492c5e97bcaf4b768aee3",
       "patchSha256": "32455c8f917d098a1eb218c249790fadaf62bf2bda3470af2f71586ffd6168c3",
       "upstreamCommit": "f3a01778a14d29b38204685deea0131274d438ff",
-      "publicationStatus": "contract-only",
+      "publicationStatus": "published",
       "source": "workflow-pinned"
     },
     "vanessaMcp": {
