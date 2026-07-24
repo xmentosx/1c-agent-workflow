@@ -18,11 +18,11 @@ Describe "ITL on-demand MCP facade" {
 
     It "pins hash-verified full catalogs to compatible backend versions" {
         $manifest = Get-Content -LiteralPath (Join-Path $AssetRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.facadeVersion | Should -Be "0.4.1"
-        $manifest.minimumFacadeVersion | Should -Be "0.4.1"
+        $manifest.facadeVersion | Should -Be "0.4.2"
+        $manifest.minimumFacadeVersion | Should -Be "0.4.2"
         $mainSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\main.go") -Raw -Encoding UTF8
         $gatewaySource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\gateway.go") -Raw -Encoding UTF8
-        $mainSource | Should -Match 'const version = "0\.4\.1"'
+        $mainSource | Should -Match 'const version = "0\.4\.2"'
         $mainSource | Should -Match '"gateway"'
         $gatewaySource | Should -Match 'gatewayResolveTool\s*=\s*"resolve_tool"'
         $gatewaySource | Should -Match 'gatewayCallTool\s*=\s*"call_tool"'
@@ -37,9 +37,9 @@ Describe "ITL on-demand MCP facade" {
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.version | Should -Be "1.3.9.131"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.sha256 | Should -Match '^[0-9a-f]{64}$'
         $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.1"
-        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.1/itl-ondemand-mcp-windows-amd64.exe"
-        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "77a2ddbdaa18e256d95f40e50176ee3deb946376f505091bf3e8a362d4cf7b8c"
+        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.2"
+        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.2/itl-ondemand-mcp-windows-amd64.exe"
+        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "ed04912f2d78eaa0b68f46654796b0bd29afaa9abc1e2abd0c68494ac0012eed"
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Not -Be "667f0651a9d87f17a7db584ccaf754a2150ab371e88c88af59428eaedf2b2ced"
         foreach ($family in @("roctup", "vanessa-ui")) {
             $definition = $manifest.families.$family
@@ -161,7 +161,7 @@ Describe "ITL on-demand MCP facade" {
                 $installRoot = Join-Path $tempRoot "localapp\ondemand"
                 function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
 
-                $version = "0.4.1"
+                $version = "0.4.2"
                 $assetName = "itl-ondemand-mcp-windows-amd64.exe"
                 $targetDirectory = Join-Path $installRoot $version
                 $targetPath = Join-Path $targetDirectory $assetName
@@ -181,7 +181,7 @@ Describe "ITL on-demand MCP facade" {
                 Install-ItlOnDemandMcp
             }
 
-            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.1\itl-ondemand-mcp-windows-amd64.exe")
+            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.2\itl-ondemand-mcp-windows-amd64.exe")
             $result.sha256 | Should -Match '^[a-f0-9]{64}$'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -305,6 +305,18 @@ Describe "ITL on-demand MCP facade" {
         }
     }
 
+    It "does not reacquire the runtime lock from nested facade broker operations" {
+        foreach ($action in @(
+            "internal-ondemand-ensure",
+            "internal-ondemand-ensure-test-client",
+            "internal-ondemand-recover",
+            "internal-ondemand-stop"
+        )) {
+            Test-Agent1cActionRequiresLifecycleLock -RequestedAction $action | Should -BeFalse -Because "$action runs inside the facade-owned runtime lease"
+        }
+        Test-Agent1cActionRequiresLifecycleLock -RequestedAction "internal-ondemand-stop-all" | Should -BeTrue
+    }
+
     It "keys ports by family, project, worktree, branch, and client instance" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-keys-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -424,6 +436,33 @@ Describe "ITL on-demand MCP facade" {
         } finally {
             [Environment]::SetEnvironmentVariable("VANESSA_TESTCLIENT_LICENSE_CAPACITY", $oldCapacity, "Process")
         }
+    }
+
+    It "excludes only the proven on-demand manager from TestClient port conflict checks" {
+        $result = & {
+            $state = [pscustomobject]@{
+                devBranchInfoBasePath = "D:\work\owned\base"
+                worktreePath = "D:\work\owned"
+                stateProjectRoot = "D:\work"
+                safeDevBranchName = "branch-owned"
+            }
+            function Get-OneCProcessInfo {
+                @(
+                    [pscustomobject]@{ processId = 71501; name = "1cv8.exe"; commandLine = '1cv8.exe ENTERPRISE /TESTMANAGER -TPort 48151 /F "D:\work\owned\base"' },
+                    [pscustomobject]@{ processId = 71502; name = "1cv8c.exe"; commandLine = '1cv8c.exe ENTERPRISE /TESTCLIENT -TPort 48151 /F "D:\foreign\base"' }
+                )
+            }
+            [pscustomobject]@{
+                ownedWithoutExclusion = Test-VanessaTestPortOwnedByState -State $state -Port 48151
+                ownedWithExclusion = Test-VanessaTestPortOwnedByState -State $state -Port 48151 -ExcludeProcessId 71501
+                foreignWithManagerExcluded = Test-VanessaTestPortUsedByForeignProcess -State $state -Port 48151 -ExcludeProcessId 71501
+                foreignWithForeignExcluded = Test-VanessaTestPortUsedByForeignProcess -State $state -Port 48151 -ExcludeProcessId 71502
+            }
+        }
+        $result.ownedWithoutExclusion | Should -BeTrue
+        $result.ownedWithExclusion | Should -BeFalse
+        $result.foreignWithManagerExcluded | Should -BeTrue
+        $result.foreignWithForeignExcluded | Should -BeFalse
     }
 
     It "reuses a proven owned on-demand TestClient without capacity check or new process" {

@@ -1024,6 +1024,21 @@ func TestRuntimeVanessaFailsClosedWhenConnectionStateIsNotProvable(t *testing.T)
 	}
 }
 
+func TestClassifyTestClientConnectionProofRecognizesRussianWindowList(t *testing.T) {
+	result := func(text string) *mcp.CallToolResult {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
+	}
+	if state := classifyTestClientConnectionProof(result("В клиенте тестирования найдено 2 окон:\n-Начальная страница")); state != testClientManagerConnected {
+		t.Fatalf("Russian positive window list classified as %q", state)
+	}
+	if state := classifyTestClientConnectionProof(result("Окна не найдены")); state != testClientConnectionFailed {
+		t.Fatalf("Russian empty window list classified as %q", state)
+	}
+	if state := classifyTestClientConnectionProof(result("Клиент тестирования не подключен")); state != testClientDisconnected {
+		t.Fatalf("Russian disconnected state classified as %q", state)
+	}
+}
+
 func TestRuntimeVanessaReturnsNotConnectedAndSkipsRuntimeTool(t *testing.T) {
 	connectCalls := 0
 	calls := map[string]int{}

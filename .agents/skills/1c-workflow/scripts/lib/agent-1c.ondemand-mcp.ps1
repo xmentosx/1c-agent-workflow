@@ -584,8 +584,9 @@ function Ensure-ItlOnDemandVanessaTestClient {
         Write-ItlOnDemandRuntimeState -RuntimeState $runtimeState | Out-Null
     }
 
-    if ((Test-VanessaTestPortOwnedByState -State $state -Port $testClientPort) -or
-        (Test-VanessaTestPortUsedByForeignProcess -State $state -Port $testClientPort)) {
+    $managerPid = ConvertTo-IntOrDefault -Value (Get-ConfigValueFromObject -Object $runtimeState -Path "pid" -Default 0) -Default 0
+    if ((Test-VanessaTestPortOwnedByState -State $state -Port $testClientPort -ExcludeProcessId $managerPid) -or
+        (Test-VanessaTestPortUsedByForeignProcess -State $state -Port $testClientPort -ExcludeProcessId $managerPid)) {
         throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: TestClient port $testClientPort is used by an unregistered process; it was not claimed or stopped."
     }
     Assert-VanessaTestClientCapacity -State $state | Out-Null

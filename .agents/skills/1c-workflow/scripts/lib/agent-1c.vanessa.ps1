@@ -3221,7 +3221,8 @@ function Get-ForeignVanessaTestProcesses {
 function Test-VanessaTestPortOwnedByState {
     param(
         [object]$State,
-        [int]$Port
+        [int]$Port,
+        [int]$ExcludeProcessId = 0
     )
 
     if ($Port -le 0) {
@@ -3229,6 +3230,10 @@ function Test-VanessaTestPortOwnedByState {
     }
 
     foreach ($processInfo in Get-OneCProcessInfo) {
+        if ($ExcludeProcessId -gt 0 -and
+            (ConvertTo-IntOrDefault -Value (Get-StateValue -State $processInfo -Name "processId" -Default 0) -Default 0) -eq $ExcludeProcessId) {
+            continue
+        }
         if ((Test-CommandLineContainsPort -CommandLine $processInfo.commandLine -Port $Port) -and
             (Test-OneCProcessBelongsToState -ProcessInfo $processInfo -State $State -TestPort $Port)) {
             return $true
@@ -3241,7 +3246,8 @@ function Test-VanessaTestPortOwnedByState {
 function Test-VanessaTestPortUsedByForeignProcess {
     param(
         [object]$State,
-        [int]$Port
+        [int]$Port,
+        [int]$ExcludeProcessId = 0
     )
 
     if ($Port -le 0) {
@@ -3249,6 +3255,10 @@ function Test-VanessaTestPortUsedByForeignProcess {
     }
 
     foreach ($processInfo in Get-OneCProcessInfo) {
+        if ($ExcludeProcessId -gt 0 -and
+            (ConvertTo-IntOrDefault -Value (Get-StateValue -State $processInfo -Name "processId" -Default 0) -Default 0) -eq $ExcludeProcessId) {
+            continue
+        }
         if ((Test-OneCVanessaTestProcess -ProcessInfo $processInfo) -and
             (Test-CommandLineContainsPort -CommandLine $processInfo.commandLine -Port $Port) -and
             -not (Test-OneCProcessBelongsToState -ProcessInfo $processInfo -State $State -TestPort $Port -RequireTestPort)) {

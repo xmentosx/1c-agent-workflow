@@ -1093,7 +1093,7 @@ func classifyTestClientConnectionProof(result *mcp.CallToolResult) string {
 	if text == "" || strings.Contains(text, "окна не найдены") || strings.Contains(text, "no windows") {
 		return testClientConnectionFailed
 	}
-	for _, marker := range []string{"окно", "window", "заголовок", "caption"} {
+	for _, marker := range []string{"окно", "окон", "window", "заголовок", "caption"} {
 		if strings.Contains(text, marker) {
 			return testClientManagerConnected
 		}
