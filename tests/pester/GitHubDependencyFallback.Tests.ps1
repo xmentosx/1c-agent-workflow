@@ -54,15 +54,23 @@ Describe "GitHub dependency rate-limit fallback" {
         $roctup = Get-GitHubReleaseAssetInfo -Repository "ROCTUP/1c-mcp-toolkit" -AssetNameLike "MCP_Toolkit.epf" -OverrideEnvName "" -DefaultFileName "MCP_Toolkit.epf" -RetryCount 1
         $client = Get-GitHubReleaseAssetInfo -Repository "1c-neurofish/onec-client-mcp-devkit" -AssetNameLike "client_mcp.cfe" -OverrideEnvName "" -DefaultFileName "client_mcp.cfe" -RetryCount 1
         $extension = Get-GitHubReleaseAssetInfo -Repository "Pr-Mex/vanessa-automation" -AssetNameLike "VAExtension*.cfe" -OverrideEnvName "" -DefaultFileName "VAExtension.cfe" -RetryCount 1
-        $automation = Get-VanessaAutomationDownloadInfo
-
-        @($roctup, $client, $extension, $automation) | ForEach-Object {
+        @($roctup, $client, $extension) | ForEach-Object {
             $_.source | Should -Be "dependency-lock rate-limit fallback"
             $_.expectedSha256 | Should -Match '^[a-f0-9]{64}$'
         }
         $roctup.name | Should -Be "MCP_Toolkit.epf"
         $client.name | Should -Be "client_mcp.cfe"
         $extension.name | Should -Be "VAExtension.1.29.cfe"
+    }
+
+    It "never resolves Vanessa Automation through releases latest even in fresh mode" {
+        Mock Invoke-RestMethod { throw "must not query GitHub" }
+
+        $info = Get-VanessaAutomationDownloadInfo
+        $info.source | Should -Be "workflow-pinned"
+        $info.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r1/vanessa-automation-single.1.2.043.28-itl-r1.zip"
+        $info.expectedSha256 | Should -Be "fae6ff06a66e5fa3fe315585ec5c5e678724edcd75fff97069f6dd224b86b9b6"
+        Assert-MockCalled Invoke-RestMethod -Times 0
     }
 
     It "does not use the lock for a non-rate-limit API failure" {

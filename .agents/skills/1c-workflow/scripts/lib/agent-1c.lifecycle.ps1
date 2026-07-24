@@ -453,6 +453,7 @@ function Write-ItlAdditionalHelperActions {
     Write-Host "  ROCTUP data: use the itl-roctup-data MCP server; its branch backend starts and stops automatically."
     Write-Host "  vibecoding1c MCP: ask for setup, status, select, refresh-registry, or update."
     Write-Host "  Vanessa UI: use the itl-vanessa-ui MCP server only for runtime UI research, recording, or debugging."
+    Write-Host "  Vanessa manual profiling: ask to start, inspect, or stop one persistent branch-local interactive profile pair."
     Write-Host "  Extension branches: one branch/worktree/base owns one CFE; several features are allowed only inside it."
     Write-Host "  Extension setup is agent-orchestrated during branch creation or on first entry when its saved status is pending."
     Write-Host "  Maintenance/recovery: ask to update base without tests, update workflow/rules, close/list/switch branches."
@@ -1069,17 +1070,12 @@ function Stop-DevBranchRuntimeBeforeInfobaseMutation {
 
     Set-RunStage -Stage "config-load.stop-runtime" -Detail "Stopping workflow-owned 1C runtime before $Reason."
     try {
-        Stop-ItlOnDemandBackends -InfoBasePath $infoBasePath -Strict
-        Stop-OwnVanessaTestProcessesAndAssert -State $State
+        Invoke-DevBranchVanessaRuntimeRelease -State $State -Reason $Reason | Out-Null
+        Stop-ItlOnDemandBackends -Family "roctup" -InfoBasePath $infoBasePath -Strict
 
         $roctupRuntime = Get-RoctupMcpRuntimeInfo -State $State
         if ($roctupRuntime.processAlive) {
             Stop-RoctupMcpForState -State $State -Quiet -RequireOwnership -SkipClientConfig | Out-Null
-        }
-
-        $vanessaRuntime = Get-VanessaMcpRuntimeInfo -State $State
-        if ($vanessaRuntime.processAlive) {
-            Stop-VanessaMcpForState -State $State -Quiet -RequireOwnership -SkipClientConfig | Out-Null
         }
 
         $remainingTests = @(Get-OwnVanessaTestProcesses -State $State)
@@ -2848,6 +2844,8 @@ function Update-WorkflowPackage {
     Update-AgentGuidanceBridge
     Update-UserRules
     Update-RoctupMcp
+    Sync-VanessaAutomationDependencyLock | Out-Null
+    Install-VanessaAutomation
     Update-VanessaMcpArtifacts
     Sync-ItlOnDemandMcpDependencyLock | Out-Null
     Install-ItlOnDemandMcp | Out-Null
@@ -5975,11 +5973,7 @@ function Init-DevBranchExtension {
         $snapshotPath = Join-Path $snapshotDir ("extension-init-{0}-{1}.dt" -f (ConvertTo-SafeName $ExtensionName), (Get-Date -Format "yyyyMMdd-HHmmss"))
         $roctupWasRunning = [bool](Get-RoctupMcpRuntimeInfo -State $state).processAlive
         $vanessaWasRunning = [bool](Get-VanessaMcpRuntimeInfo -State $state).processAlive
-        Stop-OwnVanessaTestProcessesAndAssert -State $state
         Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "extension initialization"
-        Stop-RoctupMcpForState -State $state -Quiet | Out-Null
-        $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
-        Stop-VanessaMcpForState -State $state -Quiet | Out-Null
         $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
         Set-RunStage -Stage "extension-init.snapshot" -Detail "Creating a rollback snapshot before extension initialization."
@@ -6336,6 +6330,33 @@ function Get-ConfigurationRootComment {
     return [string]$nodes[0].InnerText
 }
 
+function Prepare-ReleaseE2EOnDemandDependencies {
+    Set-RunStage -Stage "release.ondemand-prepare" -Detail "Installing the workflow-pinned Vanessa Automation and on-demand MCP facade."
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "release-e2e-prepare-ondemand"
+    Assert-DevBranchKind -State $state -Expected "configuration"
+
+    if ((Get-DependencyMode) -ne "fresh") {
+        throw "RELEASE_E2E_FRESH_DEPENDENCIES_REQUIRED: the dedicated stand must use fresh dependency mode."
+    }
+    $packageRoot = [IO.Path]::GetFullPath((Join-Path $script:Agent1cScriptRoot "..\..\..\.."))
+    $templatePath = Join-Path $packageRoot "templates\dependency-lock.json"
+    if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
+        throw "RELEASE_E2E_WORKFLOW_PIN_MISSING: $templatePath"
+    }
+    $template = Read-Utf8Text -Path $templatePath | ConvertFrom-Json
+    foreach ($dependencyName in @("vanessaAutomation", "itlOndemandMcp")) {
+        $entry = Get-ConfigValueFromObject -Object $template -Path "dependencies.$dependencyName" -Default $null
+        if ($null -eq $entry) {
+            throw "RELEASE_E2E_WORKFLOW_PIN_MISSING: templates/dependency-lock.json has no $dependencyName entry."
+        }
+        Update-DependencyLockEntry -Name $dependencyName -Values (ConvertTo-Agent1cHashtable -Object $entry)
+    }
+
+    Install-VanessaAutomation
+    Install-ItlOnDemandMcp | Out-Null
+}
+
 function Invoke-ReleaseE2EConfigRoundtrip {
     Set-RunStage -Stage "release.config-roundtrip" -Detail "Running the Release E2E configuration roundtrip."
     $state = Read-DevBranchState -Name $DevBranchName
@@ -6518,11 +6539,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
 
     try {
         New-Item -ItemType Directory -Force -Path $smokeRoot, $snapshotDir | Out-Null
-        Stop-OwnVanessaTestProcessesAndAssert -State $state
         Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "Release E2E extension smoke"
-        Stop-RoctupMcpForState -State $state -Quiet | Out-Null
-        $state = Read-DevBranchState -Name $DevBranchName
-        Stop-VanessaMcpForState -State $state -Quiet | Out-Null
         $state = Read-DevBranchState -Name $DevBranchName
 
         Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @("/DumpIB", $snapshotPath) | Out-Null
@@ -6941,7 +6958,7 @@ function Invoke-DevBranchCheck {
     $trigger = $(if ($VerificationTrigger) { $VerificationTrigger } else { "command" })
     $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
     $state = Read-DevBranchState -Name $DevBranchName
-    Stop-ItlOnDemandBackends -Family "vanessa-ui"
+    Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "check-dev-branch preflight" | Out-Null
     $mcpRuntime = Get-VanessaMcpRuntimeInfo -State $state
     if ($mcpRuntime.processAlive) {
         Stop-VanessaAuthoringMcpForState -State $state -Quiet | Out-Null
@@ -6968,7 +6985,7 @@ function Save-ReleaseE2EInfobaseSnapshot {
     Require-Value "ReleaseSnapshotPath" $ReleaseSnapshotPath | Out-Null
     $snapshotPath = Assert-ExportPathInsideProject -ExportPath $ReleaseSnapshotPath
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $snapshotPath) | Out-Null
-    Stop-OwnVanessaTestProcessesAndAssert -State $state
+    Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "Release E2E checkpoint snapshot"
     Invoke-Designer -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -DesignerArgs @("/DumpIB", $snapshotPath) | Out-Null
     if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf) -or (Get-Item -LiteralPath $snapshotPath).Length -le 0) {
         throw "Release E2E snapshot was not created: $snapshotPath"
@@ -6985,7 +7002,6 @@ function Restore-ReleaseE2EInfobaseSnapshot {
     Require-Value "ReleaseSnapshotPath" $ReleaseSnapshotPath | Out-Null
     $snapshotPath = Assert-ExportPathInsideProject -ExportPath $ReleaseSnapshotPath
     if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { throw "Release E2E snapshot is missing: $snapshotPath" }
-    Stop-OwnVanessaTestProcessesAndAssert -State $state
     Restore-DevBranchInfobaseFromSnapshot -State $state -SnapshotPath $snapshotPath -Reason "Release E2E checkpoint restore"
     Update-DevBranchState -State $state -Updates @{
         lastConfigDesignerFingerprint = ""
@@ -7082,10 +7098,7 @@ function Close-DevBranch {
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "close-dev-branch"
     Assert-DevBranchExtensionInitialized -State $state -Operation "close-dev-branch"
     Assert-SingleManagedExtensionArtifact -State $state
-    Stop-ItlOnDemandBackends
-    Stop-RoctupMcpForState -State $state -Quiet | Out-Null
-    $state = Read-DevBranchState -Name $DevBranchName
-    Stop-VanessaMcpForState -State $state -Quiet | Out-Null
+    Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "close-dev-branch"
     $state = Read-DevBranchState -Name $DevBranchName
     Release-ItlManagedPortAllocationsForState -State $state
     Sync-DevBranchContextToDotEnv -State $state

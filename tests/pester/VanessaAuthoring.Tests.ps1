@@ -11,7 +11,7 @@ Describe "Vanessa authoring gate" {
         $match = [regex]::Match($lifecycle, '(?s)function Invoke-DevBranchCheck \{(?<body>.*?)\n\}')
         $match.Success | Should -BeTrue
         $match.Groups['body'].Value.IndexOf('Assert-VanessaAuthoringPreflight') | Should -BeLessThan $match.Groups['body'].Value.IndexOf('Update-DevBranchBase')
-        $match.Groups['body'].Value | Should -Match 'Stop-ItlOnDemandBackends'
+        $match.Groups['body'].Value | Should -Match 'Invoke-DevBranchVanessaRuntimeRelease'
         $vanessa = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
         $prepare = [regex]::Match($vanessa, '(?s)function Prepare-VanessaAuthoring \{(?<body>.*?)\n\}')
         $prepare.Groups['body'].Value.IndexOf('Update-DevBranchBase') | Should -BeLessThan $prepare.Groups['body'].Value.IndexOf('Write-ItlOnDemandMcpClientConfig')
@@ -267,6 +267,130 @@ Describe "Vanessa authoring gate" {
             $result.phase | Should -Be 'passed'
             $result.mode | Should -Be 'verification-fallback'
             $result.matched | Should -Be 1
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "preserves the latest current feature-bound runner error in safe state and userReport" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-authoring-runner-error-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches"), (Join-Path $tempRoot "tests\features") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"tests/features"}'
+            $feature = Join-Path $tempRoot "tests\features\check.feature"
+            Set-Content -LiteralPath $feature -Encoding UTF8 -Value "Feature: Check`nScenario: Draft`n"
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot branch -M master
+            & git -C $tempRoot config user.email "tests@example.invalid"
+            & git -C $tempRoot config user.name "ITL Tests"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m baseline *> $null
+            & git -C $tempRoot switch -q -c itldev/demo
+            Add-Content -LiteralPath $feature -Encoding UTF8 -Value "`tGiven changed"
+            $devState = [ordered]@{ devBranchName='demo'; safeDevBranchName='demo'; devBranch='itldev/demo'; devBranchKind='configuration'; worktreePath=$tempRoot; devBranchInfoBasePath=(Join-Path $tempRoot '.agent-1c\infobases\demo') }
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dev-branches\demo.json") -Encoding UTF8 -Value ($devState | ConvertTo-Json)
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $records = @(Get-VanessaAuthoringFeatureRecords)
+                $authoring = New-VanessaAuthoringState -Phase ready -FeatureRecords $records -LibraryFingerprint ''
+                $authoring.catalogSha256 = (Get-ItlOnDemandMcpFamilyDefinition -Family 'vanessa-ui').catalogSha256
+                Write-VanessaAuthoringState -State $authoring *> $null
+                $root = Join-Path (Get-ItlOnDemandRuntimeRoot) 'vanessa-ui'
+                New-Item -ItemType Directory -Force -Path $root | Out-Null
+                $evidencePath = Join-Path $root 'current.evidence.jsonl'
+                $started = (Get-Date).ToUniversalTime()
+                @(
+                    [ordered]@{ schemaVersion=2; family='vanessa-ui'; instanceId='current'; catalogSha256=$authoring.catalogSha256; tool='search_for_steps_by_keywords'; outcome='passed'; resultCode='ITL_OK'; resultMessage='ok'; argumentsSha256=('a'*64); featurePath=''; featureSha256=''; scenarioLine=0; recordedAt=$started.AddSeconds(1).ToString('o') },
+                    [ordered]@{ schemaVersion=2; family='vanessa-ui'; instanceId='current'; catalogSha256=$authoring.catalogSha256; tool='open_feature_file'; outcome='failed'; resultCode='ITL_ONDEMAND_BACKEND_CALL_FAILED'; resultMessage='older failure'; logPath=(Join-Path $root 'backend.log'); argumentsSha256=('b'*64); featurePath=$records[0].path; featureSha256=$records[0].sha256; scenarioLine=0; recordedAt=$started.AddSeconds(2).ToString('o') },
+                    [ordered]@{ schemaVersion=2; family='vanessa-ui'; instanceId='current'; catalogSha256=$authoring.catalogSha256; tool='check_syntax'; outcome='failed'; resultCode='ITL_ONDEMAND_BACKEND_CALL_FAILED'; resultMessage='Internal error: File constructor; password=super-secret; Bearer abc.def'; logPath=(Join-Path $root 'backend.log'); argumentsSha256=('c'*64); featurePath=$records[0].path; featureSha256=$records[0].sha256; scenarioLine=0; recordedAt=$started.AddSeconds(3).ToString('o') }
+                ) | ForEach-Object { $_ | ConvertTo-Json -Compress } | Set-Content -LiteralPath $evidencePath -Encoding UTF8
+                function Stop-ItlOnDemandBackends { }
+                $message = try { Complete-VanessaAuthoring -Result failed -ErrorCategory runner; 'not-failed' } catch { $_.Exception.Message }
+                $final = Read-VanessaAuthoringState
+                [pscustomobject]@{ message=$message; report=$script:RunUserReport; final=$final; evidencePath=$evidencePath }
+            }
+
+            $result.message | Should -Be $result.report
+            $result.report | Should -Match 'Runner error code: ITL_ONDEMAND_BACKEND_CALL_FAILED'
+            $result.report | Should -Match 'Internal error: File constructor'
+            $result.report | Should -Match 'password=\[redacted\]'
+            $result.report | Should -Match 'Bearer \[redacted\]'
+            $result.report | Should -Not -Match 'super-secret|abc\.def'
+            $result.report | Should -Match ([regex]::Escape($result.evidencePath))
+            $result.final.schemaVersion | Should -Be 3
+            $result.final.runnerError.instanceId | Should -Be 'current'
+            $result.final.runnerError.featureSha256 | Should -Be $result.final.features[0].sha256
+            $result.final.runnerError.message | Should -Match 'File constructor'
+            ($result.final.backendEvidence | ConvertTo-Json -Depth 6) | Should -Not -Match 'super-secret|abc\.def'
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "reports runner error evidence not found when the current chain has no failure" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-authoring-runner-missing-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches"), (Join-Path $tempRoot "tests\features") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"tests/features"}'
+            $feature = Join-Path $tempRoot "tests\features\check.feature"
+            Set-Content -LiteralPath $feature -Encoding UTF8 -Value "Feature: Check`nScenario: Draft`n"
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot branch -M master
+            & git -C $tempRoot config user.email "tests@example.invalid"
+            & git -C $tempRoot config user.name "ITL Tests"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m baseline *> $null
+            & git -C $tempRoot switch -q -c itldev/demo
+            Add-Content -LiteralPath $feature -Encoding UTF8 -Value "`tGiven changed"
+            $devState = [ordered]@{ devBranchName='demo'; safeDevBranchName='demo'; devBranch='itldev/demo'; devBranchKind='configuration'; worktreePath=$tempRoot; devBranchInfoBasePath=(Join-Path $tempRoot '.agent-1c\infobases\demo') }
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dev-branches\demo.json") -Encoding UTF8 -Value ($devState | ConvertTo-Json)
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $records = @(Get-VanessaAuthoringFeatureRecords)
+                $authoring = New-VanessaAuthoringState -Phase ready -FeatureRecords $records -LibraryFingerprint ''
+                $authoring.catalogSha256 = (Get-ItlOnDemandMcpFamilyDefinition -Family 'vanessa-ui').catalogSha256
+                Write-VanessaAuthoringState -State $authoring *> $null
+                $root = Join-Path (Get-ItlOnDemandRuntimeRoot) 'vanessa-ui'
+                New-Item -ItemType Directory -Force -Path $root | Out-Null
+                @(
+                    [ordered]@{ schemaVersion=2; family='vanessa-ui'; instanceId='current'; catalogSha256=$authoring.catalogSha256; tool='open_feature_file'; outcome='failed'; resultCode='ITL_ONDEMAND_BACKEND_CALL_FAILED'; resultMessage='old context'; argumentsSha256=('b'*64); featurePath=$records[0].path; featureSha256=$records[0].sha256; scenarioLine=0; recordedAt=([DateTimeOffset]::Parse($authoring.createdAt).AddSeconds(-1).ToString('o')) },
+                    [ordered]@{ schemaVersion=2; family='vanessa-ui'; instanceId='current'; catalogSha256=$authoring.catalogSha256; tool='search_for_steps_by_keywords'; outcome='passed'; resultCode='ITL_OK'; argumentsSha256=('a'*64); featurePath=''; featureSha256=''; scenarioLine=0; recordedAt=(Get-Date).AddSeconds(1).ToUniversalTime().ToString('o') }
+                ) | ForEach-Object { $_ | ConvertTo-Json -Compress } | Set-Content -LiteralPath (Join-Path $root 'current.evidence.jsonl') -Encoding UTF8
+                function Stop-ItlOnDemandBackends { }
+                $message = try { Complete-VanessaAuthoring -Result failed -ErrorCategory runner; 'not-failed' } catch { $_.Exception.Message }
+                $final = Read-VanessaAuthoringState
+                [pscustomobject]@{ message=$message; report=$script:RunUserReport; runnerError=$final.runnerError }
+            }
+
+            $result.message | Should -Be $result.report
+            $result.report | Should -Match 'runner error evidence not found'
+            $result.runnerError | Should -BeNullOrEmpty
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "rejects stale, mismatched-SHA, and different-instance runner evidence" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-authoring-runner-filter-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","testsPath":"tests/features"}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $feature = [pscustomobject]@{ path='tests/features/check.feature'; sha256=('f'*64) }
+                $now = [DateTimeOffset]::UtcNow
+                $search = [pscustomobject]@{ instanceId='current'; tool='search_for_steps_by_keywords'; outcome='passed'; recordedAt=$now.ToString('o') }
+                $stale = [pscustomobject]@{ instanceId='current'; tool='open_feature_file'; outcome='failed'; resultCode='ITL_ONDEMAND_BACKEND_CALL_FAILED'; resultMessage='stale'; evidencePath='stale.jsonl'; featurePath=$feature.path; featureSha256=$feature.sha256; recordedAt=$now.AddSeconds(-1).ToString('o') }
+                $wrongSha = [pscustomobject]@{ instanceId='current'; tool='check_syntax'; outcome='failed'; resultCode='ITL_ONDEMAND_BACKEND_CALL_FAILED'; resultMessage='wrong sha'; evidencePath='wrong-sha.jsonl'; featurePath=$feature.path; featureSha256=('e'*64); recordedAt=$now.AddSeconds(1).ToString('o') }
+                $otherInstance = [pscustomobject]@{ instanceId='other'; tool='check_syntax'; outcome='failed'; resultCode='ITL_ONDEMAND_BACKEND_CALL_FAILED'; resultMessage='other instance'; evidencePath='other.jsonl'; featurePath=$feature.path; featureSha256=$feature.sha256; recordedAt=$now.AddSeconds(2).ToString('o') }
+                $license = [pscustomobject]@{ instanceId='current'; tool='run_scenario'; outcome='failed'; resultCode='ITL_VANESSA_LICENSE_LIMIT'; resultMessage='license capacity is exhausted'; evidencePath='license.jsonl'; featurePath=$feature.path; featureSha256=$feature.sha256; recordedAt=$now.AddSeconds(3).ToString('o') }
+                [pscustomobject]@{
+                    stale = Get-VanessaAuthoringRunnerError -Evidence @($stale, $search) -Features @($feature)
+                    wrongSha = Get-VanessaAuthoringRunnerError -Evidence @($search, $wrongSha) -Features @($feature)
+                    otherInstance = Get-VanessaAuthoringRunnerError -Evidence @($search, $otherInstance) -Features @($feature)
+                    license = Get-VanessaAuthoringRunnerError -Evidence @($search, $license) -Features @($feature)
+                }
+            }
+            $result.stale | Should -BeNullOrEmpty
+            $result.wrongSha | Should -BeNullOrEmpty
+            $result.otherInstance | Should -BeNullOrEmpty
+            $result.license.code | Should -Be 'ITL_VANESSA_LICENSE_LIMIT'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 

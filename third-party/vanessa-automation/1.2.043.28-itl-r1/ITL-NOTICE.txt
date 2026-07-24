@@ -1,0 +1,12 @@
+Vanessa Automation 1.2.043.28-itl-r1
+
+This binary distribution is built from Pr-Mex/vanessa-automation
+tag 1.2.043.28, commit f3a01778a14d29b38204685deea0131274d438ff,
+with the source-controlled ITL file-operations patch.
+
+The upstream compatibility version remains 1.2.043.28. The downstream
+revision itl-r1 identifies the patch and is not an upstream release.
+
+Vanessa Automation is distributed under the BSD 3-Clause License. The
+complete upstream copyright notice, license conditions, and disclaimer are
+included in LICENSE at the root of the binary distribution.

@@ -24,6 +24,32 @@
             Set-Content -LiteralPath $fakePlatform -Encoding ASCII -Value "@exit /b 0"
             return $fakePlatform
         }
+
+        function New-ItlOnDemandMcpInstallFixture {
+            param([string]$TargetRoot)
+
+            $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $entry = $lock.dependencies.itlOndemandMcp
+            $installRoot = Join-Path $TargetRoot "ondemand"
+            $assetPath = Join-Path (Join-Path $installRoot ([string]$entry.version)) ([string]$entry.assetName)
+            $oldGoProxy = $env:GOPROXY
+            $oldGoSumDb = $env:GOSUMDB
+            $oldGoToolchain = $env:GOTOOLCHAIN
+            try {
+                $env:GOPROXY = "off"
+                $env:GOSUMDB = "off"
+                $env:GOTOOLCHAIN = "local"
+                $build = @(& (Join-Path $RepoRoot "scripts\Build-ItlOnDemandMcp.ps1") -OutputPath $assetPath -SkipTests)
+            } finally {
+                $env:GOPROXY = $oldGoProxy
+                $env:GOSUMDB = $oldGoSumDb
+                $env:GOTOOLCHAIN = $oldGoToolchain
+            }
+            if ($build.Count -ne 1 -or [string]$build[0].sha256 -cne [string]$entry.sha256) {
+                throw "ITL_ONDEMAND_TEST_FIXTURE_HASH_MISMATCH expected='$($entry.sha256)' actual='$($build[0].sha256)'"
+            }
+            return $installRoot
+        }
     }
     It "normalizes existing paths and not-yet-created children through the nearest existing ancestor" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-path-normalization-" + [guid]::NewGuid().ToString("N"))
@@ -451,6 +477,7 @@
                 }
             }
             function New-ConfigLoadListFile { return "C:\logs\changed-files.txt" }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
             function Invoke-Designer {
                 param(
                     [string]$InfoBasePath,
@@ -494,6 +521,7 @@
                 }
             }
             function New-ConfigLoadListFile { return "C:\logs\changed-files.txt" }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
             function Invoke-Designer {
                 param(
                     [string]$InfoBasePath,
@@ -607,6 +635,7 @@
                 [pscustomobject]@{ files = @("Configuration.xml", "CommonModules\Модуль.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\project\src\cf" }
             }
             function New-ConfigLoadListFile { return "C:\logs\changed-files.txt" }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
             function Invoke-Designer {
                 param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
                 $script:DesignerCalls += , @($DesignerArgs)
@@ -641,6 +670,7 @@
                 [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\project\src\cf" }
             }
             function New-ConfigLoadListFile { return "C:\logs\changed-files.txt" }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
             function Invoke-Designer {
                 param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
                 $script:DesignerCallCount++
@@ -723,6 +753,7 @@
             function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-e"; fileCount = 1; absoluteExportPath = "C:\src" } }
             function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" } }
             function New-ConfigLoadListFile { throw "list must not be created" }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
             function Invoke-Designer { param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs); $script:Calls++; $script:LastLogPath = "C:\logs\full.log" }
             $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -ExportPath "src/cf" -Mode Full 6>$null
             [pscustomobject]@{ calls = $script:Calls; listFile = $load.listFile; mode = $load.loadModeUsed }
@@ -1858,6 +1889,7 @@
 
     It "leaves master clean after mocked initialization commits managed files" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-init-clean-" + [guid]::NewGuid().ToString("N"))
+        $facadeFixtureRoot = "$tempRoot-facade-fixture"
         $envNames = @(
             "INFOBASE_KIND",
             "SOURCE_USES_REPOSITORY",
@@ -1868,7 +1900,8 @@
             "WEB_PUBLISH_AUTO",
             "DEPENDENCY_MODE",
             "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE",
-            "VIBECODING1C_MCP_SETUP_DURING_INIT"
+            "VIBECODING1C_MCP_SETUP_DURING_INIT",
+            "ITL_ONDEMAND_MCP_INSTALL_ROOT"
         )
         $savedEnv = @{}
         foreach ($name in $envNames) {
@@ -1881,6 +1914,7 @@
             $templateTarget = Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Destination $templateTarget -Recurse
+            $env:ITL_ONDEMAND_MCP_INSTALL_ROOT = New-ItlOnDemandMcpInstallFixture -TargetRoot $facadeFixtureRoot
 
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
@@ -1973,6 +2007,9 @@
             }
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $facadeFixtureRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $facadeFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
@@ -2890,8 +2927,10 @@ if (`$?) { exit 0 } else { exit 1 }
         $legacyWorktreeRoot = "$tempRoot-worktrees"
         $worktreePath = "$tempRoot-fixture-branch"
         $sourceBase = Join-Path $tempRoot "source-base"
+        $facadeFixtureRoot = "$tempRoot-facade-fixture"
         $projectName = Split-Path -Leaf $tempRoot
         $oldAppData = $env:APPDATA
+        $oldOnDemandInstallRoot = $env:ITL_ONDEMAND_MCP_INSTALL_ROOT
 
         try {
             New-Item -ItemType Directory -Force -Path $sourceBase | Out-Null
@@ -2905,6 +2944,7 @@ if (`$?) { exit 0 } else { exit 1 }
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $templateTarget) | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Destination $templateTarget -Recurse
             $fakePlatform = Copy-AutoUpdateToolFixture -TargetRoot $tempRoot
+            $env:ITL_ONDEMAND_MCP_INSTALL_ROOT = New-ItlOnDemandMcpInstallFixture -TargetRoot $facadeFixtureRoot
             $devEnv = @(
                 "PLATFORM_PATH=$fakePlatform",
                 "INFOBASE_KIND=file",
@@ -3008,6 +3048,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $duplicateResult.combinedText | Should -Match "Development branch already exists: itldev/fixture-branch"
         } finally {
             $env:APPDATA = $oldAppData
+            $env:ITL_ONDEMAND_MCP_INSTALL_ROOT = $oldOnDemandInstallRoot
             if (Test-Path -LiteralPath $worktreePath -PathType Container -ErrorAction SilentlyContinue) {
                 & git -C $tempRoot worktree remove --force $worktreePath *> $null
             }
@@ -3016,6 +3057,9 @@ if (`$?) { exit 0 } else { exit 1 }
             }
             if (Test-Path -LiteralPath $legacyWorktreeRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $legacyWorktreeRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $facadeFixtureRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $facadeFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }

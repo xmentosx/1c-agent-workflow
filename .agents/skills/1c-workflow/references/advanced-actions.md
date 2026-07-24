@@ -60,6 +60,9 @@ activate-dev-branch-context
 update-dev-branch-base
 run-dev-branch-tests
 stop-dev-branch-test-clients
+start-vanessa-profile
+status-vanessa-profile
+stop-vanessa-profile
 check-dev-branch
 verify-dev-branch
 refresh-dev-branch
@@ -72,6 +75,7 @@ status
 release-e2e-snapshot
 release-e2e-restore
 release-e2e-approve-vanessa-fixture
+release-e2e-prepare-ondemand
 release-e2e-config-roundtrip
 release-e2e-extension-smoke
 ```
@@ -84,11 +88,23 @@ Extension helper actions are advanced/helper commands. `new-extension-dev-branch
 
 `stop-dev-branch-test-clients` stops only Vanessa `TESTMANAGER`/`TESTCLIENT` processes whose command line belongs to the current development branch infobase/worktree, then fails if any remain. Successful Vanessa verification performs the same cleanup automatically. It never stops foreign worktree test processes.
 
+Manual profiling uses a separate interactive lifecycle:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action start-vanessa-profile -VanessaFeaturePath .\tests\features\Example.feature
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action status-vanessa-profile
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action stop-vanessa-profile
+```
+
+`start-vanessa-profile` opens exactly one ownership-proven branch-local `TESTMANAGER -> TESTCLIENT` pair, positively proves the manager connection, and opens the specified `.feature` without `StartFeaturePlayer` or `run_scenario`. The pair stays open until `stop-vanessa-profile`. Start/reuse/status return `ITL_VANESSA_PROFILE_REPORT` with safe PID, port, infobase, feature, and connection fields only; they do not create JUnit, verification, or authoring-evidence verdicts. `stop-vanessa-profile` delegates to the shared branch-safe Vanessa runtime release primitive and is idempotent. These actions are manual diagnostics, not `/itl-check`, Vanessa authoring, or release-gate substitutes.
+
 `release-e2e-config-roundtrip` is reserved for `scripts/invoke-release-e2e.ps1`. It dumps the dedicated branch infobase into ignored local state, writes evidence under ignored `build/test-results`, and proves that a root `Configuration.xml` `Comment` loaded in strict `Partial` mode roundtrips while `Ext/ParentConfigurations.bin` is present. Do not expose it as a slash command or use it for ordinary project work.
 
 `release-e2e-snapshot` and `release-e2e-restore` are internal checkpoint actions for the same runner. They accept only a project-local ignored `.dt`; restore invalidates both configuration and extension fingerprints. Do not expose them as slash commands or use them as a general backup interface.
 
 `release-e2e-approve-vanessa-fixture` is restricted to the runner-owned `ITLReleaseFourFlat.feature` and the dedicated stand's existing release feature. It records the exact current feature hashes before each synthetic verification iteration so the ordinary Vanessa authoring preflight remains fail-closed for every other feature. It is not a project command and must not have a slash wrapper.
+
+`release-e2e-prepare-ondemand` is reserved for the same runner. It requires fresh dependency mode, synchronizes the dedicated branch worktree to the workflow-pinned Vanessa Automation and facade locks, and installs the exact SHA-verified artifacts before live on-demand probes.
 
 `release-e2e-extension-smoke` is also reserved for the Release runner. It uses the public extension initialization lifecycle to create an Empty extension, produce and reload a CFE, validate both normalized dumps, and restore the disposable infobase and worktree from a snapshot. It is not a project command and must not have a slash wrapper.
 

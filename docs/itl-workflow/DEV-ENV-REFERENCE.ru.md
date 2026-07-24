@@ -91,6 +91,7 @@
 | Ключ | Назначение | Значения/default | Владелец |
 |---|---|---|---|
 | `VANESSA_AUTOMATION_ROOT` | Каталог установки VA | default `.agent-1c/tools/vanessa-automation` | helper/user |
+| `ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE` | Локальный exact ZIP для maintainer-квалификации до публикации pinned artifact | пусто; путь к квалифицированному ZIP, SHA-256 всегда проверяется по lock | maintainer |
 | `VANESSA_AUTOMATION_EPF` | Путь к EPF | определяется helper | helper |
 | `VANESSA_AUTOMATION_VERSION` | Установленная версия | определяется helper | helper |
 | `VANESSA_FEATURES_PATH` | Каталог feature-файлов | default `tests/features` | user |
@@ -103,6 +104,7 @@
 | `VANESSA_TEST_TIMEOUT_SECONDS` | Timeout прогона | default `1800` | user |
 | `VANESSA_TEST_CLIENT_STARTUP_TIMEOUT_SECONDS` | Timeout TestClient | default `300` | user |
 | `VANESSA_TEST_WINDOW_SEARCH_TIMEOUT_SECONDS` | Timeout поиска окна | default `60` | user |
+| `VANESSA_TESTCLIENT_LICENSE_CAPACITY` | Общая доступная capacity TestClient для verification и Vanessa UI MCP | положительное число, default `2`; должно соответствовать фактическим лицензиям | user |
 | `VANESSA_EVENT_LOG_LEVELS` | Уровни журнала | default `Error` | user |
 | `VANESSA_EVENT_LOG_CLOCK_SKEW_SECONDS` | Допуск времени | default `5` | user |
 | `VANESSA_EVENT_LOG_READER` | Reader журнала | `auto` или поддержанный reader | user |

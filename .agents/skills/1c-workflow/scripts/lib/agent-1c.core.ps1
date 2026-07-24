@@ -355,7 +355,14 @@ function Test-Agent1cActionRequiresLifecycleLock {
         "detect-web-publication",
         "detect-apache",
         "vibecoding1c-mcp-status",
+        "status-vanessa-profile",
+        # The facade call already owns the shared runtime lease. Its private
+        # broker helpers must not reacquire runtime-mcp.lock from inside that
+        # call, while their instance ownership checks still fail closed.
+        "start-vanessa-profile",
         "internal-ondemand-ensure",
+        "internal-ondemand-ensure-test-client",
+        "internal-ondemand-recover",
         "internal-ondemand-stop"
     )
     return -not ($readOnlyActions -contains $RequestedAction)
