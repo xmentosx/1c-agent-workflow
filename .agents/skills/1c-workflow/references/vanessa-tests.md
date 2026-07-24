@@ -2,7 +2,7 @@
 
 > Agent reference. Read this file only before creating or editing Vanessa Automation feature tests. Do not load it for routine lifecycle commands.
 
-Verify the behavior currently being changed. Add broad smoke, whole-system E2E,
+Verify the behavior being changed. Add broad smoke, whole-system E2E,
 or long regressions only when explicitly requested.
 
 ## Quick Algorithm
