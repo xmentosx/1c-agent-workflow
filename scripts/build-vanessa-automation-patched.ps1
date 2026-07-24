@@ -186,14 +186,14 @@ function Exit-ScopedUnsafeActionProtectionBypass {
 }
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.28-itl-r2"
+$assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.28-itl-r3"
 $manifestPath = Join-Path $assetRoot "manifest.json"
 $patchPath = Join-Path $assetRoot "file-operations.patch"
 $noticePath = Join-Path $assetRoot "ITL-NOTICE.txt"
 $licenseNoticePath = Join-Path $assetRoot "LICENSE.upstream"
 
 if (-not $OutputDirectory) {
-    $OutputDirectory = Join-Path $repoRoot "build\third-party\vanessa-automation\1.2.043.28-itl-r2"
+    $OutputDirectory = Join-Path $repoRoot "build\third-party\vanessa-automation\1.2.043.28-itl-r3"
 }
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 $WorkRoot = [System.IO.Path]::GetFullPath($WorkRoot)
