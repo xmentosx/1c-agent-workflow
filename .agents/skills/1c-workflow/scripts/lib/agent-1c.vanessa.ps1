@@ -436,6 +436,167 @@ function Get-VanessaAuthoringFeatureRecords {
     } | Sort-Object path)
 }
 
+function Get-VanessaAuthoringLintWarnings {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$FeatureRecords,
+        [ValidateRange(1, 100)][int]$MaxWarnings = 20
+    )
+
+    $warnings = [System.Collections.Generic.List[object]]::new()
+    $currentRowPhrase = ConvertFrom-Utf8Base64 "0Y8g0LLRi9Cx0LjRgNCw0Y4g0YLQtdC60YPRidGD0Y4g0YHRgtGA0L7QutGD"
+    $positionPhrases = @(
+        (ConvertFrom-Utf8Base64 "0Y8g0L/QtdGA0LXRhdC+0LbRgyDQuiDRgdGC0YDQvtC60LU="),
+        (ConvertFrom-Utf8Base64 "0Y8g0YPRgdGC0LDQvdCw0LLQu9C40LLQsNGOINGC0LXQutGD0YnRg9GOINGB0YLRgNC+0LrRgw==")
+    )
+    $pauseKeyword = [regex]::Escape((ConvertFrom-Utf8Base64 "0J/QsNGD0LfQsA=="))
+    $stepKeywords = @(
+        "And", "When", "Then", "Given",
+        (ConvertFrom-Utf8Base64 "0Jg="),
+        (ConvertFrom-Utf8Base64 "0JrQvtCz0LTQsA=="),
+        (ConvertFrom-Utf8Base64 "0KLQvtCz0LTQsA=="),
+        (ConvertFrom-Utf8Base64 "0J/Rg9GB0YLRjA=="),
+        (ConvertFrom-Utf8Base64 "0JTQsNC90L4=")
+    )
+    $scenarioKeywords = @(
+        "Scenario", "Scenario Outline", "Background",
+        (ConvertFrom-Utf8Base64 "0KHRhtC10L3QsNGA0LjQuQ=="),
+        (ConvertFrom-Utf8Base64 "0KHRgtGA0YPQutGC0YPRgNCwINGB0YbQtdC90LDRgNC40Y8="),
+        (ConvertFrom-Utf8Base64 "0J/RgNC10LTRi9GB0YLQvtGA0LjRjw==")
+    )
+    $stepPrefixPattern = "(?:" + (($stepKeywords | ForEach-Object { [regex]::Escape($_) }) -join "|") + "|\*)"
+    $stepPattern = "^\s*$stepPrefixPattern\s+"
+    $pausePattern = "$stepPattern$pauseKeyword(?:\s|$)"
+    $scenarioPattern = "^\s*(?:" + (($scenarioKeywords | ForEach-Object { [regex]::Escape($_) }) -join "|") + ")\s*:"
+    $quotedValuePattern = [regex]"'(?:\\'|[^']|'')*'"
+
+    foreach ($feature in @($FeatureRecords)) {
+        if ($warnings.Count -ge $MaxWarnings) { break }
+        $relativePath = [string](Get-StateValue -State $feature -Name "path" -Default "")
+        if (-not $relativePath -or [System.IO.Path]::GetExtension($relativePath) -ine ".feature") { continue }
+        $fullPath = Resolve-ProjectPath $relativePath
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf -ErrorAction SilentlyContinue)) { continue }
+
+        $lines = @((Read-Utf8Text -Path $fullPath) -split "`r?`n")
+        $insideDocString = $false
+        $positionPending = $false
+        $positionTableRows = 0
+        $hasReliablePosition = $false
+
+        for ($index = 0; $index -lt $lines.Count; $index++) {
+            if ($warnings.Count -ge $MaxWarnings) { break }
+            $line = [string]$lines[$index]
+            $trimmed = $line.Trim()
+            $docStringMarkers = ([regex]::Matches($line, '"""')).Count
+            if ($insideDocString -or $docStringMarkers -gt 0) {
+                if (($docStringMarkers % 2) -eq 1) { $insideDocString = -not $insideDocString }
+                continue
+            }
+
+            if (($trimmed.StartsWith("|") -or $line -match $stepPattern) -and -not $trimmed.StartsWith("#")) {
+                foreach ($quotedValue in @($quotedValuePattern.Matches($line))) {
+                    if ($quotedValue.Length -le 2) { continue }
+                    $innerValue = $quotedValue.Value.Substring(1, $quotedValue.Length - 2)
+                    if ($innerValue.Contains("''")) {
+                        $warnings.Add([pscustomobject][ordered]@{
+                            code = "ITL_VANESSA_LINT_APOSTROPHE"
+                            path = $relativePath
+                            line = $index + 1
+                            message = "Doubled apostrophe in a single-quoted Gherkin value; use \'."
+                        })
+                        break
+                    }
+                }
+            }
+            if ($warnings.Count -ge $MaxWarnings) { break }
+
+            if ($line -match $scenarioPattern) {
+                $positionPending = $false
+                $positionTableRows = 0
+                $hasReliablePosition = $false
+                continue
+            }
+            if (-not $trimmed -or $trimmed.StartsWith("#") -or $trimmed.StartsWith("@")) { continue }
+
+            if ($trimmed.StartsWith("|")) {
+                if ($positionPending) {
+                    $tableValue = ($trimmed -replace '[|''"\s]', '')
+                    if ($tableValue) { $positionTableRows++ }
+                    if ($positionTableRows -ge 2) { $hasReliablePosition = $true }
+                }
+                continue
+            }
+
+            if ($line -match $stepPattern -and $line.IndexOf($currentRowPhrase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                if (-not $hasReliablePosition) {
+                    $warnings.Add([pscustomobject][ordered]@{
+                        code = "ITL_VANESSA_LINT_CURRENT_ROW"
+                        path = $relativePath
+                        line = $index + 1
+                        message = "Current-row selection has no immediately preceding concrete row/key positioning."
+                    })
+                }
+                $positionPending = $false
+                $positionTableRows = 0
+                $hasReliablePosition = $false
+                continue
+            }
+            if ($warnings.Count -ge $MaxWarnings) { break }
+
+            $isPositionStep = $false
+            foreach ($phrase in $positionPhrases) {
+                if ($line -match $stepPattern -and $line.IndexOf($phrase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                    $isPositionStep = $true
+                    break
+                }
+            }
+            if ($isPositionStep) {
+                $positionPending = $trimmed.EndsWith(":")
+                $positionTableRows = 0
+                $hasReliablePosition = -not $positionPending -and (
+                    $quotedValuePattern.Matches($line).Count -gt 0 -or
+                    $line -match '\$[^$]+\$|<[^>]+>'
+                )
+            } else {
+                $positionPending = $false
+                $positionTableRows = 0
+                $hasReliablePosition = $false
+            }
+
+            if ($line -match $pausePattern) {
+                $previousLine = $(if ($index -gt 0) { [string]$lines[$index - 1] } else { "" })
+                if ($previousLine -notmatch '^\s*#\s*\S.{5,}\s*$') {
+                    $warnings.Add([pscustomobject][ordered]@{
+                        code = "ITL_VANESSA_LINT_BLIND_PAUSE"
+                        path = $relativePath
+                        line = $index + 1
+                        message = "Blind pause has no immediate explanatory comment; prefer an observable-state wait."
+                    })
+                }
+            }
+        }
+    }
+    return @($warnings)
+}
+
+function Write-VanessaAuthoringLintWarnings {
+    param([Parameter(Mandatory = $true)][object[]]$FeatureRecords)
+
+    try {
+        $warnings = @(Get-VanessaAuthoringLintWarnings -FeatureRecords $FeatureRecords -MaxWarnings 21)
+    } catch {
+        Write-Warning "Vanessa authoring lint [ITL_VANESSA_LINT_UNAVAILABLE]: source-only warnings could not be produced; authoring gates continue."
+        return
+    }
+    foreach ($warning in @($warnings | Select-Object -First 20)) {
+        $safePath = ([string]$warning.path -replace '[\x00-\x1f\x7f]', "?")
+        if ($safePath.Length -gt 240) { $safePath = $safePath.Substring(0, 240) }
+        Write-Warning ("Vanessa authoring lint [{0}] {1}:{2}: {3}" -f $warning.code, $safePath, $warning.line, $warning.message)
+    }
+    if ($warnings.Count -gt 20) {
+        Write-Warning "Vanessa authoring lint reached the 20-warning output limit; inspect the remaining changed .feature files locally."
+    }
+}
+
 function Get-VanessaFeatureContract {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -560,6 +721,7 @@ function Prepare-VanessaAuthoring {
         Write-Host "Vanessa authoring: not required; no new or changed .feature files."
         return
     }
+    Write-VanessaAuthoringLintWarnings -FeatureRecords $features
     $applicationFeatures = @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaFeaturesPath))
     if ($applicationFeatures.Count -eq 0) {
         Set-RunFailureContext -Category "missing-suite" -RequiredAction "/itl-verify-fix"
