@@ -34,6 +34,7 @@ Changed `.feature` files require `/itl-vanessa-author`; see `vanessa-authoring.m
 - Clear a field before selection only when it is known to add or restore values and the scenario expects an exact set. Assert the resulting value or set when it is observable; do not inspect every form merely to justify clearing.
 - Base assertions on runtime-visible and available elements. Static visibility of a child does not prove user availability under the current page or mode; explicitly select the relevant state and assert only its active elements.
 - If a selector is already known, do no extra discovery. For unknown static structure, query targeted graph/code metadata or source; for dynamic visibility or availability, use targeted Vanessa UI MCP evidence. Read only the relevant `Form.xml` fragment as a final fallback, never require a full-form scan.
+- For that local source fallback, call `scripts/get-form-element-context.ps1` with exact element names; it returns only bounded `DataPath`, multi-value, and group/page ancestry records.
 - Keep acceptance scenarios fully automated. Interactive profiling is separate tooling, not a reason to add manual pauses or profiling tags to ordinary features.
 
 ## BSL Context And Extension UI

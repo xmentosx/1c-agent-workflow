@@ -27,6 +27,7 @@ Describe "Vanessa test guide contract" {
         $GuideText | Should -Match "targeted Vanessa UI MCP evidence"
         $GuideText | Should -Match 'Read only the relevant `Form\.xml` fragment as a final fallback'
         $GuideText | Should -Match "never require a full-form scan"
+        $GuideText | Should -Match 'scripts/get-form-element-context\.ps1'
     }
 
     It "keeps ordinary acceptance scenarios automated and product-neutral" {
