@@ -300,19 +300,45 @@ function Get-E2EJunitTotals {
 }
 
 function Get-E2EState {
-    $roots = @($ProjectRoot, $worktreePath) | Sort-Object -Unique
+    $roots = @($ProjectRoot, $worktreePath) | Select-Object -Unique
+    $expectedBranch = "itldev/$devBranchName"
+    $expectedWorktree = $worktreePath.TrimEnd('\', '/')
     foreach ($root in $roots) {
         $stateRoot = Join-Path $root ".agent-1c\dev-branches"
+        $candidates = @()
         foreach ($file in @(Get-ChildItem -LiteralPath $stateRoot -File -Filter "*.json" -ErrorAction SilentlyContinue)) {
             try {
                 $state = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
-                if ([string]$state.devBranchName -eq $devBranchName -or [string]$state.devBranch -eq "itldev/$devBranchName") {
-                    return [pscustomobject]@{ value = $state; path = $file.FullName }
+                if ([string]$state.devBranchName -eq $devBranchName -or [string]$state.devBranch -eq $expectedBranch) {
+                    $candidates += [pscustomobject]@{ value = $state; path = $file.FullName }
                 }
             } catch {}
         }
+        if ($candidates.Count -eq 0) { continue }
+
+        $matching = @($candidates | Where-Object {
+            $stateWorktree = ""
+            try { $stateWorktree = [System.IO.Path]::GetFullPath([string]$_.value.worktreePath).TrimEnd('\', '/') } catch {}
+            [string]$_.value.devBranchName -ceq $devBranchName -and
+                [string]$_.value.devBranch -ceq $expectedBranch -and
+                $stateWorktree.Equals($expectedWorktree, [System.StringComparison]::OrdinalIgnoreCase)
+        })
+        if ($matching.Count -eq 1) { return $matching[0] }
+        if ($matching.Count -gt 1) {
+            throw "RELEASE_E2E_BRANCH_STATE_CONTEXT_MISMATCH: multiple branch states match devBranchName='$devBranchName', devBranch='$expectedBranch', worktreePath='$worktreePath': $(@($matching.path) -join ', ')"
+        }
+        throw "RELEASE_E2E_BRANCH_STATE_CONTEXT_MISMATCH: branch state under '$stateRoot' does not exactly match devBranchName='$devBranchName', devBranch='$expectedBranch', worktreePath='$worktreePath'. Refusing to use state from another context."
     }
     throw "Development branch state was not found for E2E branch '$devBranchName'."
+}
+
+function Assert-E2EUnsafeActionProtectionConfirmed {
+    $stateRecord = Get-E2EState
+    $property = $stateRecord.value.PSObject.Properties["unsafeActionProtectionConfirmed"]
+    if ($null -eq $property -or $property.Value -isnot [bool] -or -not [bool]$property.Value) {
+        throw "RELEASE_E2E_UNSAFE_ACTION_PROTECTION_UNCONFIRMED: branch='$($stateRecord.value.devBranch)'; worktree='$worktreePath'; state='$($stateRecord.path)'; required=unsafeActionProtectionConfirmed:true. Run the monitored configure-dev-branch-unsafe-action-protection action for this worktree, complete its explicit confirmation, then rerun Release. This preflight does not confirm automatically or edit state/conf.cfg."
+    }
+    return $stateRecord
 }
 
 function ConvertTo-E2EHashtable {
@@ -419,6 +445,22 @@ function Restore-E2EStateFiles {
     param([object]$Record)
     Assert-E2ECheckpointFile -Path ([string]$Record.stateCopyPath) -Sha256 ([string]$Record.stateSha256) -Label "saved branch state"
     Copy-Item -LiteralPath ([string]$Record.stateCopyPath) -Destination ([string]$Record.actualStatePath) -Force
+    if ($script:e2eUnsafeActionProtectionConfirmation) {
+        $restoredState = Get-Content -LiteralPath ([string]$Record.actualStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($name in @($script:e2eUnsafeActionProtectionConfirmation.Keys)) {
+            $property = $restoredState.PSObject.Properties[$name]
+            if ($null -eq $property) {
+                $restoredState | Add-Member -NotePropertyName $name -NotePropertyValue $script:e2eUnsafeActionProtectionConfirmation[$name]
+            } else {
+                $property.Value = $script:e2eUnsafeActionProtectionConfirmation[$name]
+            }
+        }
+        [IO.File]::WriteAllText(
+            [string]$Record.actualStatePath,
+            (($restoredState | ConvertTo-Json -Depth 16) + [Environment]::NewLine),
+            [Text.UTF8Encoding]::new($false)
+        )
+    }
     if ([string]$Record.envCopyPath) {
         Assert-E2ECheckpointFile -Path ([string]$Record.envCopyPath) -Sha256 ([string]$Record.envSha256) -Label "saved .dev.env"
         Copy-Item -LiteralPath ([string]$Record.envCopyPath) -Destination ([string]$Record.actualEnvPath) -Force
@@ -540,6 +582,21 @@ function Sync-E2EWorktreeFromMaster {
 
 $branch = (& git -C $worktreePath branch --show-current).Trim()
 if ($LASTEXITCODE -ne 0 -or $branch -notlike "itldev/*") { throw "E2E worktree must be an itldev/* Git worktree: $worktreePath" }
+$unsafeActionProtectionState = Assert-E2EUnsafeActionProtectionConfirmed
+$script:e2eUnsafeActionProtectionConfirmation = [ordered]@{}
+foreach ($name in @(
+    "unsafeActionProtectionResolution",
+    "unsafeActionProtectionSetupMode",
+    "unsafeActionProtectionConfirmed",
+    "unsafeActionProtectionConfirmedAt",
+    "unsafeActionProtectionUser",
+    "unsafeActionProtectionSourceKey"
+)) {
+    $property = $unsafeActionProtectionState.value.PSObject.Properties[$name]
+    if ($null -ne $property) {
+        $script:e2eUnsafeActionProtectionConfirmation[$name] = $property.Value
+    }
+}
 $worktreeStatus = @(& git -C $worktreePath status --porcelain --untracked-files=all)
 if ($usingLegacyRunRoot -and $ResumeMode -eq "Restart") {
     $legacyRunRelative = $releaseRunRoot.Substring($worktreePath.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
@@ -924,7 +981,18 @@ try {
     if (-not (Test-E2EStagePassed -Name "ondemand-mcp")) {
         Set-E2EStageStatus -Name "ondemand-mcp" -Status "running"
         $executedStages += "ondemand-mcp"
+        $e2eDependencyLockPath = Join-Path $worktreePath ".agent-1c\dependency-lock.json"
+        if (-not (Test-Path -LiteralPath $e2eDependencyLockPath -PathType Leaf)) {
+            throw "Release E2E dependency lock is missing: $e2eDependencyLockPath"
+        }
+        $e2eDependencyLockBytes = [IO.File]::ReadAllBytes($e2eDependencyLockPath)
         try {
+            Invoke-E2EHelper -Action "release-e2e-prepare-ondemand" -TimeoutSeconds 1800 | Out-Null
+            $vanessaSmokeDirectory = Join-Path $outputRoot "Vanessa путь с пробелами"
+            $vanessaSmokeFeature = Join-Path $vanessaSmokeDirectory "Проверка пути.feature"
+            New-Item -ItemType Directory -Force -Path $vanessaSmokeDirectory | Out-Null
+            Copy-Item -LiteralPath $vanessaFixture.path -Destination $vanessaSmokeFeature -Force
+            $canonicalVanessaLock = (Get-Content -LiteralPath (Join-Path $workflowRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaAutomation
             if ($onDemandMcpTestFixture) {
                 $onDemandMcpEvidence = [ordered]@{
                     schemaVersion = 1
@@ -932,7 +1000,7 @@ try {
                     testFixture = $true
                     families = [ordered]@{
                         roctup = [ordered]@{ publicToolCount = 2; catalogToolCount = 13; instances = @([ordered]@{ pid = 101; port = 6003 }); cleanupPassed = $true; idleCleanupPassed = $true; secondSurvivedFirstClose = $false }
-                        "vanessa-ui" = [ordered]@{ publicToolCount = 2; catalogToolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151 }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152 }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; vanessaFileAuthoringOutcome = "runner-fallback-required"; vanessaFileAuthoringCodes = @("ITL_ONDEMAND_BACKEND_CALL_FAILED"); vanessaFeature = $vanessaFixture.path; secondSurvivedFirstClose = $true }
+                        "vanessa-ui" = [ordered]@{ publicToolCount = 2; catalogToolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256 }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256 }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; vanessaFileAuthoringOutcome = "passed"; vanessaFileAuthoringCodes = @("PATH_INVALID", "PATH_NOT_FOUND", "PATH_ACCESS_DENIED"); vanessaFeature = $vanessaSmokeFeature; secondSurvivedFirstClose = $true }
                     }
                     capturedAt = [DateTime]::UtcNow.ToString("o")
                 }
@@ -964,7 +1032,7 @@ try {
                             "-verify-idle",
                             "-output", $familyEvidencePath
                         )
-                        if ([bool]$spec.vanessaSmoke) { $probeArguments += @("-vanessa-ui-smoke", "-vanessa-feature", $vanessaFixture.path) }
+                        if ([bool]$spec.vanessaSmoke) { $probeArguments += @("-vanessa-ui-smoke", "-vanessa-feature", $vanessaSmokeFeature) }
                         & go @probeArguments
                         if ($LASTEXITCODE -ne 0) { throw "On-demand MCP live probe failed for $($spec.family)." }
                     } finally {
@@ -981,16 +1049,26 @@ try {
                     }
                     if ([bool]$spec.vanessaSmoke) {
                         $authoringOutcome = [string]$familyEvidence.vanessaFileAuthoringOutcome
-                        if ($authoringOutcome -notin @("passed", "runner-fallback-required")) {
-                            throw "Vanessa file authoring smoke returned an unsupported outcome: $authoringOutcome"
+                        if ($authoringOutcome -ne "passed") {
+                            throw "Vanessa file authoring smoke did not pass: $authoringOutcome"
                         }
                         $reportedAuthoringFeature = [System.IO.Path]::GetFullPath([string]$familyEvidence.vanessaFeature)
-                        $expectedAuthoringFeature = [System.IO.Path]::GetFullPath([string]$vanessaFixture.path)
+                        $expectedAuthoringFeature = [System.IO.Path]::GetFullPath([string]$vanessaSmokeFeature)
                         if ($reportedAuthoringFeature -ne $expectedAuthoringFeature) {
                             throw "Vanessa file authoring smoke did not target the release feature."
                         }
-                        if ($authoringOutcome -eq "runner-fallback-required" -and [int]$vanessaJUnitTests -ne 4) {
-                            throw "Vanessa authoring runner fallback was not backed by the four-test canonical JUnit run."
+                        $actualPathCodes = @($familyEvidence.vanessaFileAuthoringCodes | Sort-Object -Unique)
+                        $expectedPathCodes = @("PATH_ACCESS_DENIED", "PATH_INVALID", "PATH_NOT_FOUND")
+                        if (($actualPathCodes -join ",") -cne ($expectedPathCodes -join ",")) {
+                            throw "Vanessa file authoring smoke did not prove the exact structured path errors."
+                        }
+                        foreach ($instance in @($familyEvidence.instances)) {
+                            if ([string]$instance.vanessaAutomationCompatibilityVersion -cne [string]$canonicalVanessaLock.compatibilityVersion -or
+                                [string]$instance.vanessaAutomationDownstreamRevision -cne [string]$canonicalVanessaLock.downstreamRevision -or
+                                [string]$instance.vanessaAutomationArchiveSha256 -cne [string]$canonicalVanessaLock.sha256 -or
+                                [string]$instance.vanessaAutomationEpfSha256 -cne [string]$canonicalVanessaLock.epfSha256) {
+                                throw "Vanessa live smoke did not use the exact workflow-pinned artifact and downstream revision."
+                            }
                         }
                     }
                     $families[[string]$spec.family] = $familyEvidence
@@ -1008,6 +1086,8 @@ try {
         } catch {
             Set-E2EStageStatus -Name "ondemand-mcp" -Status "failed" -ErrorText $_.Exception.Message
             throw
+        } finally {
+            [IO.File]::WriteAllBytes($e2eDependencyLockPath, $e2eDependencyLockBytes)
         }
     } else {
         $resumedStages += "ondemand-mcp"

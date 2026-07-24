@@ -116,6 +116,16 @@ scenario, non-idempotent form/template registration, failed extension TestClient
 form opening, failed extension database restore or unpinned template is a
 release failure.
 
+For the patched Vanessa Automation artifact, pre-publication qualification must
+set `ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE` to the exact local candidate.
+The release smoke must record the canonical archive and EPF SHA-256, compatibility
+version `1.2.043.28`, downstream revision `itl-r1`, a matching live `tools/list`
+catalog, successful file and directory calls on a Windows path containing spaces
+and Cyrillic text, and structured `PATH_INVALID`, `PATH_NOT_FOUND`, and
+`PATH_ACCESS_DENIED` results. `runner-fallback-required` is not release evidence.
+The lock URL remains a contract only until a separate publication step changes
+`publicationStatus`; this checklist does not assert that the asset exists.
+
 ## Resume after interruption
 
 The runner checkpoints `config-cadence`, `config-roundtrip`, `extension-smoke`,

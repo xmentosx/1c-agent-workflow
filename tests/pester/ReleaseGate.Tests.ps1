@@ -20,6 +20,11 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match "FromBase64String"
         $e2eText | Should -Not -Match "Функционал: Четыре независимых"
         $e2eText | Should -Match '"-VanessaFeaturePath", \$vanessaFixture\.path'
+        $e2eText | Should -Match "\`$authoringOutcome -ne `"passed`""
+        $e2eText | Should -Not -Match "runner-fallback-required"
+        $e2eText | Should -Match "PATH_ACCESS_DENIED.*PATH_INVALID.*PATH_NOT_FOUND"
+        $e2eText | Should -Match "vanessaAutomationArchiveSha256"
+        $e2eText | Should -Match ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("VmFuZXNzYSDQv9GD0YLRjCDRgSDQv9GA0L7QsdC10LvQsNC80Lg=")))
         ([regex]::Matches($e2eText, 'Invoke-E2EHelper -Action "check-dev-branch"')).Count | Should -Be 4
         ([regex]::Matches($e2eText, 'Invoke-E2EHelper -Action "release-e2e-approve-vanessa-fixture"')).Count | Should -Be 3
         $e2eText | Should -Match 'RELEASE_E2E_RESUME_STATE_MISMATCH'
@@ -88,7 +93,15 @@ Describe "Release E2E orchestration" {
             & git -C $mainRoot config user.name "ITL Test"
             Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".agent-1c/dev-branches/`n.agent-1c/runs/`n.agent-1c/release-e2e-actions.log`n.agent-1c/release-e2e-partial-list.txt`nbuild/`n"
             Set-Content -LiteralPath (Join-Path $mainRoot "README.md") -Encoding ASCII -Value "fixture"
-            New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot "src\cf\Ext") | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot "src\cf\Ext"), (Join-Path $mainRoot ".agent-1c") | Out-Null
+            $dependencyLock = [ordered]@{
+                schemaVersion = 1
+                mode = "fresh"
+                dependencies = [ordered]@{
+                    vanessaAutomation = [ordered]@{ source = "fixture-original" }
+                }
+            }
+            Set-Content -LiteralPath (Join-Path $mainRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value ($dependencyLock | ConvertTo-Json -Depth 6)
             Set-Content -LiteralPath (Join-Path $mainRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value @'
 <?xml version="1.0" encoding="UTF-8"?>
 <MetaDataObject>
@@ -121,6 +134,9 @@ Describe "Release E2E orchestration" {
                 devBranchName = "workflow-release-e2e"
                 devBranch = "itldev/workflow-release-e2e"
                 worktreePath = $worktreeRoot
+                unsafeActionProtectionResolution = "branch-confirmed"
+                unsafeActionProtectionConfirmed = $true
+                unsafeActionProtectionConfirmedAt = "2026-07-24T00:00:00Z"
                 lastVerificationStatus = "missing"
             }
             Set-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\dev-branches\workflow-release-e2e.json") -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 6)
@@ -178,6 +194,12 @@ switch ($Action) {
     }
     "release-e2e-approve-vanessa-fixture" {
         if ([System.IO.Path]::GetFileName($VanessaFeaturePath) -ne "ITLReleaseFourFlat.feature") { throw "release E2E approval must use the dedicated four-scenario feature file" }
+    }
+    "release-e2e-prepare-ondemand" {
+        $lockPath = Join-Path $ProjectRoot ".agent-1c\dependency-lock.json"
+        $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $lock.dependencies.vanessaAutomation.source = "release-e2e-current-package-pin"
+        Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value ($lock | ConvertTo-Json -Depth 12)
     }
     "release-e2e-config-roundtrip" {
         [xml]$configuration = Get-Content -LiteralPath (Join-Path $ProjectRoot "src\cf\Configuration.xml") -Raw -Encoding UTF8
@@ -316,6 +338,7 @@ switch ($Action) {
             $actions = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\release-e2e-actions.log") -Encoding UTF8
             $actions | Should -Contain "release-e2e-config-roundtrip"
             $actions | Should -Contain "release-e2e-extension-smoke"
+            $actions | Should -Contain "release-e2e-prepare-ondemand"
             $actions | Should -Contain "stop-dev-branch-test-clients"
             @($actions | Where-Object { $_ -eq "check-dev-branch" }).Count | Should -Be 3
             @($actions | Where-Object { $_ -eq "release-e2e-approve-vanessa-fixture" }).Count | Should -Be 3
@@ -328,6 +351,12 @@ switch ($Action) {
             $checkpointPath = Join-Path $worktreeRoot ".agent-1c\runs\release-e2e\workflow-release-e2e\checkpoint.json"
             $promotionCheckpoint = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $promotionCheckpoint.identity.workflowCommit = "1111111111111111111111111111111111111111"
+            $postConfigStatePath = [string]$promotionCheckpoint.stateFiles.postConfig.stateCopyPath
+            $postConfigState = Get-Content -LiteralPath $postConfigStatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $postConfigState.unsafeActionProtectionConfirmed = $false
+            $postConfigState.unsafeActionProtectionConfirmedAt = ""
+            [System.IO.File]::WriteAllText($postConfigStatePath, (($postConfigState | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+            $promotionCheckpoint.stateFiles.postConfig.stateSha256 = (Get-FileHash -LiteralPath $postConfigStatePath -Algorithm SHA256).Hash.ToLowerInvariant()
             [System.IO.File]::WriteAllText($checkpointPath, (($promotionCheckpoint | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
             $promotionSummaryPath = Join-Path $tempRoot "promotion-summary.json"
             & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
@@ -341,6 +370,8 @@ switch ($Action) {
             @($promotionSummary.executedStages) | Should -Contain "verification-refresh"
             @($promotionSummary.executedStages) | Should -Contain "result-cleanup"
             @($promotionSummary.invalidatedStages) | Should -Contain "result-cleanup"
+            $promotionState = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\dev-branches\workflow-release-e2e.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $promotionState.unsafeActionProtectionConfirmed | Should -BeTrue
             $promotedActions = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\release-e2e-actions.log") -Encoding UTF8
             @($promotedActions | Where-Object { $_ -eq "check-dev-branch" }).Count | Should -Be 4
             @($promotedActions | Where-Object { $_ -eq "release-e2e-config-roundtrip" }).Count | Should -Be 1

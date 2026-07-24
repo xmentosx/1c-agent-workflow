@@ -4,16 +4,19 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -43,7 +46,21 @@ type runtime struct {
 	closed            bool
 	authoringFeature  string
 	authoringLine     int
+	testClientState   string
+	testClientPID     int
+	testClientPort    int
+	suppressEvidence  bool
 }
+
+const (
+	testClientNotStarted       = "not-started"
+	testClientProcessStarted   = "process-started"
+	testClientPortReady        = "port-ready"
+	testClientManagerConnected = "manager-connected"
+	testClientConnectionFailed = "connection-failed"
+	testClientDisconnected     = "disconnected"
+	testClientExited           = "exited"
+)
 
 func (r *runtime) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	arguments := any(map[string]any{})
@@ -122,7 +139,16 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		r.mu.Unlock()
 		return guarded, nil
 	}
+	if preflight := r.preflightVanessaTestClientLocked(ctx, toolName); preflight != nil {
+		r.attachVanessaTestClientMetaLocked(preflight)
+		r.writeEvidenceLocked(toolName, arguments, "failed", toolResultCode(preflight), resultEvidenceMessage(preflight, nil), r.instanceID, r.backend)
+		r.completeCallLocked()
+		r.mu.Unlock()
+		return preflight, nil
+	}
 	session := r.session
+	callInstanceID := r.instanceID
+	callBackend := r.backend
 	r.active++
 	r.mu.Unlock()
 
@@ -139,36 +165,236 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		}()
 	}
 	result, err := r.callUpstream(ctx, session, params)
+	forwardedProtocolError, forwardedProtocolCode := backendProtocolToolError(err)
 	r.mu.Lock()
 	r.active--
-	outcome := "passed"
-	resultCode := "ITL_OK"
-	if err != nil {
-		outcome = "failed"
-		resultCode = "ITL_ONDEMAND_BACKEND_CALL_FAILED"
-	} else if result == nil {
-		outcome = "failed"
-		resultCode = "ITL_ONDEMAND_EMPTY_RESULT"
-	} else if result.IsError {
-		outcome = "failed"
-		resultCode = toolResultCode(result)
-		if resultCode == "" {
-			resultCode = "ITL_ONDEMAND_TOOL_ERROR"
+	r.applyVanessaTestClientResultLocked(toolName, result)
+	r.attachVanessaTestClientMetaLocked(result)
+	outcome, resultCode := callOutcome(result, err)
+	if forwardedProtocolCode != "" {
+		resultCode = forwardedProtocolCode
+	}
+	r.writeEvidenceLocked(toolName, arguments, outcome, resultCode, resultEvidenceMessageForOutcome(outcome, result, err), callInstanceID, callBackend)
+	if err != nil && isConnectionRefused(err) {
+		recovery, recoveryErr := r.recoverLocked(ctx, session, callInstanceID, callBackend)
+		if recoveryErr != nil {
+			currentInstanceID := r.instanceID
+			r.completeCallLocked()
+			r.mu.Unlock()
+			return recoveryAction(toolName, callInstanceID, currentInstanceID, false, recoveryErr), nil
 		}
+		if !isIdempotentTool(r.family, tool) {
+			r.completeCallLocked()
+			r.mu.Unlock()
+			return recoveryAction(toolName, recovery.PreviousInstanceID, recovery.InstanceID, true, nil), nil
+		}
+		if preflight := r.preflightVanessaTestClientLocked(ctx, toolName); preflight != nil {
+			r.attachVanessaTestClientMetaLocked(preflight)
+			r.writeEvidenceLocked(toolName, arguments, "failed", toolResultCode(preflight), resultEvidenceMessage(preflight, nil), r.instanceID, r.backend)
+			r.completeCallLocked()
+			r.mu.Unlock()
+			return preflight, nil
+		}
+
+		retrySession := r.session
+		retryInstanceID := r.instanceID
+		retryBackend := r.backend
+		r.active++
+		r.mu.Unlock()
+		retryResult, retryErr := r.callUpstream(ctx, retrySession, params)
+		r.mu.Lock()
+		r.active--
+		r.applyVanessaTestClientResultLocked(toolName, retryResult)
+		r.attachVanessaTestClientMetaLocked(retryResult)
+		retryOutcome, retryCode := callOutcome(retryResult, retryErr)
+		r.writeEvidenceLocked(toolName, arguments, retryOutcome, retryCode, resultEvidenceMessageForOutcome(retryOutcome, retryResult, retryErr), retryInstanceID, retryBackend)
+		r.completeCallLocked()
+		r.mu.Unlock()
+		if retryErr != nil {
+			return toolError("ITL_ONDEMAND_BACKEND_RECOVERY_RETRY_FAILED", retryErr.Error(), map[string]any{
+				"action": "retry-tool-call", "automaticRetryPerformed": true, "automaticRetryLimit": 1,
+				"tool": toolName, "previousInstanceId": recovery.PreviousInstanceID, "instanceId": recovery.InstanceID,
+			}), nil
+		}
+		if retryResult == nil {
+			return toolError("ITL_ONDEMAND_EMPTY_RESULT", "recovered backend returned no tool result", map[string]any{"instanceId": recovery.InstanceID}), nil
+		}
+		return recoveredResult(retryResult, recovery), nil
 	}
-	r.writeEvidenceLocked(toolName, arguments, outcome, resultCode)
-	r.lastCallCompleted = time.Now()
-	if r.active == 0 {
-		r.armIdleLocked()
-	}
+	r.completeCallLocked()
 	r.mu.Unlock()
 	if err != nil {
+		if forwardedProtocolError != nil {
+			return forwardedProtocolError, nil
+		}
 		return toolError("ITL_ONDEMAND_BACKEND_CALL_FAILED", err.Error(), nil), nil
 	}
 	if result == nil {
 		return toolError("ITL_ONDEMAND_EMPTY_RESULT", "backend returned no tool result", nil), nil
 	}
 	return result, nil
+}
+
+type recoveryResult struct {
+	PreviousInstanceID string
+	InstanceID         string
+	Concurrent         bool
+}
+
+func callOutcome(result *mcp.CallToolResult, err error) (string, string) {
+	if err != nil {
+		return "failed", "ITL_ONDEMAND_BACKEND_CALL_FAILED"
+	}
+	if result == nil {
+		return "failed", "ITL_ONDEMAND_EMPTY_RESULT"
+	}
+	if result.IsError {
+		code := toolResultCode(result)
+		if code == "" {
+			code = "ITL_ONDEMAND_TOOL_ERROR"
+		}
+		return "failed", code
+	}
+	return "passed", "ITL_OK"
+}
+
+func (r *runtime) completeCallLocked() {
+	r.lastCallCompleted = time.Now()
+	if r.active == 0 {
+		r.armIdleLocked()
+	}
+}
+
+func isConnectionRefused(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "connection refused") ||
+		strings.Contains(text, "actively refused") ||
+		strings.Contains(text, "no connection could be made because the target machine")
+}
+
+func isIdempotentTool(family string, tool *mcp.Tool) bool {
+	if tool == nil {
+		return false
+	}
+	if tool.Annotations != nil && (tool.Annotations.ReadOnlyHint || tool.Annotations.IdempotentHint) {
+		return true
+	}
+	if family != "vanessa-ui" {
+		return false
+	}
+	switch tool.Name {
+	case "check_syntax",
+		"frequently_used_steps",
+		"get_active_window_data",
+		"get_data_from_knowledge_base",
+		"get_editor_state",
+		"get_environment_data",
+		"get_extension_list",
+		"get_form_analysis",
+		"get_form_element_data",
+		"get_info_about_line_scenario",
+		"get_object_attributes",
+		"get_table_data",
+		"get_test_results",
+		"get_VanessaAutomation_state",
+		"get_window_list_os",
+		"get_window_list_testclient",
+		"get_window_screenshot_os",
+		"infobase_info",
+		"load_features",
+		"open_feature_file",
+		"search_for_steps_by_keywords",
+		"select_scenario",
+		"select_step",
+		"voice_notification":
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *runtime) recoverLocked(ctx context.Context, failedSession *mcp.ClientSession, previousInstanceID string, previousBackend *backendInfo) (*recoveryResult, error) {
+	if r.session != failedSession {
+		if r.session != nil && r.backend != nil && r.instanceID != previousInstanceID {
+			return &recoveryResult{PreviousInstanceID: previousInstanceID, InstanceID: r.instanceID, Concurrent: true}, nil
+		}
+		return nil, fmt.Errorf("another recovery attempt did not establish a replacement backend")
+	}
+	replacementInstanceID, err := randomID()
+	if err != nil {
+		return nil, fmt.Errorf("generate replacement instance ID: %w", err)
+	}
+	info, err := r.broker.Recover(ctx, previousBackend, replacementInstanceID)
+	if err != nil {
+		return nil, err
+	}
+	if r.session != nil {
+		_ = r.session.Close()
+	}
+	r.session = nil
+	r.backend = nil
+	r.instanceID = replacementInstanceID
+	r.mismatch = nil
+	if err := r.connectLocked(ctx, info); err != nil {
+		return nil, fmt.Errorf("connect recovered backend: %w", err)
+	}
+	return &recoveryResult{PreviousInstanceID: previousInstanceID, InstanceID: replacementInstanceID}, nil
+}
+
+func recoveryAction(toolName, previousInstanceID, instanceID string, backendRecovered bool, reason error) *mcp.CallToolResult {
+	details := map[string]any{
+		"action": "review-and-retry-tool-call", "automaticRetryPerformed": false,
+		"tool": toolName, "previousInstanceId": previousInstanceID, "instanceId": instanceID,
+		"backendRecovered": backendRecovered, "callOutcome": "unknown",
+	}
+	message := "backend connection was lost; automatic replay is not allowed for this tool"
+	if reason != nil {
+		details["reason"] = reason.Error()
+		details["action"] = "retry-after-backend-recovery"
+		message = "backend connection was lost and automatic recovery could not be completed"
+	}
+	return toolError("ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED", message, details)
+}
+
+func recoveredResult(result *mcp.CallToolResult, recovery *recoveryResult) *mcp.CallToolResult {
+	if result.Meta == nil {
+		result.Meta = mcp.Meta{}
+	}
+	result.Meta["itlRecovery"] = map[string]any{
+		"recovered": true, "automaticRetryPerformed": true, "automaticRetryLimit": 1,
+		"previousInstanceId": recovery.PreviousInstanceID, "instanceId": recovery.InstanceID,
+		"concurrentRecovery": recovery.Concurrent,
+	}
+	notice, _ := json.Marshal(map[string]any{
+		"code": "ITL_ONDEMAND_BACKEND_RECOVERED", "previousInstanceId": recovery.PreviousInstanceID,
+		"instanceId": recovery.InstanceID, "automaticRetryPerformed": true,
+	})
+	result.Content = append(result.Content, &mcp.TextContent{Text: string(notice)})
+	return result
+}
+
+func backendProtocolToolError(err error) (*mcp.CallToolResult, string) {
+	if err == nil {
+		return nil, ""
+	}
+	var rpcError *jsonrpc.Error
+	if !errors.As(err, &rpcError) {
+		return nil, ""
+	}
+	message := strings.TrimSpace(rpcError.Message)
+	code, _, found := strings.Cut(message, ":")
+	if !found {
+		return nil, ""
+	}
+	switch code {
+	case "PATH_INVALID", "PATH_NOT_FOUND", "PATH_ACCESS_DENIED":
+		return toolError(code, message, map[string]any{"backendJSONRPCCode": rpcError.Code}), code
+	default:
+		return nil, ""
+	}
 }
 
 func (r *runtime) callUpstream(ctx context.Context, session *mcp.ClientSession, params *mcp.CallToolParams) (*mcp.CallToolResult, error) {
@@ -179,7 +405,9 @@ func (r *runtime) callUpstream(ctx context.Context, session *mcp.ClientSession, 
 			return result, err
 		}
 		result = r.validateVanessaResult(ctx, params.Name, result, session)
-		if r.family != "vanessa-ui" || params.Name != "connect_test_client" || r.vanessaConnectWait <= 0 || toolResultCode(result) != "ITL_VANESSA_TESTCLIENT_CONNECT_FAILED" || !time.Now().Before(deadline) {
+		code := toolResultCode(result)
+		retryConnect := code == "ITL_VANESSA_TESTCLIENT_CONNECT_FAILED" || code == "ITL_VANESSA_TESTCLIENT_NOT_CONNECTED"
+		if r.family != "vanessa-ui" || params.Name != "connect_test_client" || r.vanessaConnectWait <= 0 || !retryConnect || !time.Now().Before(deadline) {
 			return result, nil
 		}
 		wait := 500 * time.Millisecond
@@ -208,6 +436,47 @@ func toolResultCode(result *mcp.CallToolResult) string {
 	return code
 }
 
+var (
+	evidenceSecretAssignment = regexp.MustCompile(`(?i)\b(password|passwd|pwd|token|secret|api[-_ ]?key|authorization|connection[-_ ]?string)\b\s*[:=]\s*("[^"]*"|'[^']*'|[^,;\s]+)`)
+	evidenceBearerToken      = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`)
+	evidenceURLUserInfo      = regexp.MustCompile(`://[^/@\s]+@`)
+	evidenceURLSecretQuery   = regexp.MustCompile(`(?i)([?&](?:access_token|token|api_key|key|sig|signature)=)[^&#\s]+`)
+	evidenceConfiguration    = regexp.MustCompile(`\{[^{}]+\}`)
+	evidenceWhitespace       = regexp.MustCompile(`\s+`)
+)
+
+func resultEvidenceMessage(result *mcp.CallToolResult, err error) string {
+	message := ""
+	if err != nil {
+		message = err.Error()
+	} else if result == nil {
+		message = "backend returned no tool result"
+	} else if structured, ok := result.StructuredContent.(map[string]any); ok {
+		message, _ = structured["message"].(string)
+	}
+	if message == "" && result != nil {
+		message = resultText(result)
+	}
+	message = evidenceWhitespace.ReplaceAllString(strings.TrimSpace(message), " ")
+	message = evidenceSecretAssignment.ReplaceAllString(message, "$1=[redacted]")
+	message = evidenceBearerToken.ReplaceAllString(message, "Bearer [redacted]")
+	message = evidenceURLUserInfo.ReplaceAllString(message, "://[redacted]@")
+	message = evidenceURLSecretQuery.ReplaceAllString(message, "$1[redacted]")
+	message = evidenceConfiguration.ReplaceAllString(message, "[configuration redacted]")
+	runes := []rune(message)
+	if len(runes) > 240 {
+		message = string(runes[:237]) + "..."
+	}
+	return message
+}
+
+func resultEvidenceMessageForOutcome(outcome string, result *mcp.CallToolResult, err error) string {
+	if outcome != "failed" {
+		return ""
+	}
+	return resultEvidenceMessage(result, err)
+}
+
 func (r *runtime) ensureLocked(ctx context.Context) error {
 	if r.closed {
 		return fmt.Errorf("gateway is closed")
@@ -223,11 +492,23 @@ func (r *runtime) ensureLocked(ctx context.Context) error {
 	if info.URL == "" {
 		return fmt.Errorf("backend broker returned an empty URL")
 	}
+	return r.connectLocked(ctx, info)
+}
+
+func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 	if err := validateBackendVersion(r.family, r.catalog.Data.BackendVersions, info.BackendVersion); err != nil {
 		_ = r.broker.Stop(context.Background())
 		return err
 	}
 	r.backend = info
+	if r.family == "vanessa-ui" {
+		r.testClientState = testClientNotStarted
+		r.testClientPID = info.TestClientPID
+		r.testClientPort = info.TestClientPort
+		if info.TestClientState != "" {
+			r.testClientState = info.TestClientState
+		}
+	}
 	r.logger.Info("ensure backend", "family", r.family, "instanceId", r.instanceID, "stage", "mcp-connect", "url", info.URL)
 	client := mcp.NewClient(&mcp.Implementation{Name: "itl-ondemand-mcp", Version: version}, &mcp.ClientOptions{
 		Capabilities: &mcp.ClientCapabilities{},
@@ -500,6 +781,223 @@ func (r *runtime) validateManagedVanessaRequest(arguments any, toolName string) 
 	return nil
 }
 
+const (
+	vanessaToolUnknown       = ""
+	vanessaToolEditorManager = "editor-manager"
+	vanessaToolRuntime       = "testclient-runtime"
+	vanessaToolConnect       = "testclient-connect"
+	vanessaToolDisconnect    = "testclient-disconnect"
+)
+
+func classifyVanessaTool(name string) string {
+	switch name {
+	case "execute_feature_step",
+		"execute_form_actions",
+		"get_active_window_data",
+		"get_extension_list",
+		"get_form_analysis",
+		"get_form_element_data",
+		"get_object_attributes",
+		"get_window_list_testclient",
+		"manage_command_interface",
+		"manage_form_elements",
+		"run_scenario",
+		"save_table_document_to_file",
+		"user_actions_recording",
+		"window_management":
+		return vanessaToolRuntime
+	case "connect_test_client":
+		return vanessaToolConnect
+	case "close_test_client":
+		return vanessaToolDisconnect
+	case "check_syntax",
+		"frequently_used_steps",
+		"get_data_from_knowledge_base",
+		"get_editor_state",
+		"get_environment_data",
+		"get_info_about_line_scenario",
+		"get_table_data",
+		"get_test_results",
+		"get_VanessaAutomation_state",
+		"get_window_list_os",
+		"get_window_screenshot_os",
+		"infobase_info",
+		"load_features",
+		"manage_breakpoints",
+		"manage_test_client_profiles",
+		"manage_variables",
+		"open_feature_file",
+		"search_for_steps_by_keywords",
+		"select_scenario",
+		"select_step",
+		"stop_scenario",
+		"voice_notification":
+		return vanessaToolEditorManager
+	default:
+		return vanessaToolUnknown
+	}
+}
+
+func vanessaToolRequiresTestClient(name string) bool {
+	return classifyVanessaTool(name) == vanessaToolRuntime
+}
+
+func (r *runtime) preflightVanessaTestClientLocked(ctx context.Context, toolName string) *mcp.CallToolResult {
+	if r.family != "vanessa-ui" || r.backend == nil {
+		return nil
+	}
+	class := classifyVanessaTool(toolName)
+	if class == vanessaToolUnknown {
+		return toolError("ITL_VANESSA_TOOL_CLASSIFICATION_MISSING", "Vanessa tool has no reviewed TestClient lifecycle classification", map[string]any{
+			"tool": toolName, "action": "classify-tool-before-forwarding",
+		})
+	}
+	needsProcess := class == vanessaToolConnect || class == vanessaToolRuntime
+	if !needsProcess {
+		return nil
+	}
+	info, err := r.broker.EnsureTestClient(ctx)
+	if err != nil {
+		code := "ITL_VANESSA_TESTCLIENT_NOT_CONNECTED"
+		if strings.Contains(err.Error(), "ITL_VANESSA_LICENSE_LIMIT") {
+			code = "ITL_VANESSA_LICENSE_LIMIT"
+		} else if strings.Contains(err.Error(), "ITL_VANESSA_LICENSE_PREFLIGHT_UNAVAILABLE") {
+			code = "ITL_VANESSA_LICENSE_PREFLIGHT_UNAVAILABLE"
+		}
+		state := r.testClientState
+		if state == "" {
+			state = testClientNotStarted
+		}
+		r.setTestClientStateLocked(state, toolName, code, err.Error())
+		return toolError(code, "TestClient process preflight failed", map[string]any{
+			"tool": toolName, "cause": err.Error(),
+			"action": "stop-an-owned-testclient-or-review-license-capacity",
+		})
+	}
+	r.applyTestClientBackendInfoLocked(info, toolName)
+	if class == vanessaToolConnect {
+		return nil
+	}
+
+	if r.testClientState == testClientManagerConnected {
+		switch state := probeTestClientConnection(ctx, r.session); state {
+		case testClientManagerConnected:
+			return nil
+		case testClientDisconnected:
+			r.setTestClientStateLocked(testClientDisconnected, toolName, "ITL_VANESSA_TESTCLIENT_NOT_CONNECTED", "connection probe reported no logical connection")
+		default:
+			r.setTestClientStateLocked(testClientConnectionFailed, toolName, "ITL_VANESSA_TESTCLIENT_CONNECTION_STATE_UNAVAILABLE", "connection probe returned no positive or negative state")
+		}
+	}
+
+	connectResult, connectErr := r.callUpstream(ctx, r.session, &mcp.CallToolParams{
+		Name:      "connect_test_client",
+		Arguments: map[string]any{"profileName": r.backend.TestClientProfile},
+	})
+	if connectErr != nil {
+		r.setTestClientStateLocked(testClientConnectionFailed, toolName, "ITL_VANESSA_TESTCLIENT_NOT_CONNECTED", connectErr.Error())
+		return toolError("ITL_VANESSA_TESTCLIENT_NOT_CONNECTED", "automatic TestClient connection failed", map[string]any{
+			"tool": toolName, "cause": connectErr.Error(), "action": "review-testclient-log-and-retry",
+		})
+	}
+	code := toolResultCode(connectResult)
+	if code == "" {
+		r.setTestClientStateLocked(testClientManagerConnected, toolName, "ITL_OK", "automatic connection postcondition proved")
+		return nil
+	}
+	r.setTestClientStateLocked(testClientConnectionFailed, toolName, code, resultText(connectResult))
+	if code == "ITL_VANESSA_TESTCLIENT_CONNECTION_STATE_UNAVAILABLE" {
+		return connectResult
+	}
+	return toolError("ITL_VANESSA_TESTCLIENT_NOT_CONNECTED", "automatic TestClient connection did not establish a logical manager connection", map[string]any{
+		"tool": toolName, "causeCode": code, "action": "review-testclient-log-and-retry",
+	})
+}
+
+func (r *runtime) applyTestClientBackendInfoLocked(info *backendInfo, toolName string) {
+	if info == nil {
+		return
+	}
+	previousPID := r.testClientPID
+	if info.PreviousTestClientState == testClientExited && info.PreviousTestClientPID > 0 {
+		r.testClientPID = info.PreviousTestClientPID
+		r.setTestClientStateLocked(testClientExited, toolName, "ITL_VANESSA_TESTCLIENT_EXITED", "previous owned TestClient process exited")
+	}
+	r.backend.TestClientPID = info.TestClientPID
+	r.backend.TestClientPort = info.TestClientPort
+	r.backend.TestClientState = info.TestClientState
+	r.testClientPID = info.TestClientPID
+	r.testClientPort = info.TestClientPort
+	if !info.TestClientReused || previousPID != info.TestClientPID {
+		r.setTestClientStateLocked(testClientProcessStarted, toolName, "ITL_OK", "owned TestClient process started")
+	}
+	if r.testClientState != testClientManagerConnected || previousPID != info.TestClientPID {
+		r.setTestClientStateLocked(testClientPortReady, toolName, "ITL_OK", "owned TestClient port ready")
+	}
+}
+
+func (r *runtime) applyVanessaTestClientResultLocked(toolName string, result *mcp.CallToolResult) {
+	if r.family != "vanessa-ui" || result == nil {
+		return
+	}
+	code := toolResultCode(result)
+	switch toolName {
+	case "connect_test_client":
+		if code == "" {
+			r.setTestClientStateLocked(testClientManagerConnected, toolName, "ITL_OK", "connection postcondition proved")
+		} else {
+			r.setTestClientStateLocked(testClientConnectionFailed, toolName, code, resultText(result))
+		}
+	case "close_test_client":
+		if code == "" {
+			r.setTestClientStateLocked(testClientDisconnected, toolName, "ITL_OK", "manager disconnected from TestClient")
+		}
+	default:
+		if code == "ITL_VANESSA_TESTCLIENT_NOT_CONNECTED" {
+			r.setTestClientStateLocked(testClientDisconnected, toolName, code, resultText(result))
+		}
+	}
+}
+
+func (r *runtime) attachVanessaTestClientMetaLocked(result *mcp.CallToolResult) {
+	if r.family != "vanessa-ui" || result == nil {
+		return
+	}
+	if result.Meta == nil {
+		result.Meta = mcp.Meta{}
+	}
+	result.Meta["itlTestClient"] = map[string]any{
+		"state": r.testClientState, "pid": r.testClientPID, "port": r.testClientPort,
+	}
+}
+
+func (r *runtime) setTestClientStateLocked(state, toolName, code, message string) {
+	if r.family != "vanessa-ui" || state == "" {
+		return
+	}
+	r.testClientState = state
+	r.logger.Info("TestClient lifecycle", "family", r.family, "instanceId", r.instanceID,
+		"state", state, "pid", r.testClientPID, "port", r.testClientPort, "tool", toolName, "code", code)
+	directory := filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		r.logger.Error("create TestClient lifecycle directory", "error", err)
+		return
+	}
+	entry := map[string]any{
+		"schemaVersion": 1, "family": r.family, "instanceId": r.instanceID,
+		"state": state, "pid": r.testClientPID, "port": r.testClientPort,
+		"tool": toolName, "code": code, "message": message,
+		"recordedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	raw, _ := json.Marshal(entry)
+	path := filepath.Join(directory, r.instanceID+".testclient-lifecycle.jsonl")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err == nil {
+		_, _ = file.Write(append(raw, '\n'))
+		_ = file.Close()
+	}
+}
+
 func (r *runtime) preflightVanessa(ctx context.Context, session *mcp.ClientSession) error {
 	if r.family != "vanessa-ui" {
 		return nil
@@ -533,6 +1031,9 @@ func (r *runtime) validateVanessaResult(ctx context.Context, name string, result
 	if r.family != "vanessa-ui" {
 		return result
 	}
+	if vanessaToolRequiresTestClient(name) && reportsTestClientDisconnected(resultText(result)) {
+		return toolError("ITL_VANESSA_TESTCLIENT_NOT_CONNECTED", "Vanessa manager is not logically connected to TestClient", map[string]any{"tool": name})
+	}
 	if marker := vanessaSemanticFailureMarker(name, resultText(result)); marker != "" {
 		return toolError("ITL_VANESSA_TOOL_RESULT_FAILED", "Vanessa returned a runtime/editor failure", map[string]any{"tool": name, "marker": marker})
 	}
@@ -547,10 +1048,7 @@ func (r *runtime) validateVanessaResult(ctx context.Context, name string, result
 		return toolError("ITL_VANESSA_TESTCLIENT_CONNECT_FAILED", resultText(result), nil)
 	}
 	post, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "get_window_list_testclient", Arguments: map[string]any{}})
-	postText := strings.ToLower(resultText(post))
-	if err != nil || post == nil || post.IsError ||
-		strings.Contains(postText, "testclient не подключ") || strings.Contains(postText, "test client is not connected") ||
-		strings.Contains(postText, "нет соединения") {
+	if err != nil || post == nil || post.IsError {
 		message := "TestClient connection postcondition failed"
 		if err != nil {
 			message += ": " + err.Error()
@@ -559,7 +1057,65 @@ func (r *runtime) validateVanessaResult(ctx context.Context, name string, result
 		}
 		return toolError("ITL_VANESSA_TESTCLIENT_CONNECT_FAILED", message, nil)
 	}
-	return result
+	switch state := classifyTestClientConnectionProof(post); state {
+	case testClientManagerConnected:
+		return result
+	case testClientDisconnected:
+		return toolError("ITL_VANESSA_TESTCLIENT_NOT_CONNECTED", "TestClient connection postcondition reported no logical manager connection", nil)
+	default:
+		return toolError(
+			"ITL_VANESSA_TESTCLIENT_CONNECTION_STATE_UNAVAILABLE",
+			"upstream backend returned no proof of logical TestClient connection",
+			map[string]any{
+				"upstreamGap": "Vanessa UI MCP needs an explicit machine-readable TestClient connection-state contract",
+				"action":      "do-not-run-testclient-dependent-tool",
+			},
+		)
+	}
+}
+
+func probeTestClientConnection(ctx context.Context, session *mcp.ClientSession) string {
+	if session == nil {
+		return testClientDisconnected
+	}
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "get_window_list_testclient", Arguments: map[string]any{}})
+	if err != nil || result == nil || result.IsError {
+		return testClientDisconnected
+	}
+	return classifyTestClientConnectionProof(result)
+}
+
+func classifyTestClientConnectionProof(result *mcp.CallToolResult) string {
+	text := strings.TrimSpace(strings.ToLower(resultText(result)))
+	if reportsTestClientDisconnected(text) {
+		return testClientDisconnected
+	}
+	if text == "" || strings.Contains(text, "окна не найдены") || strings.Contains(text, "no windows") {
+		return testClientConnectionFailed
+	}
+	for _, marker := range []string{"окно", "window", "заголовок", "caption"} {
+		if strings.Contains(text, marker) {
+			return testClientManagerConnected
+		}
+	}
+	return testClientConnectionFailed
+}
+
+func reportsTestClientDisconnected(text string) bool {
+	normalized := strings.ToLower(text)
+	for _, marker := range []string{
+		"testclient не подключ",
+		"клиент тестирования не подключ",
+		"test client is not connected",
+		"testclient is not connected",
+		"нет соединения",
+		"no connection",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func vanessaSemanticFailureMarker(name, text string) string {
@@ -624,8 +1180,11 @@ func (r *runtime) close(ctx context.Context) error {
 	return fmt.Errorf("cleanup owned backend after stdio EOF after 3 attempts: %w", lastErr)
 }
 
-func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, resultCode string) {
-	if r.backend == nil {
+func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, resultCode, resultMessage, instanceID string, backend *backendInfo) {
+	if r.suppressEvidence {
+		return
+	}
+	if backend == nil {
 		return
 	}
 	directory := filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family)
@@ -636,16 +1195,21 @@ func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, r
 	argumentsRaw, _ := json.Marshal(arguments)
 	argumentsHash := sha256.Sum256(argumentsRaw)
 	featurePath, featureSHA, scenarioLine := r.authoringEvidenceContextLocked(toolName, arguments, outcome)
+	logPath := ""
+	if outcome == "failed" {
+		logPath = backend.LogPath
+	}
 	entry := map[string]any{
-		"schemaVersion": 2, "family": r.family, "instanceId": r.instanceID,
-		"backendVersion": r.backend.BackendVersion, "catalogSha256": r.catalog.SHA256,
+		"schemaVersion": 2, "family": r.family, "instanceId": instanceID,
+		"backendVersion": backend.BackendVersion, "catalogSha256": r.catalog.SHA256,
 		"tool": toolName, "outcome": outcome, "resultCode": resultCode,
+		"resultMessage": resultMessage, "logPath": logPath,
 		"argumentsSha256": fmt.Sprintf("%x", argumentsHash[:]),
 		"featurePath":     featurePath, "featureSha256": featureSHA, "scenarioLine": scenarioLine,
 		"recordedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	raw, _ := json.Marshal(entry)
-	path := filepath.Join(directory, r.instanceID+".evidence.jsonl")
+	path := filepath.Join(directory, instanceID+".evidence.jsonl")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err == nil {
 		_, _ = file.Write(append(raw, '\n'))

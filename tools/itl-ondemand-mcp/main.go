@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const version = "0.3.2"
+const version = "0.4.1"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -28,7 +28,13 @@ func run(args []string) error {
 	if goruntime.GOOS != "windows" || goruntime.GOARCH != "amd64" {
 		return fmt.Errorf("itl-ondemand-mcp v1 supports Windows x64 only")
 	}
-	if len(args) == 0 || args[0] != "serve" {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: itl-ondemand-mcp serve|vanessa-profile-start")
+	}
+	if args[0] == "vanessa-profile-start" {
+		return runVanessaProfileStart(args[1:])
+	}
+	if args[0] != "serve" {
 		return fmt.Errorf("usage: itl-ondemand-mcp serve --family roctup|vanessa-ui --project-root PATH --catalog PATH --helper PATH")
 	}
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)

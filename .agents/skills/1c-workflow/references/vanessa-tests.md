@@ -2,7 +2,8 @@
 
 > Agent reference. Read this file only before creating or editing Vanessa Automation feature tests. Do not load it for routine lifecycle commands.
 
-The goal of ITL feature tests is to verify the behavior currently being changed. Do not create broad smoke coverage, whole-system E2E flows, or long user regressions unless the developer explicitly asks for that.
+Verify the behavior being changed. Add broad smoke, whole-system E2E,
+or long regressions only when explicitly requested.
 
 ## Quick Algorithm
 
@@ -12,7 +13,9 @@ The goal of ITL feature tests is to verify the behavior currently being changed.
    - `integration`: object, document, register, exchange, or data movement between subsystems;
    - `UI`: form, command, or visible user behavior.
 3. Search existing steps and local `Libraries`/`@exportscenarios` before inventing new steps.
-4. For OpenSpec, write 2-3 small scenarios: the main successful path and one meaningful boundary or negative case; a fourth needs explicit justification. A quick-fix needs at least one focused regression scenario and adds a second only for a separate meaningful boundary.
+4. For OpenSpec, write 2-3 small scenarios: the main path and one meaningful
+   boundary or negative case. A fourth needs justification. A quick-fix starts
+   with one focused regression and adds another only for a separate boundary.
 5. Run the final ITL check flow. Vanessa UI MCP is only for runtime UI research, authoring support, step search, recording, and debugging; it is not the test runner.
 
 ## Mandatory Authoring Gate
@@ -25,6 +28,17 @@ Changed `.feature` files require `/itl-vanessa-author`; see `vanessa-authoring.m
 - Prefer data/object/register checks over long UI sequences when they prove the same behavior.
 - Reuse an existing library step when it already expresses the business action.
 - Keep each scenario short: setup, action, 1-3 observable assertions, cleanup if needed.
+
+## UI Authoring Rules
+
+- In single-quoted Gherkin parameters and table cells, escape an apostrophe as `\'`; do not use the BSL/SQL `''` convention.
+- Make UI setup self-contained: do not depend on saved form state, the current row, or an active page or mode left by another scenario. Establish the relevant page or mode explicitly.
+- Before selecting the current table row, position it by a stable business key; add columns when one value is not unique.
+- Clear a field before selection only when it is known to add or restore values and the scenario expects an exact set. Assert the resulting value or set when it is observable; do not inspect every form merely to justify clearing.
+- Base assertions on runtime-visible and available elements. Static visibility of a child does not prove user availability under the current page or mode; explicitly select the relevant state and assert only its active elements.
+- If a selector is already known, do no extra discovery. For unknown static structure, query targeted graph/code metadata or source; for dynamic visibility or availability, use targeted Vanessa UI MCP evidence. Read only the relevant `Form.xml` fragment as a final fallback, never require a full-form scan.
+- For that local source fallback, call `scripts/get-form-element-context.ps1` with exact element names; it returns only bounded `DataPath`, multi-value, and group/page ancestry records.
+- Keep acceptance scenarios fully automated. Interactive profiling is separate tooling, not a reason to add manual pauses or profiling tags to ordinary features.
 
 ## BSL Context And Extension UI
 
@@ -68,24 +82,15 @@ Rules:
 
 ## Unit-Like Template
 
-Use this when logic can be checked without walking through a form.
+Use this when logic can be checked without a form. Create and assert local data in
+the same BSL block; replace the placeholder call and expected value.
 
 ```gherkin
-#language: ru
-
-@feature_discount_rule
-
-Функционал: Расчет скидки договора
-
-Контекст:
-	Дано Я запускаю сценарий открытия TestClient или подключаю уже существующий
-
-Сценарий: Скидка применяется для договора с действующим условием
+Сценарий: Проверяемая логика возвращает ожидаемый результат
 	И я выполняю код встроенного языка на сервере
 		"""bsl
-			ЛокальныеДанные = Новый Структура;
-			ЛокальныеДанные.Вставить("Результат", 100); // Вызов проверяемой логики.
-			Если ЛокальныеДанные.Результат <> 100 Тогда
+			Результат = 100; // Вызов проверяемой логики.
+			Если Результат <> 100 Тогда
 				ВызватьИсключение "Ожидался результат 100";
 			КонецЕсли;
 		"""
@@ -93,41 +98,16 @@ Use this when logic can be checked without walking through a form.
 
 ## Integration Template
 
-Use this when persistence, posting, register movements, documents, objects, or exchange behavior matters.
+Use this when persistence, posting, register movements, objects, or exchange
+behavior matters. In one focused scenario:
 
 ```gherkin
-#language: ru
-
-@feature_order_posting
-
-Функционал: Проведение заказа с резервом
-
-Контекст:
-	Дано Я запускаю сценарий открытия TestClient или подключаю уже существующий
-	И я закрываю все окна клиентского приложения
-
-Сценарий: Проведение заказа создает резерв по складу
 	# Подготовка
-		И я выполняю код встроенного языка на сервере
-		"""bsl
-			// Создайте только необходимые справочники, документ и остатки.
-		"""
-
+		И я создаю только необходимые уникальные данные
 	# Действие
-		И я выполняю код встроенного языка на сервере
-		"""bsl
-			// Проведите документ или вызовите прикладную операцию.
-		"""
-
+		И я выполняю одну проверяемую прикладную операцию
 	# Проверка
-		И я выполняю код встроенного языка на сервере
-		"""bsl
-			// Прочитайте регистр в локальную переменную и проверьте результат в этом же блоке.
-			КоличествоРезерва = 5; // Замените чтением проверяемого регистра.
-			Если КоличествоРезерва <> 5 Тогда
-				ВызватьИсключение "Ожидался резерв 5";
-			КонецЕсли;
-		"""
+		И я читаю измененный объект или регистр и проверяю точный результат
 ```
 
 ## UI Template

@@ -355,6 +355,10 @@ function Test-Agent1cActionRequiresLifecycleLock {
         "detect-web-publication",
         "detect-apache",
         "vibecoding1c-mcp-status",
+        "status-vanessa-profile",
+        # The facade profile call owns the shared runtime lease and delegates
+        # mutations to the existing broker/start-lock operations.
+        "start-vanessa-profile",
         "internal-ondemand-ensure",
         "internal-ondemand-stop"
     )

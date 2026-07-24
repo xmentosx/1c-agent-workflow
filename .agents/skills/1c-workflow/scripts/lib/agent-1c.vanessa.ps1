@@ -63,12 +63,33 @@ function Get-VanessaAutomationEpfPath {
 
 function Get-VanessaAutomationState {
     $epfPath = Get-VanessaAutomationEpfPath
-    $version = Get-Setting -EnvName "VANESSA_AUTOMATION_VERSION" -ConfigName "vanessaAutomation.version" -Default ""
+    $entry = Get-DependencyLockEntry -Name "vanessaAutomation"
+    $version = [string](Get-ConfigValueFromObject -Object $entry -Path "compatibilityVersion" -Default (Get-ConfigValueFromObject -Object $entry -Path "version" -Default ""))
+    $downstreamRevision = [string](Get-ConfigValueFromObject -Object $entry -Path "downstreamRevision" -Default "")
+    $archiveSha256 = ([string](Get-ConfigValueFromObject -Object $entry -Path "sha256" -Default "")).ToLowerInvariant()
+    $expectedEpfSha256 = ([string](Get-ConfigValueFromObject -Object $entry -Path "epfSha256" -Default "")).ToLowerInvariant()
     if ($epfPath -and (Test-Path -LiteralPath $epfPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        $epfSha256 = (Get-FileHash -LiteralPath $epfPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($expectedEpfSha256 -and $epfSha256 -cne $expectedEpfSha256) {
+            return [pscustomobject]@{
+                ready = $false
+                epfPath = $epfPath
+                version = $version
+                downstreamRevision = $downstreamRevision
+                archiveSha256 = $archiveSha256
+                epfSha256 = $epfSha256
+                expectedEpfSha256 = $expectedEpfSha256
+                message = "Vanessa Automation EPF SHA256 does not match the workflow pin."
+            }
+        }
         return [pscustomobject]@{
             ready = $true
             epfPath = $epfPath
-            version = [string]$version
+            version = $version
+            downstreamRevision = $downstreamRevision
+            archiveSha256 = $archiveSha256
+            epfSha256 = $epfSha256
+            expectedEpfSha256 = $expectedEpfSha256
             message = "Vanessa Automation EPF found."
         }
     }
@@ -76,72 +97,78 @@ function Get-VanessaAutomationState {
     return [pscustomobject]@{
         ready = $false
         epfPath = ""
-        version = [string]$version
+        version = $version
+        downstreamRevision = $downstreamRevision
+        archiveSha256 = $archiveSha256
+        epfSha256 = ""
+        expectedEpfSha256 = $expectedEpfSha256
         message = "Vanessa Automation EPF was not found. Run install-vanessa-automation."
     }
 }
 
+function Get-VanessaAutomationPinnedEntry {
+    $entry = Get-DependencyLockEntry -Name "vanessaAutomation"
+    if ($null -eq $entry) {
+        throw "ITL_VANESSA_WORKFLOW_PIN_INCOMPLETE: vanessaAutomation is missing from .agent-1c/dependency-lock.json."
+    }
+
+    foreach ($field in @("compatibilityVersion", "downstreamRevision", "assetName", "url", "sha256", "epfSha256", "manifestSha256", "patchSha256", "upstreamCommit", "publicationStatus")) {
+        if ([string]::IsNullOrWhiteSpace([string](Get-ConfigValueFromObject -Object $entry -Path $field -Default ""))) {
+            throw "ITL_VANESSA_WORKFLOW_PIN_INCOMPLETE: vanessaAutomation.$field is missing from .agent-1c/dependency-lock.json."
+        }
+    }
+    foreach ($field in @("sha256", "epfSha256", "manifestSha256", "patchSha256")) {
+        if ([string](Get-ConfigValueFromObject -Object $entry -Path $field -Default "") -notmatch '^[a-fA-F0-9]{64}$') {
+            throw "ITL_VANESSA_WORKFLOW_PIN_INCOMPLETE: vanessaAutomation.$field is not a SHA-256 value."
+        }
+    }
+    if ([string](Get-ConfigValueFromObject -Object $entry -Path "upstreamCommit" -Default "") -notmatch '^[a-fA-F0-9]{40}$') {
+        throw "ITL_VANESSA_WORKFLOW_PIN_INCOMPLETE: vanessaAutomation.upstreamCommit is not a full Git commit."
+    }
+    $version = [string](Get-ConfigValueFromObject -Object $entry -Path "version" -Default "")
+    $compatibilityVersion = [string](Get-ConfigValueFromObject -Object $entry -Path "compatibilityVersion" -Default "")
+    if ($version -and $version -cne $compatibilityVersion) {
+        throw "ITL_VANESSA_WORKFLOW_PIN_INCOMPLETE: version '$version' differs from compatibilityVersion '$compatibilityVersion'."
+    }
+    return $entry
+}
+
 function Get-VanessaAutomationDownloadInfo {
-    if ((Get-DependencyMode) -eq "locked") {
-        $locked = Get-DependencyLockEntry -Name "vanessaAutomation"
-        $url = [string](Get-ConfigValueFromObject -Object $locked -Path "url" -Default "")
-        if (-not $url) {
-            throw "Dependency mode is locked, but vanessaAutomation.url is empty in .agent-1c/dependency-lock.json."
-        }
-        return [pscustomobject]@{
-            url = $url
-            version = [string](Get-ConfigValueFromObject -Object $locked -Path "version" -Default "")
-            expectedSha256 = [string](Get-ConfigValueFromObject -Object $locked -Path "sha256" -Default "")
-            source = "dependency-lock"
-        }
+    $entry = Get-VanessaAutomationPinnedEntry
+    $sourceBuild = Get-EnvValue -Name "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE"
+    $legacyOverride = Get-EnvValue -Name "VANESSA_AUTOMATION_ARCHIVE_URL"
+    $override = $(if ($sourceBuild) { [string]$sourceBuild } else { [string]$legacyOverride })
+    if ($sourceBuild -and -not (Test-Path -LiteralPath (ConvertFrom-FileUri -Value $override) -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "ITL_VANESSA_SOURCE_BUILD_NOT_FOUND: $override"
     }
-
-    $override = Get-EnvValue -Name "VANESSA_AUTOMATION_ARCHIVE_URL"
-    if ($override) {
-        return [pscustomobject]@{
-            url = [string]$override
-            version = ""
-            expectedSha256 = ""
-            source = "VANESSA_AUTOMATION_ARCHIVE_URL"
-        }
-    }
-
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    } catch {
-        # Best effort for older Windows PowerShell hosts.
-    }
-
-    try {
-        $release = Invoke-GitHubApiRestMethod -Uri "https://api.github.com/repos/Pr-Mex/vanessa-automation/releases/latest"
-        $asset = @($release.assets | Where-Object { $_.name -like "vanessa-automation-single*.zip" } | Select-Object -First 1)
-        if ($asset.Count -gt 0) {
-            return [pscustomobject]@{
-                url = [string]$asset[0].browser_download_url
-                version = [string]$release.tag_name
-                expectedSha256 = ""
-                source = "GitHub releases Pr-Mex/vanessa-automation"
-            }
-        }
-    } catch {
-        $failure = Get-GitHubApiFailureInfo -ErrorRecord $_
-        if ($failure.rateLimited) {
-            $fallback = Get-DependencyLockRateLimitFallbackInfo -LockPath "vanessaAutomation" -DefaultFileName "vanessa-automation-single.zip"
-            if ($fallback) {
-                Write-Warning "GitHub API rate limit reached; using the Vanessa Automation dependency-lock fallback."
-                return $fallback
-            }
-            throw (Get-GitHubRateLimitRecoveryMessage -Operation "resolving the latest Vanessa Automation release" -FailureInfo $failure)
-        }
-        Write-Host "[WARN] Could not read Vanessa Automation latest release from GitHub API: $($_.Exception.Message)"
+    if (-not $override -and [string](Get-ConfigValueFromObject -Object $entry -Path "publicationStatus" -Default "") -ne "published") {
+        throw "ITL_VANESSA_ARTIFACT_NOT_PUBLISHED: the immutable Vanessa Automation URL is a contract only. Set ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE to the exact qualified candidate for pre-publication tests."
     }
 
     return [pscustomobject]@{
-        url = "https://github.com/Pr-Mex/vanessa-automation/releases/download/1.2.043.28/vanessa-automation-single.1.2.043.28.zip"
-        version = "1.2.043.28"
-        expectedSha256 = ""
-        source = "fallback release URL"
+        url = $(if ($override) { $override } else { [string]$entry.url })
+        version = [string]$entry.compatibilityVersion
+        compatibilityVersion = [string]$entry.compatibilityVersion
+        downstreamRevision = [string]$entry.downstreamRevision
+        assetName = [string]$entry.assetName
+        expectedSha256 = ([string]$entry.sha256).ToLowerInvariant()
+        expectedEpfSha256 = ([string]$entry.epfSha256).ToLowerInvariant()
+        source = $(if ($sourceBuild) { "source-build override" } elseif ($legacyOverride) { "archive URL override" } else { "workflow-pinned" })
     }
+}
+
+function Sync-VanessaAutomationDependencyLock {
+    if ((Get-DependencyMode) -ne "fresh") {
+        return $false
+    }
+    $template = New-DefaultDependencyLockManifest
+    $entry = Get-ConfigValueFromObject -Object $template -Path "dependencies.vanessaAutomation" -Default $null
+    if ($null -eq $entry) {
+        throw "templates/dependency-lock.json has no vanessaAutomation entry."
+    }
+    Update-DependencyLockEntry -Name "vanessaAutomation" -Values (ConvertTo-Agent1cHashtable -Object $entry)
+    Write-Host "Vanessa Automation fresh lock synchronized to workflow pin $($entry.compatibilityVersion)-$($entry.downstreamRevision)."
+    return $true
 }
 
 function Get-VanessaCacheDirectory {
@@ -153,7 +180,7 @@ function Save-VanessaAutomationArchive {
 
     $cacheDir = Get-VanessaCacheDirectory
     New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
-    $archivePath = Join-Path $cacheDir "vanessa-automation-single.zip"
+    $archivePath = Join-Path $cacheDir ("vanessa-automation-single-" + [guid]::NewGuid().ToString("N") + ".zip")
     $source = [string]$DownloadInfo.url
 
     Write-Host "Vanessa Automation archive source: $source"
@@ -166,26 +193,14 @@ function Save-VanessaAutomationArchive {
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
     Write-Host "Vanessa Automation archive SHA256: $hash"
 
-    $expected = [string](Get-ConfigValueFromObject -Object $DownloadInfo -Path "expectedSha256" -Default "")
-    if ($expected) {
-        $expected = $expected.ToLowerInvariant()
-        if ($hash -eq $expected) {
-            Write-Host "Vanessa Automation archive hash matches dependency lock."
-        } elseif ((Get-DependencyMode) -eq "locked" -or (Test-DependencyLockRateLimitFallbackSource -Source ([string]$DownloadInfo.source))) {
-            throw "Vanessa Automation archive SHA256 mismatch. Expected $expected, got $hash."
-        } else {
-            Write-Host "[WARN] Vanessa Automation archive hash differs from expected metadata. Actual SHA256 is logged above."
-        }
+    $expected = ([string](Get-ConfigValueFromObject -Object $DownloadInfo -Path "expectedSha256" -Default "")).ToLowerInvariant()
+    if (-not $expected) {
+        throw "ITL_VANESSA_WORKFLOW_PIN_INCOMPLETE: expected archive SHA256 is empty."
     }
-
-    if (-not (Test-DependencyLockRateLimitFallbackSource -Source ([string]$DownloadInfo.source))) {
-        Update-DependencyLockEntry -Name "vanessaAutomation" -Values @{
-            version = [string]$DownloadInfo.version
-            url = $source
-            sha256 = $hash
-            source = [string]$DownloadInfo.source
-        }
+    if ($hash -cne $expected) {
+        throw "Vanessa Automation archive SHA256 mismatch. Expected $expected, got $hash."
     }
+    Write-Host "Vanessa Automation archive hash matches the workflow pin."
 
     return $archivePath
 }
@@ -193,16 +208,20 @@ function Save-VanessaAutomationArchive {
 function Expand-VanessaAutomationArchive {
     param(
         [string]$ArchivePath,
-        [string]$InstallRoot
+        [string]$InstallRoot,
+        [Parameter(Mandatory = $true)][string]$ExpectedEpfSha256
     )
 
     $existingEpf = Find-VanessaAutomationEpf -Root $InstallRoot
     if ($existingEpf) {
-        Write-Host "Vanessa Automation EPF already exists: $existingEpf"
-        return $existingEpf
+        $existingHash = (Get-FileHash -LiteralPath $existingEpf -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($existingHash -ceq $ExpectedEpfSha256.ToLowerInvariant()) {
+            Write-Host "Vanessa Automation EPF already matches the workflow pin: $existingEpf"
+            return $existingEpf
+        }
     }
 
-    if (Test-Path -LiteralPath $InstallRoot -ErrorAction SilentlyContinue) {
+    if (-not $existingEpf -and (Test-Path -LiteralPath $InstallRoot -ErrorAction SilentlyContinue)) {
         $children = @(Get-ChildItem -LiteralPath $InstallRoot -Force -ErrorAction SilentlyContinue)
         if ($children.Count -gt 0) {
             throw "Vanessa Automation install root already exists but does not contain an EPF: $InstallRoot"
@@ -211,27 +230,60 @@ function Expand-VanessaAutomationArchive {
         New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
     }
 
-    $extractRoot = Join-Path (Get-VanessaCacheDirectory) ("extract-" + [guid]::NewGuid().ToString("N"))
+    $operationId = [guid]::NewGuid().ToString("N")
+    $extractRoot = Join-Path (Get-VanessaCacheDirectory) ("extract-" + $operationId)
+    $stageRoot = "$InstallRoot.install-$operationId"
+    $rollbackRoot = "$InstallRoot.rollback-$operationId"
+    $movedExisting = $false
     New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
     try {
         Expand-Archive -LiteralPath $ArchivePath -DestinationPath $extractRoot -Force
-        Copy-Item -Path (Join-Path $extractRoot "*") -Destination $InstallRoot -Recurse -Force
+        $candidateEpf = Find-VanessaAutomationEpf -Root $extractRoot
+        if (-not $candidateEpf) {
+            throw "Downloaded Vanessa Automation archive did not contain a usable EPF."
+        }
+        $candidateHash = (Get-FileHash -LiteralPath $candidateEpf -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($candidateHash -cne $ExpectedEpfSha256.ToLowerInvariant()) {
+            throw "Vanessa Automation EPF SHA256 mismatch. Expected $ExpectedEpfSha256, got $candidateHash."
+        }
+        New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
+        Copy-Item -Path (Join-Path $extractRoot "*") -Destination $stageRoot -Recurse -Force
+        if (Test-Path -LiteralPath $InstallRoot) {
+            Move-Item -LiteralPath $InstallRoot -Destination $rollbackRoot
+            $movedExisting = $true
+        }
+        Move-Item -LiteralPath $stageRoot -Destination $InstallRoot
+        $epfPath = Find-VanessaAutomationEpf -Root $InstallRoot
+        $installedHash = $(if ($epfPath) { (Get-FileHash -LiteralPath $epfPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { "" })
+        if (-not $epfPath -or $installedHash -cne $ExpectedEpfSha256.ToLowerInvariant()) {
+            throw "Installed Vanessa Automation EPF did not preserve the workflow-pinned SHA256."
+        }
+        if ($movedExisting -and (Test-Path -LiteralPath $rollbackRoot)) {
+            Remove-Item -LiteralPath $rollbackRoot -Recurse -Force
+            $movedExisting = $false
+        }
+        return $epfPath
+    } catch {
+        if ($movedExisting) {
+            if (Test-Path -LiteralPath $InstallRoot) {
+                Remove-Item -LiteralPath $InstallRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $rollbackRoot) {
+                Move-Item -LiteralPath $rollbackRoot -Destination $InstallRoot
+            }
+        }
+        throw
     } finally {
         Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
-
-    $epfPath = Find-VanessaAutomationEpf -Root $InstallRoot
-    if (-not $epfPath) {
-        throw "Downloaded Vanessa Automation archive did not contain a usable EPF."
-    }
-
-    return $epfPath
 }
 
 function Save-VanessaAutomationSettingsToDotEnv {
     param(
         [string]$EpfPath,
-        [string]$Version = ""
+        [string]$Version = "",
+        [string]$DownstreamRevision = ""
     )
 
     $featuresPath = Get-VanessaFeaturesPath
@@ -242,6 +294,7 @@ function Save-VanessaAutomationSettingsToDotEnv {
     Set-DotEnvValues -Values @{
         VANESSA_AUTOMATION_EPF = $EpfPath
         VANESSA_AUTOMATION_VERSION = $Version
+        VANESSA_AUTOMATION_DOWNSTREAM_REVISION = $DownstreamRevision
         VANESSA_FEATURES_PATH = $featuresPath
         VANESSA_REPORTS_PATH = $reportsPath
     }
@@ -252,20 +305,20 @@ function Save-VanessaAutomationSettingsToDotEnv {
 function Install-VanessaAutomation {
     Write-Section "Install Vanessa Automation"
 
+    $downloadInfo = Get-VanessaAutomationDownloadInfo
     $state = Get-VanessaAutomationState
     if ($state.ready) {
         Write-Host "Vanessa Automation is already installed: $($state.epfPath)"
-        Save-VanessaAutomationSettingsToDotEnv -EpfPath $state.epfPath -Version $state.version
+        Save-VanessaAutomationSettingsToDotEnv -EpfPath $state.epfPath -Version $downloadInfo.compatibilityVersion -DownstreamRevision $downloadInfo.downstreamRevision
         return
     }
 
     $installRoot = Get-VanessaInstallRoot
     Write-Host "Vanessa Automation install root: $installRoot"
-    $downloadInfo = Get-VanessaAutomationDownloadInfo
     Write-Host "Vanessa Automation download metadata source: $($downloadInfo.source)"
     $archivePath = Save-VanessaAutomationArchive -DownloadInfo $downloadInfo
-    $epfPath = Expand-VanessaAutomationArchive -ArchivePath $archivePath -InstallRoot $installRoot
-    Save-VanessaAutomationSettingsToDotEnv -EpfPath $epfPath -Version $downloadInfo.version
+    $epfPath = Expand-VanessaAutomationArchive -ArchivePath $archivePath -InstallRoot $installRoot -ExpectedEpfSha256 $downloadInfo.expectedEpfSha256
+    Save-VanessaAutomationSettingsToDotEnv -EpfPath $epfPath -Version $downloadInfo.compatibilityVersion -DownstreamRevision $downloadInfo.downstreamRevision
     Write-Host "Vanessa Automation EPF: $epfPath"
 }
 
@@ -274,7 +327,7 @@ function Ensure-VanessaAutomationForInit {
 
     $state = Get-VanessaAutomationState
     if ($state.ready) {
-        Save-VanessaAutomationSettingsToDotEnv -EpfPath $state.epfPath -Version $state.version
+        Save-VanessaAutomationSettingsToDotEnv -EpfPath $state.epfPath -Version $state.version -DownstreamRevision $state.downstreamRevision
         return
     }
 
@@ -383,6 +436,167 @@ function Get-VanessaAuthoringFeatureRecords {
     } | Sort-Object path)
 }
 
+function Get-VanessaAuthoringLintWarnings {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$FeatureRecords,
+        [ValidateRange(1, 100)][int]$MaxWarnings = 20
+    )
+
+    $warnings = [System.Collections.Generic.List[object]]::new()
+    $currentRowPhrase = ConvertFrom-Utf8Base64 "0Y8g0LLRi9Cx0LjRgNCw0Y4g0YLQtdC60YPRidGD0Y4g0YHRgtGA0L7QutGD"
+    $positionPhrases = @(
+        (ConvertFrom-Utf8Base64 "0Y8g0L/QtdGA0LXRhdC+0LbRgyDQuiDRgdGC0YDQvtC60LU="),
+        (ConvertFrom-Utf8Base64 "0Y8g0YPRgdGC0LDQvdCw0LLQu9C40LLQsNGOINGC0LXQutGD0YnRg9GOINGB0YLRgNC+0LrRgw==")
+    )
+    $pauseKeyword = [regex]::Escape((ConvertFrom-Utf8Base64 "0J/QsNGD0LfQsA=="))
+    $stepKeywords = @(
+        "And", "When", "Then", "Given",
+        (ConvertFrom-Utf8Base64 "0Jg="),
+        (ConvertFrom-Utf8Base64 "0JrQvtCz0LTQsA=="),
+        (ConvertFrom-Utf8Base64 "0KLQvtCz0LTQsA=="),
+        (ConvertFrom-Utf8Base64 "0J/Rg9GB0YLRjA=="),
+        (ConvertFrom-Utf8Base64 "0JTQsNC90L4=")
+    )
+    $scenarioKeywords = @(
+        "Scenario", "Scenario Outline", "Background",
+        (ConvertFrom-Utf8Base64 "0KHRhtC10L3QsNGA0LjQuQ=="),
+        (ConvertFrom-Utf8Base64 "0KHRgtGA0YPQutGC0YPRgNCwINGB0YbQtdC90LDRgNC40Y8="),
+        (ConvertFrom-Utf8Base64 "0J/RgNC10LTRi9GB0YLQvtGA0LjRjw==")
+    )
+    $stepPrefixPattern = "(?:" + (($stepKeywords | ForEach-Object { [regex]::Escape($_) }) -join "|") + "|\*)"
+    $stepPattern = "^\s*$stepPrefixPattern\s+"
+    $pausePattern = "$stepPattern$pauseKeyword(?:\s|$)"
+    $scenarioPattern = "^\s*(?:" + (($scenarioKeywords | ForEach-Object { [regex]::Escape($_) }) -join "|") + ")\s*:"
+    $quotedValuePattern = [regex]"'(?:\\'|[^']|'')*'"
+
+    foreach ($feature in @($FeatureRecords)) {
+        if ($warnings.Count -ge $MaxWarnings) { break }
+        $relativePath = [string](Get-StateValue -State $feature -Name "path" -Default "")
+        if (-not $relativePath -or [System.IO.Path]::GetExtension($relativePath) -ine ".feature") { continue }
+        $fullPath = Resolve-ProjectPath $relativePath
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf -ErrorAction SilentlyContinue)) { continue }
+
+        $lines = @((Read-Utf8Text -Path $fullPath) -split "`r?`n")
+        $insideDocString = $false
+        $positionPending = $false
+        $positionTableRows = 0
+        $hasReliablePosition = $false
+
+        for ($index = 0; $index -lt $lines.Count; $index++) {
+            if ($warnings.Count -ge $MaxWarnings) { break }
+            $line = [string]$lines[$index]
+            $trimmed = $line.Trim()
+            $docStringMarkers = ([regex]::Matches($line, '"""')).Count
+            if ($insideDocString -or $docStringMarkers -gt 0) {
+                if (($docStringMarkers % 2) -eq 1) { $insideDocString = -not $insideDocString }
+                continue
+            }
+
+            if (($trimmed.StartsWith("|") -or $line -match $stepPattern) -and -not $trimmed.StartsWith("#")) {
+                foreach ($quotedValue in @($quotedValuePattern.Matches($line))) {
+                    if ($quotedValue.Length -le 2) { continue }
+                    $innerValue = $quotedValue.Value.Substring(1, $quotedValue.Length - 2)
+                    if ($innerValue.Contains("''")) {
+                        $warnings.Add([pscustomobject][ordered]@{
+                            code = "ITL_VANESSA_LINT_APOSTROPHE"
+                            path = $relativePath
+                            line = $index + 1
+                            message = "Doubled apostrophe in a single-quoted Gherkin value; use \'."
+                        })
+                        break
+                    }
+                }
+            }
+            if ($warnings.Count -ge $MaxWarnings) { break }
+
+            if ($line -match $scenarioPattern) {
+                $positionPending = $false
+                $positionTableRows = 0
+                $hasReliablePosition = $false
+                continue
+            }
+            if (-not $trimmed -or $trimmed.StartsWith("#") -or $trimmed.StartsWith("@")) { continue }
+
+            if ($trimmed.StartsWith("|")) {
+                if ($positionPending) {
+                    $tableValue = ($trimmed -replace '[|''"\s]', '')
+                    if ($tableValue) { $positionTableRows++ }
+                    if ($positionTableRows -ge 2) { $hasReliablePosition = $true }
+                }
+                continue
+            }
+
+            if ($line -match $stepPattern -and $line.IndexOf($currentRowPhrase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                if (-not $hasReliablePosition) {
+                    $warnings.Add([pscustomobject][ordered]@{
+                        code = "ITL_VANESSA_LINT_CURRENT_ROW"
+                        path = $relativePath
+                        line = $index + 1
+                        message = "Current-row selection has no immediately preceding concrete row/key positioning."
+                    })
+                }
+                $positionPending = $false
+                $positionTableRows = 0
+                $hasReliablePosition = $false
+                continue
+            }
+            if ($warnings.Count -ge $MaxWarnings) { break }
+
+            $isPositionStep = $false
+            foreach ($phrase in $positionPhrases) {
+                if ($line -match $stepPattern -and $line.IndexOf($phrase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                    $isPositionStep = $true
+                    break
+                }
+            }
+            if ($isPositionStep) {
+                $positionPending = $trimmed.EndsWith(":")
+                $positionTableRows = 0
+                $hasReliablePosition = -not $positionPending -and (
+                    $quotedValuePattern.Matches($line).Count -gt 0 -or
+                    $line -match '\$[^$]+\$|<[^>]+>'
+                )
+            } else {
+                $positionPending = $false
+                $positionTableRows = 0
+                $hasReliablePosition = $false
+            }
+
+            if ($line -match $pausePattern) {
+                $previousLine = $(if ($index -gt 0) { [string]$lines[$index - 1] } else { "" })
+                if ($previousLine -notmatch '^\s*#\s*\S.{5,}\s*$') {
+                    $warnings.Add([pscustomobject][ordered]@{
+                        code = "ITL_VANESSA_LINT_BLIND_PAUSE"
+                        path = $relativePath
+                        line = $index + 1
+                        message = "Blind pause has no immediate explanatory comment; prefer an observable-state wait."
+                    })
+                }
+            }
+        }
+    }
+    return @($warnings)
+}
+
+function Write-VanessaAuthoringLintWarnings {
+    param([Parameter(Mandatory = $true)][object[]]$FeatureRecords)
+
+    try {
+        $warnings = @(Get-VanessaAuthoringLintWarnings -FeatureRecords $FeatureRecords -MaxWarnings 21)
+    } catch {
+        Write-Warning "Vanessa authoring lint [ITL_VANESSA_LINT_UNAVAILABLE]: source-only warnings could not be produced; authoring gates continue."
+        return
+    }
+    foreach ($warning in @($warnings | Select-Object -First 20)) {
+        $safePath = ([string]$warning.path -replace '[\x00-\x1f\x7f]', "?")
+        if ($safePath.Length -gt 240) { $safePath = $safePath.Substring(0, 240) }
+        Write-Warning ("Vanessa authoring lint [{0}] {1}:{2}: {3}" -f $warning.code, $safePath, $warning.line, $warning.message)
+    }
+    if ($warnings.Count -gt 20) {
+        Write-Warning "Vanessa authoring lint reached the 20-warning output limit; inspect the remaining changed .feature files locally."
+    }
+}
+
 function Get-VanessaFeatureContract {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -476,6 +690,7 @@ function New-VanessaAuthoringState {
         libraryFingerprint = $LibraryFingerprint
         resultsPath = ""
         errorCategory = ""
+        runnerError = $null
         completionMode = ""
         verificationFallback = $null
         createdAt = (Get-Date).ToString("o")
@@ -506,6 +721,7 @@ function Prepare-VanessaAuthoring {
         Write-Host "Vanessa authoring: not required; no new or changed .feature files."
         return
     }
+    Write-VanessaAuthoringLintWarnings -FeatureRecords $features
     $applicationFeatures = @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaFeaturesPath))
     if ($applicationFeatures.Count -eq 0) {
         Set-RunFailureContext -Category "missing-suite" -RequiredAction "/itl-verify-fix"
@@ -578,6 +794,11 @@ function Get-VanessaAuthoringOnDemandEvidence {
                 if ((ConvertTo-IntOrDefault -Value (Get-StateValue -State $item -Name "schemaVersion" -Default 0) -Default 0) -ne 2) { continue }
                 $recordedAt = [DateTimeOffset]::Parse([string]$item.recordedAt)
                 if ($recordedAt -ge $createdAt -and [string]$item.family -eq "vanessa-ui" -and [string]$item.catalogSha256 -eq [string]$AuthoringState.catalogSha256) {
+                    if ([string](Get-StateValue -State $item -Name "outcome" -Default "") -eq "failed") {
+                        $safeMessage = ConvertTo-SafeVanessaRunnerMessage -Message ([string](Get-StateValue -State $item -Name "resultMessage" -Default "")) -Code ([string](Get-StateValue -State $item -Name "resultCode" -Default ""))
+                        $item | Add-Member -NotePropertyName resultMessage -NotePropertyValue $safeMessage -Force
+                    }
+                    $item | Add-Member -NotePropertyName evidencePath -NotePropertyValue $file.FullName -Force
                     $evidence += $item
                 }
             } catch { }
@@ -591,6 +812,72 @@ function Test-VanessaEvidenceFeatureIdentity {
 
     return ([string](Get-StateValue -State $Evidence -Name "featurePath" -Default "")).Replace("\", "/") -ieq [string]$Feature.path -and
         [string](Get-StateValue -State $Evidence -Name "featureSha256" -Default "") -eq [string]$Feature.sha256
+}
+
+function ConvertTo-SafeVanessaRunnerMessage {
+    param([string]$Message, [string]$Code)
+
+    $safe = ([string]$Message -replace '[\r\n\t]+', ' ' -replace '\s{2,}', ' ').Trim()
+    if ($safe) {
+        $assignmentPattern = '(?i)\b(password|passwd|pwd|token|secret|api[-_ ]?key|authorization|connection[-_ ]?string)\b\s*[:=]\s*(?:"[^"]*"|''[^'']*''|[^,;\s]+)'
+        $safe = [regex]::Replace($safe, $assignmentPattern, '$1=[redacted]')
+        $safe = [regex]::Replace($safe, '(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+', 'Bearer [redacted]')
+        $safe = [regex]::Replace($safe, '://[^/@\s]+@', '://[redacted]@')
+        $safe = [regex]::Replace($safe, '(?i)([?&](?:access_token|token|api_key|key|sig|signature)=)[^&#\s]+', '$1[redacted]')
+        $safe = [regex]::Replace($safe, '\{[^{}]{1,2000}\}', '[configuration redacted]')
+        if ($safe.Length -gt 240) { $safe = $safe.Substring(0, 237) + "..." }
+    }
+    if ($safe) { return $safe }
+    switch ($Code) {
+        "ITL_ONDEMAND_BACKEND_CALL_FAILED" { return "backend call failed" }
+        "ITL_VANESSA_TOOL_RESULT_FAILED" { return "Vanessa returned a runtime/editor failure" }
+        "ITL_ONDEMAND_EMPTY_RESULT" { return "backend returned no tool result" }
+        default { return "runner failure" }
+    }
+}
+
+function Get-VanessaAuthoringRunnerError {
+    param([object[]]$Evidence, [object[]]$Features)
+
+    $ordered = @($Evidence | Sort-Object { [DateTimeOffset]::Parse([string]$_.recordedAt) })
+    $activeSearch = @($ordered | Where-Object {
+        [string](Get-StateValue -State $_ -Name "tool" -Default "") -eq "search_for_steps_by_keywords" -and
+        [string](Get-StateValue -State $_ -Name "outcome" -Default "") -eq "passed" -and
+        -not [string]::IsNullOrWhiteSpace([string](Get-StateValue -State $_ -Name "instanceId" -Default ""))
+    } | Select-Object -Last 1)
+    if ($activeSearch.Count -ne 1) { return $null }
+
+    $instanceId = [string]$activeSearch[0].instanceId
+    $searchAt = [DateTimeOffset]::Parse([string]$activeSearch[0].recordedAt)
+    $failureTools = @("open_feature_file", "check_syntax", "get_info_about_line_scenario", "run_scenario", "get_test_results", "get_editor_state", "load_features")
+    $candidates = @($ordered | Where-Object {
+        $item = $_
+        $resultCode = [string](Get-StateValue -State $item -Name "resultCode" -Default "")
+        if ([string](Get-StateValue -State $item -Name "instanceId" -Default "") -ne $instanceId -or
+            [string](Get-StateValue -State $item -Name "outcome" -Default "") -ne "failed" -or
+            [string](Get-StateValue -State $item -Name "tool" -Default "") -notin $failureTools -or
+            $resultCode -notmatch '^ITL_[A-Z0-9_]{1,80}$' -or
+            [DateTimeOffset]::Parse([string]$item.recordedAt) -le $searchAt) {
+            return $false
+        }
+        foreach ($feature in $Features) {
+            if (Test-VanessaEvidenceFeatureIdentity -Evidence $item -Feature $feature) { return $true }
+        }
+        return $false
+    } | Select-Object -Last 1)
+    if ($candidates.Count -ne 1) { return $null }
+
+    $candidate = $candidates[0]
+    return [pscustomobject][ordered]@{
+        code = [string]$candidate.resultCode
+        message = ConvertTo-SafeVanessaRunnerMessage -Message ([string](Get-StateValue -State $candidate -Name "resultMessage" -Default "")) -Code ([string]$candidate.resultCode)
+        evidencePath = ([string](Get-StateValue -State $candidate -Name "evidencePath" -Default "") -replace '[\r\n]+', '').Trim()
+        logPath = ([string](Get-StateValue -State $candidate -Name "logPath" -Default "") -replace '[\r\n]+', '').Trim()
+        instanceId = $instanceId
+        featurePath = [string]$candidate.featurePath
+        featureSha256 = [string]$candidate.featureSha256
+        recordedAt = [string]$candidate.recordedAt
+    }
 }
 
 function Get-VanessaAuthoringEvidenceValidation {
@@ -688,12 +975,28 @@ function Complete-VanessaAuthoring {
     $authoring.backendEvidence = @($evidence)
     $authoring.resultsPath = $ResultsPath
     $authoring.errorCategory = $(if ($Result -eq "failed") { $(if ($ErrorCategory) { $ErrorCategory } else { "runner" }) } else { "" })
+    $runnerError = $(if ($Result -eq "failed" -and $authoring.errorCategory -eq "runner") { Get-VanessaAuthoringRunnerError -Evidence $evidence -Features $features } else { $null })
+    $authoring | Add-Member -NotePropertyName runnerError -NotePropertyValue $runnerError -Force
     $authoring.completionMode = $(if ($Result -eq "passed") { "mcp" } else { "" })
     $authoring.updatedAt = (Get-Date).ToString("o")
     if ($Result -eq "passed") { $authoring.passedAt = $authoring.updatedAt }
     Write-VanessaAuthoringState -State $authoring | Out-Null
     if ($Result -eq "failed") {
         Set-RunFailureContext -Category $authoring.errorCategory -RequiredAction "/itl-vanessa-author"
+        if ($authoring.errorCategory -eq "runner") {
+            $reportLines = @("Vanessa authoring failed (runner).")
+            if ($null -eq $runnerError) {
+                $reportLines += "runner error evidence not found"
+            } else {
+                $reportLines += "Runner error code: $($runnerError.code)"
+                $reportLines += "Runner error: $($runnerError.message)"
+                if ($runnerError.evidencePath) { $reportLines += "Evidence: $($runnerError.evidencePath)" }
+                if ($runnerError.logPath) { $reportLines += "Log: $($runnerError.logPath)" }
+            }
+            $report = $reportLines -join [Environment]::NewLine
+            Set-RunUserReport -Report $report
+            throw $report
+        }
         throw "Vanessa authoring failed ($($authoring.errorCategory)). Inspect MCP results: $ResultsPath"
     }
     Write-Host "Vanessa authoring: passed."
@@ -2432,6 +2735,7 @@ function Run-DevBranchTests {
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
     Save-VanessaTestSettingsToDotEnv -Port $testPort
     Invoke-ForeignVanessaTestProcessPolicy -State $state -TestPort $testPort
+    Assert-VanessaTestClientCapacity -State $state | Out-Null
     $state = Ensure-DevBranchEventLogBaseline -State $state
 
     $runDirectory = New-VanessaRunDirectory
@@ -2729,6 +3033,7 @@ function Get-VanessaTestPortRange {
 }
 
 function Get-OneCProcessInfo {
+    param([switch]$RequireSuccess)
     try {
         return @(Get-CimInstance Win32_Process -Filter "Name = '1cv8.exe' OR Name = '1cv8c.exe'" -ErrorAction Stop | ForEach-Object {
             [pscustomobject]@{
@@ -2739,9 +3044,68 @@ function Get-OneCProcessInfo {
             }
         })
     } catch {
+        if ($RequireSuccess) {
+            throw "ITL_VANESSA_LICENSE_PREFLIGHT_UNAVAILABLE: active 1C processes could not be inspected safely. $($_.Exception.Message)"
+        }
         Write-Host "[WARN] Could not inspect active 1C processes: $($_.Exception.Message)"
         return @()
     }
+}
+
+function Get-VanessaTestClientLicenseCapacity {
+    $capacity = ConvertTo-IntOrDefault -Value (Get-EnvValue -Name "VANESSA_TESTCLIENT_LICENSE_CAPACITY" -Default 2) -Default 2
+    if ($capacity -le 0) {
+        throw "Invalid VANESSA_TESTCLIENT_LICENSE_CAPACITY '$capacity'. Use a positive number."
+    }
+    return $capacity
+}
+
+function Get-SafeOneCProcessInfoBase {
+    param([AllowNull()][string]$CommandLine)
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) { return "" }
+    $match = [regex]::Match($CommandLine, '(?i)(?:^|\s)/(?:F|S)\s+(?:"([^"]+)"|(\S+))')
+    if (-not $match.Success) { return "" }
+    $value = $(if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value })
+    return ([string]$value).Trim()
+}
+
+function Get-VanessaTestClientCapacitySnapshot {
+    param([object]$State)
+
+    $processes = @()
+    foreach ($processInfo in @(Get-OneCProcessInfo -RequireSuccess)) {
+        $commandLine = [string](Get-StateValue -State $processInfo -Name "commandLine" -Default "")
+        if ($commandLine -notmatch '(?i)(?:^|\s)/TESTCLIENT(?:\s|$)') { continue }
+        $port = 0
+        $portMatch = [regex]::Match($commandLine, '(?i)-TPort\s+(\d+)')
+        if ($portMatch.Success) { $port = [int]$portMatch.Groups[1].Value }
+        $processes += [pscustomobject][ordered]@{
+            pid = ConvertTo-IntOrDefault -Value (Get-StateValue -State $processInfo -Name "processId" -Default 0) -Default 0
+            scope = $(if (Test-OneCProcessBelongsToState -ProcessInfo $processInfo -State $State -TestPort $port) { "owned" } else { "foreign" })
+            infobase = Get-SafeOneCProcessInfoBase -CommandLine $commandLine
+            port = $port
+        }
+    }
+    return [pscustomobject][ordered]@{
+        capacity = Get-VanessaTestClientLicenseCapacity
+        active = @($processes).Count
+        available = [Math]::Max(0, (Get-VanessaTestClientLicenseCapacity) - @($processes).Count)
+        processes = @($processes)
+    }
+}
+
+function Assert-VanessaTestClientCapacity {
+    param(
+        [object]$State,
+        [int]$RequiredSlots = 1
+    )
+
+    if ($RequiredSlots -le 0) { return (Get-VanessaTestClientCapacitySnapshot -State $State) }
+    $snapshot = Get-VanessaTestClientCapacitySnapshot -State $State
+    if (($snapshot.active + $RequiredSlots) -le $snapshot.capacity) { return $snapshot }
+    $details = @($snapshot.processes | Select-Object pid, scope, infobase, port) | ConvertTo-Json -Compress -Depth 5
+    throw "ITL_VANESSA_LICENSE_LIMIT: capacity=$($snapshot.capacity) active=$($snapshot.active) required=$RequiredSlots processes=$details recovery=stop-an-owned-TestClient-or-increase-VANESSA_TESTCLIENT_LICENSE_CAPACITY-after-license-review"
 }
 
 function Test-CommandLineContainsValue {
@@ -3315,31 +3679,413 @@ function Get-OwnVanessaTestProcesses {
     })
 }
 
-function Stop-OwnVanessaTestProcessesAndAssert {
+function Get-VanessaTestProcessCategory {
+    param([object]$ProcessInfo)
+
+    $commandLine = [string](Get-StateValue -State $ProcessInfo -Name "commandLine" -Default "")
+    return $(if ($commandLine -match '(?i)/TESTCLIENT(?:\s|$)') { "TestClient" } else { "TestManager" })
+}
+
+function Stop-OwnVanessaTestProcesses {
     param([object]$State)
 
-    $ownProcesses = @(Get-OwnVanessaTestProcesses -State $State)
-    foreach ($processInfo in $ownProcesses) {
-        Write-Host "Stopping own Vanessa TESTMANAGER/TESTCLIENT process: $(Format-OneCProcessInfo -ProcessInfo $processInfo)"
-        Stop-Process -Id $processInfo.processId -Force -ErrorAction SilentlyContinue
+    $before = @(Get-OwnVanessaTestProcesses -State $State)
+    $errors = @()
+    foreach ($processInfo in $before) {
+        $category = Get-VanessaTestProcessCategory -ProcessInfo $processInfo
+        Write-Host "Stopping own Vanessa $category process: $(Format-OneCProcessInfo -ProcessInfo $processInfo)"
+        try {
+            Stop-Process -Id ([int]$processInfo.processId) -Force -ErrorAction Stop
+        } catch {
+            $errors += "$category PID=$($processInfo.processId): $($_.Exception.Message)"
+        }
     }
 
-    if ($ownProcesses.Count -gt 0) {
+    if ($before.Count -gt 0) {
         Start-Sleep -Milliseconds 300
     }
     $remaining = @(Get-OwnVanessaTestProcesses -State $State)
-    if ($remaining.Count -gt 0) {
-        $details = ($remaining | ForEach-Object { Format-OneCProcessInfo -ProcessInfo $_ }) -join [Environment]::NewLine
-        throw "Branch-local Vanessa TESTMANAGER/TESTCLIENT cleanup failed:$([Environment]::NewLine)$details"
+    $remainingIds = @($remaining | ForEach-Object { [int]$_.processId })
+    $stopped = @($before | Where-Object { $remainingIds -notcontains [int]$_.processId })
+    return [pscustomobject]@{
+        stoppedTestManager = @($stopped | Where-Object { (Get-VanessaTestProcessCategory -ProcessInfo $_) -eq "TestManager" }).Count
+        stoppedTestClient = @($stopped | Where-Object { (Get-VanessaTestProcessCategory -ProcessInfo $_) -eq "TestClient" }).Count
+        remaining = @($remaining)
+        errors = @($errors)
+    }
+}
+
+function Stop-OwnVanessaTestProcessesAndAssert {
+    param([object]$State)
+
+    $result = Stop-OwnVanessaTestProcesses -State $State
+    if ($result.remaining.Count -gt 0 -or $result.errors.Count -gt 0) {
+        $details = @($result.remaining | ForEach-Object { Format-OneCProcessInfo -ProcessInfo $_ })
+        $details += @($result.errors)
+        throw "Branch-local Vanessa TESTMANAGER/TESTCLIENT cleanup failed:$([Environment]::NewLine)$($details -join [Environment]::NewLine)"
     }
 
-    Write-Host "Branch-local Vanessa test process cleanup passed. Stopped: $($ownProcesses.Count)"
+    Write-Host "Branch-local Vanessa test process cleanup passed. Stopped TestManager: $($result.stoppedTestManager); TestClient: $($result.stoppedTestClient)"
+}
+
+function Get-VanessaInteractiveProfileStatePath {
+    return (Join-Path $script:ProjectRoot ".agent-1c\vanessa-interactive-profile.json")
+}
+
+function Read-VanessaInteractiveProfileState {
+    param([switch]$Strict)
+
+    $path = Get-VanessaInteractiveProfileStatePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return $null
+    }
+    try {
+        return (Read-Utf8Text -Path $path | ConvertFrom-Json)
+    } catch {
+        if ($Strict) {
+            throw "ITL_VANESSA_PROFILE_STATE_INVALID path='$path' error='$($_.Exception.Message)'"
+        }
+        return $null
+    }
+}
+
+function Write-VanessaInteractiveProfileState {
+    param([Parameter(Mandatory = $true)][object]$ProfileState)
+
+    $path = Get-VanessaInteractiveProfileStatePath
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+    $temporary = "$path.tmp-$PID"
+    Write-Utf8Text -Path $temporary -Value (($ProfileState | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+    Move-Item -LiteralPath $temporary -Destination $path -Force
+    return $path
+}
+
+function Get-VanessaInteractiveProfileRuntimeInstances {
+    param([Parameter(Mandatory = $true)][object]$State)
+
+    $infoBasePath = [string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
+    return @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+        [string]$_.family -eq "vanessa-ui" -and
+        (Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $infoBasePath)
+    })
+}
+
+function New-VanessaInteractiveProfileUserReport {
+    param(
+        [string]$Action,
+        [string]$Status,
+        [object]$State,
+        [AllowNull()][object]$RuntimeState,
+        [AllowNull()][object]$ProfileState,
+        [AllowNull()][object]$ReleaseResult
+    )
+
+    $managerPid = ConvertTo-IntOrDefault -Value (Get-StateValue -State $RuntimeState -Name "pid" -Default 0) -Default 0
+    $managerPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $RuntimeState -Name "port" -Default 0) -Default 0
+    $testClientPid = ConvertTo-IntOrDefault -Value (Get-StateValue -State $RuntimeState -Name "testClientPid" -Default 0) -Default 0
+    $testClientPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $RuntimeState -Name "testClientPort" -Default 0) -Default 0
+    $connectionState = [string](Get-StateValue -State $ProfileState -Name "testClientState" -Default (Get-StateValue -State $RuntimeState -Name "testClientState" -Default "stopped"))
+    return [pscustomobject][ordered]@{
+        schemaVersion = 1
+        action = $Action
+        status = $Status
+        managerPid = $managerPid
+        managerPort = $managerPort
+        testClientPid = $testClientPid
+        testClientPort = $testClientPort
+        infoBase = [string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
+        feature = [string](Get-StateValue -State $ProfileState -Name "featurePath" -Default "")
+        connectionState = $connectionState
+        persistentUntilExplicitStop = ($Status -eq "running")
+        scenarioStarted = $false
+        verificationVerdictProduced = $false
+        stoppedTestManager = ConvertTo-IntOrDefault -Value (Get-StateValue -State $ReleaseResult -Name "stoppedTestManager" -Default 0) -Default 0
+        stoppedTestClient = ConvertTo-IntOrDefault -Value (Get-StateValue -State $ReleaseResult -Name "stoppedTestClient" -Default 0) -Default 0
+        stoppedVanessaUiBackend = ConvertTo-IntOrDefault -Value (Get-StateValue -State $ReleaseResult -Name "stoppedVanessaUiBackend" -Default 0) -Default 0
+    }
+}
+
+function Publish-VanessaInteractiveProfileUserReport {
+    param([Parameter(Mandatory = $true)][object]$Report)
+
+    $json = $Report | ConvertTo-Json -Compress -Depth 10
+    $script:RunUserReport = $json
+    Write-Host "ITL_VANESSA_PROFILE_REPORT=$json"
+    return $Report
+}
+
+function Invoke-ItlOnDemandVanessaProfileStart {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstanceId,
+        [Parameter(Mandatory = $true)][string]$FeaturePath
+    )
+
+    $executable = Get-ItlOnDemandMcpExecutablePath
+    $definition = Get-ItlOnDemandMcpFamilyDefinition -Family "vanessa-ui"
+    $output = @(& $executable `
+        "vanessa-profile-start" `
+        "--project-root" $script:ProjectRoot `
+        "--catalog" $definition.catalogPath `
+        "--helper" $script:Agent1cScriptPath `
+        "--instance-id" $InstanceId `
+        "--feature" $FeaturePath 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "ITL_VANESSA_PROFILE_START_FAILED: $($output -join ' ')"
+    }
+    $marker = "ITL_VANESSA_PROFILE_RESULT="
+    $line = @($output | ForEach-Object { [string]$_ } | Where-Object { $_.StartsWith($marker, [System.StringComparison]::Ordinal) } | Select-Object -Last 1)
+    if ($line.Count -ne 1) {
+        throw "ITL_VANESSA_PROFILE_START_FAILED: facade did not return a structured result."
+    }
+    try {
+        return ($line[0].Substring($marker.Length) | ConvertFrom-Json)
+    } catch {
+        throw "ITL_VANESSA_PROFILE_START_FAILED: facade returned invalid JSON. $($_.Exception.Message)"
+    }
+}
+
+function Resolve-VanessaInteractiveFeaturePath {
+    if ([string]::IsNullOrWhiteSpace([string]$VanessaFeaturePath)) {
+        throw "ITL_VANESSA_PROFILE_FEATURE_REQUIRED: pass -VanessaFeaturePath with one .feature file."
+    }
+    $path = Resolve-ProjectPath $VanessaFeaturePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or [System.IO.Path]::GetExtension($path) -cne ".feature") {
+        throw "ITL_VANESSA_PROFILE_FEATURE_INVALID: expected one existing .feature file: $path"
+    }
+    return $path
+}
+
+function Start-DevBranchVanessaInteractiveProfile {
+    $state = Read-CurrentDevBranchStateForVanessaMcp -Operation "start-vanessa-profile"
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "start-vanessa-profile"
+    $featurePath = Resolve-VanessaInteractiveFeaturePath
+    $profileState = Read-VanessaInteractiveProfileState -Strict
+    $runtimes = @(Get-VanessaInteractiveProfileRuntimeInstances -State $state)
+    if ($runtimes.Count -gt 1) {
+        throw "ITL_VANESSA_PROFILE_RUNTIME_CONFLICT: expected at most one current-branch Vanessa manager, found $($runtimes.Count). Run stop-vanessa-profile."
+    }
+
+    $instanceId = [string](Get-StateValue -State $profileState -Name "instanceId" -Default "")
+    if ($runtimes.Count -eq 1) {
+        $runtime = $runtimes[0]
+        if (-not $instanceId) {
+            throw "ITL_VANESSA_PROFILE_RUNTIME_CONFLICT: the owned manager runtime has no interactive-profile marker and may still have an independent idle owner; it was not reused or stopped."
+        }
+        $health = Get-ItlOnDemandBackendRuntimeHealth -RuntimeState $runtime
+        if (-not $health.owned -or $health.status -ne "healthy") {
+            throw "ITL_VANESSA_PROFILE_OWNERSHIP_UNVERIFIED: current-branch manager status=$($health.status); it was not reused or stopped."
+        }
+        if ($instanceId -and $instanceId -cne [string]$runtime.instanceId) {
+            throw "ITL_VANESSA_PROFILE_RUNTIME_CONFLICT: profile marker and owned runtime instance do not match."
+        }
+        $instanceId = [string]$runtime.instanceId
+    }
+    if (-not $instanceId) {
+        $instanceId = [guid]::NewGuid().ToString("N")
+    }
+    if ($instanceId -notmatch '^[a-f0-9]{32}$') {
+        throw "ITL_VANESSA_PROFILE_STATE_INVALID: invalid instance id '$instanceId'."
+    }
+
+    $registeredPids = @($runtimes | ForEach-Object {
+        ConvertTo-IntOrDefault -Value $_.pid -Default 0
+        ConvertTo-IntOrDefault -Value $_.testClientPid -Default 0
+    } | Where-Object { $_ -gt 0 })
+    $unregistered = @(Get-OwnVanessaTestProcesses -State $state | Where-Object {
+        $registeredPids -notcontains (ConvertTo-IntOrDefault -Value $_.processId -Default 0)
+    })
+    if ($unregistered.Count -gt 0) {
+        throw "ITL_VANESSA_PROFILE_OWNERSHIP_UNVERIFIED: $($unregistered.Count) current-branch test process(es) have no active ownership marker; they were not reused or stopped."
+    }
+
+    $transport = Invoke-ItlOnDemandVanessaProfileStart -InstanceId $instanceId -FeaturePath $featurePath
+    if ([string]$transport.status -ne "running" -or
+        [string]$transport.testClientState -ne "manager-connected" -or
+        [bool]$transport.scenarioWasStarted) {
+        throw "ITL_VANESSA_PROFILE_CONNECTION_STATE_UNAVAILABLE: facade did not positively prove a connected non-running interactive pair."
+    }
+
+    $runtime = Read-ItlOnDemandRuntimeState -Family "vanessa-ui" -InstanceId $instanceId
+    if ($null -eq $runtime -or -not (Test-ItlOnDemandOwnedProcess -RuntimeState $runtime)) {
+        throw "ITL_VANESSA_PROFILE_OWNERSHIP_UNVERIFIED: manager ownership marker was not proven after start."
+    }
+    $ownedTestClients = @(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $runtime)
+    if ($ownedTestClients.Count -ne 1 -or [int]$ownedTestClients[0].process.Id -ne [int]$transport.testClientPid) {
+        throw "ITL_VANESSA_PROFILE_OWNERSHIP_UNVERIFIED: exactly one owned TestClient was not proven after start."
+    }
+    $matchingRuntimes = @(Get-VanessaInteractiveProfileRuntimeInstances -State $state)
+    if ($matchingRuntimes.Count -ne 1 -or [string]$matchingRuntimes[0].instanceId -cne $instanceId) {
+        throw "ITL_VANESSA_PROFILE_RUNTIME_CONFLICT: exactly one owned manager runtime was not proven after start."
+    }
+
+    $now = (Get-Date).ToUniversalTime().ToString("o")
+    $saved = [pscustomobject][ordered]@{
+        schemaVersion = 1
+        status = "running"
+        instanceId = $instanceId
+        infoBasePath = [string]$state.devBranchInfoBasePath
+        featurePath = $featurePath
+        managerPid = [int]$transport.managerPid
+        managerPort = [int]$transport.managerPort
+        testClientPid = [int]$transport.testClientPid
+        testClientPort = [int]$transport.testClientPort
+        testClientState = [string]$transport.testClientState
+        startedAt = $(if ($profileState -and $profileState.startedAt) { [string]$profileState.startedAt } else { $now })
+        updatedAt = $now
+    }
+    Write-VanessaInteractiveProfileState -ProfileState $saved | Out-Null
+    $action = $(if ($runtimes.Count -eq 1 -or [bool]$transport.testClientReused) { "reused" } else { "started" })
+    $report = New-VanessaInteractiveProfileUserReport -Action $action -Status "running" -State $state -RuntimeState $runtime -ProfileState $saved
+    Publish-VanessaInteractiveProfileUserReport -Report $report
+}
+
+function Show-DevBranchVanessaInteractiveProfile {
+    $state = Read-CurrentDevBranchStateForVanessaMcp -Operation "status-vanessa-profile"
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "status-vanessa-profile"
+    $profileState = Read-VanessaInteractiveProfileState -Strict
+    $runtimes = @(Get-VanessaInteractiveProfileRuntimeInstances -State $state)
+    if ($runtimes.Count -gt 1) {
+        $report = New-VanessaInteractiveProfileUserReport -Action "status" -Status "runtime-conflict" -State $state -ProfileState $profileState
+        return (Publish-VanessaInteractiveProfileUserReport -Report $report)
+    }
+    if ($runtimes.Count -eq 0) {
+        $status = $(if ($null -eq $profileState) { "stopped" } else { "stopped-stale-marker" })
+        $report = New-VanessaInteractiveProfileUserReport -Action "status" -Status $status -State $state -ProfileState $profileState
+        return (Publish-VanessaInteractiveProfileUserReport -Report $report)
+    }
+    $runtime = $runtimes[0]
+    $health = Get-ItlOnDemandBackendRuntimeHealth -RuntimeState $runtime
+    $ownedClients = @(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $runtime)
+    $status = $(if ($health.status -eq "healthy" -and $ownedClients.Count -eq 1 -and
+        [string](Get-StateValue -State $profileState -Name "testClientState" -Default "") -eq "manager-connected") {
+        "running"
+    } elseif (-not $health.owned) {
+        "ownership-unverified"
+    } else {
+        "connection-unverified"
+    })
+    $report = New-VanessaInteractiveProfileUserReport -Action "status" -Status $status -State $state -RuntimeState $runtime -ProfileState $profileState
+    Publish-VanessaInteractiveProfileUserReport -Report $report
+}
+
+function Stop-DevBranchVanessaInteractiveProfile {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "stop-vanessa-profile"
+    $path = Get-VanessaInteractiveProfileStatePath
+    $claimedPath = ""
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+        Read-VanessaInteractiveProfileState -Strict | Out-Null
+        $claimedPath = "$path.stopping-$([guid]::NewGuid().ToString('N'))"
+        Move-Item -LiteralPath $path -Destination $claimedPath
+    }
+    try {
+        $release = Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "stop-vanessa-profile"
+        if ($claimedPath) {
+            Remove-Item -LiteralPath $claimedPath -Force
+        }
+    } catch {
+        if ($claimedPath -and (Test-Path -LiteralPath $claimedPath -PathType Leaf) -and -not (Test-Path -LiteralPath $path)) {
+            Move-Item -LiteralPath $claimedPath -Destination $path
+        }
+        throw
+    }
+    $stoppedCount = [int]$release.stoppedTestManager + [int]$release.stoppedTestClient + [int]$release.stoppedVanessaUiBackend
+    $action = $(if ($stoppedCount -gt 0 -or $claimedPath) { "stopped" } else { "already-stopped" })
+    $report = New-VanessaInteractiveProfileUserReport -Action $action -Status "stopped" -State $state -ReleaseResult $release
+    Publish-VanessaInteractiveProfileUserReport -Report $report
+}
+
+function Invoke-DevBranchVanessaRuntimeRelease {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [string]$Reason = "branch runtime cleanup"
+    )
+
+    $infoBasePath = [string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
+    if ([string]::IsNullOrWhiteSpace($infoBasePath)) {
+        throw "ITL_VANESSA_RUNTIME_RELEASE_FAILED reason='$Reason' detail='development branch infobase path is missing'"
+    }
+
+    $errors = @()
+    $testResult = Stop-OwnVanessaTestProcesses -State $State
+    $errors += @($testResult.errors)
+
+    $onDemandBefore = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+        [string]$_.family -eq "vanessa-ui" -and
+        (Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $infoBasePath)
+    })
+    foreach ($instance in $onDemandBefore) {
+        try {
+            Stop-ItlOnDemandBackendInstance `
+                -Family "vanessa-ui" `
+                -InstanceId ([string]$instance.instanceId) `
+                -StrictOwnership | Out-Null
+        } catch {
+            $errors += "vanessa-ui/$([string]$instance.instanceId): $($_.Exception.Message)"
+        }
+    }
+
+    $legacyStopped = 0
+    $legacyBefore = Get-VanessaMcpRuntimeInfo -State $State
+    if ($legacyBefore.processAlive) {
+        try {
+            if (Stop-VanessaMcpForState -State $State -Quiet -RequireOwnership -SkipClientConfig) {
+                $legacyStopped = 1
+            }
+        } catch {
+            $errors += "legacy-vanessa-ui/PID=$($legacyBefore.pid): $($_.Exception.Message)"
+        }
+    }
+
+    $remainingTests = @(Get-OwnVanessaTestProcesses -State $State)
+    $remainingOnDemand = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+        [string]$_.family -eq "vanessa-ui" -and
+        (Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $infoBasePath)
+    })
+    $legacyAfter = Get-VanessaMcpRuntimeInfo -State $State
+    $remaining = @()
+    $remaining += @($remainingTests | ForEach-Object {
+        "$(Get-VanessaTestProcessCategory -ProcessInfo $_)/PID=$([int]$_.processId)"
+    })
+    $remaining += @($remainingOnDemand | ForEach-Object {
+        "vanessa-ui/$([string]$_.instanceId)/PID=$(ConvertTo-IntOrDefault -Value $_.pid -Default 0)"
+    })
+    if ($legacyAfter.processAlive) {
+        $remaining += "legacy-vanessa-ui/PID=$($legacyAfter.pid)"
+    }
+
+    $remainingInstanceIds = @($remainingOnDemand | ForEach-Object { [string]$_.instanceId })
+    $stoppedOnDemand = @($onDemandBefore | Where-Object {
+        $remainingInstanceIds -notcontains [string]$_.instanceId
+    }).Count
+    $result = [pscustomobject]@{
+        schemaVersion = 1
+        status = $(if ($remaining.Count -eq 0 -and $errors.Count -eq 0) { "released" } else { "failed" })
+        reason = $Reason
+        infoBasePath = $infoBasePath
+        stoppedTestManager = [int]$testResult.stoppedTestManager
+        stoppedTestClient = [int]$testResult.stoppedTestClient
+        stoppedVanessaUiBackend = [int]($stoppedOnDemand + $legacyStopped)
+        remainingOwnedRuntime = @($remaining)
+        errors = @($errors)
+    }
+
+    Write-Host "Vanessa runtime cleanup stopped: TestManager=$($result.stoppedTestManager); TestClient=$($result.stoppedTestClient); Vanessa UI backend=$($result.stoppedVanessaUiBackend)."
+    Write-Host "Vanessa runtime cleanup remaining owned runtime: $($result.remainingOwnedRuntime.Count)."
+    foreach ($identity in $result.remainingOwnedRuntime) {
+        Write-Host "  $identity"
+    }
+    if ($result.status -ne "released") {
+        $detail = @($result.errors + $result.remainingOwnedRuntime) -join " | "
+        throw "ITL_VANESSA_RUNTIME_RELEASE_FAILED reason='$Reason' stoppedTestManager=$($result.stoppedTestManager) stoppedTestClient=$($result.stoppedTestClient) stoppedVanessaUiBackend=$($result.stoppedVanessaUiBackend) remaining=$($result.remainingOwnedRuntime.Count) detail='$detail'"
+    }
+    return $result
 }
 
 function Stop-DevBranchTestClients {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "stop-dev-branch-test-clients"
-    Stop-OwnVanessaTestProcessesAndAssert -State $state
+    Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "stop-dev-branch-test-clients" | Out-Null
 }
 
 function Read-CurrentDevBranchStateForVanessaMcp {

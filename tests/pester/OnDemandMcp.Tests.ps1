@@ -6,15 +6,23 @@ Describe "ITL on-demand MCP facade" {
         $HelperPath = $context.HelperPath
         $AssetRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp"
         . (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.ondemand-mcp.ps1")
+        $ModuleFixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-module-fixture-" + [guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Force -Path (Join-Path $ModuleFixtureRoot ".agent-1c") | Out-Null
+        Set-Content -LiteralPath (Join-Path $ModuleFixtureRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+        . $HelperPath -ProjectRoot $ModuleFixtureRoot -Action help *> $null
+    }
+
+    AfterAll {
+        Remove-Item -LiteralPath $ModuleFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     It "pins hash-verified full catalogs to compatible backend versions" {
         $manifest = Get-Content -LiteralPath (Join-Path $AssetRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.facadeVersion | Should -Be "0.3.2"
-        $manifest.minimumFacadeVersion | Should -Be "0.3.2"
+        $manifest.facadeVersion | Should -Be "0.4.1"
+        $manifest.minimumFacadeVersion | Should -Be "0.4.1"
         $mainSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\main.go") -Raw -Encoding UTF8
         $gatewaySource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\gateway.go") -Raw -Encoding UTF8
-        $mainSource | Should -Match 'const version = "0\.3\.2"'
+        $mainSource | Should -Match 'const version = "0\.4\.1"'
         $mainSource | Should -Match '"gateway"'
         $gatewaySource | Should -Match 'gatewayResolveTool\s*=\s*"resolve_tool"'
         $gatewaySource | Should -Match 'gatewayCallTool\s*=\s*"call_tool"'
@@ -22,11 +30,17 @@ Describe "ITL on-demand MCP facade" {
         $manifest.families.'vanessa-ui'.backendVersions.clientMcp | Should -Be "v0.6.5"
         $manifest.families.'vanessa-ui'.backendVersions.vaExtension | Should -Be "1.2.043.28"
         $manifest.families.'vanessa-ui'.backendVersions.vanessaAutomation | Should -Be "1.2.043.28"
+        $manifest.families.'vanessa-ui'.backendRevisions.vanessaAutomation | Should -Be "itl-r1"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.archiveSha256 | Should -Be "fae6ff06a66e5fa3fe315585ec5c5e678724edcd75fff97069f6dd224b86b9b6"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.epfSha256 | Should -Be "260605fd71adf1d2d354b8d1ce3ca7e2ce222db7c79d21f6cb44885aff1b5b80"
         $manifest.families.'vanessa-ui'.backendVersions.vanessaExt | Should -Be "1.3.9.131"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.version | Should -Be "1.3.9.131"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.sha256 | Should -Match '^[0-9a-f]{64}$'
         $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Match '^[0-9a-f]{64}$'
+        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.1"
+        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.1/itl-ondemand-mcp-windows-amd64.exe"
+        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "77a2ddbdaa18e256d95f40e50176ee3deb946376f505091bf3e8a362d4cf7b8c"
+        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Not -Be "667f0651a9d87f17a7db584ccaf754a2150ab371e88c88af59428eaedf2b2ced"
         foreach ($family in @("roctup", "vanessa-ui")) {
             $definition = $manifest.families.$family
             $catalogPath = Join-Path $AssetRoot ([string]$definition.catalog)
@@ -147,7 +161,7 @@ Describe "ITL on-demand MCP facade" {
                 $installRoot = Join-Path $tempRoot "localapp\ondemand"
                 function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
 
-                $version = "0.3.2"
+                $version = "0.4.1"
                 $assetName = "itl-ondemand-mcp-windows-amd64.exe"
                 $targetDirectory = Join-Path $installRoot $version
                 $targetPath = Join-Path $targetDirectory $assetName
@@ -167,7 +181,7 @@ Describe "ITL on-demand MCP facade" {
                 Install-ItlOnDemandMcp
             }
 
-            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.3.2\itl-ondemand-mcp-windows-amd64.exe")
+            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.1\itl-ondemand-mcp-windows-amd64.exe")
             $result.sha256 | Should -Match '^[a-f0-9]{64}$'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -341,6 +355,8 @@ Describe "ITL on-demand MCP facade" {
                     screenshotAddin = $params.useaddinforscreencapture
                     failClosed = $params.QuitIfSilentInstallationAddinFails
                     disableLegacyProfiles = $params.DisableLoadTestClientsTable
+                    useEditor = $params.UseEditor
+                    useVanessaEditor = $params.usevanessaeditor
                     name = $profile.$nameKey
                     port = $profile.$portKey
                     range = Get-ItlOnDemandVanessaTestClientPortRange
@@ -351,6 +367,8 @@ Describe "ITL on-demand MCP facade" {
             $result.screenshotAddin | Should -BeTrue
             $result.failClosed | Should -BeTrue
             $result.disableLegacyProfiles | Should -BeTrue
+            $result.useEditor | Should -BeTrue
+            $result.useVanessaEditor | Should -BeTrue
             $result.name | Should -Be "itl-ondemand"
             $result.port | Should -Be 48177
             $result.range.start | Should -Be 48151
@@ -358,12 +376,136 @@ Describe "ITL on-demand MCP facade" {
             $result.portKey | Should -Match '^vanessa-mcp-testclient:'
 
             $broker = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.ondemand-mcp.ps1") -Raw -Encoding UTF8
-            $broker | Should -Match 'QuietInstallVanessaExt;DisableFirstRunHelper'
+            $broker | Should -Match 'QuietInstallVanessaExt;DisableFirstRunHelper;UseEditor=true;usevanessaeditor=true'
             $broker | Should -Match 'ITL_VANESSA_UNSAFE_ACTION_PROTECTION_UNCONFIRMED'
-            $broker | Should -Match 'Start-EnterpriseBackground[\s\S]*-UseTestClient[\s\S]*-TestClientPort'
+            $broker | Should -Match 'function Ensure-ItlOnDemandVanessaTestClient'
+            $broker | Should -Match 'Assert-VanessaTestClientCapacity[\s\S]*Start-EnterpriseBackground[\s\S]*-UseTestClient[\s\S]*-TestClientPort'
             $broker | Should -Match 'testClientProcessStartTime'
-            $broker | Should -Match 'schemaVersion\s*=\s*2'
+            $broker | Should -Match 'schemaVersion\s*=\s*3'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "counts owned and foreign TestClients and fails license preflight without exposing secrets" {
+        $oldCapacity = [Environment]::GetEnvironmentVariable("VANESSA_TESTCLIENT_LICENSE_CAPACITY", "Process")
+        try {
+            [Environment]::SetEnvironmentVariable("VANESSA_TESTCLIENT_LICENSE_CAPACITY", "2", "Process")
+            $result = & {
+                $state = [pscustomobject]@{
+                    devBranchInfoBasePath = "D:\work\owned\base"
+                    worktreePath = "D:\work\owned"
+                    stateProjectRoot = "D:\work"
+                    safeDevBranchName = "branch-owned"
+                }
+                function Get-OneCProcessInfo {
+                    param([switch]$RequireSuccess)
+                    @(
+                        [pscustomobject]@{ processId = 71001; name = "1cv8c.exe"; commandLine = '1cv8c.exe /TESTCLIENT -TPort 48151 /F "D:\work\owned\base" /P "owned-secret"' },
+                        [pscustomobject]@{ processId = 71002; name = "1cv8c.exe"; commandLine = '1cv8c.exe /TESTCLIENT -TPort 48152 /F "D:\foreign\base" /P "foreign-secret"' },
+                        [pscustomobject]@{ processId = 71003; name = "1cv8c.exe"; commandLine = '1cv8c.exe /TESTMANAGER -TPort 48153 /F "D:\other\manager"' }
+                    )
+                }
+                $snapshot = Get-VanessaTestClientCapacitySnapshot -State $state
+                $message = ""
+                try {
+                    Assert-VanessaTestClientCapacity -State $state | Out-Null
+                } catch {
+                    $message = $_.Exception.Message
+                }
+                [pscustomobject]@{ snapshot = $snapshot; message = $message }
+            }
+            $result.snapshot.capacity | Should -Be 2
+            $result.snapshot.active | Should -Be 2
+            @($result.snapshot.processes | Where-Object scope -eq "owned").Count | Should -Be 1
+            @($result.snapshot.processes | Where-Object scope -eq "foreign").Count | Should -Be 1
+            $result.message | Should -Match '^ITL_VANESSA_LICENSE_LIMIT:'
+            $result.message | Should -Match '71001'
+            $result.message | Should -Match '71002'
+            $result.message | Should -Not -Match 'secret'
+        } finally {
+            [Environment]::SetEnvironmentVariable("VANESSA_TESTCLIENT_LICENSE_CAPACITY", $oldCapacity, "Process")
+        }
+    }
+
+    It "reuses a proven owned on-demand TestClient without capacity check or new process" {
+        $result = & {
+            $script:capacityChecks = 0
+            $script:testClientStarts = 0
+            $runtime = [pscustomobject]@{
+                schemaVersion = 3; status = "running"; family = "vanessa-ui"; instanceId = ("a" * 32)
+                pid = 72001; port = 9877; url = "http://127.0.0.1:9877/mcp"
+                testClientPid = 72002; testClientPort = 48151; testClientState = "port-ready"
+            }
+            function Read-ItlOnDemandRuntimeState { return $runtime }
+            function Test-ItlOnDemandOwnedProcess { return $true }
+            function Test-TcpPortOpen { return $true }
+            function Read-CurrentDevBranchStateForRoctupMcp { return [pscustomobject]@{ devBranchInfoBasePath = "D:\owned\base" } }
+            function Get-Process { return [pscustomobject]@{ Id = 72002 } }
+            function Get-ItlOnDemandOwnedTestClientProcesses { return @([pscustomobject]@{ process = [pscustomobject]@{ Id = 72002 } }) }
+            function Assert-VanessaTestClientCapacity { $script:capacityChecks++ }
+            function Start-EnterpriseBackground { $script:testClientStarts++ }
+            function Write-ItlOnDemandRuntimeState { return "state.json" }
+            $reused = Ensure-ItlOnDemandVanessaTestClient -InstanceId ("a" * 32)
+            [pscustomobject]@{ state = $reused.testClientState; reused = $reused.testClientReused; capacityChecks = $script:capacityChecks; starts = $script:testClientStarts }
+        }
+        $result.state | Should -Be "port-ready"
+        $result.reused | Should -BeTrue
+        $result.capacityChecks | Should -Be 0
+        $result.starts | Should -Be 0
+    }
+
+    It "does not claim or stop a foreign process stored as TestClient ownership" {
+        $result = & {
+            $script:stops = 0
+            $runtime = [pscustomobject]@{
+                schemaVersion = 3; status = "running"; family = "vanessa-ui"; instanceId = ("b" * 32)
+                pid = 73001; port = 9877; url = "http://127.0.0.1:9877/mcp"
+                testClientPid = 73002; testClientPort = 48151; testClientState = "port-ready"
+            }
+            function Read-ItlOnDemandRuntimeState { return $runtime }
+            function Test-ItlOnDemandOwnedProcess { return $true }
+            function Test-TcpPortOpen { return $true }
+            function Read-CurrentDevBranchStateForRoctupMcp { return [pscustomobject]@{ devBranchInfoBasePath = "D:\owned\base" } }
+            function Get-Process { return [pscustomobject]@{ Id = 73002 } }
+            function Get-ItlOnDemandOwnedTestClientProcesses { return @() }
+            function Stop-Process { $script:stops++ }
+            $message = ""
+            try {
+                Ensure-ItlOnDemandVanessaTestClient -InstanceId ("b" * 32) | Out-Null
+            } catch {
+                $message = $_.Exception.Message
+            }
+            [pscustomobject]@{ message = $message; stops = $script:stops }
+        }
+        $result.message | Should -Match '^ITL_ONDEMAND_OWNERSHIP_MISMATCH: refusing to reuse or stop unverified TestClient PID 73002'
+        $result.stops | Should -Be 0
+    }
+
+    It "does not start TestClient when the shared license capacity is exhausted" {
+        $result = & {
+            $script:starts = 0
+            $runtime = [pscustomobject]@{
+                schemaVersion = 3; status = "running"; family = "vanessa-ui"; instanceId = ("c" * 32)
+                pid = 74001; port = 9877; url = "http://127.0.0.1:9877/mcp"
+                testClientPid = 0; testClientPort = 48151; testClientState = "not-started"
+            }
+            function Read-ItlOnDemandRuntimeState { return $runtime }
+            function Test-ItlOnDemandOwnedProcess { return $true }
+            function Test-TcpPortOpen { return $true }
+            function Read-CurrentDevBranchStateForRoctupMcp { return [pscustomobject]@{ devBranchInfoBasePath = "D:\owned\base" } }
+            function Test-VanessaTestPortOwnedByState { return $false }
+            function Test-VanessaTestPortUsedByForeignProcess { return $false }
+            function Assert-VanessaTestClientCapacity { throw "ITL_VANESSA_LICENSE_LIMIT: capacity=2 active=2" }
+            function Start-EnterpriseBackground { $script:starts++ }
+            $message = ""
+            try {
+                Ensure-ItlOnDemandVanessaTestClient -InstanceId ("c" * 32) | Out-Null
+            } catch {
+                $message = $_.Exception.Message
+            }
+            [pscustomobject]@{ message = $message; starts = $script:starts }
+        }
+        $result.message | Should -Match '^ITL_VANESSA_LICENSE_LIMIT:'
+        $result.starts | Should -Be 0
     }
 
     It "refuses to claim a process when the ownership markers do not match" {
@@ -384,6 +526,129 @@ Describe "ITL on-demand MCP facade" {
             }
             $owned | Should -BeFalse
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "proves a registered runtime stale when its PID is dead after checking the port" {
+        $health = & {
+            function ConvertTo-IntOrDefault { param($Value, $Default) return [int]$Value }
+            function Get-Process { return $null }
+            function Test-TcpPortOpen { param([int]$Port) return $false }
+            function Test-ItlOnDemandOwnedProcess { return $false }
+            Get-ItlOnDemandBackendRuntimeHealth -RuntimeState ([pscustomobject]@{ pid = 41001; port = 48101 })
+        }
+        $health.stale | Should -BeTrue
+        $health.status | Should -Be "pid-dead"
+        $health.pidAlive | Should -BeFalse
+        $health.portOpen | Should -BeFalse
+    }
+
+    It "proves a registered runtime stale when its owned live PID has an unavailable port" {
+        $health = & {
+            function ConvertTo-IntOrDefault { param($Value, $Default) return [int]$Value }
+            function Get-Process { return [pscustomobject]@{ Id = 41002 } }
+            function Test-TcpPortOpen { param([int]$Port) return $false }
+            function Test-ItlOnDemandOwnedProcess { return $true }
+            Get-ItlOnDemandBackendRuntimeHealth -RuntimeState ([pscustomobject]@{ pid = 41002; port = 48102 })
+        }
+        $health.stale | Should -BeTrue
+        $health.status | Should -Be "owned-pid-port-unavailable"
+        $health.pidAlive | Should -BeTrue
+        $health.portOpen | Should -BeFalse
+        $health.owned | Should -BeTrue
+    }
+
+    It "does not classify an unverified live PID as stale" {
+        $health = & {
+            function ConvertTo-IntOrDefault { param($Value, $Default) return [int]$Value }
+            function Get-Process { return [pscustomobject]@{ Id = 41003 } }
+            function Test-TcpPortOpen { param([int]$Port) return $false }
+            function Test-ItlOnDemandOwnedProcess { return $false }
+            Get-ItlOnDemandBackendRuntimeHealth -RuntimeState ([pscustomobject]@{ pid = 41003; port = 48103 })
+        }
+        $health.stale | Should -BeFalse
+        $health.status | Should -Be "ownership-unverified"
+    }
+
+    It "replaces a proven stale runtime exactly once with a new instance identity" {
+        $result = & {
+            $script:recoveryStops = 0
+            $script:recoveryStarts = 0
+            function Read-ItlOnDemandRuntimeState {
+                return [pscustomobject]@{ family = "vanessa-ui"; instanceId = ("a" * 32); pid = 41004; port = 48104 }
+            }
+            function Get-ItlOnDemandBackendRuntimeHealth {
+                return [pscustomobject]@{ stale = $true; status = "pid-dead"; pidAlive = $false; portOpen = $false; owned = $false }
+            }
+            function Stop-ItlOnDemandBackendInstance {
+                $script:recoveryStops++
+                return [pscustomobject]@{ status = "stopped" }
+            }
+            function Start-ItlOnDemandBackendInstance {
+                param($Family, $InstanceId, $CatalogSha256)
+                $script:recoveryStarts++
+                return [pscustomobject]@{ status = "running"; family = $Family; instanceId = $InstanceId; pid = 41005; port = 48105 }
+            }
+            $replacement = Recover-ItlOnDemandBackendInstance `
+                -Family "vanessa-ui" `
+                -InstanceId ("a" * 32) `
+                -ReplacementInstanceId ("b" * 32) `
+                -ExpectedPid 41004 `
+                -ExpectedPort 48104 `
+                -CatalogSha256 ("c" * 64)
+            [pscustomobject]@{ stops = $script:recoveryStops; starts = $script:recoveryStarts; replacement = $replacement }
+        }
+        $result.stops | Should -Be 1
+        $result.starts | Should -Be 1
+        $result.replacement.instanceId | Should -Be ("b" * 32)
+    }
+
+    It "restores an atomically claimed runtime when strict ownership validation fails" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-recovery-rollback-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $runtimeRoot = Join-Path $tempRoot "runtime"
+                function Get-ItlOnDemandRuntimeRoot { return $runtimeRoot }
+                $native = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$PID"
+                $instanceId = "d" * 32
+                $path = Write-ItlOnDemandRuntimeState -RuntimeState ([pscustomobject][ordered]@{
+                    schemaVersion = 2
+                    status = "running"
+                    family = "vanessa-ui"
+                    instanceId = $instanceId
+                    pid = $PID
+                    processStartTime = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString("o")
+                    executablePath = [string]$native.ExecutablePath
+                    ownershipMarkers = @("marker-that-cannot-match")
+                    portFamily = "vanessa"
+                    portKey = "owned-key"
+                    port = 48106
+                    testClientPid = 0
+                    testClientPort = 0
+                    testClientPortFamily = ""
+                    testClientPortKey = ""
+                    vanessaParamsPath = ""
+                })
+                $message = ""
+                try {
+                    Stop-ItlOnDemandBackendInstance -Family "vanessa-ui" -InstanceId $instanceId -StrictOwnership | Out-Null
+                } catch {
+                    $message = $_.Exception.Message
+                }
+                [pscustomobject]@{
+                    message = $message
+                    restored = Test-Path -LiteralPath $path -PathType Leaf
+                    claims = @(Get-ChildItem -LiteralPath (Split-Path -Parent $path) -Filter "*.removing-*").Count
+                }
+            }
+            $result.message | Should -Match "^ITL_ONDEMAND_OWNERSHIP_MISMATCH"
+            $result.restored | Should -BeTrue
+            $result.claims | Should -Be 0
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "drains only on-demand runtime records that target the selected infobase" {
@@ -433,6 +698,188 @@ Describe "ITL on-demand MCP facade" {
             $result.baseA | Should -Be 0
             $result.baseB | Should -Be 1
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "atomically removes a stopped Vanessa runtime and releases both managed ports" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-release-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $runtimeRoot = Join-Path $tempRoot "runtime"
+                function Get-ItlOnDemandRuntimeRoot { return $runtimeRoot }
+                $script:Released = @()
+                function Release-ItlManagedPortAllocation {
+                    param([string]$Family, [string]$Key)
+                    $script:Released += "$Family/$Key"
+                }
+                $instanceId = "e" * 32
+                $paramsPath = Join-Path $tempRoot "vanessa-params.json"
+                Set-Content -LiteralPath $paramsPath -Encoding UTF8 -Value "{}"
+                $path = Write-ItlOnDemandRuntimeState -RuntimeState ([pscustomobject][ordered]@{
+                    schemaVersion = 2
+                    status = "running"
+                    family = "vanessa-ui"
+                    instanceId = $instanceId
+                    pid = 0
+                    processStartTime = ""
+                    executablePath = ""
+                    ownershipMarkers = @()
+                    portFamily = "vanessa-mcp"
+                    portKey = "backend-key"
+                    port = 48120
+                    infoBasePath = (Join-Path $tempRoot "base")
+                    testClientPid = 0
+                    testClientPort = 48170
+                    testClientPortFamily = "vanessa-mcp-testclient"
+                    testClientPortKey = "client-key"
+                    vanessaParamsPath = $paramsPath
+                })
+
+                Stop-ItlOnDemandBackendInstance -Family "vanessa-ui" -InstanceId $instanceId -StrictOwnership | Out-Null
+                [pscustomobject]@{
+                    runtimeRemoved = -not (Test-Path -LiteralPath $path)
+                    paramsRemoved = -not (Test-Path -LiteralPath $paramsPath)
+                    claims = @(Get-ChildItem -LiteralPath (Split-Path -Parent $path) -Filter "*.removing-*").Count
+                    released = @($script:Released)
+                }
+            }
+            $result.runtimeRemoved | Should -BeTrue
+            $result.paramsRemoved | Should -BeTrue
+            $result.claims | Should -Be 0
+            $result.released | Should -Contain "vanessa-mcp/backend-key"
+            $result.released | Should -Contain "vanessa-mcp-testclient/client-key"
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "stops the strictly owned backend process and closes its listening port" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-owned-process-" + [guid]::NewGuid().ToString("N"))
+        $child = $null
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $runtimeRoot = Join-Path $tempRoot "runtime"
+                function Get-ItlOnDemandRuntimeRoot { return $runtimeRoot }
+                function Release-ItlManagedPortAllocation {}
+                $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+                $listener.Start()
+                $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+                $listener.Stop()
+                $command = '$listener=[System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback,{0});$listener.Start();Start-Sleep -Seconds 60' -f $port
+                $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+                $powershell = (Get-Command powershell.exe).Source
+                $script:OwnedChild = Start-Process `
+                    -FilePath $powershell `
+                    -ArgumentList @("-NoProfile", "-EncodedCommand", $encoded) `
+                    -WindowStyle Hidden `
+                    -PassThru
+                $deadline = (Get-Date).AddSeconds(10)
+                while (-not (Test-TcpPortOpen -Port $port) -and (Get-Date) -lt $deadline) {
+                    Start-Sleep -Milliseconds 50
+                }
+                if (-not (Test-TcpPortOpen -Port $port)) {
+                    throw "Owned backend fixture did not open port $port."
+                }
+                $process = Get-Process -Id $script:OwnedChild.Id -ErrorAction Stop
+                $native = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$($script:OwnedChild.Id)"
+                $instanceId = "f" * 32
+                $path = Write-ItlOnDemandRuntimeState -RuntimeState ([pscustomobject][ordered]@{
+                    schemaVersion = 2
+                    status = "running"
+                    family = "vanessa-ui"
+                    instanceId = $instanceId
+                    pid = $script:OwnedChild.Id
+                    processStartTime = $process.StartTime.ToUniversalTime().ToString("o")
+                    executablePath = [string]$native.ExecutablePath
+                    ownershipMarkers = @($encoded)
+                    portFamily = "vanessa-mcp"
+                    portKey = "owned-process-key"
+                    port = $port
+                    infoBasePath = (Join-Path $tempRoot "base")
+                    testClientPid = 0
+                    testClientPort = 0
+                    testClientPortFamily = ""
+                    testClientPortKey = ""
+                    vanessaParamsPath = ""
+                })
+
+                Stop-ItlOnDemandBackendInstance -Family "vanessa-ui" -InstanceId $instanceId -StrictOwnership | Out-Null
+                [pscustomobject]@{
+                    child = $script:OwnedChild
+                    processAlive = $null -ne (Get-Process -Id $script:OwnedChild.Id -ErrorAction SilentlyContinue)
+                    portOpen = Test-TcpPortOpen -Port $port
+                    runtimeRemoved = -not (Test-Path -LiteralPath $path)
+                }
+            }
+            $child = $result.child
+            $result.processAlive | Should -BeFalse
+            $result.portOpen | Should -BeFalse
+            $result.runtimeRemoved | Should -BeTrue
+        } finally {
+            if ($null -ne $child -and $null -ne (Get-Process -Id $child.Id -ErrorAction SilentlyContinue)) {
+                Stop-Process -Id $child.Id -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "retains runtime state and leases when a strict stop cannot prove the port was released" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-open-port-" + [guid]::NewGuid().ToString("N"))
+        $listener = $null
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+            $listener.Start()
+            $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $runtimeRoot = Join-Path $tempRoot "runtime"
+                function Get-ItlOnDemandRuntimeRoot { return $runtimeRoot }
+                $script:ReleaseCalls = 0
+                function Release-ItlManagedPortAllocation { $script:ReleaseCalls++ }
+                $instanceId = "1" * 32
+                $path = Write-ItlOnDemandRuntimeState -RuntimeState ([pscustomobject][ordered]@{
+                    schemaVersion = 2
+                    status = "running"
+                    family = "vanessa-ui"
+                    instanceId = $instanceId
+                    pid = 0
+                    processStartTime = ""
+                    executablePath = ""
+                    ownershipMarkers = @()
+                    portFamily = "vanessa-mcp"
+                    portKey = "open-port-key"
+                    port = $port
+                    infoBasePath = (Join-Path $tempRoot "base")
+                    testClientPid = 0
+                    testClientPort = 0
+                    testClientPortFamily = ""
+                    testClientPortKey = ""
+                    vanessaParamsPath = ""
+                })
+                $message = ""
+                try {
+                    Stop-ItlOnDemandBackendInstance -Family "vanessa-ui" -InstanceId $instanceId -StrictOwnership | Out-Null
+                } catch {
+                    $message = $_.Exception.Message
+                }
+                [pscustomobject]@{
+                    message = $message
+                    runtimeRestored = Test-Path -LiteralPath $path -PathType Leaf
+                    releaseCalls = $script:ReleaseCalls
+                }
+            }
+            $result.message | Should -Match "^ITL_ONDEMAND_STOP_FAILED: backend port $port is still open"
+            $result.runtimeRestored | Should -BeTrue
+            $result.releaseCalls | Should -Be 0
+        } finally {
+            if ($null -ne $listener) { $listener.Stop() }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "fails closed when strict runtime drain encounters unreadable ownership state" {
