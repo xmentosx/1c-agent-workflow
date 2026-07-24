@@ -126,6 +126,8 @@ Describe "Release E2E orchestration" {
                 devBranchName = "workflow-release-e2e"
                 devBranch = "itldev/workflow-release-e2e"
                 worktreePath = $worktreeRoot
+                unsafeActionProtectionResolution = "branch-confirmed"
+                unsafeActionProtectionConfirmed = $true
                 lastVerificationStatus = "missing"
             }
             Set-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\dev-branches\workflow-release-e2e.json") -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 6)

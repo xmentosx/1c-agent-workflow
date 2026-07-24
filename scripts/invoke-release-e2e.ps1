@@ -300,19 +300,45 @@ function Get-E2EJunitTotals {
 }
 
 function Get-E2EState {
-    $roots = @($ProjectRoot, $worktreePath) | Sort-Object -Unique
+    $roots = @($ProjectRoot, $worktreePath) | Select-Object -Unique
+    $expectedBranch = "itldev/$devBranchName"
+    $expectedWorktree = $worktreePath.TrimEnd('\', '/')
     foreach ($root in $roots) {
         $stateRoot = Join-Path $root ".agent-1c\dev-branches"
+        $candidates = @()
         foreach ($file in @(Get-ChildItem -LiteralPath $stateRoot -File -Filter "*.json" -ErrorAction SilentlyContinue)) {
             try {
                 $state = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
-                if ([string]$state.devBranchName -eq $devBranchName -or [string]$state.devBranch -eq "itldev/$devBranchName") {
-                    return [pscustomobject]@{ value = $state; path = $file.FullName }
+                if ([string]$state.devBranchName -eq $devBranchName -or [string]$state.devBranch -eq $expectedBranch) {
+                    $candidates += [pscustomobject]@{ value = $state; path = $file.FullName }
                 }
             } catch {}
         }
+        if ($candidates.Count -eq 0) { continue }
+
+        $matching = @($candidates | Where-Object {
+            $stateWorktree = ""
+            try { $stateWorktree = [System.IO.Path]::GetFullPath([string]$_.value.worktreePath).TrimEnd('\', '/') } catch {}
+            [string]$_.value.devBranchName -ceq $devBranchName -and
+                [string]$_.value.devBranch -ceq $expectedBranch -and
+                $stateWorktree.Equals($expectedWorktree, [System.StringComparison]::OrdinalIgnoreCase)
+        })
+        if ($matching.Count -eq 1) { return $matching[0] }
+        if ($matching.Count -gt 1) {
+            throw "RELEASE_E2E_BRANCH_STATE_CONTEXT_MISMATCH: multiple branch states match devBranchName='$devBranchName', devBranch='$expectedBranch', worktreePath='$worktreePath': $(@($matching.path) -join ', ')"
+        }
+        throw "RELEASE_E2E_BRANCH_STATE_CONTEXT_MISMATCH: branch state under '$stateRoot' does not exactly match devBranchName='$devBranchName', devBranch='$expectedBranch', worktreePath='$worktreePath'. Refusing to use state from another context."
     }
     throw "Development branch state was not found for E2E branch '$devBranchName'."
+}
+
+function Assert-E2EUnsafeActionProtectionConfirmed {
+    $stateRecord = Get-E2EState
+    $property = $stateRecord.value.PSObject.Properties["unsafeActionProtectionConfirmed"]
+    if ($null -eq $property -or $property.Value -isnot [bool] -or -not [bool]$property.Value) {
+        throw "RELEASE_E2E_UNSAFE_ACTION_PROTECTION_UNCONFIRMED: branch='$($stateRecord.value.devBranch)'; worktree='$worktreePath'; state='$($stateRecord.path)'; required=unsafeActionProtectionConfirmed:true. Run the monitored configure-dev-branch-unsafe-action-protection action for this worktree, complete its explicit confirmation, then rerun Release. This preflight does not confirm automatically or edit state/conf.cfg."
+    }
+    return $stateRecord
 }
 
 function ConvertTo-E2EHashtable {
@@ -540,6 +566,7 @@ function Sync-E2EWorktreeFromMaster {
 
 $branch = (& git -C $worktreePath branch --show-current).Trim()
 if ($LASTEXITCODE -ne 0 -or $branch -notlike "itldev/*") { throw "E2E worktree must be an itldev/* Git worktree: $worktreePath" }
+[void](Assert-E2EUnsafeActionProtectionConfirmed)
 $worktreeStatus = @(& git -C $worktreePath status --porcelain --untracked-files=all)
 if ($usingLegacyRunRoot -and $ResumeMode -eq "Restart") {
     $legacyRunRelative = $releaseRunRoot.Substring($worktreePath.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
