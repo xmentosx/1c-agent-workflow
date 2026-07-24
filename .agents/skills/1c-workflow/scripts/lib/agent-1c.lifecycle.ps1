@@ -2081,6 +2081,38 @@ function Restore-AiRules1cMcpConfigSnapshot {
     }
 }
 
+function Get-AiRules1cMcpReconcileSnapshotPaths {
+    return @(
+        @(Get-AiRules1cMcpClientConfigPaths) +
+        @(Get-ItlManagedMcpStatePath)
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique
+}
+
+function Get-AiRules1cMcpExpectedClientKeys {
+    param(
+        [string[]]$ClientNames,
+        [string]$Client = ""
+    )
+
+    if (-not $Client) { $Client = Get-ItlActiveClient }
+    return @($ClientNames | ForEach-Object { ConvertTo-ItlClientMcpKey -Name ([string]$_) -Client $Client } | Where-Object { $_ } | Select-Object -Unique)
+}
+
+function Assert-AiRules1cMcpReconcileIntegrity {
+    param([string[]]$ExpectedClientNames)
+
+    $client = Get-ItlActiveClient
+    $expectedKeys = @(Get-AiRules1cMcpExpectedClientKeys -ClientNames $ExpectedClientNames -Client $client)
+    $actualKeys = @(Get-ItlClientMcpEndpointKeys -Client $client)
+    $managedKeys = @(Get-ItlManagedMcpOwnerKeys -Client $client -Owner "vibecoding1c")
+    $missingActual = @($expectedKeys | Where-Object { $actualKeys -notcontains $_ })
+    $missingManaged = @($expectedKeys | Where-Object { $managedKeys -notcontains $_ })
+    $unexpectedManaged = @($managedKeys | Where-Object { $expectedKeys -notcontains $_ })
+    if ($missingActual.Count -gt 0 -or $missingManaged.Count -gt 0 -or $unexpectedManaged.Count -gt 0) {
+        throw "ITL_MCP_RECONCILE_INTEGRITY_FAILED: client=$client missingClient=[$($missingActual -join ', ')] missingManaged=[$($missingManaged -join ', ')] unexpectedManaged=[$($unexpectedManaged -join ', ')]."
+    }
+}
+
 function Write-AiRules1cMcpPreservedWarning {
     param(
         [string]$Operation,
@@ -2180,8 +2212,9 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
     $managedServerIds = @(Get-AiRules1cManagedMcpServerIds)
     $selection = Read-Vibecoding1cMcpSelection
     $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection
-    if (-not $selectionCompleteness.isComplete) {
-        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons $selectionCompleteness.reasons
+    $selectionPath = Get-Vibecoding1cMcpSelectionPath
+    if (-not (Test-Path -LiteralPath $selectionPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons @("vibecoding1c MCP selection file is missing")
         return [pscustomobject]@{
             reconciled = $false
             preserved = $true
@@ -2191,9 +2224,26 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
     }
 
     try {
+        $selectedClientNames = @(Get-Vibecoding1cMcpSelectedClientConfigNames)
         $readyClientNames = @(Get-Vibecoding1cMcpReadyClientConfigNames)
     } catch {
-        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons @("failed to calculate ready vibecoding1c MCP endpoints: $($_.Exception.Message)")
+        throw "ITL_MCP_RECONCILE_INTEGRITY_FAILED: failed to calculate selected and ready vibecoding1c MCP endpoints. $($_.Exception.Message)"
+    }
+
+    $missingReadyClientNames = @($selectedClientNames | Where-Object { $readyClientNames -notcontains $_ })
+    if (-not $selectionCompleteness.isComplete -or $missingReadyClientNames.Count -gt 0) {
+        $client = Get-ItlActiveClient
+        $expectedKeys = @(Get-AiRules1cMcpExpectedClientKeys -ClientNames $selectedClientNames -Client $client)
+        $actualKeys = @(Get-ItlClientMcpEndpointKeys -Client $client)
+        $missingActual = @($expectedKeys | Where-Object { $actualKeys -notcontains $_ })
+        if ($missingActual.Count -gt 0) {
+            throw "ITL_MCP_RECONCILE_INTEGRITY_FAILED: selected MCP replacements are not ready and the current $client config is already incomplete. notReady=[$($missingReadyClientNames -join ', ')] missingClient=[$($missingActual -join ', ')] selection=[$(@($selectionCompleteness.reasons) -join '; ')]."
+        }
+        $preserveReasons = @($selectionCompleteness.reasons)
+        if ($missingReadyClientNames.Count -gt 0) {
+            $preserveReasons += "selected vibecoding1c MCP replacements are not ready: $($missingReadyClientNames -join ', ')"
+        }
+        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons $preserveReasons
         return [pscustomobject]@{
             reconciled = $false
             preserved = $true
@@ -2203,26 +2253,14 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
     }
 
     $replacementServerIds = @($readyClientNames | Where-Object { $managedServerIds -contains $_ } | Select-Object -Unique)
-    if ($replacementServerIds.Count -eq 0) {
-        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons @("no ready vibecoding1c MCP endpoints were found in saved state")
-        return [pscustomobject]@{
-            reconciled = $false
-            preserved = $true
-            replacements = @()
-            pruned = @()
-        }
-    }
 
-    $snapshot = New-AiRules1cMcpConfigSnapshot -Paths (Get-AiRules1cMcpClientConfigPaths)
+    $snapshot = New-AiRules1cMcpConfigSnapshot -Paths (Get-AiRules1cMcpReconcileSnapshotPaths)
     try {
-        Write-Vibecoding1cMcpClientConfig
         $removed = @(Remove-AiRules1cManagedMcpConfig -ServerIds $replacementServerIds)
+        Write-Vibecoding1cMcpClientConfig
         $pruned = @(Remove-StaleAiRules1cDataMcpConfig)
-        $withoutReplacement = @($managedServerIds | Where-Object { $replacementServerIds -notcontains $_ })
+        Assert-AiRules1cMcpReconcileIntegrity -ExpectedClientNames $readyClientNames
         Write-Host "Reconciled ai_rules_1c MCP client entries with ITL vibecoding1c MCP config: $($replacementServerIds -join ', ')."
-        if ($withoutReplacement.Count -gt 0) {
-            Write-Host "Preserved ai_rules_1c MCP entries without a ready vibecoding1c replacement: $($withoutReplacement -join ', ')."
-        }
         return [pscustomobject]@{
             reconciled = $true
             preserved = $false
@@ -2237,13 +2275,7 @@ function Invoke-AiRules1cManagedMcpConfigReconcile {
         } catch {
             throw "$Operation failed: $errorMessage MCP client config rollback also failed: $($_.Exception.Message)"
         }
-        Write-AiRules1cMcpPreservedWarning -Operation $Operation -Reasons @("failed to write replacement client config: $errorMessage")
-        return [pscustomobject]@{
-            reconciled = $false
-            preserved = $true
-            replacements = @()
-            pruned = @()
-        }
+        throw "$Operation failed and MCP client config was rolled back. $errorMessage"
     }
 }
 
