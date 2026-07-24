@@ -136,6 +136,7 @@ Describe "Release E2E orchestration" {
                 worktreePath = $worktreeRoot
                 unsafeActionProtectionResolution = "branch-confirmed"
                 unsafeActionProtectionConfirmed = $true
+                unsafeActionProtectionConfirmedAt = "2026-07-24T00:00:00Z"
                 lastVerificationStatus = "missing"
             }
             Set-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\dev-branches\workflow-release-e2e.json") -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 6)
@@ -350,6 +351,12 @@ switch ($Action) {
             $checkpointPath = Join-Path $worktreeRoot ".agent-1c\runs\release-e2e\workflow-release-e2e\checkpoint.json"
             $promotionCheckpoint = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $promotionCheckpoint.identity.workflowCommit = "1111111111111111111111111111111111111111"
+            $postConfigStatePath = [string]$promotionCheckpoint.stateFiles.postConfig.stateCopyPath
+            $postConfigState = Get-Content -LiteralPath $postConfigStatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $postConfigState.unsafeActionProtectionConfirmed = $false
+            $postConfigState.unsafeActionProtectionConfirmedAt = ""
+            [System.IO.File]::WriteAllText($postConfigStatePath, (($postConfigState | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+            $promotionCheckpoint.stateFiles.postConfig.stateSha256 = (Get-FileHash -LiteralPath $postConfigStatePath -Algorithm SHA256).Hash.ToLowerInvariant()
             [System.IO.File]::WriteAllText($checkpointPath, (($promotionCheckpoint | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
             $promotionSummaryPath = Join-Path $tempRoot "promotion-summary.json"
             & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
@@ -363,6 +370,8 @@ switch ($Action) {
             @($promotionSummary.executedStages) | Should -Contain "verification-refresh"
             @($promotionSummary.executedStages) | Should -Contain "result-cleanup"
             @($promotionSummary.invalidatedStages) | Should -Contain "result-cleanup"
+            $promotionState = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\dev-branches\workflow-release-e2e.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $promotionState.unsafeActionProtectionConfirmed | Should -BeTrue
             $promotedActions = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\release-e2e-actions.log") -Encoding UTF8
             @($promotedActions | Where-Object { $_ -eq "check-dev-branch" }).Count | Should -Be 4
             @($promotedActions | Where-Object { $_ -eq "release-e2e-config-roundtrip" }).Count | Should -Be 1

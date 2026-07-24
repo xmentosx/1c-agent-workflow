@@ -445,6 +445,22 @@ function Restore-E2EStateFiles {
     param([object]$Record)
     Assert-E2ECheckpointFile -Path ([string]$Record.stateCopyPath) -Sha256 ([string]$Record.stateSha256) -Label "saved branch state"
     Copy-Item -LiteralPath ([string]$Record.stateCopyPath) -Destination ([string]$Record.actualStatePath) -Force
+    if ($script:e2eUnsafeActionProtectionConfirmation) {
+        $restoredState = Get-Content -LiteralPath ([string]$Record.actualStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($name in @($script:e2eUnsafeActionProtectionConfirmation.Keys)) {
+            $property = $restoredState.PSObject.Properties[$name]
+            if ($null -eq $property) {
+                $restoredState | Add-Member -NotePropertyName $name -NotePropertyValue $script:e2eUnsafeActionProtectionConfirmation[$name]
+            } else {
+                $property.Value = $script:e2eUnsafeActionProtectionConfirmation[$name]
+            }
+        }
+        [IO.File]::WriteAllText(
+            [string]$Record.actualStatePath,
+            (($restoredState | ConvertTo-Json -Depth 16) + [Environment]::NewLine),
+            [Text.UTF8Encoding]::new($false)
+        )
+    }
     if ([string]$Record.envCopyPath) {
         Assert-E2ECheckpointFile -Path ([string]$Record.envCopyPath) -Sha256 ([string]$Record.envSha256) -Label "saved .dev.env"
         Copy-Item -LiteralPath ([string]$Record.envCopyPath) -Destination ([string]$Record.actualEnvPath) -Force
@@ -566,7 +582,21 @@ function Sync-E2EWorktreeFromMaster {
 
 $branch = (& git -C $worktreePath branch --show-current).Trim()
 if ($LASTEXITCODE -ne 0 -or $branch -notlike "itldev/*") { throw "E2E worktree must be an itldev/* Git worktree: $worktreePath" }
-[void](Assert-E2EUnsafeActionProtectionConfirmed)
+$unsafeActionProtectionState = Assert-E2EUnsafeActionProtectionConfirmed
+$script:e2eUnsafeActionProtectionConfirmation = [ordered]@{}
+foreach ($name in @(
+    "unsafeActionProtectionResolution",
+    "unsafeActionProtectionSetupMode",
+    "unsafeActionProtectionConfirmed",
+    "unsafeActionProtectionConfirmedAt",
+    "unsafeActionProtectionUser",
+    "unsafeActionProtectionSourceKey"
+)) {
+    $property = $unsafeActionProtectionState.value.PSObject.Properties[$name]
+    if ($null -ne $property) {
+        $script:e2eUnsafeActionProtectionConfirmation[$name] = $property.Value
+    }
+}
 $worktreeStatus = @(& git -C $worktreePath status --porcelain --untracked-files=all)
 if ($usingLegacyRunRoot -and $ResumeMode -eq "Restart") {
     $legacyRunRelative = $releaseRunRoot.Substring($worktreePath.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
