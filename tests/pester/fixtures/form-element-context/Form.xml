@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Form xmlns="http://v8.1c.ru/8.3/xcf/logform">
+	<ChildItems>
+		<UsualGroup name="OuterGroup" id="1">
+			<Title>SECRET-FULL-XML-MARKER</Title>
+			<ChildItems>
+				<Pages name="ModePages" id="2">
+					<ChildItems>
+						<Page name="FirstPage" id="3">
+							<ChildItems>
+								<InputField name="MultiField" id="4">
+									<DataPath>Object.Filters</DataPath>
+									<ExtendedEditMultipleValues>true</ExtendedEditMultipleValues>
+								</InputField>
+								<InputField name="UnknownField" id="5">
+									<DataPath>Object.Name</DataPath>
+								</InputField>
+								<InputField name="FalseField" id="6">
+									<DataPath>Object.DisabledFilters</DataPath>
+									<ExtendedEditMultipleValues>false</ExtendedEditMultipleValues>
+								</InputField>
+							</ChildItems>
+						</Page>
+						<Page name="SecondPage" id="7">
+							<ChildItems>
+								<InputField name="DuplicateField" id="8">
+									<DataPath>Object.FirstDuplicate</DataPath>
+								</InputField>
+								<InputField name="DuplicateField" id="9">
+									<DataPath>Object.SecondDuplicate</DataPath>
+								</InputField>
+							</ChildItems>
+						</Page>
+					</ChildItems>
+				</Pages>
+			</ChildItems>
+		</UsualGroup>
+	</ChildItems>
+</Form>
