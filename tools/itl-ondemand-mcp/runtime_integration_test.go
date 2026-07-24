@@ -1272,6 +1272,10 @@ func assertToolErrorCode(t *testing.T, result *mcp.CallToolResult, expected stri
 func TestRuntimeIdleTimeoutStartsAfterLastConcurrentCall(t *testing.T) {
 	tools := []*mcp.Tool{{Name: "wait", InputSchema: map[string]any{"type": "object"}}}
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseCalls := func() {
+		releaseOnce.Do(func() { close(release) })
+	}
 	entered := make(chan struct{}, 2)
 	backendServer := mcp.NewServer(&mcp.Implementation{Name: "idle-backend", Version: "1"}, nil)
 	backendServer.AddTool(tools[0], func(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1287,32 +1291,57 @@ func TestRuntimeIdleTimeoutStartsAfterLastConcurrentCall(t *testing.T) {
 	t.Cleanup(httpServer.Close)
 	broker := &fakeBroker{info: &backendInfo{URL: httpServer.URL}}
 	_, session := newFacadeSession(t, tools, broker, 40*time.Millisecond, nil)
-	done := make(chan struct{}, 2)
+	callCtx, cancelCalls := context.WithTimeout(context.Background(), 3*time.Second)
+	t.Cleanup(func() {
+		cancelCalls()
+		releaseCalls()
+	})
+	done := make(chan error, 2)
 	for range 2 {
 		go func() {
-			_, _ = session.CallTool(context.Background(), &mcp.CallToolParams{Name: "wait", Arguments: map[string]any{}})
-			done <- struct{}{}
+			_, err := session.CallTool(callCtx, &mcp.CallToolParams{Name: "wait", Arguments: map[string]any{}})
+			done <- err
 		}()
 	}
 	for range 2 {
-		<-entered
+		select {
+		case <-entered:
+		case <-callCtx.Done():
+			t.Fatalf("concurrent backend calls did not both start: %v", callCtx.Err())
+		}
 	}
-	time.Sleep(80 * time.Millisecond)
+	select {
+	case <-time.After(80 * time.Millisecond):
+	case <-callCtx.Done():
+		t.Fatalf("concurrent calls did not remain active through the idle interval: %v", callCtx.Err())
+	}
 	if _, stops := broker.counts(); stops != 0 {
 		t.Fatalf("backend stopped with active calls: %d", stops)
 	}
-	close(release)
+	releaseCalls()
 	for range 2 {
-		<-done
-	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, stops := broker.counts(); stops == 1 {
-			return
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("concurrent facade call failed: %v", err)
+			}
+		case <-callCtx.Done():
+			t.Fatalf("concurrent facade call did not return after release: %v", callCtx.Err())
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("backend was not stopped after last call became idle")
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if _, stops := broker.counts(); stops == 1 {
+				return
+			}
+		case <-callCtx.Done():
+			_, stops := broker.counts()
+			t.Fatalf("backend was not stopped after last call became idle: stops=%d err=%v", stops, callCtx.Err())
+		}
+	}
 }
 
 func TestRuntimeToolsListChangedInvalidatesSession(t *testing.T) {

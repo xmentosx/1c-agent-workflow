@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -102,6 +103,48 @@ func TestVanessaReleaseCatalogKeepsDistinctFileArgumentNames(t *testing.T) {
 	}
 	if err := catalog.validate("load_features", map[string]any{"filePath": featurePath}); err == nil {
 		t.Fatal("load_features accepted renamed filePath argument")
+	}
+}
+
+func TestLoadedCatalogConcurrentValidationIsSafe(t *testing.T) {
+	catalog := &loadedCatalog{Data: catalogFile{
+		SchemaVersion: 1,
+		Family:        "roctup",
+		Tools: []*mcp.Tool{{
+			Name: "ping",
+			InputSchema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"value": map[string]any{"type": "string"}},
+				"required":   []any{"value"},
+			},
+		}},
+	}}
+
+	const callers = 32
+	start := make(chan struct{})
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for range callers {
+		go func() {
+			defer wg.Done()
+			<-start
+			for range 100 {
+				if err := catalog.validate("ping", map[string]any{"value": "ok"}); err != nil {
+					errs <- err
+					return
+				}
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent validation failed: %v", err)
+	}
+	if len(catalog.tools) != 1 || len(catalog.validators) != 1 {
+		t.Fatalf("catalog indexes were not initialized exactly once: tools=%d validators=%d", len(catalog.tools), len(catalog.validators))
 	}
 }
 
