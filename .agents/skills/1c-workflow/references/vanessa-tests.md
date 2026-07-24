@@ -26,6 +26,16 @@ Changed `.feature` files require `/itl-vanessa-author`; see `vanessa-authoring.m
 - Reuse an existing library step when it already expresses the business action.
 - Keep each scenario short: setup, action, 1-3 observable assertions, cleanup if needed.
 
+## UI Authoring Rules
+
+- In single-quoted Gherkin parameters and table cells, escape an apostrophe as `\'`; do not use the BSL/SQL `''` convention.
+- Make UI setup self-contained: do not depend on saved form state, the current row, or an active page or mode left by another scenario. Establish the relevant page or mode explicitly.
+- Before selecting the current table row, position it by a stable business key; add columns when one value is not unique.
+- Clear a field before selection only when it is known to add or restore values and the scenario expects an exact set. Assert the resulting value or set when it is observable; do not inspect every form merely to justify clearing.
+- Base assertions on runtime-visible and available elements. Static visibility of a child does not prove user availability under the current page or mode; explicitly select the relevant state and assert only its active elements.
+- If a selector is already known, do no extra discovery. For unknown static structure, query targeted graph/code metadata or source; for dynamic visibility or availability, use targeted Vanessa UI MCP evidence. Read only the relevant `Form.xml` fragment as a final fallback, never require a full-form scan.
+- Keep acceptance scenarios fully automated. Interactive profiling is separate tooling, not a reason to add manual pauses or profiling tags to ordinary features.
+
 ## BSL Context And Extension UI
 
 - Vanessa's `Объект` scenario context is not an arbitrary `Структура`. Do not add fields with `Объект.Поле = ...` or `Объект.Вставить(...)`.
