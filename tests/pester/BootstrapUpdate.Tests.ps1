@@ -649,8 +649,12 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $previousSourcePath = $env:ITL_WORKFLOW_SOURCE_PATH
         $previousRepo = $env:ITL_WORKFLOW_REPO
         $previousRef = $env:ITL_WORKFLOW_REF
+        $previousVanessaSourceBuild = $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE
+        $qualifiedVanessaSourceBuild = "C:\Users\xment\.codex\worktrees\d22b\1c-agent-workflow\build\third-party\vanessa-automation\1.2.043.28-itl-r1\vanessa-automation-single.1.2.043.28-itl-r1.zip"
 
         try {
+            (Test-Path -LiteralPath $qualifiedVanessaSourceBuild -PathType Leaf) | Should -BeTrue
+            (Get-FileHash -LiteralPath $qualifiedVanessaSourceBuild -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be "fae6ff06a66e5fa3fe315585ec5c5e678724edcd75fff97069f6dd224b86b9b6"
             New-Item -ItemType Directory -Force -Path $projectRoot | Out-Null
             New-Item -ItemType Directory -Force -Path `
                 (Join-Path $projectRoot ".agents\skills\1c-workflow"),
@@ -722,6 +726,7 @@ local after
             $env:ITL_WORKFLOW_SOURCE_PATH = $RepoRoot
             $env:ITL_WORKFLOW_REPO = ""
             $env:ITL_WORKFLOW_REF = ""
+            $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $qualifiedVanessaSourceBuild
             & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $projectRoot -Action update-workflow -SkipAiRules > $stdoutPath 2> $stderrPath
             $diagnostic = ((Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue) + [Environment]::NewLine + (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue))
             $LASTEXITCODE | Should -Be 0 -Because $diagnostic
@@ -806,6 +811,7 @@ local after
             $env:ITL_WORKFLOW_SOURCE_PATH = $previousSourcePath
             $env:ITL_WORKFLOW_REPO = $previousRepo
             $env:ITL_WORKFLOW_REF = $previousRef
+            $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $previousVanessaSourceBuild
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force
             }
@@ -1050,7 +1056,9 @@ exit 0
                 function Update-AgentGuidanceBridge { $script:postCalls++ }
                 function Update-UserRules { $script:postCalls++ }
                 function Update-RoctupMcp { $script:postCalls++ }
-                function Update-VanessaMcpArtifacts { $script:postCalls++ }
+                function Sync-VanessaAutomationDependencyLock { $script:postCalls++; $script:vanessaSyncOrder = $script:postCalls }
+                function Install-VanessaAutomation { $script:postCalls++; $script:vanessaInstallOrder = $script:postCalls }
+                function Update-VanessaMcpArtifacts { $script:postCalls++; $script:vanessaArtifactsOrder = $script:postCalls }
                 function Sync-ItlOnDemandMcpDependencyLock { $script:postCalls++; $script:syncOrder = $script:postCalls }
                 function Install-ItlOnDemandMcp { $script:postCalls++; $script:installOrder = $script:postCalls }
                 function Invoke-AiRulesBaselineMigration { [pscustomobject]@{ migrated = $true; suppressRegularUpdate = $true } }
@@ -1065,6 +1073,9 @@ exit 0
                     finalCopyCalls = $script:copyCalls
                     reexecArgs = @($script:reexecArgs)
                     postCalls = $script:postCalls
+                    vanessaSyncOrder = $script:vanessaSyncOrder
+                    vanessaInstallOrder = $script:vanessaInstallOrder
+                    vanessaArtifactsOrder = $script:vanessaArtifactsOrder
                     syncOrder = $script:syncOrder
                     installOrder = $script:installOrder
                 }
@@ -1074,6 +1085,9 @@ exit 0
             $result.finalCopyCalls | Should -Be $result.preCopyCalls
             $result.reexecArgs | Should -Be @("-LifecyclePhase", "post-copy")
             $result.postCalls | Should -BeGreaterThan 4
+            $result.vanessaSyncOrder | Should -BeLessThan $result.vanessaInstallOrder
+            $result.vanessaInstallOrder | Should -BeLessThan $result.vanessaArtifactsOrder
+            $result.vanessaArtifactsOrder | Should -BeLessThan $result.syncOrder
             $result.syncOrder | Should -BeLessThan $result.installOrder
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

@@ -1,0 +1,2 @@
+third-party/vanessa-automation/**/*.patch text eol=lf whitespace=-blank-at-eol,-space-before-tab
+third-party/vanessa-automation/**/manifest.json text eol=lf

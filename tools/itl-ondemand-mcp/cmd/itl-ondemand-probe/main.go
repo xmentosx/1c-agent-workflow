@@ -18,12 +18,16 @@ import (
 )
 
 type runtimeState struct {
-	InstanceID        string `json:"instanceId"`
-	PID               int    `json:"pid"`
-	Port              int    `json:"port"`
-	TestClientProfile string `json:"testClientProfile,omitempty"`
-	TestClientPID     int    `json:"testClientPid,omitempty"`
-	TestClientPort    int    `json:"testClientPort,omitempty"`
+	InstanceID                            string `json:"instanceId"`
+	PID                                   int    `json:"pid"`
+	Port                                  int    `json:"port"`
+	TestClientProfile                     string `json:"testClientProfile,omitempty"`
+	TestClientPID                         int    `json:"testClientPid,omitempty"`
+	TestClientPort                        int    `json:"testClientPort,omitempty"`
+	VanessaAutomationCompatibilityVersion string `json:"vanessaAutomationCompatibilityVersion,omitempty"`
+	VanessaAutomationDownstreamRevision   string `json:"vanessaAutomationDownstreamRevision,omitempty"`
+	VanessaAutomationArchiveSHA256        string `json:"vanessaAutomationArchiveSha256,omitempty"`
+	VanessaAutomationEpfSHA256            string `json:"vanessaAutomationEpfSha256,omitempty"`
 }
 
 type probeSession struct {
@@ -129,18 +133,18 @@ func run() error {
 			if *family != "vanessa-ui" {
 				return fmt.Errorf("--vanessa-ui-smoke requires --family vanessa-ui")
 			}
-			outcome, code, err := runVanessaSmoke(ctx, item.session, item.state.TestClientPort, *vanessaFeature)
+			outcome, codes, err := runVanessaSmoke(ctx, item.session, item.state.TestClientPort, *vanessaFeature)
 			if err != nil {
 				stopHeartbeat()
 				return err
 			}
-			if outcome == "runner-fallback-required" {
-				vanessaFileAuthoringOutcome = outcome
-			} else if vanessaFileAuthoringOutcome == "" {
+			if vanessaFileAuthoringOutcome == "" {
 				vanessaFileAuthoringOutcome = outcome
 			}
-			if code != "" {
-				vanessaFileAuthoringCodes = append(vanessaFileAuthoringCodes, code)
+			for _, code := range codes {
+				if !containsString(vanessaFileAuthoringCodes, code) {
+					vanessaFileAuthoringCodes = append(vanessaFileAuthoringCodes, code)
+				}
 			}
 		}
 		stopHeartbeat()
@@ -363,9 +367,73 @@ func distinctInstances(family string, states []runtimeState) error {
 	return nil
 }
 
-func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClientPort int, featurePath string) (string, string, error) {
+func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClientPort int, featurePath string) (string, []string, error) {
 	if featurePath == "" {
-		return "", "", fmt.Errorf("Vanessa authoring smoke requires --vanessa-feature")
+		return "", nil, fmt.Errorf("Vanessa authoring smoke requires --vanessa-feature")
+	}
+	if !filepath.IsAbs(featurePath) || !strings.Contains(featurePath, " ") || !containsCyrillic(featurePath) {
+		return "", nil, fmt.Errorf("Vanessa authoring smoke requires an absolute Windows path containing spaces and Cyrillic text: %q", featurePath)
+	}
+	featureDirectory := filepath.Dir(featurePath)
+	for _, call := range []struct {
+		name      string
+		arguments map[string]any
+	}{
+		{name: "open_feature_file", arguments: map[string]any{"filePath": featurePath}},
+		{name: "check_syntax", arguments: map[string]any{"filePath": featurePath}},
+		{name: "load_features", arguments: map[string]any{"path": featurePath}},
+		{name: "load_features", arguments: map[string]any{"path": featureDirectory}},
+	} {
+		result, err := callInnerTool(ctx, session, call.name, call.arguments)
+		if err != nil {
+			return "", nil, fmt.Errorf("Vanessa file smoke %s: %w", call.name, err)
+		}
+		if result == nil || result.IsError {
+			return "", nil, fmt.Errorf("Vanessa file smoke %s returned a tool error: %#v", call.name, result)
+		}
+	}
+	accessDeniedPath := os.Getenv("ITL_VANESSA_ACCESS_DENIED_PROBE_PATH")
+	var cleanupAccessDeniedProbe func() error
+	if accessDeniedPath == "" {
+		var err error
+		accessDeniedPath, cleanupAccessDeniedProbe, err = createAccessDeniedProbe(featureDirectory)
+		if err != nil {
+			return "", nil, fmt.Errorf("create Vanessa PATH_ACCESS_DENIED probe: %w", err)
+		}
+		defer func() {
+			if cleanupAccessDeniedProbe != nil {
+				_ = cleanupAccessDeniedProbe()
+			}
+		}()
+	}
+	errorCodes := make([]string, 0, 3)
+	for _, probe := range []struct {
+		name      string
+		arguments map[string]any
+		code      string
+	}{
+		{name: "open_feature_file", arguments: map[string]any{"filePath": featurePath + "|invalid"}, code: "PATH_INVALID"},
+		{name: "load_features", arguments: map[string]any{"path": filepath.Join(featureDirectory, "Отсутствует feature.feature")}, code: "PATH_NOT_FOUND"},
+		{name: "check_syntax", arguments: map[string]any{"filePath": accessDeniedPath}, code: "PATH_ACCESS_DENIED"},
+	} {
+		result, err := callInnerTool(ctx, session, probe.name, probe.arguments)
+		if err != nil {
+			return "", nil, fmt.Errorf("Vanessa structured error smoke %s: %w", probe.name, err)
+		}
+		if result == nil || !result.IsError {
+			return "", nil, fmt.Errorf("Vanessa structured error smoke %s did not return %s: %#v", probe.name, probe.code, result)
+		}
+		actual := probeToolResultCode(result)
+		if actual != probe.code {
+			return "", nil, fmt.Errorf("Vanessa structured error smoke %s returned %q, expected %q: %#v", probe.name, actual, probe.code, result.StructuredContent)
+		}
+		errorCodes = append(errorCodes, actual)
+	}
+	if cleanupAccessDeniedProbe != nil {
+		if err := cleanupAccessDeniedProbe(); err != nil {
+			return "", nil, fmt.Errorf("cleanup Vanessa PATH_ACCESS_DENIED probe: %w", err)
+		}
+		cleanupAccessDeniedProbe = nil
 	}
 	var osWindows *mcp.CallToolResult
 	for _, call := range []struct {
@@ -379,10 +447,10 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 	} {
 		result, err := callInnerTool(ctx, session, call.name, call.arguments)
 		if err != nil {
-			return "", "", fmt.Errorf("Vanessa smoke %s: %w", call.name, err)
+			return "", nil, fmt.Errorf("Vanessa smoke %s: %w", call.name, err)
 		}
 		if result == nil || result.IsError {
-			return "", "", fmt.Errorf("Vanessa smoke %s returned a tool error: %#v", call.name, result)
+			return "", nil, fmt.Errorf("Vanessa smoke %s returned a tool error: %#v", call.name, result)
 		}
 		if call.name == "get_window_list_os" {
 			osWindows = result
@@ -393,33 +461,35 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 		var err error
 		title, err = waitForTestClientWindowTitle(ctx, testClientPort, time.Minute)
 		if err != nil {
-			return "", "", err
+			return "", nil, err
 		}
 	}
 	result, err := callInnerTool(ctx, session, "get_window_screenshot_os", map[string]any{"window_title": title, "color_mode": "grayscale"})
 	if err != nil {
-		return "", "", fmt.Errorf("Vanessa smoke get_window_screenshot_os: %w", err)
+		return "", nil, fmt.Errorf("Vanessa smoke get_window_screenshot_os: %w", err)
 	}
 	if result == nil || result.IsError || len(result.Content) == 0 {
-		return "", "", fmt.Errorf("Vanessa smoke screenshot returned no content: %#v", result)
+		return "", nil, fmt.Errorf("Vanessa smoke screenshot returned no content: %#v", result)
 	}
-	for _, name := range []string{"open_feature_file", "check_syntax"} {
-		result, err := callInnerTool(ctx, session, name, map[string]any{"filePath": featurePath})
-		if err != nil {
-			return "", "", fmt.Errorf("Vanessa authoring smoke %s: %w", name, err)
-		}
-		if result == nil {
-			return "", "", fmt.Errorf("Vanessa authoring smoke %s returned no result", name)
-		}
-		if result.IsError {
-			code := probeToolResultCode(result)
-			if code == "ITL_ONDEMAND_BACKEND_CALL_FAILED" || code == "ITL_VANESSA_TOOL_RESULT_FAILED" || code == "ITL_ONDEMAND_EMPTY_RESULT" {
-				return "runner-fallback-required", code, nil
-			}
-			return "", code, fmt.Errorf("Vanessa authoring smoke %s returned an unsupported tool error: %#v", name, result.StructuredContent)
+	return "passed", errorCodes, nil
+}
+
+func containsString(values []string, value string) bool {
+	for _, item := range values {
+		if item == value {
+			return true
 		}
 	}
-	return "passed", "", nil
+	return false
+}
+
+func containsCyrillic(value string) bool {
+	for _, symbol := range value {
+		if symbol >= '\u0400' && symbol <= '\u04ff' {
+			return true
+		}
+	}
+	return false
 }
 
 func probeToolResultCode(result *mcp.CallToolResult) string {

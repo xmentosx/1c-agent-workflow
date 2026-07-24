@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "facadeVersion": "0.3.2",
-  "minimumFacadeVersion": "0.3.2",
+  "facadeVersion": "0.4.0",
+  "minimumFacadeVersion": "0.4.0",
   "families": {
     "roctup": {
       "serverName": "itl-roctup-data",
@@ -22,6 +22,16 @@
         "vaExtension": "1.2.043.28",
         "vanessaAutomation": "1.2.043.28",
         "vanessaExt": "1.3.9.131"
+      },
+      "backendRevisions": {
+        "vanessaAutomation": "itl-r1"
+      },
+      "vanessaAutomationArtifact": {
+        "archiveSha256": "fae6ff06a66e5fa3fe315585ec5c5e678724edcd75fff97069f6dd224b86b9b6",
+        "epfSha256": "260605fd71adf1d2d354b8d1ce3ca7e2ce222db7c79d21f6cb44885aff1b5b80",
+        "manifestSha256": "6711c0373a60ec58d4adfb1d917a646f6a1ca8612c7492c5e97bcaf4b768aee3",
+        "patchSha256": "32455c8f917d098a1eb218c249790fadaf62bf2bda3470af2f71586ffd6168c3",
+        "upstreamCommit": "f3a01778a14d29b38204685deea0131274d438ff"
       },
       "lockKeys": [
         "vanessaAutomation",

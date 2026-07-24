@@ -82,6 +82,29 @@ func TestReleaseCatalogSchemasResolveAndIndex(t *testing.T) {
 	}
 }
 
+func TestVanessaReleaseCatalogKeepsDistinctFileArgumentNames(t *testing.T) {
+	path := filepath.Join("..", "..", ".agents", "skills", "1c-workflow", "assets", "ondemand-mcp", "catalogs", "vanessa-ui-v0.6.5-va-1.2.043.28.json")
+	catalog, err := loadCatalog(path, "vanessa-ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	featurePath := `D:\Git\PM5 КОРП - work 1-perf1\tests\features\Проверка пути.feature`
+	for _, name := range []string{"open_feature_file", "check_syntax"} {
+		if err := catalog.validate(name, map[string]any{"filePath": featurePath}); err != nil {
+			t.Fatalf("%s rejected filePath: %v", name, err)
+		}
+		if err := catalog.validate(name, map[string]any{"path": featurePath}); err == nil {
+			t.Fatalf("%s accepted renamed path argument", name)
+		}
+	}
+	if err := catalog.validate("load_features", map[string]any{"path": featurePath}); err != nil {
+		t.Fatalf("load_features rejected path: %v", err)
+	}
+	if err := catalog.validate("load_features", map[string]any{"filePath": featurePath}); err == nil {
+		t.Fatal("load_features accepted renamed filePath argument")
+	}
+}
+
 func TestParseBrokerOutputUsesLastMarker(t *testing.T) {
 	info, err := parseBrokerOutput("noise\n" + brokerMarker + `{"schemaVersion":1,"status":"running","url":"http://127.0.0.1:6003/mcp"}` + "\n")
 	if err != nil {

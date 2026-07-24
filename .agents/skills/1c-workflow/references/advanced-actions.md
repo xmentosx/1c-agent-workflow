@@ -60,6 +60,9 @@ activate-dev-branch-context
 update-dev-branch-base
 run-dev-branch-tests
 stop-dev-branch-test-clients
+start-vanessa-profile
+status-vanessa-profile
+stop-vanessa-profile
 check-dev-branch
 verify-dev-branch
 refresh-dev-branch
@@ -83,6 +86,16 @@ Extension helper actions are advanced/helper commands. `new-extension-dev-branch
 `configure-dev-branch-unsafe-action-protection` is an interactive recovery action for an existing development worktree when branch creation used `skip` before protection was actually disabled. Run it through `run-agent-1c-window.ps1`, optionally passing `-InfoBaseUser <name>` for an empty-password local user. It forces the normal visible Designer confirmation flow and records confirmation in branch state; it never disables protection automatically.
 
 `stop-dev-branch-test-clients` stops only Vanessa `TESTMANAGER`/`TESTCLIENT` processes whose command line belongs to the current development branch infobase/worktree, then fails if any remain. Successful Vanessa verification performs the same cleanup automatically. It never stops foreign worktree test processes.
+
+Manual profiling uses a separate interactive lifecycle:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action start-vanessa-profile -VanessaFeaturePath .\tests\features\Example.feature
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action status-vanessa-profile
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action stop-vanessa-profile
+```
+
+`start-vanessa-profile` opens exactly one ownership-proven branch-local `TESTMANAGER -> TESTCLIENT` pair, positively proves the manager connection, and opens the specified `.feature` without `StartFeaturePlayer` or `run_scenario`. The pair stays open until `stop-vanessa-profile`. Start/reuse/status return `ITL_VANESSA_PROFILE_REPORT` with safe PID, port, infobase, feature, and connection fields only; they do not create JUnit, verification, or authoring-evidence verdicts. `stop-vanessa-profile` delegates to the shared branch-safe Vanessa runtime release primitive and is idempotent. These actions are manual diagnostics, not `/itl-check`, Vanessa authoring, or release-gate substitutes.
 
 `release-e2e-config-roundtrip` is reserved for `scripts/invoke-release-e2e.ps1`. It dumps the dedicated branch infobase into ignored local state, writes evidence under ignored `build/test-results`, and proves that a root `Configuration.xml` `Comment` loaded in strict `Partial` mode roundtrips while `Ext/ParentConfigurations.bin` is present. Do not expose it as a slash command or use it for ordinary project work.
 

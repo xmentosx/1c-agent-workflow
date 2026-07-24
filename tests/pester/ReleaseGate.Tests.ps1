@@ -20,6 +20,11 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match "FromBase64String"
         $e2eText | Should -Not -Match "Функционал: Четыре независимых"
         $e2eText | Should -Match '"-VanessaFeaturePath", \$vanessaFixture\.path'
+        $e2eText | Should -Match "\`$authoringOutcome -ne `"passed`""
+        $e2eText | Should -Not -Match "runner-fallback-required"
+        $e2eText | Should -Match "PATH_ACCESS_DENIED.*PATH_INVALID.*PATH_NOT_FOUND"
+        $e2eText | Should -Match "vanessaAutomationArchiveSha256"
+        $e2eText | Should -Match ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("VmFuZXNzYSDQv9GD0YLRjCDRgSDQv9GA0L7QsdC10LvQsNC80Lg=")))
         ([regex]::Matches($e2eText, 'Invoke-E2EHelper -Action "check-dev-branch"')).Count | Should -Be 4
         ([regex]::Matches($e2eText, 'Invoke-E2EHelper -Action "release-e2e-approve-vanessa-fixture"')).Count | Should -Be 3
         $e2eText | Should -Match 'RELEASE_E2E_RESUME_STATE_MISMATCH'

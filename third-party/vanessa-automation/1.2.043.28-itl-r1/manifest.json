@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "component": "vanessa-automation-single",
+  "compatibilityVersion": "1.2.043.28",
+  "downstreamRevision": "itl-r1",
+  "upstream": {
+    "repository": "https://github.com/Pr-Mex/vanessa-automation.git",
+    "ref": "refs/tags/1.2.043.28",
+    "commit": "f3a01778a14d29b38204685deea0131274d438ff",
+    "tree": "ae3fa70d5128e71202d54c280cd187705fba43cb",
+    "sourceArchive": {
+      "format": "git archive --format=tar",
+      "sha256": "3581a8d6bb675426b6555fd0b0f2e612c7c9ea0b704123129256a89f1f8f2f81"
+    }
+  },
+  "patch": {
+    "path": "file-operations.patch",
+    "sha256": "32455c8f917d098a1eb218c249790fadaf62bf2bda3470af2f71586ffd6168c3",
+    "expectedChangedPaths": [
+      "VanessaAutomation/Forms/MCPVA/Ext/Form/Module.bsl"
+    ],
+    "errorCodes": [
+      "PATH_INVALID",
+      "PATH_NOT_FOUND",
+      "PATH_ACCESS_DENIED"
+    ]
+  },
+  "build": {
+    "platform": {
+      "version": "8.3.27.2130",
+      "architecture": "x64"
+    },
+    "oneScript": {
+      "version": "1.9.4.16",
+      "opmVersion": "1.0.7",
+      "packages": {
+        "logos": "1.4.0",
+        "v8runner": "1.8.2"
+      }
+    },
+    "gitVersion": "2.54.0.windows.1",
+    "upstreamFlow": [
+      {
+        "path": "lib/packages.os",
+        "sha256": "f296f73f67b2911cb7009064fcdd99a5bd07c095ccecf117f78a293b98ea8a15"
+      },
+      {
+        "path": "tools/onescript/ZipTemplates.os",
+        "sha256": "75933060e182038c405e99af405d956a9b7e1cff1471dbf75aba8e9bef0b531d"
+      },
+      {
+        "path": "tools/onescript/Compile.os",
+        "sha256": "4c9ee6266341266b0ab2bd22cc4b329861b196264b1715f40c1ccc37306312a4"
+      },
+      {
+        "path": "tools/onescript/MakeVASingle.os",
+        "sha256": "c03173f6c894b1343e40eab10044a2b095d9eee1bd1bffd755696864bd0779d6"
+      }
+    ],
+    "upstreamBundledDependencies": [
+      {
+        "name": "VanessaExt Windows AddIn",
+        "version": "1.3.9.131",
+        "path": "VanessaAutomation/Templates/WindowCaptureComponent/Ext/Template.bin",
+        "url": "https://github.com/lintest/VanessaExt/releases/download/1.3.9.131/AddIn.zip",
+        "sha256": "9ccae6b95077f196641070e358a654047ccf4a4197722d8acf8b2d82c4acea5a"
+      },
+      {
+        "name": "VanessaExt CentOS AddIn",
+        "version": "1.3.2.57",
+        "path": "VanessaAutomation/Templates/VanessaExtCentOS/Ext/Template.bin",
+        "url": "https://github.com/lintest/VanessaExt/releases/download/1.3.2.57/CentOS.AddIn.zip",
+        "sha256": "ad7ea06a03590fffbe320dc33afe9eaaac157789528fbc77cef8b103feb37be1"
+      },
+      {
+        "name": "VAEditor",
+        "version": "1.3.7.10",
+        "path": "VanessaAutomation/Templates/VanessaEditor/Ext/Template.bin",
+        "url": "https://github.com/Pr-Mex/VAEditor/releases/download/1.3.7.10/VAEditor.zip",
+        "sha256": "abfc24a2a42448c51d97dfe34cce9721b0097a374ea2db761e673745ede8ab2f"
+      }
+    ]
+  },
+  "runtimeQualification": {
+    "clientMcp": {
+      "version": "v0.6.5",
+      "sha256": "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"
+    },
+    "vaExtension": {
+      "version": "1.2.043.28",
+      "sha256": "fc557bb23371a37dbe22a7a7a83e28f6db75b57f87e8802028cf1f90c4e00605"
+    }
+  },
+  "artifact": {
+    "fileName": "vanessa-automation-single.1.2.043.28-itl-r1.zip",
+    "entryPoint": "vanessa-automation-single.epf",
+    "compatibilityVersion": "1.2.043.28",
+    "downstreamRevision": "itl-r1"
+  },
+  "license": {
+    "spdx": "BSD-3-Clause",
+    "upstreamPath": "LICENSE",
+    "upstreamSha256": "52a4b03391f7cf979b9fa068482ec8ff95ab358ad096d21decfc7e9d961c4409",
+    "trackedNoticePath": "LICENSE.upstream",
+    "artifactNoticePath": "ITL-NOTICE.txt"
+  }
+}

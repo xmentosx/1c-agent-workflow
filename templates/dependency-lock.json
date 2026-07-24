@@ -10,10 +10,10 @@
       "updatedAt": ""
     },
     "itlOndemandMcp": {
-      "version": "0.3.2",
+      "version": "0.4.0",
       "assetName": "itl-ondemand-mcp-windows-amd64.exe",
-      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.3.2/itl-ondemand-mcp-windows-amd64.exe",
-      "sha256": "707e87e060b4bc9d213c08f175b6e1f6b6193d7f23a8a54d812dc8998d96c62e",
+      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.0/itl-ondemand-mcp-windows-amd64.exe",
+      "sha256": "0083ab7960d1d6507f418aad64a6715df185c947cef37089043022754f1fe131",
       "os": "windows",
       "arch": "amd64",
       "source": "workflow release asset"
@@ -56,9 +56,18 @@
     },
     "vanessaAutomation": {
       "version": "1.2.043.28",
-      "url": "https://github.com/Pr-Mex/vanessa-automation/releases/download/1.2.043.28/vanessa-automation-single.1.2.043.28.zip",
-      "sha256": "cd0a017a8af69328f471f628ac1367a0e5148f790df9c28c318348b30f08f32a",
-      "source": "template baseline"
+      "compatibilityVersion": "1.2.043.28",
+      "downstreamRevision": "itl-r1",
+      "assetName": "vanessa-automation-single.1.2.043.28-itl-r1.zip",
+      "releaseTag": "vanessa-automation-v1.2.043.28-itl-r1",
+      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r1/vanessa-automation-single.1.2.043.28-itl-r1.zip",
+      "sha256": "fae6ff06a66e5fa3fe315585ec5c5e678724edcd75fff97069f6dd224b86b9b6",
+      "epfSha256": "260605fd71adf1d2d354b8d1ce3ca7e2ce222db7c79d21f6cb44885aff1b5b80",
+      "manifestSha256": "6711c0373a60ec58d4adfb1d917a646f6a1ca8612c7492c5e97bcaf4b768aee3",
+      "patchSha256": "32455c8f917d098a1eb218c249790fadaf62bf2bda3470af2f71586ffd6168c3",
+      "upstreamCommit": "f3a01778a14d29b38204685deea0131274d438ff",
+      "publicationStatus": "contract-only",
+      "source": "workflow-pinned"
     },
     "vanessaMcp": {
       "clientMcp": {
