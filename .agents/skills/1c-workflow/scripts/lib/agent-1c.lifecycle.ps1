@@ -6330,6 +6330,22 @@ function Get-ConfigurationRootComment {
     return [string]$nodes[0].InnerText
 }
 
+function Prepare-ReleaseE2EOnDemandDependencies {
+    Set-RunStage -Stage "release.ondemand-prepare" -Detail "Installing the workflow-pinned Vanessa Automation and on-demand MCP facade."
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "release-e2e-prepare-ondemand"
+    Assert-DevBranchKind -State $state -Expected "configuration"
+
+    if (-not (Sync-VanessaAutomationDependencyLock)) {
+        throw "RELEASE_E2E_FRESH_DEPENDENCIES_REQUIRED: Vanessa Automation must be synchronized from the workflow pin."
+    }
+    Install-VanessaAutomation
+    if (-not (Sync-ItlOnDemandMcpDependencyLock)) {
+        throw "RELEASE_E2E_FRESH_DEPENDENCIES_REQUIRED: the on-demand MCP facade must be synchronized from the workflow pin."
+    }
+    Install-ItlOnDemandMcp | Out-Null
+}
+
 function Invoke-ReleaseE2EConfigRoundtrip {
     Set-RunStage -Stage "release.config-roundtrip" -Detail "Running the Release E2E configuration roundtrip."
     $state = Read-DevBranchState -Name $DevBranchName

@@ -186,6 +186,7 @@ switch ($Action) {
     "release-e2e-approve-vanessa-fixture" {
         if ([System.IO.Path]::GetFileName($VanessaFeaturePath) -ne "ITLReleaseFourFlat.feature") { throw "release E2E approval must use the dedicated four-scenario feature file" }
     }
+    "release-e2e-prepare-ondemand" { }
     "release-e2e-config-roundtrip" {
         [xml]$configuration = Get-Content -LiteralPath (Join-Path $ProjectRoot "src\cf\Configuration.xml") -Raw -Encoding UTF8
         $comment = [string]$configuration.MetaDataObject.Configuration.Properties.Comment
@@ -323,6 +324,7 @@ switch ($Action) {
             $actions = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\release-e2e-actions.log") -Encoding UTF8
             $actions | Should -Contain "release-e2e-config-roundtrip"
             $actions | Should -Contain "release-e2e-extension-smoke"
+            $actions | Should -Contain "release-e2e-prepare-ondemand"
             $actions | Should -Contain "stop-dev-branch-test-clients"
             @($actions | Where-Object { $_ -eq "check-dev-branch" }).Count | Should -Be 3
             @($actions | Where-Object { $_ -eq "release-e2e-approve-vanessa-fixture" }).Count | Should -Be 3

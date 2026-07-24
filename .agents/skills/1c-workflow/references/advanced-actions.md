@@ -75,6 +75,7 @@ status
 release-e2e-snapshot
 release-e2e-restore
 release-e2e-approve-vanessa-fixture
+release-e2e-prepare-ondemand
 release-e2e-config-roundtrip
 release-e2e-extension-smoke
 ```
@@ -102,6 +103,8 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 `release-e2e-snapshot` and `release-e2e-restore` are internal checkpoint actions for the same runner. They accept only a project-local ignored `.dt`; restore invalidates both configuration and extension fingerprints. Do not expose them as slash commands or use them as a general backup interface.
 
 `release-e2e-approve-vanessa-fixture` is restricted to the runner-owned `ITLReleaseFourFlat.feature` and the dedicated stand's existing release feature. It records the exact current feature hashes before each synthetic verification iteration so the ordinary Vanessa authoring preflight remains fail-closed for every other feature. It is not a project command and must not have a slash wrapper.
+
+`release-e2e-prepare-ondemand` is reserved for the same runner. It requires fresh dependency mode, synchronizes the dedicated branch worktree to the workflow-pinned Vanessa Automation and facade locks, and installs the exact SHA-verified artifacts before live on-demand probes.
 
 `release-e2e-extension-smoke` is also reserved for the Release runner. It uses the public extension initialization lifecycle to create an Empty extension, produce and reload a CFE, validate both normalized dumps, and restore the disposable infobase and worktree from a snapshot. It is not a project command and must not have a slash wrapper.
 

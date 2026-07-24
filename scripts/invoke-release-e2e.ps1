@@ -952,6 +952,7 @@ try {
         Set-E2EStageStatus -Name "ondemand-mcp" -Status "running"
         $executedStages += "ondemand-mcp"
         try {
+            Invoke-E2EHelper -Action "release-e2e-prepare-ondemand" -TimeoutSeconds 1800 | Out-Null
             $vanessaSmokeDirectory = Join-Path $outputRoot "Vanessa путь с пробелами"
             $vanessaSmokeFeature = Join-Path $vanessaSmokeDirectory "Проверка пути.feature"
             New-Item -ItemType Directory -Force -Path $vanessaSmokeDirectory | Out-Null
