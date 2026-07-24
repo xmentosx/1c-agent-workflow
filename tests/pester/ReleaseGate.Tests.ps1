@@ -93,7 +93,15 @@ Describe "Release E2E orchestration" {
             & git -C $mainRoot config user.name "ITL Test"
             Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".agent-1c/dev-branches/`n.agent-1c/runs/`n.agent-1c/release-e2e-actions.log`n.agent-1c/release-e2e-partial-list.txt`nbuild/`n"
             Set-Content -LiteralPath (Join-Path $mainRoot "README.md") -Encoding ASCII -Value "fixture"
-            New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot "src\cf\Ext") | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot "src\cf\Ext"), (Join-Path $mainRoot ".agent-1c") | Out-Null
+            $dependencyLock = [ordered]@{
+                schemaVersion = 1
+                mode = "fresh"
+                dependencies = [ordered]@{
+                    vanessaAutomation = [ordered]@{ source = "fixture-original" }
+                }
+            }
+            Set-Content -LiteralPath (Join-Path $mainRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value ($dependencyLock | ConvertTo-Json -Depth 6)
             Set-Content -LiteralPath (Join-Path $mainRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value @'
 <?xml version="1.0" encoding="UTF-8"?>
 <MetaDataObject>
@@ -186,7 +194,12 @@ switch ($Action) {
     "release-e2e-approve-vanessa-fixture" {
         if ([System.IO.Path]::GetFileName($VanessaFeaturePath) -ne "ITLReleaseFourFlat.feature") { throw "release E2E approval must use the dedicated four-scenario feature file" }
     }
-    "release-e2e-prepare-ondemand" { }
+    "release-e2e-prepare-ondemand" {
+        $lockPath = Join-Path $ProjectRoot ".agent-1c\dependency-lock.json"
+        $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $lock.dependencies.vanessaAutomation.source = "release-e2e-current-package-pin"
+        Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value ($lock | ConvertTo-Json -Depth 12)
+    }
     "release-e2e-config-roundtrip" {
         [xml]$configuration = Get-Content -LiteralPath (Join-Path $ProjectRoot "src\cf\Configuration.xml") -Raw -Encoding UTF8
         $comment = [string]$configuration.MetaDataObject.Configuration.Properties.Comment

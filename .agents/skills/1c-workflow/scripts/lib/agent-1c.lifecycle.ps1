@@ -6336,13 +6336,24 @@ function Prepare-ReleaseE2EOnDemandDependencies {
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "release-e2e-prepare-ondemand"
     Assert-DevBranchKind -State $state -Expected "configuration"
 
-    if (-not (Sync-VanessaAutomationDependencyLock)) {
-        throw "RELEASE_E2E_FRESH_DEPENDENCIES_REQUIRED: Vanessa Automation must be synchronized from the workflow pin."
+    if ((Get-DependencyMode) -ne "fresh") {
+        throw "RELEASE_E2E_FRESH_DEPENDENCIES_REQUIRED: the dedicated stand must use fresh dependency mode."
     }
+    $packageRoot = [IO.Path]::GetFullPath((Join-Path $script:Agent1cScriptRoot "..\..\..\.."))
+    $templatePath = Join-Path $packageRoot "templates\dependency-lock.json"
+    if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
+        throw "RELEASE_E2E_WORKFLOW_PIN_MISSING: $templatePath"
+    }
+    $template = Read-Utf8Text -Path $templatePath | ConvertFrom-Json
+    foreach ($dependencyName in @("vanessaAutomation", "itlOndemandMcp")) {
+        $entry = Get-ConfigValueFromObject -Object $template -Path "dependencies.$dependencyName" -Default $null
+        if ($null -eq $entry) {
+            throw "RELEASE_E2E_WORKFLOW_PIN_MISSING: templates/dependency-lock.json has no $dependencyName entry."
+        }
+        Update-DependencyLockEntry -Name $dependencyName -Values (ConvertTo-Agent1cHashtable -Object $entry)
+    }
+
     Install-VanessaAutomation
-    if (-not (Sync-ItlOnDemandMcpDependencyLock)) {
-        throw "RELEASE_E2E_FRESH_DEPENDENCIES_REQUIRED: the on-demand MCP facade must be synchronized from the workflow pin."
-    }
     Install-ItlOnDemandMcp | Out-Null
 }
 

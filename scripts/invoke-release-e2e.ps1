@@ -951,6 +951,11 @@ try {
     if (-not (Test-E2EStagePassed -Name "ondemand-mcp")) {
         Set-E2EStageStatus -Name "ondemand-mcp" -Status "running"
         $executedStages += "ondemand-mcp"
+        $e2eDependencyLockPath = Join-Path $worktreePath ".agent-1c\dependency-lock.json"
+        if (-not (Test-Path -LiteralPath $e2eDependencyLockPath -PathType Leaf)) {
+            throw "Release E2E dependency lock is missing: $e2eDependencyLockPath"
+        }
+        $e2eDependencyLockBytes = [IO.File]::ReadAllBytes($e2eDependencyLockPath)
         try {
             Invoke-E2EHelper -Action "release-e2e-prepare-ondemand" -TimeoutSeconds 1800 | Out-Null
             $vanessaSmokeDirectory = Join-Path $outputRoot "Vanessa путь с пробелами"
@@ -1051,6 +1056,8 @@ try {
         } catch {
             Set-E2EStageStatus -Name "ondemand-mcp" -Status "failed" -ErrorText $_.Exception.Message
             throw
+        } finally {
+            [IO.File]::WriteAllBytes($e2eDependencyLockPath, $e2eDependencyLockBytes)
         }
     } else {
         $resumedStages += "ondemand-mcp"
