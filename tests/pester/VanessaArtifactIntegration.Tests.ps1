@@ -16,7 +16,7 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         New-Item -ItemType Directory -Force -Path $script:FixtureContent | Out-Null
         $script:FixtureEpfPath = Join-Path $script:FixtureContent "vanessa-automation-single.epf"
         [System.IO.File]::WriteAllBytes($script:FixtureEpfPath, [System.Text.Encoding]::UTF8.GetBytes("qualified patched EPF fixture"))
-        $script:FixtureArchivePath = Join-Path $script:FixtureRoot "vanessa-automation-single.1.2.043.28-itl-r1.zip"
+        $script:FixtureArchivePath = Join-Path $script:FixtureRoot "vanessa-automation-single.1.2.043.28-itl-r2.zip"
         Compress-Archive -LiteralPath $script:FixtureEpfPath -DestinationPath $script:FixtureArchivePath
         $script:FixtureArchiveSha256 = (Get-FileHash -LiteralPath $script:FixtureArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
         $script:FixtureEpfSha256 = (Get-FileHash -LiteralPath $script:FixtureEpfPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -52,13 +52,13 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         $entry = (Get-Content -LiteralPath (Join-Path $script:RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaAutomation
         $entry.version | Should -Be "1.2.043.28"
         $entry.compatibilityVersion | Should -Be "1.2.043.28"
-        $entry.downstreamRevision | Should -Be "itl-r1"
-        $entry.assetName | Should -Be "vanessa-automation-single.1.2.043.28-itl-r1.zip"
-        $entry.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r1/vanessa-automation-single.1.2.043.28-itl-r1.zip"
-        $entry.sha256 | Should -Be "fae6ff06a66e5fa3fe315585ec5c5e678724edcd75fff97069f6dd224b86b9b6"
-        $entry.epfSha256 | Should -Be "260605fd71adf1d2d354b8d1ce3ca7e2ce222db7c79d21f6cb44885aff1b5b80"
-        $entry.manifestSha256 | Should -Be "6711c0373a60ec58d4adfb1d917a646f6a1ca8612c7492c5e97bcaf4b768aee3"
-        $entry.patchSha256 | Should -Be "32455c8f917d098a1eb218c249790fadaf62bf2bda3470af2f71586ffd6168c3"
+        $entry.downstreamRevision | Should -Be "itl-r2"
+        $entry.assetName | Should -Be "vanessa-automation-single.1.2.043.28-itl-r2.zip"
+        $entry.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r2/vanessa-automation-single.1.2.043.28-itl-r2.zip"
+        $entry.sha256 | Should -Be "494ecd46bcca4b7c2e420bd49a5be9ed266b8a12b767947d697ecfe555a7f0b8"
+        $entry.epfSha256 | Should -Be "671d8caa069000663b9db5157eb4d780eed51b0c81db11ad3fc81b7144960f64"
+        $entry.manifestSha256 | Should -Be "910c83d2745c5d530d44b393ec1477fc03ca70bdb39c912eb110ac7da887bc87"
+        $entry.patchSha256 | Should -Be "158fafdb9189b9a75643f8d7e765f10c7998b779bdb2dc17a6df4551edadff83"
         $entry.upstreamCommit | Should -Be "f3a01778a14d29b38204685deea0131274d438ff"
         $entry.publicationStatus | Should -Be "published"
     }
@@ -78,10 +78,10 @@ Describe "Workflow-pinned Vanessa Automation integration" {
 
         $result.ready | Should -BeTrue
         $result.version | Should -Be "1.2.043.28"
-        $result.downstreamRevision | Should -Be "itl-r1"
+        $result.downstreamRevision | Should -Be "itl-r2"
         $result.epfSha256 | Should -Be $script:FixtureEpfSha256
         (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $before
-        (Get-Content -LiteralPath (Join-Path $testProjectPath ".dev.env") -Raw -Encoding UTF8) | Should -Match "VANESSA_AUTOMATION_DOWNSTREAM_REVISION=itl-r1"
+        (Get-Content -LiteralPath (Join-Path $testProjectPath ".dev.env") -Raw -Encoding UTF8) | Should -Match "VANESSA_AUTOMATION_DOWNSTREAM_REVISION=itl-r2"
     }
 
     It "installs from a packaged no-Git workflow copy through the same exact override" {
@@ -101,7 +101,7 @@ Describe "Workflow-pinned Vanessa Automation integration" {
 
         $result.ready | Should -BeTrue
         $result.epfSha256 | Should -Be $script:FixtureEpfSha256
-        $result.downstreamRevision | Should -Be "itl-r1"
+        $result.downstreamRevision | Should -Be "itl-r2"
     }
 
     It "rejects archive and EPF mismatches without replacing an existing owned install" {

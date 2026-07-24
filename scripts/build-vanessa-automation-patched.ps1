@@ -15,6 +15,70 @@ function Get-Sha256 {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function New-DeterministicZip {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceDirectory,
+        [Parameter(Mandatory = $true)][string]$DestinationPath
+    )
+
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+    $sourceFull = [System.IO.Path]::GetFullPath($SourceDirectory).TrimEnd("\")
+    $relativePaths = [string[]]@(
+        Get-ChildItem -LiteralPath $sourceFull -Recurse -File |
+            ForEach-Object { $_.FullName.Substring($sourceFull.Length).TrimStart("\") }
+    )
+    [Array]::Sort($relativePaths, [System.StringComparer]::Ordinal)
+
+    $destinationStream = [System.IO.File]::Open(
+        $DestinationPath,
+        [System.IO.FileMode]::CreateNew,
+        [System.IO.FileAccess]::Write,
+        [System.IO.FileShare]::None
+    )
+    try {
+        $archive = [System.IO.Compression.ZipArchive]::new(
+            $destinationStream,
+            [System.IO.Compression.ZipArchiveMode]::Create,
+            $false,
+            [System.Text.Encoding]::UTF8
+        )
+        try {
+            $fixedTimestamp = [System.DateTimeOffset]::new(
+                2000, 1, 1, 0, 0, 0, [System.TimeSpan]::Zero
+            )
+            foreach ($relativePath in $relativePaths) {
+                $entryName = $relativePath.Replace("\", "/")
+                $entry = $archive.CreateEntry(
+                    $entryName,
+                    [System.IO.Compression.CompressionLevel]::Optimal
+                )
+                $entry.LastWriteTime = $fixedTimestamp
+                $entry.ExternalAttributes = 0
+
+                $inputStream = [System.IO.File]::OpenRead(
+                    (Join-Path $sourceFull $relativePath)
+                )
+                try {
+                    $outputStream = $entry.Open()
+                    try {
+                        $inputStream.CopyTo($outputStream)
+                    } finally {
+                        $outputStream.Dispose()
+                    }
+                } finally {
+                    $inputStream.Dispose()
+                }
+            }
+        } finally {
+            $archive.Dispose()
+        }
+    } finally {
+        $destinationStream.Dispose()
+    }
+}
+
 function Assert-Equal {
     param(
         [Parameter(Mandatory = $true)][string]$Actual,
@@ -48,15 +112,88 @@ function Test-PathInside {
     return $candidateFull.StartsWith($parentFull + "\", [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Enter-ScopedUnsafeActionProtectionBypass {
+    param(
+        [Parameter(Mandatory = $true)][string]$ConfPath,
+        [Parameter(Mandatory = $true)][string]$BuildToken
+    )
+
+    if ($BuildToken -notmatch "^[0-9a-f]{8}$") {
+        throw "Unsafe qualification-base token: $BuildToken"
+    }
+
+    $confDirectory = Split-Path -Parent $ConfPath
+    New-Item -ItemType Directory -Path $confDirectory -Force | Out-Null
+
+    $originalExists = Test-Path -LiteralPath $ConfPath -PathType Leaf
+    $originalBytes = if ($originalExists) {
+        [System.IO.File]::ReadAllBytes($ConfPath)
+    } else {
+        [byte[]]@()
+    }
+
+    $originalText = if ($originalBytes.Length -gt 0) {
+        [System.Text.Encoding]::UTF8.GetString($originalBytes)
+    } else {
+        ""
+    }
+    $ownedPattern = ".*$BuildToken.*"
+    $settingPattern = "(?m)^(DisableUnsafeActionProtection=)([^\r\n]*)"
+    if ([regex]::IsMatch($originalText, $settingPattern)) {
+        $expectedText = ([regex]::new($settingPattern)).Replace(
+            $originalText,
+            {
+                param($match)
+                $existingPatterns = $match.Groups[2].Value.TrimEnd(";")
+                return $match.Groups[1].Value + $existingPatterns + ";" + $ownedPattern + ";"
+            }
+        )
+    } else {
+        $separator = if ($originalText.Length -gt 0 -and
+            -not $originalText.EndsWith("`n") -and
+            -not $originalText.EndsWith("`r")) {
+            "`r`n"
+        } else {
+            ""
+        }
+        $expectedText = $originalText + $separator + "DisableUnsafeActionProtection=" + $ownedPattern + ";`r`n"
+    }
+    $expectedBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($expectedText)
+    [System.IO.File]::WriteAllBytes($ConfPath, $expectedBytes)
+
+    return [pscustomobject]@{
+        confPath = $ConfPath
+        originalExists = $originalExists
+        originalBytes = $originalBytes
+        expectedSha256 = (Get-Sha256 -Path $ConfPath)
+        ownedPattern = $ownedPattern
+    }
+}
+
+function Exit-ScopedUnsafeActionProtectionBypass {
+    param([Parameter(Mandatory = $true)]$State)
+
+    if (-not (Test-Path -LiteralPath $State.confPath -PathType Leaf)) {
+        throw "Qualification conf.cfg disappeared before restoration: $($State.confPath)"
+    }
+    Assert-Equal (Get-Sha256 -Path $State.confPath) ([string]$State.expectedSha256) "Qualification conf.cfg"
+
+    if ([bool]$State.originalExists) {
+        [System.IO.File]::WriteAllBytes([string]$State.confPath, [byte[]]$State.originalBytes)
+    } else {
+        Remove-Item -LiteralPath ([string]$State.confPath) -Force
+    }
+}
+
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.28-itl-r1"
+$assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.28-itl-r2"
 $manifestPath = Join-Path $assetRoot "manifest.json"
 $patchPath = Join-Path $assetRoot "file-operations.patch"
 $noticePath = Join-Path $assetRoot "ITL-NOTICE.txt"
 $licenseNoticePath = Join-Path $assetRoot "LICENSE.upstream"
 
 if (-not $OutputDirectory) {
-    $OutputDirectory = Join-Path $repoRoot "build\third-party\vanessa-automation\1.2.043.28-itl-r1"
+    $OutputDirectory = Join-Path $repoRoot "build\third-party\vanessa-automation\1.2.043.28-itl-r2"
 }
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 $WorkRoot = [System.IO.Path]::GetFullPath($WorkRoot)
@@ -178,7 +315,7 @@ try {
         "-C", $sourceDirectory, "diff", "--check"
     ) -Description "Check patched source whitespace"
 
-    $changedPaths = @(& git -C $sourceDirectory diff --name-only)
+    $changedPaths = @(& git -C $sourceDirectory -c core.quotepath=false diff --name-only)
     if ($LASTEXITCODE -ne 0) { throw "Could not enumerate patched paths." }
     $expectedChangedPaths = @($manifest.patch.expectedChangedPaths)
     if (($changedPaths -join "`n") -ne ($expectedChangedPaths -join "`n")) {
@@ -221,14 +358,22 @@ try {
 
     Push-Location $sourceDirectory
     try {
-        Invoke-Native -FilePath $oscriptCommand.Source -Arguments @(
-            (Join-Path $sourceDirectory "tools\onescript\MakeVASingle.os"),
-            $sourceDirectory,
-            $singleBuildDirectory,
-            (Join-Path $sourceDirectory "features\Libraries"),
-            $PlatformBin,
-            $qualificationBase
-        ) -Description "Run upstream MakeVASingle.os"
+        $userConfPath = Join-Path $env:LOCALAPPDATA "1C\1cv8\conf\conf.cfg"
+        $unsafeActionProtectionState = Enter-ScopedUnsafeActionProtectionBypass `
+            -ConfPath $userConfPath `
+            -BuildToken $workId
+        try {
+            Invoke-Native -FilePath $oscriptCommand.Source -Arguments @(
+                (Join-Path $sourceDirectory "tools\onescript\MakeVASingle.os"),
+                $sourceDirectory,
+                $singleBuildDirectory,
+                (Join-Path $sourceDirectory "features\Libraries"),
+                $PlatformBin,
+                $qualificationBase
+            ) -Description "Run upstream MakeVASingle.os"
+        } finally {
+            Exit-ScopedUnsafeActionProtectionBypass -State $unsafeActionProtectionState
+        }
     } finally {
         Pop-Location
     }
@@ -251,13 +396,7 @@ try {
         Remove-Item -LiteralPath $artifactPath -Force
     }
 
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::CreateFromDirectory(
-        $stageDirectory,
-        $artifactPath,
-        [System.IO.Compression.CompressionLevel]::Optimal,
-        $false
-    )
+    New-DeterministicZip -SourceDirectory $stageDirectory -DestinationPath $artifactPath
 
     $candidateProvenance = [ordered]@{
         schemaVersion = 1
