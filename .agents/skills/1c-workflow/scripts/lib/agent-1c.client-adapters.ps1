@@ -414,6 +414,58 @@ function ConvertTo-ItlClientMcpKey {
     return $Name
 }
 
+function Get-ItlClientMcpEndpointKeys {
+    param([string]$Client = "")
+
+    if (-not $Client) { $Client = Get-ItlActiveClient }
+    $adapter = Get-ItlClientAdapter -Client $Client
+    $path = Join-Path $script:ProjectRoot $adapter.mcpPath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return @()
+    }
+
+    if ($adapter.mcpFormat -eq "toml") {
+        $keys = @()
+        $pattern = '(?m)^\[mcp_servers\.(?:"(?<quoted>[^"]+)"|(?<plain>[^\]]+))\]\s*$'
+        foreach ($match in [regex]::Matches((Read-Utf8Text -Path $path), $pattern)) {
+            $name = if ($match.Groups["quoted"].Success) { $match.Groups["quoted"].Value } else { $match.Groups["plain"].Value }
+            if ($name) { $keys += $name }
+        }
+        return @($keys | Select-Object -Unique)
+    }
+
+    try {
+        $config = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-Utf8Text -Path $path | ConvertFrom-Json)
+    } catch {
+        throw "Client MCP config is not valid JSON: $path. $($_.Exception.Message)"
+    }
+    $containerName = [string]$adapter.mcpContainer
+    if (-not $config.Contains($containerName)) {
+        return @()
+    }
+    $container = ConvertTo-Vibecoding1cMcpHashtable -Object $config[$containerName]
+    return @($container.Keys | ForEach-Object { [string]$_ })
+}
+
+function Get-ItlManagedMcpOwnerKeys {
+    param(
+        [string]$Owner,
+        [string]$Client = ""
+    )
+
+    if (-not $Client) { $Client = Get-ItlActiveClient }
+    $state = Read-ItlManagedMcpState
+    if (-not $state.Contains("owners")) {
+        return @()
+    }
+    $owners = ConvertTo-Vibecoding1cMcpHashtable -Object $state["owners"]
+    $stateKey = "$Client/$Owner"
+    if (-not $owners.Contains($stateKey)) {
+        return @()
+    }
+    return @($owners[$stateKey] | ForEach-Object { [string]$_ } | Where-Object { $_ } | Select-Object -Unique)
+}
+
 function Write-ItlClientMcpEndpoints {
     param(
         [object[]]$Endpoints,
@@ -473,6 +525,12 @@ function Write-ItlClientMcpEndpoints {
             $lines.Add("")
         }
         Set-Vibecoding1cMcpManagedTextBlock -Path $path -BlockId $Owner -Body ((@($lines) -join [Environment]::NewLine).TrimEnd())
+        $state = Read-ItlManagedMcpState
+        if (-not $state.Contains("owners")) { $state["owners"] = [ordered]@{} }
+        $owners = ConvertTo-Vibecoding1cMcpHashtable -Object $state["owners"]
+        $owners["$Client/$Owner"] = @($normalized | ForEach-Object { [string]$_.name })
+        $state["owners"] = $owners
+        Write-ItlManagedMcpState -State $state
         return $path
     }
 
@@ -532,6 +590,10 @@ function Write-ItlClientMcpEndpoints {
             [ordered]@{ lifecycle = "eager"; transport = "streamable-http"; url = $endpoint.url }
         } else {
             [ordered]@{ type = "http"; url = $endpoint.url }
+        }
+        if ($Owner -eq "vibecoding1c") {
+            $entry["managedBy"] = "vibecoding1c-mcp"
+            $entry["family"] = "vibecoding1c"
         }
         $container[$endpoint.name] = $entry
         $written += $endpoint.name

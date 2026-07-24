@@ -2607,6 +2607,30 @@ function Resolve-Vibecoding1cMcpVolumes {
     }
 }
 
+function Get-Vibecoding1cMcpEndpointStateIdentity {
+    param([object]$Endpoint)
+
+    $name = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "name" -Default "")
+    $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "scope" -Default "")
+    $provider = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "provider" -Default "local")
+    $configId = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "configId" -Default "")
+    $hostId = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "hostId" -Default "")
+    $parts = @($name, $scope, $provider, $configId, $hostId)
+    if ($scope -ne "global") {
+        $projectRoot = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "projectRoot" -Default "")
+        if ($projectRoot) {
+            try { $projectRoot = [System.IO.Path]::GetFullPath($projectRoot).TrimEnd("\").ToLowerInvariant() } catch { $projectRoot = $projectRoot.ToLowerInvariant() }
+            $parts += "root:$projectRoot"
+        } else {
+            $projectSlug = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "projectSlug" -Default "")
+            $branchSlug = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "branchSlug" -Default "")
+            $gitBranch = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "gitBranch" -Default "")
+            $parts += "legacy:$projectSlug/$branchSlug/$gitBranch"
+        }
+    }
+    return ($parts -join "|")
+}
+
 function Set-Vibecoding1cMcpEndpointState {
     param(
         [object]$Runtime,
@@ -2618,20 +2642,21 @@ function Set-Vibecoding1cMcpEndpointState {
     $state = Read-Vibecoding1cMcpState
     $stateHash = ConvertTo-Vibecoding1cMcpHashtable -Object $state
     $servers = @()
+    $runtimeIdentity = Get-Vibecoding1cMcpEndpointStateIdentity -Endpoint $Runtime
     foreach ($server in ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $state -Name "servers" -Default @())) {
-        if ([string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "name" -Default "") -ne $Runtime.name) {
+        if ((Get-Vibecoding1cMcpEndpointStateIdentity -Endpoint $server) -ne $runtimeIdentity) {
             $servers += $server
         }
     }
 
     $servers += [ordered]@{
-        id = $Runtime.id
-        scope = $Runtime.scope
-        name = $Runtime.name
-        containerName = $Runtime.containerName
-        internalPort = $Runtime.internalPort
-        hostPort = $Runtime.hostPort
-        url = $Runtime.url
+        id = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "id" -Default "")
+        scope = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "scope" -Default "")
+        name = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "name" -Default "")
+        containerName = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "containerName" -Default "")
+        internalPort = Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "internalPort" -Default $null
+        hostPort = Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "hostPort" -Default $null
+        url = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "url" -Default "")
         status = $Status
         family = "vibecoding1c"
         provider = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "provider" -Default "local")
@@ -2651,11 +2676,11 @@ function Set-Vibecoding1cMcpEndpointState {
         reportHash = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "reportHash" -Default "")
         indexedAt = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "indexedAt" -Default "")
         freshness = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "freshness" -Default "")
-        image = $Runtime.image
-        projectSlug = $Runtime.projectSlug
-        branchSlug = $Runtime.branchSlug
-        gitBranch = $Runtime.gitBranch
-        projectRoot = $Runtime.projectRoot
+        image = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "image" -Default "")
+        projectSlug = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "projectSlug" -Default "")
+        branchSlug = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "branchSlug" -Default "")
+        gitBranch = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "gitBranch" -Default "")
+        projectRoot = [string](Get-Vibecoding1cMcpObjectValue -Object $Runtime -Name "projectRoot" -Default "")
         runtimePath = $RuntimePath
         composeProject = $ComposeProject
         updatedAt = (Get-Date).ToString("o")
@@ -3162,10 +3187,7 @@ function Get-Vibecoding1cMcpCurrentEndpoints {
             }
             continue
         }
-        if ([string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "projectSlug" -Default "") -ne $context.projectSlug) {
-            continue
-        }
-        if ($scope -eq "branch" -and [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "branchSlug" -Default "") -ne $context.branchSlug) {
+        if (-not (Test-Vibecoding1cMcpEndpointMatchesScopeContext -Endpoint $server -Context $context)) {
             continue
         }
         $endpoints += $server
@@ -3188,6 +3210,33 @@ function Get-Vibecoding1cMcpServerStatusKey {
     return "$Id|$Scope|$Provider|$ConfigId|$HostId"
 }
 
+function Test-Vibecoding1cMcpEndpointMatchesScopeContext {
+    param(
+        [object]$Endpoint,
+        [object]$Context
+    )
+
+    $endpointRoot = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "projectRoot" -Default "")
+    if ($endpointRoot) {
+        try {
+            $endpointRoot = [System.IO.Path]::GetFullPath($endpointRoot).TrimEnd("\")
+            $contextRoot = [System.IO.Path]::GetFullPath([string]$Context.projectRoot).TrimEnd("\")
+            return $endpointRoot.Equals($contextRoot, [System.StringComparison]::OrdinalIgnoreCase)
+        } catch {
+            return $endpointRoot.Equals([string]$Context.projectRoot, [System.StringComparison]::OrdinalIgnoreCase)
+        }
+    }
+
+    if ([string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "projectSlug" -Default "") -ne $Context.projectSlug) {
+        return $false
+    }
+    $scope = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "scope" -Default "")
+    if ($scope -eq "branch" -and [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "branchSlug" -Default "") -ne $Context.branchSlug) {
+        return $false
+    }
+    return $true
+}
+
 function Get-Vibecoding1cMcpCurrentStateServers {
     param([switch]$IncludeGlobal)
 
@@ -3208,10 +3257,7 @@ function Get-Vibecoding1cMcpCurrentStateServers {
             }
             continue
         }
-        if ([string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "projectSlug" -Default "") -ne $context.projectSlug) {
-            continue
-        }
-        if ($scope -eq "branch" -and [string](Get-Vibecoding1cMcpObjectValue -Object $server -Name "branchSlug" -Default "") -ne $context.branchSlug) {
+        if (-not (Test-Vibecoding1cMcpEndpointMatchesScopeContext -Endpoint $server -Context $context)) {
             continue
         }
         $servers += $server
@@ -3231,8 +3277,39 @@ function Format-Vibecoding1cMcpStatusList {
 function Get-Vibecoding1cMcpStatusSummary {
     $selection = Read-Vibecoding1cMcpSelection
     $context = Get-Vibecoding1cMcpScopeContext
-    $activeEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints -IncludeGlobal)
+    $client = ""
+    try {
+        $client = Get-ItlActiveClient
+    } catch {
+        $client = ""
+    }
+    $clientConfigKeys = @()
+    if ($client) {
+        $clientConfigKeys = @(Get-ItlClientMcpEndpointKeys -Client $client)
+    }
+    $readyEndpoints = @((Get-Vibecoding1cMcpClientConfigEndpointSet).allEndpoints)
+    $activeEndpoints = @()
+    if ($client) {
+        $activeEndpoints = @($readyEndpoints | Where-Object {
+            $clientName = Get-Vibecoding1cMcpEndpointClientName -Endpoint $_
+            $clientKey = ConvertTo-ItlClientMcpKey -Name $clientName -Client $client
+            $clientConfigKeys -contains $clientKey
+        })
+    }
     $currentServers = @(Get-Vibecoding1cMcpCurrentStateServers -IncludeGlobal)
+
+    $readyByKey = @{}
+    foreach ($endpoint in $readyEndpoints) {
+        $key = Get-Vibecoding1cMcpServerStatusKey `
+            -Id ([string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "id" -Default "")) `
+            -Scope ([string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "scope" -Default "")) `
+            -Provider ([string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "provider" -Default "local")) `
+            -ConfigId ([string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "configId" -Default "")) `
+            -HostId ([string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "hostId" -Default ""))
+        if ($key) {
+            $readyByKey[$key] = $endpoint
+        }
+    }
 
     $activeByKey = @{}
     foreach ($endpoint in $activeEndpoints) {
@@ -3313,13 +3390,16 @@ function Get-Vibecoding1cMcpStatusSummary {
         }
 
         $reason = $(if ($provider -eq "remote") { "not-connected" } else { "not-started" })
+        if ($key -and $readyByKey.ContainsKey($key)) {
+            $reason = "client-config-missing"
+        }
         if ($key -and $currentByKey.ContainsKey($key)) {
             $current = $currentByKey[$key]
             $status = [string](Get-Vibecoding1cMcpObjectValue -Object $current -Name "status" -Default "")
             $url = [string](Get-Vibecoding1cMcpObjectValue -Object $current -Name "url" -Default "")
-            if ($status) {
+            if ($reason -ne "client-config-missing" -and $status) {
                 $reason = $status
-            } elseif (-not $url) {
+            } elseif ($reason -ne "client-config-missing" -and -not $url) {
                 $reason = "missing-url"
             }
         }
@@ -3448,11 +3528,40 @@ function Get-Vibecoding1cMcpKiloConfigPath {
 function Get-Vibecoding1cMcpClientConfigEndpointSet {
     $globalEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints -IncludeGlobal | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -eq "global" })
     $localEndpoints = @(Get-Vibecoding1cMcpCurrentEndpoints | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -ne "global" })
+    $selection = Read-Vibecoding1cMcpSelection
+    $resolvedRemoteEndpoints = @()
+    foreach ($server in @(Select-Vibecoding1cMcpManifestServers)) {
+        if (-not (Test-Vibecoding1cMcpServerEnabled -Server $server -Selection $selection)) {
+            continue
+        }
+        if ((Get-Vibecoding1cMcpSelectedProvider -Server $server -Selection $selection) -ne "remote") {
+            continue
+        }
+        try {
+            $runtime = New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection
+        } catch {
+            continue
+        }
+        if ($null -ne $runtime -and (Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $runtime)) {
+            $resolvedRemoteEndpoints += $runtime
+        }
+    }
+
+    $byClientName = [ordered]@{}
+    foreach ($endpoint in @($globalEndpoints + $localEndpoints + $resolvedRemoteEndpoints)) {
+        $clientName = Get-Vibecoding1cMcpEndpointClientName -Endpoint $endpoint
+        if ($clientName) {
+            $byClientName[$clientName] = $endpoint
+        }
+    }
+    $allEndpoints = @($byClientName.Values)
+    $globalEndpoints = @($allEndpoints | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -eq "global" })
+    $localEndpoints = @($allEndpoints | Where-Object { [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "") -ne "global" })
 
     return [pscustomobject]@{
         globalEndpoints = @($globalEndpoints)
         localEndpoints = @($localEndpoints)
-        allEndpoints = @($globalEndpoints + $localEndpoints)
+        allEndpoints = @($allEndpoints)
     }
 }
 
@@ -3472,6 +3581,21 @@ function Get-Vibecoding1cMcpClientConfigClientNames {
 function Get-Vibecoding1cMcpReadyClientConfigNames {
     $endpointSet = Get-Vibecoding1cMcpClientConfigEndpointSet
     return @(Get-Vibecoding1cMcpClientConfigClientNames -Endpoints $endpointSet.allEndpoints)
+}
+
+function Get-Vibecoding1cMcpSelectedClientConfigNames {
+    $selection = Read-Vibecoding1cMcpSelection
+    $names = @()
+    foreach ($server in @(Select-Vibecoding1cMcpManifestServers)) {
+        if (-not (Test-Vibecoding1cMcpServerEnabled -Server $server -Selection $selection)) {
+            continue
+        }
+        $name = Get-Vibecoding1cMcpEndpointClientName -Endpoint $server
+        if ($name) {
+            $names += $name
+        }
+    }
+    return @($names | Select-Object -Unique)
 }
 
 function Select-Vibecoding1cMcpClientConfigEndpoints {
