@@ -65,11 +65,13 @@ foreach ($plan in $plans) {
     $workerJunit = Join-Path $workerRoot ("worker-{0}.xml" -f $index)
     $stdoutPath = Join-Path $workerRoot ("worker-{0}.stdout.log" -f $index)
     $stderrPath = Join-Path $workerRoot ("worker-{0}.stderr.log" -f $index)
-    Remove-Item -LiteralPath $resultPath, $workerJunit, $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    $stdinPath = Join-Path $workerRoot ("worker-{0}.stdin.txt" -f $index)
+    Remove-Item -LiteralPath $resultPath, $workerJunit, $stdoutPath, $stderrPath, $stdinPath -Force -ErrorAction SilentlyContinue
+    [System.IO.File]::WriteAllText($stdinPath, "", [System.Text.UTF8Encoding]::new($false))
     $payload = [ordered]@{ schemaVersion = 1; worker = $index; estimatedSeconds = [double]$plan.weight; paths = @($plan.paths) }
     [System.IO.File]::WriteAllText($planPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
     $args = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (ConvertTo-NativeArgument $workerScript), "-PlanPath", (ConvertTo-NativeArgument $planPath), "-JunitPath", (ConvertTo-NativeArgument $workerJunit), "-ResultPath", (ConvertTo-NativeArgument $resultPath))
-    $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($args -join " ") -WorkingDirectory $RepositoryRoot -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
+    $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($args -join " ") -WorkingDirectory $RepositoryRoot -WindowStyle Hidden -RedirectStandardInput $stdinPath -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
     $processes += [pscustomobject]@{ worker = $index; process = $process; resultPath = $resultPath; junitPath = $workerJunit; stdoutPath = $stdoutPath; stderrPath = $stderrPath }
 }
 
@@ -101,7 +103,9 @@ if ($serialTestFiles.Count -gt 0) {
     $serialJunit = Join-Path $workerRoot ("worker-{0}.xml" -f $serialWorker)
     $serialStdoutPath = Join-Path $workerRoot ("worker-{0}.stdout.log" -f $serialWorker)
     $serialStderrPath = Join-Path $workerRoot ("worker-{0}.stderr.log" -f $serialWorker)
-    Remove-Item -LiteralPath $serialResultPath, $serialJunit, $serialStdoutPath, $serialStderrPath -Force -ErrorAction SilentlyContinue
+    $serialStdinPath = Join-Path $workerRoot ("worker-{0}.stdin.txt" -f $serialWorker)
+    Remove-Item -LiteralPath $serialResultPath, $serialJunit, $serialStdoutPath, $serialStderrPath, $serialStdinPath -Force -ErrorAction SilentlyContinue
+    [System.IO.File]::WriteAllText($serialStdinPath, "", [System.Text.UTF8Encoding]::new($false))
     $serialWeight = [double](($serialTestFiles | ForEach-Object {
         if ($weights.ContainsKey($_.Name)) { [double]$weights[$_.Name] } else { $defaultSeconds }
     } | Measure-Object -Sum).Sum)
@@ -113,7 +117,7 @@ if ($serialTestFiles.Count -gt 0) {
     }
     [System.IO.File]::WriteAllText($serialPlanPath, (($serialPayload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
     $serialArgs = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (ConvertTo-NativeArgument $workerScript), "-PlanPath", (ConvertTo-NativeArgument $serialPlanPath), "-JunitPath", (ConvertTo-NativeArgument $serialJunit), "-ResultPath", (ConvertTo-NativeArgument $serialResultPath))
-    $serialProcess = Start-Process -FilePath "powershell.exe" -ArgumentList ($serialArgs -join " ") -WorkingDirectory $RepositoryRoot -WindowStyle Hidden -RedirectStandardOutput $serialStdoutPath -RedirectStandardError $serialStderrPath -PassThru
+    $serialProcess = Start-Process -FilePath "powershell.exe" -ArgumentList ($serialArgs -join " ") -WorkingDirectory $RepositoryRoot -WindowStyle Hidden -RedirectStandardInput $serialStdinPath -RedirectStandardOutput $serialStdoutPath -RedirectStandardError $serialStderrPath -PassThru
     $serialEntry = [pscustomobject]@{
         worker = $serialWorker
         process = $serialProcess

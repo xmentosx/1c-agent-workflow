@@ -38,8 +38,10 @@ function Invoke-TestPowerShellFile {
 
     $stdoutPath = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-test-powershell-stdout-" + [guid]::NewGuid().ToString("N") + ".log")
     $stderrPath = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-test-powershell-stderr-" + [guid]::NewGuid().ToString("N") + ".log")
+    $stdinPath = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-test-powershell-stdin-" + [guid]::NewGuid().ToString("N") + ".txt")
 
     try {
+        [System.IO.File]::WriteAllText($stdinPath, "", [System.Text.UTF8Encoding]::new($false))
         $quoteArgument = {
             param([string]$Value)
             if ($Value -match '[\s"]') {
@@ -50,6 +52,7 @@ function Invoke-TestPowerShellFile {
         $argumentList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (& $quoteArgument $FilePath)) + @($Arguments | ForEach-Object { & $quoteArgument $_ })
         $process = Start-Process -FilePath "powershell" `
             -ArgumentList $argumentList `
+            -RedirectStandardInput $stdinPath `
             -RedirectStandardOutput $stdoutPath `
             -RedirectStandardError $stderrPath `
             -Wait `
@@ -67,7 +70,7 @@ function Invoke-TestPowerShellFile {
             combinedText = ($combined -join [Environment]::NewLine)
         }
     } finally {
-        foreach ($path in @($stdoutPath, $stderrPath)) {
+        foreach ($path in @($stdinPath, $stdoutPath, $stderrPath)) {
             if (Test-Path -LiteralPath $path -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
             }

@@ -63,6 +63,21 @@ checkpoint v1 один раз мигрируется штатным `Restart`.
 `-ReleaseResumeMode Restart`; произвольное удаление checkpoint или ручная
 правка state не являются штатным восстановлением.
 
+Перед Pester или запуском 1С `Full` и `Release` автоматически выполняют
+`scripts/test-release-readiness.ps1` и сохраняют
+`build/test-results/local/release-context.json`. Preflight агрегирует все
+обнаруженные проблемы: immutable Vanessa archive, согласованность lock и
+compatibility manifest, pinned controlled fork, UTF-8/AST изменённых PowerShell
+файлов. Для `Release` дополнительно проверяются exact workflow commit и managed
+package обоих worktree E2E-стенда, чистая ветка и подтверждение unsafe-action
+protection. Дорогой gate не начинается при `CANDIDATE_INCOMPLETE`,
+`DEPENDENCY_DRIFT`, `STAND_STALE` или `ENVIRONMENT`.
+
+Если immutable Vanessa archive отсутствует, online preflight скачивает его по
+URL из lock в канонический ignored cache `build/third-party/vanessa-automation`;
+`Offline` только проверяет уже имеющийся файл. Ручная подготовка
+`ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE` не требуется.
+
 Release требует fresh passed `/itl-check`, экспортирует CF/CFE, сверяет SHA256
 и останавливает Vanessa UI MCP и ROCTUP MCP. Extension smoke создаёт Empty-
 расширение, проверяет повторные form/template операции, сохранность

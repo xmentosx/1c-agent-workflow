@@ -13,7 +13,7 @@ or long regressions only when explicitly requested.
    - `integration`: object, document, register, exchange, or data movement between subsystems;
    - `UI`: form, command, or visible user behavior.
 3. Search existing steps and local `Libraries`/`@exportscenarios` before inventing new steps.
-4. For OpenSpec, write 2-3 small scenarios: the main path and one meaningful
+4. For OpenSpec, write 2-3 scenarios: the main path and one meaningful
    boundary or negative case. A fourth needs justification. A quick-fix starts
    with one focused regression and adds another only for a separate boundary.
 5. Run the final ITL check flow. Vanessa UI MCP is only for runtime UI research, authoring support, step search, recording, and debugging; it is not the test runner.
