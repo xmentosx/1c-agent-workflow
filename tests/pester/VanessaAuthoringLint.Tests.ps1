@@ -165,15 +165,11 @@ Scenario: Stored expression is not executed here
         $warningText | Should -Not -Match 'secret inspection detail'
     }
 
-    It "keeps lint warnings outside authoring state and evidence gates" {
+    It "emits lint only from the cheap verification preflight" {
         $source = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
-        $prepare = [regex]::Match($source, '(?s)function Prepare-VanessaAuthoring \{(?<body>.*?)\n\}')
-        $prepare.Success | Should -BeTrue
-        $prepare.Groups['body'].Value | Should -Match 'Write-VanessaAuthoringLintWarnings -FeatureRecords \$features'
-        $prepare.Groups['body'].Value.IndexOf('Write-VanessaAuthoringLintWarnings') | Should -BeLessThan $prepare.Groups['body'].Value.IndexOf('Update-DevBranchBase')
-        $state = [regex]::Match($source, '(?s)function New-VanessaAuthoringState \{(?<body>.*?)\n\}')
-        $state.Groups['body'].Value | Should -Not -Match 'lint|warning'
-        $preflight = [regex]::Match($source, '(?s)function Assert-VanessaAuthoringPreflight \{(?<body>.*?)\n\}')
-        $preflight.Groups['body'].Value | Should -Not -Match 'Lint'
+        $preflight = [regex]::Match($source, '(?s)function Assert-VanessaVerificationPreflight \{(?<body>.*?)\n\}')
+        $preflight.Success | Should -BeTrue
+        $preflight.Groups['body'].Value | Should -Match 'Write-VanessaAuthoringLintWarnings -FeatureRecords \$changed'
+        $source | Should -Not -Match 'New-VanessaAuthoringState|AuthoringStatePath|backendEvidence'
     }
 }

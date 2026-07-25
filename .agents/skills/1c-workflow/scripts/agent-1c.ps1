@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "prepare-vanessa-authoring", "complete-vanessa-authoring", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "run-dev-branch-tests", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-approve-vanessa-fixture", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "run-dev-branch-tests", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -70,11 +70,6 @@ param(
     [string]$VerificationTrigger = "",
     [ValidateSet("", "vanessa", "event-log", "all")]
     [string]$ExplicitVerificationComponent = "",
-    [ValidateSet("", "passed", "failed")]
-    [string]$AuthoringResult = "",
-    [ValidateSet("", "missing-suite", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log")]
-    [string]$AuthoringErrorCategory = "",
-    [string]$AuthoringResultsPath = "",
     [string]$RepairSessionId = "",
     [string[]]$ConfigObjectPaths = @(),
     [switch]$PublishToWeb,
@@ -242,9 +237,6 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Mode" -Value $Mode
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationTrigger" -Value $VerificationTrigger
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ExplicitVerificationComponent" -Value $ExplicitVerificationComponent
-    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuthoringResult" -Value $AuthoringResult
-    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuthoringErrorCategory" -Value $AuthoringErrorCategory
-    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuthoringResultsPath" -Value $AuthoringResultsPath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "RepairSessionId" -Value $RepairSessionId
     if ($ConfigObjectPaths.Count -gt 0) { Add-Agent1cReexecArgument -Arguments $arguments -Name "ConfigObjectPaths" -Value ($ConfigObjectPaths -join ",") }
     Add-Agent1cReexecArgument -Arguments $arguments -Name "PublishToWeb" -Value $PublishToWeb
@@ -288,8 +280,6 @@ $script:RunRequiredAction = ""
 $script:RunDevBranch = ""
 $script:RunWorktreePath = ""
 $script:RunExtensionInitializationStatus = ""
-$script:RunAuthoringStatus = ""
-$script:RunAuthoringStatePath = ""
 $script:RunUserReport = ""
 $script:ProjectRoot = Resolve-Agent1cFullPath -Path $ProjectRoot
 $script:ConfigPath = Resolve-Agent1cFullPath -Path $ConfigPath
@@ -374,8 +364,6 @@ try {
         "configure-web-publication" { Configure-WebPublication }
         "publish-dev-branch" { Publish-DevBranch }
         "install-vanessa-automation" { Install-VanessaAutomation }
-        "prepare-vanessa-authoring" { Prepare-VanessaAuthoring }
-        "complete-vanessa-authoring" { Complete-VanessaAuthoring -Result $AuthoringResult -ErrorCategory $AuthoringErrorCategory -ResultsPath $AuthoringResultsPath }
         "begin-verification-repair" { Start-ItlVerificationRepairSession }
         "vibecoding1c-mcp-setup" { Setup-Vibecoding1cMcp }
         "vibecoding1c-mcp-update" { Update-Vibecoding1cMcp }
@@ -426,7 +414,6 @@ try {
         "list-dev-branches" { List-DevBranches }
         "release-e2e-snapshot" { Save-ReleaseE2EInfobaseSnapshot }
         "release-e2e-restore" { Restore-ReleaseE2EInfobaseSnapshot }
-        "release-e2e-approve-vanessa-fixture" { Approve-ReleaseE2EVanessaFixtureAuthoring -FeaturePath $VanessaFeaturePath }
         "release-e2e-prepare-ondemand" { Prepare-ReleaseE2EOnDemandDependencies }
         "release-e2e-config-roundtrip" { Invoke-ReleaseE2EConfigRoundtrip }
         "release-e2e-extension-smoke" { Invoke-ReleaseE2EExtensionSmoke }

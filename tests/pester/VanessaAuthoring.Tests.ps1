@@ -1,4 +1,4 @@
-Describe "Vanessa authoring gate" {
+Describe "Vanessa test development and verification" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -6,26 +6,29 @@ Describe "Vanessa authoring gate" {
         $HelperPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
     }
 
-    It "places authoring preflight before base update and exposes the exact MCP schema" {
+    It "uses one verification preflight without a mandatory authoring action or state" {
         $lifecycle = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
-        $match = [regex]::Match($lifecycle, '(?s)function Invoke-DevBranchCheck \{(?<body>.*?)\n\}')
-        $match.Success | Should -BeTrue
-        $match.Groups['body'].Value.IndexOf('Assert-VanessaAuthoringPreflight') | Should -BeLessThan $match.Groups['body'].Value.IndexOf('Update-DevBranchBase')
-        $match.Groups['body'].Value | Should -Match 'Invoke-DevBranchVanessaRuntimeRelease'
+        $check = [regex]::Match($lifecycle, '(?s)function Invoke-DevBranchCheck \{(?<body>.*?)\n\}')
+        $check.Success | Should -BeTrue
+        $check.Groups['body'].Value.IndexOf('Assert-VanessaVerificationPreflight') | Should -BeLessThan $check.Groups['body'].Value.IndexOf('Update-DevBranchBase')
+        $check.Groups['body'].Value | Should -Match 'Invoke-DevBranchVanessaRuntimeRelease'
+        $check.Groups['body'].Value | Should -Not -Match 'Authoring'
+
+        $helper = Get-Content -LiteralPath $HelperPath -Raw -Encoding UTF8
         $vanessa = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
-        $prepare = [regex]::Match($vanessa, '(?s)function Prepare-VanessaAuthoring \{(?<body>.*?)\n\}')
-        $prepare.Groups['body'].Value.IndexOf('Update-DevBranchBase') | Should -BeLessThan $prepare.Groups['body'].Value.IndexOf('Write-ItlOnDemandMcpClientConfig')
-        $prepare.Groups['body'].Value | Should -Not -Match 'Start-VanessaMcp'
-        $prepare.Groups['body'].Value | Should -Match 'Phase "ready"'
-        $command = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-vanessa-author.md.template") -Raw -Encoding UTF8
-        foreach ($name in @('search_name','search_description','search_type','exclude_name','exclude_description','exclude_type','limit')) { $command | Should -Match $name }
-        $command | Should -Match 'never invent `keywords`'
-        $command | Should -Match 'Never call.*raw HTTP'
+        $core = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.core.ps1") -Raw -Encoding UTF8
+        $compact = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\run-itl-command.ps1") -Raw -Encoding UTF8
+        $helper | Should -Not -Match 'prepare-vanessa-authoring|complete-vanessa-authoring|release-e2e-approve-vanessa-fixture|AuthoringResult'
+        $vanessa | Should -Not -Match 'AuthoringState|AuthoringVerificationFallback|runner-fallback-pending'
+        $core | Should -Not -Match 'authoringStatus|authoringStatePath'
+        $compact | Should -Not -Match 'authoringStatus|authoringStatePath'
+        Test-Path -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-vanessa-author.md.template") | Should -BeFalse
+
         $reference = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\vanessa-authoring.md") -Raw -Encoding UTF8
-        $reference | Should -Match 'one authoring chain through one facade instance'
-        $reference | Should -Match 'Always pair each `run_scenario` with `get_test_results`'
-        $reference | Should -Match 'status\.json.*JUnit.*error directory.*vanessa\.log.*TestClient `/Out`'
-        $reference | Should -Match 'capture the intended TestManager window before cleanup'
+        $reference | Should -Match 'There is no separate Vanessa authoring gate'
+        $reference | Should -Match 'scenario run is optional diagnostic feedback'
+        $reference | Should -Match '/itl-check` is the only executable verification gate'
+        $reference | Should -Match 'Do not delete, skip, filter, or weaken'
     }
 
     It "does not classify runMcp as a final Vanessa test process" {
@@ -70,40 +73,8 @@ Describe "Vanessa authoring gate" {
         ($registry | ConvertTo-Json -Depth 6) | Should -Not -Match '(?i)commit|[0-9a-f]{40}'
     }
 
-    It "invalidates a pass when a changed feature hash changes in a Cyrillic worktree" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-$([char]0x0422)-" + [guid]::NewGuid().ToString("N"))
-        try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot "tests\features") | Out-Null
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"tests/features"}'
-            $feature = Join-Path $tempRoot ("tests\features\$([char]0x0424).feature")
-            Set-Content -LiteralPath $feature -Encoding UTF8 -Value "Feature: Check`n"
-            & git -C $tempRoot init *> $null
-            & git -C $tempRoot branch -M master
-            & git -C $tempRoot config core.autocrlf false
-            & git -C $tempRoot config core.safecrlf false
-            & git -C $tempRoot config user.email "tests@example.invalid"
-            & git -C $tempRoot config user.name "ITL Tests"
-            & git -C $tempRoot add .
-            & git -C $tempRoot commit -m baseline *> $null
-            & git -C $tempRoot switch -q -c itldev/demo
-            Add-Content -LiteralPath $feature -Encoding UTF8 -Value "Scenario: First"
-            $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $records = @(Get-VanessaAuthoringFeatureRecords)
-                $authoring = New-VanessaAuthoringState -Phase 'passed' -FeatureRecords $records -LibraryFingerprint ''
-                $authoring.catalogSha256 = (Get-ItlOnDemandMcpFamilyDefinition -Family 'vanessa-ui').catalogSha256
-                $authoring.passedAt = (Get-Date).ToString('o')
-                Write-VanessaAuthoringState -State $authoring *> $null
-                Assert-VanessaAuthoringPreflight -Trigger command
-                Add-Content -LiteralPath $feature -Encoding UTF8 -Value "`tGiven changed"
-                try { Assert-VanessaAuthoringPreflight -Trigger command; 'not-invalidated' } catch { $_.Exception.Message }
-            }
-            $result | Should -Match 'missing or stale'
-        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It "detects a feature committed on the development branch" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-authoring-committed-" + [guid]::NewGuid().ToString("N"))
+    It "detects a feature committed on the development branch for cheap lint preflight" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-feature-preflight-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot "tests\features") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"tests/features"}'
@@ -121,281 +92,11 @@ Describe "Vanessa authoring gate" {
             & git -C $tempRoot commit -m feature *> $null
             $records = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                @(Get-VanessaAuthoringFeatureRecords)
+                @(Get-VanessaChangedFeatureRecords)
             }
             @($records).Count | Should -Be 1
             $records[0].path | Should -Be 'tests/features/committed.feature'
-            $records[0].title | Should -Be 'Committed'
-        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It "records final feature hashes after edits made during authoring" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-authoring-complete-" + [guid]::NewGuid().ToString("N"))
-        try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches"), (Join-Path $tempRoot "tests\features") | Out-Null
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"tests/features"}'
-            $feature = Join-Path $tempRoot "tests\features\check.feature"
-            Set-Content -LiteralPath $feature -Encoding UTF8 -Value "Feature: Check`n"
-            & git -C $tempRoot init *> $null
-            & git -C $tempRoot branch -M master
-            & git -C $tempRoot config core.autocrlf false
-            & git -C $tempRoot config user.email "tests@example.invalid"
-            & git -C $tempRoot config user.name "ITL Tests"
-            & git -C $tempRoot add .
-            & git -C $tempRoot commit -m baseline *> $null
-            & git -C $tempRoot switch -q -c itldev/demo
-            $state = [ordered]@{ devBranchName='demo'; safeDevBranchName='demo'; devBranch='itldev/demo'; devBranchKind='configuration'; worktreePath=$tempRoot; devBranchInfoBasePath=(Join-Path $tempRoot '.agent-1c\infobases\demo') }
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dev-branches\demo.json") -Encoding UTF8 -Value ($state | ConvertTo-Json)
-            Add-Content -LiteralPath $feature -Encoding UTF8 -Value "Scenario: Draft"
-            $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $catalogSha256 = (Get-ItlOnDemandMcpFamilyDefinition -Family 'vanessa-ui').catalogSha256
-                $prepared = New-VanessaAuthoringState -Phase 'ready' -FeatureRecords @(Get-VanessaAuthoringFeatureRecords) -LibraryFingerprint ''
-                $prepared.catalogSha256 = $catalogSha256
-                $prepared.PSObject.Properties.Name | Should -Not -Contain 'mcpPid'
-                $prepared.PSObject.Properties.Name | Should -Contain 'backendEvidence'
-                Write-VanessaAuthoringState -State $prepared *> $null
-                Add-Content -LiteralPath $feature -Encoding UTF8 -Value "`tGiven final edit"
-                $finalRecord = @(Get-VanessaAuthoringFeatureRecords)[0]
-                $evidenceRoot = Join-Path (Get-ItlOnDemandRuntimeRoot) 'vanessa-ui'
-                New-Item -ItemType Directory -Force -Path $evidenceRoot | Out-Null
-                $started = (Get-Date).ToUniversalTime()
-                $scenarioLine = [int]$finalRecord.scenarios[0].line
-                $sequence = @(
-                    @{ tool='search_for_steps_by_keywords'; featurePath=''; featureSha256=''; scenarioLine=0 },
-                    @{ tool='open_feature_file'; featurePath=$finalRecord.path; featureSha256=$finalRecord.sha256; scenarioLine=0 },
-                    @{ tool='check_syntax'; featurePath=$finalRecord.path; featureSha256=$finalRecord.sha256; scenarioLine=0 },
-                    @{ tool='get_info_about_line_scenario'; featurePath=$finalRecord.path; featureSha256=$finalRecord.sha256; scenarioLine=$scenarioLine },
-                    @{ tool='run_scenario'; featurePath=$finalRecord.path; featureSha256=$finalRecord.sha256; scenarioLine=$scenarioLine },
-                    @{ tool='get_test_results'; featurePath=$finalRecord.path; featureSha256=$finalRecord.sha256; scenarioLine=$scenarioLine }
-                )
-                $lines = for($index=0; $index -lt $sequence.Count; $index++) {
-                    $item = $sequence[$index]
-                    [ordered]@{ schemaVersion=2; family='vanessa-ui'; instanceId='fixture'; backendVersion='fixture'; catalogSha256=$catalogSha256; tool=$item.tool; outcome='passed'; resultCode='ITL_OK'; argumentsSha256=('a'*64); featurePath=$item.featurePath; featureSha256=$item.featureSha256; scenarioLine=$item.scenarioLine; recordedAt=$started.AddSeconds($index+1).ToString('o') } | ConvertTo-Json -Compress
-                }
-                $lines | Set-Content -LiteralPath (Join-Path $evidenceRoot 'fixture.evidence.jsonl') -Encoding UTF8
-                function Stop-ItlOnDemandBackends { }
-                Complete-VanessaAuthoring -Result passed
-                $final = Read-VanessaAuthoringState
-                [pscustomobject]@{ phase=$final.phase; matches=(Test-VanessaAuthoringStateMatches -State $final -FeatureRecords @(Get-VanessaAuthoringFeatureRecords) -LibraryFingerprint '') }
-            }
-            $result.phase | Should -Be 'passed'
-            $result.matches | Should -BeTrue
-        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It "rejects legacy state and a lone successful search evidence record" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-authoring-chain-" + [guid]::NewGuid().ToString("N"))
-        try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches"), (Join-Path $tempRoot "tests\features") | Out-Null
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"tests/features"}'
-            $feature = Join-Path $tempRoot "tests\features\check.feature"
-            Set-Content -LiteralPath $feature -Encoding UTF8 -Value "Feature: Check`nScenario: Draft`n"
-            & git -C $tempRoot init *> $null
-            & git -C $tempRoot branch -M master
-            & git -C $tempRoot config user.email "tests@example.invalid"
-            & git -C $tempRoot config user.name "ITL Tests"
-            & git -C $tempRoot add .
-            & git -C $tempRoot commit -m baseline *> $null
-            & git -C $tempRoot switch -q -c itldev/demo
-            Add-Content -LiteralPath $feature -Encoding UTF8 -Value "`tGiven changed"
-            $state = [ordered]@{ devBranchName='demo'; safeDevBranchName='demo'; devBranch='itldev/demo'; devBranchKind='configuration'; worktreePath=$tempRoot; devBranchInfoBasePath=(Join-Path $tempRoot '.agent-1c\infobases\demo') }
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dev-branches\demo.json") -Encoding UTF8 -Value ($state | ConvertTo-Json)
-            $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $records = @(Get-VanessaAuthoringFeatureRecords)
-                $prepared = New-VanessaAuthoringState -Phase ready -FeatureRecords $records -LibraryFingerprint ''
-                $prepared.catalogSha256 = (Get-ItlOnDemandMcpFamilyDefinition -Family 'vanessa-ui').catalogSha256
-                $legacy = $prepared.PSObject.Copy(); $legacy.schemaVersion = 2
-                $legacyMatches = Test-VanessaAuthoringStateMatches -State $legacy -FeatureRecords $records -LibraryFingerprint ''
-                Write-VanessaAuthoringState -State $prepared *> $null
-                $root = Join-Path (Get-ItlOnDemandRuntimeRoot) 'vanessa-ui'; New-Item -ItemType Directory -Force -Path $root | Out-Null
-                [ordered]@{ schemaVersion=2; family='vanessa-ui'; instanceId='fixture'; backendVersion='fixture'; catalogSha256=$prepared.catalogSha256; tool='search_for_steps_by_keywords'; outcome='passed'; resultCode='ITL_OK'; argumentsSha256=('a'*64); featurePath=''; featureSha256=''; scenarioLine=0; recordedAt=(Get-Date).AddSeconds(1).ToUniversalTime().ToString('o') } |
-                    ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $root 'fixture.evidence.jsonl') -Encoding UTF8
-                function Stop-ItlOnDemandBackends { }
-                $message = try { Complete-VanessaAuthoring -Result passed; 'not-blocked' } catch { $_.Exception.Message }
-                [pscustomobject]@{ legacyMatches=$legacyMatches; message=$message }
-            }
-            $result.legacyMatches | Should -BeFalse
-            $result.message | Should -Match 'complete ordered Vanessa authoring evidence chain'
-        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It "allows only a feature-bound runner failure and completes it from matching unfiltered JUnit" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-authoring-fallback-" + [guid]::NewGuid().ToString("N"))
-        try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot "tests\features") | Out-Null
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"tests/features"}'
-            $feature = Join-Path $tempRoot "tests\features\check.feature"
-            Set-Content -LiteralPath $feature -Encoding UTF8 -Value "Feature: Check`nScenario: Draft`n"
-            $duplicate = Join-Path $tempRoot 'tests\features\duplicate.feature'
-            Set-Content -LiteralPath $duplicate -Encoding UTF8 -Value "Feature: Check`nScenario: Other`n"
-            & git -C $tempRoot init *> $null
-            & git -C $tempRoot branch -M master
-            & git -C $tempRoot config user.email "tests@example.invalid"
-            & git -C $tempRoot config user.name "ITL Tests"
-            & git -C $tempRoot add .
-            & git -C $tempRoot commit -m baseline *> $null
-            & git -C $tempRoot switch -q -c itldev/demo
-            Add-Content -LiteralPath $feature -Encoding UTF8 -Value "`tGiven changed"
-            $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $records = @(Get-VanessaAuthoringFeatureRecords)
-                $authoring = New-VanessaAuthoringState -Phase failed -FeatureRecords $records -LibraryFingerprint ''
-                $authoring.catalogSha256 = (Get-ItlOnDemandMcpFamilyDefinition -Family 'vanessa-ui').catalogSha256
-                $authoring.backendEvidence = @([pscustomobject][ordered]@{ schemaVersion=2; family='vanessa-ui'; instanceId='fixture'; catalogSha256=$authoring.catalogSha256; tool='open_feature_file'; outcome='failed'; resultCode='ITL_ONDEMAND_BACKEND_CALL_FAILED'; argumentsSha256=('a'*64); featurePath=$records[0].path; featureSha256=$records[0].sha256; scenarioLine=0; recordedAt=(Get-Date).ToUniversalTime().ToString('o') })
-                $authoring.errorCategory = 'unsupported-step'
-                Write-VanessaAuthoringState -State $authoring *> $null
-                $unsupported = try { Assert-VanessaAuthoringPreflight -Trigger command; 'not-blocked' } catch { $_.Exception.Message }
-                $authoring.errorCategory = 'runner'
-                Write-VanessaAuthoringState -State $authoring *> $null
-                Assert-VanessaAuthoringPreflight -Trigger command
-                $pending = $script:RunAuthoringStatus
-                $run = Join-Path $tempRoot 'build\test-results\vanessa\run-fixture'; New-Item -ItemType Directory -Force -Path $run | Out-Null
-                Set-Content -LiteralPath (Join-Path $run 'junit.xml') -Encoding UTF8 -Value '<testsuite tests="1" failures="0" errors="0"><testcase name="Draft" classname="Check"/></testsuite>'
-                $duplicateResult = try { Complete-VanessaAuthoringVerificationFallback -RunDirectory $run; 'not-blocked' } catch { $_.Exception.Message }
-                Remove-Item -LiteralPath $duplicate -Force
-                Set-Content -LiteralPath (Join-Path $run 'junit.xml') -Encoding UTF8 -Value '<testsuite tests="1" failures="0" errors="0"><testcase name="Draft" classname="Check"><skipped/></testcase></testsuite>'
-                $skipped = try { Complete-VanessaAuthoringVerificationFallback -RunDirectory $run; 'not-blocked' } catch { $_.Exception.Message }
-                Set-Content -LiteralPath (Join-Path $run 'junit.xml') -Encoding UTF8 -Value '<testsuite tests="1" failures="0" errors="0"><testcase name="Other" classname="Other"/></testsuite>'
-                $missing = try { Complete-VanessaAuthoringVerificationFallback -RunDirectory $run; 'not-blocked' } catch { $_.Exception.Message }
-                Set-Content -LiteralPath (Join-Path $run 'junit.xml') -Encoding UTF8 -Value '<testsuite tests="1" failures="0" errors="0"><testcase name="Draft" classname="Check"/></testsuite>'
-                Complete-VanessaAuthoringVerificationFallback -RunDirectory $run
-                $final = Read-VanessaAuthoringState
-                [pscustomobject]@{ unsupported=$unsupported; pending=$pending; skipped=$skipped; duplicate=$duplicateResult; missing=$missing; phase=$final.phase; mode=$final.completionMode; matched=@($final.verificationFallback.matchedFeatures).Count }
-            }
-            $result.unsupported | Should -Match 'missing or stale'
-            $result.pending | Should -Be 'runner-fallback-pending'
-            $result.skipped | Should -Match 'skipped/failed/error'
-            $result.duplicate | Should -Match 'unique feature title'
-            $result.missing | Should -Match 'did not prove execution'
-            $result.phase | Should -Be 'passed'
-            $result.mode | Should -Be 'verification-fallback'
-            $result.matched | Should -Be 1
-        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It "preserves the latest current feature-bound runner error in safe state and userReport" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-authoring-runner-error-" + [guid]::NewGuid().ToString("N"))
-        try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches"), (Join-Path $tempRoot "tests\features") | Out-Null
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"tests/features"}'
-            $feature = Join-Path $tempRoot "tests\features\check.feature"
-            Set-Content -LiteralPath $feature -Encoding UTF8 -Value "Feature: Check`nScenario: Draft`n"
-            & git -C $tempRoot init *> $null
-            & git -C $tempRoot branch -M master
-            & git -C $tempRoot config user.email "tests@example.invalid"
-            & git -C $tempRoot config user.name "ITL Tests"
-            & git -C $tempRoot add .
-            & git -C $tempRoot commit -m baseline *> $null
-            & git -C $tempRoot switch -q -c itldev/demo
-            Add-Content -LiteralPath $feature -Encoding UTF8 -Value "`tGiven changed"
-            $devState = [ordered]@{ devBranchName='demo'; safeDevBranchName='demo'; devBranch='itldev/demo'; devBranchKind='configuration'; worktreePath=$tempRoot; devBranchInfoBasePath=(Join-Path $tempRoot '.agent-1c\infobases\demo') }
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dev-branches\demo.json") -Encoding UTF8 -Value ($devState | ConvertTo-Json)
-
-            $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $records = @(Get-VanessaAuthoringFeatureRecords)
-                $authoring = New-VanessaAuthoringState -Phase ready -FeatureRecords $records -LibraryFingerprint ''
-                $authoring.catalogSha256 = (Get-ItlOnDemandMcpFamilyDefinition -Family 'vanessa-ui').catalogSha256
-                Write-VanessaAuthoringState -State $authoring *> $null
-                $root = Join-Path (Get-ItlOnDemandRuntimeRoot) 'vanessa-ui'
-                New-Item -ItemType Directory -Force -Path $root | Out-Null
-                $evidencePath = Join-Path $root 'current.evidence.jsonl'
-                $started = (Get-Date).ToUniversalTime()
-                @(
-                    [ordered]@{ schemaVersion=2; family='vanessa-ui'; instanceId='current'; catalogSha256=$authoring.catalogSha256; tool='search_for_steps_by_keywords'; outcome='passed'; resultCode='ITL_OK'; resultMessage='ok'; argumentsSha256=('a'*64); featurePath=''; featureSha256=''; scenarioLine=0; recordedAt=$started.AddSeconds(1).ToString('o') },
-                    [ordered]@{ schemaVersion=2; family='vanessa-ui'; instanceId='current'; catalogSha256=$authoring.catalogSha256; tool='open_feature_file'; outcome='failed'; resultCode='ITL_ONDEMAND_BACKEND_CALL_FAILED'; resultMessage='older failure'; logPath=(Join-Path $root 'backend.log'); argumentsSha256=('b'*64); featurePath=$records[0].path; featureSha256=$records[0].sha256; scenarioLine=0; recordedAt=$started.AddSeconds(2).ToString('o') },
-                    [ordered]@{ schemaVersion=2; family='vanessa-ui'; instanceId='current'; catalogSha256=$authoring.catalogSha256; tool='check_syntax'; outcome='failed'; resultCode='ITL_ONDEMAND_BACKEND_CALL_FAILED'; resultMessage='Internal error: File constructor; password=super-secret; Bearer abc.def'; logPath=(Join-Path $root 'backend.log'); argumentsSha256=('c'*64); featurePath=$records[0].path; featureSha256=$records[0].sha256; scenarioLine=0; recordedAt=$started.AddSeconds(3).ToString('o') }
-                ) | ForEach-Object { $_ | ConvertTo-Json -Compress } | Set-Content -LiteralPath $evidencePath -Encoding UTF8
-                function Stop-ItlOnDemandBackends { }
-                $message = try { Complete-VanessaAuthoring -Result failed -ErrorCategory runner; 'not-failed' } catch { $_.Exception.Message }
-                $final = Read-VanessaAuthoringState
-                [pscustomobject]@{ message=$message; report=$script:RunUserReport; final=$final; evidencePath=$evidencePath }
-            }
-
-            $result.message | Should -Be $result.report
-            $result.report | Should -Match 'Runner error code: ITL_ONDEMAND_BACKEND_CALL_FAILED'
-            $result.report | Should -Match 'Internal error: File constructor'
-            $result.report | Should -Match 'password=\[redacted\]'
-            $result.report | Should -Match 'Bearer \[redacted\]'
-            $result.report | Should -Not -Match 'super-secret|abc\.def'
-            $result.report | Should -Match ([regex]::Escape($result.evidencePath))
-            $result.final.schemaVersion | Should -Be 3
-            $result.final.runnerError.instanceId | Should -Be 'current'
-            $result.final.runnerError.featureSha256 | Should -Be $result.final.features[0].sha256
-            $result.final.runnerError.message | Should -Match 'File constructor'
-            ($result.final.backendEvidence | ConvertTo-Json -Depth 6) | Should -Not -Match 'super-secret|abc\.def'
-        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It "reports runner error evidence not found when the current chain has no failure" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-authoring-runner-missing-" + [guid]::NewGuid().ToString("N"))
-        try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches"), (Join-Path $tempRoot "tests\features") | Out-Null
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"tests/features"}'
-            $feature = Join-Path $tempRoot "tests\features\check.feature"
-            Set-Content -LiteralPath $feature -Encoding UTF8 -Value "Feature: Check`nScenario: Draft`n"
-            & git -C $tempRoot init *> $null
-            & git -C $tempRoot branch -M master
-            & git -C $tempRoot config user.email "tests@example.invalid"
-            & git -C $tempRoot config user.name "ITL Tests"
-            & git -C $tempRoot add .
-            & git -C $tempRoot commit -m baseline *> $null
-            & git -C $tempRoot switch -q -c itldev/demo
-            Add-Content -LiteralPath $feature -Encoding UTF8 -Value "`tGiven changed"
-            $devState = [ordered]@{ devBranchName='demo'; safeDevBranchName='demo'; devBranch='itldev/demo'; devBranchKind='configuration'; worktreePath=$tempRoot; devBranchInfoBasePath=(Join-Path $tempRoot '.agent-1c\infobases\demo') }
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dev-branches\demo.json") -Encoding UTF8 -Value ($devState | ConvertTo-Json)
-
-            $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $records = @(Get-VanessaAuthoringFeatureRecords)
-                $authoring = New-VanessaAuthoringState -Phase ready -FeatureRecords $records -LibraryFingerprint ''
-                $authoring.catalogSha256 = (Get-ItlOnDemandMcpFamilyDefinition -Family 'vanessa-ui').catalogSha256
-                Write-VanessaAuthoringState -State $authoring *> $null
-                $root = Join-Path (Get-ItlOnDemandRuntimeRoot) 'vanessa-ui'
-                New-Item -ItemType Directory -Force -Path $root | Out-Null
-                @(
-                    [ordered]@{ schemaVersion=2; family='vanessa-ui'; instanceId='current'; catalogSha256=$authoring.catalogSha256; tool='open_feature_file'; outcome='failed'; resultCode='ITL_ONDEMAND_BACKEND_CALL_FAILED'; resultMessage='old context'; argumentsSha256=('b'*64); featurePath=$records[0].path; featureSha256=$records[0].sha256; scenarioLine=0; recordedAt=([DateTimeOffset]::Parse($authoring.createdAt).AddSeconds(-1).ToString('o')) },
-                    [ordered]@{ schemaVersion=2; family='vanessa-ui'; instanceId='current'; catalogSha256=$authoring.catalogSha256; tool='search_for_steps_by_keywords'; outcome='passed'; resultCode='ITL_OK'; argumentsSha256=('a'*64); featurePath=''; featureSha256=''; scenarioLine=0; recordedAt=(Get-Date).AddSeconds(1).ToUniversalTime().ToString('o') }
-                ) | ForEach-Object { $_ | ConvertTo-Json -Compress } | Set-Content -LiteralPath (Join-Path $root 'current.evidence.jsonl') -Encoding UTF8
-                function Stop-ItlOnDemandBackends { }
-                $message = try { Complete-VanessaAuthoring -Result failed -ErrorCategory runner; 'not-failed' } catch { $_.Exception.Message }
-                $final = Read-VanessaAuthoringState
-                [pscustomobject]@{ message=$message; report=$script:RunUserReport; runnerError=$final.runnerError }
-            }
-
-            $result.message | Should -Be $result.report
-            $result.report | Should -Match 'runner error evidence not found'
-            $result.runnerError | Should -BeNullOrEmpty
-        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It "rejects stale, mismatched-SHA, and different-instance runner evidence" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-authoring-runner-filter-" + [guid]::NewGuid().ToString("N"))
-        try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","testsPath":"tests/features"}'
-            $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $feature = [pscustomobject]@{ path='tests/features/check.feature'; sha256=('f'*64) }
-                $now = [DateTimeOffset]::UtcNow
-                $search = [pscustomobject]@{ instanceId='current'; tool='search_for_steps_by_keywords'; outcome='passed'; recordedAt=$now.ToString('o') }
-                $stale = [pscustomobject]@{ instanceId='current'; tool='open_feature_file'; outcome='failed'; resultCode='ITL_ONDEMAND_BACKEND_CALL_FAILED'; resultMessage='stale'; evidencePath='stale.jsonl'; featurePath=$feature.path; featureSha256=$feature.sha256; recordedAt=$now.AddSeconds(-1).ToString('o') }
-                $wrongSha = [pscustomobject]@{ instanceId='current'; tool='check_syntax'; outcome='failed'; resultCode='ITL_ONDEMAND_BACKEND_CALL_FAILED'; resultMessage='wrong sha'; evidencePath='wrong-sha.jsonl'; featurePath=$feature.path; featureSha256=('e'*64); recordedAt=$now.AddSeconds(1).ToString('o') }
-                $otherInstance = [pscustomobject]@{ instanceId='other'; tool='check_syntax'; outcome='failed'; resultCode='ITL_ONDEMAND_BACKEND_CALL_FAILED'; resultMessage='other instance'; evidencePath='other.jsonl'; featurePath=$feature.path; featureSha256=$feature.sha256; recordedAt=$now.AddSeconds(2).ToString('o') }
-                $license = [pscustomobject]@{ instanceId='current'; tool='run_scenario'; outcome='failed'; resultCode='ITL_VANESSA_LICENSE_LIMIT'; resultMessage='license capacity is exhausted'; evidencePath='license.jsonl'; featurePath=$feature.path; featureSha256=$feature.sha256; recordedAt=$now.AddSeconds(3).ToString('o') }
-                [pscustomobject]@{
-                    stale = Get-VanessaAuthoringRunnerError -Evidence @($stale, $search) -Features @($feature)
-                    wrongSha = Get-VanessaAuthoringRunnerError -Evidence @($search, $wrongSha) -Features @($feature)
-                    otherInstance = Get-VanessaAuthoringRunnerError -Evidence @($search, $otherInstance) -Features @($feature)
-                    license = Get-VanessaAuthoringRunnerError -Evidence @($search, $license) -Features @($feature)
-                }
-            }
-            $result.stale | Should -BeNullOrEmpty
-            $result.wrongSha | Should -BeNullOrEmpty
-            $result.otherInstance | Should -BeNullOrEmpty
-            $result.license.code | Should -Be 'ITL_VANESSA_LICENSE_LIMIT'
+            @($records[0].PSObject.Properties.Name) | Should -Be @('path')
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
@@ -425,7 +126,7 @@ Describe "Vanessa authoring gate" {
     }
 
     It "bypasses missing suite when Vanessa mode is off" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-authoring-off-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-verification-off-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","testsPath":"missing/features"}'
@@ -434,7 +135,7 @@ Describe "Vanessa authoring gate" {
             & git -C $tempRoot config user.name "ITL Tests"
             & git -C $tempRoot commit --allow-empty -m baseline *> $null
             [Environment]::SetEnvironmentVariable('ITL_VANESSA_TESTING','off','Process')
-            $result = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; try { Assert-VanessaAuthoringPreflight -Trigger command; 'passed' } catch { $_.Exception.Message } }
+            $result = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; try { Assert-VanessaVerificationPreflight -Trigger command; 'passed' } catch { $_.Exception.Message } }
             $result | Should -Be 'passed'
         } finally {
             [Environment]::SetEnvironmentVariable('ITL_VANESSA_TESTING',$null,'Process')
@@ -443,7 +144,7 @@ Describe "Vanessa authoring gate" {
     }
 
     It "reports missing-suite before any infobase update through status JSON" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-authoring-status-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-verification-status-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"missing/features"}'
@@ -473,6 +174,8 @@ Describe "Vanessa authoring gate" {
             $status.stage | Should -Not -Match 'update|designer'
             $status.errorCategory | Should -Be 'missing-suite'
             $status.requiredAction | Should -Be '/itl-verify-fix'
+            @($status.PSObject.Properties.Name) | Should -Not -Contain 'authoringStatus'
+            @($status.PSObject.Properties.Name) | Should -Not -Contain 'authoringStatePath'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 }

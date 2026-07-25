@@ -4,11 +4,11 @@ Use this reference for `/itl-check`, `verify-dev-branch`, Vanessa Automation, ev
 
 ## Normal Gate
 
-Use `/itl-check` or helper action `check-dev-branch` for the post-change executable gate. It updates the copied branch infobase, evaluates `ITL_VANESSA_TESTING` and `ITL_CHECK_EVENT_LOG`, and runs permitted components. Vanessa uses packet `StartFeaturePlayer` in a real `TESTMANAGER -> TESTCLIENT` topology.
+Use `/itl-check` or helper action `check-dev-branch` for the only post-change executable gate. It ensures the copied branch infobase matches current configuration/extension sources, skips Designer/Enterprise when the fingerprint is already current, evaluates `ITL_VANESSA_TESTING` and `ITL_CHECK_EVENT_LOG`, and runs permitted components. Vanessa uses packet `StartFeaturePlayer` in a real `TESTMANAGER -> TESTCLIENT` topology.
 
-`/itl-check` remains a single mechanical helper run: it does not author tests or start an agent repair loop. New/changed features first require `/itl-vanessa-author`; missing suites route to `/itl-verify-fix`. Recovery reuses sufficient coverage, otherwise creates a focused scenario, authors it, and uses one helper-owned three-run repair session.
+`/itl-check` remains a single mechanical helper run: it does not author tests or start an agent repair loop. Its cheap preflight checks the suite and reports bounded source-only feature warnings without executing a second authoring run. Missing suites and failed verification route to `/itl-verify-fix`. Recovery reuses sufficient coverage, otherwise creates the smallest focused scenario and uses one helper-owned three-run repair session.
 
-The compact result exposes `errorCategory`, `requiredAction`, `authoringStatus`, and `authoringStatePath`. Categories are `missing-suite`, `unsupported-step`, `scenario-context`, `product-assertion`, `runner`, and `event-log`. Follow the structured action; read the last 80 log lines only for an unclassified runner failure.
+The compact result exposes `errorCategory` and `requiredAction`. Categories are `missing-suite`, `unsupported-step`, `scenario-context`, `product-assertion`, `runner`, and `event-log`. They are routing hints, not automatic proof that the test or product is wrong. Follow the structured action; read the last 80 log lines only for an unclassified runner failure.
 
 Do not run a separate base update first. `/deploy-and-test` is a published compatibility bridge to `check-dev-branch`, not an independent loader. Do not replace executable evidence with MCP or a headless EPF. `verify-dev-branch` is the repair-trigger compatibility alias.
 
@@ -24,13 +24,13 @@ When Vanessa is off, do not automatically author tests or add them to a new plan
 
 Use scenarios from `tests/features` for OpenSpec and quick-fix verification. Before creating or editing feature files, read `references/vanessa-tests.md`; do not load it for routine lifecycle commands.
 
-For a quick-fix, create or update at least one focused regression scenario; add a second only for a separate meaningful boundary or negative case. For OpenSpec, plan 2-3 scenarios by default and require an explicit short justification for a fourth. Choose the cheapest reliable check type:
+For a quick-fix, reuse sufficient existing coverage; otherwise create or update one focused regression scenario and add a second only for a separate meaningful boundary or negative case. For OpenSpec, plan 2-3 scenarios by default and require an explicit short justification for a fourth. Choose the cheapest reliable check type:
 
 - `unit-like`: local calculation, condition, filling, or applied logic.
 - `integration`: object/register/document/exchange interaction.
 - `UI`: forms, commands, or visible user behavior.
 
-If Vanessa fails, analyze JUnit/report/status/log/event-log paths and active 1C process diagnostics, fix the cause, and rerun `/itl-check`. On timeout, stop only current-branch `TESTMANAGER`/`TESTCLIENT` processes; never kill another worktree's test manager/client.
+If Vanessa fails, analyze JUnit/report/status/log/event-log paths and active 1C process diagnostics before editing. Syntax/undefined-step failures normally point to the test; a new event-log error in changed BSL or failure of unchanged coverage strongly points to the product; UI-element and assertion mismatches remain ambiguous until checked against the requirement and actual runtime state. Fix the cause and rerun `/itl-check`. Never delete, skip, filter, or weaken a core assertion merely to make verification green. On timeout, stop only current-branch `TESTMANAGER`/`TESTCLIENT` processes; never kill another worktree's test manager/client.
 
 ## Event Log Baseline
 

@@ -17,7 +17,7 @@ Use `scripts/agent-1c.ps1` when PowerShell is available. Open `references/workfl
 - `references/verification-result.md`: `/itl-check`, Vanessa Automation, event-log baseline, result export, `verificationPolicy`.
 - `references/dev-branch-development.md`: work inside an existing `itldev/*` branch.
 - `references/vanessa-tests.md`: author or edit focused Vanessa Automation feature tests.
-- `references/vanessa-authoring.md`: pass the changed-feature MCP authoring gate.
+- `references/vanessa-authoring.md`: use MCP selectively while developing or diagnosing Vanessa tests.
 - `references/advanced-actions.md`: diagnostics and full helper action catalog.
 
 Human-facing guides live under `docs/itl-workflow/`; read them only for explanation. For unclear intent, show helper `help` unchanged.
@@ -55,8 +55,6 @@ Ask setup questions only when the helper cannot collect them. Store secrets only
 Use sibling Git worktrees, leave the main folder on `master`, and load only the copied branch infobase. Stop on unexpected dirty Git state before lifecycle changes.
 
 Use `/itl-check` or `check-dev-branch` for the final executable gate. It runs Vanessa Automation verification through `TESTMANAGER -> TESTCLIENT`, reads JUnit, and checks the event-log baseline. Never replace it with MCP, a headless EPF, or `/deploy-and-test`.
-
-Run `/itl-vanessa-author` for new/changed `.feature`; it owns authoring evidence through `itl-vanessa-ui` and stays outside `itl-routine`.
 
 ROCTUP MCP is the preferred branch-local data channel in `itldev/*` and needs no web publication. Use Vanessa UI MCP only when static analysis cannot answer the UI question; `/itl-check` remains the separate verification runner. vibecoding1c MCP is helper-managed; External MCP is unmanaged. Never paste keys into chat or tracked files.
 

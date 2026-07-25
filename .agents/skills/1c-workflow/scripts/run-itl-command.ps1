@@ -175,8 +175,6 @@ $requiredAction = [string](Get-ObjectValue -Object $status -Name "requiredAction
 $devBranch = [string](Get-ObjectValue -Object $status -Name "devBranch" -Default "")
 $worktreePath = [string](Get-ObjectValue -Object $status -Name "worktreePath" -Default "")
 $extensionInitializationStatus = [string](Get-ObjectValue -Object $status -Name "extensionInitializationStatus" -Default "")
-$authoringStatus = [string](Get-ObjectValue -Object $status -Name "authoringStatus" -Default "")
-$authoringStatePath = [string](Get-ObjectValue -Object $status -Name "authoringStatePath" -Default "")
 $userReport = [string](Get-ObjectValue -Object $status -Name "userReport" -Default "")
 $logTail = ""
 if ($exitCode -ne 0 -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
@@ -202,7 +200,7 @@ $nextAction = if ($exitCode -eq 0 -and $requiredAction) {
     "Read only the last 80 lines of console.log and address the reported failure."
 }
 $artifacts = [System.Collections.Generic.List[string]]::new()
-foreach ($candidate in @((Get-ObjectValue -Object $status -Name "lastLogPath" -Default ""), $authoringStatePath, $logPath, $statusPath)) {
+foreach ($candidate in @((Get-ObjectValue -Object $status -Name "lastLogPath" -Default ""), $logPath, $statusPath)) {
     if ($candidate -and -not $artifacts.Contains([string]$candidate)) { $artifacts.Add([string]$candidate) }
 }
 
@@ -220,8 +218,6 @@ $summary = [ordered]@{
     devBranch = $devBranch
     worktreePath = $worktreePath
     extensionInitializationStatus = $extensionInitializationStatus
-    authoringStatus = $authoringStatus
-    authoringStatePath = $authoringStatePath
     userReport = $userReport
     logPath = $logPath
     statusPath = $statusPath
