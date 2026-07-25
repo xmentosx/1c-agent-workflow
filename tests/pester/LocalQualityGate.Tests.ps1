@@ -24,6 +24,9 @@ Describe "Local quality gate contract" {
         $text | Should -Match 'Get-LocalForkRelease'
         $text | Should -Match 'invoke-release-e2e\.ps1'
         $text | Should -Match 'LifecycleOperationLock\.Tests\.ps1'
+        $text | Should -Match 'test-release-readiness\.ps1'
+        $text | Should -Match 'release-context\.json'
+        $text | Should -Match 'ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE'
     }
 
     It "reuses exact or ancestor same-tree Full qualifications and checkpoints static proof before runtime" {
@@ -56,6 +59,7 @@ Describe "Local quality gate contract" {
         $runner | Should -Match '\*\.Tests\.ps1'
         $runner | Should -Match 'Sort-Object.*weight'
         $runner | Should -Match 'Start-Process'
+        $runner | Should -Match 'RedirectStandardInput'
         $runner | Should -Match 'assignment omitted or duplicated'
         $runner | Should -Match 'ReleaseGate\.Tests\.ps1'
         $runner | Should -Match 'only after all parallel workers finish'

@@ -76,6 +76,8 @@ $reuseQualification = $false
 $qualificationReuseKind = ""
 $existingQualification = $null
 $parallelCompatibility = $null
+$releaseContextPath = ""
+$releaseContext = $null
 
 function Add-StageResult {
     param(
@@ -259,6 +261,7 @@ function Test-ForkQualification {
 function Get-WorkflowGateScriptPaths {
     $paths = @(
         (Join-Path $repoRoot "scripts\check.ps1"),
+        (Join-Path $repoRoot "scripts\test-release-readiness.ps1"),
         (Join-Path $repoRoot "scripts\invoke-release-e2e.ps1"),
         (Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"),
         (Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"),
@@ -382,6 +385,25 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "git diff --check failed." }
     } | Out-Null
 
+    if ($Mode -in @("Full", "Release")) {
+        $releaseContextPath = Join-Path $outputRoot "release-context.json"
+        $readinessScript = Join-Path $repoRoot "scripts\test-release-readiness.ps1"
+        Invoke-GateStage -Name "release-readiness" -Reason "aggregate dependency, candidate, encoding, and stand preflight" -Detail $releaseContextPath -Body {
+            $readinessArguments = @("-Mode", $Mode, "-RepositoryRoot", $repoRoot, "-OutputPath", $releaseContextPath)
+            if ($Offline) { $readinessArguments += "-Offline" }
+            $readinessRulesSource = if ($aiRulesRelease -and [string]$aiRulesRelease.sourceRoot) { [string]$aiRulesRelease.sourceRoot } elseif ($sourceIsLocal) { [System.IO.Path]::GetFullPath($resolvedAiRulesSource) } else { "" }
+            if ($readinessRulesSource) { $readinessArguments += @("-AiRulesSource", $readinessRulesSource) }
+            if ($Mode -eq "Release") { $readinessArguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot))) }
+            Invoke-PowerShellChild -ScriptPath $readinessScript -Arguments $readinessArguments -TimeoutSeconds 300 -LogName "release-readiness"
+            if (-not (Test-Path -LiteralPath $releaseContextPath -PathType Leaf)) { throw "Release readiness context was not created." }
+            $script:releaseContext = Get-Content -LiteralPath $releaseContextPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string]$script:releaseContext.status -ne "passed") { throw "Release readiness context reports '$([string]$script:releaseContext.status)'." }
+            $archivePath = [string]$script:releaseContext.artifacts.vanessaAutomation.path
+            if (-not $archivePath) { throw "Release readiness did not resolve the Vanessa Automation archive." }
+            $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $archivePath
+        } | Out-Null
+    }
+
     $reuseQualification = $false
     if ($Mode -in @("Full", "Release") -and $aiRulesRelease) {
         $qualificationMatch = Test-WorkflowQualification -Path $qualificationFullPath -Commit $commit -Tree $tree -ForkIdentity $aiRulesRelease
@@ -413,7 +435,7 @@ try {
                 Import-Module Pester -MinimumVersion 5.0.0 -Force
                 $script:pesterVersion = [string](Get-Module Pester | Select-Object -First 1 -ExpandProperty Version)
                 $configuration = New-PesterConfiguration
-                $configuration.Run.Path = @(".\tests\pester\ParserDocsBudgets.Tests.ps1", ".\tests\pester\LifecycleOperationLock.Tests.ps1", ".\tests\pester\DesignerMemoryGuard.Tests.ps1", ".\tests\pester\DesignerCompletion.Tests.ps1", ".\tests\pester\HostTooling.Tests.ps1", ".\tests\pester\DependencyLocks.Tests.ps1", ".\tests\pester\AiRulesClients.Tests.ps1", ".\tests\pester\ClientAdaptersAndModes.Tests.ps1", ".\tests\pester\AiRulesMigration.Tests.ps1", ".\tests\pester\ReleaseGate.Tests.ps1", ".\tests\pester\LocalQualityGate.Tests.ps1")
+                $configuration.Run.Path = @(".\tests\pester\ParserDocsBudgets.Tests.ps1", ".\tests\pester\LifecycleOperationLock.Tests.ps1", ".\tests\pester\DesignerMemoryGuard.Tests.ps1", ".\tests\pester\DesignerCompletion.Tests.ps1", ".\tests\pester\HostTooling.Tests.ps1", ".\tests\pester\DependencyLocks.Tests.ps1", ".\tests\pester\AiRulesClients.Tests.ps1", ".\tests\pester\ClientAdaptersAndModes.Tests.ps1", ".\tests\pester\AiRulesMigration.Tests.ps1", ".\tests\pester\ReleaseGate.Tests.ps1", ".\tests\pester\ReleaseReadiness.Tests.ps1", ".\tests\pester\LocalQualityGate.Tests.ps1")
                 $configuration.Run.PassThru = $true
                 $configuration.Output.Verbosity = "Normal"
                 $configuration.TestResult.Enabled = $true
@@ -571,6 +593,7 @@ try {
         aiRulesRelease = $aiRulesRelease
         qualificationPath = $qualificationFullPath
         e2eReportPath = $e2eReportPath
+        releaseContextPath = $releaseContextPath
         qualificationReuseKind = $qualificationReuseKind
         tests = $result
         stages = @($stages | ForEach-Object { $_ })

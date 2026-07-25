@@ -40,6 +40,20 @@ valid proof exists, `Release` executes and persists the static prefix before E2E
 so a runtime retry does not repeat Pester/fork/compatibility. Cheap preflights
 still run every time.
 
+`Full` and `Release` first create one immutable
+`build/test-results/local/release-context.json`. Do not start Designer,
+Enterprise or a manual recovery while this context reports `failed`. Resolve
+every listed issue and rerun the same gate. The preflight intentionally reports
+all candidate, dependency, encoding and stand drift in one pass instead of
+failing after an expensive stage.
+
+The dedicated E2E master and configured branch must be installed from the exact
+workflow candidate commit. Their managed package inventory and both
+`.agent-1c/dependency-lock.json` files must match the candidate before Release.
+Use normal `update-workflow`, commit the managed stand update, then create or
+refresh the disposable branch. Never copy a lock or helper into the stand by
+hand.
+
 The command runs or exactly reuses the qualified static/fork/compatibility
 stages, then makes two sequential generated commits that each change only the
 root `src/cf/Configuration.xml` `Comment` in the dedicated E2E branch. The
