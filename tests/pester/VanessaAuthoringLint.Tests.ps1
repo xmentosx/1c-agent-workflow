@@ -10,6 +10,11 @@ Describe "Vanessa authoring lint" {
         $script:CurrentRowPhrase = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0Y8g0LLRi9Cx0LjRgNCw0Y4g0YLQtdC60YPRidGD0Y4g0YHRgtGA0L7QutGD"))
         $script:PositionPhrase = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0Y8g0L/QtdGA0LXRhdC+0LbRgyDQuiDRgdGC0YDQvtC60LU="))
         $script:PauseKeyword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0J/QsNGD0LfQsA=="))
+        $script:ClientCodePhrase = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwICjQoNCw0YHRiNC40YDQtdC90LjQtSk="))
+        $script:ServerCodePhrase = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwINC90LAg0YHQtdGA0LLQtdGA0LU="))
+        $script:SaveValueName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0KHQvtGF0YDQsNC90LjRgtGM0JfQvdCw0YfQtdC90LjQtQ=="))
+        $script:CatalogsName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0KHQv9GA0LDQstC+0YfQvdC40LrQuA=="))
+        $script:ClientModuleName = "Example" + [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JrQu9C40LXQvdGC"))
     }
 
     AfterAll {
@@ -94,6 +99,42 @@ Scenario: Explained
         @($warnings).Count | Should -Be 1
         $warnings[0].code | Should -Be 'ITL_VANESSA_LINT_BLIND_PAUSE'
         $warnings[0].line | Should -Be 3
+    }
+
+    It "warns for unsupported cross-step state and obvious client-server context mixing" {
+        $featurePath = Join-Path $script:LintRoot "tests\features\bsl-context.feature"
+        @"
+Feature: BSL contexts
+Scenario: Unsafe client
+    And $script:ClientCodePhrase
+        """bsl
+        Value = $($script:CatalogsName).Items.FindByCode("42");
+        $($script:SaveValueName)("key", Value);
+        """
+Scenario: Unsafe server
+    And $script:ServerCodePhrase
+        """bsl
+        $($script:ClientModuleName).OpenForm();
+        """
+Scenario: Stored expression is not executed here
+    And remember expression
+        """bsl
+        Value = $($script:CatalogsName).Items.FindByCode("42");
+        """
+"@ | Set-Content -LiteralPath $featurePath -Encoding UTF8
+
+        $warnings = & {
+            . $HelperPath -ProjectRoot $script:LintRoot -Action help *> $null
+            Get-VanessaAuthoringLintWarnings -FeatureRecords @([pscustomobject]@{ path = 'tests/features/bsl-context.feature' })
+        }
+
+        @($warnings).Count | Should -Be 3
+        @($warnings | Select-Object -ExpandProperty code) | Should -Be @(
+            'ITL_VANESSA_LINT_CLIENT_METADATA',
+            'ITL_VANESSA_LINT_UNSUPPORTED_STATE',
+            'ITL_VANESSA_LINT_SERVER_CLIENT_MODULE'
+        )
+        @($warnings | Select-Object -ExpandProperty line) | Should -Be @(5, 6, 11)
     }
 
     It "bounds warning output and does not echo feature contents" {
