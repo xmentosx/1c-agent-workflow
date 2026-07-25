@@ -71,9 +71,33 @@ Describe "GitHub dependency rate-limit fallback" {
 
         $info = Get-VanessaAutomationDownloadInfo
         $info.source | Should -Be "workflow-pinned"
-        $info.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r3/vanessa-automation-single.1.2.043.28-itl-r3.zip"
-        $info.expectedSha256 | Should -Be "e66eb2bec4861ef32f21947b4be8b88df9ca70b254cd7ae6f33406b632201fbf"
+        $info.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r4/vanessa-automation-single.1.2.043.28-itl-r4.zip"
+        $info.expectedSha256 | Should -Be "55f487363b297251042e962146a73b08c9cffd115072c40d8143bbd2d1cb2f04"
         Assert-MockCalled Invoke-RestMethod -Times 0
+    }
+
+    It "fails closed before a Vanessa run when the source-build archive differs from the active project pin" {
+        $archivePath = Join-Path $TestDrive "wrong-vanessa-candidate.zip"
+        [System.IO.File]::WriteAllBytes($archivePath, [System.Text.Encoding]::UTF8.GetBytes("wrong candidate"))
+        [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $archivePath, "Process")
+        Mock Get-VanessaAutomationDownloadInfo {
+            return [pscustomobject]@{ expectedSha256 = ("0" * 64) }
+        }
+
+        { Assert-VanessaSourceBuildArchiveMatchesActivePin } |
+            Should -Throw "*ITL_VANESSA_SOURCE_BUILD_SHA_MISMATCH*"
+    }
+
+    It "accepts the exact source-build archive selected by the active project pin" {
+        $archivePath = Join-Path $TestDrive "exact-vanessa-candidate.zip"
+        [System.IO.File]::WriteAllBytes($archivePath, [System.Text.Encoding]::UTF8.GetBytes("exact candidate"))
+        $archiveSha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $archivePath, "Process")
+        Mock Get-VanessaAutomationDownloadInfo {
+            return [pscustomobject]@{ expectedSha256 = $archiveSha256 }
+        }
+
+        { Assert-VanessaSourceBuildArchiveMatchesActivePin } | Should -Not -Throw
     }
 
     It "does not use the lock for a non-rate-limit API failure" {

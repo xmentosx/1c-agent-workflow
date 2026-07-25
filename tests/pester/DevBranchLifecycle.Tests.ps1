@@ -1225,6 +1225,7 @@
         $HelperText | Should -Match "Test-VanessaTestPortUsedByForeignProcess"
         $HelperText | Should -Match "VANESSA_TEST_FOREIGN_WAIT_MODE"
         $HelperText | Should -Match "ConvertFrom-Utf8Base64"
+        $HelperText | Should -Match '(?s)function Run-DevBranchTests.*?Assert-VanessaSourceBuildArchiveMatchesActivePin.*?\$vanessa = Get-VanessaAutomationState'
 
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_TEST_PORT_RANGE=48051\.\.48150"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_TEST_FOREIGN_WAIT_MODE=warn"
@@ -1517,15 +1518,35 @@
                 $statusKey = Decode-TestUtf8 "0J/Rg9GC0YzQmtCk0LDQudC70YPQlNC70Y/QktGL0LPRgNGD0LfQutC40KHRgtCw0YLRg9GB0LDQktGL0L/QvtC70L3QtdC90LjRj9Ch0YbQtdC90LDRgNC40LXQsg=="
                 $windowTimeoutKey = Decode-TestUtf8 "0JrQvtC70LjRh9C10YHRgtCy0L7QodC10LrRg9C90LTQn9C+0LjRgdC60LDQntC60L3QsA=="
                 $stopOnErrorKey = Decode-TestUtf8 "0J7RgdGC0LDQvdC+0LLQutCw0J/RgNC40JLQvtC30L3QuNC60L3QvtCy0LXQvdC40LjQntGI0LjQsdC60Lg="
+                $portRangeKey = Decode-TestUtf8 "0JTQuNCw0L/QsNC30L7QvdCf0L7RgNGC0L7QslRlc3RjbGllbnQ="
+                $serviceMessageDirectoryKey = Decode-TestUtf8 "0JrQsNGC0LDQu9C+0LPQpNCw0LnQu9C+0LLQktGL0LLQvtC00LDQodC70YPQttC10LHQvdGL0YXQodC+0L7QsdGJ0LXQvdC40Lk="
+                $modalWindowErrorKey = Decode-TestUtf8 "0JzQvtC00LDQu9GM0L3QvtC10J7QutC90L7Qn9GA0LjQl9Cw0L/Rg9GB0LrQtdCa0LvQuNC10L3RgtCw0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP0K3RgtC+0J7RiNC40LHQutCw"
+                $singleTestClientKey = Decode-TestUtf8 "0KDQsNC30YDQtdGI0LXQvdC+0JfQsNC/0YPRgdC60LDRgtGM0KLQvtC70YzQutC+0J7QtNC40L3QmtC70LjQtdC90YLQotC10YHRgtC40YDQvtCy0LDQvdC40Y8="
 
                 $params.Version | Should -Be "1.2.043.28"
                 $params.junitpath | Should -Be $runDirectory
+                $params.logtotext | Should -BeTrue
+                $params.logstepstotext | Should -BeTrue
+                $params.logerrorstotext | Should -BeTrue
+                $params.getactiveformdataonerror | Should -BeTrue
+                $params.fulllog | Should -BeTrue
+                $params.textlogname | Should -Be (Join-Path $runDirectory "vanessa.log")
+                $params.texterrorslogname | Should -Be (Join-Path $runDirectory "errors")
+                $params.maskpwdinlog | Should -BeTrue
+                $params.outputloginconsole | Should -BeFalse
                 $params.stoponerror | Should -BeFalse
+                $params.NumberOfAttemptsToExecuteTheScript | Should -Be 1
+                $params.updatetreewhenscenariostarts | Should -BeFalse
+                $params.PSObject.Properties.Name | Should -Not -Contain "distinguishbrokenorfailedbythenkeyword"
+                $params.PSObject.Properties[$portRangeKey].Value | Should -Be "48051-48051"
                 $params.PSObject.Properties[$statusKey].Value | Should -Be $statusPath
                 $params.PSObject.Properties[$scenarioKey].Value.PSObject.Properties[$windowTimeoutKey].Value | Should -Be 60
                 $params.PSObject.Properties[$scenarioKey].Value.PSObject.Properties[$stopOnErrorKey].Value | Should -BeFalse
 
                 $clientSettings = $params.PSObject.Properties[$clientKey].Value
+                $clientSettings.PSObject.Properties[$serviceMessageDirectoryKey].Value | Should -Be $runDirectory
+                $clientSettings.PSObject.Properties[$modalWindowErrorKey].Value | Should -BeTrue
+                $clientSettings.PSObject.Properties[$singleTestClientKey].Value | Should -BeTrue
                 $clientRecord = @($clientSettings.PSObject.Properties[$clientsKey].Value)[0]
                 [int]$clientRecord.PSObject.Properties[$portKey].Value | Should -Be 48051
                 $clientRecord.PSObject.Properties[$pathKey].Value | Should -Match ([regex]::Escape($ibPath))

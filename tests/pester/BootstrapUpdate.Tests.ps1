@@ -651,7 +651,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $previousRef = $env:ITL_WORKFLOW_REF
         $previousVanessaSourceBuild = $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE
         $qualifiedVanessaSourceBuild = if ([string]::IsNullOrWhiteSpace($previousVanessaSourceBuild)) {
-            Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.28-itl-r3\vanessa-automation-single.1.2.043.28-itl-r3.zip"
+            Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.28-itl-r4\vanessa-automation-single.1.2.043.28-itl-r4.zip"
         } else {
             [System.IO.Path]::GetFullPath($previousVanessaSourceBuild)
         }

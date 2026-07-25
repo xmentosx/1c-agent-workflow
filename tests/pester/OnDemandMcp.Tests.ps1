@@ -30,9 +30,9 @@ Describe "ITL on-demand MCP facade" {
         $manifest.families.'vanessa-ui'.backendVersions.clientMcp | Should -Be "v0.6.5"
         $manifest.families.'vanessa-ui'.backendVersions.vaExtension | Should -Be "1.2.043.28"
         $manifest.families.'vanessa-ui'.backendVersions.vanessaAutomation | Should -Be "1.2.043.28"
-        $manifest.families.'vanessa-ui'.backendRevisions.vanessaAutomation | Should -Be "itl-r3"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.archiveSha256 | Should -Be "e66eb2bec4861ef32f21947b4be8b88df9ca70b254cd7ae6f33406b632201fbf"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.epfSha256 | Should -Be "74a7542091716b1ceea000367efe8a3cf65582f3c0f1bf5221d1038494a67fca"
+        $manifest.families.'vanessa-ui'.backendRevisions.vanessaAutomation | Should -Be "itl-r4"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.archiveSha256 | Should -Be "55f487363b297251042e962146a73b08c9cffd115072c40d8143bbd2d1cb2f04"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.epfSha256 | Should -Be "7e52c7ed277bd69526fa07cc41b1d240d2d252a5ccc515712c6285610e1e1858"
         $manifest.families.'vanessa-ui'.backendVersions.vanessaExt | Should -Be "1.3.9.131"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.version | Should -Be "1.3.9.131"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.sha256 | Should -Match '^[0-9a-f]{64}$'
