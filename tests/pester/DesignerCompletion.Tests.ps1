@@ -127,7 +127,44 @@ Describe "1C Designer completion evidence" {
         $result.timedOut | Should -BeFalse
     }
 
-    It "requires repository terminal evidence and keeps secrets out of command output" {
+    It "tracks Designer descendants and the unique out log while ignoring unrelated 1C processes" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $logPath = Join-Path $TestDrive "owned-designer.log"
+            $script:DesignerInventory = @(
+                [pscustomobject]@{ Name = "1cv8.exe"; ProcessId = 8100; ParentProcessId = 100; CommandLine = "DESIGNER /Out other.log" },
+                [pscustomobject]@{ Name = "1cv8.exe"; ProcessId = 8101; ParentProcessId = 8100; CommandLine = "DESIGNER" },
+                [pscustomobject]@{ Name = "1cv8.exe"; ProcessId = 8102; ParentProcessId = 100; CommandLine = "DESIGNER /Out `"$logPath`"" },
+                [pscustomobject]@{ Name = "1cv8.exe"; ProcessId = 8199; ParentProcessId = 100; CommandLine = "DESIGNER /Out unrelated.log" }
+            )
+            function Get-CimInstance {
+                param([string]$ClassName, [string]$Filter, [object]$ErrorAction)
+                return @($script:DesignerInventory)
+            }
+
+            $state = New-DesignerInvocationProbeState -LauncherProcessId 8100
+            $active = Get-DesignerInvocationProcessState -ProbeState $state -LogPath $logPath
+            $script:DesignerInventory = @()
+            $state.nextProcessCheckAtUtc = [DateTime]::MinValue
+            $released = Get-DesignerInvocationProcessState -ProbeState $state -LogPath $logPath
+            [pscustomobject]@{
+                active = $active
+                released = $released
+                tracked = @($state.trackedProcessIds)
+            }
+        }
+
+        $result.active.querySucceeded | Should -BeTrue
+        $result.active.active | Should -BeTrue
+        @($result.active.processIds) | Should -Contain 8100
+        @($result.active.processIds) | Should -Contain 8101
+        @($result.active.processIds) | Should -Contain 8102
+        @($result.active.processIds) | Should -Not -Contain 8199
+        $result.released.active | Should -BeFalse
+        @($result.tracked) | Should -Contain 8102
+    }
+
+    It "waits for a combined repository and database update to release the infobase without depending on localized success text" {
         $fixtureRoot = Join-Path $TestDrive "repository-evidence"
         $basePath = Join-Path $fixtureRoot "base"
         $platformPath = Join-Path $fixtureRoot "1cv8.exe"
@@ -142,10 +179,12 @@ Describe "1C Designer completion evidence" {
                 logsPath = "logs"
                 designerMaxWorkingSetMb = 0
                 designerOperationTimeoutSeconds = 30
+                designerDumpStabilitySeconds = 0
                 completionPostExitTimeoutSeconds = 75
             }
             $script:ProbeBeforeEvidence = $null
-            $script:ProbeAfterEvidence = $null
+            $script:ProbeWhileLocked = $null
+            $script:ProbeAfterRelease = $null
             $script:CapturedTimeout = 0
             $script:CapturedPostExitProbeSeconds = 0
             function Invoke-NativeProcessAndWaitResult {
@@ -163,11 +202,34 @@ Describe "1C Designer completion evidence" {
                 $script:CapturedPostExitProbeSeconds = $PostExitProbeSeconds
                 $outIndex = [Array]::IndexOf($Arguments, "/Out")
                 $logPath = [string]$Arguments[$outIndex + 1]
-                $context = [pscustomobject]@{ launcherExited = $true; launcherExitCode = 0; processId = 7001 }
-                $script:ProbeBeforeEvidence = [bool](& $CompletionProbe $context)
-                $successText = -join ([char[]](1054, 1073, 1085, 1086, 1074, 1083, 1077, 1085, 1080, 1077, 32, 1082, 1086, 1085, 1092, 1080, 1075, 1091, 1088, 1072, 1094, 1080, 1080, 32, 1080, 1079, 32, 1093, 1088, 1072, 1085, 1080, 1083, 1080, 1097, 1072, 32, 1091, 1089, 1087, 1077, 1096, 1085, 1086, 32, 1079, 1072, 1074, 1077, 1088, 1096, 1077, 1085, 1086))
-                [System.IO.File]::WriteAllText($logPath, $successText, (Get-Utf8Encoding))
-                $script:ProbeAfterEvidence = [bool](& $CompletionProbe $context)
+                $runningContext = [pscustomobject]@{
+                    launcherExited = $false
+                    launcherExitCode = 0
+                    processId = 7001
+                    postExitElapsedSeconds = 0
+                }
+                $exitedContext = [pscustomobject]@{
+                    launcherExited = $true
+                    launcherExitCode = 0
+                    processId = 7001
+                    postExitElapsedSeconds = 0
+                }
+                $script:ProbeBeforeEvidence = [bool](& $CompletionProbe $runningContext)
+                $englishSuccess = "Configuration update from repository completed successfully.`r`nDatabase configuration update completed successfully."
+                [System.IO.File]::WriteAllText($logPath, $englishSuccess, (Get-Utf8Encoding))
+                $holder = [System.IO.File]::Open(
+                    (Join-Path $basePath "1Cv8.1CD"),
+                    [System.IO.FileMode]::Open,
+                    [System.IO.FileAccess]::Read,
+                    [System.IO.FileShare]::Read
+                )
+                try {
+                    $script:ProbeWhileLocked = [bool](& $CompletionProbe $exitedContext)
+                } finally {
+                    $holder.Dispose()
+                }
+                Start-Sleep -Milliseconds 1100
+                $script:ProbeAfterRelease = [bool](& $CompletionProbe $exitedContext)
                 return [pscustomobject]@{
                     processId = 7001; exitCode = 0; timedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
@@ -193,22 +255,24 @@ Describe "1C Designer completion evidence" {
             [pscustomobject]@{
                 output = $output
                 before = $script:ProbeBeforeEvidence
-                after = $script:ProbeAfterEvidence
+                whileLocked = $script:ProbeWhileLocked
+                afterRelease = $script:ProbeAfterRelease
                 timeout = $script:CapturedTimeout
                 postExitProbeSeconds = $script:CapturedPostExitProbeSeconds
             }
         }
 
         $result.before | Should -BeFalse
-        $result.after | Should -BeTrue
+        $result.whileLocked | Should -BeFalse
+        $result.afterRelease | Should -BeTrue
         $result.timeout | Should -Be 30
-        $result.postExitProbeSeconds | Should -Be 75
+        $result.postExitProbeSeconds | Should -Be 30
         $result.output | Should -Not -Match "ib-secret"
         $result.output | Should -Not -Match "repo-secret"
         $result.output | Should -Match ([regex]::Escape("<hidden>"))
     }
 
-    It "accepts configuration update terminal evidence while another process holds the file infobase" {
+    It "does not accept configuration update evidence until the file infobase is released" {
         $fixtureRoot = Join-Path $TestDrive "configuration-update-with-open-session"
         $basePath = Join-Path $fixtureRoot "base"
         $databasePath = Join-Path $basePath "1Cv8.1CD"
@@ -227,7 +291,9 @@ Describe "1C Designer completion evidence" {
                 completionPostExitTimeoutSeconds = 9
             }
             $script:ProbePassed = $false
+            $script:ProbeWhileLocked = $false
             $script:CapturedPostExitProbeSeconds = 0
+            $script:DatabaseHolder = $null
             function Invoke-NativeProcessAndWaitResult {
                 param(
                     [string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 0,
@@ -245,6 +311,10 @@ Describe "1C Designer completion evidence" {
                     processId = 7005
                     postExitElapsedSeconds = 0
                 }
+                $script:ProbeWhileLocked = [bool](& $CompletionProbe $context)
+                $script:DatabaseHolder.Dispose()
+                $script:DatabaseHolder = $null
+                Start-Sleep -Milliseconds 1100
                 $script:ProbePassed = [bool](& $CompletionProbe $context)
                 return [pscustomobject]@{
                     processId = 7005; exitCode = 0; timedOut = $false; postExitProbeTimedOut = $false
@@ -255,23 +325,27 @@ Describe "1C Designer completion evidence" {
                 }
             }
 
-            $holder = [System.IO.File]::Open($databasePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+            $script:DatabaseHolder = [System.IO.File]::Open($databasePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
             try {
                 $exclusiveRelease = Test-DesignerInfoBaseReleased -InfoBaseKind "file" -InfoBasePath $basePath
                 Invoke-Designer -InfoBasePath $basePath -InfoBaseKind "file" -DesignerArgs @("/LoadConfigFromFiles", (Join-Path $fixtureRoot "src"), "/UpdateDBCfg") 6>$null | Out-Null
                 [pscustomobject]@{
                     exclusiveRelease = $exclusiveRelease
+                    probeWhileLocked = $script:ProbeWhileLocked
                     probePassed = $script:ProbePassed
                     postExitProbeSeconds = $script:CapturedPostExitProbeSeconds
                 }
             } finally {
-                $holder.Dispose()
+                if ($null -ne $script:DatabaseHolder) {
+                    $script:DatabaseHolder.Dispose()
+                }
             }
         }
 
         $result.exclusiveRelease | Should -BeFalse
+        $result.probeWhileLocked | Should -BeFalse
         $result.probePassed | Should -BeTrue
-        $result.postExitProbeSeconds | Should -Be 9
+        $result.postExitProbeSeconds | Should -Be 30
     }
 
     It "accepts a stable empty log after an extension configuration update exits successfully" {
@@ -308,6 +382,8 @@ Describe "1C Designer completion evidence" {
                     processId = 7007
                     postExitElapsedSeconds = 0
                 }
+                $script:ProbePassed = [bool](& $CompletionProbe $context)
+                Start-Sleep -Milliseconds 1100
                 $script:ProbePassed = [bool](& $CompletionProbe $context)
                 return [pscustomobject]@{
                     processId = 7007; exitCode = 0; timedOut = $false; postExitProbeTimedOut = $false
@@ -364,7 +440,7 @@ Describe "1C Designer completion evidence" {
 
         $message | Should -Match "^DESIGNER_POST_EXIT_PROBE_TIMEOUT "
         $message | Should -Match "operation=configuration-update"
-        $message | Should -Match "timeoutSeconds=11"
+        $message | Should -Match "timeoutSeconds=30"
     }
 
     It "assigns bounded completion evidence to every other Designer command family used by the helper" {
@@ -386,6 +462,17 @@ Describe "1C Designer completion evidence" {
                 completionPostExitTimeoutSeconds = 7
             }
             $script:Observed = [System.Collections.Generic.List[object]]::new()
+            function Test-DesignerInvocationReleased {
+                param(
+                    [object]$ProbeState,
+                    [object]$ProbeContext,
+                    [string]$LogPath,
+                    [string]$InfoBaseKind,
+                    [string]$InfoBasePath,
+                    [string]$OperationKind
+                )
+                return ($null -ne $ProbeContext -and [bool]$ProbeContext.launcherExited)
+            }
             function Invoke-NativeProcessAndWaitResult {
                 param(
                     [string]$FilePath,
@@ -450,7 +537,7 @@ Describe "1C Designer completion evidence" {
         @($result).Count | Should -Be 9
         @($result | Where-Object { $_.timeout -ne 30 }).Count | Should -Be 0
         @($result | Where-Object {
-            $expected = $(if ($_.operation -in @("/LoadConfigFromFiles", "/LoadCfg", "unknown")) { 7 } else { 30 })
+            $expected = 30
             $_.postExitProbeSeconds -ne $expected
         }).Count | Should -Be 0
         @($result | Where-Object { -not $_.probePassed }).Count | Should -Be 0
@@ -553,10 +640,10 @@ Describe "1C Designer completion evidence" {
 
         $result.callsWhileRunning | Should -Be 1
         $result.firstExitedResult | Should -BeFalse
-        $result.callsAfterFirstExitProbe | Should -Be 2
-        $result.callsAfterImmediateProbes | Should -Be 2
+        $result.callsAfterFirstExitProbe | Should -Be 1
+        $result.callsAfterImmediateProbes | Should -Be 1
         $result.stableExitedResult | Should -BeTrue
-        $result.finalArtifactCalls | Should -Be 3
+        $result.finalArtifactCalls | Should -Be 2
         $result.postExitProbeSeconds | Should -Be 30
     }
 

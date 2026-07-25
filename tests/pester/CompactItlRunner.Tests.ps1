@@ -34,6 +34,34 @@ exit 0
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "reports bounded live stage progress on stderr while keeping stdout as compact JSON" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-progress-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now = Get-Date
+$running = [ordered]@{ schemaVersion=1; status='running'; action=$Action; stage='designer.wait'; stageDetail='Waiting for owned 1C processes and infobase release.'; errorMessage=''; exitCode=$null; lastLogPath='' }
+[IO.File]::WriteAllText($RunStatusPath,(($running | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+Start-Sleep -Milliseconds 1200
+$done = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport='done' }
+[IO.File]::WriteAllText($RunStatusPath,(($done | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+            $stdoutPath = Join-Path $tempRoot "stdout.txt"
+            $stderrPath = Join-Path $tempRoot "stderr.txt"
+            & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -- -Action refresh-dev-branch 1> $stdoutPath 2> $stderrPath
+            $LASTEXITCODE | Should -Be 0
+            $summary = Get-Content -LiteralPath $stdoutPath -Raw | ConvertFrom-Json
+            $summary.status | Should -Be "succeeded"
+            $progress = Get-Content -LiteralPath $stderrPath -Raw
+            $progress | Should -Match "ITL progress: stage=designer.wait;"
+            $progress | Should -Match "Waiting for owned 1C processes"
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "finalizes a running status when the helper process exits with an error" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-running-exit-" + [guid]::NewGuid().ToString("N"))
         try {

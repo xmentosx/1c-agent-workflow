@@ -3963,7 +3963,7 @@ function Get-DesignerLogTerminalState {
         [regex]::Escape($impossibleText),
         [regex]::Escape($errorText),
         [regex]::Escape($errorsText)
-    $noFailurePattern = '(?i)(?:\u043e\u0448\u0438\u0431\u043a\u0438\s+\u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442|\u043e\u0448\u0438\u0431\u043e\u043a\s+\u043d\u0435\s+\u043e\u0431\u043d\u0430\u0440\u0443\u0436\u0435\u043d\u043e|\u0431\u0435\u0437\s+\u043e\u0448\u0438\u0431\u043e\u043a|\b0\s+errors?\b|\bno\s+errors?\b)'
+    $noFailurePattern = '(?i)(?:\u043e\u0448\u0438\u0431\u043a\u0438\s+\u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442|\u043e\u0448\u0438\u0431\u043e\u043a\s+\u043d\u0435\s+\u043e\u0431\u043d\u0430\u0440\u0443\u0436\u0435\u043d\u043e|\u0431\u0435\u0437\s+\u043e\u0448\u0438\u0431\u043e\u043a|\b0\s+errors?\b|\berrors?\s*[:=]\s*0\b|\bno\s+errors?\b)'
     foreach ($line in @([string]$text -split '[\r\n]+')) {
         if ([regex]::IsMatch($line, $noFailurePattern)) {
             continue
@@ -4165,6 +4165,136 @@ function Test-DesignerInfoBaseReleased {
     } catch {
         return $false
     }
+}
+
+function New-DesignerInvocationProbeState {
+    param([int]$LauncherProcessId)
+
+    $trackedProcessIds = [System.Collections.Generic.HashSet[int]]::new()
+    if ($LauncherProcessId -gt 0) {
+        $trackedProcessIds.Add($LauncherProcessId) | Out-Null
+    }
+    return [pscustomobject]@{
+        trackedProcessIds = $trackedProcessIds
+        lastDiagnosticSecond = -1
+        stagePublished = $false
+        nextProcessCheckAtUtc = [DateTime]::MinValue
+        lastProcessState = $null
+        processesReleasedSinceUtc = $null
+        processesReleaseConfirmed = $false
+    }
+}
+
+function Get-DesignerInvocationProcessState {
+    param(
+        [Parameter(Mandatory = $true)][object]$ProbeState,
+        [string]$LogPath
+    )
+
+    $observedAtUtc = [DateTime]::UtcNow
+    if ($null -ne $ProbeState.lastProcessState -and $observedAtUtc -lt [DateTime]$ProbeState.nextProcessCheckAtUtc) {
+        return $ProbeState.lastProcessState
+    }
+
+    try {
+        $designerProcesses = @(Get-CimInstance Win32_Process -Filter "Name='1cv8.exe' OR Name='1cv8c.exe'" -ErrorAction Stop)
+        $normalizedLogPath = if ($LogPath) {
+            [System.IO.Path]::GetFullPath($LogPath)
+        } else {
+            ""
+        }
+
+        $changed = $true
+        while ($changed) {
+            $changed = $false
+            foreach ($candidate in $designerProcesses) {
+                $processId = [int]$candidate.ProcessId
+                $parentProcessId = [int]$candidate.ParentProcessId
+                $commandLine = [string]$candidate.CommandLine
+                $matchesLog = $normalizedLogPath -and
+                    $commandLine.IndexOf($normalizedLogPath, [StringComparison]::OrdinalIgnoreCase) -ge 0
+                $matchesParent = $ProbeState.trackedProcessIds.Contains($parentProcessId)
+                if (($matchesLog -or $matchesParent) -and $ProbeState.trackedProcessIds.Add($processId)) {
+                    $changed = $true
+                }
+            }
+        }
+
+        $activeProcessIds = @($designerProcesses |
+            Where-Object { $ProbeState.trackedProcessIds.Contains([int]$_.ProcessId) } |
+            ForEach-Object { [int]$_.ProcessId })
+        $state = [pscustomobject]@{
+            querySucceeded = $true
+            active = ($activeProcessIds.Count -gt 0)
+            processIds = $activeProcessIds
+            detail = ""
+        }
+    } catch {
+        $state = [pscustomobject]@{
+            querySucceeded = $false
+            active = $true
+            processIds = @()
+            detail = (($_.Exception.Message -replace '[\r\n]+', ' ').Trim())
+        }
+    }
+    $ProbeState.lastProcessState = $state
+    $ProbeState.nextProcessCheckAtUtc = $observedAtUtc.AddMilliseconds(500)
+    return $state
+}
+
+function Test-DesignerInvocationReleased {
+    param(
+        [Parameter(Mandatory = $true)][object]$ProbeState,
+        [AllowNull()][object]$ProbeContext,
+        [string]$LogPath,
+        [string]$InfoBaseKind,
+        [string]$InfoBasePath,
+        [string]$OperationKind
+    )
+
+    if ($null -eq $ProbeContext -or -not [bool]$ProbeContext.launcherExited) {
+        return $false
+    }
+
+    $processState = Get-DesignerInvocationProcessState -ProbeState $ProbeState -LogPath $LogPath
+    if (-not $processState.querySucceeded -or $processState.active) {
+        $ProbeState.processesReleasedSinceUtc = $null
+        $ProbeState.processesReleaseConfirmed = $false
+    } elseif (-not $ProbeState.processesReleaseConfirmed) {
+        if ($null -eq $ProbeState.processesReleasedSinceUtc) {
+            $ProbeState.processesReleasedSinceUtc = [DateTime]::UtcNow
+        } elseif (([DateTime]::UtcNow - [DateTime]$ProbeState.processesReleasedSinceUtc).TotalSeconds -ge 1) {
+            $ProbeState.processesReleaseConfirmed = $true
+        }
+    }
+    $infoBaseReleased = Test-DesignerInfoBaseReleased -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+    $elapsed = ConvertTo-IntOrDefault -Value (Get-StateValue -State $ProbeContext -Name "postExitElapsedSeconds" -Default 0) -Default 0
+    $waitingDetail = if (-not $processState.querySucceeded) {
+        "cannot enumerate owned 1C processes: $($processState.detail)"
+    } elseif ($processState.active) {
+        "owned 1C process IDs are still active: $(@($processState.processIds) -join ', ')"
+    } elseif (-not $ProbeState.processesReleaseConfirmed) {
+        "confirming that no delayed owned 1C process appears"
+    } elseif (-not $infoBaseReleased) {
+        "the file infobase is still locked"
+    } else {
+        ""
+    }
+
+    if ($waitingDetail) {
+        if (-not $ProbeState.stagePublished) {
+            $ProbeState.stagePublished = $true
+            $stage = $(if ([string]$script:RunStage -like "config-load.*") { "config-load.designer-wait" } else { "designer.wait" })
+            Set-RunStage -Stage $stage -Detail "Designer launcher exited; waiting for $OperationKind to release its processes and infobase."
+        }
+        if ($elapsed -eq 0 -or ($elapsed % 10 -eq 0 -and $elapsed -ne $ProbeState.lastDiagnosticSecond)) {
+            $ProbeState.lastDiagnosticSecond = $elapsed
+            Write-Host "Designer PID $($ProbeContext.processId) launcher exited; $OperationKind is not released yet (${elapsed}s): $waitingDetail."
+        }
+        return $false
+    }
+
+    return $true
 }
 
 function Stop-NativeProcessForSafety {
@@ -4538,6 +4668,7 @@ function Invoke-Designer {
     $completionTimeoutSeconds = 0
     $completionGraceSeconds = 0
     $artifactProbeState = $null
+    $invocationProbeState = $null
     $repositoryUpdateIndex = [Array]::IndexOf($DesignerArgs, "/ConfigurationRepositoryUpdateCfg")
     $updateDbIndex = [Array]::IndexOf($DesignerArgs, "/UpdateDBCfg")
     $dumpIndex = [Array]::IndexOf($DesignerArgs, "/DumpConfigToFiles")
@@ -4545,13 +4676,42 @@ function Invoke-Designer {
     $dumpIbIndex = [Array]::IndexOf($DesignerArgs, "/DumpIB")
     $externalProcessorIndex = [Array]::IndexOf($DesignerArgs, "/LoadExternalDataProcessorOrReportFromFiles")
     if ($repositoryUpdateIndex -ge 0) {
-        $operationKind = "repository-update"
+        $operationKind = $(if ($updateDbIndex -ge 0) { "repository-update-with-db-update" } else { "repository-update" })
         $completionTimeoutSeconds = Get-DesignerOperationTimeoutSeconds
-        $repositorySuccessText = -join ([char[]](1054, 1073, 1085, 1086, 1074, 1083, 1077, 1085, 1080, 1077, 32, 1082, 1086, 1085, 1092, 1080, 1075, 1091, 1088, 1072, 1094, 1080, 1080, 32, 1080, 1079, 32, 1093, 1088, 1072, 1085, 1080, 1083, 1080, 1097, 1072, 32, 1091, 1089, 1087, 1077, 1096, 1085, 1086, 32, 1079, 1072, 1074, 1077, 1088, 1096, 1077, 1085, 1086))
-        $repositorySuccessPattern = "(?i)" + [regex]::Escape($repositorySuccessText)
+        $stabilitySeconds = Get-DesignerDumpStabilitySeconds
+        $initialLogState = Get-DesignerFileArtifactState -Path $logPath
+        $initialSignature = [string]$initialLogState.signature
+        $artifactProbeState = New-DesignerArtifactProbeState
+        $invocationProbeState = New-DesignerInvocationProbeState -LauncherProcessId 0
         $completionProbe = {
-            $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern $repositorySuccessPattern
-            return ($terminalState.state -ne "pending")
+            param($probeContext)
+            $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
+            if ($terminalState.state -eq "failure") {
+                return $true
+            }
+            if (-not $invocationProbeState.trackedProcessIds.Contains([int]$probeContext.processId)) {
+                $invocationProbeState.trackedProcessIds.Add([int]$probeContext.processId) | Out-Null
+            }
+            if (-not (Test-DesignerInvocationReleased `
+                -ProbeState $invocationProbeState `
+                -ProbeContext $probeContext `
+                -LogPath $logPath `
+                -InfoBaseKind $InfoBaseKind `
+                -InfoBasePath $InfoBasePath `
+                -OperationKind $operationKind)) {
+                return $false
+            }
+            $observedAtUtc = [DateTime]::UtcNow
+            if ($observedAtUtc -lt [DateTime]$artifactProbeState.nextCheckAtUtc) {
+                return $false
+            }
+            $logState = Get-DesignerFileArtifactState -Path $logPath
+            return (Test-DesignerArtifactStability `
+                -ProbeState $artifactProbeState `
+                -ArtifactState $logState `
+                -InitialSignature $initialSignature `
+                -StabilitySeconds $stabilitySeconds `
+                -ObservedAtUtc $observedAtUtc)
         }
     } elseif ($dumpIndex -ge 0 -and ($dumpIndex + 1) -lt $DesignerArgs.Count) {
         $operationKind = "dump-config-to-files"
@@ -4561,13 +4721,23 @@ function Invoke-Designer {
         $initialDumpState = Get-DesignerDumpArtifactState -Path $operationTarget
         $initialSignature = [string]$initialDumpState.signature
         $artifactProbeState = New-DesignerArtifactProbeState
+        $invocationProbeState = New-DesignerInvocationProbeState -LauncherProcessId 0
         $completionProbe = {
             param($probeContext)
             $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
             if ($terminalState.state -eq "failure") {
                 return $true
             }
-            if ($null -eq $probeContext -or -not $probeContext.launcherExited) {
+            if (-not $invocationProbeState.trackedProcessIds.Contains([int]$probeContext.processId)) {
+                $invocationProbeState.trackedProcessIds.Add([int]$probeContext.processId) | Out-Null
+            }
+            if (-not (Test-DesignerInvocationReleased `
+                -ProbeState $invocationProbeState `
+                -ProbeContext $probeContext `
+                -LogPath $logPath `
+                -InfoBaseKind $InfoBaseKind `
+                -InfoBasePath $InfoBasePath `
+                -OperationKind $operationKind)) {
                 return $false
             }
             $observedAtUtc = [DateTime]::UtcNow
@@ -4593,13 +4763,23 @@ function Invoke-Designer {
         $initialFileState = Get-DesignerFileArtifactState -Path $operationTarget
         $initialSignature = [string]$initialFileState.signature
         $artifactProbeState = New-DesignerArtifactProbeState
+        $invocationProbeState = New-DesignerInvocationProbeState -LauncherProcessId 0
         $completionProbe = {
             param($probeContext)
             $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
             if ($terminalState.state -eq "failure") {
                 return $true
             }
-            if ($null -eq $probeContext -or -not $probeContext.launcherExited) {
+            if (-not $invocationProbeState.trackedProcessIds.Contains([int]$probeContext.processId)) {
+                $invocationProbeState.trackedProcessIds.Add([int]$probeContext.processId) | Out-Null
+            }
+            if (-not (Test-DesignerInvocationReleased `
+                -ProbeState $invocationProbeState `
+                -ProbeContext $probeContext `
+                -LogPath $logPath `
+                -InfoBaseKind $InfoBaseKind `
+                -InfoBasePath $InfoBasePath `
+                -OperationKind $operationKind)) {
                 return $false
             }
             $observedAtUtc = [DateTime]::UtcNow
@@ -4621,29 +4801,25 @@ function Invoke-Designer {
         $initialLogState = Get-DesignerFileArtifactState -Path $logPath -AllowEmpty
         $initialSignature = [string]$initialLogState.signature
         $artifactProbeState = New-DesignerArtifactProbeState
+        $invocationProbeState = New-DesignerInvocationProbeState -LauncherProcessId 0
         $configurationSuccessPattern = $(if ($operationKind -eq "configuration-update") { Get-DesignerConfigurationUpdateSuccessPattern } else { "" })
-        $postExitProbeState = [pscustomobject]@{
-            stagePublished = $false
-            lastDiagnosticSecond = -1
-        }
         $completionProbe = {
             param($probeContext)
             $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern $configurationSuccessPattern
             if ($terminalState.state -eq "failure") {
                 return $true
             }
-            if ($null -eq $probeContext -or -not $probeContext.launcherExited) {
+            if (-not $invocationProbeState.trackedProcessIds.Contains([int]$probeContext.processId)) {
+                $invocationProbeState.trackedProcessIds.Add([int]$probeContext.processId) | Out-Null
+            }
+            if (-not (Test-DesignerInvocationReleased `
+                -ProbeState $invocationProbeState `
+                -ProbeContext $probeContext `
+                -LogPath $logPath `
+                -InfoBaseKind $InfoBaseKind `
+                -InfoBasePath $InfoBasePath `
+                -OperationKind $operationKind)) {
                 return $false
-            }
-            if (-not $postExitProbeState.stagePublished) {
-                $postExitProbeState.stagePublished = $true
-                $stage = $(if ([string]$script:RunStage -like "config-load.*") { "config-load.post-exit-probe" } else { "designer.post-exit-probe" })
-                Set-RunStage -Stage $stage -Detail "Designer exited with code $($probeContext.launcherExitCode); waiting for $operationKind completion evidence."
-            }
-            $elapsed = ConvertTo-IntOrDefault -Value (Get-StateValue -State $probeContext -Name "postExitElapsedSeconds" -Default 0) -Default 0
-            if ($elapsed -gt 0 -and $elapsed % 10 -eq 0 -and $elapsed -ne $postExitProbeState.lastDiagnosticSecond) {
-                $postExitProbeState.lastDiagnosticSecond = $elapsed
-                Write-Host "Designer PID $($probeContext.processId) exited with code $($probeContext.launcherExitCode); post-exit probe pending for $operationKind (${elapsed}s)."
             }
             $observedAtUtc = [DateTime]::UtcNow
             if ($observedAtUtc -lt [DateTime]$artifactProbeState.nextCheckAtUtc) {
@@ -4664,11 +4840,7 @@ function Invoke-Designer {
     }
 
     $maxWorkingSetMb = Get-DesignerMaxWorkingSetMb
-    $postExitProbeSeconds = if ($operationKind -in @("repository-update", "configuration-update")) {
-        Get-CompletionPostExitTimeoutSeconds
-    } else {
-        $completionTimeoutSeconds
-    }
+    $postExitProbeSeconds = $completionTimeoutSeconds
     $result = Invoke-NativeProcessAndWaitResult `
         -FilePath $platformPath `
         -Arguments $args `
@@ -4698,16 +4870,11 @@ function Invoke-Designer {
 
     $operationLogState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
     if ($operationLogState.state -eq "failure") {
-        $failureLabel = if ($operationKind -eq "repository-update") { "repository update" } else { $operationKind }
+        $failureLabel = if ($operationKind -like "repository-update*") { "repository update" } else { $operationKind }
         throw "1C Designer $failureLabel failed: $($operationLogState.detail). Log: $logPath"
     }
 
-    if ($operationKind -eq "repository-update") {
-        $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern $repositorySuccessPattern
-        if ($terminalState.state -ne "success") {
-            throw "1C Designer repository update ended without terminal success evidence. Log: $logPath"
-        }
-    } elseif ($operationKind -eq "dump-config-to-files") {
+    if ($operationKind -eq "dump-config-to-files") {
         $dumpState = if ($null -ne $artifactProbeState -and $null -ne $artifactProbeState.confirmedState) {
             $artifactProbeState.confirmedState
         } else {

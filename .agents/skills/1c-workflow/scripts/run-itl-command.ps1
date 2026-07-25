@@ -63,6 +63,20 @@ function Set-ObjectValue {
     $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
 }
 
+function ConvertTo-NativeCommandLineArgument {
+    param([AllowNull()][string]$Argument)
+    if ($null -eq $Argument -or $Argument.Length -eq 0) { return '""' }
+    if ($Argument -notmatch '[\s"]') { return $Argument }
+    $escaped = $Argument -replace '(\\*)"', '$1$1\"'
+    $escaped = $escaped -replace '(\\+)$', '$1$1'
+    return '"' + $escaped + '"'
+}
+
+function Join-NativeCommandLineArguments {
+    param([string[]]$Arguments)
+    return (@($Arguments | ForEach-Object { ConvertTo-NativeCommandLineArgument -Argument ([string]$_) }) -join " ")
+}
+
 function Find-LauncherRunDirectory {
     param([object[]]$Output, [datetime]$StartedAt, [string]$RunsRoot)
     foreach ($line in @($Output)) {
@@ -130,9 +144,49 @@ if ($windowed) {
     [System.IO.File]::WriteAllText($logPath, "", $utf8)
     $helperPath = Join-Path $PSScriptRoot "agent-1c.ps1"
     $monitoredArgs = @("-ProjectRoot", $projectRoot, "-RunStatusPath", $statusPath, "-RunLogPath", $logPath) + @($helperArgs)
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $helperPath @monitoredArgs *>&1 |
-        ForEach-Object { [System.IO.File]::AppendAllText($logPath, ([string]$_ + [Environment]::NewLine), $utf8) }
-    $exitCode = if ($LASTEXITCODE -is [int]) { [int]$LASTEXITCODE } else { 1 }
+    $nativeArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $helperPath) + $monitoredArgs
+    $processStartInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $processStartInfo.FileName = "powershell"
+    $processStartInfo.Arguments = Join-NativeCommandLineArguments -Arguments $nativeArguments
+    $processStartInfo.WorkingDirectory = $projectRoot
+    $processStartInfo.UseShellExecute = $false
+    $processStartInfo.CreateNoWindow = $true
+    $processStartInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    $processStartInfo.RedirectStandardOutput = $true
+    $processStartInfo.RedirectStandardError = $true
+    $helperProcess = New-Object System.Diagnostics.Process
+    $helperProcess.StartInfo = $processStartInfo
+    if (-not $helperProcess.Start()) {
+        throw "Failed to start compact ITL helper: $helperPath"
+    }
+    $helperOutputTask = $helperProcess.StandardOutput.ReadToEndAsync()
+    $helperErrorTask = $helperProcess.StandardError.ReadToEndAsync()
+    $lastProgressStage = ""
+    $lastProgressAt = [DateTime]::MinValue
+    while (-not $helperProcess.HasExited) {
+        $currentStatus = Read-JsonFile -Path $statusPath
+        $currentStage = [string](Get-ObjectValue -Object $currentStatus -Name "stage" -Default "")
+        $stageChanged = $currentStage -and $currentStage -ne $lastProgressStage
+        $heartbeatDue = $currentStage -and ([DateTime]::UtcNow - $lastProgressAt).TotalSeconds -ge 30
+        if ($stageChanged -or $heartbeatDue) {
+            $lastProgressStage = $currentStage
+            $lastProgressAt = [DateTime]::UtcNow
+            $elapsed = [int][Math]::Floor(((Get-Date) - $startedAt).TotalSeconds)
+            $detail = Limit-Text -Value (Get-ObjectValue -Object $currentStatus -Name "stageDetail" -Default "") -Length 300
+            [Console]::Error.WriteLine("ITL progress: stage=$currentStage; elapsed=${elapsed}s; detail=$detail")
+        }
+        $helperProcess.WaitForExit(500) | Out-Null
+    }
+    $helperProcess.WaitForExit()
+    $exitCode = [int]$helperProcess.ExitCode
+    $helperOutput = $helperOutputTask.GetAwaiter().GetResult()
+    $helperErrors = $helperErrorTask.GetAwaiter().GetResult()
+    if ($helperOutput) {
+        [System.IO.File]::AppendAllText($logPath, $helperOutput, $utf8)
+    }
+    if ($helperErrors) {
+        [System.IO.File]::AppendAllText($logPath, $helperErrors, $utf8)
+    }
 }
 
 $status = Read-JsonFile -Path $statusPath
