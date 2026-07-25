@@ -16,11 +16,11 @@ or long regressions only when explicitly requested.
 4. For OpenSpec, write 2-3 scenarios: the main path and one meaningful
    boundary or negative case. A fourth needs justification. A quick-fix starts
    with one focused regression and adds another only for a separate boundary.
-5. Run the final ITL check flow. Vanessa UI MCP is only for runtime UI research, authoring support, step search, recording, and debugging; it is not the test runner.
+5. Run the final ITL check flow. Vanessa UI MCP may aid test development but is not the test runner.
 
-## Mandatory Authoring Gate
+## Development And Verification
 
-Changed `.feature` files require `/itl-vanessa-author`; see `vanessa-authoring.md`. MCP never replaces `/itl-check`.
+No separate authoring pass. Use `itl-vanessa-ui` only when needed; see `vanessa-authoring.md`. MCP is diagnostic and never replaces `/itl-check`.
 
 ## Context Economy
 
@@ -154,7 +154,7 @@ Use UI checks only for forms, commands, or visible behavior. Prefer form element
 - Use explicit waits such as `я жду закрытия окна ... в течение 20 секунд`. Use blind pauses only when no stable event exists, and comment why.
 - For UI steps, use `с именем '<ИмяЭлемента>'` when the element name is known; window captions can change.
 - An unexpected modal fails the automated run; never ask the user to click it. Handle an expected dialog in the scenario.
-- After the feature SHA passes authoring, freeze it during infrastructure diagnosis; change it only on fresh same-SHA evidence.
+- After `/itl-check` fails, diagnose before editing. For infrastructure failure, freeze it during infrastructure diagnosis. Never weaken its core assertion.
 - Do not stop or touch another worktree's `TESTMANAGER`/`TESTCLIENT`; the helper owns the final run.
 
 ## Libraries And Custom Steps

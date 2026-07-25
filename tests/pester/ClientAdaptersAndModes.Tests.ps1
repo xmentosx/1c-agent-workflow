@@ -94,7 +94,7 @@
                 }
             }
             $vanessaSource = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
-            $vanessaSource | Should -Match 'Vanessa authoring state: ready'
+            $vanessaSource | Should -Not -Match 'Vanessa authoring state'
             $vanessaSource | Should -Not -Match 'reloadInstruction'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
@@ -490,20 +490,16 @@
         $verifyFix = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-verify-fix.md.template") -Raw
         $verifyFix | Should -Match 'agent: code'
         $verifyFix | Should -Match 'VerificationTrigger repair'
-        $authorTemplate = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-vanessa-author.md.template") -Raw
-        $authorRouting = & {
+        $routing = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             [pscustomobject]@{
                 listed = (Get-ItlRoutineCommandNames) -contains "itl-vanessa-author.md"
-                kilocode = Convert-ItlCommandForClient -Text $authorTemplate -Client "kilocode" -FileName "itl-vanessa-author.md"
-                opencode = Convert-ItlCommandForClient -Text $authorTemplate -Client "opencode" -FileName "itl-vanessa-author.md"
                 opencodeVerifyFix = Convert-ItlCommandForClient -Text $verifyFix -Client "opencode" -FileName "itl-verify-fix.md"
             }
         }
-        $authorRouting.listed | Should -BeFalse
-        $authorRouting.kilocode | Should -Match '(?m)^agent:\s*code\s*$'
-        $authorRouting.opencode | Should -Match '(?m)^agent:\s*build\s*$'
-        $authorRouting.opencodeVerifyFix | Should -Match '(?m)^agent:\s*build\s*$'
+        $routing.listed | Should -BeFalse
+        $routing.opencodeVerifyFix | Should -Match '(?m)^agent:\s*build\s*$'
+        Test-Path -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-vanessa-author.md.template") | Should -BeFalse
     }
 
     It "maps every development OpenCode ITL wrapper to a valid agent" {

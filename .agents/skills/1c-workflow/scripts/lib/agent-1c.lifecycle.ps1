@@ -6991,11 +6991,7 @@ function Invoke-DevBranchCheck {
     $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
     $state = Read-DevBranchState -Name $DevBranchName
     Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "check-dev-branch preflight" | Out-Null
-    $mcpRuntime = Get-VanessaMcpRuntimeInfo -State $state
-    if ($mcpRuntime.processAlive) {
-        Stop-VanessaAuthoringMcpForState -State $state -Quiet | Out-Null
-    }
-    Assert-VanessaAuthoringPreflight -Trigger $trigger -ExplicitComponents $explicit
+    Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $explicit
     Use-ItlVerificationRepairAttempt
     Update-DevBranchBase
     Invoke-ItlVerificationCycle -Trigger $trigger -ExplicitComponents $explicit
@@ -7548,9 +7544,6 @@ function Show-Help {
             $kind = Get-DevBranchKind -State $state
             $extensionInitializationStatus = Get-DevBranchExtensionInitializationStatus -State $state
             $hasCheckableChanges = Test-DevBranchHasCheckableChanges -State $state
-            $authoringRequired = $false
-            try { $authoringRequired = Test-VanessaAuthoringRequired } catch { $authoringRequired = $false }
-
             Write-Host ""
             Write-Host "Branch:"
             Write-Host "  Name: $(Get-StateValue -State $state -Name 'devBranchName' -Default (Get-StateValue -State $state -Name 'safeDevBranchName' -Default '<unknown>'))"
@@ -7580,8 +7573,6 @@ function Show-Help {
             Write-Host ""
             if ($kind -eq "extension" -and $extensionInitializationStatus -ne "ready") {
                 Write-Host "Recommended next step: tell the agent whether to create an Empty extension or load a CFE, with the extension name and CFE path when applicable."
-            } elseif ($authoringRequired) {
-                Write-Host "Recommended next step: /itl-vanessa-author"
             } elseif ($hasCheckableChanges -or (@("failed", "stale", "unknown") -contains $verification.effectiveStatus)) {
                 Write-Host "Recommended next step: /itl-check"
             } elseif (-not $verification.isFreshPassed) {
@@ -7602,11 +7593,11 @@ function Show-Help {
         Write-Host ""
         Write-Host "Lifecycle:"
         if ($openSpec.mode -eq "native") {
-            Write-Host "  extension setup when pending -> optional $($openSpec.invocations.explore) -> quick-fix or $($openSpec.invocations.propose) -> $($openSpec.invocations.apply)/work -> /itl-vanessa-author when features change -> /itl-check -> /itl-result"
+            Write-Host "  extension setup when pending -> optional $($openSpec.invocations.explore) -> quick-fix or $($openSpec.invocations.propose) -> $($openSpec.invocations.apply)/work -> /itl-check -> /itl-result"
         } elseif ($openSpec.mode -eq "natural") {
-            Write-Host "  extension setup when pending -> natural explore -> quick-fix or natural propose -> natural apply/work -> /itl-vanessa-author when features change -> /itl-check -> /itl-result -> natural archive"
+            Write-Host "  extension setup when pending -> natural explore -> quick-fix or natural propose -> natural apply/work -> /itl-check -> /itl-result -> natural archive"
         } else {
-            Write-Host "  extension setup when pending -> quick-fix -> /itl-vanessa-author when features change -> /itl-check -> /itl-result; restore the OpenSpec workspace/rules before an OpenSpec change."
+            Write-Host "  extension setup when pending -> quick-fix -> /itl-check -> /itl-result; restore the OpenSpec workspace/rules before an OpenSpec change."
         }
         Write-Host "  use /itl-refresh when master changes must be merged into this branch."
         Write-Host ""
@@ -7614,7 +7605,6 @@ function Show-Help {
         Write-Host "  /itl"
         Write-Host "  /itl-status"
         Write-Host "  /itl-check"
-        Write-Host "  /itl-vanessa-author"
         Write-Host "  /itl-verify-fix"
         Write-Host "  /itl-refresh"
         Write-Host "  /itl-result"

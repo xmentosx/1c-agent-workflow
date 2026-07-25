@@ -303,7 +303,7 @@
         $expected = @{
             common = @("itl.md.template", "itl-litemode.md.template", "itl-status.md.template")
             master = @("itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-switch-client.md.template", "itl-update-workflow.md.template")
-            dev = @("itl-check.md.template", "itl-refresh.md.template", "itl-result.md.template", "itl-vanessa-author.md.template", "itl-verify-fix.md.template")
+            dev = @("itl-check.md.template", "itl-refresh.md.template", "itl-result.md.template", "itl-verify-fix.md.template")
         }
 
         foreach ($setName in $expected.Keys) {
@@ -545,7 +545,6 @@
                 function Get-DevBranchKind { "configuration" }
                 function Get-DevBranchExtensionInitializationStatus { "ready" }
                 function Test-DevBranchHasCheckableChanges { $false }
-                function Test-VanessaAuthoringRequired { $false }
                 function Get-ItlActiveClient { "qwen" }
                 Show-Help
             } 6>&1 | Out-String

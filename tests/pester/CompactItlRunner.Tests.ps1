@@ -190,16 +190,15 @@ exit 0
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "returns structured Vanessa authoring failure without requiring the log tail" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-authoring-" + [guid]::NewGuid().ToString("N"))
+    It "returns a structured Vanessa test-contract failure without requiring the log tail" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-test-contract-" + [guid]::NewGuid().ToString("N"))
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
             Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
-$authoring = Join-Path $ProjectRoot '.agent-1c\vanessa-authoring\state.json'
-$payload = [ordered]@{ schemaVersion=1; status='failed'; action=$Action; stage='vanessa.preflight'; stageDetail='stale'; errorMessage='authoring pass stale'; exitCode=1; lastLogPath=''; errorCategory='unsupported-step'; requiredAction='/itl-vanessa-author'; authoringStatus='reload-required'; authoringStatePath=$authoring }
+$payload = [ordered]@{ schemaVersion=1; status='failed'; action=$Action; stage='vanessa.failed'; stageDetail='undefined step'; errorMessage='undefined step'; exitCode=1; lastLogPath=''; errorCategory='unsupported-step'; requiredAction='/itl-verify-fix' }
 [IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
 exit 1
 '@
@@ -207,9 +206,10 @@ exit 1
             $LASTEXITCODE | Should -Be 1
             $summary = ($output -join "`n") | ConvertFrom-Json
             $summary.errorCategory | Should -Be "unsupported-step"
-            $summary.requiredAction | Should -Be "/itl-vanessa-author"
-            $summary.nextAction | Should -Be "/itl-vanessa-author"
-            $summary.authoringStatus | Should -Be "reload-required"
+            $summary.requiredAction | Should -Be "/itl-verify-fix"
+            $summary.nextAction | Should -Be "/itl-verify-fix"
+            @($summary.PSObject.Properties.Name) | Should -Not -Contain "authoringStatus"
+            @($summary.PSObject.Properties.Name) | Should -Not -Contain "authoringStatePath"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 }

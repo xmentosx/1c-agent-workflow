@@ -274,8 +274,6 @@ function Write-RunStatus {
         devBranch = $(if ($script:RunDevBranch) { [string]$script:RunDevBranch } else { "" })
         worktreePath = $(if ($script:RunWorktreePath) { [string]$script:RunWorktreePath } else { "" })
         extensionInitializationStatus = $(if ($script:RunExtensionInitializationStatus) { [string]$script:RunExtensionInitializationStatus } else { "" })
-        authoringStatus = $(if ($script:RunAuthoringStatus) { [string]$script:RunAuthoringStatus } else { "" })
-        authoringStatePath = $(if ($script:RunAuthoringStatePath) { [string]$script:RunAuthoringStatePath } else { "" })
         userReport = $(if ($script:RunUserReport) { [string]$script:RunUserReport } else { "" })
     }
 
@@ -308,12 +306,12 @@ function Set-RunFailureContextFromMessage {
     if ($Message -match '(?i)(No Vanessa .*feature|features path was not found|missing-suite)') {
         $category = "missing-suite"
         $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '(?i)(undefined step|step.+not found|unsupported-step|authoring pass)') {
+    } elseif ($Message -match '(?i)(undefined step|step.+not found|unsupported-step)') {
         $category = "unsupported-step"
-        $requiredAction = "/itl-vanessa-author"
+        $requiredAction = "/itl-verify-fix"
     } elseif ($Message -match '(?i)(scenario context|scenario-context)') {
         $category = "scenario-context"
-        $requiredAction = "/itl-vanessa-author"
+        $requiredAction = "/itl-verify-fix"
     } elseif ($Message -match '(?i)(event.?log)') {
         $category = "event-log"
         $requiredAction = "/itl-verify-fix"
