@@ -1537,7 +1537,7 @@
                 $params.stoponerror | Should -BeFalse
                 $params.NumberOfAttemptsToExecuteTheScript | Should -Be 1
                 $params.updatetreewhenscenariostarts | Should -BeFalse
-                $params.distinguishbrokenorfailedbythenkeyword | Should -BeTrue
+                $params.PSObject.Properties.Name | Should -Not -Contain "distinguishbrokenorfailedbythenkeyword"
                 $params.PSObject.Properties[$portRangeKey].Value | Should -Be "48051-48051"
                 $params.PSObject.Properties[$statusKey].Value | Should -Be $statusPath
                 $params.PSObject.Properties[$scenarioKey].Value.PSObject.Properties[$windowTimeoutKey].Value | Should -Be 60

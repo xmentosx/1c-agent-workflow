@@ -2348,7 +2348,6 @@ function New-VanessaParamsFile {
     $params["stoponerror"] = $false
     $params["NumberOfAttemptsToExecuteTheScript"] = 1
     $params["updatetreewhenscenariostarts"] = $false
-    $params["distinguishbrokenorfailedbythenkeyword"] = $true
     $params[(ConvertFrom-Utf8Base64 "0JTQuNCw0L/QsNC30L7QvdCf0L7RgNGC0L7QslRlc3RjbGllbnQ=")] = "$TestPort-$TestPort"
     $params[(ConvertFrom-Utf8Base64 "0JLRi9C/0L7Qu9C90LXQvdC40LXQodGG0LXQvdCw0YDQuNC10LI=")] = $scenarioSettings
     $params[(ConvertFrom-Utf8Base64 "0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP")] = $testClientSettings
