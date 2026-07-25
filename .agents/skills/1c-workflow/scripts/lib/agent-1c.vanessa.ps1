@@ -219,6 +219,16 @@ function Save-VanessaAutomationArchive {
     return $archivePath
 }
 
+function Expand-VanessaAutomationArchiveContents {
+    param(
+        [Parameter(Mandatory = $true)][string]$ArchivePath,
+        [Parameter(Mandatory = $true)][string]$DestinationPath
+    )
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($ArchivePath, $DestinationPath)
+}
+
 function Expand-VanessaAutomationArchive {
     param(
         [string]$ArchivePath,
@@ -251,7 +261,7 @@ function Expand-VanessaAutomationArchive {
     $movedExisting = $false
     New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
     try {
-        Expand-Archive -LiteralPath $ArchivePath -DestinationPath $extractRoot -Force
+        Expand-VanessaAutomationArchiveContents -ArchivePath $ArchivePath -DestinationPath $extractRoot
         $candidateEpf = Find-VanessaAutomationEpf -Root $extractRoot
         if (-not $candidateEpf) {
             throw "Downloaded Vanessa Automation archive did not contain a usable EPF."
