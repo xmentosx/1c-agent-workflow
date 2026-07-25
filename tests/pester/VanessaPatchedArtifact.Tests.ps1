@@ -1,7 +1,7 @@
 Describe "Controlled Vanessa Automation patched artifact" {
     BeforeAll {
         $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-        $assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.28-itl-r3"
+        $assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.28-itl-r4"
         $manifestPath = Join-Path $assetRoot "manifest.json"
         $patchPath = Join-Path $assetRoot "file-operations.patch"
         $licensePath = Join-Path $assetRoot "LICENSE.upstream"
@@ -17,7 +17,7 @@ Describe "Controlled Vanessa Automation patched artifact" {
         $manifest.upstream.commit | Should -Be "f3a01778a14d29b38204685deea0131274d438ff"
         $manifest.upstream.sourceArchive.sha256 | Should -Be "3581a8d6bb675426b6555fd0b0f2e612c7c9ea0b704123129256a89f1f8f2f81"
         $manifest.compatibilityVersion | Should -Be "1.2.043.28"
-        $manifest.downstreamRevision | Should -Be "itl-r3"
+        $manifest.downstreamRevision | Should -Be "itl-r4"
         $manifest.build.platform.version | Should -Be "8.3.27.2130"
         $manifest.build.oneScript.version | Should -Be "1.9.4.16"
         $manifest.build.oneScript.packages.v8runner | Should -Be "1.8.2"
@@ -49,13 +49,17 @@ Describe "Controlled Vanessa Automation patched artifact" {
             ".*?\+\s*" + [regex]::Escape($mcpActiveGuard) +
             ".*?\+\s*" + [regex]::Escape($returnFalse))
         $mcpMarker = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JTQvtC/0J/QsNGA0LDQvNC10YLRgNGLLtCS0YHRgtCw0LLQuNGC0YwoItCt0YLQvtCS0YvQt9C+0LJNQ1AiLCDQl9C90LDRh9C10L3QuNC10JfQsNC/0L7Qu9C90LXQvdC+KNCY0LTQtdC90YLQuNGE0LjQutCw0YLQvtGA0JfQsNC00LDRh9C4TUNQKCkpKTs="))
-        $serverMarker = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JTQsNC90L3Ri9C1LtCU0L7Qv9Cf0LDRgNCw0LzQtdGC0YDRiy7QodCy0L7QudGB0YLQstC+KCLQrdGC0L7QktGL0LfQvtCyTUNQIiwg0K3RgtC+0JLRi9C30L7Qsk1DUCk7"))
         $serverGuard = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JXRgdC70Lgg0K3RgtC+0JLRi9C30L7Qsk1DUCDQotC+0LPQtNCw"))
         $stepDefinitionPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0KTQsNC50LtFUEYgPSDQmtCw0YLQsNC70L7Qs9Ck0LjRh9C4ICsgInN0ZXBfZGVmaW5pdGlvbnMi"))
         $patchText | Should -Match ("(?m)^\+\s*" + [regex]::Escape($mcpMarker) + "$")
-        $patchText | Should -Match ("(?m)^\+\s*" + [regex]::Escape($serverMarker) + "$")
         $patchText | Should -Match ("(?m)^\+\s*" + [regex]::Escape($serverGuard) + "$")
         $patchText | Should -Match ("(?m)^\+\s*" + [regex]::Escape($stepDefinitionPath) + "$")
+        $safeMarkerLookup = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JXRgdC70Lgg0JTQsNC90L3Ri9C1LtCU0L7Qv9Cf0LDRgNCw0LzQtdGC0YDRiy7QodCy0L7QudGB0YLQstC+KCLQrdGC0L7QktGL0LfQvtCyTUNQIikg0KLQvtCz0LTQsA=="))
+        $booleanMarkerType = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JXRgdC70Lgg0KLQuNC/0JfQvdGHKNCU0LDQvdC90YvQtS7QlNC+0L/Qn9Cw0YDQsNC80LXRgtGA0Ysu0K3RgtC+0JLRi9C30L7Qsk1DUCkgPSDQotC40L8oItCR0YPQu9C10LLQviIpINCi0L7Qs9C00LA="))
+        $unsafeOutputParameterLookup = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JTQsNC90L3Ri9C1LtCU0L7Qv9Cf0LDRgNCw0LzQtdGC0YDRiy7QodCy0L7QudGB0YLQstC+KCLQrdGC0L7QktGL0LfQvtCyTUNQIiwg0K3RgtC+0JLRi9C30L7Qsk1DUCk7"))
+        $patchText | Should -Match ("(?m)^\+\s*" + [regex]::Escape($safeMarkerLookup) + "$")
+        $patchText | Should -Match ("(?m)^\+\s*" + [regex]::Escape($booleanMarkerType) + "$")
+        $patchText | Should -Not -Match ("(?m)^\+\s*" + [regex]::Escape($unsafeOutputParameterLookup) + "$")
         $editorContent = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0KLQtdC60YHRgtCk0LDQudC70LAgPSDQktCw0L3QtdGB0YHQsC7Qn9C+0LvRg9GH0LjRgtGMVmFuZXNzYUVkaXRvcigpLmdldENvbnRlbnQoKTs="))
         $directReloadCallback = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0J7Qv9C+0LLQtdGB0YLQuNGC0YxNQ1Bf0J7Ql9Cw0LLQtdGA0YjQtdC90LjQuNCX0LDQs9GA0YPQt9C60LjQpNC40YfQuCg="))
         $reloadCallbackType = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JfQsNCz0YDRg9C30LjRgtGM0KTQuNGH0YPQlNC70Y/QktGL0L/QvtC70L3QtdC90LjRj9Ch0YbQtdC90LDRgNC40Y8="))
@@ -117,7 +121,7 @@ Describe "Controlled Vanessa Automation patched artifact" {
         $buildScriptText | Should -Match ([regex]::Escape("[Array]::Sort"))
         $buildScriptText | Should -Match ([regex]::Escape("2000, 1, 1, 0, 0, 0"))
         $buildScriptText | Should -Not -Match ([regex]::Escape("[System.IO.Compression.ZipFile]::CreateFromDirectory"))
-        $manifest.artifact.fileName | Should -Be "vanessa-automation-single.1.2.043.28-itl-r3.zip"
+        $manifest.artifact.fileName | Should -Be "vanessa-automation-single.1.2.043.28-itl-r4.zip"
     }
 
     It "retains the complete BSD 3-Clause binary redistribution notice" {
