@@ -16,8 +16,11 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         New-Item -ItemType Directory -Force -Path $script:FixtureContent | Out-Null
         $script:FixtureEpfPath = Join-Path $script:FixtureContent "vanessa-automation-single.epf"
         [System.IO.File]::WriteAllBytes($script:FixtureEpfPath, [System.Text.Encoding]::UTF8.GetBytes("qualified patched EPF fixture"))
+        $script:FixtureNestedPath = Join-Path $script:FixtureContent "metadata\fixture.txt"
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $script:FixtureNestedPath) | Out-Null
+        [System.IO.File]::WriteAllText($script:FixtureNestedPath, "nested fixture", [System.Text.UTF8Encoding]::new($false))
         $script:FixtureArchivePath = Join-Path $script:FixtureRoot "vanessa-automation-single.1.2.043.28-itl-r4.zip"
-        Compress-Archive -LiteralPath $script:FixtureEpfPath -DestinationPath $script:FixtureArchivePath
+        Compress-Archive -Path (Join-Path $script:FixtureContent "*") -DestinationPath $script:FixtureArchivePath
         $script:FixtureArchiveSha256 = (Get-FileHash -LiteralPath $script:FixtureArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
         $script:FixtureEpfSha256 = (Get-FileHash -LiteralPath $script:FixtureEpfPath -Algorithm SHA256).Hash.ToLowerInvariant()
         function global:New-VanessaArtifactTestProject {
@@ -48,6 +51,13 @@ Describe "Workflow-pinned Vanessa Automation integration" {
     AfterAll {
         Remove-Item Function:\New-VanessaArtifactTestProject -ErrorAction SilentlyContinue
     }
+
+    It "uses linear .NET archive extraction instead of Windows PowerShell Expand-Archive" {
+        $implementation = Get-Content -LiteralPath (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
+        $implementation | Should -Match ([regex]::Escape("[System.IO.Compression.ZipFile]::ExtractToDirectory"))
+        $implementation | Should -Not -Match "\bExpand-Archive\b"
+    }
+
     It "keeps compatibility, downstream revision, artifact provenance, and publication state separate" {
         $entry = (Get-Content -LiteralPath (Join-Path $script:RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaAutomation
         $entry.version | Should -Be "1.2.043.28"
@@ -82,6 +92,7 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         $result.epfSha256 | Should -Be $script:FixtureEpfSha256
         (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $before
         (Get-Content -LiteralPath (Join-Path $testProjectPath ".dev.env") -Raw -Encoding UTF8) | Should -Match "VANESSA_AUTOMATION_DOWNSTREAM_REVISION=itl-r4"
+        (Get-Content -LiteralPath (Join-Path $testProjectPath ".agent-1c\tools\vanessa-automation\metadata\fixture.txt") -Raw -Encoding UTF8) | Should -Be "nested fixture"
     }
 
     It "installs from a packaged no-Git workflow copy through the same exact override" {
