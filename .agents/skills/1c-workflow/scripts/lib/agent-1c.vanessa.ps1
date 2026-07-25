@@ -482,6 +482,28 @@ function Get-VanessaAuthoringLintWarnings {
     $pausePattern = "$stepPattern$pauseKeyword(?:\s|$)"
     $scenarioPattern = "^\s*(?:" + (($scenarioKeywords | ForEach-Object { [regex]::Escape($_) }) -join "|") + ")\s*:"
     $quotedValuePattern = [regex]"'(?:\\'|[^']|'')*'"
+    $serverCodePhrase = ConvertFrom-Utf8Base64 "0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwINC90LAg0YHQtdGA0LLQtdGA0LU="
+    $clientCodePhrase = ConvertFrom-Utf8Base64 "0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwICjQoNCw0YHRiNC40YDQtdC90LjQtSk="
+    $unsupportedStateCalls = @(
+        (ConvertFrom-Utf8Base64 "0KHQvtGF0YDQsNC90LjRgtGM0JfQvdCw0YfQtdC90LjQtQ=="),
+        (ConvertFrom-Utf8Base64 "0JLQvtGB0YHRgtCw0L3QvtCy0LjRgtGM0JfQvdCw0YfQtdC90LjQtQ==")
+    )
+    $metadataManagers = @(
+        "0KHQv9GA0LDQstC+0YfQvdC40LrQuA==",
+        "0JTQvtC60YPQvNC10L3RgtGL",
+        "0J/Qu9Cw0L3Ri9CS0LjQtNC+0LLQpdCw0YDQsNC60YLQtdGA0LjRgdGC0LjQug==",
+        "0J/Qu9Cw0L3Ri9Ch0YfQtdGC0L7Qsg==",
+        "0J/Qu9Cw0L3Ri9CS0LjQtNC+0LLQoNCw0YHRh9C10YLQsA==",
+        "0KDQtdCz0LjRgdGC0YDRi9Ch0LLQtdC00LXQvdC40Lk=",
+        "0KDQtdCz0LjRgdGC0YDRi9Cd0LDQutC+0L/Qu9C10L3QuNGP",
+        "0KDQtdCz0LjRgdGC0YDRi9CR0YPRhdCz0LDQu9GC0LXRgNC40Lg=",
+        "0KDQtdCz0LjRgdGC0YDRi9Cg0LDRgdGH0LXRgtCw",
+        "0JHQuNC30L3QtdGB0J/RgNC+0YbQtdGB0YHRiw==",
+        "0JfQsNC00LDRh9C4"
+    ) | ForEach-Object { ConvertFrom-Utf8Base64 $_ }
+    $metadataManagerPattern = "\b(?:" + (($metadataManagers | ForEach-Object { [regex]::Escape($_) }) -join "|") + ")\s*\."
+    $clientModuleSuffix = ConvertFrom-Utf8Base64 "0JrQu9C40LXQvdGC"
+    $clientModulePattern = "\b[\p{L}\p{Nd}_]*" + [regex]::Escape($clientModuleSuffix) + "\s*\."
 
     foreach ($feature in @($FeatureRecords)) {
         if ($warnings.Count -ge $MaxWarnings) { break }
@@ -492,6 +514,10 @@ function Get-VanessaAuthoringLintWarnings {
 
         $lines = @((Read-Utf8Text -Path $fullPath) -split "`r?`n")
         $insideDocString = $false
+        $pendingCodeContext = ""
+        $docStringCodeContext = ""
+        $docStringWarnedState = $false
+        $docStringWarnedContext = $false
         $positionPending = $false
         $positionTableRows = 0
         $hasReliablePosition = $false
@@ -501,8 +527,62 @@ function Get-VanessaAuthoringLintWarnings {
             $line = [string]$lines[$index]
             $trimmed = $line.Trim()
             $docStringMarkers = ([regex]::Matches($line, '"""')).Count
-            if ($insideDocString -or $docStringMarkers -gt 0) {
-                if (($docStringMarkers % 2) -eq 1) { $insideDocString = -not $insideDocString }
+            if (-not $insideDocString -and $line -match $stepPattern) {
+                $pendingCodeContext = ""
+                if ($line.IndexOf($serverCodePhrase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                    $pendingCodeContext = "server"
+                } elseif ($line.IndexOf($clientCodePhrase, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                    $pendingCodeContext = "client"
+                }
+            }
+            if ($insideDocString) {
+                if ($docStringMarkers -eq 0 -and $docStringCodeContext) {
+                    if (-not $docStringWarnedState) {
+                        foreach ($callName in $unsupportedStateCalls) {
+                            if ($line.IndexOf($callName, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                                $warnings.Add([pscustomobject][ordered]@{
+                                    code = "ITL_VANESSA_LINT_UNSUPPORTED_STATE"
+                                    path = $relativePath
+                                    line = $index + 1
+                                    message = "VAExtension arbitrary code uses unsupported cross-step state; use a supported Vanessa variable or library step."
+                                })
+                                $docStringWarnedState = $true
+                                break
+                            }
+                        }
+                    }
+                    if (-not $docStringWarnedContext -and $docStringCodeContext -eq "client" -and $line -match $metadataManagerPattern) {
+                        $warnings.Add([pscustomobject][ordered]@{
+                            code = "ITL_VANESSA_LINT_CLIENT_METADATA"
+                            path = $relativePath
+                            line = $index + 1
+                            message = "Client arbitrary-code block directly references a metadata manager; split server data access from client UI work."
+                        })
+                        $docStringWarnedContext = $true
+                    } elseif (-not $docStringWarnedContext -and $docStringCodeContext -eq "server" -and $line -match $clientModulePattern) {
+                        $warnings.Add([pscustomobject][ordered]@{
+                            code = "ITL_VANESSA_LINT_SERVER_CLIENT_MODULE"
+                            path = $relativePath
+                            line = $index + 1
+                            message = "Server arbitrary-code block references a client-only module name; split server data access from client UI work."
+                        })
+                        $docStringWarnedContext = $true
+                    }
+                }
+                if (($docStringMarkers % 2) -eq 1) {
+                    $insideDocString = $false
+                    $pendingCodeContext = ""
+                    $docStringCodeContext = ""
+                }
+                continue
+            }
+            if ($docStringMarkers -gt 0) {
+                if (($docStringMarkers % 2) -eq 1) {
+                    $insideDocString = $true
+                    $docStringCodeContext = $pendingCodeContext
+                    $docStringWarnedState = $false
+                    $docStringWarnedContext = $false
+                }
                 continue
             }
 

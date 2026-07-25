@@ -21,6 +21,11 @@ Describe "Vanessa authoring gate" {
         foreach ($name in @('search_name','search_description','search_type','exclude_name','exclude_description','exclude_type','limit')) { $command | Should -Match $name }
         $command | Should -Match 'never invent `keywords`'
         $command | Should -Match 'Never call.*raw HTTP'
+        $reference = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\vanessa-authoring.md") -Raw -Encoding UTF8
+        $reference | Should -Match 'one authoring chain through one facade instance'
+        $reference | Should -Match 'Always pair each `run_scenario` with `get_test_results`'
+        $reference | Should -Match 'status\.json.*JUnit.*error directory.*vanessa\.log.*TestClient `/Out`'
+        $reference | Should -Match 'capture the intended TestManager window before cleanup'
     }
 
     It "does not classify runMcp as a final Vanessa test process" {

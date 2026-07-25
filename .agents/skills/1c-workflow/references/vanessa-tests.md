@@ -24,9 +24,8 @@ Changed `.feature` files require `/itl-vanessa-author`; see `vanessa-authoring.m
 
 ## Context Economy
 
-- Search known steps by meaning or, for runtime UI evidence, through Vanessa UI MCP; do not paste full catalogs.
-- Prefer data/object/register checks over long UI sequences when they prove the same behavior.
-- Reuse an existing library step when it already expresses the business action.
+- Search steps by meaning; use Vanessa UI MCP only for runtime UI evidence.
+- Prefer data/object/register checks and existing library steps when they prove the same behavior.
 - Keep each scenario short: setup, action, 1-3 observable assertions, cleanup if needed.
 
 ## UI Authoring Rules
@@ -34,16 +33,18 @@ Changed `.feature` files require `/itl-vanessa-author`; see `vanessa-authoring.m
 - In single-quoted Gherkin parameters and table cells, escape an apostrophe as `\'`; do not use the BSL/SQL `''` convention.
 - Make UI setup self-contained: do not depend on saved form state, the current row, or an active page or mode left by another scenario. Establish the relevant page or mode explicitly.
 - Before selecting the current table row, position it by a stable business key; add columns when one value is not unique.
-- Clear a field before selection only when it is known to add or restore values and the scenario expects an exact set. Assert the resulting value or set when it is observable; do not inspect every form merely to justify clearing.
-- Base assertions on runtime-visible and available elements. Static visibility of a child does not prove user availability under the current page or mode; explicitly select the relevant state and assert only its active elements.
-- If a selector is already known, do no extra discovery. For unknown static structure, query targeted graph/code metadata or source; for dynamic visibility or availability, use targeted Vanessa UI MCP evidence. Read only the relevant `Form.xml` fragment as a final fallback, never require a full-form scan.
+- Clear a field only when selection restores/adds values and the scenario asserts the exact result.
+- Assert runtime-visible, available elements after explicitly selecting their page or mode; static child visibility is insufficient.
+- For unknown selectors, use targeted graph/code evidence, then Vanessa UI MCP for dynamic state. Read only the relevant `Form.xml` fragment as a final fallback.
 - For that local source fallback, call `scripts/get-form-element-context.ps1` with exact element names; it returns only bounded `DataPath`, multi-value, and group/page ancestry records.
 - Keep acceptance scenarios fully automated. Interactive profiling is separate tooling, not a reason to add manual pauses or profiling tags to ordinary features.
 
-## BSL Context And Extension UI
+## BSL Execution Context And State
 
 - Vanessa's `Объект` scenario context is not an arbitrary `Структура`. Do not add fields with `Объект.Поле = ...` or `Объект.Вставить(...)`.
-- Values that live only inside one BSL block belong in a local `Структура` created and consumed in that same block. Across steps, use an existing supported Vanessa context mechanism or a reusable library step instead of inventing fields on `Объект`.
+- Keep local BSL values inside one block; across steps use a supported Vanessa variable/library step, not invented `Объект` fields.
+- Classify every executable BSL block: metadata/data access is server-side; forms and client-only modules are client-side. Never combine both contexts in one block.
+- Transfer cross-context values through supported Vanessa variables. Do not use `СохранитьЗначение`/`ВосстановитьЗначение` as VAExtension cross-step transport.
 - Extension forms are supported in the real `TESTMANAGER -> TESTCLIENT` run. A requirement about an extension form, command, or visible state needs a UI scenario; a unit-like BSL check does not replace it.
 
 ## Feature File Structure
@@ -152,6 +153,8 @@ Use UI checks only for forms, commands, or visible behavior. Prefer form element
 - After opening a form, check warnings and `ErrorWindow` when the next step assumes a successful open.
 - Use explicit waits such as `я жду закрытия окна ... в течение 20 секунд`. Use blind pauses only when no stable event exists, and comment why.
 - For UI steps, use `с именем '<ИмяЭлемента>'` when the element name is known; window captions can change.
+- An unexpected modal fails the automated run; never ask the user to click it. Handle an expected dialog in the scenario.
+- After the feature SHA passes authoring, freeze it during infrastructure diagnosis; change it only on fresh same-SHA evidence.
 - Do not stop or touch another worktree's `TESTMANAGER`/`TESTCLIENT`; the helper owns the final run.
 
 ## Libraries And Custom Steps
