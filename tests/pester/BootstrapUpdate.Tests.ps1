@@ -113,6 +113,9 @@ exit 0
         $installText | Should -Match ([regex]::Escape("install-agent-1c-workflow.ps1 -ProjectRoot <project>"))
         $installText | Should -Match "Do not expand the normal bootstrap into manual copy commands"
         $installText | Should -Match "## Manual Recovery Copy Steps"
+        $installText | Should -Match "newly created unique empty temporary directory"
+        $installText | Should -Match "Never probe for an existing temporary clone"
+        $installText | Should -Match ([regex]::Escape("git ls-remote origin refs/heads/master"))
 
         $normalInstallText = $installText.Substring(0, $installText.IndexOf("## Manual Recovery Copy Steps"))
         $normalInstallText | Should -Not -Match "Copy the common skills into the target project"
@@ -866,7 +869,7 @@ local after
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
 
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $InstallerPath -ProjectRoot $tempRoot -NoInit > $stdoutPath 2> $stderrPath
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $InstallerPath -ProjectRoot $tempRoot -NoInit -SkipWorkflowSourceFreshnessCheck > $stdoutPath 2> $stderrPath
             $LASTEXITCODE | Should -Be 0
             (Get-Content -Encoding UTF8 -Raw $stdoutPath) | Should -Match "Initialization skipped because -NoInit was specified"
 
@@ -915,13 +918,86 @@ local after
         }
     }
 
+    It "stops before copying when the canonical workflow source clone is stale" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-stale-bootstrap-source-" + [guid]::NewGuid().ToString("N"))
+        $sourceRoot = Join-Path $tempRoot "source"
+        $remoteRoot = Join-Path $tempRoot "remote.git"
+        $updaterRoot = Join-Path $tempRoot "updater"
+        $targetRoot = Join-Path $tempRoot "target"
+        $freshTargetRoot = Join-Path $tempRoot "fresh-target"
+        $dirtyTargetRoot = Join-Path $tempRoot "dirty-target"
+        $previousRepo = $env:ITL_WORKFLOW_REPO
+        $previousRef = $env:ITL_WORKFLOW_REF
+
+        try {
+            New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents") -Destination $sourceRoot -Recurse -Force
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates") -Destination $sourceRoot -Recurse -Force
+            New-Item -ItemType Directory -Force -Path (Join-Path $sourceRoot "docs") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "docs\itl-workflow") -Destination (Join-Path $sourceRoot "docs\itl-workflow") -Recurse -Force
+            foreach ($name in @("install-agent-1c-workflow.ps1", "AGENT-INSTALL.md")) {
+                Copy-Item -LiteralPath (Join-Path $RepoRoot $name) -Destination (Join-Path $sourceRoot $name) -Force
+            }
+
+            & git -C $sourceRoot init *> $null
+            & git -C $sourceRoot config user.email "test@example.invalid"
+            & git -C $sourceRoot config user.name "ITL Test"
+            & git -C $sourceRoot add .
+            & git -C $sourceRoot commit -m "stale source" *> $null
+            & git -C $sourceRoot branch -M master
+            $localCommit = ((& git -C $sourceRoot rev-parse HEAD) -join "").Trim()
+
+            & git clone --bare $sourceRoot $remoteRoot *> $null
+            & git -C $sourceRoot remote add origin $remoteRoot
+            & git clone $remoteRoot $updaterRoot *> $null
+            & git -C $updaterRoot config user.email "test@example.invalid"
+            & git -C $updaterRoot config user.name "ITL Test"
+            Set-Content -LiteralPath (Join-Path $updaterRoot "fresh-marker.txt") -Encoding ASCII -Value "fresh"
+            & git -C $updaterRoot add fresh-marker.txt
+            & git -C $updaterRoot commit -m "advance remote" *> $null
+            & git -C $updaterRoot push origin master *> $null
+            $remoteCommit = ((& git -C $updaterRoot rev-parse HEAD) -join "").Trim()
+
+            $env:ITL_WORKFLOW_REPO = $remoteRoot
+            $env:ITL_WORKFLOW_REF = "master"
+            $output = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $InstallerPath -ProjectRoot $targetRoot -SourceRoot $sourceRoot -NoInit 2>&1)
+            $exitCode = $LASTEXITCODE
+            $combined = $output -join [Environment]::NewLine
+
+            $exitCode | Should -Not -Be 0
+            $combined | Should -Match "устарел"
+            $combined | Should -Match ([regex]::Escape($localCommit))
+            $combined | Should -Match ([regex]::Escape($remoteCommit))
+            $combined | Should -Match "новый.*clone"
+            (Test-Path -LiteralPath $targetRoot -ErrorAction SilentlyContinue) | Should -BeFalse
+
+            & git -C $sourceRoot fetch origin master *> $null
+            & git -C $sourceRoot merge --ff-only origin/master *> $null
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $InstallerPath -ProjectRoot $freshTargetRoot -SourceRoot $sourceRoot -NoInit *> $null
+            $LASTEXITCODE | Should -Be 0
+            (Test-Path -LiteralPath (Join-Path $freshTargetRoot "install-agent-1c-workflow.ps1") -PathType Leaf) | Should -BeTrue
+
+            Add-Content -LiteralPath (Join-Path $sourceRoot "AGENT-INSTALL.md") -Encoding UTF8 -Value "tracked test change"
+            $dirtyOutput = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $InstallerPath -ProjectRoot $dirtyTargetRoot -SourceRoot $sourceRoot -NoInit 2>&1)
+            $LASTEXITCODE | Should -Not -Be 0
+            ($dirtyOutput -join [Environment]::NewLine) | Should -Match "tracked-изменения"
+            (Test-Path -LiteralPath $dirtyTargetRoot -ErrorAction SilentlyContinue) | Should -BeFalse
+        } finally {
+            $env:ITL_WORKFLOW_REPO = $previousRepo
+            $env:ITL_WORKFLOW_REF = $previousRef
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "preserves an existing project README during bootstrap" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-package-readme-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Encoding UTF8 -Value "# Project-owned documentation"
 
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $InstallerPath -ProjectRoot $tempRoot -NoInit *> $null
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $InstallerPath -ProjectRoot $tempRoot -NoInit -SkipWorkflowSourceFreshnessCheck *> $null
             $LASTEXITCODE | Should -Be 0
             (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "README.md")) | Should -Match "Project-owned documentation"
         } finally {
