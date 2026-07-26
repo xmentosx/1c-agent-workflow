@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "publish", "proxy", "dump-config")]
+    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "publish", "proxy", "reconcile", "dump-config")]
     [string]$Action = "status",
 
     [string]$ConfigPath = ".\host.config.json",
@@ -1856,6 +1856,7 @@ function Start-DockerServer {
         } else {
             Write-Host "Starting existing container: $containerName"
             if (-not $DryRun) {
+                Invoke-DockerCommandChecked -Arguments @("update", "--restart", "unless-stopped", $containerName) -TimeoutSec 60 -Description "docker restart policy $containerName"
                 Invoke-DockerCommandChecked -Arguments @("start", $containerName) -TimeoutSec 120 -Description "docker start $containerName"
             }
             Write-Host "Container ready: $containerName -> $($Runtime.url)"
@@ -1864,7 +1865,7 @@ function Start-DockerServer {
     }
     $envValues = Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase
     $volumes = Resolve-ServerVolumes -Config $Config -Server $Server -ConfigState $ConfigState
-    $args = @("run", "-d", "--name", $containerName, "-p", "$($Runtime.hostPort):$($Runtime.internalPort)")
+    $args = @("run", "-d", "--restart", "unless-stopped", "--name", $containerName, "-p", "$($Runtime.hostPort):$($Runtime.internalPort)")
     foreach ($key in @($envValues.Keys | Sort-Object)) {
         $args += @("-e", "$key=$($envValues[$key])")
     }
@@ -2107,7 +2108,7 @@ function Enable-ToolsListProxyForRuntime {
     $upstreamUrl = "http://host.docker.internal:$($Runtime.hostPort)/mcp"
     try {
         Invoke-DockerCommandChecked -Arguments @(
-            "run", "-d", "--name", $proxyContainerName,
+            "run", "-d", "--restart", "unless-stopped", "--name", $proxyContainerName,
             "--add-host", "host.docker.internal:host-gateway",
             "-p", "$proxyPort`:8080", "-v", $contractVolume,
             $settings.image,
@@ -2241,7 +2242,7 @@ function Enable-TrackedToolsListProxiesAndPublish {
             $contractVolume = "$($settings.contractPath):/app/tools-contract.json:ro"
             $upstreamUrl = "http://host.docker.internal:$hostPort/mcp"
             Invoke-DockerCommandChecked -Arguments @(
-                "run", "-d", "--name", $proxyContainerName,
+                "run", "-d", "--restart", "unless-stopped", "--name", $proxyContainerName,
                 "--add-host", "host.docker.internal:host-gateway",
                 "-p", "$proxyPort`:8080", "-v", $contractVolume,
                 $settings.image,
@@ -2280,8 +2281,141 @@ function Enable-TrackedToolsListProxiesAndPublish {
     }
 }
 
+function Wait-HostTcpPortOpen {
+    param(
+        [int]$Port,
+        [int]$Attempts = 18,
+        [int]$DelaySeconds = 1
+    )
+
+    for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
+        if (Test-HostTcpPortOpen -Port $Port -TimeoutMilliseconds 500) {
+            return $true
+        }
+        if ($attempt -lt ($Attempts - 1)) {
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+    return $false
+}
+
+function Repair-TrackedMcpHostAndPublish {
+    param(
+        [object]$Config,
+        [string]$TargetServerId = ""
+    )
+
+    $settings = Get-ToolsListProxySettings -Config $Config
+    if (-not $settings.enabled) { throw "toolsListProxy.enabled must be true for -Action reconcile." }
+    if ($TargetServerId -and $TargetServerId -notin @($settings.serverIds)) {
+        throw "Server '$TargetServerId' is not included in toolsListProxy.serverIds."
+    }
+    $statePath = Get-HostStatePath -Config $Config
+    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
+        throw "Tracked host state was not found: $statePath. Run setup once before reconcile."
+    }
+    $state = Read-HostState -Config $Config
+    $selectedIds = $(if ($TargetServerId) { @($TargetServerId) } else { @($settings.serverIds) })
+    $targets = @(As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @()) | Where-Object {
+        [string](Get-ObjectValue -Object $_ -Name "id" -Default "") -in $selectedIds
+    })
+    $trackedIds = @($targets | ForEach-Object { [string](Get-ObjectValue -Object $_ -Name "id" -Default "") } | Select-Object -Unique)
+    $missingIds = @($selectedIds | Where-Object { $_ -notin $trackedIds })
+    if ($missingIds.Count -gt 0) { throw "Reconcile targets are missing from tracked host state: $($missingIds -join ', ')." }
+
+    if ($DryRun) {
+        foreach ($server in $targets) {
+            $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
+            Write-Host "Would reconcile tracked MCP runtime '$id': enforce restart policy, start stopped containers, qualify its proxy, and publish only ready state."
+        }
+        return
+    }
+
+    foreach ($command in @("git", "docker")) {
+        if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "Required command was not found: $command" }
+    }
+    if ((Invoke-DockerCommand -Arguments @("info") -Quiet -TimeoutSec 60) -ne 0) {
+        throw "Docker is installed but not available to the current user/session."
+    }
+
+    $repairIds = New-Object System.Collections.Generic.List[string]
+    foreach ($server in $targets) {
+        $id = [string](Get-ObjectValue -Object $server -Name "id" -Default "")
+        $containerName = [string](Get-ObjectValue -Object $server -Name "containerName" -Default "")
+        $hostPort = [int](Get-ObjectValue -Object $server -Name "hostPort" -Default 0)
+        if (-not $containerName -or $hostPort -le 0) {
+            throw "Tracked runtime for '$id' has no containerName or hostPort."
+        }
+        $containerState = Get-HostContainerPublishState -ContainerName $containerName
+        if ($containerState -eq "missing" -or $containerState -eq "unknown") {
+            throw "Tracked direct MCP container '$containerName' is $containerState. Run setup to recreate it."
+        }
+        Invoke-DockerCommandChecked -Arguments @("update", "--restart", "unless-stopped", $containerName) -TimeoutSec 60 -Description "docker restart policy $containerName"
+        if ($containerState -ne "running") {
+            Invoke-DockerCommandChecked -Arguments @("start", $containerName) -TimeoutSec 120 -Description "docker start $containerName"
+        }
+        if (-not (Wait-HostTcpPortOpen -Port $hostPort)) {
+            Invoke-DockerCommandChecked -Arguments @("restart", $containerName) -TimeoutSec 180 -Description "docker restart $containerName"
+            if (-not (Wait-HostTcpPortOpen -Port $hostPort)) {
+                throw "Direct MCP runtime '$id' did not open tracked port $hostPort after restart."
+            }
+        }
+
+        $proxyContainerName = [string](Get-ObjectValue -Object $server -Name "proxyContainerName" -Default "$containerName-tools-list-proxy")
+        $proxyPort = [int](Get-ObjectValue -Object $server -Name "proxyPort" -Default ($hostPort + [int]$settings.portOffset))
+        $proxyState = Get-HostContainerPublishState -ContainerName $proxyContainerName
+        if ($proxyState -ne "missing" -and $proxyState -ne "unknown") {
+            Invoke-DockerCommandChecked -Arguments @("update", "--restart", "unless-stopped", $proxyContainerName) -TimeoutSec 60 -Description "docker restart policy $proxyContainerName"
+            if ($proxyState -ne "running") {
+                Invoke-DockerCommandChecked -Arguments @("start", $proxyContainerName) -TimeoutSec 120 -Description "docker start $proxyContainerName"
+            }
+        }
+        if ($proxyState -eq "missing" -or $proxyState -eq "unknown" -or -not (Test-ToolsListProxyReady -Port $proxyPort)) {
+            if (-not $repairIds.Contains($id)) { [void]$repairIds.Add($id) }
+        }
+    }
+
+    foreach ($id in $repairIds) {
+        try {
+            Enable-TrackedToolsListProxiesAndPublish -Config $Config -TargetServerId $id
+        } catch {
+            Write-Warning "Initial MCP qualification for '$id' failed; restarting only its tracked direct runtime and retrying once. $($_.Exception.Message)"
+            foreach ($server in @($targets | Where-Object { [string](Get-ObjectValue -Object $_ -Name "id" -Default "") -eq $id })) {
+                $containerName = [string](Get-ObjectValue -Object $server -Name "containerName" -Default "")
+                $hostPort = [int](Get-ObjectValue -Object $server -Name "hostPort" -Default 0)
+                Invoke-DockerCommandChecked -Arguments @("restart", $containerName) -TimeoutSec 180 -Description "docker restart $containerName"
+                if (-not (Wait-HostTcpPortOpen -Port $hostPort)) {
+                    throw "Direct MCP runtime '$id' did not recover on tracked port $hostPort."
+                }
+            }
+            Enable-TrackedToolsListProxiesAndPublish -Config $Config -TargetServerId $id
+        }
+    }
+    if ($repairIds.Count -eq 0) {
+        Publish-Registry -Config $Config
+    }
+}
+
 function Get-HostServerPublishStatus {
     param([object]$Server)
+
+    $proxyUrl = [string](Get-ObjectValue -Object $Server -Name "proxyUrl" -Default "")
+    if ($proxyUrl) {
+        $proxyContainerName = [string](Get-ObjectValue -Object $Server -Name "proxyContainerName" -Default "")
+        $proxyState = Get-HostContainerPublishState -ContainerName $proxyContainerName
+        if ($proxyState -eq "missing" -or $proxyState -eq "unknown") {
+            return $proxyState
+        }
+        if ($proxyState -ne "running") {
+            return "stopped"
+        }
+        $proxyPort = [int](Get-ObjectValue -Object $Server -Name "proxyPort" -Default 0)
+        $toolsContractStatus = [string](Get-ObjectValue -Object $Server -Name "toolsContractStatus" -Default "")
+        if ($toolsContractStatus -eq "qualified" -and (Test-ToolsListProxyReady -Port $proxyPort)) {
+            return "running"
+        }
+        return "unreachable"
+    }
 
     $containerName = [string](Get-ObjectValue -Object $Server -Name "containerName" -Default "")
     $containerState = Get-HostContainerPublishState -ContainerName $containerName
@@ -2927,6 +3061,10 @@ switch ($Action) {
     }
     "proxy" {
         Enable-TrackedToolsListProxiesAndPublish -Config $config -TargetServerId $ServerId
+        Show-HostStatus -Config $config -TargetServerId $ServerId
+    }
+    "reconcile" {
+        Repair-TrackedMcpHostAndPublish -Config $config -TargetServerId $ServerId
         Show-HostStatus -Config $config -TargetServerId $ServerId
     }
     "dump-config" {

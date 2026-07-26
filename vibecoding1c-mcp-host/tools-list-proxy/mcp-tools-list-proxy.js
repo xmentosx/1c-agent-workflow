@@ -82,9 +82,17 @@ function requestBuffer(target, method, headers, body, options = {}, redirectCoun
       method,
       headers: requestHeaders,
     }, response => {
-      if ([301, 302, 307, 308].includes(response.statusCode || 0) && response.headers.location && redirectCount < 3) {
+      const redirectStatus = response.statusCode || 0;
+      const mayPreserveMethod = [307, 308].includes(redirectStatus) || (['GET', 'HEAD'].includes(method) && [301, 302].includes(redirectStatus));
+      if (mayPreserveMethod && response.headers.location && redirectCount < 3) {
         response.resume();
         const redirected = new URL(response.headers.location, target);
+        const targetPort = target.port || (target.protocol === 'https:' ? '443' : '80');
+        const redirectedPort = redirected.port || (redirected.protocol === 'https:' ? '443' : '80');
+        if (redirected.protocol !== target.protocol || redirectedPort !== targetPort) {
+          reject(new Error(`MCP upstream redirect changed protocol or port: ${target} -> ${redirected}`));
+          return;
+        }
         requestBuffer(redirected, method, headers, body, options, redirectCount + 1).then(resolve, reject);
         return;
       }
@@ -234,6 +242,10 @@ function requestMethod(body) {
   } catch (_) { return ''; }
 }
 
+function isSafeControlMethod(method) {
+  return method === 'initialize' || method === 'tools/list';
+}
+
 function filteredHeaders(headers) {
   const blocked = new Set(['host', 'connection', 'content-length', 'transfer-encoding']);
   const result = {};
@@ -256,17 +268,102 @@ function safeErrorMessage(error) {
 
 async function startProxy(args, expected) {
   let upstream = new URL(args['upstream-url']);
+  let qualified = false;
+  let readinessInFlight = null;
   const listenPort = Number(args['listen-port'] || 8080);
   const readinessTimeoutMs = Number(args['readiness-timeout-ms'] || 30000);
+  const ensureReady = async (force = false) => {
+    if (!force && qualified) return { upstreamUrl: upstream.toString(), toolCount: expected.toolCount };
+    if (readinessInFlight) return readinessInFlight;
+    readinessInFlight = probeReadiness(upstream.toString(), expected, { timeoutMs: readinessTimeoutMs }).then(result => {
+      upstream = new URL(result.upstreamUrl);
+      qualified = true;
+      return result;
+    }, error => {
+      qualified = false;
+      throw error;
+    }).finally(() => {
+      readinessInFlight = null;
+    });
+    return readinessInFlight;
+  };
+
+  const writeProxyError = (outgoing, statusCode, code, error) => {
+    if (outgoing.writableEnded) return;
+    if (!outgoing.headersSent) outgoing.writeHead(statusCode, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    outgoing.end(JSON.stringify({ error: code, message: safeErrorMessage(error) }));
+  };
+
+  const forwardRequest = (incoming, outgoing, body, attempt = 0) => {
+    const method = requestMethod(body);
+    const transport = upstream.protocol === 'https:' ? https : http;
+    const headers = filteredHeaders(incoming.headers);
+    headers.host = upstream.host;
+    if (body.length) headers['content-length'] = body.length;
+    const upstreamRequest = transport.request({
+      protocol: upstream.protocol, hostname: upstream.hostname, port: upstream.port || undefined,
+      path: `${upstream.pathname}${upstream.search}`, method: incoming.method, headers,
+    }, upstreamResponse => {
+      if ([307, 308].includes(upstreamResponse.statusCode || 0) && upstreamResponse.headers.location) {
+        upstreamResponse.resume();
+        qualified = false;
+        if (!isSafeControlMethod(method) || attempt >= 1) {
+          writeProxyError(outgoing, 502, 'MCP_UPSTREAM_REDIRECT', new Error(`Upstream redirected ${method || incoming.method}; non-idempotent requests are not replayed.`));
+          return;
+        }
+        ensureReady(true).then(
+          () => forwardRequest(incoming, outgoing, body, attempt + 1),
+          error => writeProxyError(outgoing, 503, 'MCP_UPSTREAM_UNREADY', error),
+        );
+        return;
+      }
+
+      const responseHeaders = filteredHeaders(upstreamResponse.headers);
+      if (method !== 'tools/list') {
+        outgoing.writeHead(upstreamResponse.statusCode || 502, responseHeaders);
+        upstreamResponse.pipe(outgoing);
+        return;
+      }
+      const responseChunks = [];
+      upstreamResponse.on('data', chunk => responseChunks.push(chunk));
+      upstreamResponse.on('end', () => {
+        try {
+          const transformed = transformToolsListResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'], expected);
+          if (responseHeaders['content-type'] && !String(responseHeaders['content-type']).toLowerCase().includes('charset=')) {
+            responseHeaders['content-type'] = `${responseHeaders['content-type']}; charset=utf-8`;
+          }
+          responseHeaders['content-length'] = transformed.length;
+          outgoing.writeHead(upstreamResponse.statusCode || 200, responseHeaders);
+          outgoing.end(transformed);
+        } catch (error) {
+          writeProxyError(outgoing, 502, 'MCP_TOOLS_CONTRACT_DRIFT', error);
+        }
+      });
+    });
+    upstreamRequest.on('error', error => {
+      qualified = false;
+      if (isSafeControlMethod(method) && attempt < 1) {
+        ensureReady(true).then(
+          () => forwardRequest(incoming, outgoing, body, attempt + 1),
+          readinessError => writeProxyError(outgoing, 503, 'MCP_UPSTREAM_UNREADY', readinessError),
+        );
+        return;
+      }
+      writeProxyError(outgoing, 502, 'MCP_UPSTREAM_FAILED', error);
+    });
+    upstreamRequest.setTimeout(readinessTimeoutMs, () => upstreamRequest.destroy(new Error(`HTTP request timed out after ${readinessTimeoutMs} ms.`)));
+    if (body.length) upstreamRequest.write(body);
+    upstreamRequest.end();
+  };
+
   const server = http.createServer((incoming, outgoing) => {
     if (incoming.method === 'GET' && incoming.url === '/health') {
       outgoing.writeHead(200, { 'content-type': 'application/json' });
-      outgoing.end(JSON.stringify({ status: 'ok', serverId: args['server-id'], upstream: upstream.toString() }));
+      outgoing.end(JSON.stringify({ status: 'ok', ready: qualified, serverId: args['server-id'], upstream: upstream.toString() }));
       return;
     }
     if (incoming.method === 'GET' && incoming.url === '/ready') {
-      probeReadiness(upstream.toString(), expected, { timeoutMs: readinessTimeoutMs }).then(result => {
-        upstream = new URL(result.upstreamUrl);
+      ensureReady(true).then(result => {
         outgoing.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         outgoing.end(JSON.stringify({ status: 'ready', serverId: args['server-id'], upstream: result.upstreamUrl, toolCount: result.toolCount }));
       }, error => {
@@ -288,43 +385,10 @@ async function startProxy(args, expected) {
     });
     incoming.on('end', () => {
       const body = Buffer.concat(chunks);
-      const transport = upstream.protocol === 'https:' ? https : http;
-      const headers = filteredHeaders(incoming.headers);
-      headers.host = upstream.host;
-      if (body.length) headers['content-length'] = body.length;
-      const upstreamRequest = transport.request({
-        protocol: upstream.protocol, hostname: upstream.hostname, port: upstream.port || undefined,
-        path: `${upstream.pathname}${upstream.search}`, method: incoming.method, headers,
-      }, upstreamResponse => {
-        const responseHeaders = filteredHeaders(upstreamResponse.headers);
-        if (requestMethod(body) !== 'tools/list') {
-          outgoing.writeHead(upstreamResponse.statusCode || 502, responseHeaders);
-          upstreamResponse.pipe(outgoing);
-          return;
-        }
-        const responseChunks = [];
-        upstreamResponse.on('data', chunk => responseChunks.push(chunk));
-        upstreamResponse.on('end', () => {
-          try {
-            const transformed = transformToolsListResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'], expected);
-            if (responseHeaders['content-type'] && !String(responseHeaders['content-type']).toLowerCase().includes('charset=')) {
-              responseHeaders['content-type'] = `${responseHeaders['content-type']}; charset=utf-8`;
-            }
-            responseHeaders['content-length'] = transformed.length;
-            outgoing.writeHead(upstreamResponse.statusCode || 200, responseHeaders);
-            outgoing.end(transformed);
-          } catch (error) {
-            outgoing.writeHead(502, { 'content-type': 'application/json' });
-            outgoing.end(JSON.stringify({ error: 'MCP_TOOLS_CONTRACT_DRIFT', message: error.message }));
-          }
-        });
-      });
-      upstreamRequest.on('error', error => {
-        if (!outgoing.headersSent) outgoing.writeHead(502, { 'content-type': 'application/json' });
-        outgoing.end(JSON.stringify({ error: 'MCP_UPSTREAM_FAILED', message: error.message }));
-      });
-      if (body.length) upstreamRequest.write(body);
-      upstreamRequest.end();
+      ensureReady().then(
+        () => forwardRequest(incoming, outgoing, body),
+        error => writeProxyError(outgoing, 503, 'MCP_UPSTREAM_UNREADY', error),
+      );
     });
   });
   await new Promise((resolve, reject) => {

@@ -204,6 +204,43 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "plans tracked reconcile without mutating state or restarting in dry-run" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-tools-reconcile-action-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $stateRoot = Join-Path $tempRoot "state"
+        $statePath = Join-Path $stateRoot "host-state.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $stateRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                hostId = "fixture-host"
+                baseUrl = "http://fixture-host"
+                stateRoot = $stateRoot
+                toolsListProxy = [ordered]@{ enabled = $true; serverIds = @("code"); portOffset = 4000 }
+            }
+            $state = [ordered]@{
+                schemaVersion = 1
+                updatedAt = "2026-07-20T00:00:00Z"
+                configurations = @()
+                servers = @([ordered]@{
+                    id = "code"; scope = "project"; configId = "trade"; name = "itl-code-trade"
+                    containerName = "itl-code-trade"; hostPort = 18100; url = "http://fixture-host:18100/mcp"
+                    status = "running"; health = "running"
+                })
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            Set-Content -LiteralPath $statePath -Encoding UTF8 -Value (($state | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            $beforeHash = (Get-FileHash -LiteralPath $statePath -Algorithm SHA256).Hash
+
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $McpHostPath -Action reconcile -ConfigPath $configPath -DryRun 2>&1
+
+            $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+            ($output -join [Environment]::NewLine) | Should -Match "Would reconcile tracked MCP runtime 'code'"
+            ($output -join [Environment]::NewLine) | Should -Not -Match "docker start|docker restart|Refreshing configurations|Reindexing"
+            (Get-FileHash -LiteralPath $statePath -Algorithm SHA256).Hash | Should -Be $beforeHash
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "rolls back tracked proxy activation before publish when qualification fails" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-tools-proxy-rollback-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
@@ -261,7 +298,7 @@
 
                 { Enable-TrackedToolsListProxiesAndPublish -Config (Read-JsonFile -Path $configPath) } | Should -Throw "*did not qualify*"
                 $script:ProxyRollbackPublished | Should -BeFalse
-                (@($script:ProxyRollbackDockerCalls) -join "|") | Should -Match "run -d --name itl-code-trade-tools-list-proxy"
+                (@($script:ProxyRollbackDockerCalls) -join "|") | Should -Match "run -d --restart unless-stopped --name itl-code-trade-tools-list-proxy"
                 (@($script:ProxyRollbackDockerCalls) -join "|") | Should -Match "rm -f itl-code-trade-tools-list-proxy"
                 Remove-Variable -Scope Script -Name ProxyRollbackDockerCalls -ErrorAction SilentlyContinue
                 Remove-Variable -Scope Script -Name ProxyRollbackPublished -ErrorAction SilentlyContinue
@@ -452,6 +489,8 @@
         $readmeText | Should -Match ([regex]::Escape("/app/model_cache"))
         $readmeText | Should -Match "sentence-transformers"
         $readmeText | Should -Match "embedded_pages > 0"
+        $readmeText | Should -Match ([regex]::Escape("-Action reconcile -ConfigPath .\host.config.json"))
+        $readmeText | Should -Match "restart=unless-stopped"
         $runbookText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\RUNBOOK.ru.md")
         $runbookText | Should -Match ([regex]::Escape("-Action setup -ConfigPath .\host.config.json -ServerId bookstack"))
         $runbookText | Should -Match ([regex]::Escape("-Action start -ConfigPath .\host.config.json -ServerId bookstack"))
@@ -467,6 +506,8 @@
         $runbookText | Should -Match ([regex]::Escape("/app/model_cache"))
         $runbookText | Should -Match "sentence-transformers"
         $runbookText | Should -Match "embedded_pages > 0"
+        $runbookText | Should -Match ([regex]::Escape("-Action reconcile -ConfigPath .\host.config.json"))
+        $runbookText | Should -Match "Register-ScheduledTask"
         $McpHostDumpText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1")
         $nativeEmptyStringFunction = [regex]::Match($McpHostDumpText, '(?s)function ConvertTo-NativeEmptyStringArgument \{.*?\n\}')
         $nativeEmptyStringFunction.Success | Should -Be $true
@@ -482,6 +523,42 @@
         $McpHostText | Should -Match "Command timed out after"
         $McpHostText | Should -Match "read-only file system"
         $McpHostText | Should -Not -Match '(?m)^\s*LICENSE_KEY_[A-Z0-9_]+\s*=\s*[^#\s]+'
+    }
+
+    It "publishes proxied endpoints only after MCP protocol readiness" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-tools-proxy-publish-status-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{ schemaVersion = 1; stateRoot = (Join-Path $tempRoot "state") }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function Get-HostContainerPublishState {
+                    param([string]$ContainerName)
+                    return $script:ProxyPublishContainerState
+                }
+                function Test-ToolsListProxyReady {
+                    param([int]$Port, [int]$TimeoutSec = 35)
+                    return $script:ProxyPublishReady
+                }
+                $server = [ordered]@{
+                    id = "code"; containerName = "itl-code-trade"; hostPort = 18100
+                    proxyUrl = "http://fixture-host:22100/mcp"; proxyPort = 22100
+                    proxyContainerName = "itl-code-trade-tools-list-proxy"; toolsContractStatus = "qualified"
+                }
+
+                $script:ProxyPublishContainerState = "running"
+                $script:ProxyPublishReady = $true
+                (Get-HostServerPublishStatus -Server $server) | Should -Be "running"
+                $script:ProxyPublishReady = $false
+                (Get-HostServerPublishStatus -Server $server) | Should -Be "unreachable"
+                $script:ProxyPublishContainerState = "stopped"
+                (Get-HostServerPublishStatus -Server $server) | Should -Be "stopped"
+                Remove-Variable -Scope Script -Name ProxyPublishContainerState -ErrorAction SilentlyContinue
+                Remove-Variable -Scope Script -Name ProxyPublishReady -ErrorAction SilentlyContinue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
     It "keeps config-specific MCP host servers project-scoped for legacy manifests and configs" {
@@ -1187,12 +1264,13 @@
                 function Invoke-DockerCommandCapture {
                     param([string[]]$Arguments, [int]$TimeoutSec = 300, [string]$Description = "docker command")
                     $script:HostDockerWrapperCalls.Add("capture:${TimeoutSec}:${Description}:$($Arguments -join ' ')")
-                    return @("itl-1c-ssl")
+                    return $(if ($script:HostDockerExisting) { @("itl-1c-ssl") } else { @() })
                 }
                 function Invoke-DockerCommandChecked {
                     param([string[]]$Arguments, [int]$TimeoutSec = 300, [string]$Description = "docker command")
                     $script:HostDockerWrapperCalls.Add("checked:${TimeoutSec}:${Description}:$($Arguments -join ' ')")
                 }
+                function Ensure-ServerDockerImageAvailable { param([object]$Server, [string]$Image) }
 
                 $hostConfig = Read-JsonFile -Path $configPath
                 $server = [pscustomobject]@{ id = "ssl"; embedding = $false }
@@ -1203,12 +1281,20 @@
                     image = "fixture"
                     url = "http://localhost:18004/mcp"
                 }
+                $script:HostDockerExisting = $true
                 Start-DockerServer -Config $hostConfig -Server $server -Runtime $runtime
 
                 $calls = @($script:HostDockerWrapperCalls)
                 $calls[0] | Should -Match "^capture:60:docker ps for itl-1c-ssl:"
-                $calls[1] | Should -Be "checked:120:docker start itl-1c-ssl:start itl-1c-ssl"
+                $calls[1] | Should -Be "checked:60:docker restart policy itl-1c-ssl:update --restart unless-stopped itl-1c-ssl"
+                $calls[2] | Should -Be "checked:120:docker start itl-1c-ssl:start itl-1c-ssl"
+
+                $script:HostDockerExisting = $false
+                $runtime.containerName = "itl-1c-ssl-new"
+                Start-DockerServer -Config $hostConfig -Server $server -Runtime $runtime
+                (@($script:HostDockerWrapperCalls) -join "|") | Should -Match "run -d --restart unless-stopped --name itl-1c-ssl-new"
                 Remove-Variable -Scope Script -Name HostDockerWrapperCalls -ErrorAction SilentlyContinue
+                Remove-Variable -Scope Script -Name HostDockerExisting -ErrorAction SilentlyContinue
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {

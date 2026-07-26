@@ -128,6 +128,7 @@ async function runCliStartupIntegration() {
   child.stdout.on('data', chunk => { childOutput += chunk.toString('utf8'); });
   child.stderr.on('data', chunk => { childOutput += chunk.toString('utf8'); });
   let upstream;
+  let initialized = 0;
 
   try {
     await waitFor(async () => {
@@ -147,6 +148,7 @@ async function runCliStartupIntegration() {
       request.on('end', () => {
         const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
         if (body && body.method === 'initialize') {
+          initialized += 1;
           response.writeHead(200, { 'content-type': 'application/json' });
           response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1.0' } } }));
           return;
@@ -166,14 +168,70 @@ async function runCliStartupIntegration() {
       });
     });
     await listenOn(upstream, upstreamPort);
-    await waitFor(async () => {
-      const response = await fetch(`http://127.0.0.1:${proxyPort}/ready`);
-      return response.status === 200 && (await response.json()).status === 'ready';
-    }, 'proxy readiness did not recover after upstream startup');
+    const firstClient = await fetch(`http://127.0.0.1:${proxyPort}/mcp`, {
+      method: 'POST',
+      headers: { accept: 'application/json, text/event-stream', 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'fixture-client', version: '1.0' } } }),
+    });
+    assert.strictEqual(firstClient.status, 200);
+    assert.strictEqual((await firstClient.json()).result.serverInfo.name, 'fixture');
+    assert.strictEqual(initialized, 2, 'the first client request must trigger one readiness initialize and then its own initialize');
+    const recovered = await fetch(`http://127.0.0.1:${proxyPort}/health`);
+    assert.strictEqual((await recovered.json()).ready, true);
   } finally {
     if (upstream?.listening) await close(upstream);
     await stopChild(child);
     fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+async function runSingleFlightIntegration() {
+  let initialized = 0;
+  const upstream = http.createServer((request, response) => {
+    const chunks = [];
+    request.on('data', chunk => chunks.push(chunk));
+    request.on('end', () => {
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
+      if (body && body.method === 'initialize') {
+        initialized += 1;
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1.0' } } }));
+        return;
+      }
+      if (body && body.method === 'notifications/initialized') {
+        response.writeHead(202);
+        response.end();
+        return;
+      }
+      if (body && body.method === 'tools/list') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { tools } }));
+        return;
+      }
+      response.writeHead(400);
+      response.end();
+    });
+  });
+  const upstreamPort = await listen(upstream);
+  const proxyServer = await proxy.startProxy({
+    'upstream-url': `http://127.0.0.1:${upstreamPort}/mcp`,
+    'listen-port': '0',
+    'server-id': 'fixture',
+    'readiness-timeout-ms': '2000',
+  }, originalContract);
+  const proxyUrl = `http://127.0.0.1:${proxyServer.address().port}/mcp`;
+  const headers = { accept: 'application/json, text/event-stream', 'content-type': 'application/json' };
+  try {
+    const responses = await Promise.all([20, 21].map(id => fetch(proxyUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ jsonrpc: '2.0', id, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: `fixture-${id}`, version: '1.0' } } }),
+    })));
+    assert.deepStrictEqual(responses.map(response => response.status), [200, 200]);
+    assert.strictEqual(initialized, 3, 'concurrent first requests must share one readiness probe');
+  } finally {
+    await close(proxyServer);
+    await close(upstream);
   }
 }
 
@@ -182,6 +240,7 @@ async function runIntegration() {
   const calls = [];
   let initialized = 0;
   let deleted = 0;
+  let retryListAttempts = 0;
   const upstream = http.createServer((request, response) => {
     const chunks = [];
     request.on('data', chunk => chunks.push(chunk));
@@ -215,12 +274,23 @@ async function runIntegration() {
         return;
       }
       if (body && body.method === 'tools/list') {
+        if (body.id === 13) {
+          retryListAttempts += 1;
+          if (retryListAttempts === 1) {
+            request.socket.destroy();
+            return;
+          }
+        }
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { tools } }));
         return;
       }
       if (body && body.method === 'tools/call') {
         calls.push({ body, sessionId });
+        if (body.params && body.params.name === 'disconnect') {
+          request.socket.destroy();
+          return;
+        }
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: 'forwarded' }] } }));
         return;
@@ -243,17 +313,10 @@ async function runIntegration() {
   try {
     const health = await fetch(`${proxyUrl}/health`);
     assert.strictEqual(health.status, 200);
-    assert.strictEqual((await health.json()).status, 'ok');
+    const initialHealth = await health.json();
+    assert.strictEqual(initialHealth.status, 'ok');
+    assert.strictEqual(initialHealth.ready, false);
     assert.strictEqual(initialized, 0);
-
-    const ready = await fetch(`${proxyUrl}/ready`);
-    assert.strictEqual(ready.status, 200);
-    assert.strictEqual((await ready.json()).status, 'ready');
-    assert.strictEqual(initialized, 1);
-    assert.strictEqual(deleted, 1);
-    assert.strictEqual(sessions.size, 0);
-    const normalizedHealth = await fetch(`${proxyUrl}/health`);
-    assert.match((await normalizedHealth.json()).upstream, /\/mcp\/$/);
 
     const init = await fetch(`${proxyUrl}/mcp`, {
       method: 'POST', headers: commonHeaders,
@@ -263,6 +326,13 @@ async function runIntegration() {
     const clientSession = init.headers.get('mcp-session-id');
     assert.ok(clientSession);
     await init.text();
+    assert.strictEqual(initialized, 2, 'first normal initialize must self-qualify the proxy without an explicit /ready call');
+    assert.strictEqual(deleted, 1);
+    assert.strictEqual(sessions.size, 1);
+    const normalizedHealth = await fetch(`${proxyUrl}/health`);
+    const normalizedHealthBody = await normalizedHealth.json();
+    assert.strictEqual(normalizedHealthBody.ready, true);
+    assert.match(normalizedHealthBody.upstream, /\/mcp\/$/);
     const sessionHeaders = { ...commonHeaders, 'mcp-session-id': clientSession };
     const notification = await fetch(`${proxyUrl}/mcp`, {
       method: 'POST', headers: sessionHeaders,
@@ -280,9 +350,25 @@ async function runIntegration() {
       sessionId: clientSession,
     }]);
 
+    const retriedList = await fetch(`${proxyUrl}/mcp`, {
+      method: 'POST', headers: sessionHeaders,
+      body: JSON.stringify({ jsonrpc: '2.0', id: 13, method: 'tools/list', params: {} }),
+    });
+    assert.strictEqual(retriedList.status, 200);
+    assert.strictEqual((await retriedList.json()).result.tools.length, tools.length);
+    assert.strictEqual(retryListAttempts, 2, 'tools/list may be retried once after successful requalification');
+
+    const failedToolCall = await fetch(`${proxyUrl}/mcp`, {
+      method: 'POST', headers: sessionHeaders,
+      body: JSON.stringify({ jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name: 'disconnect', arguments: {} } }),
+    });
+    assert.strictEqual(failedToolCall.status, 502);
+    assert.strictEqual((await failedToolCall.json()).error, 'MCP_UPSTREAM_FAILED');
+    assert.strictEqual(calls.filter(call => call.body.params.name === 'disconnect').length, 1, 'tools/call must never be replayed after a transport failure');
+
     const clientDelete = await fetch(`${proxyUrl}/mcp`, { method: 'DELETE', headers: sessionHeaders });
     assert.strictEqual(clientDelete.status, 200);
-    assert.strictEqual(deleted, 2);
+    assert.strictEqual(deleted, 4);
 
     await close(upstream);
     const unready = await fetch(`${proxyUrl}/ready`);
@@ -296,7 +382,7 @@ async function runIntegration() {
   }
 }
 
-runCliStartupIntegration().then(runIntegration).then(() => {
+runCliStartupIntegration().then(runSingleFlightIntegration).then(runIntegration).then(() => {
   process.stdout.write('tools-list proxy unit contract passed\n');
 }, error => {
   process.stderr.write(`${error.stack || error.message}\n`);
