@@ -96,6 +96,31 @@ containers, checks MCP protocol readiness through each proxy, recreates only mis
 proxies, and publishes only qualified endpoints. If qualification still fails, it restarts only
 the affected direct runtime and retries once. Missing direct containers require `setup`; reconcile
 does not infer or create untracked runtimes.
+
+The supported watchdog is part of the installer and does not require an administrator-written
+wrapper script. Enable the `watchdog` section in `host.config.json`, then install its managed
+Windows Scheduled Task:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action watchdog-install -ConfigPath .\host.config.json
+```
+
+The task runs as the current Windows user at logon and at the configured interval, invokes the
+same bounded `reconcile` implementation, ignores overlapping runs, and persists the latest result
+to `<stateRoot>/watchdog-state.json`. An unchanged qualified host does not create a new registry
+commit on every interval. The installing account must be able to run `docker info` and push the
+registry checkout. Manage the shipped task from the same console:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action watchdog-status -ConfigPath .\host.config.json
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action watchdog-run -ConfigPath .\host.config.json
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action watchdog-uninstall -ConfigPath .\host.config.json
+```
+
+Installation refuses to replace a same-named task that is not marked as installer-managed.
+`watchdog-run` exits successfully without repair when `watchdog.enabled` is false, so configuration
+can disable recovery before the managed task is removed.
+
 `read_ticket` returns comments, issue-level and comment-level attachments, sanitized
 rendered HTML, formatting spans, and prompt-ready markdown. Image originals are always
 represented as attachment resource handles; OCR text is only draft accompaniment and tells

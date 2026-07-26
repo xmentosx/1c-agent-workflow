@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "publish", "proxy", "reconcile", "dump-config")]
+    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "publish", "proxy", "reconcile", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "dump-config")]
     [string]$Action = "status",
 
     [string]$ConfigPath = ".\host.config.json",
@@ -16,6 +16,9 @@ $script:Utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [Console]::OutputEncoding = $script:Utf8NoBom
 $OutputEncoding = $script:Utf8NoBom
 $script:PythonExecutable = ""
+$script:HostInstallerPath = [System.IO.Path]::GetFullPath($PSCommandPath)
+$script:WatchdogDescription = "Managed by 1c-agent-workflow standalone MCP host watchdog."
+$script:WatchdogTaskPath = "\"
 
 function Read-Text {
     param([string]$Path)
@@ -2302,7 +2305,8 @@ function Wait-HostTcpPortOpen {
 function Repair-TrackedMcpHostAndPublish {
     param(
         [object]$Config,
-        [string]$TargetServerId = ""
+        [string]$TargetServerId = "",
+        [switch]$SkipUnchangedRegistryPublish
     )
 
     $settings = Get-ToolsListProxySettings -Config $Config
@@ -2392,8 +2396,206 @@ function Repair-TrackedMcpHostAndPublish {
         }
     }
     if ($repairIds.Count -eq 0) {
-        Publish-Registry -Config $Config
+        Publish-Registry -Config $Config -SkipUnchangedHost:$SkipUnchangedRegistryPublish
     }
+}
+
+function Get-McpHostWatchdogSettings {
+    param([object]$Config)
+
+    $raw = Get-ObjectValue -Object $Config -Name "watchdog" -Default $null
+    $enabled = [System.Convert]::ToBoolean((Get-ObjectValue -Object $raw -Name "enabled" -Default $false))
+    $intervalMinutes = [int](Get-ObjectValue -Object $raw -Name "intervalMinutes" -Default 5)
+    $startupDelaySeconds = [int](Get-ObjectValue -Object $raw -Name "startupDelaySeconds" -Default 30)
+    $taskName = [string](Get-ObjectValue -Object $raw -Name "taskName" -Default "ITL MCP Host Watchdog")
+
+    if ($intervalMinutes -lt 1 -or $intervalMinutes -gt 1440) {
+        throw "watchdog.intervalMinutes must be between 1 and 1440."
+    }
+    if ($startupDelaySeconds -lt 0 -or $startupDelaySeconds -gt 3600) {
+        throw "watchdog.startupDelaySeconds must be between 0 and 3600."
+    }
+    if ([string]::IsNullOrWhiteSpace($taskName) -or $taskName.IndexOfAny([char[]]@("\", "/")) -ge 0) {
+        throw "watchdog.taskName must be a non-empty scheduled task name without path separators."
+    }
+
+    return [pscustomobject]@{
+        enabled = $enabled
+        intervalMinutes = $intervalMinutes
+        startupDelaySeconds = $startupDelaySeconds
+        taskName = $taskName
+    }
+}
+
+function Get-McpHostWatchdogStatePath {
+    param([object]$Config)
+    return (Join-Path (Get-StateRoot -Config $Config) "watchdog-state.json")
+}
+
+function Write-McpHostWatchdogRunState {
+    param(
+        [object]$Config,
+        [string]$StartedAt,
+        [ValidateSet("succeeded", "failed", "disabled")][string]$Status,
+        [string]$Message = ""
+    )
+
+    $state = [ordered]@{
+        schemaVersion = 1
+        taskName = (Get-McpHostWatchdogSettings -Config $Config).taskName
+        startedAt = $StartedAt
+        completedAt = (Get-Date).ToString("o")
+        status = $Status
+        message = $Message
+    }
+    Write-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $Config) -Value $state
+}
+
+function Invoke-McpHostWatchdogRun {
+    param([object]$Config)
+
+    $settings = Get-McpHostWatchdogSettings -Config $Config
+    $startedAt = (Get-Date).ToString("o")
+    if (-not $settings.enabled) {
+        Write-Host "MCP host watchdog is disabled in host config; reconcile skipped."
+        Write-McpHostWatchdogRunState -Config $Config -StartedAt $startedAt -Status "disabled"
+        return
+    }
+
+    try {
+        Repair-TrackedMcpHostAndPublish -Config $Config -SkipUnchangedRegistryPublish
+        Write-McpHostWatchdogRunState -Config $Config -StartedAt $startedAt -Status "succeeded" -Message "Tracked MCP runtimes, proxies, and registry reconciled."
+        Write-Host "MCP host watchdog reconcile completed."
+    } catch {
+        $message = $_.Exception.Message
+        try {
+            Write-McpHostWatchdogRunState -Config $Config -StartedAt $startedAt -Status "failed" -Message $message
+        } catch {
+            Write-Warning "Could not persist watchdog failure state: $($_.Exception.Message)"
+        }
+        throw "MCP host watchdog reconcile failed: $message"
+    }
+}
+
+function Assert-McpHostWatchdogTaskOwned {
+    param(
+        [AllowNull()][object]$Task,
+        [string]$TaskName
+    )
+
+    if ($null -eq $Task) { return }
+    $description = [string](Get-ObjectValue -Object $Task -Name "Description" -Default "")
+    if ($description -ne $script:WatchdogDescription) {
+        throw "Scheduled task '$TaskName' already exists and is not managed by this installer."
+    }
+}
+
+function Get-McpHostWatchdogTask {
+    param([string]$TaskName)
+
+    if (-not (Get-Command "Get-ScheduledTask" -ErrorAction SilentlyContinue)) {
+        throw "Windows ScheduledTasks module is unavailable; watchdog management requires Windows Scheduled Tasks."
+    }
+    return (Get-ScheduledTask -TaskName $TaskName -TaskPath $script:WatchdogTaskPath -ErrorAction SilentlyContinue)
+}
+
+function Install-McpHostWatchdog {
+    param([object]$Config)
+
+    $settings = Get-McpHostWatchdogSettings -Config $Config
+    if (-not $settings.enabled) {
+        throw "watchdog.enabled must be true for -Action watchdog-install."
+    }
+    $resolvedConfigPath = Get-FullPath $ConfigPath
+    $workingDirectory = Split-Path -Parent $script:HostInstallerPath
+    if ($script:HostInstallerPath.Contains('"') -or $resolvedConfigPath.Contains('"')) {
+        throw "Watchdog installer and config paths must not contain double quotes."
+    }
+    $taskArguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -Action watchdog-run -ConfigPath "{1}"' -f $script:HostInstallerPath, $resolvedConfigPath
+
+    if ($DryRun) {
+        Write-Host "Would install scheduled task '$($settings.taskName)' for the current user."
+        Write-Host "Would run at user logon and every $($settings.intervalMinutes) minute(s), with a $($settings.startupDelaySeconds)-second initial delay."
+        Write-Host "Task command: powershell.exe $taskArguments"
+        return
+    }
+
+    foreach ($command in @("New-ScheduledTaskAction", "New-ScheduledTaskTrigger", "New-ScheduledTaskSettingsSet", "Register-ScheduledTask")) {
+        if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
+            throw "Windows ScheduledTasks command was not found: $command"
+        }
+    }
+    $existingTask = Get-McpHostWatchdogTask -TaskName $settings.taskName
+    Assert-McpHostWatchdogTaskOwned -Task $existingTask -TaskName $settings.taskName
+
+    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $taskArguments -WorkingDirectory $workingDirectory
+    $firstRunAt = (Get-Date).AddSeconds([Math]::Max(1, $settings.startupDelaySeconds))
+    $periodicTrigger = New-ScheduledTaskTrigger -Once -At $firstRunAt -RepetitionInterval (New-TimeSpan -Minutes $settings.intervalMinutes)
+    $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
+    if ($settings.startupDelaySeconds -gt 0 -and $logonTrigger.PSObject.Properties["Delay"]) {
+        $logonTrigger.Delay = [System.Xml.XmlConvert]::ToString((New-TimeSpan -Seconds $settings.startupDelaySeconds))
+    }
+    $taskSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+    Register-ScheduledTask -TaskName $settings.taskName -TaskPath $script:WatchdogTaskPath -Action $action -Trigger @($logonTrigger, $periodicTrigger) -Settings $taskSettings -Description $script:WatchdogDescription -User $currentUser -RunLevel Highest -Force | Out-Null
+
+    Write-Host "MCP host watchdog task installed: $($settings.taskName)"
+    Write-Host "Schedule: at logon and every $($settings.intervalMinutes) minute(s); overlapping runs are ignored."
+    Invoke-McpHostWatchdogRun -Config $Config
+}
+
+function Show-McpHostWatchdogStatus {
+    param([object]$Config)
+
+    $settings = Get-McpHostWatchdogSettings -Config $Config
+    Write-Host "Watchdog config: enabled=$($settings.enabled) intervalMinutes=$($settings.intervalMinutes) startupDelaySeconds=$($settings.startupDelaySeconds)"
+    Write-Host "Scheduled task: $($settings.taskName)"
+    $task = Get-McpHostWatchdogTask -TaskName $settings.taskName
+    if ($null -eq $task) {
+        Write-Host "Task state: not-installed"
+    } else {
+        Assert-McpHostWatchdogTaskOwned -Task $task -TaskName $settings.taskName
+        Write-Host "Task state: $(Get-ObjectValue -Object $task -Name 'State' -Default 'unknown')"
+        if (Get-Command "Get-ScheduledTaskInfo" -ErrorAction SilentlyContinue) {
+            $taskInfo = Get-ScheduledTaskInfo -TaskName $settings.taskName -TaskPath $script:WatchdogTaskPath -ErrorAction SilentlyContinue
+            if ($null -ne $taskInfo) {
+                Write-Host "Last task result: $(Get-ObjectValue -Object $taskInfo -Name 'LastTaskResult' -Default 'unknown')"
+                Write-Host "Last run time: $(Get-ObjectValue -Object $taskInfo -Name 'LastRunTime' -Default 'unknown')"
+                Write-Host "Next run time: $(Get-ObjectValue -Object $taskInfo -Name 'NextRunTime' -Default 'unknown')"
+            }
+        }
+    }
+
+    $runStatePath = Get-McpHostWatchdogStatePath -Config $Config
+    if (Test-Path -LiteralPath $runStatePath -PathType Leaf) {
+        $runState = Read-JsonFile -Path $runStatePath
+        Write-Host "Last reconcile: status=$(Get-ObjectValue -Object $runState -Name 'status' -Default 'unknown') startedAt=$(Get-ObjectValue -Object $runState -Name 'startedAt' -Default '') completedAt=$(Get-ObjectValue -Object $runState -Name 'completedAt' -Default '')"
+        $message = [string](Get-ObjectValue -Object $runState -Name "message" -Default "")
+        if ($message) { Write-Host "Last reconcile message: $message" }
+    } else {
+        Write-Host "Last reconcile: no persisted watchdog run state"
+    }
+}
+
+function Uninstall-McpHostWatchdog {
+    param([object]$Config)
+
+    $settings = Get-McpHostWatchdogSettings -Config $Config
+    $task = Get-McpHostWatchdogTask -TaskName $settings.taskName
+    if ($null -eq $task) {
+        Write-Host "MCP host watchdog task is not installed: $($settings.taskName)"
+        return
+    }
+    Assert-McpHostWatchdogTaskOwned -Task $task -TaskName $settings.taskName
+    if ($DryRun) {
+        Write-Host "Would uninstall managed scheduled task '$($settings.taskName)'."
+        return
+    }
+    if (-not (Get-Command "Unregister-ScheduledTask" -ErrorAction SilentlyContinue)) {
+        throw "Windows ScheduledTasks command was not found: Unregister-ScheduledTask"
+    }
+    Unregister-ScheduledTask -TaskName $settings.taskName -TaskPath $script:WatchdogTaskPath -Confirm:$false
+    Write-Host "MCP host watchdog task uninstalled: $($settings.taskName)"
 }
 
 function Get-HostServerPublishStatus {
@@ -2975,12 +3177,45 @@ function Write-MergedRegistryPayload {
     Write-JsonFile -Path $RegistryPath -Value (New-RegistryPayload -Hosts $hosts -PublishedAt $PublishedAt)
 }
 
+function Test-RegistryCurrentHostMatchesState {
+    param(
+        [object]$Config,
+        [string]$RegistryPath
+    )
+
+    Update-HostStateForPublish -Config $Config
+    $state = Read-HostState -Config $Config
+    $hostId = Get-HostId -Config $Config
+    $currentPayload = Read-RegistryPayload -RegistryPath $RegistryPath
+    $existingHost = @(Get-RegistryHostEntries -Payload $currentPayload | Where-Object {
+        [string](Get-ObjectValue -Object $_ -Name "hostId" -Default "") -eq $hostId
+    } | Select-Object -First 1)
+    if ($existingHost.Count -eq 0) {
+        return $false
+    }
+    $existingPublishedAt = [string](Get-ObjectValue -Object $existingHost[0] -Name "publishedAt" -Default "")
+    if (-not $existingPublishedAt) {
+        return $false
+    }
+    $candidate = New-CurrentHostRegistryEntry -Config $Config -State $state -PublishedAt $existingPublishedAt
+    $existingJson = $existingHost[0] | ConvertTo-Json -Depth 30 -Compress
+    $candidateJson = $candidate | ConvertTo-Json -Depth 30 -Compress
+    return ($existingJson -ceq $candidateJson)
+}
+
 function Publish-Registry {
-    param([object]$Config)
+    param(
+        [object]$Config,
+        [switch]$SkipUnchangedHost
+    )
     $registryRepo = [string](Get-ObjectValue -Object $Config -Name "registryRepo" -Default "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git")
     $registryRoot = Get-RegistryRoot -Config $Config
     Ensure-GitCheckout -Repo $registryRepo -Path $registryRoot
     $registryPath = Join-Path $registryRoot "registry.json"
+    if ($SkipUnchangedHost -and (Test-RegistryCurrentHostMatchesState -Config $Config -RegistryPath $registryPath)) {
+        Write-Host "Registry already matches the qualified host state; publish skipped."
+        return
+    }
     $publishedAt = (Get-Date).ToString("o")
     for ($attempt = 0; $attempt -le 1; $attempt++) {
         Write-MergedRegistryPayload -Config $Config -RegistryPath $registryPath -PublishedAt $publishedAt
@@ -3066,6 +3301,18 @@ switch ($Action) {
     "reconcile" {
         Repair-TrackedMcpHostAndPublish -Config $config -TargetServerId $ServerId
         Show-HostStatus -Config $config -TargetServerId $ServerId
+    }
+    "watchdog-install" {
+        Install-McpHostWatchdog -Config $config
+    }
+    "watchdog-status" {
+        Show-McpHostWatchdogStatus -Config $config
+    }
+    "watchdog-run" {
+        Invoke-McpHostWatchdogRun -Config $config
+    }
+    "watchdog-uninstall" {
+        Uninstall-McpHostWatchdog -Config $config
     }
     "dump-config" {
         Invoke-HostConfigDumpHelper -ResolvedConfigPath $ConfigPath -TargetConfigId $ConfigId

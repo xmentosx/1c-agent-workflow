@@ -241,6 +241,90 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "plans the managed watchdog task without requiring an administrator-written script" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-action-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                stateRoot = (Join-Path $tempRoot "state")
+                watchdog = [ordered]@{
+                    enabled = $true
+                    intervalMinutes = 7
+                    startupDelaySeconds = 45
+                    taskName = "ITL fixture watchdog"
+                }
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $McpHostPath -Action watchdog-install -ConfigPath $configPath -DryRun 2>&1
+
+            $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+            ($output -join [Environment]::NewLine) | Should -Match "Would install scheduled task 'ITL fixture watchdog'"
+            ($output -join [Environment]::NewLine) | Should -Match "every 7 minute"
+            ($output -join [Environment]::NewLine) | Should -Match "45-second initial delay"
+            ($output -join [Environment]::NewLine) | Should -Match ([regex]::Escape("-Action watchdog-run"))
+            ($output -join [Environment]::NewLine) | Should -Match ([regex]::Escape([System.IO.Path]::GetFullPath($configPath)))
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "rejects invalid watchdog settings and refuses an unmanaged task collision" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-guard-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                stateRoot = (Join-Path $tempRoot "state")
+                watchdog = [ordered]@{ enabled = $true; intervalMinutes = 5; startupDelaySeconds = 30; taskName = "ITL fixture watchdog" }
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                { Get-McpHostWatchdogSettings -Config ([pscustomobject]@{ watchdog = [pscustomobject]@{ enabled = $true; intervalMinutes = 0 } }) } | Should -Throw "*between 1 and 1440*"
+                { Assert-McpHostWatchdogTaskOwned -Task ([pscustomobject]@{ Description = "another owner" }) -TaskName "ITL fixture watchdog" } | Should -Throw "*is not managed by this installer*"
+                { Assert-McpHostWatchdogTaskOwned -Task ([pscustomobject]@{ Description = $script:WatchdogDescription }) -TaskName "ITL fixture watchdog" } | Should -Not -Throw
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "records watchdog success, failure, and disabled runs" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-state-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                stateRoot = (Join-Path $tempRoot "state")
+                watchdog = [ordered]@{ enabled = $true; intervalMinutes = 5; startupDelaySeconds = 30; taskName = "ITL fixture watchdog" }
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                function Repair-TrackedMcpHostAndPublish { param([object]$Config); if ($script:WatchdogFailure) { throw "fixture failure" } }
+
+                $script:WatchdogFailure = $false
+                Invoke-McpHostWatchdogRun -Config $hostConfig *> $null
+                $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $hostConfig)
+                $state.status | Should -Be "succeeded"
+
+                $script:WatchdogFailure = $true
+                { Invoke-McpHostWatchdogRun -Config $hostConfig *> $null } | Should -Throw "*fixture failure*"
+                $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $hostConfig)
+                $state.status | Should -Be "failed"
+                $state.message | Should -Be "fixture failure"
+
+                $hostConfig.watchdog.enabled = $false
+                Invoke-McpHostWatchdogRun -Config $hostConfig *> $null
+                $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $hostConfig)
+                $state.status | Should -Be "disabled"
+                Remove-Variable -Scope Script -Name WatchdogFailure -ErrorAction SilentlyContinue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "rolls back tracked proxy activation before publish when qualification fails" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-tools-proxy-rollback-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
@@ -385,6 +469,10 @@
         $hostConfig.toolsListProxy.enabled | Should -BeTrue
         @($hostConfig.toolsListProxy.serverIds) | Should -Be @("docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis", "code", "graph")
         $hostConfig.toolsListProxy.portOffset | Should -Be 4000
+        $hostConfig.watchdog.enabled | Should -BeTrue
+        $hostConfig.watchdog.intervalMinutes | Should -Be 5
+        $hostConfig.watchdog.startupDelaySeconds | Should -Be 30
+        $hostConfig.watchdog.taskName | Should -Be "ITL MCP Host Watchdog"
         $hostConfig.graphMetadataSearchServer.autoUpdateOnStartup | Should -Be $true
         $hostConfig.configurations[0].configId | Should -Be "trade"
         $hostConfig.configurations[0].sourceRepo | Should -Match "trade-config-dump"
@@ -490,6 +578,10 @@
         $readmeText | Should -Match "sentence-transformers"
         $readmeText | Should -Match "embedded_pages > 0"
         $readmeText | Should -Match ([regex]::Escape("-Action reconcile -ConfigPath .\host.config.json"))
+        $readmeText | Should -Match ([regex]::Escape("-Action watchdog-install -ConfigPath .\host.config.json"))
+        $readmeText | Should -Match ([regex]::Escape("-Action watchdog-status -ConfigPath .\host.config.json"))
+        $readmeText | Should -Match ([regex]::Escape("-Action watchdog-run -ConfigPath .\host.config.json"))
+        $readmeText | Should -Match ([regex]::Escape("-Action watchdog-uninstall -ConfigPath .\host.config.json"))
         $readmeText | Should -Match "restart=unless-stopped"
         $runbookText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\RUNBOOK.ru.md")
         $runbookText | Should -Match ([regex]::Escape("-Action setup -ConfigPath .\host.config.json -ServerId bookstack"))
@@ -507,7 +599,10 @@
         $runbookText | Should -Match "sentence-transformers"
         $runbookText | Should -Match "embedded_pages > 0"
         $runbookText | Should -Match ([regex]::Escape("-Action reconcile -ConfigPath .\host.config.json"))
-        $runbookText | Should -Match "Register-ScheduledTask"
+        $runbookText | Should -Match ([regex]::Escape("-Action watchdog-install -ConfigPath .\host.config.json"))
+        $runbookText | Should -Match ([regex]::Escape("-Action watchdog-status -ConfigPath .\host.config.json"))
+        $runbookText | Should -Match ([regex]::Escape("-Action watchdog-run -ConfigPath .\host.config.json"))
+        $runbookText | Should -Match ([regex]::Escape("-Action watchdog-uninstall -ConfigPath .\host.config.json"))
         $McpHostDumpText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1")
         $nativeEmptyStringFunction = [regex]::Match($McpHostDumpText, '(?s)function ConvertTo-NativeEmptyStringArgument \{.*?\n\}')
         $nativeEmptyStringFunction.Success | Should -Be $true
@@ -1148,6 +1243,11 @@
                 ($registry.servers | Where-Object { $_.hostId -eq "host-a" -and $_.id -eq "code" } | Select-Object -First 1).clientNames.aiRules1c | Should -Be "1c-code-metadata-mcp"
                 (Read-HostState -Config $hostConfig).servers[0].clientNames.aiRules1c | Should -Be "1c-code-metadata-mcp"
                 @($registry.configurations | Where-Object { $_.hostId -eq "host-a" -and $_.configurationName -eq "Trade A Name" }).Count | Should -Be 1
+                (Test-RegistryCurrentHostMatchesState -Config $hostConfig -RegistryPath $registryPath) | Should -BeTrue
+                $changedState = Read-HostState -Config $hostConfig
+                $changedState.configurations[0].title = "Trade A changed"
+                Write-HostState -Config $hostConfig -State $changedState
+                (Test-RegistryCurrentHostMatchesState -Config $hostConfig -RegistryPath $registryPath) | Should -BeFalse
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
