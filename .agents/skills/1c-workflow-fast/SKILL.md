@@ -47,7 +47,7 @@ On `status=succeeded`, the final response must be exactly the non-empty `userRep
 
 Current-branch actions infer `itldev/<name>`; do not ask for a branch name. Data/UI work uses the matching MCP skill. `/itl-check` is Vanessa Automation verification, not MCP.
 
-After changes, run `check-dev-branch` directly; do not pre-run base update or `/deploy-and-test`. Its stderr heartbeat reports stage, elapsed time, liveness, no-progress time, timeout remaining, owned PIDs, CPU/log deltas, and working set. `stalled-suspected` is diagnostic only: never kill 1C manually. The helper owns hard timeout cleanup of exact tracked processes. Liveness never replaces or weakens the independent Designer memory guard.
+After changes, run `check-dev-branch` directly; do not pre-run base update or `/deploy-and-test`. Its stderr heartbeat reports stage, elapsed time, liveness, no-progress time, timeout remaining, owned PIDs, CPU/log deltas, and working set. Never kill 1C manually: the helper warns at `stalled-suspected`, applies its bounded stall timeout, and cleans up exact tracked processes. Liveness never replaces or weakens the independent Designer memory guard or overall hard timeout.
 
 For export/close, obey the helper's `verificationPolicy`.
 

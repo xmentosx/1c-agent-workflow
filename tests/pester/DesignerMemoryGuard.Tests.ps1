@@ -357,10 +357,13 @@ while ($true) {
 
         $projectTemplate.designerMaxWorkingSetMb | Should -Be 10240
         $projectTemplate.designerStallWarningSeconds | Should -Be 300
+        $projectTemplate.designerStallTimeoutSeconds | Should -Be 600
         $envTemplate | Should -Match "DESIGNER_MAX_WORKING_SET_MB"
         $envTemplate | Should -Match "DESIGNER_STALL_WARNING_SECONDS"
+        $envTemplate | Should -Match "DESIGNER_STALL_TIMEOUT_SECONDS"
         $checkText | Should -Match ([regex]::Escape(".\tests\pester\DesignerMemoryGuard.Tests.ps1"))
         $coreText | Should -Match "DESIGNER_MEMORY_MONITOR_FAILED"
+        $coreText | Should -Match "DESIGNER_STALL_TIMEOUT"
         $coreText | Should -Match 'MaxWorkingSetMb \$maxWorkingSetMb'
         $coreText | Should -Match "Update-DesignerInvocationLiveness"
         $lifecycleText | Should -Match "memory-limit-exceeded"
