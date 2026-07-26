@@ -1,6 +1,6 @@
 ## 1C Project Lifecycle
 
-ITL owns lifecycle, bases, MCP, verification, and export. Use `1c-workflow-fast` routinely; use `1c-workflow` plus one reference for recovery. Invoke helpers only. 1C Designer/Enterprise `/LoadConfigFromFiles ... /UpdateDBCfg` actions default to `timeout_ms >= 3900000`, above the 3600-second internal limit. Do not use `120000 ms`; status/help do not need it.
+ITL owns lifecycle, bases, MCP, verification, and export. Use `1c-workflow-fast`; use `1c-workflow` plus one recovery reference. Helpers only. 1C Designer/Enterprise `/LoadConfigFromFiles ... /UpdateDBCfg` actions default to `timeout_ms >= 3900000`, above the 3600-second limit. Do not use `120000 ms`; status/help do not need it.
 
 Native `/itl`: return exact helper stdout in one fenced `text` block; preserve line breaks, blank lines, and indentation; write nothing outside. Never summarize, reorder, omit, or merge sections.
 

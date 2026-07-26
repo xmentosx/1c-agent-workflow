@@ -60,10 +60,17 @@ validates the live upstream tool contract, and terminates any diagnostic statefu
 the proxy starts listening before the upstream is ready, and the installer retries readiness
 during upstream warm-up before it publishes the proxy URL. A successful readiness probe also
 retains the canonical redirected upstream URL for subsequent transparent client calls.
+The first normal MCP request performs the same single-flight readiness check automatically, so
+clients do not need to know or call `/ready`. Upstream redirects are consumed inside the proxy
+and are never returned to a remote client. After a transport failure only `initialize` and
+`tools/list` may be retried once after requalification; `tools/call` is never replayed.
 
 The locally owned BookStack and Mantis HTTP MCP servers run in stateless mode. Restarting or
 recreating either container therefore does not invalidate an already connected client's
 transport session. The proxy remains transparent and never replays `tools/call`.
+Direct and proxy containers created by the installer use Docker
+`restart=unless-stopped`. Existing direct containers receive the same policy when started or
+reconciled.
 
 After the host has already been set up, enable or refresh all tracked proxies without refreshing
 configuration sources, restarting direct MCP servers, or triggering indexing:
@@ -77,6 +84,18 @@ On failure it restores prior proxy containers and host state and does not publis
 Use `-ServerId <id>` for one tracked server. Use
 `scripts/export-tools-list-proxy-catalog.ps1` to export the live original/candidate catalog and
 the byte-reduction report before approving description changes.
+
+For periodic recovery without refreshing sources or indexing, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action reconcile -ConfigPath .\host.config.json
+```
+
+`reconcile` applies the restart policy to exact containers recorded in host state, starts stopped
+containers, checks MCP protocol readiness through each proxy, recreates only missing/unready
+proxies, and publishes only qualified endpoints. If qualification still fails, it restarts only
+the affected direct runtime and retries once. Missing direct containers require `setup`; reconcile
+does not infer or create untracked runtimes.
 `read_ticket` returns comments, issue-level and comment-level attachments, sanitized
 rendered HTML, formatting spans, and prompt-ready markdown. Image originals are always
 represented as attachment resource handles; OCR text is only draft accompaniment and tells
@@ -127,10 +146,12 @@ dump-config     Update a local sourcePath from a 1C configuration repository inf
 refresh-config  Regenerate Report.txt and fingerprints for one or all configs.
 reindex         Regenerate Report.txt, recreate RESET_DATABASE-capable servers.
 publish         Publish current host state to the registry repo.
+proxy           Transactionally rebuild and qualify tracked tools-list proxies, then publish.
+reconcile       Recover tracked runtimes/proxies and publish only MCP-ready endpoints.
 ```
 
 Use `-ConfigId <id>` with `start`, `refresh-config`, or `reindex` to limit config-specific work.
-Use `-ServerId <id>` with `setup`, `start`, `stop`, `status`, or `reindex` to manage one MCP server, for example `-ServerId bookstack` or `-ServerId mantis`.
+Use `-ServerId <id>` with `setup`, `start`, `stop`, `status`, `reindex`, `proxy`, or `reconcile` to manage one MCP server, for example `-ServerId bookstack` or `-ServerId mantis`.
 Use `-ConfigId <id>` with `dump-config` to update one local dump.
 Use `-DryRun` to validate generated paths and payloads without Docker/Git writes where possible.
 Run `publish` after `reindex` when remote clients should see updated registry freshness metadata.

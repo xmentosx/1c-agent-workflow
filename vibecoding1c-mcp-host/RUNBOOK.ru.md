@@ -121,11 +121,18 @@ notepad .\host.config.json
   проверяет upstream tool contract и закрывает созданную диагностическую stateful-сессию.
   Proxy начинает слушать до готовности upstream, а установщик повторяет `/ready` во время прогрева.
   Успешный probe сохраняет канонический upstream URL после redirect для последующих вызовов.
-  Публикация выполняется только после успешного `/ready`; вызовы `tools/call` proxy не повторяет.
+  Первый обычный MCP-запрос сам выполняет такую же single-flight readiness-проверку, поэтому
+  агенту не нужно знать о `/ready` или вызывать его. Redirect upstream обрабатывается внутри
+  proxy и не выдаётся внешнему клиенту. После transport-сбоя proxy может один раз повторить только
+  `initialize` или `tools/list` после повторной квалификации; `tools/call` не повторяется.
+  Публикация выполняется только после успешной MCP-квалификации.
   После первоначального setup используйте `-Action proxy`: действие работает по сохранённому
   host-state, не обновляет конфигурации, не перезапускает прямые MCP и не запускает индексацию.
   Все цели сначала квалифицируются; при любой ошибке контейнеры и host-state откатываются,
   а новые proxy URL не публикуются.
+  Создаваемые installer прямые и proxy-контейнеры получают Docker policy
+  `restart=unless-stopped`; при `start` и `reconcile` она также назначается существующим
+  отслеживаемым контейнерам.
 - `configurations`: список конфигураций 1C, для которых нужно поднять `code`/`graph`.
 - `mantisTicketServer.baseUrl`: URL Mantis, доступный выделенной машине.
 - `mantisTicketServer.attachmentCachePath`: локальный cache оригиналов вложений Mantis.
@@ -250,6 +257,40 @@ BookStack и Mantis MCP работают в stateless HTTP mode. После пе
 10. Делает commit `publish vibecoding1c MCP registry` и `git push`, если registry изменился.
 
 `setup` не запускает выгрузку из 1C. Если `sourcePath` должен обновляться из базы, сначала выполните ручной `dump-config`.
+
+После обновления workflow один раз пересоберите и транзакционно замените proxy-контейнеры:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action proxy -ConfigPath .\host.config.json
+```
+
+Для штатного восстановления уже развёрнутого host без refresh исходников и индексации:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action reconcile -ConfigPath .\host.config.json
+```
+
+`reconcile` работает только по точным `containerName`/портам из host-state: назначает
+`restart=unless-stopped`, запускает остановленные контейнеры, проверяет MCP-протокол через
+`/ready`, пересоздаёт только отсутствующие или неготовые proxy и публикует registry после
+квалификации. При первой ошибке квалификации перезапускается только соответствующий direct
+runtime и выполняется одна повторная попытка. Отсутствующий direct container считается
+дрейфом установки и требует `setup`.
+
+Для автоматического контроля зарегистрируйте запуск при старте host и каждые пять минут
+из PowerShell с правами пользователя, у которого работает `docker info`:
+
+```powershell
+$hostScript = (Resolve-Path .\install-vibecoding1c-mcp-host.ps1).Path
+$hostConfig = (Resolve-Path .\host.config.json).Path
+$taskArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$hostScript`" -Action reconcile -ConfigPath `"$hostConfig`""
+$taskAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $taskArgs
+$startupTrigger = New-ScheduledTaskTrigger -AtStartup
+$periodicTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
+Register-ScheduledTask -TaskName "ITL MCP host reconcile" -Action $taskAction -Trigger @($startupTrigger, $periodicTrigger) -RunLevel Highest -Force
+```
+
+Не запускайте scheduled task от другой учётной записи без доступа к Docker и registry repo.
 
 ## Проверка
 
