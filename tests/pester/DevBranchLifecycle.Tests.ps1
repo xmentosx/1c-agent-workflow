@@ -2892,19 +2892,20 @@ if (`$?) { exit 0 } else { exit 1 }
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
 
             function Get-MainWorktreePath {
-                return "C:\Users\e.ermakov\W\PM5 КОРП-W1"
+                return "C:\Users\e.ermakov\W\test3"
             }
 
             function Get-DevBranchWorktreeRoot {
                 return "C:\Users\e.ermakov\W"
             }
 
-            $acceptedName = "12345678901234567"
-            $rejectedName = $acceptedName + "8"
+            $acceptedName = "12345678901234567890123"
+            $rejectedName = (("x" * 79) -join "")
             $acceptedPath = Resolve-DevBranchWorktreePath -SafeDevBranchName $acceptedName
             Assert-DevBranchWorktreePathBudget -WorktreePath $acceptedPath -SafeDevBranchName $acceptedName | Out-Null
 
             $message = ""
+            $rejectedPath = ""
             try {
                 $rejectedPath = Resolve-DevBranchWorktreePath -SafeDevBranchName $rejectedName
                 Assert-DevBranchWorktreePathBudget -WorktreePath $rejectedPath -SafeDevBranchName $rejectedName | Out-Null
@@ -2914,13 +2915,17 @@ if (`$?) { exit 0 } else { exit 1 }
 
             [pscustomobject]@{
                 acceptedLength = $acceptedPath.Length
+                rejectedLength = $rejectedPath.Length
                 message = $message
+                firstLine = @($message -split "\r?\n")[0]
             }
         }
 
         $result.acceptedLength | Should -Be 50
-        $result.message | Should -Match "максимум"
-        $result.message | Should -Match "17"
+        $result.rejectedLength | Should -Be 106
+        $result.firstLine | Should -Match "сейчас 79"
+        $result.firstLine | Should -Match "допустимо не более 23"
+        $result.firstLine | Should -Match "нужно убрать минимум 56"
         $result.message | Should -Match "MAX_PATH=260"
     }
 

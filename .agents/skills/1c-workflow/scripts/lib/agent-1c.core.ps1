@@ -3667,12 +3667,11 @@ function Assert-DevBranchWorktreePathBudget {
     if ($maximumBranchNameLength -lt 0) {
         $maximumBranchNameLength = 0
     }
+    $requiredReduction = [Math]::Max(0, $SafeDevBranchName.Length - $maximumBranchNameLength)
 
     throw (@(
-        ((Get-Agent1cUtf8Text "0J3QtdCy0L7Qt9C80L7QttC90L4g0YHQvtC30LTQsNGC0Ywg0LLQtdGC0LrRgyDRgNCw0LfRgNCw0LHQvtGC0LrQuDog0L/RgNC10LTQv9C+0LvQsNCz0LDQtdC80YvQuSDQutCw0YLQsNC70L7QsyDRgdC+0LTQtdGA0LbQuNGCIHswfSDRgdC40LzQstC+0LvQvtCyLCDQvNCw0LrRgdC40LzRg9C8IOKAlCB7MX0u") -f $resolvedPath.Length, $MaximumLength),
-        ((Get-Agent1cUtf8Text "0JrQsNGC0LDQu9C+0LM6IHswfQ==") -f $resolvedPath),
-        ((Get-Agent1cUtf8Text "0JTQu9GPINGC0LXQutGD0YnQtdCz0L4g0YDQsNGB0L/QvtC70L7QttC10L3QuNGPINC/0YDQvtC10LrRgtCwINC40LzRjyDQstC10YLQutC4INC/0L7RgdC70LUgJ2l0bGRldi8nINC80L7QttC10YIg0YHQvtC00LXRgNC20LDRgtGMINC90LUg0LHQvtC70LXQtSB7MH0g0YHQuNC80LLQvtC70L7Qsi4=") -f $maximumBranchNameLength),
-        ((Get-Agent1cUtf8Text "0KLQtdC60YPRidC10LUg0L3QvtGA0LzQsNC70LjQt9C+0LLQsNC90L3QvtC1INC40LzRjyDQstC10YLQutC4ICd7MH0nINGB0L7QtNC10YDQttC40YIgezF9INGB0LjQvNCy0L7Qu9C+0LIu") -f $SafeDevBranchName, $SafeDevBranchName.Length),
+        ((Get-Agent1cUtf8Text "0J3QtdCy0L7Qt9C80L7QttC90L4g0YHQvtC30LTQsNGC0Ywg0LLQtdGC0LrRgyDRgNCw0LfRgNCw0LHQvtGC0LrQuDog0LTQu9C40L3QsCDQvdC+0YDQvNCw0LvQuNC30L7QstCw0L3QvdC+0LPQviDQuNC80LXQvdC4INC/0L7RgdC70LUgJ2l0bGRldi8nINCyINGB0LjQvNCy0L7Qu9Cw0YUg4oCUINGB0LXQudGH0LDRgSB7MH0sINC00L7Qv9GD0YHRgtC40LzQviDQvdC1INCx0L7Qu9C10LUgezF9LCDQvdGD0LbQvdC+INGD0LHRgNCw0YLRjCDQvNC40L3QuNC80YPQvCB7Mn0u") -f $SafeDevBranchName.Length, $maximumBranchNameLength, $requiredReduction),
+        ((Get-Agent1cUtf8Text "0J/RgNC10LTQv9C+0LvQsNCz0LDQtdC80YvQuSDQutCw0YLQsNC70L7QszogezB9ICh7MX0g0YHQuNC80LLQvtC70L7Qsjsg0LzQsNC60YHQuNC80YPQvCB7Mn0pLg==") -f $resolvedPath, $resolvedPath.Length, $MaximumLength),
         (Get-Agent1cUtf8Text "0J7Qs9GA0LDQvdC40YfQtdC90LjQtSDRgdCy0Y/Qt9Cw0L3QviDRgSBNQVhfUEFUSD0yNjAg0Lgg0LTQu9C40L3QvdGL0LzQuCDQuNC80LXQvdCw0LzQuCDRhNCw0LnQu9C+0LIg0LjRgdGF0L7QtNC90LjQutC+0LIg0LrQvtC90YTQuNCz0YPRgNCw0YbQuNC5INC4INGA0LDRgdGI0LjRgNC10L3QuNC5IDHQoS4=")
     ) -join [Environment]::NewLine)
 }
