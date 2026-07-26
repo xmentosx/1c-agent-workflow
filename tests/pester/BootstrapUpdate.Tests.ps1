@@ -76,6 +76,38 @@ exit 0
         $text | Should -Match 'rename or merge fields'
     }
 
+    It "enforces the initial project root budget and recommends W only inside the user profile" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $profile = "C:\Users\e.ermakov"
+            $insideMessage = ""
+            $outsideMessage = ""
+            try {
+                Assert-Agent1cInitialProjectRootPathBudget -ProjectRoot "C:\Users\e.ermakov\Documents\Very Long Project Folder" -UserProfilePath $profile | Out-Null
+            } catch {
+                $insideMessage = $_.Exception.Message
+            }
+            try {
+                Assert-Agent1cInitialProjectRootPathBudget -ProjectRoot "D:\Department\Projects\Very Long Project Folder" -UserProfilePath $profile | Out-Null
+            } catch {
+                $outsideMessage = $_.Exception.Message
+            }
+            [pscustomobject]@{
+                accepted = (Get-Agent1cProjectRootPathBudget -ProjectRoot "C:\Users\e.ermakov\W\PM5 КОРП-W1" -UserProfilePath $profile).valid
+                insideMessage = $insideMessage
+                outsideMessage = $outsideMessage
+            }
+        }
+
+        $result.accepted | Should -BeTrue
+        $result.insideMessage | Should -Match "MAX_PATH=260"
+        $result.insideMessage | Should -Match ([regex]::Escape("C:\Users\e.ermakov\W"))
+        $result.insideMessage | Should -Match "14"
+        $result.outsideMessage | Should -Match "MAX_PATH=260"
+        $result.outsideMessage | Should -Not -Match ([regex]::Escape("C:\Users\e.ermakov\W"))
+        (Get-Content -LiteralPath $InstallerPath -Raw -Encoding UTF8) | Should -Match "Assert-BootstrapProjectRootPathBudget"
+    }
+
     It "documents the one-step bootstrap as the normal install path" {
         $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
         $installText | Should -Match ([regex]::Escape("install-agent-1c-workflow.ps1 -ProjectRoot <project>"))
@@ -903,6 +935,7 @@ local after
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-bootstrap-source-provenance-" + [guid]::NewGuid().ToString("N"))
         $sourceRoot = Join-Path $tempRoot "source"
         $originUrl = "https://example.invalid/itl-workflow.git"
+        $shortTargets = @()
 
         function Invoke-ProvenanceBootstrapFixture {
             param([string]$TargetRoot)
@@ -958,7 +991,14 @@ exit 0
             & git -C $sourceRoot remote add origin $originUrl
             $commit = (& git -C $sourceRoot rev-parse HEAD).Trim()
 
-            $branchArgs = @(Invoke-ProvenanceBootstrapFixture -TargetRoot (Join-Path $tempRoot "branch-target"))
+            $shortTargetParent = Join-Path ([Environment]::GetFolderPath("UserProfile")) "W"
+            $shortTargets = @(
+                (Join-Path $shortTargetParent ("b" + [guid]::NewGuid().ToString("N").Substring(0, 6))),
+                (Join-Path $shortTargetParent ("t" + [guid]::NewGuid().ToString("N").Substring(0, 6))),
+                (Join-Path $shortTargetParent ("d" + [guid]::NewGuid().ToString("N").Substring(0, 6))),
+                (Join-Path $shortTargetParent ("n" + [guid]::NewGuid().ToString("N").Substring(0, 6)))
+            )
+            $branchArgs = @(Invoke-ProvenanceBootstrapFixture -TargetRoot $shortTargets[0])
             (Get-ProvenanceArgumentValue -Arguments $branchArgs -Name "-BootstrapWorkflowRepo") | Should -Be $originUrl
             (Get-ProvenanceArgumentValue -Arguments $branchArgs -Name "-BootstrapWorkflowRef") | Should -Be "master"
             (Get-ProvenanceArgumentValue -Arguments $branchArgs -Name "-BootstrapWorkflowCommit") | Should -Be $commit
@@ -967,19 +1007,19 @@ exit 0
             & git -C $sourceRoot tag "workflow-v1"
             & git -C $sourceRoot checkout --detach --quiet HEAD 2>$null | Out-Null
             $LASTEXITCODE | Should -Be 0
-            $tagArgs = @(Invoke-ProvenanceBootstrapFixture -TargetRoot (Join-Path $tempRoot "tag-target"))
+            $tagArgs = @(Invoke-ProvenanceBootstrapFixture -TargetRoot $shortTargets[1])
             (Get-ProvenanceArgumentValue -Arguments $tagArgs -Name "-BootstrapWorkflowRef") | Should -Be "workflow-v1"
             (Get-ProvenanceArgumentValue -Arguments $tagArgs -Name "-BootstrapWorkflowCommit") | Should -Be $commit
 
             & git -C $sourceRoot tag -d "workflow-v1" *> $null
-            $detachedArgs = @(Invoke-ProvenanceBootstrapFixture -TargetRoot (Join-Path $tempRoot "detached-target"))
+            $detachedArgs = @(Invoke-ProvenanceBootstrapFixture -TargetRoot $shortTargets[2])
             (Get-ProvenanceArgumentValue -Arguments $detachedArgs -Name "-BootstrapWorkflowRef") | Should -Be $commit
             (Get-ProvenanceArgumentValue -Arguments $detachedArgs -Name "-BootstrapWorkflowCommit") | Should -Be $commit
 
             $sourceGitPath = Join-Path $sourceRoot ".git"
             $sourceGitPath.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
             Remove-Item -LiteralPath $sourceGitPath -Recurse -Force
-            $nonGitArgs = @(Invoke-ProvenanceBootstrapFixture -TargetRoot (Join-Path $tempRoot "nongit-target"))
+            $nonGitArgs = @(Invoke-ProvenanceBootstrapFixture -TargetRoot $shortTargets[3])
             $nonGitFlatArgs = if ($nonGitArgs.Count -eq 1 -and $nonGitArgs[0] -is [array]) { @($nonGitArgs[0]) } else { @($nonGitArgs) }
             $nonGitFlatArgs | Should -Not -Contain "-BootstrapWorkflowRepo"
             $nonGitFlatArgs | Should -Not -Contain "-BootstrapWorkflowRef"
@@ -987,6 +1027,11 @@ exit 0
             (Get-ProvenanceArgumentValue -Arguments $nonGitArgs -Name "-BootstrapWorkflowSource") | Should -Be "path"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            foreach ($target in @($shortTargets)) {
+                if ($target -and (Test-Path -LiteralPath $target -ErrorAction SilentlyContinue)) {
+                    Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
         }
     }
 
@@ -1997,6 +2042,7 @@ Start-Sleep -Seconds 20
                     function Setup-Vibecoding1cMcp { $calls.Add("setup-vibecoding") | Out-Null }
                     function Assert-InitGitClean { $calls.Add("git-clean") | Out-Null }
                     function Get-ItlActiveClient { return "kilocode" }
+                    function Assert-Agent1cInitialProjectRootPathBudget { return [pscustomobject]@{ valid = $true } }
 
                     Initialize-Project
                     return @($calls)

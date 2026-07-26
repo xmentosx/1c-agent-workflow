@@ -915,9 +915,10 @@ function Ensure-DevBranchEnterpriseNormalized {
 function Dump-ConfigToFiles {
     $exportPath = Get-ExportPath
     $absoluteExportPath = Assert-ExportPathInsideProject $exportPath
-    $transactionRoot = Assert-ExportPathInsideProject -ExportPath (".agent-1c/config-dump/" + [guid]::NewGuid().ToString("N"))
-    $stagedPath = Join-Path $transactionRoot "staged"
-    $backupPath = Join-Path $transactionRoot "backup"
+    $transaction = Initialize-Agent1cProjectTransactionSlot -Kind "c" -Target $absoluteExportPath
+    $transactionRoot = $transaction.slot
+    $stagedPath = $transaction.stage
+    $backupPath = $transaction.backup
     $targetExisted = Test-Path -LiteralPath $absoluteExportPath -PathType Container -ErrorAction SilentlyContinue
     $targetMoved = $false
     $stageInstalled = $false
@@ -948,16 +949,13 @@ function Dump-ConfigToFiles {
         if ($targetExisted) {
             Move-Item -LiteralPath $absoluteExportPath -Destination $backupPath
             $targetMoved = $true
+            Write-Agent1cProjectTransactionState -Paths $transaction -Kind "c" -Phase "target-backed-up" -Target $absoluteExportPath
         }
         Move-Item -LiteralPath $stagedPath -Destination $absoluteExportPath
         $stageInstalled = $true
+        Write-Agent1cProjectTransactionState -Paths $transaction -Kind "c" -Phase "installed" -Target $absoluteExportPath
 
-        if ($targetMoved -and (Test-Path -LiteralPath $backupPath -PathType Container)) {
-            Remove-Item -LiteralPath $backupPath -Recurse -Force
-        }
-        if (Test-Path -LiteralPath $transactionRoot -PathType Container) {
-            Remove-Item -LiteralPath $transactionRoot -Recurse -Force
-        }
+        Complete-Agent1cProjectTransactionSlot -Paths $transaction
 
         return [pscustomobject]@{
             exportPath = $exportPath
@@ -992,9 +990,10 @@ function Dump-ExtensionToFiles {
     $extensionName = Require-DevBranchExtensionName -State $State
     $extensionExportPath = Get-DevBranchExtensionExportPath -State $State
     $absoluteExportPath = Assert-ExportPathInsideProject $extensionExportPath
-    $transactionRoot = Assert-ExportPathInsideProject -ExportPath (".agent-1c/extension-dump/" + [guid]::NewGuid().ToString("N"))
-    $stagedPath = Join-Path $transactionRoot "staged"
-    $backupPath = Join-Path $transactionRoot "backup"
+    $transaction = Initialize-Agent1cProjectTransactionSlot -Kind "e" -Target $absoluteExportPath
+    $transactionRoot = $transaction.slot
+    $stagedPath = $transaction.stage
+    $backupPath = $transaction.backup
     $targetExisted = Test-Path -LiteralPath $absoluteExportPath -PathType Container -ErrorAction SilentlyContinue
     $targetMoved = $false
     $stageInstalled = $false
@@ -1018,11 +1017,14 @@ function Dump-ExtensionToFiles {
         if ($targetExisted) {
             Move-Item -LiteralPath $absoluteExportPath -Destination $backupPath
             $targetMoved = $true
+            Write-Agent1cProjectTransactionState -Paths $transaction -Kind "e" -Phase "target-backed-up" -Target $absoluteExportPath
         } elseif (Test-Path -LiteralPath $absoluteExportPath -PathType Leaf -ErrorAction SilentlyContinue) {
             throw "Extension dump target is a file: $absoluteExportPath"
         }
         Move-Item -LiteralPath $stagedPath -Destination $absoluteExportPath
         $stageInstalled = $true
+        Write-Agent1cProjectTransactionState -Paths $transaction -Kind "e" -Phase "installed" -Target $absoluteExportPath
+        Complete-Agent1cProjectTransactionSlot -Paths $transaction
 
         return [pscustomobject]@{
             extensionName = $extensionName
@@ -1045,10 +1047,6 @@ function Dump-ExtensionToFiles {
             throw "Extension dump failed: $originalError Transaction rollback also failed: $($_.Exception.Message)"
         }
         throw "Extension dump failed before state or fingerprint update: $originalError"
-    } finally {
-        if (Test-Path -LiteralPath $transactionRoot -PathType Container -ErrorAction SilentlyContinue) {
-            Remove-Item -LiteralPath $transactionRoot -Recurse -Force -ErrorAction SilentlyContinue
-        }
     }
 }
 
@@ -4825,6 +4823,7 @@ function Test-InitAiRulesReady {
 
 function Initialize-Project {
     Write-Section "Initialize project"
+    Assert-Agent1cInitialProjectRootPathBudget | Out-Null
     New-Item -ItemType Directory -Force -Path $script:ProjectRoot | Out-Null
     Write-Host "Project root: $script:ProjectRoot"
     if ($InitMode -eq "wizard" -and [string]::IsNullOrWhiteSpace($RunStatusPath)) {
@@ -5635,6 +5634,7 @@ function New-DevBranchCore {
     if (Test-Path -LiteralPath $worktreePath -ErrorAction SilentlyContinue) {
         throw "Development branch worktree path already exists: $worktreePath"
     }
+    Assert-DevBranchWorktreePathBudget -WorktreePath $worktreePath -SafeDevBranchName $safe
 
     $worktreeParent = Split-Path -Parent $worktreePath
     if ($worktreeParent) {

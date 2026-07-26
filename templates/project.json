@@ -46,7 +46,7 @@
     "publicationUrlBase": "http://localhost"
   },
   "vanessaAutomation": {
-    "installRoot": ".agent-1c/tools/vanessa-automation",
+    "installRoot": ".agent-1c/tools/va",
     "epfPath": "",
     "version": "",
     "featuresPath": "tests/features",

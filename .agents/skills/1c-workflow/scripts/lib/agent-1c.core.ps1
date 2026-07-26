@@ -1164,6 +1164,155 @@ function Resolve-ProjectPath {
     return (Resolve-Agent1cFullPath -Path (Join-Path $script:ProjectRoot $Path))
 }
 
+function Get-Agent1cProjectRootPathBudget {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectRoot,
+        [int]$MaximumLength = 35,
+        [string]$UserProfilePath = ""
+    )
+
+    $resolvedRoot = Resolve-Agent1cFullPath -Path $ProjectRoot
+    $profileRoot = $UserProfilePath
+    if ([string]::IsNullOrWhiteSpace($profileRoot)) {
+        $profileRoot = [Environment]::GetFolderPath("UserProfile")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($profileRoot)) {
+        $profileRoot = Resolve-Agent1cFullPath -Path $profileRoot
+    }
+
+    $recommendedParent = ""
+    $recommendedProjectNameLength = 0
+    if ($profileRoot) {
+        $profilePrefix = $profileRoot.TrimEnd("\", "/") + "\"
+        if ($resolvedRoot.StartsWith($profilePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $recommendedParent = Join-Path $profileRoot "W"
+            $recommendedProjectNameLength = $MaximumLength - $recommendedParent.Length - 1
+            if ($recommendedProjectNameLength -lt 1) {
+                $recommendedParent = ""
+                $recommendedProjectNameLength = 0
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        path = $resolvedRoot
+        length = $resolvedRoot.Length
+        maximumLength = $MaximumLength
+        valid = ($resolvedRoot.Length -le $MaximumLength)
+        recommendedParent = $recommendedParent
+        recommendedProjectNameLength = $recommendedProjectNameLength
+    }
+}
+
+function Assert-Agent1cInitialProjectRootPathBudget {
+    param(
+        [string]$ProjectRoot = $script:ProjectRoot,
+        [string]$UserProfilePath = ""
+    )
+
+    $budget = Get-Agent1cProjectRootPathBudget -ProjectRoot $ProjectRoot -MaximumLength 35 -UserProfilePath $UserProfilePath
+    if ($budget.valid) {
+        return $budget
+    }
+
+    $lines = @(
+        ((Get-Agent1cUtf8Text "0J3QtdCy0L7Qt9C80L7QttC90L4g0LjQvdC40YbQuNCw0LvQuNC30LjRgNC+0LLQsNGC0Ywg0L/RgNC+0LXQutGCOiDQv9C+0LvQvdGL0Lkg0L/Rg9GC0Ywg0YHQvtC00LXRgNC20LjRgiB7MH0g0YHQuNC80LLQvtC70L7Qsiwg0LHQtdC30L7Qv9Cw0YHQvdGL0Lkg0LzQsNC60YHQuNC80YPQvCDigJQgezF9Lg==") -f $budget.length, $budget.maximumLength),
+        ((Get-Agent1cUtf8Text "0J/Rg9GC0Yw6IHswfQ==") -f $budget.path),
+        (Get-Agent1cUtf8Text "0J7Qs9GA0LDQvdC40YfQtdC90LjQtSDRgdCy0Y/Qt9Cw0L3QviDRgSBNQVhfUEFUSD0yNjAg0Lgg0LTQu9C40L3QvdGL0LzQuCDQuNC80LXQvdCw0LzQuCDRhNCw0LnQu9C+0LIg0LjRgdGF0L7QtNC90LjQutC+0LIg0LrQvtC90YTQuNCz0YPRgNCw0YbQuNC5INC4INGA0LDRgdGI0LjRgNC10L3QuNC5IDHQoS4=")
+    )
+    if ($budget.recommendedParent) {
+        $lines += @(
+            (Get-Agent1cUtf8Text "0JTQu9GPINC/0YDQvtC10LrRgtCwINCyINC/0YDQvtGE0LjQu9C1INC/0L7Qu9GM0LfQvtCy0LDRgtC10LvRjyDRgNC10LrQvtC80LXQvdC00YPQtdGC0YHRjyDRgdC+0LfQtNCw0YLRjCDQutC+0YDQvtGC0LrQuNC5INGA0LDQsdC+0YfQuNC5INC60LDRgtCw0LvQvtCzOg=="),
+            $budget.recommendedParent,
+            ((Get-Agent1cUtf8Text "0JIg0L3RkdC8INC40LzRjyDQv9Cw0L/QutC4INC/0YDQvtC10LrRgtCwINC80L7QttC10YIg0YHQvtC00LXRgNC20LDRgtGMINC90LUg0LHQvtC70LXQtSB7MH0g0YHQuNC80LLQvtC70L7Qsi4=") -f $budget.recommendedProjectNameLength)
+        )
+    }
+    throw ($lines -join [Environment]::NewLine)
+}
+
+function Get-Agent1cProjectTransactionPaths {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("c", "e", "v")]
+        [string]$Kind
+    )
+
+    $root = Resolve-ProjectPath ".tx"
+    $slot = Join-Path $root $Kind
+    return [pscustomobject]@{
+        root = $root
+        slot = $slot
+        stage = Join-Path $slot "s"
+        backup = Join-Path $slot "b"
+        state = Join-Path $slot "j"
+    }
+}
+
+function Write-Agent1cProjectTransactionState {
+    param(
+        [Parameter(Mandatory = $true)][object]$Paths,
+        [Parameter(Mandatory = $true)][string]$Kind,
+        [Parameter(Mandatory = $true)][string]$Phase,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+
+    New-Item -ItemType Directory -Force -Path $Paths.root | Out-Null
+    $record = [ordered]@{
+        schemaVersion = 1
+        kind = $Kind
+        phase = $Phase
+        target = $Target
+        updatedAt = (Get-Date).ToString("o")
+    }
+    Write-Utf8Text -Path $Paths.state -Value (($record | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
+}
+
+function Initialize-Agent1cProjectTransactionSlot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("c", "e", "v")]
+        [string]$Kind,
+        [Parameter(Mandatory = $true)][string]$Target
+    )
+
+    $paths = Get-Agent1cProjectTransactionPaths -Kind $Kind
+    if (Test-Path -LiteralPath $paths.backup -PathType Container -ErrorAction SilentlyContinue) {
+        if (Test-Path -LiteralPath $Target -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $paths.backup -Recurse -Force -ErrorAction Stop
+        } else {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Target) | Out-Null
+            Move-Item -LiteralPath $paths.backup -Destination $Target -ErrorAction Stop
+        }
+    }
+    if (Test-Path -LiteralPath $paths.stage -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $paths.stage -Recurse -Force -ErrorAction Stop
+    }
+    if (Test-Path -LiteralPath $paths.slot -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $paths.slot -Recurse -Force -ErrorAction Stop
+    }
+
+    New-Item -ItemType Directory -Force -Path $paths.stage | Out-Null
+    Write-Agent1cProjectTransactionState -Paths $paths -Kind $Kind -Phase "staging" -Target $Target
+    return $paths
+}
+
+function Complete-Agent1cProjectTransactionSlot {
+    param([Parameter(Mandatory = $true)][object]$Paths)
+
+    if (Test-Path -LiteralPath $Paths.slot -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $Paths.slot -Recurse -Force -ErrorAction Stop
+    }
+    if (Test-Path -LiteralPath $Paths.state -PathType Leaf -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $Paths.state -Force -ErrorAction Stop
+    }
+    if (Test-Path -LiteralPath $Paths.root -PathType Container -ErrorAction SilentlyContinue) {
+        $children = @(Get-ChildItem -LiteralPath $Paths.root -Force -ErrorAction Stop)
+        if ($children.Count -eq 0) {
+            Remove-Item -LiteralPath $Paths.root -Force -ErrorAction Stop
+        }
+    }
+}
+
 function Set-ProjectContext {
     param([string]$Root)
 
@@ -1780,6 +1929,7 @@ function Ensure-GitIgnore {
         "*.dt",
         "*.log",
         "logs/",
+        ".tx/",
         ".agent-1c/dev-branches/",
         ".agent-1c/event-log-baselines/",
         ".agent-1c/runs/",
@@ -1798,6 +1948,7 @@ function Ensure-GitIgnore {
         ".agent-1c/tools/event-log-exporter/",
         ".agent-1c/tools/auto-update/",
         ".agent-1c/tools/data-mcp/",
+        ".agent-1c/tools/va/",
         ".agent-1c/tools/vanessa-automation/",
         ".agent-1c/tools/vanessa-mcp/",
         ".agent-1c/tools/roctup-mcp-toolkit/",
@@ -3494,6 +3645,36 @@ function Resolve-DevBranchWorktreePath {
     $projectFolderName = Split-Path -Leaf $mainWorktreePath
     $worktreeFolderName = "$projectFolderName-$SafeDevBranchName"
     return [System.IO.Path]::GetFullPath((Join-Path (Get-DevBranchWorktreeRoot) $worktreeFolderName))
+}
+
+function Assert-DevBranchWorktreePathBudget {
+    param(
+        [Parameter(Mandatory = $true)][string]$WorktreePath,
+        [Parameter(Mandatory = $true)][string]$SafeDevBranchName,
+        [int]$MaximumLength = 50
+    )
+
+    $resolvedPath = Resolve-Agent1cFullPath -Path $WorktreePath
+    if ($resolvedPath.Length -le $MaximumLength) {
+        return
+    }
+
+    $mainWorktreePath = Get-MainWorktreePath
+    $projectFolderName = Split-Path -Leaf $mainWorktreePath
+    $worktreeParent = Get-DevBranchWorktreeRoot
+    $fixedPrefix = Join-Path $worktreeParent ($projectFolderName + "-")
+    $maximumBranchNameLength = $MaximumLength - $fixedPrefix.Length
+    if ($maximumBranchNameLength -lt 0) {
+        $maximumBranchNameLength = 0
+    }
+
+    throw (@(
+        ((Get-Agent1cUtf8Text "0J3QtdCy0L7Qt9C80L7QttC90L4g0YHQvtC30LTQsNGC0Ywg0LLQtdGC0LrRgyDRgNCw0LfRgNCw0LHQvtGC0LrQuDog0L/RgNC10LTQv9C+0LvQsNCz0LDQtdC80YvQuSDQutCw0YLQsNC70L7QsyDRgdC+0LTQtdGA0LbQuNGCIHswfSDRgdC40LzQstC+0LvQvtCyLCDQvNCw0LrRgdC40LzRg9C8IOKAlCB7MX0u") -f $resolvedPath.Length, $MaximumLength),
+        ((Get-Agent1cUtf8Text "0JrQsNGC0LDQu9C+0LM6IHswfQ==") -f $resolvedPath),
+        ((Get-Agent1cUtf8Text "0JTQu9GPINGC0LXQutGD0YnQtdCz0L4g0YDQsNGB0L/QvtC70L7QttC10L3QuNGPINC/0YDQvtC10LrRgtCwINC40LzRjyDQstC10YLQutC4INC/0L7RgdC70LUgJ2l0bGRldi8nINC80L7QttC10YIg0YHQvtC00LXRgNC20LDRgtGMINC90LUg0LHQvtC70LXQtSB7MH0g0YHQuNC80LLQvtC70L7Qsi4=") -f $maximumBranchNameLength),
+        ((Get-Agent1cUtf8Text "0KLQtdC60YPRidC10LUg0L3QvtGA0LzQsNC70LjQt9C+0LLQsNC90L3QvtC1INC40LzRjyDQstC10YLQutC4ICd7MH0nINGB0L7QtNC10YDQttC40YIgezF9INGB0LjQvNCy0L7Qu9C+0LIu") -f $SafeDevBranchName, $SafeDevBranchName.Length),
+        (Get-Agent1cUtf8Text "0J7Qs9GA0LDQvdC40YfQtdC90LjQtSDRgdCy0Y/Qt9Cw0L3QviDRgSBNQVhfUEFUSD0yNjAg0Lgg0LTQu9C40L3QvdGL0LzQuCDQuNC80LXQvdCw0LzQuCDRhNCw0LnQu9C+0LIg0LjRgdGF0L7QtNC90LjQutC+0LIg0LrQvtC90YTQuNCz0YPRgNCw0YbQuNC5INC4INGA0LDRgdGI0LjRgNC10L3QuNC5IDHQoS4=")
+    ) -join [Environment]::NewLine)
 }
 
 function ConvertTo-AgentToolList {

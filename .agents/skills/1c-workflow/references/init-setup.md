@@ -57,6 +57,13 @@ Use this as `.agent-1c/project.json`:
 
 Use `.dev.env` for secrets, passwords, web publication values, local tool paths, `DEPENDENCY_MODE`, `VERIFICATION_POLICY`, and optional overrides. `DESIGNER_MAX_WORKING_SET_MB` overrides the project-level `designerMaxWorkingSetMb` limit for automated Designer processes in the current worktree; the default is 10240 MB and `0` disables the guard. `DESIGNER_OPERATION_TIMEOUT_SECONDS` bounds every automated Designer operation while it waits for command-specific completion evidence (default 3600 seconds), and `DESIGNER_DUMP_STABILITY_SECONDS` controls how long file or `/Out` evidence must remain unchanged before acceptance (default 5 seconds). `GITHUB_TOKEN` (then `GH_TOKEN`) optionally authenticates GitHub API requests; without a token, a fresh dependency resolve falls back to a compatible lock entry only after GitHub rate limiting. Empty password values mean the password is not set.
 
+## Windows Path Budgets
+
+- The absolute initial project root must be at most 35 characters. The bootstrap and `init-project` reject longer paths before mutation and explain that the reserve is required for Windows `MAX_PATH=260` and long 1C configuration/extension source names.
+- Only when the requested root is under the current user profile does the error recommend the exact `<user-profile>\W` parent and calculate the project-folder name available there.
+- A newly created development worktree path `<parent>\<project-folder>-<safe-branch>` must be at most 50 characters. The error calculates the safe-branch limit only from those fixed path parts; it does not inspect current source files.
+- Configuration, extension, and Vanessa install transactions use the ignored project-local `.tx` directory with one-letter operation slots. Successful operations remove their slot and the empty `.tx` root.
+
 ## Required Questions
 
 Ask only for values the helper cannot collect or infer:
@@ -110,7 +117,7 @@ Goal: create baseline project state.
 - `detect-web-publication`: detect existing web publication tooling and show usable `.dev.env` values.
 - `configure-web-publication`: run the interactive web publication policy/settings wizard after init.
 - `publish-dev-branch`: publish or record publication for an existing development branch.
-- `install-vanessa-automation`: download `vanessa-automation-single.*.zip`, verify SHA256 when available, unpack under `.agent-1c/tools/vanessa-automation`, and save `VANESSA_*` paths.
+- `install-vanessa-automation`: download `vanessa-automation-single.*.zip`, verify its archive and EPF SHA256 values, stream only the EPF and root license/provenance files through `.tx\v`, atomically install them under `.agent-1c/tools/va`, and save `VANESSA_*` paths. Do not expand the archive's deep `features` tree.
 - init/update: download the facade to `%LOCALAPPDATA%\ITL\MCP\ondemand\<version>`, verify SHA256, cache only backend versions admitted by `assets/ondemand-mcp/compatibility.json`, and save ROCTUP/Vanessa artifact paths. It does not start 1C or a backend.
 
 ## UPDATE_WORKFLOW

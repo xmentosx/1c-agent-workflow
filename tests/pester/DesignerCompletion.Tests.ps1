@@ -732,6 +732,7 @@ Describe "1C Designer completion evidence" {
         }
 
         $result.dumpTarget | Should -Not -Be $targetPath
+        $result.dumpTarget | Should -Be (Join-Path $fixtureRoot ".tx\c\s")
         $result.dumpResult.transactional | Should -BeTrue
         $result.oldExists | Should -BeFalse
         $result.newExists | Should -BeTrue

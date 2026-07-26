@@ -21,6 +21,11 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
 [Console]::OutputEncoding = $utf8
 $OutputEncoding = $utf8
 
+function Get-BootstrapUtf8Text {
+    param([string]$Base64)
+    return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Base64))
+}
+
 if ($InitMaxWaitSeconds -lt 0) {
     throw "InitMaxWaitSeconds must be 0 or greater."
 }
@@ -92,6 +97,41 @@ function Get-FullPathNormalized {
     param([string]$Path)
 
     return (Resolve-Agent1cFullPath -Path $Path)
+}
+
+function Assert-BootstrapProjectRootPathBudget {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+
+    $maximumLength = 35
+    $resolvedRoot = Resolve-Agent1cFullPath -Path $ProjectRoot
+    if ($resolvedRoot.Length -le $maximumLength) {
+        return
+    }
+
+    $lines = @(
+        ((Get-BootstrapUtf8Text "0J3QtdCy0L7Qt9C80L7QttC90L4g0LjQvdC40YbQuNCw0LvQuNC30LjRgNC+0LLQsNGC0Ywg0L/RgNC+0LXQutGCOiDQv9C+0LvQvdGL0Lkg0L/Rg9GC0Ywg0YHQvtC00LXRgNC20LjRgiB7MH0g0YHQuNC80LLQvtC70L7Qsiwg0LHQtdC30L7Qv9Cw0YHQvdGL0Lkg0LzQsNC60YHQuNC80YPQvCDigJQgezF9Lg==") -f $resolvedRoot.Length, $maximumLength),
+        ((Get-BootstrapUtf8Text "0J/Rg9GC0Yw6IHswfQ==") -f $resolvedRoot),
+        (Get-BootstrapUtf8Text "0J7Qs9GA0LDQvdC40YfQtdC90LjQtSDRgdCy0Y/Qt9Cw0L3QviDRgSBNQVhfUEFUSD0yNjAg0Lgg0LTQu9C40L3QvdGL0LzQuCDQuNC80LXQvdCw0LzQuCDRhNCw0LnQu9C+0LIg0LjRgdGF0L7QtNC90LjQutC+0LIg0LrQvtC90YTQuNCz0YPRgNCw0YbQuNC5INC4INGA0LDRgdGI0LjRgNC10L3QuNC5IDHQoS4=")
+    )
+
+    $profileRoot = [Environment]::GetFolderPath("UserProfile")
+    if (-not [string]::IsNullOrWhiteSpace($profileRoot)) {
+        $profileRoot = Resolve-Agent1cFullPath -Path $profileRoot
+        $profilePrefix = $profileRoot.TrimEnd("\", "/") + "\"
+        if ($resolvedRoot.StartsWith($profilePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $recommendedParent = Join-Path $profileRoot "W"
+            $maximumProjectNameLength = $maximumLength - $recommendedParent.Length - 1
+            if ($maximumProjectNameLength -gt 0) {
+                $lines += @(
+                    (Get-BootstrapUtf8Text "0JTQu9GPINC/0YDQvtC10LrRgtCwINCyINC/0YDQvtGE0LjQu9C1INC/0L7Qu9GM0LfQvtCy0LDRgtC10LvRjyDRgNC10LrQvtC80LXQvdC00YPQtdGC0YHRjyDRgdC+0LfQtNCw0YLRjCDQutC+0YDQvtGC0LrQuNC5INGA0LDQsdC+0YfQuNC5INC60LDRgtCw0LvQvtCzOg=="),
+                    $recommendedParent,
+                    ((Get-BootstrapUtf8Text "0JIg0L3RkdC8INC40LzRjyDQv9Cw0L/QutC4INC/0YDQvtC10LrRgtCwINC80L7QttC10YIg0YHQvtC00LXRgNC20LDRgtGMINC90LUg0LHQvtC70LXQtSB7MH0g0YHQuNC80LLQvtC70L7Qsi4=") -f $maximumProjectNameLength)
+                )
+            }
+        }
+    }
+
+    throw ($lines -join [Environment]::NewLine)
 }
 
 function Invoke-BootstrapGitCapture {
@@ -255,6 +295,9 @@ if (-not (Test-Path -LiteralPath $sourceRootFull -PathType Container -ErrorActio
 }
 
 Assert-SourcePackage -Root $sourceRootFull
+if (-not $NoInit) {
+    Assert-BootstrapProjectRootPathBudget -ProjectRoot $projectRootFull
+}
 New-Item -ItemType Directory -Force -Path $projectRootFull | Out-Null
 
 Write-Host "Installing ITL workflow package."
