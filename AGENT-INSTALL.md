@@ -17,6 +17,8 @@ Canonical bootstrap source:
 
 Do not infer or try `main` for this package unless the user explicitly provides a different branch or URL.
 
+For every initialization, clone `master` into a newly created unique empty temporary directory. Never probe for an existing temporary clone and reuse it. Do not run bootstrap from a clone retained by an earlier agent session. Immediately before invoking the installer, `git rev-parse HEAD` in that clone must equal `git ls-remote origin refs/heads/master`. The installer repeats this check for the canonical repository and stops before copying files when the source has tracked changes, the remote commit cannot be verified, or `HEAD` differs from `origin/master`. `-NoInit` does not bypass source freshness. Never pass `-SkipWorkflowSourceFreshnessCheck` during normal bootstrap; it exists only for controlled maintainer tests of an unpublished source tree.
+
 ## Supported Agents
 
 This package supports Codex, Kilo Code, Claude Code, Cursor, OpenCode, Kimi Code, Qwen Code, Command Code, Cline, and Pi, with exactly one active client per project. The initialization wizard requires that choice; `other` and multi-client installs are not supported.
@@ -42,6 +44,12 @@ Default bootstrap command from the cloned workflow package:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File <source>\install-agent-1c-workflow.ps1 -ProjectRoot <project>
+```
+
+Create `<source>` with a fresh clone, for example:
+
+```powershell
+git clone --branch master --single-branch https://github.com/xmentosx/1c-agent-workflow.git <new-empty-temp-path>
 ```
 
 The bootstrap command copies `.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, `templates/`, the root docs/guides, and `install-agent-1c-workflow.ps1`. It does not copy `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, or generated `.kilo/commands/`.
