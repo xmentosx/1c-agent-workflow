@@ -13,6 +13,11 @@
         $LauncherText = $context.LauncherText
         $McpHostText = $context.McpHostText
 
+        function New-ShortWorkflowProjectRoot {
+            $parent = Join-Path ([Environment]::GetFolderPath("UserProfile")) "W"
+            return (Join-Path $parent ("t" + [guid]::NewGuid().ToString("N").Substring(0, 6)))
+        }
+
         function Copy-AutoUpdateToolFixture {
             param([string]$TargetRoot)
             $target = Join-Path $TargetRoot ".agents\skills\1c-workflow\tools\auto-update"
@@ -1993,6 +1998,10 @@
                     Write-Utf8Text -Path (Join-Path $script:ProjectRoot "AGENTS.md") -Value "Read USER-RULES.md for project-specific instructions.`n"
                 }
 
+                function Assert-Agent1cInitialProjectRootPathBudget {
+                    return [pscustomobject]@{ valid = $true }
+                }
+
                 Initialize-Project *> $null
 
                 [pscustomobject]@{
@@ -2878,8 +2887,45 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
+    It "limits a new worktree path to 50 characters and reports the available branch name length" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            function Get-MainWorktreePath {
+                return "C:\Users\e.ermakov\W\PM5 КОРП-W1"
+            }
+
+            function Get-DevBranchWorktreeRoot {
+                return "C:\Users\e.ermakov\W"
+            }
+
+            $acceptedName = "12345678901234567"
+            $rejectedName = $acceptedName + "8"
+            $acceptedPath = Resolve-DevBranchWorktreePath -SafeDevBranchName $acceptedName
+            Assert-DevBranchWorktreePathBudget -WorktreePath $acceptedPath -SafeDevBranchName $acceptedName | Out-Null
+
+            $message = ""
+            try {
+                $rejectedPath = Resolve-DevBranchWorktreePath -SafeDevBranchName $rejectedName
+                Assert-DevBranchWorktreePathBudget -WorktreePath $rejectedPath -SafeDevBranchName $rejectedName | Out-Null
+            } catch {
+                $message = $_.Exception.Message
+            }
+
+            [pscustomobject]@{
+                acceptedLength = $acceptedPath.Length
+                message = $message
+            }
+        }
+
+        $result.acceptedLength | Should -Be 50
+        $result.message | Should -Match "максимум"
+        $result.message | Should -Match "17"
+        $result.message | Should -Match "MAX_PATH=260"
+    }
+
     It "stops direct non-interactive manual unsafe action confirmation before creating a worktree" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-manual-confirm-test-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = New-ShortWorkflowProjectRoot
         $legacyWorktreeRoot = "$tempRoot-worktrees"
         $worktreePath = "$tempRoot-needs-confirmation"
         $sourceBase = Join-Path $tempRoot "source-base"
@@ -2944,7 +2990,7 @@ if (`$?) { exit 0 } else { exit 1 }
     }
 
     It "creates a sibling worktree branch without starting branch MCP even when legacy auto-start is true" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-worktree-test-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = New-ShortWorkflowProjectRoot
         $legacyWorktreeRoot = "$tempRoot-worktrees"
         $worktreePath = "$tempRoot-fixture-branch"
         $sourceBase = Join-Path $tempRoot "source-base"
@@ -3086,7 +3132,7 @@ if (`$?) { exit 0 } else { exit 1 }
     }
 
     It "resumes worktree branch initialization after the early protection resolution fails" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-worktree-resume-test-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = New-ShortWorkflowProjectRoot
         $worktreeRoot = "$tempRoot-worktrees"
         $worktreePath = Join-Path $worktreeRoot "partial-branch"
         $sourceBase = Join-Path $tempRoot "source-base"
@@ -3188,7 +3234,7 @@ if (`$?) { exit 0 } else { exit 1 }
     }
 
     It "inherits complete vibecoding1c MCP selection into a sibling worktree" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-worktree-mcp-test-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = New-ShortWorkflowProjectRoot
         $legacyWorktreeRoot = "$tempRoot-worktrees"
         $worktreePath = "$tempRoot-mcp-branch"
         $sourceBase = Join-Path $tempRoot "source-base"

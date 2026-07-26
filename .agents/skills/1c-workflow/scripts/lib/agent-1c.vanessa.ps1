@@ -1,6 +1,12 @@
 function Get-VanessaInstallRoot {
-    $value = Get-Setting -EnvName "VANESSA_AUTOMATION_ROOT" -ConfigName "vanessaAutomation.installRoot" -Default ".agent-1c/tools/vanessa-automation"
-    return (Resolve-ProjectPath ([string]$value))
+    $legacyRelative = ".agent-1c/tools/vanessa-automation"
+    $currentRelative = ".agent-1c/tools/va"
+    $value = Get-Setting -EnvName "VANESSA_AUTOMATION_ROOT" -ConfigName "vanessaAutomation.installRoot" -Default $currentRelative
+    $resolved = Resolve-ProjectPath ([string]$value)
+    if ([string]::Equals($resolved, (Resolve-ProjectPath $legacyRelative), [System.StringComparison]::OrdinalIgnoreCase)) {
+        return (Resolve-ProjectPath $currentRelative)
+    }
+    return $resolved
 }
 
 function Get-VanessaFeaturesPath {
@@ -53,8 +59,11 @@ function Get-VanessaAutomationEpfPath {
         if (-not [System.IO.Path]::IsPathRooted($path)) {
             $path = Resolve-ProjectPath $path
         }
-        if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) {
-            return [System.IO.Path]::GetFullPath($path)
+        $legacyRoot = Resolve-ProjectPath ".agent-1c/tools/vanessa-automation"
+        $resolvedPath = Resolve-Agent1cFullPath -Path $path
+        $isLegacyManagedPath = $resolvedPath.StartsWith(($legacyRoot.TrimEnd("\", "/") + "\"), [System.StringComparison]::OrdinalIgnoreCase)
+        if (-not $isLegacyManagedPath -and (Test-Path -LiteralPath $resolvedPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+            return $resolvedPath
         }
     }
 
@@ -226,7 +235,50 @@ function Expand-VanessaAutomationArchiveContents {
     )
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($ArchivePath, $DestinationPath)
+    New-Item -ItemType Directory -Force -Path $DestinationPath | Out-Null
+
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
+    try {
+        $selected = [ordered]@{
+            "vanessa-automation-single.epf" = "vanessa.epf"
+            "LICENSE" = "LICENSE"
+            "ITL-NOTICE.txt" = "ITL-NOTICE.txt"
+            "ITL-PROVENANCE.json" = "ITL-PROVENANCE.json"
+        }
+        $epfPath = ""
+        foreach ($sourceName in $selected.Keys) {
+            $matches = @($archive.Entries | Where-Object {
+                ([string]$_.FullName).Replace("\", "/").TrimStart("/") -ceq $sourceName
+            })
+            if ($sourceName -eq "vanessa-automation-single.epf" -and $matches.Count -ne 1) {
+                throw "Downloaded Vanessa Automation archive must contain exactly one root vanessa-automation-single.epf entry."
+            }
+            if ($matches.Count -eq 0) {
+                continue
+            }
+            if ($matches.Count -gt 1) {
+                throw "Downloaded Vanessa Automation archive contains duplicate root entry: $sourceName"
+            }
+
+            $targetPath = Join-Path $DestinationPath ([string]$selected[$sourceName])
+            $inputStream = $null
+            $outputStream = $null
+            try {
+                $inputStream = $matches[0].Open()
+                $outputStream = [System.IO.File]::Open($targetPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+                $inputStream.CopyTo($outputStream)
+            } finally {
+                if ($null -ne $outputStream) { $outputStream.Dispose() }
+                if ($null -ne $inputStream) { $inputStream.Dispose() }
+            }
+            if ($sourceName -eq "vanessa-automation-single.epf") {
+                $epfPath = $targetPath
+            }
+        }
+        return $epfPath
+    } finally {
+        $archive.Dispose()
+    }
 }
 
 function Expand-VanessaAutomationArchive {
@@ -250,19 +302,14 @@ function Expand-VanessaAutomationArchive {
         if ($children.Count -gt 0) {
             throw "Vanessa Automation install root already exists but does not contain an EPF: $InstallRoot"
         }
-    } else {
-        New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
     }
 
-    $operationId = [guid]::NewGuid().ToString("N")
-    $extractRoot = Join-Path (Get-Agent1cTempRoot) ("itl-va-extract-" + $operationId)
-    $stageRoot = "$InstallRoot.install-$operationId"
-    $rollbackRoot = "$InstallRoot.rollback-$operationId"
+    $transaction = Initialize-Agent1cProjectTransactionSlot -Kind "v" -Target $InstallRoot
+    $stageRoot = $transaction.stage
+    $rollbackRoot = $transaction.backup
     $movedExisting = $false
-    New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
     try {
-        Expand-VanessaAutomationArchiveContents -ArchivePath $ArchivePath -DestinationPath $extractRoot
-        $candidateEpf = Find-VanessaAutomationEpf -Root $extractRoot
+        $candidateEpf = Expand-VanessaAutomationArchiveContents -ArchivePath $ArchivePath -DestinationPath $stageRoot
         if (-not $candidateEpf) {
             throw "Downloaded Vanessa Automation archive did not contain a usable EPF."
         }
@@ -270,22 +317,21 @@ function Expand-VanessaAutomationArchive {
         if ($candidateHash -cne $ExpectedEpfSha256.ToLowerInvariant()) {
             throw "Vanessa Automation EPF SHA256 mismatch. Expected $ExpectedEpfSha256, got $candidateHash."
         }
-        New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
-        Copy-Item -Path (Join-Path $extractRoot "*") -Destination $stageRoot -Recurse -Force
         if (Test-Path -LiteralPath $InstallRoot) {
             Move-Item -LiteralPath $InstallRoot -Destination $rollbackRoot
             $movedExisting = $true
+            Write-Agent1cProjectTransactionState -Paths $transaction -Kind "v" -Phase "target-backed-up" -Target $InstallRoot
         }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $InstallRoot) | Out-Null
         Move-Item -LiteralPath $stageRoot -Destination $InstallRoot
+        Write-Agent1cProjectTransactionState -Paths $transaction -Kind "v" -Phase "installed" -Target $InstallRoot
         $epfPath = Find-VanessaAutomationEpf -Root $InstallRoot
         $installedHash = $(if ($epfPath) { (Get-FileHash -LiteralPath $epfPath -Algorithm SHA256).Hash.ToLowerInvariant() } else { "" })
         if (-not $epfPath -or $installedHash -cne $ExpectedEpfSha256.ToLowerInvariant()) {
             throw "Installed Vanessa Automation EPF did not preserve the workflow-pinned SHA256."
         }
-        if ($movedExisting -and (Test-Path -LiteralPath $rollbackRoot)) {
-            Remove-Item -LiteralPath $rollbackRoot -Recurse -Force
-            $movedExisting = $false
-        }
+        Complete-Agent1cProjectTransactionSlot -Paths $transaction
+        $movedExisting = $false
         return $epfPath
     } catch {
         if ($movedExisting) {
@@ -296,10 +342,8 @@ function Expand-VanessaAutomationArchive {
                 Move-Item -LiteralPath $rollbackRoot -Destination $InstallRoot
             }
         }
+        Complete-Agent1cProjectTransactionSlot -Paths $transaction
         throw
-    } finally {
-        Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 

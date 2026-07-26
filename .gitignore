@@ -9,6 +9,7 @@ testResults.xml
 logs/
 tmp/
 temp/
+.tx/
 .agent-1c/dev-branches/
 .agent-1c/event-log-baselines/
 .agent-1c/event-log-signature-cache/

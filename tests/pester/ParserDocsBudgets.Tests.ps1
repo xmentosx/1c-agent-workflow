@@ -778,6 +778,7 @@
 
     It "ignores transactional runtime staging in every package surface" {
         $requiredPaths = @(
+            ".tx/",
             ".agent-1c/branch-dumps/",
             ".agent-1c/config-dump/",
             ".agent-1c/extension-dump/",

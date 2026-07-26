@@ -7,6 +7,7 @@ testResults.xml
 *.dt
 *.log
 logs/
+.tx/
 .agent-1c/dev-branches/
 .agent-1c/event-log-baselines/
 .agent-1c/event-log-signature-cache/
@@ -30,6 +31,7 @@ logs/
 .agent-1c/tools/event-log-exporter/
 .agent-1c/tools/auto-update/
 .agent-1c/tools/data-mcp/
+.agent-1c/tools/va/
 .agent-1c/tools/vanessa-automation/
 .agent-1c/tools/vanessa-mcp/
 .agent-1c/tools/roctup-mcp-toolkit/
