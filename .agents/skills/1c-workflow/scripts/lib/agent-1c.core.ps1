@@ -1046,6 +1046,22 @@ function Get-DesignerStallWarningSeconds {
     return $parsed
 }
 
+function Get-DesignerStallTimeoutSeconds {
+    $rawValue = Get-Setting `
+        -EnvName "DESIGNER_STALL_TIMEOUT_SECONDS" `
+        -ConfigName "designerStallTimeoutSeconds" `
+        -Default 600
+    $text = ([string]$rawValue).Trim()
+    $parsed = 0
+    if ($text -notmatch '^\d+$' -or
+        -not [int]::TryParse($text, [ref]$parsed) -or
+        $parsed -lt 60 -or
+        $parsed -gt 86400) {
+        throw "DESIGNER_STALL_TIMEOUT_SECONDS or project.designerStallTimeoutSeconds must be an integer between 60 and 86400. Actual: '$rawValue'."
+    }
+    return $parsed
+}
+
 function Get-DesignerDumpStabilitySeconds {
     $rawValue = Get-Setting `
         -EnvName "DESIGNER_DUMP_STABILITY_SECONDS" `
@@ -4388,7 +4404,8 @@ function Test-DesignerInfoBaseReleased {
 function New-DesignerInvocationProbeState {
     param(
         [int]$LauncherProcessId,
-        [int]$StallWarningSeconds = -1
+        [int]$StallWarningSeconds = -1,
+        [int]$StallTimeoutSeconds = -1
     )
 
     $trackedProcessIds = [System.Collections.Generic.HashSet[int]]::new()
@@ -4398,6 +4415,12 @@ function New-DesignerInvocationProbeState {
     if ($StallWarningSeconds -lt 0) {
         $StallWarningSeconds = Get-DesignerStallWarningSeconds
     }
+    if ($StallTimeoutSeconds -lt 0) {
+        $StallTimeoutSeconds = Get-DesignerStallTimeoutSeconds
+    }
+    if ($StallTimeoutSeconds -le $StallWarningSeconds) {
+        throw "DESIGNER_STALL_TIMEOUT_SECONDS ($StallTimeoutSeconds) must be greater than DESIGNER_STALL_WARNING_SECONDS ($StallWarningSeconds)."
+    }
     return [pscustomobject]@{
         trackedProcessIds = $trackedProcessIds
         lastDiagnosticSecond = -1
@@ -4406,6 +4429,9 @@ function New-DesignerInvocationProbeState {
         processesReleasedSinceUtc = $null
         processesReleaseConfirmed = $false
         stallWarningSeconds = $StallWarningSeconds
+        stallTimeoutSeconds = $StallTimeoutSeconds
+        stallTimeoutExceeded = $false
+        stallCleanup = $null
         startedAtUtc = [DateTime]::UtcNow
         lastObservedAtUtc = $null
         lastEvidenceAtUtc = $null
@@ -4548,7 +4574,9 @@ function Update-DesignerInvocationLiveness {
     }
     $noProgressSeconds = [int][Math]::Max(0, [Math]::Floor(($observedAtUtc - [DateTime]$ProbeState.lastEvidenceAtUtc).TotalSeconds))
     $launcherExited = [bool](Get-StateValue -State $ProbeContext -Name "launcherExited" -Default $false)
-    $liveness = if ($noProgressSeconds -ge [int]$ProbeState.stallWarningSeconds) {
+    $liveness = if ($noProgressSeconds -ge [int]$ProbeState.stallTimeoutSeconds) {
+        "stalled-timeout"
+    } elseif ($noProgressSeconds -ge [int]$ProbeState.stallWarningSeconds) {
         "stalled-suspected"
     } elseif ($launcherExited) {
         "running-waiting-release"
@@ -4556,12 +4584,15 @@ function Update-DesignerInvocationLiveness {
         "running-active"
     }
     $timeoutRemainingSeconds = [int](Get-StateValue -State $ProbeContext -Name "timeoutRemainingSeconds" -Default 0)
+    $stallTimeoutRemainingSeconds = [int][Math]::Max(0, [int]$ProbeState.stallTimeoutSeconds - $noProgressSeconds)
     $workingSetMb = [int](Get-StateValue -State $ProcessState -Name "workingSetMb" -Default 0)
 
     if (-not $ProbeState.stagePrefix) {
         $ProbeState.stagePrefix = $(if ([string]$script:RunStage -like "config-load.*") { "config-load" } else { "designer" })
     }
-    $stageSuffix = if ($liveness -eq "stalled-suspected") {
+    $stageSuffix = if ($liveness -eq "stalled-timeout") {
+        "designer-stalled-timeout"
+    } elseif ($liveness -eq "stalled-suspected") {
         "designer-stalled-suspected"
     } elseif ($launcherExited) {
         "designer-wait"
@@ -4570,7 +4601,7 @@ function Update-DesignerInvocationLiveness {
     }
     $stage = if ($ProbeState.stagePrefix -eq "config-load") { "config-load.$stageSuffix" } else { $stageSuffix }
     $ownedProcessText = if (@($ProcessState.processIds).Count -gt 0) { @($ProcessState.processIds) -join "," } else { "none" }
-    $detail = "liveness=$liveness; noProgress=${noProgressSeconds}s; ownedPids=$ownedProcessText; cpuDelta=${cpuDeltaMilliseconds}ms; workingSet=${workingSetMb}MB; logGrowth=${logGrowthBytes}B; timeoutRemaining=${timeoutRemainingSeconds}s; $WaitingDetail"
+    $detail = "liveness=$liveness; noProgress=${noProgressSeconds}s; stallTimeoutRemaining=${stallTimeoutRemainingSeconds}s; ownedPids=$ownedProcessText; cpuDelta=${cpuDeltaMilliseconds}ms; workingSet=${workingSetMb}MB; logGrowth=${logGrowthBytes}B; timeoutRemaining=${timeoutRemainingSeconds}s; $WaitingDetail"
 
     $script:RunLiveness = $liveness
     $script:RunNoProgressSeconds = $noProgressSeconds
@@ -4599,6 +4630,7 @@ function Update-DesignerInvocationLiveness {
     $observation = [pscustomobject]@{
         liveness = $liveness
         noProgressSeconds = $noProgressSeconds
+        stallTimeoutRemainingSeconds = $stallTimeoutRemainingSeconds
         timeoutRemainingSeconds = $timeoutRemainingSeconds
         processIds = @($ProcessState.processIds)
         cpuDeltaMilliseconds = $cpuDeltaMilliseconds
@@ -4654,12 +4686,17 @@ function Test-DesignerInvocationReleased {
         ""
     }
 
-    Update-DesignerInvocationLiveness `
+    $livenessObservation = Update-DesignerInvocationLiveness `
         -ProbeState $ProbeState `
         -ProcessState $processState `
         -ProbeContext $ProbeContext `
         -LogPath $LogPath `
-        -WaitingDetail $waitingDetail | Out-Null
+        -WaitingDetail $waitingDetail
+
+    if ($livenessObservation.liveness -eq "stalled-timeout" -and -not [bool]$ProbeState.stallTimeoutExceeded) {
+        $ProbeState.stallTimeoutExceeded = $true
+        $ProbeState.stallCleanup = Stop-DesignerInvocationOwnedProcesses -ProbeState $ProbeState -LogPath $LogPath
+    }
 
     if (-not $launcherExited) {
         return $false
@@ -5305,6 +5342,15 @@ function Invoke-Designer {
     if ($result.memoryLimitExceeded) {
         $terminationDetail = if ($result.terminationError) { " terminationError='$(([string]$result.terminationError) -replace '[\r\n]+', ' ')'" } else { "" }
         throw "DESIGNER_MEMORY_LIMIT_EXCEEDED pid=$($result.processId) limitMb=$maxWorkingSetMb peakWorkingSetMb=$($result.peakWorkingSetMb) terminationConfirmed=$($result.terminationConfirmed) log=$logPath$terminationDetail"
+    }
+    if ($null -ne $invocationProbeState -and [bool]$invocationProbeState.stallTimeoutExceeded) {
+        $targetDetail = if ($operationTarget) { " target='$operationTarget'" } else { "" }
+        $stallCleanup = $invocationProbeState.stallCleanup
+        $cleanupError = if ($null -ne $stallCleanup -and $stallCleanup.error) { " cleanupError='$(([string]$stallCleanup.error) -replace '[\r\n]+', ' ')'" } else { "" }
+        $cleanupAttempted = $null -ne $stallCleanup -and [bool]$stallCleanup.attempted
+        $cleanupConfirmed = $null -ne $stallCleanup -and [bool]$stallCleanup.confirmed
+        $cleanupProcessIds = if ($null -ne $stallCleanup) { @($stallCleanup.processIds) -join "," } else { "" }
+        throw "DESIGNER_STALL_TIMEOUT operation=$operationKind stallTimeoutSeconds=$($invocationProbeState.stallTimeoutSeconds) noProgressSeconds=$($script:RunNoProgressSeconds) pid=$($result.processId) log=$logPath$targetDetail ownedCleanupAttempted=$cleanupAttempted ownedCleanupConfirmed=$cleanupConfirmed ownedProcessIds=$cleanupProcessIds$cleanupError"
     }
     if ($result.timedOut) {
         $targetDetail = if ($operationTarget) { " target='$operationTarget'" } else { "" }

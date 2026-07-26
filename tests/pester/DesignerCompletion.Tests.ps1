@@ -172,7 +172,7 @@ Describe "1C Designer completion evidence" {
             $script:RunStage = "config-load.designer"
             $script:LastProcessPeakWorkingSetMb = 777
             $startedAt = [DateTime]::new(2026, 7, 26, 12, 0, 0, [DateTimeKind]::Utc)
-            $probeState = New-DesignerInvocationProbeState -LauncherProcessId 8200 -StallWarningSeconds 30
+            $probeState = New-DesignerInvocationProbeState -LauncherProcessId 8200 -StallWarningSeconds 30 -StallTimeoutSeconds 60
 
             $first = Update-DesignerInvocationLiveness `
                 -ProbeState $probeState `
@@ -236,6 +236,145 @@ Describe "1C Designer completion evidence" {
         $result.memoryGuardPeak | Should -Be 777
     }
 
+    It "fails a sustained Designer stall and cleans up only exact tracked processes" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:StoppedDesignerIds = [System.Collections.Generic.List[int]]::new()
+            $script:RunStage = "config-load.designer"
+            $startedAt = [DateTime]::new(2026, 7, 26, 12, 0, 0, [DateTimeKind]::Utc)
+            $probeState = New-DesignerInvocationProbeState `
+                -LauncherProcessId 8250 `
+                -StallWarningSeconds 30 `
+                -StallTimeoutSeconds 60
+            function Get-DesignerInvocationProcessState {
+                return [pscustomobject]@{
+                    querySucceeded = $true; active = $true; processIds = @(8250, 8251)
+                    cpuSampleAvailable = $true; cpuTime100ns = [int64]10000000
+                    workingSetSampleAvailable = $true; workingSetMb = 256; detail = ""
+                }
+            }
+            function Test-DesignerInfoBaseReleased { return $false }
+            function Get-Process {
+                param([int]$Id, [object]$ErrorAction)
+                return [pscustomobject]@{ Id = $Id; HasExited = $false }
+            }
+            function Stop-NativeProcessForSafety {
+                param([object]$Process)
+                $script:StoppedDesignerIds.Add([int]$Process.Id) | Out-Null
+                return [pscustomobject]@{ confirmed = $true; error = "" }
+            }
+
+            Test-DesignerInvocationReleased `
+                -ProbeState $probeState `
+                -ProbeContext ([pscustomobject]@{
+                    launcherExited = $false; observedAtUtc = $startedAt
+                    timeoutRemainingSeconds = 3600; processId = 8250
+                }) `
+                -LogPath (Join-Path $TestDrive "stall-timeout.log") `
+                -InfoBaseKind file `
+                -InfoBasePath (Join-Path $TestDrive "base") `
+                -OperationKind "dump-config-to-files" | Out-Null
+            Test-DesignerInvocationReleased `
+                -ProbeState $probeState `
+                -ProbeContext ([pscustomobject]@{
+                    launcherExited = $false; observedAtUtc = $startedAt.AddSeconds(61)
+                    timeoutRemainingSeconds = 3539; processId = 8250
+                }) `
+                -LogPath (Join-Path $TestDrive "stall-timeout.log") `
+                -InfoBaseKind file `
+                -InfoBasePath (Join-Path $TestDrive "base") `
+                -OperationKind "dump-config-to-files" | Out-Null
+
+            [pscustomobject]@{
+                exceeded = $probeState.stallTimeoutExceeded
+                liveness = $probeState.lastObservation.liveness
+                stage = $probeState.lastObservation.stage
+                cleanup = $probeState.stallCleanup
+                stopped = @($script:StoppedDesignerIds)
+            }
+        }
+
+        $result.exceeded | Should -BeTrue
+        $result.liveness | Should -Be "stalled-timeout"
+        $result.stage | Should -Be "config-load.designer-stalled-timeout"
+        $result.cleanup.confirmed | Should -BeTrue
+        @($result.stopped) | Should -Be @(8250, 8251)
+    }
+
+    It "returns a stable Designer stall error after owned cleanup" {
+        $fixtureRoot = Join-Path $TestDrive "designer-stall-call"
+        $basePath = Join-Path $fixtureRoot "base"
+        $platformPath = Join-Path $fixtureRoot "1cv8.exe"
+        New-Item -ItemType Directory -Force -Path $basePath | Out-Null
+        New-Item -ItemType File -Force -Path $platformPath | Out-Null
+        New-Item -ItemType File -Force -Path (Join-Path $basePath "1Cv8.1CD") | Out-Null
+
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:Config = [pscustomobject]@{
+                platformPath = $platformPath
+                logsPath = "logs"
+                designerStallWarningSeconds = 30
+                designerStallTimeoutSeconds = 60
+            }
+            $script:StoppedDesignerIds = [System.Collections.Generic.List[int]]::new()
+            function Get-DesignerInvocationProcessState {
+                return [pscustomobject]@{
+                    querySucceeded = $true; active = $true; processIds = @(8260, 8261)
+                    cpuSampleAvailable = $true; cpuTime100ns = [int64]10000000
+                    workingSetSampleAvailable = $true; workingSetMb = 256; detail = ""
+                }
+            }
+            function Test-DesignerInfoBaseReleased { return $false }
+            function Get-Process {
+                param([int]$Id, [object]$ErrorAction)
+                return [pscustomobject]@{ Id = $Id; HasExited = $false }
+            }
+            function Stop-NativeProcessForSafety {
+                param([object]$Process)
+                $script:StoppedDesignerIds.Add([int]$Process.Id) | Out-Null
+                return [pscustomobject]@{ confirmed = $true; error = "" }
+            }
+            function Invoke-NativeProcessAndWaitResult {
+                param(
+                    [string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 0,
+                    [scriptblock]$OnTimeout = $null, [scriptblock]$CompletionProbe = $null,
+                    [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
+                    [int]$MaxWorkingSetMb = 0
+                )
+                $startedAt = [DateTime]::UtcNow
+                & $CompletionProbe ([pscustomobject]@{
+                    launcherExited = $false; observedAtUtc = $startedAt
+                    timeoutRemainingSeconds = $TimeoutSeconds; processId = 8260
+                }) | Out-Null
+                & $CompletionProbe ([pscustomobject]@{
+                    launcherExited = $false; observedAtUtc = $startedAt.AddSeconds(61)
+                    timeoutRemainingSeconds = ($TimeoutSeconds - 61); processId = 8260
+                }) | Out-Null
+                return [pscustomobject]@{
+                    processId = 8260; exitCode = 1; timedOut = $false
+                    memoryLimitExceeded = $false; memoryMonitorFailed = $false
+                    memoryMonitorError = ""; peakWorkingSetMb = 256
+                    terminationConfirmed = $true; terminationError = ""
+                    postExitProbeTimedOut = $false
+                }
+            }
+
+            $message = try {
+                Invoke-Designer -InfoBasePath $basePath -InfoBaseKind file -DesignerArgs @("/UpdateDBCfg") 6>$null | Out-Null
+                ""
+            } catch {
+                $_.Exception.Message
+            }
+            [pscustomobject]@{ message = $message; stopped = @($script:StoppedDesignerIds) }
+        }
+
+        $result.message | Should -Match '^DESIGNER_STALL_TIMEOUT\b'
+        $result.message | Should -Match 'stallTimeoutSeconds=60'
+        $result.message | Should -Match 'ownedCleanupConfirmed=True'
+        @($result.stopped) | Should -Be @(8260, 8261)
+    }
+
     It "stops only tracked Designer processes during the hard-timeout cleanup" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -259,7 +398,7 @@ Describe "1C Designer completion evidence" {
             }
 
             $cleanup = Stop-DesignerInvocationOwnedProcesses `
-                -ProbeState (New-DesignerInvocationProbeState -LauncherProcessId 8301 -StallWarningSeconds 30) `
+                -ProbeState (New-DesignerInvocationProbeState -LauncherProcessId 8301 -StallWarningSeconds 30 -StallTimeoutSeconds 60) `
                 -LogPath (Join-Path $TestDrive "owned-timeout.log")
             [pscustomobject]@{ cleanup = $cleanup; stopped = @($script:StoppedDesignerIds) }
         }
@@ -270,38 +409,52 @@ Describe "1C Designer completion evidence" {
         @($result.stopped) | Should -Be @(8301, 8302)
     }
 
-    It "validates the configurable stall warning independently from the hard timeout" {
+    It "validates the configurable stall warning and fail-closed stall timeout" {
         $result = & {
             $savedDirect = $env:DESIGNER_STALL_WARNING_SECONDS
             $savedPrefixed = $env:AGENT_1C_DESIGNER_STALL_WARNING_SECONDS
+            $savedTimeout = $env:DESIGNER_STALL_TIMEOUT_SECONDS
+            $savedPrefixedTimeout = $env:AGENT_1C_DESIGNER_STALL_TIMEOUT_SECONDS
             try {
                 $env:DESIGNER_STALL_WARNING_SECONDS = $null
                 $env:AGENT_1C_DESIGNER_STALL_WARNING_SECONDS = $null
+                $env:DESIGNER_STALL_TIMEOUT_SECONDS = $null
+                $env:AGENT_1C_DESIGNER_STALL_TIMEOUT_SECONDS = $null
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
                 $script:Config = [pscustomobject]@{}
                 $defaultValue = Get-DesignerStallWarningSeconds
+                $defaultTimeout = Get-DesignerStallTimeoutSeconds
                 $script:Config = [pscustomobject]@{ designerStallWarningSeconds = 90 }
                 $projectValue = Get-DesignerStallWarningSeconds
                 $env:DESIGNER_STALL_WARNING_SECONDS = "45"
                 $worktreeValue = Get-DesignerStallWarningSeconds
                 $env:DESIGNER_STALL_WARNING_SECONDS = "10"
                 $invalid = try { Get-DesignerStallWarningSeconds | Out-Null; "" } catch { $_.Exception.Message }
+                $env:DESIGNER_STALL_WARNING_SECONDS = "300"
+                $env:DESIGNER_STALL_TIMEOUT_SECONDS = "300"
+                $invalidOrder = try { New-DesignerInvocationProbeState -LauncherProcessId 1 | Out-Null; "" } catch { $_.Exception.Message }
                 [pscustomobject]@{
                     defaultValue = $defaultValue
+                    defaultTimeout = $defaultTimeout
                     projectValue = $projectValue
                     worktreeValue = $worktreeValue
                     invalid = $invalid
+                    invalidOrder = $invalidOrder
                 }
             } finally {
                 $env:DESIGNER_STALL_WARNING_SECONDS = $savedDirect
                 $env:AGENT_1C_DESIGNER_STALL_WARNING_SECONDS = $savedPrefixed
+                $env:DESIGNER_STALL_TIMEOUT_SECONDS = $savedTimeout
+                $env:AGENT_1C_DESIGNER_STALL_TIMEOUT_SECONDS = $savedPrefixedTimeout
             }
         }
 
         $result.defaultValue | Should -Be 300
+        $result.defaultTimeout | Should -Be 600
         $result.projectValue | Should -Be 90
         $result.worktreeValue | Should -Be 45
         $result.invalid | Should -Match "between 30 and 86400"
+        $result.invalidOrder | Should -Match "must be greater"
     }
 
     It "waits for a combined repository and database update to release the infobase without depending on localized success text" {
