@@ -277,20 +277,41 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 runtime и выполняется одна повторная попытка. Отсутствующий direct container считается
 дрейфом установки и требует `setup`.
 
-Для автоматического контроля зарегистрируйте запуск при старте host и каждые пять минут
-из PowerShell с правами пользователя, у которого работает `docker info`:
+Автоматический watchdog входит в поставку. Включите его в `host.config.json`:
 
-```powershell
-$hostScript = (Resolve-Path .\install-vibecoding1c-mcp-host.ps1).Path
-$hostConfig = (Resolve-Path .\host.config.json).Path
-$taskArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$hostScript`" -Action reconcile -ConfigPath `"$hostConfig`""
-$taskAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $taskArgs
-$startupTrigger = New-ScheduledTaskTrigger -AtStartup
-$periodicTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
-Register-ScheduledTask -TaskName "ITL MCP host reconcile" -Action $taskAction -Trigger @($startupTrigger, $periodicTrigger) -RunLevel Highest -Force
+```json
+"watchdog": {
+  "enabled": true,
+  "intervalMinutes": 5,
+  "startupDelaySeconds": 30,
+  "taskName": "ITL MCP Host Watchdog"
+}
 ```
 
-Не запускайте scheduled task от другой учётной записи без доступа к Docker и registry repo.
+Установите управляемую задачу одной командой:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action watchdog-install -ConfigPath .\host.config.json
+```
+
+Installer регистрирует Windows Scheduled Task от текущего пользователя, запускает её при входе
+пользователя и с заданным интервалом, запрещает параллельные экземпляры и сразу выполняет первый
+`reconcile`. Результат последнего запуска сохраняется в `<stateRoot>\watchdog-state.json`.
+Если квалифицированное состояние host не изменилось, watchdog не создаёт новый commit registry
+на каждом интервале.
+
+Проверка, ручной запуск и удаление:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action watchdog-status -ConfigPath .\host.config.json
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action watchdog-run -ConfigPath .\host.config.json
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action watchdog-uninstall -ConfigPath .\host.config.json
+```
+
+Устанавливайте задачу из учётной записи, у которой работают `docker info` и Git push в registry.
+Installer не перезаписывает одноимённую чужую задачу. При `watchdog.enabled=false` штатный
+`watchdog-run` ничего не восстанавливает; после этого задачу можно удалить через
+`watchdog-uninstall`.
 
 ## Проверка
 

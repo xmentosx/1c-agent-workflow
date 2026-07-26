@@ -62,6 +62,12 @@
     "portOffset": 4000,
     "image": "itl/mcp-tools-list-proxy:local"
   },
+  "watchdog": {
+    "enabled": true,
+    "intervalMinutes": 5,
+    "startupDelaySeconds": 30,
+    "taskName": "ITL MCP Host Watchdog"
+  },
   "enabledServers": {
     "global": [ "docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis" ],
     "project": [ "code", "graph" ]
