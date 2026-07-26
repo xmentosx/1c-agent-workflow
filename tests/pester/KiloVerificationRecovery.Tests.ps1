@@ -79,4 +79,26 @@ Describe "Kilo verification recovery command" {
             $recoveryText | Should -Match ([regex]::Escape($marker))
         }
     }
+
+    It "routes natural-language lifecycle completion through structured compact status" {
+        $fastSkill = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md") -Raw -Encoding UTF8
+        $compactRunner = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\run-itl-command.ps1") -Raw -Encoding UTF8
+
+        $fastSkill | Should -Match 'run-itl-command\.ps1 -- -Action <action>'
+        $fastSkill | Should -Not -Match 'scripts\\agent-1c\.ps1 -Action <action>'
+        foreach ($marker in @(
+            'status=failed',
+            'Never relabel it as skipped',
+            'requiredAction=/itl-verify-fix',
+            'Do not return completion to the user',
+            'stalled-suspected',
+            'hard timeout',
+            'memory'
+        )) {
+            $fastSkill | Should -Match ([regex]::Escape($marker))
+        }
+        foreach ($action in @('init-dev-branch-extension', 'update-dev-branch-base', 'check-dev-branch', 'verify-dev-branch')) {
+            $compactRunner | Should -Match ([regex]::Escape('"' + $action + '"'))
+        }
+    }
 }

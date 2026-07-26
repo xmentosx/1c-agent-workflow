@@ -6,6 +6,40 @@ Describe "1C workflow ai_rules_1c client checks" {
         $HelperPath = $context.HelperPath
     }
 
+    It "offers Kilo Code first as recommended and selects it when the wizard answer is skipped" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $capture = [pscustomobject]@{
+                lines = [System.Collections.Generic.List[string]]::new()
+                prompt = ""
+            }
+            function Write-Host {
+                param([Parameter(Position = 0)]$Object)
+                [void]$capture.lines.Add([string]$Object)
+            }
+            function Read-Host {
+                param([Parameter(Position = 0)]$Prompt)
+                $capture.prompt = [string]$Prompt
+                return ""
+            }
+
+            $selected = Read-InitAgentTarget
+            [pscustomobject]@{
+                selected = $selected
+                choices = @(Get-InitAgentTargetChoices)
+                supportedCount = @(Get-SupportedAgentTargets).Count
+                lines = @($capture.lines)
+                prompt = $capture.prompt
+            }
+        }
+
+        $result.selected | Should -Be "kilocode"
+        @($result.choices)[0] | Should -Be "kilocode"
+        @($result.choices | Select-Object -Unique).Count | Should -Be $result.supportedCount
+        @($result.lines) | Should -Contain "1. kilocode (recommended)"
+        $result.prompt | Should -Match "\[kilocode\]$"
+    }
+
     It "migrates only the legacy dual client and rejects other multi-client inputs" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-targets-" + [guid]::NewGuid().ToString("N"))
         $savedAgentTools = [Environment]::GetEnvironmentVariable("AGENT_TOOLS", "Process")

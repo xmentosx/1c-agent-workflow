@@ -20,7 +20,7 @@ Run the fork Full gate, preview publication with `publish-fork-release.ps1 -What
 
 ## Single-client migration
 
-Each project has exactly one of `codex`, `kilocode`, `claude-code`, `cursor`, `opencode`, `kimi`, `qwen`, `command-code`, `cline`, or `pi`. New initialization requires the choice. Legacy `["codex","kilocode"]` normalizes to `["kilocode"]`; every other multi-client set requires an explicit selection. Generic `other` is not supported.
+Each project has exactly one of `codex`, `kilocode`, `claude-code`, `cursor`, `opencode`, `kimi`, `qwen`, `command-code`, `cline`, or `pi`. Interactive initialization offers `kilocode` first as the recommended default when the answer is left blank; configured/JSON initialization still requires an exact client value. Legacy `["codex","kilocode"]` normalizes to `["kilocode"]`; every other multi-client set requires an explicit selection. Generic `other` is not supported.
 
 `update-workflow` supports legacy upstream-to-fork and strictly monotonic controlled-fork upgrades, including `r11 -> r13` and `r12 -> r13` for every supported single-client installation. Eligibility requires recorded installed commit/provenance, an immutable `itl-*` ref, no `userModified` managed files, supported client state, and upstream ancestry. A custom repository, missing provenance, tracked-config ambiguity, or modified managed file produces a recovery report instead of mutation.
 

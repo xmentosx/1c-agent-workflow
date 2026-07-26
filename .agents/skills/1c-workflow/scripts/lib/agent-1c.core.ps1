@@ -266,6 +266,13 @@ function Write-RunStatus {
         lastProcessMemoryLimitExceeded = [bool]$script:LastProcessMemoryLimitExceeded
         lastProcessPeakWorkingSetMb = [int]$script:LastProcessPeakWorkingSetMb
         lastProcessWorkingSetLimitMb = [int]$script:LastProcessWorkingSetLimitMb
+        liveness = $(if ($script:RunLiveness) { [string]$script:RunLiveness } else { "" })
+        noProgressSeconds = [int]$script:RunNoProgressSeconds
+        timeoutRemainingSeconds = [int]$script:RunTimeoutRemainingSeconds
+        ownedProcessIds = @($script:RunOwnedProcessIds)
+        cpuDeltaMilliseconds = [int]$script:RunCpuDeltaMilliseconds
+        workingSetMb = [int]$script:RunWorkingSetMb
+        logGrowthBytes = [int64]$script:RunLogGrowthBytes
         gitIndexLockPreExisted = [bool]$script:GitIndexLockPreExisted
         resumedFrom = $script:ResumedFrom
         recoveryReason = $script:RecoveryReason
@@ -1019,6 +1026,22 @@ function Get-DesignerOperationTimeoutSeconds {
         $parsed -lt 1 -or
         $parsed -gt 86400) {
         throw "DESIGNER_OPERATION_TIMEOUT_SECONDS or project.designerOperationTimeoutSeconds must be an integer between 1 and 86400. Actual: '$rawValue'."
+    }
+    return $parsed
+}
+
+function Get-DesignerStallWarningSeconds {
+    $rawValue = Get-Setting `
+        -EnvName "DESIGNER_STALL_WARNING_SECONDS" `
+        -ConfigName "designerStallWarningSeconds" `
+        -Default 300
+    $text = ([string]$rawValue).Trim()
+    $parsed = 0
+    if ($text -notmatch '^\d+$' -or
+        -not [int]::TryParse($text, [ref]$parsed) -or
+        $parsed -lt 30 -or
+        $parsed -gt 86400) {
+        throw "DESIGNER_STALL_WARNING_SECONDS or project.designerStallWarningSeconds must be an integer between 30 and 86400. Actual: '$rawValue'."
     }
     return $parsed
 }
@@ -3710,14 +3733,23 @@ function Get-SupportedAgentTargets {
     return @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
 }
 
+function Get-InitAgentTargetChoices {
+    $supported = @(Get-SupportedAgentTargets)
+    return @("kilocode") + @($supported | Where-Object { $_ -ne "kilocode" })
+}
+
 function Read-InitAgentTarget {
     Write-Host (Get-Agent1cUtf8Text "0JLRi9Cx0LXRgNC40YLQtSDQtdC00LjQvdGB0YLQstC10L3QvdGL0Lkg0LDQs9C10L3RgtGB0LrQuNC5INC60LvQuNC10L3RgiDQtNC70Y8g0L/RgNC+0LXQutGC0LA6")
-    $supported = @(Get-SupportedAgentTargets)
+    $supported = @(Get-InitAgentTargetChoices)
     for ($index = 0; $index -lt $supported.Count; $index++) {
-        Write-Host ("{0}. {1}" -f ($index + 1), $supported[$index])
+        $label = if ($supported[$index] -eq "kilocode") { "kilocode (recommended)" } else { $supported[$index] }
+        Write-Host ("{0}. {1}" -f ($index + 1), $label)
     }
     while ($true) {
-        $answer = (Read-Host (Get-Agent1cUtf8Text "0JrQu9C40LXQvdGCINCw0LPQtdC90YLQsA==")).Trim().ToLowerInvariant()
+        $answer = (Read-Host ((Get-Agent1cUtf8Text "0JrQu9C40LXQvdGCINCw0LPQtdC90YLQsA==") + " [kilocode]")).Trim().ToLowerInvariant()
+        if (-not $answer) {
+            return "kilocode"
+        }
         $number = 0
         if ([int]::TryParse($answer, [ref]$number) -and $number -ge 1 -and $number -le $supported.Count) {
             return $supported[$number - 1]
@@ -4252,19 +4284,25 @@ function Get-DesignerFileArtifactState {
 
     try {
         if (-not (Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction Stop)) {
-            return [pscustomobject]@{ ready = $false; signature = "" }
+            return [pscustomobject]@{ ready = $false; signature = ""; length = [int64]0; latestWriteTimeUtcTicks = [int64]0 }
         }
         $file = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
         if (-not $AllowEmpty -and $file.Length -le 0) {
-            return [pscustomobject]@{ ready = $false; signature = "" }
+            return [pscustomobject]@{
+                ready = $false
+                signature = ""
+                length = [int64]$file.Length
+                latestWriteTimeUtcTicks = [int64]$file.LastWriteTimeUtc.Ticks
+            }
         }
         return [pscustomobject]@{
             ready = $true
             signature = ("{0}|{1}" -f $file.Length, $file.LastWriteTimeUtc.Ticks)
+            length = [int64]$file.Length
             latestWriteTimeUtcTicks = [int64]$file.LastWriteTimeUtc.Ticks
         }
     } catch {
-        return [pscustomobject]@{ ready = $false; signature = ""; latestWriteTimeUtcTicks = [int64]0 }
+        return [pscustomobject]@{ ready = $false; signature = ""; length = [int64]0; latestWriteTimeUtcTicks = [int64]0 }
     }
 }
 
@@ -4348,20 +4386,38 @@ function Test-DesignerInfoBaseReleased {
 }
 
 function New-DesignerInvocationProbeState {
-    param([int]$LauncherProcessId)
+    param(
+        [int]$LauncherProcessId,
+        [int]$StallWarningSeconds = -1
+    )
 
     $trackedProcessIds = [System.Collections.Generic.HashSet[int]]::new()
     if ($LauncherProcessId -gt 0) {
         $trackedProcessIds.Add($LauncherProcessId) | Out-Null
     }
+    if ($StallWarningSeconds -lt 0) {
+        $StallWarningSeconds = Get-DesignerStallWarningSeconds
+    }
     return [pscustomobject]@{
         trackedProcessIds = $trackedProcessIds
         lastDiagnosticSecond = -1
-        stagePublished = $false
         nextProcessCheckAtUtc = [DateTime]::MinValue
         lastProcessState = $null
         processesReleasedSinceUtc = $null
         processesReleaseConfirmed = $false
+        stallWarningSeconds = $StallWarningSeconds
+        startedAtUtc = [DateTime]::UtcNow
+        lastObservedAtUtc = $null
+        lastEvidenceAtUtc = $null
+        lastProcessSignature = ""
+        lastCpuTime100ns = [int64]0
+        lastCpuSampleAvailable = $false
+        lastLogSignature = ""
+        lastLogLength = [int64]0
+        lastPublishedAtUtc = [DateTime]::MinValue
+        lastPublishedLiveness = ""
+        stagePrefix = ""
+        lastObservation = $null
     }
 }
 
@@ -4400,13 +4456,33 @@ function Get-DesignerInvocationProcessState {
             }
         }
 
-        $activeProcessIds = @($designerProcesses |
-            Where-Object { $ProbeState.trackedProcessIds.Contains([int]$_.ProcessId) } |
-            ForEach-Object { [int]$_.ProcessId })
+        $activeProcesses = @($designerProcesses |
+            Where-Object { $ProbeState.trackedProcessIds.Contains([int]$_.ProcessId) })
+        $activeProcessIds = @($activeProcesses | ForEach-Object { [int]$_.ProcessId } | Sort-Object)
+        [int64]$cpuTime100ns = 0
+        [int64]$workingSetBytes = 0
+        $cpuSampleAvailable = $false
+        $workingSetSampleAvailable = $false
+        foreach ($activeProcess in $activeProcesses) {
+            foreach ($cpuProperty in @("KernelModeTime", "UserModeTime")) {
+                if ($activeProcess.PSObject.Properties.Name -contains $cpuProperty) {
+                    $cpuSampleAvailable = $true
+                    $cpuTime100ns += [int64](Get-StateValue -State $activeProcess -Name $cpuProperty -Default 0)
+                }
+            }
+            if ($activeProcess.PSObject.Properties.Name -contains "WorkingSetSize") {
+                $workingSetSampleAvailable = $true
+                $workingSetBytes += [int64](Get-StateValue -State $activeProcess -Name "WorkingSetSize" -Default 0)
+            }
+        }
         $state = [pscustomobject]@{
             querySucceeded = $true
             active = ($activeProcessIds.Count -gt 0)
             processIds = $activeProcessIds
+            cpuSampleAvailable = $cpuSampleAvailable
+            cpuTime100ns = $cpuTime100ns
+            workingSetSampleAvailable = $workingSetSampleAvailable
+            workingSetMb = $(if ($workingSetSampleAvailable) { [int][Math]::Ceiling([double]$workingSetBytes / 1MB) } else { 0 })
             detail = ""
         }
     } catch {
@@ -4414,12 +4490,126 @@ function Get-DesignerInvocationProcessState {
             querySucceeded = $false
             active = $true
             processIds = @()
+            cpuSampleAvailable = $false
+            cpuTime100ns = [int64]0
+            workingSetSampleAvailable = $false
+            workingSetMb = 0
             detail = (($_.Exception.Message -replace '[\r\n]+', ' ').Trim())
         }
     }
     $ProbeState.lastProcessState = $state
     $ProbeState.nextProcessCheckAtUtc = $observedAtUtc.AddMilliseconds(500)
     return $state
+}
+
+function Update-DesignerInvocationLiveness {
+    param(
+        [Parameter(Mandatory = $true)][object]$ProbeState,
+        [Parameter(Mandatory = $true)][object]$ProcessState,
+        [AllowNull()][object]$ProbeContext,
+        [string]$LogPath,
+        [string]$WaitingDetail
+    )
+
+    $observedAtUtc = [DateTime](Get-StateValue -State $ProbeContext -Name "observedAtUtc" -Default ([DateTime]::UtcNow))
+    $logState = Get-DesignerFileArtifactState -Path $LogPath -AllowEmpty
+    $logSignature = [string](Get-StateValue -State $logState -Name "signature" -Default "")
+    [int64]$logLength = [int64](Get-StateValue -State $logState -Name "length" -Default 0)
+    $processSignature = (@($ProcessState.processIds) -join ",")
+    $cpuSampleAvailable = [bool](Get-StateValue -State $ProcessState -Name "cpuSampleAvailable" -Default $false)
+    [int64]$cpuTime100ns = [int64](Get-StateValue -State $ProcessState -Name "cpuTime100ns" -Default 0)
+    [int]$cpuDeltaMilliseconds = 0
+    [int64]$logGrowthBytes = 0
+    $evidence = [System.Collections.Generic.List[string]]::new()
+
+    if ($null -eq $ProbeState.lastObservedAtUtc) {
+        $ProbeState.lastEvidenceAtUtc = $observedAtUtc
+        $evidence.Add("baseline") | Out-Null
+    } else {
+        if ($processSignature -ne [string]$ProbeState.lastProcessSignature) {
+            $evidence.Add("process-set") | Out-Null
+        }
+        if ($cpuSampleAvailable -and [bool]$ProbeState.lastCpuSampleAvailable -and
+            $cpuTime100ns -gt [int64]$ProbeState.lastCpuTime100ns) {
+            $cpuDeltaMilliseconds = [int][Math]::Floor(($cpuTime100ns - [int64]$ProbeState.lastCpuTime100ns) / 10000)
+            $evidence.Add("cpu") | Out-Null
+        }
+        if ($logSignature -ne [string]$ProbeState.lastLogSignature) {
+            $logGrowthBytes = $logLength - [int64]$ProbeState.lastLogLength
+            $evidence.Add("log") | Out-Null
+        }
+        if ($evidence.Count -gt 0) {
+            $ProbeState.lastEvidenceAtUtc = $observedAtUtc
+        }
+    }
+
+    if ($null -eq $ProbeState.lastEvidenceAtUtc) {
+        $ProbeState.lastEvidenceAtUtc = $observedAtUtc
+    }
+    $noProgressSeconds = [int][Math]::Max(0, [Math]::Floor(($observedAtUtc - [DateTime]$ProbeState.lastEvidenceAtUtc).TotalSeconds))
+    $launcherExited = [bool](Get-StateValue -State $ProbeContext -Name "launcherExited" -Default $false)
+    $liveness = if ($noProgressSeconds -ge [int]$ProbeState.stallWarningSeconds) {
+        "stalled-suspected"
+    } elseif ($launcherExited) {
+        "running-waiting-release"
+    } else {
+        "running-active"
+    }
+    $timeoutRemainingSeconds = [int](Get-StateValue -State $ProbeContext -Name "timeoutRemainingSeconds" -Default 0)
+    $workingSetMb = [int](Get-StateValue -State $ProcessState -Name "workingSetMb" -Default 0)
+
+    if (-not $ProbeState.stagePrefix) {
+        $ProbeState.stagePrefix = $(if ([string]$script:RunStage -like "config-load.*") { "config-load" } else { "designer" })
+    }
+    $stageSuffix = if ($liveness -eq "stalled-suspected") {
+        "designer-stalled-suspected"
+    } elseif ($launcherExited) {
+        "designer-wait"
+    } else {
+        "designer-running"
+    }
+    $stage = if ($ProbeState.stagePrefix -eq "config-load") { "config-load.$stageSuffix" } else { $stageSuffix }
+    $ownedProcessText = if (@($ProcessState.processIds).Count -gt 0) { @($ProcessState.processIds) -join "," } else { "none" }
+    $detail = "liveness=$liveness; noProgress=${noProgressSeconds}s; ownedPids=$ownedProcessText; cpuDelta=${cpuDeltaMilliseconds}ms; workingSet=${workingSetMb}MB; logGrowth=${logGrowthBytes}B; timeoutRemaining=${timeoutRemainingSeconds}s; $WaitingDetail"
+
+    $script:RunLiveness = $liveness
+    $script:RunNoProgressSeconds = $noProgressSeconds
+    $script:RunTimeoutRemainingSeconds = $timeoutRemainingSeconds
+    $script:RunOwnedProcessIds = @($ProcessState.processIds)
+    $script:RunCpuDeltaMilliseconds = $cpuDeltaMilliseconds
+    $script:RunWorkingSetMb = $workingSetMb
+    $script:RunLogGrowthBytes = $logGrowthBytes
+
+    $publishDue = $ProbeState.lastPublishedAtUtc -eq [DateTime]::MinValue -or
+        ($observedAtUtc - [DateTime]$ProbeState.lastPublishedAtUtc).TotalSeconds -ge 10 -or
+        $liveness -ne [string]$ProbeState.lastPublishedLiveness -or
+        [string]$script:RunStage -ne $stage
+    if ($publishDue) {
+        $ProbeState.lastPublishedAtUtc = $observedAtUtc
+        $ProbeState.lastPublishedLiveness = $liveness
+        Set-RunStage -Stage $stage -Detail $detail
+    }
+
+    $ProbeState.lastObservedAtUtc = $observedAtUtc
+    $ProbeState.lastProcessSignature = $processSignature
+    $ProbeState.lastCpuTime100ns = $cpuTime100ns
+    $ProbeState.lastCpuSampleAvailable = $cpuSampleAvailable
+    $ProbeState.lastLogSignature = $logSignature
+    $ProbeState.lastLogLength = $logLength
+    $observation = [pscustomobject]@{
+        liveness = $liveness
+        noProgressSeconds = $noProgressSeconds
+        timeoutRemainingSeconds = $timeoutRemainingSeconds
+        processIds = @($ProcessState.processIds)
+        cpuDeltaMilliseconds = $cpuDeltaMilliseconds
+        workingSetMb = $workingSetMb
+        logGrowthBytes = $logGrowthBytes
+        evidence = @($evidence)
+        stage = $stage
+        detail = $detail
+    }
+    $ProbeState.lastObservation = $observation
+    return $observation
 }
 
 function Test-DesignerInvocationReleased {
@@ -4432,7 +4622,7 @@ function Test-DesignerInvocationReleased {
         [string]$OperationKind
     )
 
-    if ($null -eq $ProbeContext -or -not [bool]$ProbeContext.launcherExited) {
+    if ($null -eq $ProbeContext) {
         return $false
     }
 
@@ -4449,7 +4639,10 @@ function Test-DesignerInvocationReleased {
     }
     $infoBaseReleased = Test-DesignerInfoBaseReleased -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
     $elapsed = ConvertTo-IntOrDefault -Value (Get-StateValue -State $ProbeContext -Name "postExitElapsedSeconds" -Default 0) -Default 0
-    $waitingDetail = if (-not $processState.querySucceeded) {
+    $launcherExited = [bool](Get-StateValue -State $ProbeContext -Name "launcherExited" -Default $false)
+    $waitingDetail = if (-not $launcherExited) {
+        "Designer launcher is active"
+    } elseif (-not $processState.querySucceeded) {
         "cannot enumerate owned 1C processes: $($processState.detail)"
     } elseif ($processState.active) {
         "owned 1C process IDs are still active: $(@($processState.processIds) -join ', ')"
@@ -4461,12 +4654,18 @@ function Test-DesignerInvocationReleased {
         ""
     }
 
+    Update-DesignerInvocationLiveness `
+        -ProbeState $ProbeState `
+        -ProcessState $processState `
+        -ProbeContext $ProbeContext `
+        -LogPath $LogPath `
+        -WaitingDetail $waitingDetail | Out-Null
+
+    if (-not $launcherExited) {
+        return $false
+    }
+
     if ($waitingDetail) {
-        if (-not $ProbeState.stagePublished) {
-            $ProbeState.stagePublished = $true
-            $stage = $(if ([string]$script:RunStage -like "config-load.*") { "config-load.designer-wait" } else { "designer.wait" })
-            Set-RunStage -Stage $stage -Detail "Designer launcher exited; waiting for $OperationKind to release its processes and infobase."
-        }
         if ($elapsed -eq 0 -or ($elapsed % 10 -eq 0 -and $elapsed -ne $ProbeState.lastDiagnosticSecond)) {
             $ProbeState.lastDiagnosticSecond = $elapsed
             Write-Host "Designer PID $($ProbeContext.processId) launcher exited; $OperationKind is not released yet (${elapsed}s): $waitingDetail."
@@ -4475,6 +4674,49 @@ function Test-DesignerInvocationReleased {
     }
 
     return $true
+}
+
+function Stop-DesignerInvocationOwnedProcesses {
+    param(
+        [Parameter(Mandatory = $true)][object]$ProbeState,
+        [string]$LogPath
+    )
+
+    $state = Get-DesignerInvocationProcessState -ProbeState $ProbeState -LogPath $LogPath
+    if (-not $state.querySucceeded) {
+        return [pscustomobject]@{
+            attempted = $false
+            confirmed = $false
+            processIds = @()
+            error = "Could not enumerate owned Designer processes: $($state.detail)"
+        }
+    }
+
+    $errors = [System.Collections.Generic.List[string]]::new()
+    $attempted = $false
+    $confirmed = $true
+    foreach ($processId in @($state.processIds)) {
+        $attempted = $true
+        try {
+            $ownedProcess = Get-Process -Id ([int]$processId) -ErrorAction Stop
+            $termination = Stop-NativeProcessForSafety -Process $ownedProcess
+            if (-not [bool]$termination.confirmed) {
+                $confirmed = $false
+            }
+            if ($termination.error) {
+                $errors.Add("PID ${processId}: $($termination.error)") | Out-Null
+            }
+        } catch {
+            $confirmed = $false
+            $errors.Add("PID ${processId}: $($_.Exception.Message)") | Out-Null
+        }
+    }
+    return [pscustomobject]@{
+        attempted = $attempted
+        confirmed = $confirmed
+        processIds = @($state.processIds)
+        error = ($errors -join " ")
+    }
 }
 
 function Stop-NativeProcessForSafety {
@@ -4566,7 +4808,8 @@ function Invoke-NativeProcessAndWaitResult {
     $terminationConfirmed = $true
     $terminationError = ""
     if ($TimeoutSeconds -gt 0 -or $MaxWorkingSetMb -gt 0 -or $null -ne $CompletionProbe) {
-        $deadline = if ($TimeoutSeconds -gt 0) { [DateTime]::UtcNow.AddSeconds($TimeoutSeconds) } else { [DateTime]::MaxValue }
+        $monitorStartedAtUtc = [DateTime]::UtcNow
+        $deadline = if ($TimeoutSeconds -gt 0) { $monitorStartedAtUtc.AddSeconds($TimeoutSeconds) } else { [DateTime]::MaxValue }
         $postExitProbeDeadlineUtc = $null
         $probeObservedAt = $null
         $finished = $false
@@ -4629,10 +4872,19 @@ function Invoke-NativeProcessAndWaitResult {
             if ($null -ne $CompletionProbe) {
                 $probeComplete = $false
                 try {
+                    $probeObservedAtUtc = [DateTime]::UtcNow
                     $probeContext = [pscustomobject]@{
                         launcherExited = $launcherExited
                         launcherExitCode = $launcherExitCode
                         processId = $process.Id
+                        observedAtUtc = $probeObservedAtUtc
+                        elapsedSeconds = [int][Math]::Floor(($probeObservedAtUtc - $monitorStartedAtUtc).TotalSeconds)
+                        timeoutSeconds = $TimeoutSeconds
+                        timeoutRemainingSeconds = $(if ($TimeoutSeconds -gt 0) {
+                            [int][Math]::Max(0, [Math]::Ceiling(($deadline - $probeObservedAtUtc).TotalSeconds))
+                        } else {
+                            0
+                        })
                         launcherExitedAtUtc = $launcherExitedAtUtc
                         postExitProbeDeadlineUtc = $postExitProbeDeadlineUtc
                         postExitElapsedSeconds = $(
@@ -5021,10 +5273,27 @@ function Invoke-Designer {
 
     $maxWorkingSetMb = Get-DesignerMaxWorkingSetMb
     $postExitProbeSeconds = $completionTimeoutSeconds
+    $timeoutCleanupState = [pscustomobject]@{
+        attempted = $false
+        confirmed = $true
+        processIds = @()
+        error = ""
+    }
+    $timeoutCleanup = {
+        if ($null -eq $invocationProbeState) {
+            return
+        }
+        $cleanup = Stop-DesignerInvocationOwnedProcesses -ProbeState $invocationProbeState -LogPath $logPath
+        $timeoutCleanupState.attempted = [bool]$cleanup.attempted
+        $timeoutCleanupState.confirmed = [bool]$cleanup.confirmed
+        $timeoutCleanupState.processIds = @($cleanup.processIds)
+        $timeoutCleanupState.error = [string]$cleanup.error
+    }
     $result = Invoke-NativeProcessAndWaitResult `
         -FilePath $platformPath `
         -Arguments $args `
         -TimeoutSeconds $completionTimeoutSeconds `
+        -OnTimeout $timeoutCleanup `
         -CompletionProbe $completionProbe `
         -CompletionGraceSeconds $completionGraceSeconds `
         -PostExitProbeSeconds $postExitProbeSeconds `
@@ -5039,7 +5308,9 @@ function Invoke-Designer {
     }
     if ($result.timedOut) {
         $targetDetail = if ($operationTarget) { " target='$operationTarget'" } else { "" }
-        throw "DESIGNER_OPERATION_TIMEOUT operation=$operationKind timeoutSeconds=$completionTimeoutSeconds pid=$($result.processId) log=$logPath$targetDetail"
+        $livenessDetail = " liveness=$($script:RunLiveness) noProgressSeconds=$($script:RunNoProgressSeconds) timeoutRemainingSeconds=$($script:RunTimeoutRemainingSeconds)"
+        $cleanupError = if ($timeoutCleanupState.error) { " cleanupError='$(([string]$timeoutCleanupState.error) -replace '[\r\n]+', ' ')'" } else { "" }
+        throw "DESIGNER_OPERATION_TIMEOUT operation=$operationKind timeoutSeconds=$completionTimeoutSeconds pid=$($result.processId) log=$logPath$targetDetail$livenessDetail ownedCleanupAttempted=$($timeoutCleanupState.attempted) ownedCleanupConfirmed=$($timeoutCleanupState.confirmed) ownedProcessIds=$(@($timeoutCleanupState.processIds) -join ',')$cleanupError"
     }
     if ([bool](Get-StateValue -State $result -Name "postExitProbeTimedOut" -Default $false)) {
         throw "DESIGNER_POST_EXIT_PROBE_TIMEOUT operation=$operationKind timeoutSeconds=$postExitProbeSeconds pid=$($result.processId) log=$logPath"

@@ -265,6 +265,13 @@ $script:LastProcessTimedOut = $false
 $script:LastProcessMemoryLimitExceeded = $false
 $script:LastProcessPeakWorkingSetMb = 0
 $script:LastProcessWorkingSetLimitMb = 0
+$script:RunLiveness = ""
+$script:RunNoProgressSeconds = 0
+$script:RunTimeoutRemainingSeconds = 0
+$script:RunOwnedProcessIds = @()
+$script:RunCpuDeltaMilliseconds = 0
+$script:RunWorkingSetMb = 0
+$script:RunLogGrowthBytes = [int64]0
 $script:RunStage = ""
 $script:RunStageDetail = ""
 $script:RunStartedAt = Get-Date
@@ -444,6 +451,10 @@ try {
     } catch {
         [Console]::Error.WriteLine("Failed to write run status: $($_.Exception.Message)")
     }
+    $failureCategory = $(if ($script:RunErrorCategory) { [string]$script:RunErrorCategory } else { "runner" })
+    $requiredAction = $(if ($script:RunRequiredAction) { [string]$script:RunRequiredAction } else { "none" })
+    $completionState = $(if ($script:RunRequiredAction) { "pending-verification" } else { "failed" })
+    [Console]::Error.WriteLine("ITL failure: status=failed; errorCategory=$failureCategory; requiredAction=$requiredAction; completion=$completionState.")
     [Console]::Error.WriteLine($errorMessage)
     if ($PauseOnFailure) {
         Write-Host ""

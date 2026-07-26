@@ -95,6 +95,7 @@ function Find-LauncherRunDirectory {
 
 $allowedActions = @(
     "new-dev-branch", "new-extension-dev-branch", "adopt-dev-worktree", "close-dev-branch", "check-dev-branch",
+    "init-dev-branch-extension", "update-dev-branch-base", "verify-dev-branch",
     "refresh-dev-branch", "export-dev-branch-result", "update-workflow",
     "itl-switch-client"
 )
@@ -173,7 +174,10 @@ if ($windowed) {
             $lastProgressAt = [DateTime]::UtcNow
             $elapsed = [int][Math]::Floor(((Get-Date) - $startedAt).TotalSeconds)
             $detail = Limit-Text -Value (Get-ObjectValue -Object $currentStatus -Name "stageDetail" -Default "") -Length 300
-            [Console]::Error.WriteLine("ITL progress: stage=$currentStage; elapsed=${elapsed}s; detail=$detail")
+            $liveness = [string](Get-ObjectValue -Object $currentStatus -Name "liveness" -Default "")
+            $noProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0)
+            $timeoutRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "timeoutRemainingSeconds" -Default 0)
+            [Console]::Error.WriteLine("ITL progress: stage=$currentStage; elapsed=${elapsed}s; liveness=$liveness; noProgress=${noProgressSeconds}s; timeoutRemaining=${timeoutRemainingSeconds}s; detail=$detail")
         }
         $helperProcess.WaitForExit(500) | Out-Null
     }
@@ -273,6 +277,13 @@ $summary = [ordered]@{
     worktreePath = $worktreePath
     extensionInitializationStatus = $extensionInitializationStatus
     userReport = $userReport
+    liveness = [string](Get-ObjectValue -Object $status -Name "liveness" -Default "")
+    noProgressSeconds = [int](Get-ObjectValue -Object $status -Name "noProgressSeconds" -Default 0)
+    timeoutRemainingSeconds = [int](Get-ObjectValue -Object $status -Name "timeoutRemainingSeconds" -Default 0)
+    ownedProcessIds = @((Get-ObjectValue -Object $status -Name "ownedProcessIds" -Default @()))
+    cpuDeltaMilliseconds = [int](Get-ObjectValue -Object $status -Name "cpuDeltaMilliseconds" -Default 0)
+    workingSetMb = [int](Get-ObjectValue -Object $status -Name "workingSetMb" -Default 0)
+    logGrowthBytes = [int64](Get-ObjectValue -Object $status -Name "logGrowthBytes" -Default 0)
     logPath = $logPath
     statusPath = $statusPath
 }

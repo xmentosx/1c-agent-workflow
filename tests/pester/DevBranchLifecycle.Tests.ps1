@@ -2827,7 +2827,7 @@ if (`$?) { exit 0 } else { exit 1 }
         $extensionBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template")
         $fastSkill = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md")
 
-        foreach ($text in @($configBranchTemplate, $extensionBranchTemplate, $fastSkill)) {
+        foreach ($text in @($configBranchTemplate, $extensionBranchTemplate)) {
             $text | Should -Match "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip"
         }
 
@@ -2837,8 +2837,9 @@ if (`$?) { exit 0 } else { exit 1 }
         $extensionBranchTemplate | Should -Match "ExtensionSourcePath"
         $extensionBranchTemplate | Should -Match "Never ask the developer to open a terminal or copy a PowerShell command"
         $extensionBranchTemplate | Should -Match "-OfferOpenAgent"
-        $fastSkill | Should -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action new-dev-branch"))
-        $fastSkill | Should -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action new-extension-dev-branch"))
+        $fastSkill | Should -Match ([regex]::Escape("run-itl-command.ps1 -Windowed -- -Action new-dev-branch"))
+        $fastSkill | Should -Match ([regex]::Escape("run-itl-command.ps1 -Windowed -- -Action new-extension-dev-branch"))
+        $fastSkill | Should -Not -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action"))
     }
 
     It "keeps interactive Designer confirmation launch visible" {
