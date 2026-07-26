@@ -21,7 +21,7 @@ For every initialization, clone `master` into a newly created unique empty tempo
 
 ## Supported Agents
 
-This package supports Codex, Kilo Code, Claude Code, Cursor, OpenCode, Kimi Code, Qwen Code, Command Code, Cline, and Pi, with exactly one active client per project. The initialization wizard requires that choice; `other` and multi-client installs are not supported.
+This package supports Codex, Kilo Code, Claude Code, Cursor, OpenCode, Kimi Code, Qwen Code, Command Code, Cline, and Pi, with exactly one active client per project. The initialization wizard lists Kilo Code first as the recommended option and selects it when the answer is left blank; `other` and multi-client installs are not supported.
 
 - Common workflow skill: `.agents/skills/1c-workflow`.
 - Fast routine workflow skill: `.agents/skills/1c-workflow-fast`.
@@ -104,7 +104,7 @@ Required for initial project setup:
 
 - Current working directory is the project root. Do not ask the developer to confirm initialization in chat before starting the monitored wizard; the wizard owns interactive setup questions and visible confirmations. Print the absolute path only as execution context when useful.
 - The absolute initial project-root path must be at most 35 characters. The bootstrap and helper stop before initialization when it is longer and explain that this reserves space below Windows `MAX_PATH=260` for long 1C configuration and extension source names. Only when the requested project is under the current user's profile, recommend the exact `<user-profile>\W` parent and report the project-folder name length available there; for example, under `C:\Users\e.ermakov\W` the project folder may use up to 14 characters.
-- Current agent target. Require one explicit choice: `codex`, `kilocode`, `claude-code`, `cursor`, `opencode`, `kimi`, `qwen`, `command-code`, `cline`, or `pi`. The running surface may be offered as the recommended choice but must not be silently inferred. JSON/configured init must provide `agentTarget` or an exact-one `aiRules.tools` value.
+- Current agent target. Offer `kilocode` first and mark it recommended; an empty interactive answer selects `kilocode`. The developer can explicitly choose `codex`, `kilocode`, `claude-code`, `cursor`, `opencode`, `kimi`, `qwen`, `command-code`, `cline`, or `pi`. JSON/configured init must still provide `agentTarget` or an exact-one `aiRules.tools` value.
 - Directory for development branch infobase copies: do not ask during normal initialization. Use `.agent-1c/infobases/dev-branches` inside the active branch worktree and ensure `.agent-1c/infobases/` is ignored by Git. Ask only if the developer explicitly wants a custom location.
 - Directory for development branch Git worktrees: do not ask during normal initialization. By default, create each worktree next to the main project as `<project-folder>-<safe-branch>`, without an intermediate worktrees directory. `DEV_BRANCH_WORKTREE_ROOT` or `devBranchWorktreeRoot` overrides only the parent directory; the worktree leaf remains `<project-folder>-<safe-branch>`. A newly created worktree's absolute path must be at most 50 characters. If `<parent>\<project-folder>-<safe-branch>` exceeds that fixed limit, stop before creation and report the maximum safe-branch length calculated from the current parent and project-folder names; do not derive this limit from the current source tree.
 - Development branch infobase copies must be registered automatically in the user's 1C launcher list `%APPDATA%\1C\1CEStart\ibases.v8i` under `/ITL/<project-root-name>`, with the launcher entry name equal to `<project-root-name>-<safe-branch>`. Write that file as UTF-8 with BOM and create a timestamped backup before changing it.
@@ -307,7 +307,7 @@ After the first source infobase sync and configuration dump, let the ITL helper 
 
 For normal initialization, use only the monitored root bootstrap. For an already initialized project, use `update-ai-rules` below. Direct installer invocation is a non-standard recovery path for an explicitly configured custom repository; select and verify an immutable ref/commit first instead of following remote HEAD.
 
-The workflow installs exactly one client from `aiRules.tools`. The wizard choice is mandatory. Legacy `["codex","kilocode"]` migrates to `["kilocode"]`; other multi-client combinations stop for an explicit choice. Switch later only from clean `master` with `/itl-switch-client <client>`; it snapshots state, removes hash-matching managed assets, clears incompatible `SUBAGENT_MODEL_*`, installs the pinned adapter, and leaves other worktrees and RTK integration unchanged.
+The workflow installs exactly one client from `aiRules.tools`. The interactive wizard defaults a blank answer to the first recommended option, Kilo Code; configured/JSON init requires an exact client. Legacy `["codex","kilocode"]` migrates to `["kilocode"]`; other multi-client combinations stop for an explicit choice. Switch later only from clean `master` with `/itl-switch-client <client>`; it snapshots state, removes hash-matching managed assets, clears incompatible `SUBAGENT_MODEL_*`, installs the pinned adapter, and leaves other worktrees and RTK integration unchanged.
 
 For an explicit configured-source compatibility check in the workflow repository, run:
 

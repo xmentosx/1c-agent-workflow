@@ -178,4 +178,36 @@ Describe "Vanessa test development and verification" {
             @($status.PSObject.Properties.Name) | Should -Not -Contain 'authoringStatePath'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
+
+    It "prints an explicit failed completion route for a legacy direct helper call" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-verification-direct-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1,"baseConfigurationVersion":"PM5","masterBranch":"master","testsPath":"missing/features"}'
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "tests@example.invalid"
+            & git -C $tempRoot config user.name "ITL Tests"
+            & git -C $tempRoot commit --allow-empty -m baseline *> $null
+            & git -C $tempRoot switch -q -c itldev/demo
+            $state = [ordered]@{ devBranchName='demo'; safeDevBranchName='demo'; devBranch='itldev/demo'; devBranchKind='configuration'; worktreePath=$tempRoot; devBranchInfoBasePath=(Join-Path $tempRoot '.agent-1c\infobases\demo') }
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dev-branches\demo.json") -Encoding UTF8 -Value ($state | ConvertTo-Json)
+            $processInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $processInfo.FileName = (Get-Command powershell).Source
+            $processInfo.UseShellExecute = $false
+            $processInfo.CreateNoWindow = $true
+            $processInfo.RedirectStandardOutput = $true
+            $processInfo.RedirectStandardError = $true
+            $processInfo.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$HelperPath`" -ProjectRoot `"$tempRoot`" -Action check-dev-branch"
+            $process = [System.Diagnostics.Process]::Start($processInfo)
+            $null = $process.StandardOutput.ReadToEnd()
+            $stderr = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+
+            $process.ExitCode | Should -Be 1
+            $stderr | Should -Match "ITL failure: status=failed"
+            $stderr | Should -Match "errorCategory=missing-suite"
+            $stderr | Should -Match "requiredAction=/itl-verify-fix"
+            $stderr | Should -Match "completion=pending-verification"
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
 }

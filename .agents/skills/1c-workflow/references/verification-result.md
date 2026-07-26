@@ -10,6 +10,8 @@ Use `/itl-check` or helper action `check-dev-branch` for the only post-change ex
 
 The compact result exposes `errorCategory` and `requiredAction`. Categories are `missing-suite`, `unsupported-step`, `scenario-context`, `product-assertion`, `runner`, and `event-log`. They are routing hints, not automatic proof that the test or product is wrong. Follow the structured action; read the last 80 log lines only for an unclassified runner failure.
 
+Long Designer work publishes a 30-second stderr heartbeat plus structured status evidence: current stage, elapsed time, liveness, seconds without CPU/log/process progress, timeout remaining, exact owned PIDs, CPU/log deltas, and working set. `stalled-suspected` begins after `DESIGNER_STALL_WARNING_SECONDS` (default 300) and is diagnostic only; the independent memory guard and hard operation timeout remain authoritative. Never kill 1C manually from a stale-looking heartbeat. At the hard timeout the helper stops only tracked Designer processes and reports the cleanup evidence.
+
 Do not run a separate base update first. `/deploy-and-test` is a published compatibility bridge to `check-dev-branch`, not an independent loader. Do not replace executable evidence with MCP or a headless EPF. `verify-dev-branch` is the repair-trigger compatibility alias.
 
 ## ITL Modes

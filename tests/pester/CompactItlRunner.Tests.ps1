@@ -43,7 +43,7 @@ exit 0
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $now = Get-Date
-$running = [ordered]@{ schemaVersion=1; status='running'; action=$Action; stage='designer.wait'; stageDetail='Waiting for owned 1C processes and infobase release.'; errorMessage=''; exitCode=$null; lastLogPath='' }
+$running = [ordered]@{ schemaVersion=1; status='running'; action=$Action; stage='designer.wait'; stageDetail='Waiting for owned 1C processes and infobase release.'; errorMessage=''; exitCode=$null; lastLogPath=''; liveness='stalled-suspected'; noProgressSeconds=300; timeoutRemainingSeconds=3300 }
 [IO.File]::WriteAllText($RunStatusPath,(($running | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
 Start-Sleep -Milliseconds 1200
 $done = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport='done' }
@@ -57,8 +57,12 @@ exit 0
             $summary = Get-Content -LiteralPath $stdoutPath -Raw | ConvertFrom-Json
             $summary.status | Should -Be "succeeded"
             $progress = Get-Content -LiteralPath $stderrPath -Raw
-            $progress | Should -Match "ITL progress: stage=designer.wait;"
-            $progress | Should -Match "Waiting for owned 1C processes"
+            $normalizedProgress = $progress -replace "\s+", ""
+            $normalizedProgress | Should -Match "ITLprogress:stage=designer.wait;"
+            $normalizedProgress | Should -Match "liveness=stalled-suspected"
+            $normalizedProgress | Should -Match "noProgress=300s"
+            $normalizedProgress | Should -Match "timeoutRemaining=3300s"
+            $normalizedProgress | Should -Match "Waitingforowned1Cprocesses"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 

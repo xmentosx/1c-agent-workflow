@@ -10,6 +10,7 @@
   "logsPath": "logs/1c",
   "designerMaxWorkingSetMb": 10240,
   "designerOperationTimeoutSeconds": 3600,
+  "designerStallWarningSeconds": 300,
   "designerDumpStabilitySeconds": 5,
   "completionPostExitTimeoutSeconds": 60,
   "platformPath": "",
