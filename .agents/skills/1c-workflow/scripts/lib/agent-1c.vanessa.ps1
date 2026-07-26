@@ -255,7 +255,7 @@ function Expand-VanessaAutomationArchive {
     }
 
     $operationId = [guid]::NewGuid().ToString("N")
-    $extractRoot = Join-Path (Get-VanessaCacheDirectory) ("extract-" + $operationId)
+    $extractRoot = Join-Path (Get-Agent1cTempRoot) ("itl-va-extract-" + $operationId)
     $stageRoot = "$InstallRoot.install-$operationId"
     $rollbackRoot = "$InstallRoot.rollback-$operationId"
     $movedExisting = $false

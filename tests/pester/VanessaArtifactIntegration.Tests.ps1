@@ -58,6 +58,12 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         $implementation | Should -Not -Match "\bExpand-Archive\b"
     }
 
+    It "extracts directly under the shared temp root to preserve the Windows path budget" {
+        $implementation = Get-Content -LiteralPath (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
+        $implementation | Should -Match ([regex]::Escape('$extractRoot = Join-Path (Get-Agent1cTempRoot) ("itl-va-extract-" + $operationId)'))
+        $implementation | Should -Not -Match ([regex]::Escape('$extractRoot = Join-Path (Get-VanessaCacheDirectory)'))
+    }
+
     It "keeps compatibility, downstream revision, artifact provenance, and publication state separate" {
         $entry = (Get-Content -LiteralPath (Join-Path $script:RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaAutomation
         $entry.version | Should -Be "1.2.043.28"
