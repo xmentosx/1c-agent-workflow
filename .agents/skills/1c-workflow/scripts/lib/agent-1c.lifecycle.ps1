@@ -544,6 +544,71 @@ function New-ConfigLoadListFile {
     return $listFilePath
 }
 
+function New-ConfigDumpInfoLoadSnapshot {
+    param([string]$AbsoluteExportPath)
+
+    $dumpInfoPath = Join-Path $AbsoluteExportPath "ConfigDumpInfo.xml"
+    $snapshot = [pscustomobject]@{
+        path = $dumpInfoPath
+        existed = (Test-Path -LiteralPath $dumpInfoPath -PathType Leaf)
+        backupPath = ""
+        preserveBackup = $false
+    }
+    if (-not $snapshot.existed) {
+        return $snapshot
+    }
+
+    $backupPath = New-TimestampedFilePath `
+        -Directory ([System.IO.Path]::GetTempPath()) `
+        -Prefix "itl-config-dump-info-" `
+        -Extension ".xml"
+    Copy-Item -LiteralPath $dumpInfoPath -Destination $backupPath -Force -ErrorAction Stop
+    $snapshot.backupPath = $backupPath
+    return $snapshot
+}
+
+function Restore-ConfigDumpInfoLoadSnapshot {
+    param([object]$Snapshot)
+
+    if (-not $Snapshot) {
+        return
+    }
+
+    if ($Snapshot.existed) {
+        if (-not $Snapshot.backupPath -or -not (Test-Path -LiteralPath $Snapshot.backupPath -PathType Leaf)) {
+            throw "ConfigDumpInfo rollback failed because the snapshot is missing: $($Snapshot.backupPath)"
+        }
+        try {
+            Copy-Item -LiteralPath $Snapshot.backupPath -Destination $Snapshot.path -Force -ErrorAction Stop
+        } catch {
+            $Snapshot.preserveBackup = $true
+            throw "ConfigDumpInfo rollback failed for '$($Snapshot.path)'. Recovery snapshot was preserved at '$($Snapshot.backupPath)': $($_.Exception.Message)"
+        }
+        return
+    }
+
+    if (Test-Path -LiteralPath $Snapshot.path -PathType Leaf) {
+        Remove-Item -LiteralPath $Snapshot.path -Force -ErrorAction Stop
+    }
+}
+
+function Remove-ConfigDumpInfoLoadSnapshot {
+    param([object]$Snapshot)
+
+    if (-not $Snapshot -or -not $Snapshot.backupPath -or -not (Test-Path -LiteralPath $Snapshot.backupPath -PathType Leaf)) {
+        return
+    }
+    if ($Snapshot.preserveBackup) {
+        Write-Warning "ConfigDumpInfo recovery snapshot was retained after a rollback failure: $($Snapshot.backupPath)"
+        return
+    }
+    try {
+        Remove-Item -LiteralPath $Snapshot.backupPath -Force -ErrorAction Stop
+    } catch {
+        Write-Warning "Could not remove the temporary ConfigDumpInfo snapshot '$($Snapshot.backupPath)': $($_.Exception.Message)"
+    }
+}
+
 function Invoke-ConfigLoadWithFallback {
     param(
         [string]$InfoBasePath,
@@ -557,107 +622,119 @@ function Invoke-ConfigLoadWithFallback {
         [string]$Mode = "Auto"
     )
 
-    $baseArgs = @("/LoadConfigFromFiles", $AbsoluteExportPath)
-    if ($ExtensionName) {
-        $baseArgs += @("-Extension", $ExtensionName)
-    }
-
-    if ($Mode -eq "Full") {
-        Write-Host "Full config load requested explicitly. Changed file count: $FileCount"
-        Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
-            -DesignerArgs ($baseArgs + @("-Format", "Hierarchical", "/UpdateDBCfg")) | Out-Null
-        return [pscustomobject]@{
-            loadModeUsed = "full"
-            partialLogPath = ""
-            fullFallbackLogPath = $script:LastLogPath
-            lastLogPath = $script:LastLogPath
-            configLoadStatus = "passed"
-            partialError = ""
-            fullFallbackError = ""
-        }
-    }
-
-    Write-Host "Partial config load file count: $FileCount"
-    Write-Host "Partial config load list: $ListFilePath"
-    $partialArgs = $baseArgs + @("-listFile", $ListFilePath, "-Format", "Hierarchical", "/UpdateDBCfg")
-    $script:LastNativeProcessStarted = $false
+    $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath $AbsoluteExportPath
     try {
-        Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -DesignerArgs $partialArgs | Out-Null
-        return [pscustomobject]@{
-            loadModeUsed = "partial"
-            partialLogPath = $script:LastLogPath
-            fullFallbackLogPath = ""
-            lastLogPath = $script:LastLogPath
-            configLoadStatus = "passed"
-            partialError = ""
-            fullFallbackError = ""
-        }
-    } catch {
-        $partialException = $_
-        $partialLogPath = $script:LastLogPath
-        $partialMessage = $partialException.Exception.Message
-        $memoryGuardCode = ""
-        if ($partialMessage -match '^(DESIGNER_MEMORY_LIMIT_EXCEEDED|DESIGNER_MEMORY_MONITOR_FAILED)\b') {
-            $memoryGuardCode = $Matches[1]
-        }
-        if ($memoryGuardCode) {
-            $configLoadStatus = if ($memoryGuardCode -eq "DESIGNER_MEMORY_LIMIT_EXCEEDED") { "memory-limit-exceeded" } else { "memory-monitor-failed" }
-            if ($State) {
-                Update-DevBranchState -State $State -Updates @{
-                    configLoadStatus = $configLoadStatus
-                    lastConfigLoadMode = "partial"
-                    lastConfigPartialLogPath = $partialLogPath
-                    lastConfigFullFallbackLogPath = ""
-                    lastConfigPartialError = $partialMessage
-                    lastConfigFullFallbackError = ""
-                    lastDesignerMemoryLimitExceeded = ($memoryGuardCode -eq "DESIGNER_MEMORY_LIMIT_EXCEEDED")
-                    lastDesignerPeakWorkingSetMb = [int]$script:LastProcessPeakWorkingSetMb
-                    lastDesignerWorkingSetLimitMb = [int]$script:LastProcessWorkingSetLimitMb
-                    lastDesignerMemoryGuardError = $partialMessage
-                    lastDesignerMemoryGuardFailedAt = (Get-Date).ToString("o")
-                    lastLogPath = $partialLogPath
-                }
-            }
-            $contentLabel = if ($ExtensionName) { "extension" } else { "configuration" }
-            Set-RunStage -Stage "config-load.$configLoadStatus" -Detail "$memoryGuardCode stopped the partial $contentLabel load; full fallback is suppressed."
-            Write-Warning "$memoryGuardCode stopped Designer. Full-load fallback is suppressed to avoid submitting the same source files to another process."
-            Write-Warning "Inspect the input XML/source files. Because no infobase snapshot is available, recreate the branch infobase if its state is uncertain. Log: $partialLogPath"
-            throw
-        }
-        if ($Mode -eq "Partial" -or -not $script:LastNativeProcessStarted) {
-            throw
+        $baseArgs = @("/LoadConfigFromFiles", $AbsoluteExportPath)
+        if ($ExtensionName) {
+            $baseArgs += @("-Extension", $ExtensionName)
         }
 
-        Write-Warning "Partial config load failed after Designer received -listFile. Running one full-load fallback in the same branch infobase. No infobase snapshot is available."
-        Write-Warning "Partial load log: $partialLogPath"
-        try {
-            Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
-                -DesignerArgs ($baseArgs + @("-Format", "Hierarchical", "/UpdateDBCfg")) | Out-Null
+        if ($Mode -eq "Full") {
+            Write-Host "Full config load requested explicitly. Changed file count: $FileCount"
+            try {
+                Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+                    -DesignerArgs ($baseArgs + @("-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")) | Out-Null
+            } catch {
+                Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
+                throw
+            }
             return [pscustomobject]@{
-                loadModeUsed = "full-fallback"
-                partialLogPath = $partialLogPath
+                loadModeUsed = "full"
+                partialLogPath = ""
                 fullFallbackLogPath = $script:LastLogPath
                 lastLogPath = $script:LastLogPath
-                configLoadStatus = "fallback-succeeded"
-                partialError = $partialException.Exception.Message
+                configLoadStatus = "passed"
+                partialError = ""
+                fullFallbackError = ""
+            }
+        }
+
+        Write-Host "Partial config load file count: $FileCount"
+        Write-Host "Partial config load list: $ListFilePath"
+        $partialArgs = $baseArgs + @("-listFile", $ListFilePath, "-partial", "-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")
+        $script:LastNativeProcessStarted = $false
+        try {
+            Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -DesignerArgs $partialArgs | Out-Null
+            return [pscustomobject]@{
+                loadModeUsed = "partial"
+                partialLogPath = $script:LastLogPath
+                fullFallbackLogPath = ""
+                lastLogPath = $script:LastLogPath
+                configLoadStatus = "passed"
+                partialError = ""
                 fullFallbackError = ""
             }
         } catch {
-            $fullException = $_
-            $fullLogPath = $script:LastLogPath
-            if ($State) {
-                Update-DevBranchState -State $State -Updates @{
-                    configLoadStatus = "fallback-failed"
-                    lastConfigLoadMode = "full-fallback"
-                    lastConfigPartialLogPath = $partialLogPath
-                    lastConfigFullFallbackLogPath = $fullLogPath
-                    lastConfigPartialError = $partialException.Exception.Message
-                    lastConfigFullFallbackError = $fullException.Exception.Message
-                    lastLogPath = $fullLogPath
-                }
+            $partialException = $_
+            $partialLogPath = $script:LastLogPath
+            $partialMessage = $partialException.Exception.Message
+            Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
+            $memoryGuardCode = ""
+            if ($partialMessage -match '^(DESIGNER_MEMORY_LIMIT_EXCEEDED|DESIGNER_MEMORY_MONITOR_FAILED)\b') {
+                $memoryGuardCode = $Matches[1]
             }
-            throw "Partial and full fallback config loads both failed. Partial: $($partialException.Exception.Message) (log: $partialLogPath). Full fallback: $($fullException.Exception.Message) (log: $fullLogPath). The branch infobase may be in an intermediate state; the safe recovery is to recreate its copy."
+            if ($memoryGuardCode) {
+                $configLoadStatus = if ($memoryGuardCode -eq "DESIGNER_MEMORY_LIMIT_EXCEEDED") { "memory-limit-exceeded" } else { "memory-monitor-failed" }
+                if ($State) {
+                    Update-DevBranchState -State $State -Updates @{
+                        configLoadStatus = $configLoadStatus
+                        lastConfigLoadMode = "partial"
+                        lastConfigPartialLogPath = $partialLogPath
+                        lastConfigFullFallbackLogPath = ""
+                        lastConfigPartialError = $partialMessage
+                        lastConfigFullFallbackError = ""
+                        lastDesignerMemoryLimitExceeded = ($memoryGuardCode -eq "DESIGNER_MEMORY_LIMIT_EXCEEDED")
+                        lastDesignerPeakWorkingSetMb = [int]$script:LastProcessPeakWorkingSetMb
+                        lastDesignerWorkingSetLimitMb = [int]$script:LastProcessWorkingSetLimitMb
+                        lastDesignerMemoryGuardError = $partialMessage
+                        lastDesignerMemoryGuardFailedAt = (Get-Date).ToString("o")
+                        lastLogPath = $partialLogPath
+                    }
+                }
+                $contentLabel = if ($ExtensionName) { "extension" } else { "configuration" }
+                Set-RunStage -Stage "config-load.$configLoadStatus" -Detail "$memoryGuardCode stopped the partial $contentLabel load; full fallback is suppressed."
+                Write-Warning "$memoryGuardCode stopped Designer. Full-load fallback is suppressed to avoid submitting the same source files to another process."
+                Write-Warning "Inspect the input XML/source files. Because no infobase snapshot is available, recreate the branch infobase if its state is uncertain. Log: $partialLogPath"
+                throw
+            }
+            if ($Mode -eq "Partial" -or -not $script:LastNativeProcessStarted) {
+                throw
+            }
+
+            Write-Warning "Partial config load failed after Designer received -listFile. Running one full-load fallback in the same branch infobase. No infobase snapshot is available."
+            Write-Warning "Partial load log: $partialLogPath"
+            try {
+                Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+                    -DesignerArgs ($baseArgs + @("-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")) | Out-Null
+                return [pscustomobject]@{
+                    loadModeUsed = "full-fallback"
+                    partialLogPath = $partialLogPath
+                    fullFallbackLogPath = $script:LastLogPath
+                    lastLogPath = $script:LastLogPath
+                    configLoadStatus = "fallback-succeeded"
+                    partialError = $partialException.Exception.Message
+                    fullFallbackError = ""
+                }
+            } catch {
+                $fullException = $_
+                $fullLogPath = $script:LastLogPath
+                Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
+                if ($State) {
+                    Update-DevBranchState -State $State -Updates @{
+                        configLoadStatus = "fallback-failed"
+                        lastConfigLoadMode = "full-fallback"
+                        lastConfigPartialLogPath = $partialLogPath
+                        lastConfigFullFallbackLogPath = $fullLogPath
+                        lastConfigPartialError = $partialException.Exception.Message
+                        lastConfigFullFallbackError = $fullException.Exception.Message
+                        lastLogPath = $fullLogPath
+                    }
+                }
+                throw "Partial and full fallback config loads both failed. Partial: $($partialException.Exception.Message) (log: $partialLogPath). Full fallback: $($fullException.Exception.Message) (log: $fullLogPath). The branch infobase may be in an intermediate state; the safe recovery is to recreate its copy."
+            }
         }
+    } finally {
+        Remove-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
     }
 }
 
@@ -4958,6 +5035,80 @@ function Sync-Master {
     Sync-KiloItlCommandSurface
 }
 
+function Get-ConfigDumpInfoRepoPathsAtCommit {
+    param([string]$Commit)
+
+    $paths = @()
+    foreach ($path in @(Get-GitOutput @("ls-tree", "-r", "--name-only", $Commit))) {
+        $normalizedPath = ([string]$path).Replace("\", "/").Trim()
+        if ($normalizedPath -and ([System.IO.Path]::GetFileName($normalizedPath) -ieq "ConfigDumpInfo.xml")) {
+            $paths += $normalizedPath
+        }
+    }
+    return @($paths | Sort-Object -Unique)
+}
+
+function Test-GitMergeInProgress {
+    $mergeHeadPath = (Get-GitOutput @("rev-parse", "--git-path", "MERGE_HEAD")).Trim()
+    if (-not [System.IO.Path]::IsPathRooted($mergeHeadPath)) {
+        $mergeHeadPath = Join-Path $script:ProjectRoot $mergeHeadPath
+    }
+    return (Test-Path -LiteralPath $mergeHeadPath -PathType Leaf)
+}
+
+function Restore-BranchConfigDumpInfoFromCommit {
+    param(
+        [string]$Commit,
+        [string[]]$RepoPaths
+    )
+
+    foreach ($repoPath in @($RepoPaths)) {
+        Invoke-Git @("checkout", $Commit, "--", $repoPath)
+        Invoke-Git @("add", "--", $repoPath)
+    }
+}
+
+function Merge-MasterPreservingBranchConfigDumpInfo {
+    param([string]$MasterBranch = (Get-MasterBranch))
+
+    $branchCommit = Get-CurrentCommit
+    $branchDumpInfoPaths = @(Get-ConfigDumpInfoRepoPathsAtCommit -Commit $branchCommit)
+    $mergeException = $null
+    try {
+        Invoke-Git @("merge", "--no-ff", "--no-commit", $MasterBranch)
+    } catch {
+        $mergeException = $_
+    }
+
+    if ($mergeException) {
+        $unmergedPaths = @(
+            Get-GitOutput @("diff", "--name-only", "--diff-filter=U") |
+                ForEach-Object { ([string]$_).Replace("\", "/").Trim() } |
+                Where-Object { $_ }
+        )
+        $dumpInfoConflicts = @($unmergedPaths | Where-Object { $branchDumpInfoPaths -contains $_ })
+        if ($dumpInfoConflicts.Count -eq 0) {
+            throw $mergeException
+        }
+
+        Restore-BranchConfigDumpInfoFromCommit -Commit $branchCommit -RepoPaths $dumpInfoConflicts
+        $remainingConflicts = @(Get-GitOutput @("diff", "--name-only", "--diff-filter=U"))
+        if ($remainingConflicts.Count -gt 0) {
+            throw "Master merge still has non-ConfigDumpInfo conflicts after preserving the branch synchronization cursor: $($remainingConflicts -join ', ')"
+        }
+    }
+
+    if (-not (Test-GitMergeInProgress)) {
+        if ($mergeException) {
+            throw $mergeException
+        }
+        return
+    }
+
+    Restore-BranchConfigDumpInfoFromCommit -Commit $branchCommit -RepoPaths $branchDumpInfoPaths
+    Invoke-Git @("commit", "--no-edit")
+}
+
 function Initialize-DevBranchRuntime {
     param(
         [ValidateSet("configuration", "extension")]
@@ -6291,7 +6442,7 @@ function Refresh-DevBranch {
             Invoke-Git @("checkout", $state.devBranch)
         }
         Set-RunStage -Stage "refresh.merge" -Detail "Merging master into the development branch."
-        Invoke-Git @("merge", (Get-MasterBranch))
+        Merge-MasterPreservingBranchConfigDumpInfo
         Restart-Agent1cAfterDevBranchMerge -Operation "refresh-dev-branch"
     }
 
@@ -7139,7 +7290,7 @@ function Close-DevBranch {
             Invoke-Git @("checkout", $state.devBranch)
         }
         Set-RunStage -Stage "close.merge" -Detail "Merging master into the development branch before close."
-        Invoke-Git @("merge", (Get-MasterBranch))
+        Merge-MasterPreservingBranchConfigDumpInfo
         Restart-Agent1cAfterDevBranchMerge -Operation "close-dev-branch"
     }
 
