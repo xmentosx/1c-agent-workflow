@@ -507,6 +507,8 @@
         $result.args | Should -Contain "/LoadConfigFromFiles"
         $result.args | Should -Contain "-listFile"
         $result.args | Should -Contain "C:\logs\changed-files.txt"
+        $result.args | Should -Contain "-partial"
+        $result.args | Should -Contain "-updateConfigDumpInfo"
         $result.args | Should -Contain "/UpdateDBCfg"
         $result.listFile | Should -Be "C:\logs\changed-files.txt"
     }
@@ -547,6 +549,8 @@
 
         $result | Should -Contain "-listFile"
         $result | Should -Contain "C:\logs\changed-files.txt"
+        $result | Should -Contain "-partial"
+        $result | Should -Contain "-updateConfigDumpInfo"
         $result | Should -Contain "/UpdateDBCfg"
     }
 
@@ -658,7 +662,11 @@
 
         $result.calls.Count | Should -Be 2
         $result.calls[0] | Should -Contain "-listFile"
+        $result.calls[0] | Should -Contain "-partial"
+        $result.calls[0] | Should -Contain "-updateConfigDumpInfo"
         $result.calls[1] | Should -Not -Contain "-listFile"
+        $result.calls[1] | Should -Not -Contain "-partial"
+        $result.calls[1] | Should -Contain "-updateConfigDumpInfo"
         $result.load.loadModeUsed | Should -Be "full-fallback"
         $result.load.configLoadStatus | Should -Be "fallback-succeeded"
         $result.load.partialLogPath | Should -Be "C:\logs\partial.log"
@@ -718,6 +726,8 @@
         }
         $partial.calls.Count | Should -Be 1
         $partial.calls[0] | Should -Contain "-listFile"
+        $partial.calls[0] | Should -Contain "-partial"
+        $partial.calls[0] | Should -Contain "-updateConfigDumpInfo"
 
         $full = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -732,7 +742,102 @@
         }
         $full.calls.Count | Should -Be 1
         $full.calls[0] | Should -Not -Contain "-listFile"
+        $full.calls[0] | Should -Not -Contain "-partial"
+        $full.calls[0] | Should -Contain "-updateConfigDumpInfo"
         $full.load.loadModeUsed | Should -Be "full"
+    }
+
+    It "rolls ConfigDumpInfo back between a failed partial load and its full fallback" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-dump-info-fallback-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $exportPath = Join-Path $tempRoot "src\cf"
+            New-Item -ItemType Directory -Force -Path $exportPath | Out-Null
+            $dumpInfoPath = Join-Path $exportPath "ConfigDumpInfo.xml"
+            Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "original-cursor"
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:DesignerCallCount = 0
+                $script:CursorSeenByFallback = ""
+                function Invoke-Designer {
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                    $script:DesignerCallCount++
+                    $script:LastNativeProcessStarted = $true
+                    if ($script:DesignerCallCount -eq 1) {
+                        Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "partial-cursor"
+                        throw "partial failed"
+                    }
+                    $script:CursorSeenByFallback = (Get-Content -LiteralPath $dumpInfoPath -Raw).Trim()
+                    Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "full-cursor"
+                }
+
+                $load = Invoke-ConfigLoadWithFallback `
+                    -InfoBasePath "C:\base" `
+                    -InfoBaseKind file `
+                    -State ([pscustomobject]@{}) `
+                    -AbsoluteExportPath $exportPath `
+                    -ListFilePath "C:\list.txt" `
+                    -FileCount 1 `
+                    -Mode Auto 3>$null 6>$null
+                [pscustomobject]@{
+                    load = $load
+                    fallbackInputCursor = $script:CursorSeenByFallback
+                    finalCursor = (Get-Content -LiteralPath $dumpInfoPath -Raw).Trim()
+                }
+            }
+
+            $result.load.loadModeUsed | Should -Be "full-fallback"
+            $result.fallbackInputCursor | Should -Be "original-cursor"
+            $result.finalCursor | Should -Be "full-cursor"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "restores ConfigDumpInfo when both partial and full fallback loads fail" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-dump-info-failed-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $exportPath = Join-Path $tempRoot "src\cf"
+            New-Item -ItemType Directory -Force -Path $exportPath | Out-Null
+            $dumpInfoPath = Join-Path $exportPath "ConfigDumpInfo.xml"
+            Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "original-cursor"
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:DesignerCallCount = 0
+                function Invoke-Designer {
+                    $script:DesignerCallCount++
+                    $script:LastNativeProcessStarted = $true
+                    Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "failed-cursor-$script:DesignerCallCount"
+                    throw "load failed $script:DesignerCallCount"
+                }
+
+                $message = ""
+                try {
+                    Invoke-ConfigLoadWithFallback `
+                        -InfoBasePath "C:\base" `
+                        -InfoBaseKind file `
+                        -State ([pscustomobject]@{}) `
+                        -AbsoluteExportPath $exportPath `
+                        -ListFilePath "C:\list.txt" `
+                        -FileCount 1 `
+                        -Mode Auto 3>$null 6>$null | Out-Null
+                } catch {
+                    $message = $_.Exception.Message
+                }
+                [pscustomobject]@{
+                    calls = $script:DesignerCallCount
+                    message = $message
+                    finalCursor = (Get-Content -LiteralPath $dumpInfoPath -Raw).Trim()
+                }
+            }
+
+            $result.calls | Should -Be 2
+            $result.message | Should -Match "both failed"
+            $result.finalCursor | Should -Be "original-cursor"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "does not fallback when Designer preparation fails before a process starts and Full does not require a list file" {
@@ -986,7 +1091,7 @@
             $match = [regex]::Match($HelperText, "(?s)function\s+$functionName\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
             $match.Success | Should -Be $true
             $body = $match.Groups["body"].Value
-            $mergeIndex = $body.IndexOf('Invoke-Git @("merge", (Get-MasterBranch))')
+            $mergeIndex = $body.IndexOf("Merge-MasterPreservingBranchConfigDumpInfo")
             $phaseRestartIndex = $body.IndexOf('Restart-Agent1cAfterDevBranchMerge -Operation')
             $loadIndex = $body.IndexOf('Load-ConfigFromFiles')
 
@@ -2885,6 +2990,46 @@ if (`$?) { exit 0 } else { exit 1 }
             if (Test-Path -LiteralPath $customRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $customRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "keeps the branch ConfigDumpInfo cursor when master is merged" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-dump-info-merge-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "base-cursor"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value "<Configuration />"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            & git -C $tempRoot branch -M master
+
+            & git -C $tempRoot checkout -b itldev/test *> $null
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "branch-cursor"
+            Set-Content -LiteralPath (Join-Path $tempRoot "branch.txt") -Encoding UTF8 -Value "branch"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "branch cursor" *> $null
+
+            & git -C $tempRoot checkout master *> $null
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "master-cursor"
+            Set-Content -LiteralPath (Join-Path $tempRoot "master.txt") -Encoding UTF8 -Value "master"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "master cursor" *> $null
+            & git -C $tempRoot checkout itldev/test *> $null
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Merge-MasterPreservingBranchConfigDumpInfo -MasterBranch master
+            }
+
+            (Get-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Raw).Trim() | Should -Be "branch-cursor"
+            Test-Path -LiteralPath (Join-Path $tempRoot "master.txt") -PathType Leaf | Should -BeTrue
+            @((& git -C $tempRoot rev-list --parents -n 1 HEAD) -split "\s+").Count | Should -Be 3
+            ((& git -C $tempRoot status --porcelain) -join "") | Should -BeNullOrEmpty
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
