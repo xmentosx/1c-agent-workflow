@@ -3857,7 +3857,14 @@ function Get-VanessaMcpArtifactLockEntry {
 function Find-VanessaMcpCachedArtifactPath {
     param([object]$Definition)
 
-    $configured = Resolve-VanessaMcpArtifactPath -Value (Get-EnvValue -Name ([string]$Definition.pathEnvName) -Default "")
+    $pathEnvName = [string]$Definition.pathEnvName
+    $configuredValue = Get-EnvValue -Name $pathEnvName -Default ""
+    $configured = ""
+    try {
+        $configured = Resolve-VanessaMcpArtifactPath -Value $configuredValue
+    } catch {
+        Write-Warning "ITL_VANESSA_MCP_ARTIFACT_PATH_INVALID: ignoring the invalid cached artifact path from $pathEnvName; artifact resolution will continue from the managed install root."
+    }
     if ($configured -and (Test-Path -LiteralPath $configured -PathType Leaf -ErrorAction SilentlyContinue)) {
         return $configured
     }
