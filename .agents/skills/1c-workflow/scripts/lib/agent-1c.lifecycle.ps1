@@ -2966,6 +2966,7 @@ function Update-WorkflowPackage {
         Sync-KiloItlCommandSurface
     } else {
         $migration = Invoke-AiRulesBaselineMigration
+        Assert-AiRulesBaselineMigrationResult -Migration $migration
         if (-not $migration.migrated -and -not $migration.suppressRegularUpdate) {
             Update-AiRules1c
         }
