@@ -35,7 +35,94 @@ function Test-AiRulesManifestPathOwnedByWorkflow {
     return $Path.Replace("\", "/").TrimStart("./") -eq "dev.env"
 }
 
+function Get-AiRulesManifestUserModifiedPaths {
+    $manifestPath = Join-Path $script:ProjectRoot ".ai-rules.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        return @()
+    }
+    $manifest = Read-Utf8Text -Path $manifestPath | ConvertFrom-Json
+    if ($null -eq $manifest.files) {
+        return @()
+    }
+    return @($manifest.files.PSObject.Properties | Where-Object {
+        -not (Test-AiRulesManifestPathOwnedByWorkflow -Path ([string]$_.Name)) -and
+        [bool](Get-ConfigValueFromObject -Object $_.Value -Path "userModified" -Default $false)
+    } | ForEach-Object { [string]$_.Name })
+}
+
 function Test-AiRulesManifestHasUserChanges {
+    return @(Get-AiRulesManifestUserModifiedPaths).Count -gt 0
+}
+
+function Get-AiRulesUtf8Sha256 {
+    param(
+        [string]$Text,
+        [switch]$WithBom
+    )
+
+    $encoding = Get-Utf8Encoding
+    $contentBytes = $encoding.GetBytes($Text)
+    $bytes = $contentBytes
+    if ($WithBom) {
+        $preamble = (Get-Utf8BomEncoding).GetPreamble()
+        $bytes = New-Object byte[] ($preamble.Length + $contentBytes.Length)
+        [Array]::Copy($preamble, 0, $bytes, 0, $preamble.Length)
+        [Array]::Copy($contentBytes, 0, $bytes, $preamble.Length, $contentBytes.Length)
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Test-AiRulesUserRulesContainsOnlyWorkflowOverlayChange {
+    param([object]$ManifestEntry)
+
+    $installedHash = [string](Get-ConfigValueFromObject -Object $ManifestEntry -Path "installedHash" -Default "")
+    if ($installedHash -notmatch '^[0-9a-fA-F]{64}$') {
+        return $false
+    }
+    $path = Join-Path $script:ProjectRoot "USER-RULES.md"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return $false
+    }
+
+    $text = Read-Utf8Text -Path $path
+    $startMarker = "<!-- ITL-WORKFLOW-USER-RULES:START -->"
+    $endMarker = "<!-- ITL-WORKFLOW-USER-RULES:END -->"
+    if ([regex]::Matches($text, [regex]::Escape($startMarker)).Count -ne 1 -or
+        [regex]::Matches($text, [regex]::Escape($endMarker)).Count -ne 1) {
+        return $false
+    }
+    $managedPattern = "(?s)" + [regex]::Escape($startMarker) + ".*?" + [regex]::Escape($endMarker)
+    $managedMatch = [regex]::Match($text, $managedPattern)
+    if (-not $managedMatch.Success) {
+        return $false
+    }
+
+    $before = $text.Substring(0, $managedMatch.Index)
+    $after = $text.Substring($managedMatch.Index + $managedMatch.Length)
+    $beforeWithoutOneNewLine = [regex]::Replace($before, '(?:\r\n|\n|\r)$', '', 1)
+    $afterWithoutOneNewLine = [regex]::Replace($after, '^(?:\r\n|\n|\r)', '', 1)
+    $candidates = @(
+        ($before + $after),
+        ($beforeWithoutOneNewLine + $after),
+        ($before + $afterWithoutOneNewLine),
+        ($beforeWithoutOneNewLine + $afterWithoutOneNewLine)
+    ) | Select-Object -Unique
+    $expected = $installedHash.ToLowerInvariant()
+    foreach ($candidate in $candidates) {
+        if ((Get-AiRulesUtf8Sha256 -Text $candidate) -eq $expected -or
+            (Get-AiRulesUtf8Sha256 -Text $candidate -WithBom) -eq $expected) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Clear-StaleAiRulesUserRulesModifiedIfWorkflowOwned {
     $manifestPath = Join-Path $script:ProjectRoot ".ai-rules.json"
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
         return $false
@@ -44,15 +131,18 @@ function Test-AiRulesManifestHasUserChanges {
     if ($null -eq $manifest.files) {
         return $false
     }
-    foreach ($property in @($manifest.files.PSObject.Properties)) {
-        if (Test-AiRulesManifestPathOwnedByWorkflow -Path ([string]$property.Name)) {
-            continue
-        }
-        if ([bool](Get-ConfigValueFromObject -Object $property.Value -Path "userModified" -Default $false)) {
-            return $true
-        }
+    $candidate = @($manifest.files.PSObject.Properties | Where-Object {
+        (($_.Name -replace '\\', '/').TrimStart('./')) -eq "USER-RULES.md" -and
+        [bool](Get-ConfigValueFromObject -Object $_.Value -Path "userModified" -Default $false)
+    }) | Select-Object -First 1
+    if ($null -eq $candidate -or -not (Test-AiRulesUserRulesContainsOnlyWorkflowOverlayChange -ManifestEntry $candidate.Value)) {
+        return $false
     }
-    return $false
+
+    $candidate.Value | Add-Member -NotePropertyName userModified -NotePropertyValue $false -Force
+    Write-Utf8Text -Path $manifestPath -Value (($manifest | ConvertTo-Json -Depth 30) + [Environment]::NewLine)
+    Write-Host "Cleared stale ai_rules_1c USER-RULES.md userModified marker because the file differs from installedHash only by the ITL-managed overlay."
+    return $true
 }
 
 function Test-AiRulesMcpSnapshotMatchesCurrent {
@@ -216,6 +306,7 @@ function Get-AiRulesMigrationPlan {
         return [pscustomobject]@{ status = "manifest-missing"; eligible = $false; suppressRegularUpdate = $true; reason = "legacy ai_rules_1c manifest is missing"; target = $target }
     }
     Clear-StaleAiRulesMcpUserModifiedIfWorkflowOwned | Out-Null
+    Clear-StaleAiRulesUserRulesModifiedIfWorkflowOwned | Out-Null
     if (Test-AiRulesManifestHasUserChanges) {
         return [pscustomobject]@{ status = "user-modified"; eligible = $false; suppressRegularUpdate = $true; reason = "legacy ai_rules_1c manifest contains userModified files"; target = $target }
     }
@@ -451,12 +542,25 @@ function New-AiRulesMigrationRecoveryReport {
             upstreamCommit = [string]$Plan.target.upstreamCommit
             downstreamRevision = [int]$Plan.target.downstreamRevision
         }
+        userModifiedFiles = $(if ([string]$Plan.status -eq "user-modified") { @(Get-AiRulesManifestUserModifiedPaths) } else { @() })
         recommendedAction = $recommendedAction
     }
     $path = Join-Path $runRoot "recovery-report.json"
     Write-Utf8Text -Path $path -Value (($report | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
     Write-Host "ai_rules_1c recovery report: $path"
     return $path
+}
+
+function Assert-AiRulesBaselineMigrationResult {
+    param([object]$Migration)
+
+    if ([bool]$Migration.migrated -or -not [bool]$Migration.suppressRegularUpdate -or [string]$Migration.status -eq "custom") {
+        return
+    }
+    $recoveryReportPath = [string](Get-ConfigValueFromObject -Object $Migration -Path "recoveryReportPath" -Default "")
+    Set-RunFailureContext -Category "ai-rules-migration-blocked" -RequiredAction "Resolve the ai_rules_1c migration recovery report, then retry /itl-update-workflow."
+    $reportSuffix = if ($recoveryReportPath) { " Recovery report: $recoveryReportPath" } else { "" }
+    throw "ai_rules_1c migration is blocked ($($Migration.status)): $($Migration.reason).$reportSuffix"
 }
 
 function Invoke-AiRulesBaselineMigration {

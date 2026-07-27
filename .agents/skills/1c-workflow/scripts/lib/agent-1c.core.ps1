@@ -295,7 +295,7 @@ function Set-RunUserReport {
 
 function Set-RunFailureContext {
     param(
-        [ValidateSet("", "missing-suite", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log")]
+        [ValidateSet("", "missing-suite", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "ai-rules-migration-blocked")]
         [string]$Category = "",
         [string]$RequiredAction = ""
     )

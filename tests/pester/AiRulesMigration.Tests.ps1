@@ -127,6 +127,73 @@ Describe "ai_rules_1c migration planning" {
         }
     }
 
+    It "clears a USER-RULES marker when the ITL overlay is the only change from installedHash" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-user-rules-overlay-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-AiRulesMigrationFixture -Root $tempRoot `
+                -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" -CurrentRef "itl-main-72665287-r13" `
+                -CurrentCommit "b66569bebf46e0369efa53983fca69368e16d57a" `
+                -CurrentUpstreamCommit "72665287e77361aea3aaf866fef163d98f0fabcd" -CurrentDownstreamRevision 13
+            $userRulesPath = Join-Path $tempRoot "USER-RULES.md"
+            $baseline = "# User Rules`r`n`r`n## Migrated content from a previous setup`r`n`r`n<!-- start of migrated content -->`r`n<!-- end of migrated content -->`r`n"
+            [System.IO.File]::WriteAllText($userRulesPath, $baseline, (New-Object System.Text.UTF8Encoding $false))
+            $installedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $userRulesPath).Hash.ToLowerInvariant()
+            $installedHash | Should -Be "26d9fa88b4972690f0e62d7faa51af3f312a938813139000065aab03fdf7f04d"
+            $overlay = "<!-- ITL-WORKFLOW-USER-RULES:START -->`r`n## 1C Project Lifecycle`r`nManaged by ITL.`r`n<!-- ITL-WORKFLOW-USER-RULES:END -->"
+            [System.IO.File]::AppendAllText($userRulesPath, "`r`n$overlay`r`n", (New-Object System.Text.UTF8Encoding $false))
+
+            $manifestPath = Join-Path $tempRoot ".ai-rules.json"
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $manifest.files | Add-Member -NotePropertyName "USER-RULES.md" -NotePropertyValue ([pscustomobject]@{
+                source = "USER-RULES.md"
+                template = $true
+                installedHash = $installedHash
+                userModified = $true
+            })
+            Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
+
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $plan.status | Should -Be "eligible"
+            $updatedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $updatedManifest.files.'USER-RULES.md'.userModified | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps USER-RULES blocking when content outside the ITL overlay changed" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-user-rules-custom-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-AiRulesMigrationFixture -Root $tempRoot `
+                -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" -CurrentRef "itl-main-72665287-r13" `
+                -CurrentCommit "b66569bebf46e0369efa53983fca69368e16d57a" `
+                -CurrentUpstreamCommit "72665287e77361aea3aaf866fef163d98f0fabcd" -CurrentDownstreamRevision 13
+            $userRulesPath = Join-Path $tempRoot "USER-RULES.md"
+            $baseline = "# User Rules`r`n"
+            [System.IO.File]::WriteAllText($userRulesPath, $baseline, (New-Object System.Text.UTF8Encoding $false))
+            $installedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $userRulesPath).Hash.ToLowerInvariant()
+            $overlay = "<!-- ITL-WORKFLOW-USER-RULES:START -->`r`n## 1C Project Lifecycle`r`nManaged by ITL.`r`n<!-- ITL-WORKFLOW-USER-RULES:END -->"
+            [System.IO.File]::WriteAllText($userRulesPath, ($baseline + "Keep my custom rule.`r`n`r`n" + $overlay + "`r`n"), (New-Object System.Text.UTF8Encoding $false))
+
+            $manifestPath = Join-Path $tempRoot ".ai-rules.json"
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $manifest.files | Add-Member -NotePropertyName "USER-RULES.md" -NotePropertyValue ([pscustomobject]@{
+                source = "USER-RULES.md"
+                template = $true
+                installedHash = $installedHash
+                userModified = $true
+            })
+            Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
+
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $plan.status | Should -Be "user-modified"
+            $updatedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $updatedManifest.files.'USER-RULES.md'.userModified | Should -BeTrue
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "plans a controlled fork r4 to r14 migration by downstream revision and upstream provenance" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-controlled-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -316,6 +383,38 @@ Describe "ai_rules_1c transactional migration" {
             $report.migrationStatus | Should -Be "custom"
             $report.current.repo | Should -Be "https://example.invalid/custom-rules.git"
             $report.target.ref | Should -Be "itl-main-72665287-r14"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "reports blocking files and makes a blocked managed migration fail closed" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-blocked-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-AiRulesMigrationFixture -Root $tempRoot -UserModified $true
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Invoke-AiRulesBaselineMigration
+            }
+            $result.status | Should -Be "user-modified"
+            $report = Get-Content -LiteralPath $result.recoveryReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($report.userModifiedFiles) | Should -Contain ".codex/rules/example.md"
+
+            $assertion = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:RunErrorCategory = ""
+                $script:RunRequiredAction = ""
+                try {
+                    Assert-AiRulesBaselineMigrationResult -Migration $result
+                    [pscustomobject]@{ error = ""; category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+                } catch {
+                    [pscustomobject]@{ error = $_.Exception.Message; category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+                }
+            }
+            $assertion.error | Should -Match "migration is blocked \(user-modified\)"
+            $assertion.error | Should -Match ([regex]::Escape($result.recoveryReportPath))
+            $assertion.category | Should -Be "ai-rules-migration-blocked"
+            $assertion.requiredAction | Should -Match "/itl-update-workflow"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
