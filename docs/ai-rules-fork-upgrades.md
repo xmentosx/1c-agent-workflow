@@ -2,9 +2,9 @@
 
 ## Current qualified release
 
-The workflow is pinned to `itl-main-72665287-r13` at fork commit `b66569bebf46e0369efa53983fca69368e16d57a`. Its exact upstream provenance is `refs/heads/main@72665287e77361aea3aaf866fef163d98f0fabcd`. `templates/dependency-lock.json` is the single source of this tag, commit, upstream provenance, downstream revision `13`, and `compatibilityStatus=passed`; project templates, code, docs, and tests must agree with it.
+The workflow is pinned to `itl-main-72665287-r14` at fork commit `0888fcdaf223abf97cfba7450bf38454926ad384`. Its exact upstream provenance remains the previously audited snapshot `refs/heads/main@72665287e77361aea3aaf866fef163d98f0fabcd`; the newer live upstream tip is intentionally deferred to a separate intake audit. `templates/dependency-lock.json` is the single source of this tag, commit, upstream provenance, downstream revision `14`, and `compatibilityStatus=passed`; project templates, code, docs, and tests must agree with it.
 
-Fork `main` is the clean upstream snapshot. Downstream changes exist only on immutable branch/tag `release/itl-main-72665287-r13` / `itl-main-72665287-r13`, which point to the same qualified commit. Installed projects never consume moving `main`. Older immutable releases remain published only for provenance. `r13` retains the OpenSpec `1.2.0` snapshot and its five upstream-native bundles, and documents natural fallback for the other five clients without downstream bundle generation.
+Fork `main` mirrors upstream and is never consumed by installed projects. Downstream changes exist only on immutable release branches/tags; the current pair is `release/itl-main-72665287-r14` / `itl-main-72665287-r14`, which point to the same release commit. Older immutable releases remain published only for provenance. `r14` preserves the r13 runtime/tool implementation and narrows only the managed-form routing exception: structural edits of an existing `Form.xml` must use `1c-form-edit` whenever supported, while literal corrections and unsupported repairs remain eligible for explained direct XML editing.
 
 ## Intake discipline
 
@@ -22,7 +22,7 @@ Run the fork Full gate, preview publication with `publish-fork-release.ps1 -What
 
 Each project has exactly one of `codex`, `kilocode`, `claude-code`, `cursor`, `opencode`, `kimi`, `qwen`, `command-code`, `cline`, or `pi`. Interactive initialization offers `kilocode` first as the recommended default when the answer is left blank; configured/JSON initialization still requires an exact client value. Legacy `["codex","kilocode"]` normalizes to `["kilocode"]`; every other multi-client set requires an explicit selection. Generic `other` is not supported.
 
-`update-workflow` supports legacy upstream-to-fork and strictly monotonic controlled-fork upgrades, including `r11 -> r13` and `r12 -> r13` for every supported single-client installation. Eligibility requires recorded installed commit/provenance, an immutable `itl-*` ref, no `userModified` managed files, supported client state, and upstream ancestry. A custom repository, missing provenance, tracked-config ambiguity, or modified managed file produces a recovery report instead of mutation.
+`update-workflow` supports legacy upstream-to-fork and strictly monotonic controlled-fork upgrades, including `r11 -> r14`, `r12 -> r14`, and `r13 -> r14` for every supported single-client installation. Eligibility requires recorded installed commit/provenance, an immutable `itl-*` ref, no `userModified` managed files, supported client state, and upstream ancestry. A custom repository, missing provenance, tracked-config ambiguity, or modified managed file produces a recovery report instead of mutation.
 
 OpenSpec remains an upstream-owned dependency. The host reports `native` only when the manifest owns an intact command/SKILL bundle, `natural` when `bundleSkipped` is intentional and the shared workspace/rules are complete, and `unavailable` otherwise. A damaged native bundle never falls back to natural. The external executable is diagnosed separately; the workflow neither installs it nor runs `openspec update`.
 
