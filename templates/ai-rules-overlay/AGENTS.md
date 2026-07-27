@@ -45,7 +45,7 @@ For low-risk ambiguity, choose the codebase-consistent option, state the assumpt
 
 - Verification evidence must be newer than the last relevant edit. Reuse fresh evidence; never claim a check ran when it did not.
 - BSL uses the applicable syntax, logic/review, style, impact, and runtime gates from `verification-gates.md`. Metadata XML uses schema/examples plus `verify_xml`. Embedded BSL requires both chains.
-- For agent-made 1C configuration/extension behavior changes in an installed ITL project, do not report ready/done until relevant Vanessa coverage exists or was updated and one fresh successful `/itl-check` completed after the last change. Vanessa UI MCP is optional development/debugging support and creates no separate pass. The helper owns the current-fingerprint infobase update and final Vanessa execution. A quick-fix validation is not a substitute for this project completion gate.
+- For agent-made 1C configuration/extension behavior changes in an installed ITL project, do not report ready/done until relevant Vanessa coverage exists or was updated and a fresh successful `/itl-check` completed after the last change. The helper owns infobase update and Vanessa execution. A quick-fix validation is not a substitute for this project completion gate.
 - If `USER-RULES.md` defines a post-change or completion command, it is mandatory even when a narrower validator already passed.
 - Load `content/rules/verification-delivery.md` after the hard gates. Report what changed, evidence actually produced, remaining risks, and relevant artifact paths.
 
@@ -67,7 +67,7 @@ Load only the rule matching the current need; do not bulk-read the catalog.
 
 - **BSL/code:** `coding-standards.md` is the index. Use `dev-standards-code-style.md` for writing/review, `module-structure.md` for module creation/restructure, `query-design.md` for non-trivial queries, `locks-and-transactions.md` for transactional paths, and `logging-strategy.md` for logging.
 - **Typical configuration/extensions:** `dev-standards-change-markers.md`, `extension-patterns.md`, and `dev-standards-architecture.md` as applicable.
-- **Metadata:** use the exposed `1c-metadata-manage` skill for structure/create/edit/validate/remove operations. For manual XML outside that skill, load `metadata-xml-workarounds.md`.
+- **Metadata:** use the exposed `1c-metadata-manage` skill for structure/create/edit/validate/remove operations. Adding, removing, moving, nesting, or changing the type of elements in an existing `Form.xml` must use `1c-form-edit` when that operation is supported and is never a manual one-line fix. Direct XML remains limited to literal-value corrections or unsupported repairs; state why the form tool does not apply before editing. For manual XML outside that skill, load `metadata-xml-workarounds.md`.
 - **Forms:** load `forms.md` first, then only `forms-add.md`, `form-patterns.md`, `form-module.md`, or `async-methods.md` as needed.
 - **Architecture/domain:** use `registers-design.md`, `dcs-design.md`, `integrations-add.md`, or `platform-solutions.md` only for matching work.
 - **Debug/review:** load `systematic-debugging.md` for bugs/runtime regressions and `anti-patterns.md` for review/performance investigation.

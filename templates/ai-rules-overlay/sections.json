@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "baselineUpstreamCommit": "72665287e77361aea3aaf866fef163d98f0fabcd",
-  "baselineReleaseCommit": "b66569bebf46e0369efa53983fca69368e16d57a",
+  "baselineReleaseCommit": "0888fcdaf223abf97cfba7450bf38454926ad384",
   "targetPath": "AGENTS.md",
   "maximumTargetCharacters": 20000,
   "downstreamPatch": {
@@ -20,7 +20,7 @@
     },
     {
       "heading": "Process",
-      "sha256": "c609f9af884dcbf78587ceb955d50c0455c0d1cc7f277c293a49b61088df68d8",
+      "sha256": "f19bd0ea2caf400ef1a554add4a6da55b27f0aaab1614c1efc00ec28a579c4aa",
       "disposition": "rewrite",
       "owner": "content/rules/development-process.md"
     },

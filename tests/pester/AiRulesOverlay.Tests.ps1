@@ -87,4 +87,15 @@ Describe "controlled ai_rules_1c release overlay" {
             ((Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json).downstreamPaths | Where-Object state -eq "changed").path | Should -Contain "base.txt"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
+
+    It "routes structural Form.xml edits through the specialized tool" {
+        $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\AGENTS.md") -Raw -Encoding UTF8
+        foreach ($marker in @(
+            'existing `Form.xml` must use `1c-form-edit`',
+            'never a manual one-line fix',
+            'state why the form tool does not apply before editing'
+        )) {
+            $agentsText | Should -Match ([regex]::Escape($marker))
+        }
+    }
 }
