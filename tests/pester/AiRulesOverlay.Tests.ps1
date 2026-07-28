@@ -98,4 +98,18 @@ Describe "controlled ai_rules_1c release overlay" {
             $agentsText | Should -Match ([regex]::Escape($marker))
         }
     }
+
+    It "keeps eligible local BSL fixes on quick-fix without weakening completion" {
+        $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\AGENTS.md") -Raw -Encoding UTF8
+        foreach ($marker in @(
+            'An internal BSL fix that preserves public contracts may remain a quick-fix',
+            'do not promote it solely because it corrects existing behavior',
+            'relevant Vanessa coverage exists or was updated',
+            'a fresh successful `/itl-check` completed after the last change'
+        )) {
+            $agentsText | Should -Match ([regex]::Escape($marker))
+        }
+
+        $agentsText | Should -Not -Match 'public APIs.*changes to existing behavior always promote'
+    }
 }
