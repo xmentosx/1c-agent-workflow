@@ -129,7 +129,7 @@ Goal: refresh the installed ITL workflow package without rerunning initializatio
 3. Resolve the package source from `ITL_WORKFLOW_SOURCE_PATH` or clone/update `ITL_WORKFLOW_REPO` and `ITL_WORKFLOW_REF` (`https://github.com/xmentosx/1c-agent-workflow.git`, `master` by default).
 4. Copy only managed workflow files: `.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, Kilo templates, `docs/itl-workflow/`, `templates/`, `install-agent-1c-workflow.ps1`, and `AGENT-INSTALL.md`. Never copy or overwrite the target project's root `README.md`. Remove obsolete root workflow docs only when their hashes match a known managed version; preserve divergent files with a warning.
 5. Preserve local runtime/project state. Do not overwrite `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, or existing project/tools config.
-6. Record provenance, reapply `USER-RULES.md`, refresh the compatible facade/backend caches, run `update-ai-rules` unless skipped, and leave tracked changes for review. Reload the active client once after a facade install/upgrade.
+6. Record provenance, reapply `USER-RULES.md`, refresh compatible facade/backend caches, and run `update-ai-rules` unless skipped. After all stages succeed, create one allowlisted local `master` commit named `chore: update ITL workflow to <ref>@<short-sha>`; a no-op creates no commit. Verify tracked state is clean and never push. Reload the active client once after a facade install/upgrade.
 7. Do not update active `itldev/*` worktrees automatically; merge/refresh each one so its active-client config receives the stable facades. Backend starts thereafter need no reload.
 
 ## UPDATE_AI_RULES

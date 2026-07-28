@@ -208,8 +208,8 @@
             }
 
             foreach ($client in $adapted.Keys) {
-                $adapted[$client]["itl.md"] | Should -Match "entire final response"
-                $adapted[$client]["itl.md"] | Should -Match 'fenced `text` code block'
+                $adapted[$client]["itl.md"] | Should -Match "весь финальный ответ"
+                $adapted[$client]["itl.md"] | Should -Match 'fenced-блока `text`'
                 $adapted[$client]["itl-status.md"] | Should -Match "structured Russian Markdown report"
                 $adapted[$client]["itl-status.md"] | Should -Match 'one `- Подпись: значение` field per line'
                 $adapted[$client]["itl-status.md"] | Should -Match "Kilo Browser Automation"

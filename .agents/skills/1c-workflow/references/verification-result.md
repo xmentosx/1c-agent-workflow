@@ -49,7 +49,7 @@ Goal: export a CF or CFE artifact from the current development branch.
 3. Apply `verificationPolicy`: default `warn` requires explicit unverified confirmation or `-AllowUnverifiedResult` when verification is missing, failed, stale, or unknown; `block` stops without an override path.
 4. Export CF for configuration branches and CFE for extension branches.
 5. Create `<artifact>.manifest.json` next to the exported artifact.
-6. Report artifact path, manifest path, SHA256, verification status, latest 1C log path, and manual import note.
+6. Normalize the artifact and manifest to absolute paths, publish them as `resultPath` and `resultManifestPath` in run status/compact JSON, include both in `artifacts`, and return a short Russian `userReport` with the full paths. The manifest also retains SHA256, verification status, latest 1C log path, and the manual import note.
 
 The result manifest records artifact SHA256, operation, branch metadata, master/development base commits, whether the source came from a clean commit or the effective working tree, configuration and verification fingerprints, verification status/report/log, latest 1C log path, publication URL, manual import note, and whether an unverified override was used. A development commit in a dirty-tree manifest is the base commit, not a claim that the exported content was committed.
 

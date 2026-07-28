@@ -2,6 +2,23 @@
 
 Настройки проекта находятся в ignored-файле `.dev.env`. Большинство режимов можно переключить slash-командой или обычным запросом агенту. Полный перечень переменных приведен в [справочнике `.dev.env`](DEV-ENV-REFERENCE.ru.md).
 
+## Что использовать обычно
+
+Для большинства задач ничего менять не нужно:
+
+```text
+стандартная разработка
+  ├─ статические проверки: VERIFICATION_DEPTH=full
+  ├─ Vanessa: ITL_VANESSA_TESTING=auto
+  ├─ журнал регистрации: ITL_CHECK_EVENT_LOG=auto
+  ├─ зависимости: DEPENDENCY_MODE=fresh
+  └─ непроверенный результат: VERIFICATION_POLICY=warn
+```
+
+Штатные значения: `VERIFICATION_DEPTH=full`, `UI_TESTING=manual`, `ORCHESTRATION=standard`, `ITL_ROUTINE_MODE=off`, `CAVEMAN=on`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
+
+Меняйте режим только ради понятной цели: уменьшить глубину низкорисковой статической проверки, вручную отключить компонент executable verification, выбрать экономную оркестрацию или запретить непроверенную выгрузку.
+
 ## Kilo Browser Automation и контекст
 
 После инициализации, создания ветки и в `/itl-status` workflow показывает определённое состояние Kilo Browser Automation. Включённый параметр добавляет скрытый Playwright MCP и может расходовать несколько тысяч дополнительных токенов контекста даже без вызова браузера. Включайте его только для задач, которым действительно нужно управление веб-браузером.
@@ -9,8 +26,6 @@
 ITL не включает и не выключает Browser Automation и не создаёт для этого `.vscode/settings.json`. Если состояние нельзя однозначно определить из workspace, пользовательских настроек и default установленного Kilo, выводится `unknown`.
 
 Для воспроизводимого замера попросите агента «замерь контекст». Диагностика умеет сделать один автоматический CLI baseline либо разобрать и сравнить чистые IDE-сессии. Для Browser A/B переключайте настройку вручную, перезагружайте Kilo и создавайте отдельную односообщенческую сессию для каждого состояния.
-
-Штатные значения: `VERIFICATION_DEPTH=full`, `UI_TESTING=manual`, `ORCHESTRATION=standard`, `ITL_ROUTINE_MODE=off`, `CAVEMAN=on`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
 
 ## Краткая карта
 
@@ -28,7 +43,7 @@ ITL не включает и не выключает Browser Automation и не 
 | Зависимости | `DEPENDENCY_MODE` | `fresh`, `locked` | `fresh` | проект |
 | Выгрузка без fresh pass | `VERIFICATION_POLICY` | `warn`, `block` | `warn` | проект |
 
-## Upstream `/litemode`
+## Статические проверки: upstream `/litemode`
 
 `/litemode` управляет `VERIFICATION_DEPTH` — глубиной статических проверок BSL для низкорисковых изменений.
 
@@ -83,7 +98,7 @@ ITL не включает и не выключает Browser Automation и не 
 
 `/caveman lite|full|ultra` меняет только уровень текущей сессии. Фразы `caveman please` и `stop caveman` также действуют только в текущем чате и имеют приоритет над `.dev.env`. Режим влияет на форму ответа, но не на верификацию, модели или обязательные отчеты.
 
-## Process tuning
+## Настройка процесса
 
 - `QUICKFIX_MAX_LINES=40` — максимальный объем затронутых BSL-строк для локального quick-fix. Risk promotion важнее числа строк.
 - `DEBUG_FAST_PATH=standard` — допускает сокращенный путь отладки только при непосредственно доказанной причине. `extended` расширяет применимость, `off` всегда требует полный диагностический цикл.
