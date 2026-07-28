@@ -2162,81 +2162,128 @@ function Get-VanessaVerificationStatus {
     }
 }
 
-function Get-GitObjectIdForHeadPath {
-    param([string]$RepoPath)
+function Get-GitObjectIdForTreePath {
+    param(
+        [string]$Treeish,
+        [string]$RepoPath
+    )
 
     $normalized = ($RepoPath -replace "\\", "/").Trim("/")
     if (-not $normalized) {
         return ""
     }
 
-    & git -C $script:ProjectRoot rev-parse --verify --quiet "HEAD:$normalized" *> $null
+    $treePath = "{0}:{1}" -f $Treeish, $normalized
+    & git -C $script:ProjectRoot rev-parse --verify --quiet $treePath *> $null
     if ($LASTEXITCODE -ne 0) {
         return "<missing>"
     }
 
-    $output = Get-GitOutput @("rev-parse", "HEAD:$normalized")
+    $output = Get-GitOutput @("rev-parse", $treePath)
     if ($output) {
         return ([string]$output).Trim()
     }
     return "<missing>"
 }
 
-function Get-GitDiffDigestForFingerprintPaths {
-    param([string[]]$PathSpec)
-
-    $arguments = @("-c", "core.quotepath=false", "diff", "--binary", "--no-color", "--no-ext-diff", "HEAD", "--") + @($PathSpec)
-    $output = & git -C $script:ProjectRoot @arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not calculate the tracked verification diff."
-    }
-    return (Get-StringSha256 -Value (@($output) -join "`n"))
-}
-
-function Get-UntrackedDigestForFingerprintPaths {
-    param([string[]]$PathSpec)
-
-    $arguments = @("-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard", "--") + @($PathSpec)
-    $paths = @(& git -C $script:ProjectRoot @arguments)
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not enumerate untracked verification files."
-    }
-
-    $parts = @()
-    foreach ($repoPath in @($paths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Sort-Object -Unique)) {
-        $normalized = ([string]$repoPath -replace "\\", "/").TrimStart("/")
-        $fullPath = Resolve-Agent1cFullPath -Path (Join-Path $script:ProjectRoot $normalized)
-        $rootPath = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd([char[]]@('\', '/'))
-        if (-not $fullPath.StartsWith(($rootPath + [System.IO.Path]::DirectorySeparatorChar), [System.StringComparison]::OrdinalIgnoreCase)) {
-            throw "Verification untracked file resolved outside the project root: $normalized"
-        }
-        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf -ErrorAction SilentlyContinue)) {
-            $parts += "$normalized=<missing>"
-            continue
-        }
-        $parts += "$normalized=$((Get-FileHash -Algorithm SHA256 -LiteralPath $fullPath).Hash.ToLowerInvariant())"
-    }
-    return (Get-StringSha256 -Value ($parts -join "|"))
-}
-
-function Get-VerificationFingerprint {
-    $paths = @(
+function Get-VerificationFingerprintScopePaths {
+    return @(
         (Get-ExportPath),
         (Get-ExtensionsPath),
         (Get-VanessaFeaturesPath)
     )
+}
 
-    $parts = @("v2")
+function Get-VerificationWorkingTreeChangePaths {
+    param([string[]]$PathSpec)
+
+    $tracked = @(Get-GitPathList -Arguments (@(
+        "diff",
+        "--name-only",
+        "-z",
+        "--no-renames",
+        "--diff-filter=ACDMRTUXB",
+        "HEAD",
+        "--"
+    ) + @($PathSpec)))
+    $untracked = @(Get-GitPathList -Arguments (@(
+        "ls-files",
+        "-z",
+        "--others",
+        "--exclude-standard",
+        "--"
+    ) + @($PathSpec)))
+
+    $pathSet = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::Ordinal)
+    foreach ($repoPath in @($tracked) + @($untracked)) {
+        if ([string]::IsNullOrWhiteSpace([string]$repoPath)) {
+            continue
+        }
+        $normalized = ([string]$repoPath -replace "\\", "/").TrimStart("/")
+        [void]$pathSet.Add($normalized)
+    }
+
+    [string[]]$sorted = @($pathSet)
+    [System.Array]::Sort($sorted, [System.StringComparer]::Ordinal)
+    return @($sorted)
+}
+
+function New-VerificationEffectiveTree {
+    param([string[]]$ChangedPaths)
+
+    $paths = @($ChangedPaths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    if ($paths.Count -eq 0) {
+        return "HEAD"
+    }
+
+    $tempDirectory = [System.IO.Path]::GetTempPath()
+    $indexPath = New-TimestampedFilePath -Directory $tempDirectory -Prefix "agent-1c-verification-index-" -Extension ".idx"
+    $pathspecPath = New-TimestampedFilePath -Directory $tempDirectory -Prefix "agent-1c-verification-paths-" -Extension ".bin"
+    $hadGitIndexFile = Test-Path Env:GIT_INDEX_FILE
+    $previousGitIndexFile = $env:GIT_INDEX_FILE
+    try {
+        $pathspecText = (@($paths) -join ([string][char]0)) + [char]0
+        [System.IO.File]::WriteAllText($pathspecPath, $pathspecText, (Get-Utf8Encoding))
+
+        $env:GIT_INDEX_FILE = $indexPath
+        Invoke-Git @("read-tree", "HEAD")
+        Invoke-Git @(
+            "--literal-pathspecs",
+            "add",
+            "-A",
+            "--pathspec-from-file=$pathspecPath",
+            "--pathspec-file-nul"
+        )
+        $tree = [string](Get-GitOutput @("write-tree"))
+        if ([string]::IsNullOrWhiteSpace($tree)) {
+            throw "Git did not return an effective verification tree."
+        }
+        return $tree.Trim()
+    } finally {
+        if ($hadGitIndexFile) {
+            $env:GIT_INDEX_FILE = $previousGitIndexFile
+        } else {
+            Remove-Item Env:GIT_INDEX_FILE -ErrorAction SilentlyContinue
+        }
+        foreach ($temporaryPath in @($indexPath, "$indexPath.lock", $pathspecPath)) {
+            if (Test-Path -LiteralPath $temporaryPath -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+function Get-VerificationFingerprint {
+    $paths = @(Get-VerificationFingerprintScopePaths)
+    $changedPaths = @(Get-VerificationWorkingTreeChangePaths -PathSpec $paths)
+    $treeish = New-VerificationEffectiveTree -ChangedPaths $changedPaths
+    $parts = @("v3")
     foreach ($path in $paths) {
         $normalized = ($path -replace "\\", "/").Trim("/")
         if ($normalized) {
-            $parts += "$normalized=$(Get-GitObjectIdForHeadPath -RepoPath $normalized)"
+            $parts += "$normalized=$(Get-GitObjectIdForTreePath -Treeish $treeish -RepoPath $normalized)"
         }
     }
-
-    $parts += "tracked=$(Get-GitDiffDigestForFingerprintPaths -PathSpec $paths)"
-    $parts += "untracked=$(Get-UntrackedDigestForFingerprintPaths -PathSpec $paths)"
-
     return ($parts -join "|")
 }
 
@@ -2313,10 +2360,11 @@ function Confirm-UnverifiedProceed {
     param(
         [object]$State,
         [string]$Operation,
+        [object]$VerificationState = $null,
         [switch]$Allow
     )
 
-    $verification = Get-VerificationState -State $State
+    $verification = if ($null -ne $VerificationState) { $VerificationState } else { Get-VerificationState -State $State }
     if ($verification.isFreshPassed) {
         return $false
     }
