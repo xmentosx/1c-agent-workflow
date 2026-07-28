@@ -24,9 +24,9 @@ When Vanessa is off, do not automatically author tests or add them to a new plan
 
 ## Vanessa Automation
 
-Use scenarios from `tests/features` for OpenSpec and quick-fix verification. Before creating or editing feature files, read `references/vanessa-tests.md`; do not load it for routine lifecycle commands.
+Use scenarios from `tests/features` for quick-fix, direct full-cycle, and OpenSpec verification. Before creating or editing feature files, read `references/vanessa-tests.md`; do not load it for routine lifecycle commands.
 
-For a quick-fix, reuse sufficient existing coverage; otherwise create or update one focused regression scenario and add a second only for a separate meaningful boundary or negative case. For OpenSpec, plan 2-3 scenarios by default and require an explicit short justification for a fourth. Choose the cheapest reliable check type:
+For a quick-fix, reuse sufficient existing coverage; otherwise create or update one focused regression scenario and add a second only for a separate meaningful boundary or negative case. For direct full-cycle, choose coverage from the actual behavior and risk rather than OpenSpec artifact count. For OpenSpec, plan 2-3 scenarios by default and require an explicit short justification for a fourth. Choose the cheapest reliable check type:
 
 - `unit-like`: local calculation, condition, filling, or applied logic.
 - `integration`: object/register/document/exchange interaction.
