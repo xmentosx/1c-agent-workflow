@@ -226,6 +226,9 @@
         foreach ($client in @('Codex', 'Kilo Code', 'Claude Code', 'Cursor', 'OpenCode', 'Kimi Code', 'Qwen Code', 'Command Code', 'Cline', 'Pi')) {
             $readmeText | Should -Match ([regex]::Escape($client))
         }
+        $readmeText | Should -Not -Match ([regex]::Escape('generic `other`'))
+        $readmeText | Should -Not -Match "multi-client"
+        $readmeText | Should -Not -Match "OpenSpec workspace и правила устанавливаются"
         foreach ($forbidden in @('VANESSA-TESTS-GUIDE', 'advanced-actions.md', '.agents/skills/1c-workflow/references/', '/itl-check')) {
             $readmeText | Should -Not -Match ([regex]::Escape($forbidden))
         }
@@ -279,6 +282,22 @@
                 (Test-Path -LiteralPath $resolved -PathType Leaf) | Should -BeTrue -Because "$relativePath links to $target"
             }
         }
+    }
+
+    It "keeps the Russian user guides ordered from workflow overview to reference detail" {
+        $projectWorkflow = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "docs\itl-workflow\PROJECT-WORKFLOW.ru.md")
+        $featureWorkflow = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "docs\itl-workflow\FEATURE-DEVELOPMENT.ru.md")
+        $modes = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "docs\itl-workflow\MODES-AND-SETTINGS.ru.md")
+        $envReference = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "docs\itl-workflow\DEV-ENV-REFERENCE.ru.md")
+
+        $projectWorkflow.IndexOf("## За пять минут") | Should -BeLessThan $projectWorkflow.IndexOf("## Модель проекта")
+        $projectWorkflow | Should -Match '(?s)```text.*master.*itldev/<задача>.*?/itl-check.*?/itl-result.*?```'
+        $projectWorkflow | Should -Match "полные абсолютные пути"
+        $projectWorkflow | Should -Match "allowlisted-коммит"
+        $featureWorkflow.IndexOf("## Процесс целиком") | Should -BeLessThan $featureWorkflow.IndexOf("## Перед началом")
+        $featureWorkflow | Should -Match '(?s)```text.*quick-fix.*full-cycle.*OpenSpec.*?/itl-check.*?/itl-result.*?```'
+        $modes.IndexOf("## Что использовать обычно") | Should -BeLessThan $modes.IndexOf("## Kilo Browser Automation")
+        $envReference | Should -Match '(?s)```text.*нужно изменить поведение.*точному имени ключа.*?```'
     }
 
     It 'keeps the local gate output under ignored build test-results path' {
@@ -356,7 +375,7 @@
     It "shows capability-matched OpenSpec modes only in the dev ITL lifecycle panel" {
         $masterStart = $HelperText.IndexOf('if ($surface -eq "master")')
         $devStart = $HelperText.IndexOf('} elseif ($surface -eq "dev")', $masterStart)
-        $unknownStart = $HelperText.IndexOf('Write-Host "  Open the master worktree to create branches', $devStart)
+        $unknownStart = $HelperText.IndexOf('Write-Host "  Откройте worktree master для создания веток', $devStart)
         $masterStart | Should -BeGreaterThan -1
         $devStart | Should -BeGreaterThan $masterStart
         $unknownStart | Should -BeGreaterThan $devStart
@@ -364,20 +383,57 @@
         $masterBlock = $HelperText.Substring($masterStart, $devStart - $masterStart)
         $devBlock = $HelperText.Substring($devStart, $unknownStart - $devStart)
         $devBlock | Should -Match "OpenSpec"
-        $devBlock | Should -Match 'Mode: \$\(\$openSpec\.mode\)'
+        $devBlock | Should -Match 'Режим: \$\(\$openSpec\.mode\)'
         $devBlock | Should -Match 'openSpec\.mode -eq "native"'
         $devBlock | Should -Match 'openSpec\.mode -eq "natural"'
         $devBlock | Should -Match "Get-ItlOpenSpecNaturalRequests"
-        $devBlock | Should -Match "Optional"
+        $devBlock | Should -Match "Исследовать задачу"
         $devBlock | Should -Match "proposal"
-        $devBlock | Should -Match "choose execution path"
-        $devBlock | Should -Match "direct by default"
-        $devBlock | Should -Match "Checkable changes"
+        $devBlock | Should -Match "выберите quick-fix или full-cycle"
+        $devBlock | Should -Match "По умолчанию full-cycle выполняется напрямую"
+        $devBlock | Should -Match "Есть проверяемые изменения"
+    }
+
+    It "keeps the Russian lifecycle panel current for master dev and unknown contexts" {
+        $lifecycleText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1")
+        $panelText = $lifecycleText.Substring($lifecycleText.IndexOf("function Show-Help {"))
+        foreach ($label in @(
+            "Жизненный цикл ITL",
+            "Корень проекта:",
+            "Контекст:",
+            "Ветка Git:",
+            "Команды ITL в этом контексте:",
+            "Рекомендуемый шаг:",
+            "Следующий шаг:",
+            "Дополнительные действия:"
+        )) {
+            $lifecycleText | Should -Match ([regex]::Escape($label))
+        }
+        foreach ($command in @(
+            "/itl-new-config-branch <name>",
+            "/itl-new-extension-branch <name>",
+            "/itl-update-workflow",
+            "/itl-switch-client <client>",
+            "/itl-check",
+            "/itl-verify-fix",
+            "/itl-refresh",
+            "/itl-result"
+        )) {
+            $panelText | Should -Match ([regex]::Escape($command))
+        }
+        foreach ($obsolete in @(
+            "ITL lifecycle",
+            "Commands in this context:",
+            "Recommended next step:",
+            "Additional helper actions:"
+        )) {
+            $panelText | Should -Not -Match ([regex]::Escape($obsolete))
+        }
     }
 
     It "keeps additional helper actions grouped without adding visible slash commands" {
-        $HelperText | Should -Match "Additional helper actions:"
-        foreach ($group in @("ROCTUP MCP", "vibecoding1c MCP", "Vanessa UI MCP", "Extension branches", "Maintenance/recovery")) {
+        $HelperText | Should -Match "Дополнительные действия:"
+        foreach ($group in @("ROCTUP", "vibecoding1c MCP", "Vanessa UI", "Ветки расширений", "Обслуживание и recovery")) {
             $HelperText | Should -Match ([regex]::Escape($group))
         }
 
@@ -391,14 +447,14 @@
         $wrapperText = Get-Content -Encoding UTF8 -Raw $wrapperPath
 
         $wrapperText | Should -Match "-Action\s+help"
-        $wrapperText | Should -Match "entire final response"
-        $wrapperText | Should -Match 'fenced `text` code block'
-        $wrapperText | Should -Match "nothing outside it"
-        $wrapperText | Should -Match "every helper newline, blank line, and indentation"
-        $wrapperText | Should -Match "Do not summarize"
-        $wrapperText | Should -Match "actual error instead of fabricating a panel"
-        $wrapperText | Should -Match "Additional helper actions:"
-        $wrapperText | Should -Match "Lifecycle:"
+        $wrapperText | Should -Match "весь финальный ответ"
+        $wrapperText | Should -Match 'fenced-блока `text`'
+        $wrapperText | Should -Match "без текста снаружи"
+        $wrapperText | Should -Match "все переносы строк, пустые строки и отступы"
+        $wrapperText | Should -Match "Не пересказывайте"
+        $wrapperText | Should -Match "При ошибке сообщите фактическую ошибку"
+        $wrapperText | Should -Match "Дополнительные действия:"
+        $wrapperText | Should -Match "Жизненный цикл:"
         $wrapperText | Should -Not -Match "Lifecycle-РґРµР№СЃС‚РІРёСЏ РЅРµ РІС‹РїРѕР»РЅСЏР»РёСЃСЊ"
     }
 
@@ -513,15 +569,15 @@
             $LASTEXITCODE | Should -Be 0
             $text = ($output | Out-String)
 
-            $text | Should -Match "Checkable changes: False"
-            $text | Should -Match "Recommended next step: choose execution path: quick-fix or full-cycle"
-            $text | Should -Match "Full-cycle is direct by default"
-            $text | Should -Match "use /opsx-explore or /opsx-propose only when formal discovery or agreement adds value"
+            $text | Should -Match "Есть проверяемые изменения: False"
+            $text | Should -Match "Рекомендуемый шаг: выберите quick-fix или full-cycle"
+            $text | Should -Match "По умолчанию full-cycle выполняется напрямую"
+            $text | Should -Match "используйте /opsx-explore или /opsx-propose, только если полезно формальное исследование или согласование"
             foreach ($command in @("/opsx-propose", "/opsx-explore", "/opsx-apply", "/opsx-archive")) {
                 $text | Should -Match ([regex]::Escape($command))
             }
             $text | Should -Not -Match "Kilo OpenSpec commands are unavailable"
-            $text | Should -Not -Match "Recommended next step: /itl-check"
+            $text | Should -Not -Match "Рекомендуемый шаг: /itl-check"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -550,16 +606,16 @@
                 function Test-DevBranchHasCheckableChanges { $false }
                 function Get-ItlActiveClient { "qwen" }
                 Show-Help
-            } 6>&1 | Out-String
-            $normalizedOutput = ($output -replace '\s+', ' ').Trim()
-            $normalizedOutput | Should -Match "Mode: natural"
+            } 6>&1 | Out-String -Width 10000
+            $normalizedOutput = ((@($output) -join [Environment]::NewLine) -replace '\s+', ' ').Trim()
+            $normalizedOutput | Should -Match "Режим: natural"
             foreach ($request in @(
                 "Исследуй задачу в режиме OpenSpec, не создавая proposal и не меняя код",
                 "Подготовь OpenSpec proposal для <изменение>; создай proposal, design, tasks, test-plan и spec deltas; код не меняй",
                 "Реализуй согласованный OpenSpec change <change-id> по tasks.md и test-plan.md",
                 "Заархивируй принятый OpenSpec change <change-id> и синхронизируй specs"
             )) { $normalizedOutput | Should -Match ([regex]::Escape($request)) }
-            $normalizedOutput | Should -Match "External CLI: not detected; no installation is attempted"
+            $normalizedOutput | Should -Match "Внешний CLI: не найден; установка не выполняется"
             $normalizedOutput | Should -Not -Match "/opsx-propose"
             $normalizedOutput | Should -Not -Match "/opsx-apply"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
@@ -600,9 +656,9 @@
             $LASTEXITCODE | Should -Be 0
             $text = ($output | Out-String)
 
-            $text | Should -Match "Checkable changes: True"
-            $text | Should -Match "Recommended next step: /itl-check"
-            $text | Should -Match "OpenSpec is unavailable"
+            $text | Should -Match "Есть проверяемые изменения: True"
+            $text | Should -Match "Рекомендуемый шаг: /itl-check"
+            $text | Should -Match "OpenSpec недоступен"
             $text | Should -Not -Match "  /opsx-propose  Start the normal OpenSpec flow"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {

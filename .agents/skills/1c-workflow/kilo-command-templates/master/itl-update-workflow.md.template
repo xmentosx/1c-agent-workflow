@@ -1,16 +1,16 @@
 ---
-description: Update the installed ITL workflow package
+description: Обновить установленный пакет ITL workflow
 agent: code
 ---
 
-Use this command only from the `master` worktree. It refreshes the installed ITL workflow files, regenerates local Kilo ITL commands, updates AI rules by default, and leaves tracked changes for review.
+Используйте команду только из worktree `master`. Она обновляет файлы ITL workflow и AI rules, пересоздаёт команды активного клиента и коммитит только принадлежащие updater tracked-изменения. Push не выполняется.
 
-Run the helper directly from the current project directory:
+Запустите helper из текущей папки проекта:
 
-If the agent shell tool supports `timeout_ms`, run this lifecycle command with `timeout_ms >= 3900000` by default so the outer shell outlives the 3600-second Designer limit; if that limit is configured higher, raise the outer timeout too. Do not use `120000 ms` or other short defaults because the helper may launch 1C Designer/Enterprise operations.
+Если shell-инструмент поддерживает `timeout_ms`, задайте `timeout_ms >= 3900000`, чтобы внешняя оболочка пережила 3600-секундный лимит Designer. При большем лимите Designer увеличьте и внешний тайм-аут. Не используйте `120000 ms` и другие короткие значения.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action update-workflow
 ```
 
-If the helper reports a dirty tracked Git worktree, stop and ask the developer to commit or stash tracked changes before retrying. The compact runner returns a bounded JSON summary; read only the last 80 lines of its `logPath` on failure. Do not run this command from an `itldev/*` worktree; update development worktrees later by merging fresh `master` or running `/itl-refresh`.
+Если helper сообщает о dirty tracked Git worktree, остановитесь и попросите разработчика закоммитить или убрать изменения, затем повторите команду. При успехе и непустом `userReport` верните пользователю точно этот русский Markdown-отчёт без вступления, пересказа и чтения `console.log`. При ошибке читайте только последние 80 строк `logPath`. Не запускайте команду из `itldev/*`; ветки разработки обновляются отдельно через `/itl-refresh`.

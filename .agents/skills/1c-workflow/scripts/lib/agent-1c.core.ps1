@@ -282,6 +282,8 @@ function Write-RunStatus {
         worktreePath = $(if ($script:RunWorktreePath) { [string]$script:RunWorktreePath } else { "" })
         extensionInitializationStatus = $(if ($script:RunExtensionInitializationStatus) { [string]$script:RunExtensionInitializationStatus } else { "" })
         userReport = $(if ($script:RunUserReport) { [string]$script:RunUserReport } else { "" })
+        resultPath = $(if ($script:RunResultPath) { [string]$script:RunResultPath } else { "" })
+        resultManifestPath = $(if ($script:RunResultManifestPath) { [string]$script:RunResultManifestPath } else { "" })
     }
 
     Write-Utf8Text -Path $script:ResolvedRunStatusPath -Value (($payload | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
@@ -291,6 +293,16 @@ function Set-RunUserReport {
     param([AllowEmptyString()][string]$Report)
 
     $script:RunUserReport = $Report.Trim()
+}
+
+function Set-RunResultArtifacts {
+    param(
+        [string]$ResultPath,
+        [string]$ResultManifestPath
+    )
+
+    $script:RunResultPath = $(if ($ResultPath) { Resolve-Agent1cFullPath -Path $ResultPath } else { "" })
+    $script:RunResultManifestPath = $(if ($ResultManifestPath) { Resolve-Agent1cFullPath -Path $ResultManifestPath } else { "" })
 }
 
 function Set-RunFailureContext {

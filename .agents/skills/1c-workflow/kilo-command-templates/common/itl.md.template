@@ -1,22 +1,22 @@
 ---
-description: Show the ITL lifecycle panel for the current project context
+description: Показать жизненный цикл ITL для текущего контекста проекта
 agent: code
 ---
 
-Run the helper lifecycle panel from the current project directory:
+Запустите helper-панель из текущей папки проекта:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action help
 ```
 
-On success, the entire final response must be exactly one fenced `text` code block with nothing outside it. Inside that block, return the source line and helper stdout as follows:
+При успехе весь финальный ответ должен состоять ровно из одного fenced-блока `text`, без текста снаружи. Внутри сначала укажите источник, затем полный stdout helper:
 
-Required response format:
+Формат ответа:
 
 ```text
 Источник истины для текущей папки: helper lifecycle panel.
 
-<paste the exact helper stdout here, unchanged>
+<вставьте сюда точный stdout helper без изменений>
 ```
 
-Preserve every helper newline, blank line, and indentation inside the block. Do not summarize, translate, split into your own sections, reorder, omit, or merge helper sections. Preserve the helper's `Lifecycle:`, `ITL commands valid in this context:`, `Inherited by Kilo from primary checkout; invalid in this context:`, `OpenSpec:`, and `Additional helper actions:` sections exactly as printed. Do not add a separate "Lifecycle-действия не выполнялись" / "no lifecycle actions executed" note. If the helper fails, report the actual error instead of fabricating a panel. Do not execute a lifecycle action unless the developer clearly chooses one.
+Сохраните все переносы строк, пустые строки и отступы helper. Не пересказывайте, не переводите, не делите на собственные разделы, не меняйте порядок, не пропускайте и не объединяйте разделы. Сохраните разделы `Жизненный цикл:`, `Команды ITL в этом контексте:`, `Унаследовано Kilo из основного checkout, но недоступно в этом контексте:`, `OpenSpec:` и `Дополнительные действия:` точно как напечатано. Не добавляйте отдельное сообщение о том, что lifecycle-действия не выполнялись. При ошибке сообщите фактическую ошибку, не создавая панель самостоятельно. Не запускайте lifecycle-действие, пока разработчик явно его не выбрал.

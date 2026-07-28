@@ -299,7 +299,7 @@ $env:ITL_WORKFLOW_REPO = "https://github.com/xmentosx/1c-agent-workflow.git"
 $env:ITL_WORKFLOW_REF = "master"
 ```
 
-After the update, review and commit tracked changes in `master`. Active `itldev/*` worktrees do not update automatically; merge or run `/itl-refresh` so each receives the facade config. A facade install/upgrade needs one client reload; later backend starts do not.
+After every successful update, the helper creates one allowlisted local commit in `master` and verifies that tracked state is clean; it never pushes. A no-op update creates no commit. Active `itldev/*` worktrees do not update automatically; run `/itl-refresh` in each one so it receives the updated workflow and facade config. A facade install/upgrade needs one client reload; later backend starts do not.
 
 ## Install ai_rules_1c
 
@@ -419,7 +419,7 @@ Show development branch worktree paths.
 What 1C workflow actions are available?
 ```
 
-`/itl-result` follows `VERIFICATION_POLICY`. The default `warn` policy preserves the current explicit unverified override flow and records the override in the result manifest. When `VERIFICATION_POLICY=block`, result export must stop until `/itl-check` or `verify-dev-branch helper alias` is fresh passed; do not bypass that with `-AllowUnverifiedResult`. `close-dev-branch` remains an advanced helper action only when the developer explicitly wants to mark a branch closed and hide it from active lists.
+`/itl-result` follows `VERIFICATION_POLICY`. On success its compact result and Russian `userReport` contain the normalized absolute CF/CFE path and adjacent manifest path; return that report unchanged to the developer. The default `warn` policy preserves the current explicit unverified override flow and records the override in the result manifest. When `VERIFICATION_POLICY=block`, result export must stop until `/itl-check` or `verify-dev-branch helper alias` is fresh passed; do not bypass that with `-AllowUnverifiedResult`. `close-dev-branch` remains an advanced helper action only when the developer explicitly wants to mark a branch closed and hide it from active lists.
 
 ## Completion Report
 

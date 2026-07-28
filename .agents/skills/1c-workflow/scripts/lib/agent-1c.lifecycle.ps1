@@ -449,15 +449,15 @@ function Restart-Agent1cAfterDevBranchMerge {
 
 function Write-ItlAdditionalHelperActions {
     Write-Host ""
-    Write-Host "Additional helper actions:"
-    Write-Host "  ROCTUP data: use the itl-roctup-data MCP server; its branch backend starts and stops automatically."
-    Write-Host "  vibecoding1c MCP: ask for setup, status, select, refresh-registry, or update."
-    Write-Host "  Vanessa UI: use the itl-vanessa-ui MCP server only for runtime UI research, recording, or debugging."
-    Write-Host "  Vanessa manual profiling: ask to start, inspect, or stop one persistent branch-local interactive profile pair."
-    Write-Host "  Extension branches: one branch/worktree/base owns one CFE; several features are allowed only inside it."
-    Write-Host "  Extension setup is agent-orchestrated during branch creation or on first entry when its saved status is pending."
-    Write-Host "  Maintenance/recovery: ask to update base without tests, update workflow/rules, close/list/switch branches."
-    Write-Host "  Full helper action catalog: .agents/skills/1c-workflow/references/advanced-actions.md."
+    Write-Host "Дополнительные действия:"
+    Write-Host "  Данные ROCTUP: используйте MCP-сервер itl-roctup-data; backend ветки запускается и останавливается автоматически."
+    Write-Host "  vibecoding1c MCP: попросите выполнить setup, status, select, refresh-registry или update."
+    Write-Host "  Vanessa UI: используйте MCP-сервер itl-vanessa-ui только для исследования, записи или отладки фактического UI."
+    Write-Host "  Ручное профилирование Vanessa: попросите запустить, проверить или остановить постоянную интерактивную пару текущей ветки."
+    Write-Host "  Ветки расширений: одна ветка, worktree и база владеют одним CFE; внутри него допустимо несколько функций."
+    Write-Host "  Инициализацией расширения управляет агент при создании ветки или первом входе со статусом pending."
+    Write-Host "  Обслуживание и recovery: попросите обновить базу без тестов, обновить workflow/rules, закрыть, показать или переключить ветки."
+    Write-Host "  Полный каталог helper-действий: .agents/skills/1c-workflow/references/advanced-actions.md."
 }
 
 function Get-ConfigLoadChangeSet {
@@ -2543,6 +2543,201 @@ function Assert-WorkflowTrackedGitClean {
     }
 }
 
+function Assert-WorkflowUpdateCommitIdentity {
+    foreach ($identityKind in @("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT")) {
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            & git -C $script:ProjectRoot var $identityKind *> $null
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        if ($exitCode -ne 0) {
+            throw "update-workflow cannot create its required commit because Git identity '$identityKind' is unavailable. Configure user.name and user.email, then retry."
+        }
+    }
+}
+
+function ConvertTo-WorkflowUpdateRepoPath {
+    param([string]$Path)
+
+    $normalized = ([string]$Path).Trim().Replace("\", "/")
+    while ($normalized.StartsWith("./", [System.StringComparison]::Ordinal)) {
+        $normalized = $normalized.Substring(2)
+    }
+    if (-not $normalized -or [System.IO.Path]::IsPathRooted($normalized) -or $normalized -eq ".." -or $normalized.StartsWith("../", [System.StringComparison]::Ordinal)) {
+        throw "Invalid workflow update managed repository path: '$Path'."
+    }
+    return $normalized
+}
+
+function Get-WorkflowUpdateClientSurfacePaths {
+    $paths = [System.Collections.Generic.List[string]]::new()
+    $state = Read-ItlClientSurfaceState
+    $clients = ConvertTo-Vibecoding1cMcpHashtable -Object $state["clients"]
+    foreach ($client in @($clients.Keys)) {
+        $entry = ConvertTo-Vibecoding1cMcpHashtable -Object $clients[$client]
+        if (-not $entry.Contains("files")) { continue }
+        $files = ConvertTo-Vibecoding1cMcpHashtable -Object $entry["files"]
+        foreach ($path in @($files.Keys)) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$path)) {
+                $paths.Add((ConvertTo-WorkflowUpdateRepoPath -Path ([string]$path)))
+            }
+        }
+    }
+    return @($paths | Select-Object -Unique)
+}
+
+function Get-WorkflowUpdateManagedPathSpecs {
+    param(
+        [string[]]$AiRulesPathsBefore = @(),
+        [string[]]$ClientSurfacePathsBefore = @()
+    )
+
+    $paths = [System.Collections.Generic.List[string]]::new()
+    foreach ($path in @(
+        ".agents/skills/1c-workflow",
+        ".agents/skills/1c-workflow-fast",
+        ".agents/skills/product-docs",
+        ".agents/skills/itl-roctup-1c-data",
+        ".agents/skills/itl-vanessa-ui-mcp",
+        "docs/itl-workflow",
+        "templates",
+        "tests/features/Libraries/ITL",
+        "install-agent-1c-workflow.ps1",
+        "AGENT-INSTALL.md",
+        ".agent-1c/project.json",
+        ".agent-1c/dependency-lock.json",
+        ".gitignore",
+        ".ai-rules.json",
+        "AGENTS.md",
+        "USER-RULES.md",
+        "LLM-RULES.md",
+        "memory.md"
+    ) + @($AiRulesPathsBefore) + @($ClientSurfacePathsBefore) + @(Get-WorkflowUpdateClientSurfacePaths)) {
+        if ([string]::IsNullOrWhiteSpace([string]$path)) { continue }
+        $normalized = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$path)
+        if (-not $paths.Contains($normalized)) { $paths.Add($normalized) }
+    }
+    foreach ($entry in @(Get-AiRules1cManifestFileEntries)) {
+        if ([string]::IsNullOrWhiteSpace([string]$entry.target)) { continue }
+        $normalized = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$entry.target)
+        if (-not $paths.Contains($normalized)) { $paths.Add($normalized) }
+    }
+    return @($paths)
+}
+
+function Get-WorkflowUpdateDeletedLegacyPaths {
+    $deleted = [System.Collections.Generic.List[string]]::new()
+    foreach ($relativePath in @(Get-LegacyWorkflowManagedFileHashes).Keys) {
+        $output = @(& git -C $script:ProjectRoot -c core.quotepath=false diff --name-status -- $relativePath)
+        if ($LASTEXITCODE -ne 0) {
+            throw "Cannot inspect legacy workflow deletion status: $relativePath"
+        }
+        if (@($output | Where-Object { ([string]$_).StartsWith("D`t", [System.StringComparison]::Ordinal) }).Count -gt 0) {
+            $deleted.Add((ConvertTo-WorkflowUpdateRepoPath -Path $relativePath))
+        }
+    }
+    return @($deleted)
+}
+
+function Test-WorkflowUpdatePathAllowed {
+    param(
+        [string]$Path,
+        [string[]]$ManagedPathSpecs
+    )
+
+    $normalizedPath = ConvertTo-WorkflowUpdateRepoPath -Path $Path
+    foreach ($spec in @($ManagedPathSpecs)) {
+        $normalizedSpec = ConvertTo-WorkflowUpdateRepoPath -Path $spec
+        if ($normalizedPath.Equals($normalizedSpec, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $normalizedPath.StartsWith(($normalizedSpec.TrimEnd("/") + "/"), [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Get-WorkflowUpdateTrackedChangePaths {
+    return @(
+        @(Get-GitPathList -Arguments @("diff", "--name-only", "-z")) +
+        @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z"))
+    ) | Select-Object -Unique
+}
+
+function Commit-WorkflowUpdate {
+    param(
+        [object]$Source,
+        [string[]]$AiRulesPathsBefore = @(),
+        [string[]]$ClientSurfacePathsBefore = @()
+    )
+
+    $managedPathSpecs = @(
+        @(Get-WorkflowUpdateManagedPathSpecs -AiRulesPathsBefore $AiRulesPathsBefore -ClientSurfacePathsBefore $ClientSurfacePathsBefore) +
+        @(Get-WorkflowUpdateDeletedLegacyPaths)
+    ) | Select-Object -Unique
+    $trackedChanges = @(Get-WorkflowUpdateTrackedChangePaths)
+    $unexpectedTracked = @($trackedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs) })
+    if ($unexpectedTracked.Count -gt 0) {
+        throw "update-workflow produced tracked changes outside its managed allowlist and will not commit them: $($unexpectedTracked -join ', ')"
+    }
+
+    $managedUntracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard") |
+        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
+    $changes = @($trackedChanges + $managedUntracked | Select-Object -Unique)
+    if ($changes.Count -eq 0) {
+        return [pscustomobject]@{
+            created = $false
+            commit = Get-CurrentCommit
+            message = ""
+        }
+    }
+
+    $sourceRef = [string]$Source.ref
+    $sourceCommit = [string]$Source.commit
+    $shortCommit = $(if ($sourceCommit.Length -ge 7) { $sourceCommit.Substring(0, 7) } else { $sourceCommit })
+    $message = if ($sourceRef -and $shortCommit) {
+        "chore: update ITL workflow to $sourceRef@$shortCommit"
+    } elseif ($shortCommit) {
+        "chore: update ITL workflow to $shortCommit"
+    } else {
+        "chore: update ITL workflow from local source"
+    }
+    $unstagedManaged = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z") |
+        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
+    $stageCandidates = @($unstagedManaged + $managedUntracked | Select-Object -Unique)
+    if ($stageCandidates.Count -gt 0) {
+        Invoke-Git (@("add", "--all", "--") + $stageCandidates)
+    }
+    $stagedChanges = @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z"))
+    $unexpectedStaged = @($stagedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs) })
+    if ($unexpectedStaged.Count -gt 0) {
+        throw "update-workflow found staged changes outside its managed allowlist and will not commit them: $($unexpectedStaged -join ', ')"
+    }
+    if ($stagedChanges.Count -eq 0) {
+        throw "update-workflow found managed changes but could not stage any of them."
+    }
+    Invoke-Git @("commit", "--quiet", "-m", $message)
+    Write-Host "Committed: $message"
+
+    $remainingTracked = @(Get-WorkflowUpdateTrackedChangePaths)
+    if ($remainingTracked.Count -gt 0) {
+        throw "update-workflow created its commit but the tracked master worktree is still dirty: $($remainingTracked -join ', ')"
+    }
+    $remainingManagedUntracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard") |
+        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
+    if ($remainingManagedUntracked.Count -gt 0) {
+        throw "update-workflow created its commit but managed files remain untracked: $($remainingManagedUntracked -join ', ')"
+    }
+
+    return [pscustomobject]@{
+        created = $true
+        commit = Get-CurrentCommit
+        message = $message
+    }
+}
+
 function Copy-WorkflowManagedDirectory {
     param(
         [string]$SourceRoot,
@@ -2852,28 +3047,37 @@ function Get-WorkflowActiveDevBranchStates {
 }
 
 function Write-WorkflowUpdateFollowUp {
+    param(
+        [object]$Source,
+        [object]$CommitResult
+    )
+
     $states = @(Get-WorkflowActiveDevBranchStates)
-    Write-Host ""
-    Write-Host "Next steps:"
-    Write-Host "  Review and commit the updated workflow/rules files in master."
-    Write-Host "  Kilo Code: run /reload or open a new session so project instructions, skills, agents, and commands are reread."
-    Write-Host "  MCP client config is reconciled automatically when saved vibecoding1c selection/state has ready replacements."
-    Write-Host "  If the helper preserved upstream MCP entries, complete setup when ready:"
-    Write-Host "    powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-setup"
-    Write-Host "  Refresh vibecoding1c MCP registry/distribution when needed:"
-    Write-Host "    powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-update"
+    $sourceRef = [string]$Source.ref
+    $sourceCommit = [string]$Source.commit
+    $reportLines = [System.Collections.Generic.List[string]]::new()
+    $reportLines.Add("## Workflow обновлён")
+    Add-RunUserReportLine -Lines $reportLines -Label "Источник" -Value ([string]$Source.source)
+    Add-RunUserReportLine -Lines $reportLines -Label "Версия workflow" -Value $(if ($sourceRef -and $sourceCommit) { "$sourceRef@$sourceCommit" } elseif ($sourceCommit) { $sourceCommit } else { $sourceRef }) -Default "<локальный источник без Git commit>"
+    Add-RunUserReportLine -Lines $reportLines -Label "Коммит master" -Value ([string]$CommitResult.commit)
+    Add-RunUserReportLine -Lines $reportLines -Label "Новый коммит создан" -Value $(if ($CommitResult.created) { "да" } else { "нет, workflow уже актуален" })
+    Add-RunUserReportLine -Lines $reportLines -Label "Tracked-состояние master" -Value "clean"
+    $reportLines.Add("")
+    $reportLines.Add("## Следующие действия")
+    $reportLines.Add("- Перезапустите или перезагрузите активный AI-клиент, чтобы он перечитал правила, навыки и команды.")
+    $reportLines.Add("- Push из проекта не выполнялся: созданный коммит остаётся в локальном `master`.")
+    $reportLines.Add("- Активные `itldev/*` обновляются отдельно через `/itl-refresh`.")
     if ($states.Count -gt 0) {
-        Write-Host "  Active development branches must merge the updated master intentionally:"
+        $reportLines.Add("- Найдены активные ветки разработки:")
         foreach ($state in ($states | Sort-Object @{ Expression = { Get-StateValue -State $_ -Name "devBranchName" -Default "" } })) {
             $name = Get-StateValue -State $state -Name "devBranchName" -Default (Get-StateValue -State $state -Name "safeDevBranchName" -Default "<unknown>")
             $worktreePath = Get-StateValue -State $state -Name "worktreePath" -Default (Get-StateValue -State $state -Name "stateProjectRoot" -Default "")
-            Write-Host "    $name -> $worktreePath"
+            $reportLines.Add("  - $name → $worktreePath")
         }
-        Write-Host "  In each branch worktree, use refresh-dev-branch or merge master, then rerun vibecoding1c MCP setup/status for that scope."
-        Write-Host "  Each refreshed branch receives stable itl-roctup-data and itl-vanessa-ui entries; backend starts need no further reload."
     } else {
-        Write-Host "  No active development branches were found."
+        $reportLines.Add("- Активных веток разработки нет.")
     }
+    Write-AndSetRunUserReport -Lines $reportLines
 }
 
 function Write-WorkflowPackageStatusLines {
@@ -2937,6 +3141,7 @@ function Update-WorkflowPackage {
     if ($LifecyclePhase -ne "post-copy") {
         Set-RunStage -Stage "workflow-update.preflight" -Detail "Validating the master worktree and workflow source."
         Assert-WorkflowPackageUpdateContext
+        Assert-WorkflowUpdateCommitIdentity
 
         $source = Resolve-WorkflowPackageSource
         Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
@@ -2961,6 +3166,8 @@ function Update-WorkflowPackage {
 
     Set-RunStage -Stage "workflow-update.post-copy" -Detail "Applying installed-project overlays and dependency updates."
     Assert-MasterWorktreeContext -Operation "update-workflow post-copy"
+    $aiRulesPathsBefore = @(Get-AiRules1cManifestFileEntries | ForEach-Object { [string]$_.target })
+    $clientSurfacePathsBefore = @(Get-WorkflowUpdateClientSurfacePaths)
     Ensure-GitIgnore
     Sync-ItlVanessaLibraries
     Update-AgentGuidanceBridge
@@ -2994,8 +3201,15 @@ function Update-WorkflowPackage {
     if ($workflowEntry["commit"]) {
         Write-Host "Workflow package commit: $($workflowEntry['commit'])"
     }
-    Write-Host "No commit was created automatically."
-    Write-WorkflowUpdateFollowUp
+    $workflowSource = [pscustomobject]@{
+        repo = [string]$workflowEntry["repo"]
+        ref = [string]$workflowEntry["ref"]
+        commit = [string]$workflowEntry["commit"]
+        source = [string]$workflowEntry["source"]
+    }
+    Set-RunStage -Stage "workflow-update.commit" -Detail "Committing the managed workflow update in master."
+    $commitResult = Commit-WorkflowUpdate -Source $workflowSource -AiRulesPathsBefore $aiRulesPathsBefore -ClientSurfacePathsBefore $clientSurfacePathsBefore
+    Write-WorkflowUpdateFollowUp -Source $workflowSource -CommitResult $commitResult
 }
 
 function Update-UserRules {
@@ -7265,6 +7479,7 @@ function Export-DevBranchResult {
 
     Assert-DevBranchToolArtifactExportGuard -State $state -ContentKind $kind
     $resultPath = Export-DevBranchResultFile -State $state -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -ContentKind $kind
+    $resultPath = Resolve-Agent1cFullPath -Path $resultPath
     Assert-DevBranchToolArtifactExportGuard -State $state -ContentKind $kind -ResultPath $resultPath
     $verificationAfterExport = Get-VerificationState -State $state
     if ([string]$verificationAfterExport.currentFingerprint -cne $operationFingerprint) {
@@ -7291,6 +7506,7 @@ function Export-DevBranchResult {
         -WorktreeClean ([bool]$worktreeClean) `
         -VerificationScopeCommitted ([bool]$verificationScopeCommitted) `
         -UnverifiedOverride ([bool]$unverifiedOverride)
+    $manifestPath = Resolve-Agent1cFullPath -Path $manifestPath
     $updates = @{}
     $updates["lastResultPath"] = $resultPath
     $updates["lastResultKind"] = $resultKind
@@ -7303,6 +7519,14 @@ function Export-DevBranchResult {
         $updates["lastUnverifiedResultPath"] = $resultPath
     }
     Update-DevBranchState -State $state -Updates $updates
+    Set-RunResultArtifacts -ResultPath $resultPath -ResultManifestPath $manifestPath
+    $reportLines = [System.Collections.Generic.List[string]]::new()
+    $reportLines.Add("## Результат ветки")
+    Add-RunUserReportLine -Lines $reportLines -Label "Файл" -Value $resultPath
+    Add-RunUserReportLine -Lines $reportLines -Label "Манифест" -Value $manifestPath
+    Add-RunUserReportLine -Lines $reportLines -Label "Ветка" -Value $state.devBranch
+    Add-RunUserReportLine -Lines $reportLines -Label "Проверка" -Value $(if ($unverifiedOverride) { "выгружено с явно подтверждённым исключением" } else { "fresh passed" })
+    Write-AndSetRunUserReport -Lines $reportLines
     Write-Host "Branch: $($state.devBranch)"
     Write-Host "Development branch commit: $devBranchCommit"
     Write-Host "Result saved: $resultPath"
@@ -7665,8 +7889,8 @@ function Validate-Project {
 }
 
 function Show-Help {
-    Write-Section "ITL lifecycle panel"
-    Write-Host "Project root: $script:ProjectRoot"
+    Write-Section "Жизненный цикл ITL"
+    Write-Host "Корень проекта: $script:ProjectRoot"
 
     $surface = Get-KiloItlCommandSurface
     $currentBranch = ""
@@ -7675,16 +7899,16 @@ function Show-Help {
     } catch {
         $currentBranch = ""
     }
-    Write-Host "Context: $surface"
-    Write-Host "Git branch: $(if ($currentBranch) { $currentBranch } else { '<none>' })"
-    Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 3900000 by default and exceed the configured Designer timeout."
+    Write-Host "Контекст: $surface"
+    Write-Host "Ветка Git: $(if ($currentBranch) { $currentBranch } else { '<нет>' })"
+    Write-Host "Долгие операции могут запускать Конфигуратор или Предприятие 1С; timeout_ms оболочки агента должен быть не меньше 3900000 и превышать настроенный тайм-аут Designer."
 
     if ($surface -eq "master") {
         Write-Host ""
-        Write-Host "Lifecycle:"
-        Write-Host "  master -> create branch -> open worktree -> work -> check -> result"
+        Write-Host "Жизненный цикл:"
+        Write-Host "  master → создать ветку → открыть worktree → выполнить задачу → проверить → получить результат"
         Write-Host ""
-        Write-Host "ITL commands valid in this context:"
+        Write-Host "Команды ITL в этом контексте:"
         Write-Host "  /itl"
         Write-Host "  /itl-status"
         Write-Host "  /itl-new-config-branch <name>"
@@ -7693,10 +7917,10 @@ function Show-Help {
         Write-Host "  /itl-switch-client <client>"
         Write-Host "  /itl-litemode <mode>"
         Write-Host ""
-        Write-Host "Active development worktrees:"
+        Write-Host "Активные worktree разработки:"
         $states = @(Get-WorkflowActiveDevBranchStates)
         if ($states.Count -eq 0) {
-            Write-Host "  none"
+            Write-Host "  нет"
         } else {
             foreach ($state in ($states | Sort-Object @{ Expression = { Get-StateValue -State $_ -Name "createdAt" -Default "" } }, @{ Expression = { Get-StateValue -State $_ -Name "devBranchName" -Default "" } })) {
                 $name = Get-StateValue -State $state -Name "devBranchName" -Default (Get-StateValue -State $state -Name "safeDevBranchName" -Default "<unknown>")
@@ -7708,24 +7932,24 @@ function Show-Help {
                     Write-Host "    Worktree: $worktreePath"
                 }
                 if ((Get-DevBranchKind -State $state) -eq "extension") {
-                    Write-Host "    Extension initialization: $(Get-DevBranchExtensionInitializationStatus -State $state)"
+                    Write-Host "    Инициализация расширения: $(Get-DevBranchExtensionInitializationStatus -State $state)"
                 }
-                Write-VanessaTestStatusLines -State $state -Indent "    "
-                Write-RoctupMcpStatusLines -State $state -Indent "    "
-                Write-VanessaMcpStatusLines -State $state -Indent "    "
+                Write-Host "    Проверка Vanessa: $(Get-StateValue -State $state -Name 'lastVerificationStatus' -Default '<нет>')"
+                Write-Host "    ROCTUP MCP: $(Get-StateValue -State $state -Name 'roctupMcpStatus' -Default 'on-demand')"
+                Write-Host "    Vanessa UI MCP: $(Get-StateValue -State $state -Name 'vanessaMcpStatus' -Default 'on-demand')"
             }
         }
         Write-Host ""
-        Write-Host "Next step: create a configuration or extension branch, then open the printed worktree folder."
+        Write-Host "Следующий шаг: создайте ветку конфигурации или расширения и откройте показанную папку worktree."
     } elseif ($surface -eq "dev") {
         $openSpec = Get-AiRules1cOpenSpecStatus
         $state = $null
         try {
             $state = Read-DevBranchState -Name ""
         } catch {
-            Write-Host "Development branch state: missing"
+            Write-Host "Состояние ветки разработки: отсутствует"
             Write-Host ""
-            Write-Host "Recommended next step: run /itl-status, then open the worktree recorded for this branch if it exists."
+            Write-Host "Рекомендуемый шаг: выполните /itl-status и откройте сохранённый worktree этой ветки, если он существует."
         }
 
         if ($state) {
@@ -7734,63 +7958,63 @@ function Show-Help {
             $extensionInitializationStatus = Get-DevBranchExtensionInitializationStatus -State $state
             $hasCheckableChanges = Test-DevBranchHasCheckableChanges -State $state
             Write-Host ""
-            Write-Host "Branch:"
-            Write-Host "  Name: $(Get-StateValue -State $state -Name 'devBranchName' -Default (Get-StateValue -State $state -Name 'safeDevBranchName' -Default '<unknown>'))"
-            Write-Host "  Type: $kind"
+            Write-Host "Ветка:"
+            Write-Host "  Имя: $(Get-StateValue -State $state -Name 'devBranchName' -Default (Get-StateValue -State $state -Name 'safeDevBranchName' -Default '<неизвестно>'))"
+            Write-Host "  Тип: $kind"
             if ($kind -eq "extension") {
-                Write-Host "  Extension initialization: $extensionInitializationStatus"
+                Write-Host "  Инициализация расширения: $extensionInitializationStatus"
             }
-            Write-Host "  Infobase: $($state.devBranchInfoBasePath)"
+            Write-Host "  Информационная база: $($state.devBranchInfoBasePath)"
             $publicationUrl = Get-StateValue -State $state -Name "publicationUrl" -Default ""
             if ($publicationUrl) {
-                Write-Host "  Publication URL: $publicationUrl"
+                Write-Host "  URL публикации: $publicationUrl"
             }
             $mainWorktreePath = Get-StateValue -State $state -Name "mainWorktreePath" -Default ""
             if ($mainWorktreePath) {
-                Write-Host "  Master worktree: $mainWorktreePath"
+                Write-Host "  Worktree master: $mainWorktreePath"
             }
             Write-Host ""
-            Write-Host "Verification:"
-            Write-Host "  Status: $($verification.effectiveStatus)"
+            Write-Host "Проверка:"
+            Write-Host "  Статус: $($verification.effectiveStatus)"
             Write-Host "  Fresh passed: $($verification.isFreshPassed)"
-            Write-Host "  Checkable changes: $hasCheckableChanges"
+            Write-Host "  Есть проверяемые изменения: $hasCheckableChanges"
             if ($verification.reportPath) {
-                Write-Host "  Report: $($verification.reportPath)"
+                Write-Host "  Отчёт: $($verification.reportPath)"
             }
-            Write-Host "  Last result: $(Get-StateValue -State $state -Name 'lastResultPath' -Default '<none>')"
-            Write-Host "  Final result: $(Get-StateValue -State $state -Name 'finalResultPath' -Default '<none>')"
+            Write-Host "  Последний результат: $(Get-StateValue -State $state -Name 'lastResultPath' -Default '<нет>')"
+            Write-Host "  Финальный результат: $(Get-StateValue -State $state -Name 'finalResultPath' -Default '<нет>')"
             Write-Host ""
             if ($kind -eq "extension" -and $extensionInitializationStatus -ne "ready") {
-                Write-Host "Recommended next step: tell the agent whether to create an Empty extension or load a CFE, with the extension name and CFE path when applicable."
+                Write-Host "Рекомендуемый шаг: сообщите агенту, нужно создать пустое расширение или загрузить CFE; укажите имя расширения и путь к CFE, если он нужен."
             } elseif ($hasCheckableChanges -or (@("failed", "stale", "unknown") -contains $verification.effectiveStatus)) {
-                Write-Host "Recommended next step: /itl-check"
+                Write-Host "Рекомендуемый шаг: /itl-check"
             } elseif (-not $verification.isFreshPassed) {
                 if ($openSpec.mode -eq "native") {
-                    Write-Host "Recommended next step: choose execution path: quick-fix or full-cycle. Full-cycle is direct by default; use $($openSpec.invocations.explore) or $($openSpec.invocations.propose) only when formal discovery or agreement adds value."
+                    Write-Host "Рекомендуемый шаг: выберите quick-fix или full-cycle. По умолчанию full-cycle выполняется напрямую; используйте $($openSpec.invocations.explore) или $($openSpec.invocations.propose), только если полезно формальное исследование или согласование."
                 } elseif ($openSpec.mode -eq "natural") {
-                    Write-Host "Recommended next step: choose execution path: quick-fix or full-cycle. Full-cycle is direct by default; ask for natural OpenSpec explore/propose only when formal discovery or agreement adds value."
+                    Write-Host "Рекомендуемый шаг: выберите quick-fix или full-cycle. По умолчанию full-cycle выполняется напрямую; запросите natural OpenSpec explore/propose, только если полезно формальное исследование или согласование."
                 } else {
-                    Write-Host "Recommended next step: choose execution path: quick-fix or direct full-cycle. Restore the OpenSpec workspace/rules only when formal discovery or agreement is needed."
+                    Write-Host "Рекомендуемый шаг: выберите quick-fix или direct full-cycle. Восстанавливайте workspace и правила OpenSpec только для формального исследования или согласования."
                 }
             } elseif (-not (Get-StateValue -State $state -Name "lastResultPath" -Default "")) {
-                Write-Host "Recommended next step: /itl-result"
+                Write-Host "Рекомендуемый шаг: /itl-result"
             } else {
-                Write-Host "Recommended next step: continue work and rerun /itl-check, or use /itl-result again when the artifact is ready."
+                Write-Host "Рекомендуемый шаг: продолжите работу и повторите /itl-check либо снова выполните /itl-result, когда понадобится артефакт."
             }
         }
 
         Write-Host ""
-        Write-Host "Lifecycle:"
+        Write-Host "Жизненный цикл:"
         if ($openSpec.mode -eq "native") {
-            Write-Host "  extension setup when pending -> quick-fix or direct full-cycle -> /itl-check -> /itl-result; OpenSpec explore/propose/apply/archive is optional."
+            Write-Host "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; OpenSpec explore/propose/apply/archive используется при необходимости."
         } elseif ($openSpec.mode -eq "natural") {
-            Write-Host "  extension setup when pending -> quick-fix or direct full-cycle -> /itl-check -> /itl-result; natural OpenSpec explore/propose/apply/archive is optional."
+            Write-Host "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; natural OpenSpec explore/propose/apply/archive используется при необходимости."
         } else {
-            Write-Host "  extension setup when pending -> quick-fix or direct full-cycle -> /itl-check -> /itl-result; restore OpenSpec only when formal discovery or agreement is needed."
+            Write-Host "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; восстанавливайте OpenSpec только для формального исследования или согласования."
         }
-        Write-Host "  use /itl-refresh when master changes must be merged into this branch."
+        Write-Host "  используйте /itl-refresh, когда изменения master нужно перенести в эту ветку."
         Write-Host ""
-        Write-Host "ITL commands valid in this context:"
+        Write-Host "Команды ITL в этом контексте:"
         Write-Host "  /itl"
         Write-Host "  /itl-status"
         Write-Host "  /itl-check"
@@ -7806,7 +8030,7 @@ function Show-Help {
         }
         if ($inheritedPrimaryCommands.Count -gt 0) {
             Write-Host ""
-            Write-Host "Inherited by Kilo from primary checkout; invalid in this context:"
+            Write-Host "Унаследовано Kilo из основного checkout, но недоступно в этом контексте:"
             foreach ($command in $inheritedPrimaryCommands) {
                 Write-Host "  $command"
             }
@@ -7814,41 +8038,41 @@ function Show-Help {
         Write-Host ""
         Write-Host "OpenSpec:"
         $naturalRequests = Get-ItlOpenSpecNaturalRequests
-        Write-Host "  Mode: $($openSpec.mode)"
-        Write-Host "  External CLI: $(if ($openSpec.cliAvailable) { $openSpec.cliPath } else { 'not detected; no installation is attempted' })"
+        Write-Host "  Режим: $($openSpec.mode)"
+        Write-Host "  Внешний CLI: $(if ($openSpec.cliAvailable) { $openSpec.cliPath } else { 'не найден; установка не выполняется' })"
         if ($openSpec.mode -eq "native") {
-            Write-Host "  $($openSpec.invocations.propose)  Start proposal/design/tasks/test-plan/spec deltas; no code changes."
-            Write-Host "  $($openSpec.invocations.apply)  Implement an approved OpenSpec change from tasks.md and test-plan.md."
-            Write-Host "  $($openSpec.invocations.archive)  Archive an accepted OpenSpec change."
-            Write-Host "  $($openSpec.invocations.explore)  Optional exploration without proposal or code changes."
+            Write-Host "  $($openSpec.invocations.propose)  Создать proposal/design/tasks/test-plan/spec deltas без изменения кода."
+            Write-Host "  $($openSpec.invocations.apply)  Реализовать согласованное изменение по tasks.md и test-plan.md."
+            Write-Host "  $($openSpec.invocations.archive)  Архивировать принятое изменение."
+            Write-Host "  $($openSpec.invocations.explore)  Исследовать задачу без proposal и изменения кода."
             if (-not $openSpec.cliAvailable) {
-                Write-Host "  If the native prompt cannot invoke the CLI, use the natural requests below; never run npm install or openspec update."
-                Write-Host "  Explore: $($naturalRequests.explore)"
-                Write-Host "  Propose: $($naturalRequests.propose)"
-                Write-Host "  Apply: $($naturalRequests.apply)"
-                Write-Host "  Archive: $($naturalRequests.archive)"
+                Write-Host "  Если native prompt не может вызвать CLI, используйте запросы ниже; не запускайте npm install или openspec update."
+                Write-Host "  Исследование: $($naturalRequests.explore)"
+                Write-Host "  Предложение: $($naturalRequests.propose)"
+                Write-Host "  Реализация: $($naturalRequests.apply)"
+                Write-Host "  Архивация: $($naturalRequests.archive)"
             }
         } elseif ($openSpec.mode -eq "natural") {
-            Write-Host "  Explore: $($naturalRequests.explore)"
-            Write-Host "  Propose: $($naturalRequests.propose)"
-            Write-Host "  Apply: $($naturalRequests.apply)"
-            Write-Host "  Archive: $($naturalRequests.archive)"
-            Write-Host "  No native bundle is required; never run npm install or openspec update."
+            Write-Host "  Исследование: $($naturalRequests.explore)"
+            Write-Host "  Предложение: $($naturalRequests.propose)"
+            Write-Host "  Реализация: $($naturalRequests.apply)"
+            Write-Host "  Архивация: $($naturalRequests.archive)"
+            Write-Host "  Native bundle не требуется; не запускайте npm install или openspec update."
         } else {
-            Write-Host "  OpenSpec is unavailable: $($openSpec.reason)"
-            Write-Host "  Recovery: in master run update-ai-rules or update-workflow, merge the update into this branch, then run /itl-refresh."
+            Write-Host "  OpenSpec недоступен: $($openSpec.reason)"
+            Write-Host "  Восстановление: в master выполните update-ai-rules или update-workflow, перенесите обновление в ветку и запустите /itl-refresh."
         }
-        Write-Host "  use /itl-verify-fix only to repair omitted coverage or a failing verification cycle."
+        Write-Host "  используйте /itl-verify-fix только для исправления пропущенного покрытия или неуспешного цикла проверки."
     } else {
         Write-Host ""
-        Write-Host "Lifecycle:"
-        Write-Host "  Open the master worktree to create branches, or open an itldev/* worktree to check/result work."
+        Write-Host "Жизненный цикл:"
+        Write-Host "  Откройте worktree master для создания веток либо worktree itldev/* для разработки, проверки и получения результата."
         Write-Host ""
-        Write-Host "ITL commands valid in this context:"
+        Write-Host "Команды ITL в этом контексте:"
         Write-Host "  /itl"
         Write-Host "  /itl-status"
         Write-Host ""
-        Write-Host "Next step: run /itl-status to inspect this folder, then open the correct worktree."
+        Write-Host "Следующий шаг: выполните /itl-status для проверки папки, затем откройте правильный worktree."
     }
 
     Write-ItlAdditionalHelperActions

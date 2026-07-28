@@ -1093,7 +1093,7 @@
             function Update-DevBranchState {}
             function Invoke-DevBranchMcpRestartAfterInfobaseLoad { param([object]$State) $State }
             function Assert-DevBranchToolArtifactExportGuard {}
-            function Export-DevBranchResultFile { "C:\result\branch1.cf" }
+            function Export-DevBranchResultFile { "C:\Результаты работы\branch1.cf" }
             function Test-GitHasChanges { $true }
             function Get-VerificationWorkingTreeChangePaths { @("src/cf/Configuration.xml") }
             function Get-VerificationFingerprintScopePaths { @("src/cf", "src/cfe", "tests/features") }
@@ -1124,10 +1124,17 @@
             }
 
             Export-DevBranchResult 6>$null
+            $script:CapturedManifest | Add-Member -NotePropertyName runResultPath -NotePropertyValue $script:RunResultPath
+            $script:CapturedManifest | Add-Member -NotePropertyName runResultManifestPath -NotePropertyValue $script:RunResultManifestPath
+            $script:CapturedManifest | Add-Member -NotePropertyName userReport -NotePropertyValue $script:RunUserReport
             return $script:CapturedManifest
         }
 
-        $result.resultPath | Should -Be "C:\result\branch1.cf"
+        $result.resultPath | Should -Be "C:\Результаты работы\branch1.cf"
+        $result.runResultPath | Should -Be "C:\Результаты работы\branch1.cf"
+        $result.runResultManifestPath | Should -Be "C:\Результаты работы\branch1.cf.manifest.json"
+        $result.userReport | Should -Match ([regex]::Escape("Файл: C:\Результаты работы\branch1.cf"))
+        $result.userReport | Should -Match ([regex]::Escape("Манифест: C:\Результаты работы\branch1.cf.manifest.json"))
         $result.devBranchCommit | Should -Be "base-commit"
         $result.sourceFingerprint | Should -Be "config-fingerprint"
         $result.verificationFingerprint | Should -Be "v3|fixture"
@@ -4003,7 +4010,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $result | Should -Be @("/itl-update-workflow")
 
             $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $worktreeRoot -Action help 2>&1
-            ($output -join [Environment]::NewLine) | Should -Match "ITL commands valid in this context"
+            ($output -join [Environment]::NewLine) | Should -Match "Команды ITL в этом контексте"
             ($output -join [Environment]::NewLine) | Should -Match "Inherited by Kilo from primary checkout; invalid in this context"
         } finally {
             $previousPreference = $ErrorActionPreference
