@@ -1367,6 +1367,11 @@ function New-ResultManifest {
         [string]$Operation,
         [string]$MasterCommit = "",
         [string]$DevBranchCommit = "",
+        [string]$SourceFingerprint = "",
+        [string]$VerificationFingerprint = "",
+        [object]$VerificationState = $null,
+        [bool]$WorktreeClean = $true,
+        [bool]$VerificationScopeCommitted = $true,
         [bool]$UnverifiedOverride = $false
     )
 
@@ -1377,11 +1382,11 @@ function New-ResultManifest {
 
     $artifact = Get-Item -LiteralPath $artifactPath
     $artifactHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifactPath).Hash.ToLowerInvariant()
-    $verification = Get-VerificationState -State $State
+    $verification = if ($null -ne $VerificationState) { $VerificationState } else { Get-VerificationState -State $State }
     $manifestPath = "$artifactPath.manifest.json"
 
     $manifest = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         operation = $Operation
         createdAt = (Get-Date).ToString("o")
         artifact = [ordered]@{
@@ -1400,6 +1405,14 @@ function New-ResultManifest {
         commits = [ordered]@{
             master = $MasterCommit
             development = $DevBranchCommit
+            developmentBase = $DevBranchCommit
+        }
+        source = [ordered]@{
+            provenance = $(if ($VerificationScopeCommitted) { "commit" } else { "working-tree" })
+            worktreeClean = [bool]$WorktreeClean
+            verificationScopeCommitted = [bool]$VerificationScopeCommitted
+            configFingerprint = $SourceFingerprint
+            verificationFingerprint = $VerificationFingerprint
         }
         verification = [ordered]@{
             status = $verification.effectiveStatus
@@ -1408,6 +1421,8 @@ function New-ResultManifest {
             verifiedAt = $verification.verifiedAt
             verifiedCommit = $verification.verifiedCommit
             currentCommit = $verification.currentCommit
+            verifiedFingerprint = $verification.verifiedFingerprint
+            currentFingerprint = $verification.currentFingerprint
             reportPath = $verification.reportPath
             logPath = $verification.logPath
             reason = $verification.reason
@@ -7218,12 +7233,14 @@ function Export-DevBranchResult {
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "export-dev-branch-result"
     Assert-DevBranchExtensionInitialized -State $state -Operation "export-dev-branch-result"
     Assert-SingleManagedExtensionArtifact -State $state
-    Assert-CleanGit
     Sync-DevBranchContextToDotEnv -State $state
-    $currentBranch = Get-CurrentBranch
-    if ($currentBranch -ne $state.devBranch) {
-        Invoke-Git @("checkout", $state.devBranch)
+    $initialVerification = Get-VerificationState -State $state
+    $operationFingerprint = [string]$initialVerification.currentFingerprint
+    if ([string]::IsNullOrWhiteSpace($operationFingerprint)) {
+        throw "export-dev-branch-result could not calculate the current verification fingerprint."
     }
+    Confirm-UnverifiedProceed -State $state -Operation "export-dev-branch-result" -VerificationState $initialVerification -Allow:$AllowUnverifiedResult | Out-Null
+
     $kind = Get-DevBranchKind -State $state
     if ($kind -eq "extension") {
         $extensionName = Require-DevBranchExtensionName -State $state
@@ -7240,12 +7257,27 @@ function Export-DevBranchResult {
     Update-DevBranchState -State $state -Updates $updates
     $state = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "result export base update"
     $state = Read-DevBranchState -Name $DevBranchName
-    $unverifiedOverride = Confirm-UnverifiedProceed -State $state -Operation "export-dev-branch-result" -Allow:$AllowUnverifiedResult
+    $verificationBeforeExport = Get-VerificationState -State $state
+    if ([string]$verificationBeforeExport.currentFingerprint -cne $operationFingerprint) {
+        throw "export-dev-branch-result stopped because source or Vanessa feature content changed during result preparation. Run /itl-check again."
+    }
+    $unverifiedOverride = Confirm-UnverifiedProceed -State $state -Operation "export-dev-branch-result" -VerificationState $verificationBeforeExport -Allow:$AllowUnverifiedResult
 
     Assert-DevBranchToolArtifactExportGuard -State $state -ContentKind $kind
     $resultPath = Export-DevBranchResultFile -State $state -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -ContentKind $kind
     Assert-DevBranchToolArtifactExportGuard -State $state -ContentKind $kind -ResultPath $resultPath
+    $verificationAfterExport = Get-VerificationState -State $state
+    if ([string]$verificationAfterExport.currentFingerprint -cne $operationFingerprint) {
+        throw "export-dev-branch-result stopped because source or Vanessa feature content changed during artifact export. Run /itl-check again."
+    }
+    if (-not $unverifiedOverride -and -not $verificationAfterExport.isFreshPassed) {
+        throw "export-dev-branch-result stopped because fresh passed Vanessa verification was lost during artifact export. Run /itl-check again."
+    }
+
     $resultKind = $(if ($kind -eq "extension") { "cfe" } else { "cf" })
+    $sourceFingerprint = $(if ($loadResult.PSObject.Properties.Match("sourceFingerprint").Count -gt 0) { [string]$loadResult.sourceFingerprint } else { "" })
+    $worktreeClean = -not (Test-GitHasChanges)
+    $verificationScopeCommitted = (@(Get-VerificationWorkingTreeChangePaths -PathSpec (Get-VerificationFingerprintScopePaths)).Count -eq 0)
     $manifestPath = New-ResultManifest `
         -State $state `
         -ResultPath $resultPath `
@@ -7253,6 +7285,11 @@ function Export-DevBranchResult {
         -Operation "export-dev-branch-result" `
         -MasterCommit $masterCommit `
         -DevBranchCommit $devBranchCommit `
+        -SourceFingerprint $sourceFingerprint `
+        -VerificationFingerprint $operationFingerprint `
+        -VerificationState $verificationAfterExport `
+        -WorktreeClean ([bool]$worktreeClean) `
+        -VerificationScopeCommitted ([bool]$verificationScopeCommitted) `
         -UnverifiedOverride ([bool]$unverifiedOverride)
     $updates = @{}
     $updates["lastResultPath"] = $resultPath
