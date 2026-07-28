@@ -703,6 +703,9 @@
             $text | Should -Match "git branch --show-current.*не каталог"
             $text | Should -Match "exportPath.*extensionsPath"
             $text | Should -Match "master.*branch-safety blocker"
+            $text | Should -Match "изменение поведения системы за пределами допустимого локального quick-fix"
+            $text | Should -Match "связанные или подключенные к существующему поведению метаданные"
+            $text | Should -Not -Match "(?m)^- изменение поведения системы;$"
             $text | Should -Not -Match "2-4 Vanessa"
     }
 
@@ -718,6 +721,9 @@
         foreach ($marker in @('native', 'natural', 'Исследуй задачу в режиме OpenSpec', 'Подготовь OpenSpec proposal', 'не запускает `openspec update`')) {
             $text | Should -Match ([regex]::Escape($marker))
         }
+        $text | Should -Match "Сам факт исправления наблюдаемого поведения не переводит локальную BSL-правку в OpenSpec"
+        $text | Should -Match "изменения поведения за пределами допустимого локального quick-fix"
+        $text | Should -Not -Match "Используется для новой функциональности, изменения поведения, нескольких модулей"
         $text | Should -Not -Match ([regex]::Escape('.agents/skills/1c-workflow/references/'))
     }
 

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "baselineUpstreamCommit": "72665287e77361aea3aaf866fef163d98f0fabcd",
-  "baselineReleaseCommit": "0888fcdaf223abf97cfba7450bf38454926ad384",
+  "baselineReleaseCommit": "cf31a89deaee5d39bab5cce490330d204e6e1233",
   "targetPath": "AGENTS.md",
   "maximumTargetCharacters": 20000,
   "downstreamPatch": {
@@ -60,6 +60,7 @@
   "requiredTargetAnchors": [
     "USER-RULES.md` / `memory.md` -> `LLM-RULES.md`",
     "Quick-fix reduces planning overhead, never verification depth.",
+    "do not promote it solely because it corrects existing behavior",
     "do not report ready/done until relevant Vanessa coverage exists or was updated and a fresh successful `/itl-check` completed",
     "If `USER-RULES.md` defines a post-change or completion command, it is mandatory",
     "content/skills/mcp-1c-tools/SKILL.md",
