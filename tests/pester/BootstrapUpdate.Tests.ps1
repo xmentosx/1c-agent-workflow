@@ -286,11 +286,12 @@ exit 0
         $userRulesTemplateText | Should -Match "product-docs/SKILL.md"
         $userRulesTemplateText | Should -Match "BookStack-product-docs-mcp"
         $userRulesTemplateText | Should -Match "before broad repository traversal"
-        $userRulesTemplateText | Should -Match "OpenSpec explore/propose/apply phase"
-        $userRulesTemplateText | Should -Match "native command/SKILL"
-        $userRulesTemplateText | Should -Match "natural-language OpenSpec explore/propose/apply phase"
+        $userRulesTemplateText | Should -Match ([regex]::Escape("executionPath=quick-fix|full-cycle"))
+        $userRulesTemplateText | Should -Match ([regex]::Escape("planningMode=direct|OpenSpec"))
+        $userRulesTemplateText | Should -Match "Promotion triggers.*never force OpenSpec"
+        $userRulesTemplateText | Should -Match "OpenSpec phases read rules"
         $userRulesTemplateText | Should -Match 'Never install missing `openspec` or run `openspec update`'
-        $userRulesTemplateText | Should -Match "activate required project skills"
+        $userRulesTemplateText | Should -Match "activate required skills"
         $userRulesTemplateText | Should -Match "code, tests, current 1C metadata"
         $userRulesTemplateText | Should -Match "available MCP evidence"
         $userRulesTemplateText | Should -Match "surface conflicts"
@@ -368,7 +369,7 @@ exit 0
             $result.pm4 | Should -Match "technical or implementation architecture"
             $result.pm4 | Should -Not -Match "BookStack-product-docs-mcp"
             $result.pm5 | Should -Match "BookStack-product-docs-mcp"
-            $result.pm5 | Should -Match "OpenSpec explore/propose/apply phase"
+            $result.pm5 | Should -Match ([regex]::Escape("planningMode=direct|OpenSpec"))
             $result.pm5 | Should -Match "product-docs/SKILL.md"
             ([regex]::Matches($result.pm5, 'ITL-WORKFLOW-USER-RULES:START')).Count | Should -Be 1
         } finally {

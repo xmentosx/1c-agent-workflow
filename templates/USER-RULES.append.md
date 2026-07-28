@@ -1,12 +1,12 @@
 ## 1C Project Lifecycle
 
-ITL owns lifecycle, bases, MCP, verification, and export. Use `1c-workflow-fast`; use `1c-workflow` plus one recovery reference. Helpers only. 1C Designer/Enterprise `/LoadConfigFromFiles ... /UpdateDBCfg` actions default to `timeout_ms >= 3900000`, above the 3600-second limit. Do not use `120000 ms`; status/help do not need it.
+ITL owns lifecycle, bases, MCP, verification, and export. Use `1c-workflow-fast`; use `1c-workflow` plus one recovery reference. Helpers only. 1C Designer/Enterprise LoadConfigFromFiles/UpdateDBCfg actions need `timeout_ms >= 3900000`; status/help do not. Do not use `120000 ms`.
 
 Native `/itl`: return exact helper stdout in one fenced `text` block; preserve line breaks, blank lines, and indentation; write nothing outside. Never summarize, reorder, omit, or merge sections.
 
 One agent client is active. Its adapter owns commands/rules/agents; five ITL skills remain under `.agents/skills`. Switch only from clean `master` via `/itl-switch-client`; update worktrees later via `/itl-refresh`.
 
-Mechanically classify each code/metadata edit as quick-fix or OpenSpec. Quick-fix obeys `QUICKFIX_MAX_LINES` and needs focused regression evidence. Every native command/SKILL or natural-language OpenSpec explore/propose/apply phase uses one preflight: read `AGENTS.md` and `USER-RULES.md`; activate required project skills; consult required docs first; record `Context Sources`; agree `test-plan.md` at propose; follow approved artifacts at apply; finish with fresh ITL evidence. Never install missing `openspec` or run `openspec update`; memory cannot replace preflight.
+Classify code/metadata: record `executionPath=quick-fix|full-cycle`. For full-cycle record `planningMode=direct|OpenSpec`: direct for clear scope; OpenSpec on request or for formal agreement. Promotion triggers require full-cycle depth but never force OpenSpec. Quick-fix obeys `QUICKFIX_MAX_LINES` and needs regression evidence. OpenSpec phases read rules, activate required skills/docs, record `Context Sources`, agree `test-plan.md` at propose, follow approved artifacts at apply, and finish with evidence. Never install missing `openspec` or run `openspec update`; memory cannot replace preflight.
 
 For PM5 product logic, architecture, workflows, permissions, reports, integrations, acceptance tests, and OpenSpec work, activate `.agents/skills/product-docs/SKILL.md` before analysis or changes. Search `BookStack-product-docs-mcp` first, before broad repository traversal; verify against code, tests, current 1C metadata, and available MCP evidence; cite sources and surface conflicts. PM4 projects use the PM4 replacement rule installed by the helper.
 

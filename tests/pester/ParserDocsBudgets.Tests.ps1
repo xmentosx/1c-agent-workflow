@@ -370,7 +370,8 @@
         $devBlock | Should -Match "Get-ItlOpenSpecNaturalRequests"
         $devBlock | Should -Match "Optional"
         $devBlock | Should -Match "proposal"
-        $devBlock | Should -Match "choose development mode"
+        $devBlock | Should -Match "choose execution path"
+        $devBlock | Should -Match "direct by default"
         $devBlock | Should -Match "Checkable changes"
     }
 
@@ -455,7 +456,7 @@
         $installText | Should -Match "actual error instead of fabricating a panel"
     }
 
-    It "recommends choosing development mode for a fresh clean dev branch" {
+    It "recommends separate execution and planning choices for a fresh clean dev branch" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-help-clean-dev-" + [guid]::NewGuid().ToString("N"))
 
         try {
@@ -513,7 +514,9 @@
             $text = ($output | Out-String)
 
             $text | Should -Match "Checkable changes: False"
-            $text | Should -Match "Recommended next step: choose development mode: quick-fix, /opsx-explore, or /opsx-propose"
+            $text | Should -Match "Recommended next step: choose execution path: quick-fix or full-cycle"
+            $text | Should -Match "Full-cycle is direct by default"
+            $text | Should -Match "use /opsx-explore or /opsx-propose only when formal discovery or agreement adds value"
             foreach ($command in @("/opsx-propose", "/opsx-explore", "/opsx-apply", "/opsx-archive")) {
                 $text | Should -Match ([regex]::Escape($command))
             }
@@ -650,10 +653,12 @@
         $userRulesText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\USER-RULES.append.md")
 
         foreach ($marker in @(
-            "mechanically classify",
+            "executionPath=quick-fix|full-cycle",
+            "planningMode=direct|OpenSpec",
+            "never force OpenSpec",
             "QUICKFIX_MAX_LINES",
             "/itl-check",
-            "OpenSpec explore/propose/apply phase",
+            "OpenSpec phases read rules",
             "quick-fix",
             "Context Sources",
             "test-plan.md",
@@ -695,7 +700,7 @@
                 $text | Should -Match ([regex]::Escape($marker))
             }
 
-            $text | Should -Match "quick-fix.*Vanessa regression test"
+            $text | Should -Match "quick-fix.*переиспользуйте.*Vanessa-покрытие"
             $text | Should -Match "Второй сценарий.*только.*отдельной значимой границы"
             $text | Should -Match "OpenSpec.*hybrid cadence"
             $text | Should -Match "2-3 Vanessa"
@@ -703,8 +708,8 @@
             $text | Should -Match "git branch --show-current.*не каталог"
             $text | Should -Match "exportPath.*extensionsPath"
             $text | Should -Match "master.*branch-safety blocker"
-            $text | Should -Match "изменение поведения системы за пределами допустимого локального quick-fix"
-            $text | Should -Match "связанные или подключенные к существующему поведению метаданные"
+            $text | Should -Match "изменение существующей формы или wired metadata"
+            $text | Should -Match "Promotion trigger.*сам по себе не требует OpenSpec"
             $text | Should -Not -Match "(?m)^- изменение поведения системы;$"
             $text | Should -Not -Match "2-4 Vanessa"
     }
@@ -722,7 +727,8 @@
             $text | Should -Match ([regex]::Escape($marker))
         }
         $text | Should -Match "Сам факт исправления наблюдаемого поведения не переводит локальную BSL-правку в OpenSpec"
-        $text | Should -Match "изменения поведения за пределами допустимого локального quick-fix"
+        $text | Should -Match "Direct full-cycle"
+        $text | Should -Match "verification risk сами по себе не принуждают к OpenSpec"
         $text | Should -Not -Match "Используется для новой функциональности, изменения поведения, нескольких модулей"
         $text | Should -Not -Match ([regex]::Escape('.agents/skills/1c-workflow/references/'))
     }

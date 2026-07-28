@@ -7766,11 +7766,11 @@ function Show-Help {
                 Write-Host "Recommended next step: /itl-check"
             } elseif (-not $verification.isFreshPassed) {
                 if ($openSpec.mode -eq "native") {
-                    Write-Host "Recommended next step: choose development mode: quick-fix, $($openSpec.invocations.explore), or $($openSpec.invocations.propose)"
+                    Write-Host "Recommended next step: choose execution path: quick-fix or full-cycle. Full-cycle is direct by default; use $($openSpec.invocations.explore) or $($openSpec.invocations.propose) only when formal discovery or agreement adds value."
                 } elseif ($openSpec.mode -eq "natural") {
-                    Write-Host "Recommended next step: choose quick-fix, or ask the agent to explore a task or prepare an OpenSpec proposal in natural language."
+                    Write-Host "Recommended next step: choose execution path: quick-fix or full-cycle. Full-cycle is direct by default; ask for natural OpenSpec explore/propose only when formal discovery or agreement adds value."
                 } else {
-                    Write-Host "Recommended next step: choose quick-fix, or restore the OpenSpec workspace/rules from master before starting an OpenSpec change."
+                    Write-Host "Recommended next step: choose execution path: quick-fix or direct full-cycle. Restore the OpenSpec workspace/rules only when formal discovery or agreement is needed."
                 }
             } elseif (-not (Get-StateValue -State $state -Name "lastResultPath" -Default "")) {
                 Write-Host "Recommended next step: /itl-result"
@@ -7782,11 +7782,11 @@ function Show-Help {
         Write-Host ""
         Write-Host "Lifecycle:"
         if ($openSpec.mode -eq "native") {
-            Write-Host "  extension setup when pending -> optional $($openSpec.invocations.explore) -> quick-fix or $($openSpec.invocations.propose) -> $($openSpec.invocations.apply)/work -> /itl-check -> /itl-result"
+            Write-Host "  extension setup when pending -> quick-fix or direct full-cycle -> /itl-check -> /itl-result; OpenSpec explore/propose/apply/archive is optional."
         } elseif ($openSpec.mode -eq "natural") {
-            Write-Host "  extension setup when pending -> natural explore -> quick-fix or natural propose -> natural apply/work -> /itl-check -> /itl-result -> natural archive"
+            Write-Host "  extension setup when pending -> quick-fix or direct full-cycle -> /itl-check -> /itl-result; natural OpenSpec explore/propose/apply/archive is optional."
         } else {
-            Write-Host "  extension setup when pending -> quick-fix -> /itl-check -> /itl-result; restore the OpenSpec workspace/rules before an OpenSpec change."
+            Write-Host "  extension setup when pending -> quick-fix or direct full-cycle -> /itl-check -> /itl-result; restore OpenSpec only when formal discovery or agreement is needed."
         }
         Write-Host "  use /itl-refresh when master changes must be merged into this branch."
         Write-Host ""

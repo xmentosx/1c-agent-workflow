@@ -1,9 +1,21 @@
 {
   "schemaVersion": 1,
   "baselineUpstreamCommit": "72665287e77361aea3aaf866fef163d98f0fabcd",
-  "baselineReleaseCommit": "cf31a89deaee5d39bab5cce490330d204e6e1233",
+  "baselineReleaseCommit": "0118493165fd9507169317be28d53c52803d52ed",
   "targetPath": "AGENTS.md",
   "maximumTargetCharacters": 20000,
+  "additionalTargets": [
+    {
+      "path": "USER-RULES.md",
+      "template": "USER-RULES.md",
+      "maximumCharacters": 2400,
+      "requiredAnchors": [
+        "executionPath=quick-fix|full-cycle",
+        "planningMode=direct|OpenSpec",
+        "Promotion triggers require full-cycle depth but never force OpenSpec by themselves."
+      ]
+    }
+  ],
   "downstreamPatch": {
     "disposition": "rewrite",
     "description": "Reapply the qualified downstream delta from the immutable baseline release, excluding AGENTS.md. Any upstream drift in a touched path blocks the build for an explicit keep/drop/rewrite audit.",
@@ -60,6 +72,7 @@
   "requiredTargetAnchors": [
     "USER-RULES.md` / `memory.md` -> `LLM-RULES.md`",
     "Quick-fix reduces planning overhead, never verification depth.",
+    "Full-cycle is not OpenSpec",
     "do not promote it solely because it corrects existing behavior",
     "do not report ready/done until relevant Vanessa coverage exists or was updated and a fresh successful `/itl-check` completed",
     "If `USER-RULES.md` defines a post-change or completion command, it is mandatory",
