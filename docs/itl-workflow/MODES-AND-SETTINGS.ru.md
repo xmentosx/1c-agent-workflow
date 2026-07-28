@@ -1,6 +1,6 @@
 # Режимы и пользовательские настройки
 
-Настройки проекта находятся в ignored-файле `.dev.env`. Большинство режимов можно переключить slash-командой или обычным запросом агенту. Полный перечень переменных приведен в [справочнике `.dev.env`](DEV-ENV-REFERENCE.ru.md).
+Настройки проекта находятся в локальном файле `.dev.env`, который Git не отслеживает. Большинство режимов можно переключить slash-командой или обычным запросом агенту. Полный перечень переменных приведен в [справочнике `.dev.env`](DEV-ENV-REFERENCE.ru.md).
 
 ## Что использовать обычно
 
@@ -29,10 +29,10 @@ ITL не включает и не выключает Browser Automation и не 
 
 ## Краткая карта
 
-| Назначение | Команда/параметр | Значения | Default | Область действия |
+| Назначение | Команда/параметр | Значения | По умолчанию | Область действия |
 |---|---|---|---|---|
-| Глубина upstream статических проверок | `/litemode`, `VERIFICATION_DEPTH` | `full`, `standard`, `lite` | `full` | проект |
-| Browser UI testing upstream | `UI_TESTING` | `auto`, `manual`, `off` | `manual` | проект |
+| Глубина статических проверок `ai_rules_1c` | `/litemode`, `VERIFICATION_DEPTH` | `full`, `standard`, `lite` | `full` | проект |
+| Проверка веб-интерфейса по правилам `ai_rules_1c` | `UI_TESTING` | `auto`, `manual`, `off` | `manual` | проект |
 | ITL Vanessa Automation | `/itl-litemode`, `ITL_VANESSA_TESTING` | `auto`, `manual`, `off` | `auto` | проект/worktree |
 | ITL журнал регистрации | `/itl-litemode`, `ITL_CHECK_EVENT_LOG` | `auto`, `manual`, `off` | `auto` | проект/worktree |
 | Оркестрация | `/economymode`, `ORCHESTRATION` | `standard`, `economy` | `standard` | проект |
@@ -43,7 +43,7 @@ ITL не включает и не выключает Browser Automation и не 
 | Зависимости | `DEPENDENCY_MODE` | `fresh`, `locked` | `fresh` | проект |
 | Выгрузка без fresh pass | `VERIFICATION_POLICY` | `warn`, `block` | `warn` | проект |
 
-## Статические проверки: upstream `/litemode`
+## Статические проверки `ai_rules_1c`: `/litemode`
 
 `/litemode` управляет `VERIFICATION_DEPTH` — глубиной статических проверок BSL для низкорисковых изменений.
 

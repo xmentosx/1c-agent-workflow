@@ -10,7 +10,7 @@
   └─ неизвестный параметр ──────► поиск по точному имени ключа
 ```
 
-Значения с владельцем `helper` или `runtime` не редактируйте вручную без recovery-задачи. Пустое значение означает указанный default либо отсутствие настройки.
+В таблицах `user` означает настройку пользователя, `helper` — встроенные скрипты workflow, а `runtime` — автоматически запущенные процессы. Значения с владельцем `helper` или `runtime` не редактируйте вручную без задачи по восстановлению. Пустое значение означает указанное значение по умолчанию либо отсутствие настройки.
 
 Для защиты от `MAX_PATH=260` абсолютный путь начального корня проекта ограничен 35 символами, а путь нового worktree `<родитель>\<проект>-<ветка>` — 50 символами. Допустимая длина имени ветки вычисляется только как остаток от 50 после родительского пути, имени папки проекта, разделителя и дефиса; содержимое исходников не анализируется. Временные транзакции выгрузки конфигурации, расширения и установки Vanessa используют игнорируемую папку `.tx` внутри проекта.
 
@@ -56,8 +56,8 @@
 | `DEPENDENCY_MODE` | Разрешение зависимостей | `fresh`/`locked`, default `fresh` | user |
 | `QUICKFIX_MAX_LINES` | Лимит BSL-строк quick-fix | default `40` | user |
 | `DEBUG_FAST_PATH` | Сокращенный цикл отладки | `standard`/`extended`/`off`, default `standard` | user |
-| `VERIFICATION_DEPTH` | Глубина upstream static QA | `full`/`standard`/`lite`, default `full` | user/`/litemode` |
-| `UI_TESTING` | Upstream browser UI testing | `auto`/`manual`/`off`, default `manual` | user/`/litemode` |
+| `VERIFICATION_DEPTH` | Глубина статических проверок `ai_rules_1c` | `full`/`standard`/`lite`, default `full` | user/`/litemode` |
+| `UI_TESTING` | Проверка веб-интерфейса по правилам `ai_rules_1c` | `auto`/`manual`/`off`, default `manual` | user/`/litemode` |
 | `ORCHESTRATION` | Режим оркестрации | `standard`/`economy`, default `standard` | user/`/economymode` |
 | `SUBAGENT_MODEL_CODING` | Модель coding tier | model id; пусто = модель клиента | user/installer |
 | `SUBAGENT_MODEL_ANALYSIS` | Модель analysis tier | model id; пусто = модель клиента | user/installer |
