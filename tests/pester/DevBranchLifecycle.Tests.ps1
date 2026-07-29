@@ -2722,6 +2722,7 @@ if (`$?) { exit 0 } else { exit 1 }
 
         $handoff = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-ItlActiveClient { return "kilocode" }
             $script:RunRequiredAction = ""
             $script:RunWorktreePath = ""
             $output = Write-DevBranchWorktreeOpenMessage -MainProjectPath "C:\fixture\main" -WorktreePath "C:\fixture\branch1" 6>&1
@@ -2734,6 +2735,24 @@ if (`$?) { exit 0 } else { exit 1 }
         $handoff.output | Should -Not -Match '/reload'
         $handoff.requiredAction | Should -Match 'дополнительная перезагрузка клиента.*не требуется'
         $handoff.worktreePath | Should -Be "C:\fixture\branch1"
+
+        $codexHandoff = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-ItlActiveClient { return "codex" }
+            $script:RunRequiredAction = ""
+            $script:RunWorktreePath = ""
+            $output = Write-DevBranchWorktreeOpenMessage -MainProjectPath "C:\fixture\main" -WorktreePath "C:\fixture\branch-codex" 6>&1
+            [pscustomobject]@{
+                output = ($output -join [Environment]::NewLine)
+                requiredAction = $script:RunRequiredAction
+                worktreePath = $script:RunWorktreePath
+            }
+        }
+        $codexHandoff.output | Should -Match 'как отдельный project'
+        $codexHandoff.requiredAction | Should -Match 'новую задачу в режиме Local'
+        $codexHandoff.requiredAction | Should -Match 'Режим Worktree не выбирайте'
+        $codexHandoff.requiredAction | Should -Match 'Git worktree и среда 1С уже созданы ITL'
+        $codexHandoff.worktreePath | Should -Be "C:\fixture\branch-codex"
     }
 
     It "requires initial Kilo reload in the existing master window only" {
