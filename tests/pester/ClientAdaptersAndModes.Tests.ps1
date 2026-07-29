@@ -61,6 +61,8 @@
             $registry = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-ItlClientAdapterRegistry }
             @($registry.Keys) | Should -Be @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
             $registry.codex.skillsPath | Should -Be ".agents/skills"
+            $registry.codex.commandsPath | Should -Be ".agents/skills"
+            $registry.codex.commandFormat | Should -Be "skill"
             $registry.kilocode.commandsPath | Should -Be ".kilo/commands"
             $registry.opencode.agentsPath | Should -Be ".opencode/agent"
             $registry.opencode.commandsPath | Should -Be ".opencode/command"
@@ -201,7 +203,7 @@
             $adapted = & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
                 $result = [ordered]@{}
-                foreach ($client in @("kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")) {
+                foreach ($client in @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")) {
                     $result[$client] = [ordered]@{}
                     foreach ($fileName in $templates.Keys) {
                         $result[$client][$fileName] = Convert-ItlCommandForClient -Text $templates[$fileName] -Client $client -FileName $fileName
@@ -224,6 +226,7 @@
                     $adapted[$client][$fileName] | Should -Match '(?m)^description:\s*[^\r\n]*[А-Яа-яЁё]'
                 }
             }
+            $adapted.codex["itl.md"] | Should -Match '(?m)^name:\s*itl$'
             $adapted["opencode"]["itl-new-config-branch.md"] | Should -Match '(?m)^description:\s*Создать ветку конфигурации ITL'
             $adapted["opencode"]["itl-new-extension-branch.md"] | Should -Match '(?m)^description:\s*Создать ветку расширения ITL'
         } finally {
@@ -250,6 +253,7 @@
 
     It "generates the documented routine surfaces for every new client" {
         $expected = [ordered]@{
+            codex = ".agents/skills/itl/SKILL.md"
             kimi = ".kimi-code/skills/itl/SKILL.md"
             qwen = ".qwen/commands/itl.md"
             "command-code" = ".commandcode/commands/itl.md"
@@ -267,8 +271,68 @@
             @($result[$client].Keys) | Should -Contain $path
             [string]$result[$client][$path] | Should -Not -Match '(?m)^agent:'
         }
+        [string]$result.codex[$expected.codex] | Should -Match '(?m)^name:\s*itl$'
+        @($result.codex.Keys) | Should -Contain ".agents/skills/itl/agents/openai.yaml"
+        [string]$result.codex[".agents/skills/itl/agents/openai.yaml"] | Should -Match 'allow_implicit_invocation:\s*false'
         [string]$result.kimi[$expected.kimi] | Should -Match '(?m)^name:\s*itl$'
         [string]$result.cline[$expected.cline] | Should -Match '(?m)^name:\s*itl$'
+    }
+
+    It "generates only context-valid explicit Codex routine skills" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-codex-surface-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"masterBranch":"master","aiRules":{"tools":["codex"]}}'
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot branch -M master
+
+            $masterFiles = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
+            }
+            @($masterFiles.Keys).Count | Should -Be 14
+            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-new-config-branch", "itl-new-extension-branch", "itl-update-workflow", "itl-switch-client")) {
+                @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
+                @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/agents/openai.yaml"
+            }
+            @($masterFiles.Keys) | Should -Not -Contain ".agents/skills/itl-check/SKILL.md"
+
+            & git -C $tempRoot branch -M itldev/codex-surface
+            $devFiles = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
+            }
+            @($devFiles.Keys).Count | Should -Be 14
+            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-check", "itl-verify-fix", "itl-refresh", "itl-result")) {
+                @($devFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
+                [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match 'allow_implicit_invocation:\s*false'
+            }
+            @($devFiles.Keys) | Should -Not -Contain ".agents/skills/itl-new-config-branch/SKILL.md"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "renders ITL command examples in the active client syntax" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-active-command-syntax-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $values = [ordered]@{}
+                foreach ($client in @("codex", "kilocode", "kimi")) {
+                    Write-Utf8Text -Path (Join-Path $tempRoot ".agent-1c\project.json") -Value "{`"aiRules`":{`"tools`":[`"$client`"]}}"
+                    [void](Read-ProjectConfig)
+                    $values[$client] = ConvertTo-ItlActiveClientCommandText -Text "Рекомендуемый шаг: /itl-check"
+                }
+                $values
+            }
+            $result.codex | Should -Be 'Рекомендуемый шаг: $itl-check'
+            $result.kilocode | Should -Be "Рекомендуемый шаг: /itl-check"
+            $result.kimi | Should -Be "Рекомендуемый шаг: /skill:itl-check"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "renders all new project MCP schemas without replacing user config" {

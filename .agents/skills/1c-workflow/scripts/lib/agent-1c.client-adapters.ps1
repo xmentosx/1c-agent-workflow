@@ -4,10 +4,10 @@
             id = "codex"
             rulesPath = ".codex/rules"
             agentsPath = ".codex/agents"
-            commandsPath = ""
+            commandsPath = ".agents/skills"
             skillsPath = ".agents/skills"
             mcpPath = ".codex/config.toml"
-            commandFormat = "none"
+            commandFormat = "skill"
             commandRouting = "none"
             nativeAgents = $true
             mcpFormat = "toml"
@@ -245,6 +245,30 @@ function Get-ItlActiveClient {
         }
     }
     return [string]$configured[0]
+}
+
+function ConvertTo-ItlActiveClientCommandText {
+    param([string]$Text)
+
+    try {
+        $client = Get-ItlActiveClient
+        $adapter = Get-ItlClientAdapter -Client $client
+    } catch {
+        return $Text
+    }
+
+    $prefix = switch ([string]$adapter.commandFormat) {
+        "skill" {
+            if ($client -eq "codex") { '$' } elseif ($client -eq "kimi") { "/skill:" } else { "/" }
+        }
+        default { "/" }
+    }
+    return $Text.Replace("/itl", ($prefix + "itl"))
+}
+
+function Write-ItlActiveClientCommandText {
+    param([string]$Text)
+    Write-Host (ConvertTo-ItlActiveClientCommandText -Text $Text)
 }
 
 function Get-AiRules1cInstalledSkillRoot {
@@ -807,6 +831,10 @@ function Get-ItlExpectedSurfaceFiles {
                 $name = $source.Name.Substring(0, $source.Name.Length - ".template".Length)
                 $relative = Get-ItlCommandRelativePath -Adapter $adapter -FileName $name
                 $files[$relative] = Convert-ItlCommandForClient -Text (Read-Utf8Text -Path $source.FullName) -Client $Client -FileName $name
+                if ($Client -eq "codex") {
+                    $skillRoot = $relative.Substring(0, $relative.Length - "/SKILL.md".Length)
+                    $files["$skillRoot/agents/openai.yaml"] = "policy:`n  allow_implicit_invocation: false`n"
+                }
             }
         }
     }

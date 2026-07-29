@@ -29,10 +29,10 @@ This package supports Codex, Kilo Code, Claude Code, Cursor, OpenCode, Kimi Code
 - Branch data exploration skill: `.agents/skills/itl-roctup-1c-data`.
 - Runtime form investigation skill: `.agents/skills/itl-vanessa-ui-mcp`.
 - Common project guidance: upstream `AGENTS.md` from `ai_rules_1c` plus detailed ITL overlay notes in `USER-RULES.md`.
-- ITL command source templates: `.agents/skills/1c-workflow/kilo-command-templates`; adapters render them to the active client's native command path. Codex uses project-local skills and natural requests because project-local custom slash prompts are not supported.
+- ITL command source templates: `.agents/skills/1c-workflow/kilo-command-templates`; adapters render them to the active client's native command, skill, or prompt path. Codex receives ignored context-specific `.agents/skills/itl*/SKILL.md` wrappers from the same templates.
 - Client discovery paths and capabilities are registered in the helper for exactly ten clients: Codex, Kilo, Claude Code, Cursor, OpenCode, Kimi, Qwen, Command Code, Cline, and Pi. Kimi/Cline routines are skills, Pi routines are prompts, Qwen uses shared `.qwen/settings.json`, Command Code uses root `.mcp.json`, and Pi pins its MCP extension project-locally.
 - Local MCP/client runtime state is ignored and written only for the active client. Kilo uses `.kilo/kilo.json`; a neighboring `.kilo/kilo.jsonc` collision blocks writes. Tracked Cursor/OpenCode config requires explicit migration.
-- Codex usage: choose the skill via `/skills`, invoke `$1c-workflow` for detailed workflows or `$1c-workflow-fast` for routine helper-first commands, or use natural language that matches the skill description.
+- Codex usage: type `$itl` to see the current lifecycle panel, then invoke one of the visible `$itl*` skills. Use `$1c-workflow` only for initialization, unusual recovery, or detailed workflow work; matching natural language remains supported.
 
 Do not rely on Codex-only custom prompts for this workflow. They are local to one user and are not the team distribution mechanism.
 
@@ -395,17 +395,33 @@ Advanced/helper actions such as extension setup/dump, project initialization, wo
 
 OpenSpec remains owned by the pinned `ai_rules_1c` upstream snapshot. A healthy managed client bundle is reported as `native`; an intentional manifest `bundleSkipped` with a complete `openspec/` workspace, managed `sdd-integrations.md`, and ITL `USER-RULES.md` preflight is reported as `natural`. Missing/damaged managed artifacts are `unavailable` and must not fall back silently. The external `openspec` executable is diagnostic only: its absence does not block natural mode and never triggers `npm install` or `openspec update`.
 
-Typing `/` shows available project commands.
+Use the active client's command or skill picker to discover the generated project surface.
 
 For Codex:
 
 ```text
-/skills -> 1C Workflow
-$1c-workflow
-$1c-workflow-fast
+master:
+$itl
+$itl-status
+$itl-new-config-branch
+$itl-new-extension-branch
+$itl-update-workflow
+$itl-switch-client
+$itl-litemode
+
+itldev/*:
+$itl
+$itl-status
+$itl-check
+$itl-verify-fix
+$itl-refresh
+$itl-result
+$itl-litemode
 ```
 
-Natural language is also supported:
+Only the seven skills valid for the current Git context are generated. They are ignored runtime files, refreshed by the normal client-surface synchronization, and configured with `allow_implicit_invocation: false`, so they do not compete for implicit routing context. Open a new Codex task after generation so the picker rereads them.
+
+Natural language and the general workflow skills remain available for advanced or recovery work:
 
 ```text
 Create a 1C development branch named order discounts.
