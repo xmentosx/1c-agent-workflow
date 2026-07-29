@@ -99,6 +99,9 @@
             $registry.cline.mcpPath | Should -Be ".cline/mcp.json"
             $registry.pi.commandsPath | Should -Be ".pi/prompts"
             $registry.pi.requiredPackage | Should -Be "npm:pi-mcp-extension@1.5.0"
+            $registry.cursor.mcpEnablementObservation | Should -Be "private-client-state"
+            $registry.cursor.mcpEnablementUserInstruction | Should -Match ([regex]::Escape("+ → MCP Servers"))
+            $registry.cursor.mcpEnablementUserInstruction | Should -Match "не предоставляет workflow доступ"
             foreach ($client in @($registry.Keys)) {
                 [string]$registry[$client].reload | Should -Not -BeNullOrEmpty
                 if ($client -ne "opencode") {
@@ -247,6 +250,8 @@
                 $adapted[$client]["itl-status.md"] | Should -Match 'one `- Подпись: значение` field per line'
                 $adapted[$client]["itl-status.md"] | Should -Match "Kilo Browser Automation"
                 $adapted[$client]["itl-status.md"] | Should -Match "never omit, reword, or move"
+                $adapted[$client]["itl-status.md"] | Should -Match "Cursor MCP Agent switches"
+                $adapted[$client]["itl-status.md"] | Should -Match "separate permission boundary"
                 $adapted[$client]["itl-status.md"] | Should -Match "Контекст разработки"
                 $adapted[$client]["itl-litemode.md"] | Should -Match "complete helper stdout unchanged"
                 $adapted[$client]["itl-litemode.md"] | Should -Match 'exactly one fenced `text` code block'
@@ -277,6 +282,61 @@
             $instructions[$client] | Should -Not -Match '^(Start|Run|Restart|Reload|Trust)\b' -Because $client
         }
         $instructions.kilocode | Should -Match '/reload'
+    }
+
+    It "separates Cursor MCP client config coverage from private Agent switches" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-cursor-mcp-enablement-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\mcp"), (Join-Path $tempRoot ".cursor") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["cursor"]}}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".cursor\mcp.json") -Encoding UTF8 -Value '{"mcpServers":{"itl-roctup-data":{"command":"fixture"},"1C-docs-mcp":{"type":"http","url":"http://fixture.invalid/mcp"}}}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\mcp\client-managed.json") -Encoding UTF8 -Value '{"schemaVersion":1,"owners":{"cursor/ondemand-facade":["itl-roctup-data"],"cursor/vibecoding1c":["1C-docs-mcp","1c-code-metadata-mcp"]}}'
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $observation = Get-ItlClientMcpEnablementObservation
+                $status = (Write-ItlClientMcpEnablementStatusLines 6>&1) -join [Environment]::NewLine
+                $mcpLines = [System.Collections.Generic.List[string]]::new()
+                $adviceLines = [System.Collections.Generic.List[string]]::new()
+                Add-ItlClientMcpEnablementRunUserReportLines -McpLines $mcpLines -AdviceLines $adviceLines
+                [pscustomobject]@{
+                    observation = $observation
+                    status = $status
+                    reportLines = @($mcpLines)
+                    adviceLines = @($adviceLines)
+                }
+            }
+
+            $result.observation.applicable | Should -BeTrue
+            $result.observation.enablementState | Should -Be "not-observable"
+            $result.observation.configuredCount | Should -Be 2
+            $result.observation.configuredManagedCount | Should -Be 2
+            $result.observation.expectedManagedCount | Should -Be 3
+            @($result.observation.missingManagedServerIds) | Should -Be @("1c-code-metadata-mcp")
+            $result.status | Should -Match "managed ITL coverage=2/3"
+            $result.status | Should -Match "Cursor MCP missing managed servers: 1c-code-metadata-mcp"
+            $result.status | Should -Match "Cursor MCP Agent switches: not observable by ITL"
+            $result.status | Should -Match ([regex]::Escape("+ → MCP Servers"))
+            ($result.reportLines -join "`n") | Should -Match "MCP в конфигурации Cursor: 2; управляемые ITL: 2/3"
+            ($result.reportLines -join "`n") | Should -Match "Переключатели MCP в Cursor Agent: ITL не может проверить"
+            ($result.adviceLines -join "`n") | Should -Match "В конфигурации Cursor отсутствуют управляемые MCP: 1c-code-metadata-mcp"
+            ($result.adviceLines -join "`n") | Should -Match "Обязательная проверка Cursor:"
+            ($result.adviceLines -join "`n") | Should -Match ([regex]::Escape("+ → MCP Servers"))
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "wires Cursor MCP enablement guidance into init branch refresh and status reports" {
+        $lifecycleText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
+        foreach ($functionName in @("Write-InitRunUserReport", "Write-DevBranchRunUserReport")) {
+            $block = [regex]::Match($lifecycleText, "(?s)function $functionName \{.*?(?=\r?\nfunction )").Value
+            $block | Should -Not -BeNullOrEmpty
+            ([regex]::Matches($block, "Add-ItlClientMcpEnablementRunUserReportLines")).Count | Should -Be 1 -Because $functionName
+        }
+        $statusBlock = [regex]::Match($lifecycleText, "(?s)function Show-WorkflowStatus \{.*?(?=\r?\nfunction )").Value
+        $statusBlock | Should -Not -BeNullOrEmpty
+        ([regex]::Matches($statusBlock, "Write-ItlClientMcpEnablementStatusLines")).Count | Should -Be 1
     }
 
     It "generates the documented routine surfaces for every new client" {

@@ -74,6 +74,8 @@
             mcpStdioFormat = "standard"
             mcpRemoteFormat = "http"
             trackedMcpConfig = $true
+            mcpEnablementObservation = "private-client-state"
+            mcpEnablementUserInstruction = "Откройте в текущем проекте Cursor меню + → MCP Servers и убедитесь, что включены все серверы ITL. ITL проверяет .cursor/mcp.json, но Cursor не предоставляет workflow доступ к состоянию этих переключателей. После включения откройте новый Agent-чат."
             reload = "Reload the Cursor window."
             reloadUserReport = "Перезагрузите окно Cursor."
         }
@@ -469,6 +471,65 @@ function Get-ItlClientMcpEndpointKeys {
     }
     $container = ConvertTo-Vibecoding1cMcpHashtable -Object $config[$containerName]
     return @($container.Keys | ForEach-Object { [string]$_ })
+}
+
+function Get-ItlClientMcpEnablementObservation {
+    param([string]$Client = "")
+
+    if (-not $Client) { $Client = Get-ItlActiveClient }
+    $adapter = Get-ItlClientAdapter -Client $Client
+    $configuredServerIds = @(Get-ItlClientMcpEndpointKeys -Client $Client | Sort-Object -Unique)
+    $managedServerIds = @()
+    $managedState = Read-ItlManagedMcpState
+    if ($managedState.Contains("owners")) {
+        $owners = ConvertTo-Vibecoding1cMcpHashtable -Object $managedState["owners"]
+        foreach ($ownerKey in @($owners.Keys | Where-Object { $_ -like "$Client/*" })) {
+            $managedServerIds += @($owners[$ownerKey] | ForEach-Object { [string]$_ } | Where-Object { $_ })
+        }
+    }
+    $managedServerIds = @($managedServerIds | Sort-Object -Unique)
+    $configuredManagedServerIds = @($managedServerIds | Where-Object { $_ -in $configuredServerIds })
+    $missingManagedServerIds = @($managedServerIds | Where-Object { $_ -notin $configuredServerIds })
+    $observationMode = [string](Get-StateValue -State $adapter -Name "mcpEnablementObservation" -Default "client-config")
+
+    return [pscustomobject]@{
+        applicable = ($observationMode -eq "private-client-state")
+        client = $Client
+        configPath = [string]$adapter.mcpPath
+        configuredServerIds = @($configuredServerIds)
+        configuredCount = @($configuredServerIds).Count
+        managedServerIds = @($managedServerIds)
+        expectedManagedCount = @($managedServerIds).Count
+        configuredManagedServerIds = @($configuredManagedServerIds)
+        configuredManagedCount = @($configuredManagedServerIds).Count
+        missingManagedServerIds = @($missingManagedServerIds)
+        enablementState = $(if ($observationMode -eq "private-client-state") { "not-observable" } else { "client-config" })
+        instruction = [string](Get-StateValue -State $adapter -Name "mcpEnablementUserInstruction" -Default "")
+    }
+}
+
+function Write-ItlClientMcpEnablementStatusLines {
+    try {
+        $observation = Get-ItlClientMcpEnablementObservation
+    } catch {
+        Write-Host "Client MCP enablement observation: unavailable ($($_.Exception.Message))"
+        return
+    }
+    if (-not $observation.applicable) { return }
+
+    $managedCoverage = if ($observation.expectedManagedCount -gt 0) {
+        "$($observation.configuredManagedCount)/$($observation.expectedManagedCount)"
+    } else {
+        "<unknown>"
+    }
+    Write-Host "Cursor MCP client config: $($observation.configuredCount) servers; managed ITL coverage=$managedCoverage; path=$($observation.configPath)"
+    if (@($observation.missingManagedServerIds).Count -gt 0) {
+        Write-Host "Cursor MCP missing managed servers: $(@($observation.missingManagedServerIds) -join ', ')"
+    }
+    Write-Host "Cursor MCP Agent switches: not observable by ITL"
+    if ($observation.instruction) {
+        Write-Host "Cursor MCP required action: $($observation.instruction)"
+    }
 }
 
 function Get-ItlManagedMcpOwnerKeys {

@@ -3798,6 +3798,34 @@ function Add-Vibecoding1cRunUserReportLines {
     }
 }
 
+function Add-ItlClientMcpEnablementRunUserReportLines {
+    param(
+        [System.Collections.Generic.List[string]]$McpLines,
+        [System.Collections.Generic.List[string]]$AdviceLines
+    )
+
+    try {
+        $observation = Get-ItlClientMcpEnablementObservation
+    } catch {
+        return
+    }
+    if (-not $observation.applicable) { return }
+
+    $managedCoverage = if ($observation.expectedManagedCount -gt 0) {
+        "$($observation.configuredManagedCount)/$($observation.expectedManagedCount)"
+    } else {
+        "<не определено>"
+    }
+    Add-RunUserReportLine -Lines $McpLines -Label "MCP в конфигурации Cursor" -Value "$($observation.configuredCount); управляемые ITL: $managedCoverage"
+    Add-RunUserReportLine -Lines $McpLines -Label "Переключатели MCP в Cursor Agent" -Value "ITL не может проверить"
+    if (@($observation.missingManagedServerIds).Count -gt 0) {
+        $AdviceLines.Add("- В конфигурации Cursor отсутствуют управляемые MCP: $(@($observation.missingManagedServerIds) -join ', '). Выполните /itl-refresh и повторите /itl-status.")
+    }
+    if ($observation.instruction) {
+        $AdviceLines.Add("- Обязательная проверка Cursor: $($observation.instruction)")
+    }
+}
+
 function Add-KiloBrowserRunUserReportLines {
     param(
         [System.Collections.Generic.List[string]]$McpLines,
@@ -3855,6 +3883,7 @@ function Write-InitRunUserReport {
     $facadeStatus = if ($facadeExecutable -and (Test-Path -LiteralPath $facadeExecutable -PathType Leaf)) { "ready" } else { "missing" }
     Add-RunUserReportLine -Lines $lines -Label "Шлюз ITL on-demand MCP" -Value (ConvertTo-RunUserReportStateDisplay -Value $facadeStatus -Kind Availability)
     Add-Vibecoding1cRunUserReportLines -Lines $lines -AdviceLines $advice
+    Add-ItlClientMcpEnablementRunUserReportLines -McpLines $lines -AdviceLines $advice
     Add-KiloBrowserRunUserReportLines -McpLines $lines -AdviceLines $advice -ProjectRoot $script:ProjectRoot
 
     if (-not $usesRepository) {
@@ -3942,6 +3971,7 @@ function Write-DevBranchRunUserReport {
     Add-RunUserReportLine -Lines $lines -Label "ROCTUP MCP" -Value (ConvertTo-RunUserReportStateDisplay -Value (Get-StateValue -State $State -Name "roctupMcpStatus" -Default "unknown") -Kind McpStatus)
     Add-RunUserReportLine -Lines $lines -Label "Vanessa UI MCP" -Value (ConvertTo-RunUserReportStateDisplay -Value (Get-StateValue -State $State -Name "vanessaMcpStatus" -Default "unknown") -Kind McpStatus)
     Add-Vibecoding1cRunUserReportLines -Lines $lines -AdviceLines $advice
+    Add-ItlClientMcpEnablementRunUserReportLines -McpLines $lines -AdviceLines $advice
     Add-KiloBrowserRunUserReportLines -McpLines $lines -AdviceLines $advice -ProjectRoot $AdvisoryRoot
 
     $extensionStatus = Get-DevBranchExtensionInitializationStatus -State $State
@@ -7295,6 +7325,7 @@ function Show-WorkflowStatus {
     Write-WorkflowPackageStatusLines
     Write-AiRules1cStatusLines
     Write-ItlOnDemandMcpStatusLines
+    Write-ItlClientMcpEnablementStatusLines
     Write-KiloBrowserAutomationSummary -ProjectRoot $script:ProjectRoot
 
     if ($currentBranch -notlike "itldev/*") {
