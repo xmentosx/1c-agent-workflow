@@ -286,11 +286,12 @@ exit 0
         $userRulesTemplateText | Should -Match "product-docs/SKILL.md"
         $userRulesTemplateText | Should -Match "BookStack-product-docs-mcp"
         $userRulesTemplateText | Should -Match "before broad repository traversal"
-        $userRulesTemplateText | Should -Match "OpenSpec explore/propose/apply phase"
-        $userRulesTemplateText | Should -Match "native command/SKILL"
-        $userRulesTemplateText | Should -Match "natural-language OpenSpec explore/propose/apply phase"
+        $userRulesTemplateText | Should -Match ([regex]::Escape("executionPath=quick-fix|full-cycle"))
+        $userRulesTemplateText | Should -Match ([regex]::Escape("planningMode=direct|OpenSpec"))
+        $userRulesTemplateText | Should -Match "Promotion triggers.*never force OpenSpec"
+        $userRulesTemplateText | Should -Match "OpenSpec phases read rules"
         $userRulesTemplateText | Should -Match 'Never install missing `openspec` or run `openspec update`'
-        $userRulesTemplateText | Should -Match "activate required project skills"
+        $userRulesTemplateText | Should -Match "activate required skills"
         $userRulesTemplateText | Should -Match "code, tests, current 1C metadata"
         $userRulesTemplateText | Should -Match "available MCP evidence"
         $userRulesTemplateText | Should -Match "surface conflicts"
@@ -368,7 +369,7 @@ exit 0
             $result.pm4 | Should -Match "technical or implementation architecture"
             $result.pm4 | Should -Not -Match "BookStack-product-docs-mcp"
             $result.pm5 | Should -Match "BookStack-product-docs-mcp"
-            $result.pm5 | Should -Match "OpenSpec explore/propose/apply phase"
+            $result.pm5 | Should -Match ([regex]::Escape("planningMode=direct|OpenSpec"))
             $result.pm5 | Should -Match "product-docs/SKILL.md"
             ([regex]::Matches($result.pm5, 'ITL-WORKFLOW-USER-RULES:START')).Count | Should -Be 1
         } finally {
@@ -776,8 +777,9 @@ local after
 
             $stdout = Get-Content -Encoding UTF8 -Raw $stdoutPath
             $stdout | Should -Match "ITL workflow package post-copy processing completed"
-            $stdout | Should -Match "No commit was created automatically"
-            $stdout | Should -Match "No active development branches were found"
+            $stdout | Should -Match "Workflow обновлён"
+            $stdout | Should -Match "Новый коммит создан: да"
+            $stdout | Should -Match "Активных веток разработки нет"
             $stdout | Should -Match "Removed obsolete workflow-managed file: VANESSA-TESTS-GUIDE.ru.md"
             $operationState = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json") | ConvertFrom-Json
             $operationState.action | Should -Be "update-workflow"
@@ -847,9 +849,10 @@ local after
             $userRulesText | Should -Not -Match "old managed block"
             $userRulesText | Should -Match "local after"
 
-            ((& git -C $projectRoot rev-list --count HEAD).Trim()) | Should -Be $commitCountBefore
+            [int]((& git -C $projectRoot rev-list --count HEAD).Trim()) | Should -Be ([int]$commitCountBefore + 1)
+            ((& git -C $projectRoot log -1 --pretty=%s).Trim()) | Should -Be ("chore: update ITL workflow to master@" + ((& git -C $RepoRoot rev-parse --short=7 HEAD).Trim()))
             ((& git -C $projectRoot branch --show-current).Trim()) | Should -Be "master"
-            (& git -C $projectRoot status --short) | Should -Not -BeNullOrEmpty
+            @(& git -C $projectRoot status --short) | Should -Be @("?? scratch.local")
         } finally {
             $env:ITL_WORKFLOW_SOURCE_PATH = $previousSourcePath
             $env:ITL_WORKFLOW_REPO = $previousRepo
@@ -857,6 +860,134 @@ local after
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $previousVanessaSourceBuild
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force
+            }
+        }
+    }
+
+    It "commits only allowlisted workflow update changes and preserves unrelated untracked files" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-update-commit-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "AGENT-INSTALL.md") -Encoding UTF8 -Value "old"
+            Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Encoding UTF8 -Value "project docs"
+            & git -C $tempRoot init -b master *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add AGENT-INSTALL.md README.md
+            & git -C $tempRoot commit -m init *> $null
+            Set-Content -LiteralPath (Join-Path $tempRoot "AGENT-INSTALL.md") -Encoding UTF8 -Value "updated"
+            Set-Content -LiteralPath (Join-Path $tempRoot "scratch.local") -Encoding UTF8 -Value "keep"
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Commit-WorkflowUpdate -Source ([pscustomobject]@{ ref = "master"; commit = "1234567890abcdef1234567890abcdef12345678"; source = "path" })
+            }
+
+            $result.created | Should -BeTrue
+            ((& git -C $tempRoot log -1 --pretty=%s).Trim()) | Should -Be "chore: update ITL workflow to master@1234567"
+            (Get-Content -LiteralPath (Join-Path $tempRoot "scratch.local") -Raw -Encoding UTF8) | Should -Match "keep"
+            @(& git -C $tempRoot status --short) | Should -Be @("?? scratch.local")
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
+    It "does not create an update commit for a no-op" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-update-noop-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "AGENT-INSTALL.md") -Encoding UTF8 -Value "current"
+            & git -C $tempRoot init -b master *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add AGENT-INSTALL.md
+            & git -C $tempRoot commit -m init *> $null
+            $before = ((& git -C $tempRoot rev-list --count HEAD).Trim())
+
+            $execution = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $source = [pscustomobject]@{ ref = "master"; commit = "1234567890abcdef1234567890abcdef12345678"; source = "path" }
+                $result = Commit-WorkflowUpdate -Source $source
+                Write-WorkflowUpdateFollowUp -Source $source -CommitResult $result *> $null
+                [pscustomobject]@{ result = $result; userReport = $script:RunUserReport }
+            }
+
+            $execution.result.created | Should -BeFalse
+            $execution.userReport | Should -Match "Новый коммит создан: нет, workflow уже актуален"
+            $execution.userReport | Should -Match "Push из проекта не выполнялся"
+            $execution.userReport | Should -Match "/itl-refresh"
+            ((& git -C $tempRoot rev-list --count HEAD).Trim()) | Should -Be $before
+            @(& git -C $tempRoot status --short).Count | Should -Be 0
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
+    It "refuses to commit tracked update changes outside the managed allowlist" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-update-allowlist-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Encoding UTF8 -Value "before"
+            & git -C $tempRoot init -b master *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add README.md
+            & git -C $tempRoot commit -m init *> $null
+            Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Encoding UTF8 -Value "unexpected"
+
+            $message = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                try {
+                    Commit-WorkflowUpdate -Source ([pscustomobject]@{ ref = "master"; commit = "1234567890abcdef1234567890abcdef12345678"; source = "path" }) *> $null
+                    ""
+                } catch {
+                    $_.Exception.Message
+                }
+            }
+
+            $message | Should -Match "outside its managed allowlist"
+            ((& git -C $tempRoot rev-list --count HEAD).Trim()) | Should -Be "1"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
+    It "stops before copying when Git commit identity is unavailable" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-update-no-identity-" + [guid]::NewGuid().ToString("N"))
+        $environmentNames = @(
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_NOSYSTEM",
+            "GIT_AUTHOR_NAME",
+            "GIT_AUTHOR_EMAIL",
+            "GIT_COMMITTER_NAME",
+            "GIT_COMMITTER_EMAIL"
+        )
+        $previousEnvironment = @{}
+        foreach ($name in $environmentNames) {
+            $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+        }
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $emptyGlobalConfig = Join-Path $tempRoot "empty-gitconfig"
+            Set-Content -LiteralPath $emptyGlobalConfig -Encoding ASCII -Value ""
+            & git -C $tempRoot init -b master *> $null
+
+            [Environment]::SetEnvironmentVariable("GIT_CONFIG_GLOBAL", $emptyGlobalConfig, "Process")
+            [Environment]::SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", "1", "Process")
+            foreach ($name in @("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL")) {
+                [Environment]::SetEnvironmentVariable($name, $null, "Process")
+            }
+
+            {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Assert-WorkflowUpdateCommitIdentity
+            } | Should -Throw "*Git identity*unavailable*"
+        } finally {
+            foreach ($name in $environmentNames) {
+                [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+            }
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
@@ -1168,6 +1299,7 @@ exit 0
                 $script:postCalls = 0
                 $script:reexecArgs = @()
                 function Assert-WorkflowPackageUpdateContext {}
+                function Assert-WorkflowUpdateCommitIdentity {}
                 function Resolve-WorkflowPackageSource { [pscustomobject]@{ root = "C:\source"; repo = "repo"; ref = "ref"; commit = "commit"; source = "path" } }
                 function Assert-WorkflowSourceOutsideProject {}
                 function Copy-WorkflowManagedDirectory { $script:copyCalls++ }
@@ -1191,7 +1323,9 @@ exit 0
                 function Sync-ItlOnDemandMcpDependencyLock { $script:postCalls++; $script:syncOrder = $script:postCalls }
                 function Install-ItlOnDemandMcp { $script:postCalls++; $script:installOrder = $script:postCalls }
                 function Invoke-AiRulesBaselineMigration { [pscustomobject]@{ migrated = $true; suppressRegularUpdate = $true } }
-                function Write-WorkflowUpdateFollowUp { $script:postCalls++ }
+                function Get-AiRules1cManifestFileEntries { @() }
+                function Commit-WorkflowUpdate { [pscustomobject]@{ created = $false; commit = "project-commit"; message = "" } }
+                function Write-WorkflowUpdateFollowUp { param([object]$Source,[object]$CommitResult); $script:postCalls++ }
                 function Read-DependencyLockManifest { @{ dependencies = @{ workflowPackage = @{ source = "path"; commit = "commit" } } } }
                 $LifecyclePhase = "post-copy"
                 Update-WorkflowPackage *> $null

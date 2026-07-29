@@ -234,6 +234,8 @@ $devBranch = [string](Get-ObjectValue -Object $status -Name "devBranch" -Default
 $worktreePath = [string](Get-ObjectValue -Object $status -Name "worktreePath" -Default "")
 $extensionInitializationStatus = [string](Get-ObjectValue -Object $status -Name "extensionInitializationStatus" -Default "")
 $userReport = [string](Get-ObjectValue -Object $status -Name "userReport" -Default "")
+$resultPath = [string](Get-ObjectValue -Object $status -Name "resultPath" -Default "")
+$resultManifestPath = [string](Get-ObjectValue -Object $status -Name "resultManifestPath" -Default "")
 $logTail = ""
 if ($exitCode -ne 0 -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
     $logTail = ((Get-Content -LiteralPath $logPath -Tail 80 -Encoding UTF8 -ErrorAction SilentlyContinue) -join [Environment]::NewLine)
@@ -258,7 +260,7 @@ $nextAction = if ($exitCode -eq 0 -and $requiredAction) {
     "Read only the last 80 lines of console.log and address the reported failure."
 }
 $artifacts = [System.Collections.Generic.List[string]]::new()
-foreach ($candidate in @((Get-ObjectValue -Object $status -Name "lastLogPath" -Default ""), $logPath, $statusPath)) {
+foreach ($candidate in @($resultPath, $resultManifestPath, (Get-ObjectValue -Object $status -Name "lastLogPath" -Default ""), $logPath, $statusPath)) {
     if ($candidate -and -not $artifacts.Contains([string]$candidate)) { $artifacts.Add([string]$candidate) }
 }
 
@@ -277,6 +279,8 @@ $summary = [ordered]@{
     worktreePath = $worktreePath
     extensionInitializationStatus = $extensionInitializationStatus
     userReport = $userReport
+    resultPath = $resultPath
+    resultManifestPath = $resultManifestPath
     liveness = [string](Get-ObjectValue -Object $status -Name "liveness" -Default "")
     noProgressSeconds = [int](Get-ObjectValue -Object $status -Name "noProgressSeconds" -Default 0)
     timeoutRemainingSeconds = [int](Get-ObjectValue -Object $status -Name "timeoutRemainingSeconds" -Default 0)
@@ -297,7 +301,11 @@ if ($summaryText.Length -gt 4000) {
     $summary.error = Limit-Text -Value $summary.error -Length 400
     $summary.stageDetail = Limit-Text -Value $summary.stageDetail -Length 300
     if ([string]$summary.status -eq "succeeded" -and $summary.userReport) {
-        $summary.artifacts = @($statusPath)
+        $summary.artifacts = @(
+            @($resultPath, $resultManifestPath, $statusPath) |
+                Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+                Select-Object -Unique
+        )
     }
     $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
 }

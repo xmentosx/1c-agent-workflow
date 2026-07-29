@@ -1,6 +1,23 @@
 # Режимы и пользовательские настройки
 
-Настройки проекта находятся в ignored-файле `.dev.env`. Большинство режимов можно переключить slash-командой или обычным запросом агенту. Полный перечень переменных приведен в [справочнике `.dev.env`](DEV-ENV-REFERENCE.ru.md).
+Настройки проекта находятся в локальном файле `.dev.env`, который Git не отслеживает. Большинство режимов можно переключить slash-командой или обычным запросом агенту. Полный перечень переменных приведен в [справочнике `.dev.env`](DEV-ENV-REFERENCE.ru.md).
+
+## Что использовать обычно
+
+Для большинства задач ничего менять не нужно:
+
+```text
+стандартная разработка
+  ├─ статические проверки: VERIFICATION_DEPTH=full
+  ├─ Vanessa: ITL_VANESSA_TESTING=auto
+  ├─ журнал регистрации: ITL_CHECK_EVENT_LOG=auto
+  ├─ зависимости: DEPENDENCY_MODE=fresh
+  └─ непроверенный результат: VERIFICATION_POLICY=warn
+```
+
+Штатные значения: `VERIFICATION_DEPTH=full`, `UI_TESTING=manual`, `ORCHESTRATION=standard`, `ITL_ROUTINE_MODE=off`, `CAVEMAN=on`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
+
+Меняйте режим только ради понятной цели: уменьшить глубину низкорисковой статической проверки, вручную отключить компонент executable verification, выбрать экономную оркестрацию или запретить непроверенную выгрузку.
 
 ## Kilo Browser Automation и контекст
 
@@ -10,14 +27,12 @@ ITL не включает и не выключает Browser Automation и не 
 
 Для воспроизводимого замера попросите агента «замерь контекст». Диагностика умеет сделать один автоматический CLI baseline либо разобрать и сравнить чистые IDE-сессии. Для Browser A/B переключайте настройку вручную, перезагружайте Kilo и создавайте отдельную односообщенческую сессию для каждого состояния.
 
-Штатные значения: `VERIFICATION_DEPTH=full`, `UI_TESTING=manual`, `ORCHESTRATION=standard`, `ITL_ROUTINE_MODE=off`, `CAVEMAN=on`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
-
 ## Краткая карта
 
-| Назначение | Команда/параметр | Значения | Default | Область действия |
+| Назначение | Команда/параметр | Значения | По умолчанию | Область действия |
 |---|---|---|---|---|
-| Глубина upstream статических проверок | `/litemode`, `VERIFICATION_DEPTH` | `full`, `standard`, `lite` | `full` | проект |
-| Browser UI testing upstream | `UI_TESTING` | `auto`, `manual`, `off` | `manual` | проект |
+| Глубина статических проверок `ai_rules_1c` | `/litemode`, `VERIFICATION_DEPTH` | `full`, `standard`, `lite` | `full` | проект |
+| Проверка веб-интерфейса по правилам `ai_rules_1c` | `UI_TESTING` | `auto`, `manual`, `off` | `manual` | проект |
 | ITL Vanessa Automation | `/itl-litemode`, `ITL_VANESSA_TESTING` | `auto`, `manual`, `off` | `auto` | проект/worktree |
 | ITL журнал регистрации | `/itl-litemode`, `ITL_CHECK_EVENT_LOG` | `auto`, `manual`, `off` | `auto` | проект/worktree |
 | Оркестрация | `/economymode`, `ORCHESTRATION` | `standard`, `economy` | `standard` | проект |
@@ -28,7 +43,7 @@ ITL не включает и не выключает Browser Automation и не 
 | Зависимости | `DEPENDENCY_MODE` | `fresh`, `locked` | `fresh` | проект |
 | Выгрузка без fresh pass | `VERIFICATION_POLICY` | `warn`, `block` | `warn` | проект |
 
-## Upstream `/litemode`
+## Статические проверки `ai_rules_1c`: `/litemode`
 
 `/litemode` управляет `VERIFICATION_DEPTH` — глубиной статических проверок BSL для низкорисковых изменений.
 
@@ -83,7 +98,7 @@ ITL не включает и не выключает Browser Automation и не 
 
 `/caveman lite|full|ultra` меняет только уровень текущей сессии. Фразы `caveman please` и `stop caveman` также действуют только в текущем чате и имеют приоритет над `.dev.env`. Режим влияет на форму ответа, но не на верификацию, модели или обязательные отчеты.
 
-## Process tuning
+## Настройка процесса
 
 - `QUICKFIX_MAX_LINES=40` — максимальный объем затронутых BSL-строк для локального quick-fix. Risk promotion важнее числа строк.
 - `DEBUG_FAST_PATH=standard` — допускает сокращенный путь отладки только при непосредственно доказанной причине. `extended` расширяет применимость, `off` всегда требует полный диагностический цикл.

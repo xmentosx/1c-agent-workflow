@@ -187,10 +187,13 @@
 
     It "preserves the output format contracts across native command adapters" {
         $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\common"
+        $masterTemplateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master"
         $templates = [ordered]@{
             "itl.md" = Get-Content -LiteralPath (Join-Path $templateRoot "itl.md.template") -Raw -Encoding UTF8
             "itl-status.md" = Get-Content -LiteralPath (Join-Path $templateRoot "itl-status.md.template") -Raw -Encoding UTF8
             "itl-litemode.md" = Get-Content -LiteralPath (Join-Path $templateRoot "itl-litemode.md.template") -Raw -Encoding UTF8
+            "itl-new-config-branch.md" = Get-Content -LiteralPath (Join-Path $masterTemplateRoot "itl-new-config-branch.md.template") -Raw -Encoding UTF8
+            "itl-new-extension-branch.md" = Get-Content -LiteralPath (Join-Path $masterTemplateRoot "itl-new-extension-branch.md.template") -Raw -Encoding UTF8
         }
         $previousMode = [Environment]::GetEnvironmentVariable("ITL_ROUTINE_MODE", "Process")
         try {
@@ -209,7 +212,7 @@
 
             foreach ($client in $adapted.Keys) {
                 $adapted[$client]["itl.md"] | Should -Match "entire final response"
-                $adapted[$client]["itl.md"] | Should -Match 'fenced `text` code block'
+                $adapted[$client]["itl.md"] | Should -Match 'fenced `text` block'
                 $adapted[$client]["itl-status.md"] | Should -Match "structured Russian Markdown report"
                 $adapted[$client]["itl-status.md"] | Should -Match 'one `- Подпись: значение` field per line'
                 $adapted[$client]["itl-status.md"] | Should -Match "Kilo Browser Automation"
@@ -217,7 +220,12 @@
                 $adapted[$client]["itl-status.md"] | Should -Match "Контекст разработки"
                 $adapted[$client]["itl-litemode.md"] | Should -Match "complete helper stdout unchanged"
                 $adapted[$client]["itl-litemode.md"] | Should -Match 'exactly one fenced `text` code block'
+                foreach ($fileName in $templates.Keys) {
+                    $adapted[$client][$fileName] | Should -Match '(?m)^description:\s*[^\r\n]*[А-Яа-яЁё]'
+                }
             }
+            $adapted["opencode"]["itl-new-config-branch.md"] | Should -Match '(?m)^description:\s*Создать ветку конфигурации ITL'
+            $adapted["opencode"]["itl-new-extension-branch.md"] | Should -Match '(?m)^description:\s*Создать ветку расширения ITL'
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", $previousMode, "Process")
         }
@@ -684,9 +692,9 @@
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-doctor-openspec-natural-" + [guid]::NewGuid().ToString("N"))
         try {
             New-OpenSpecModeFixture -Root $tempRoot -Client qwen -Mode natural
-            $projectConfig = [ordered]@{ masterBranch = "master"; aiRules = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-72665287-r13"; tools = @("qwen") } }
+            $projectConfig = [ordered]@{ masterBranch = "master"; aiRules = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-72665287-r16"; tools = @("qwen") } }
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c/project.json") -Encoding UTF8 -Value (($projectConfig | ConvertTo-Json -Depth 6) + "`n")
-            $lock = [ordered]@{ dependencies = [ordered]@{ aiRules1c = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-72665287-r13"; commit = "b66569bebf46e0369efa53983fca69368e16d57a"; upstreamCommit = "72665287e77361aea3aaf866fef163d98f0fabcd"; downstreamRevision = 13; compatibilityStatus = "passed" } } }
+            $lock = [ordered]@{ dependencies = [ordered]@{ aiRules1c = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-72665287-r16"; commit = "0118493165fd9507169317be28d53c52803d52ed"; upstreamCommit = "72665287e77361aea3aaf866fef163d98f0fabcd"; downstreamRevision = 16; compatibilityStatus = "passed" } } }
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c/dependency-lock.json") -Encoding UTF8 -Value (($lock | ConvertTo-Json -Depth 8) + "`n")
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_VANESSA_TESTING=auto`nITL_CHECK_EVENT_LOG=manual`n"
             foreach ($skill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")) {

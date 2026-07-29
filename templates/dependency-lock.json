@@ -20,14 +20,14 @@
     },
     "aiRules1c": {
       "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
-      "ref": "itl-main-72665287-r13",
-      "commit": "b66569bebf46e0369efa53983fca69368e16d57a",
+      "ref": "itl-main-72665287-r16",
+      "commit": "0118493165fd9507169317be28d53c52803d52ed",
       "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
       "upstreamRef": "refs/heads/main",
       "upstreamCommit": "72665287e77361aea3aaf866fef163d98f0fabcd",
-      "downstreamRevision": 13,
+      "downstreamRevision": 16,
       "compatibilityStatus": "passed",
-      "compatibilityCheckedAt": "2026-07-20T00:00:00Z"
+      "compatibilityCheckedAt": "2026-07-28T15:05:33Z"
     },
     "piMcpExtension": {
       "version": "1.5.0",

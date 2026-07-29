@@ -1310,6 +1310,86 @@ VANESSA_MCP_VA_EXTENSION_CFE_URL=$extensionUri
         }
     }
 
+    It "heals an invalid configured Vanessa UI MCP artifact path during forced refresh" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vanessa-ui-mcp-invalid-path-test-" + [guid]::NewGuid().ToString("N"))
+        $environmentNames = @(
+            "DEPENDENCY_MODE",
+            "VANESSA_MCP_CLIENT_CFE_PATH",
+            "VANESSA_MCP_CLIENT_CFE_VERSION",
+            "VANESSA_MCP_CLIENT_CFE_SHA256",
+            "VANESSA_MCP_VA_EXTENSION_CFE_PATH",
+            "VANESSA_MCP_VA_EXTENSION_CFE_VERSION",
+            "VANESSA_MCP_VA_EXTENSION_CFE_SHA256"
+        )
+        $previousEnvironment = @{}
+        foreach ($name in $environmentNames) {
+            $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+        }
+
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot "fixtures") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $tempRoot ".agent-1c\project.json")
+            $clientSource = Join-Path $tempRoot "fixtures\client_mcp.cfe"
+            $extensionSource = Join-Path $tempRoot "fixtures\VAExtension.1.29.cfe"
+            Set-Content -LiteralPath $clientSource -Encoding UTF8 -Value "client fixture"
+            Set-Content -LiteralPath $extensionSource -Encoding UTF8 -Value "extension fixture"
+            $invalidExtensionPath = (Join-Path $tempRoot "legacy\VAExtension.1.29.cfe") + "C:\Users\other\worktree\.agent-1c\tools\vanessa-mcp\VAExtension.1.29.cfe"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value @"
+DEPENDENCY_MODE=fresh
+VANESSA_MCP_VA_EXTENSION_CFE_PATH=$invalidExtensionPath
+"@
+            [Environment]::SetEnvironmentVariable("VANESSA_MCP_VA_EXTENSION_CFE_PATH", $invalidExtensionPath, "Process")
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:capturedWarnings = New-Object System.Collections.Generic.List[string]
+                function Write-Warning {
+                    param([string]$Message)
+                    [void]$script:capturedWarnings.Add($Message)
+                }
+                function Get-VanessaMcpReleaseAssetInfo {
+                    param([object]$Definition)
+
+                    $isClient = [string]$Definition.lockKey -eq "clientMcp"
+                    $fixturePath = $(if ($isClient) { $clientSource } else { $extensionSource })
+                    return [pscustomobject]@{
+                        url = $fixturePath
+                        name = $(if ($isClient) { "client_mcp.cfe" } else { "VAExtension.1.29.cfe" })
+                        version = $(if ($isClient) { "v0.6.5" } else { "1.2.043.28" })
+                        expectedSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $fixturePath).Hash.ToLowerInvariant()
+                        source = "targeted-test"
+                    }
+                }
+
+                $artifacts = @(Install-VanessaMcpArtifacts -ForceDownload)
+                return [pscustomobject]@{
+                    artifacts = $artifacts
+                    warnings = @($script:capturedWarnings)
+                    dotEnv = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".dev.env")
+                }
+            }
+
+            $result.artifacts.Count | Should -Be 2
+            $clientArtifact = @($result.artifacts | Where-Object { $_.key -eq "clientMcp" })[0]
+            $extensionArtifact = @($result.artifacts | Where-Object { $_.key -eq "vaExtension" })[0]
+            (Test-Path -LiteralPath $clientArtifact.path -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath $extensionArtifact.path -PathType Leaf) | Should -Be $true
+            $extensionArtifact.path | Should -Be ([System.IO.Path]::GetFullPath((Join-Path $tempRoot ".agent-1c\tools\vanessa-mcp\VAExtension.1.29.cfe")))
+            ($result.warnings -join [Environment]::NewLine) | Should -Match "ITL_VANESSA_MCP_ARTIFACT_PATH_INVALID"
+            ($result.warnings -join [Environment]::NewLine) | Should -Match "VANESSA_MCP_VA_EXTENSION_CFE_PATH"
+            ($result.warnings -join [Environment]::NewLine) | Should -Not -Match ([regex]::Escape($invalidExtensionPath))
+            $result.dotEnv | Should -Match ("(?m)^VANESSA_MCP_VA_EXTENSION_CFE_PATH=" + [regex]::Escape($extensionArtifact.path) + "\r?$")
+            $result.dotEnv | Should -Not -Match ([regex]::Escape($invalidExtensionPath))
+        } finally {
+            foreach ($name in $environmentNames) {
+                [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+            }
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "wires Vanessa UI through the stable on-demand facade and local artifacts" {
         $entrypoint = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1")
         $actions = @("install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status")

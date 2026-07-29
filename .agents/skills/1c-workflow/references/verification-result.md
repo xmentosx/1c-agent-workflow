@@ -24,9 +24,9 @@ When Vanessa is off, do not automatically author tests or add them to a new plan
 
 ## Vanessa Automation
 
-Use scenarios from `tests/features` for OpenSpec and quick-fix verification. Before creating or editing feature files, read `references/vanessa-tests.md`; do not load it for routine lifecycle commands.
+Use scenarios from `tests/features` for quick-fix, direct full-cycle, and OpenSpec verification. Before creating or editing feature files, read `references/vanessa-tests.md`; do not load it for routine lifecycle commands.
 
-For a quick-fix, reuse sufficient existing coverage; otherwise create or update one focused regression scenario and add a second only for a separate meaningful boundary or negative case. For OpenSpec, plan 2-3 scenarios by default and require an explicit short justification for a fourth. Choose the cheapest reliable check type:
+For a quick-fix, reuse sufficient existing coverage; otherwise create or update one focused regression scenario and add a second only for a separate meaningful boundary or negative case. For direct full-cycle, choose coverage from the actual behavior and risk rather than OpenSpec artifact count. For OpenSpec, plan 2-3 scenarios by default and require an explicit short justification for a fourth. Choose the cheapest reliable check type:
 
 - `unit-like`: local calculation, condition, filling, or applied logic.
 - `integration`: object/register/document/exchange interaction.
@@ -44,16 +44,17 @@ The preferred 8.3.22 sequential `.lgp` reader streams records and rejects non-`E
 
 Goal: export a CF or CFE artifact from the current development branch.
 
-1. Require the current `itldev/*` worktree and clean tracked Git state.
-2. Check verification freshness before export.
+1. Require the current `itldev/*` worktree. Do not require or create a Git commit.
+2. Check that the canonical effective-tree fingerprint still matches the successful verification before loading, before export, and after export.
 3. Apply `verificationPolicy`: default `warn` requires explicit unverified confirmation or `-AllowUnverifiedResult` when verification is missing, failed, stale, or unknown; `block` stops without an override path.
 4. Export CF for configuration branches and CFE for extension branches.
 5. Create `<artifact>.manifest.json` next to the exported artifact.
-6. Report artifact path, manifest path, SHA256, verification status, latest 1C log path, and manual import note.
+6. Normalize the artifact and manifest to absolute paths, publish them as `resultPath` and `resultManifestPath` in run status/compact JSON, include both in `artifacts`, and return a short Russian `userReport` with the full paths. The manifest also retains SHA256, verification status, latest 1C log path, and the manual import note.
 
-The result manifest records artifact SHA256, operation, branch metadata, master/development commits, verification status/report/log, latest 1C log path, publication URL, manual import note, and whether an unverified override was used.
+The result manifest records artifact SHA256, operation, branch metadata, master/development base commits, whether the source came from a clean commit or the effective working tree, configuration and verification fingerprints, verification status/report/log, latest 1C log path, publication URL, manual import note, and whether an unverified override was used. A development commit in a dirty-tree manifest is the base commit, not a claim that the exported content was committed.
 
-Verification freshness uses a content-aware fingerprint of configured configuration, extension, and feature paths. A second edit of an already dirty file makes a previous passed verification stale even when its porcelain Git status remains `M`.
+Verification freshness uses a versioned canonical Git tree fingerprint of configured configuration, extension, and feature paths. A temporary index materializes the effective scoped working tree without changing the user's index. Committing exactly that checked content preserves the fingerprint; staging, unstaging, or committing files outside the scope also preserves it. Any effective scoped content change makes previous evidence stale.
+The `v3` rollout intentionally treats stored legacy `v2` evidence as stale once; run one fresh `/itl-check` after updating the workflow.
 
 ## Verification Policy
 

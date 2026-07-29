@@ -1,16 +1,16 @@
 ---
-description: Export CF or CFE result for the current ITL branch
+description: Выгрузить CF или CFE текущей ветки ITL
 agent: code
 ---
 
 Use this command only from an active `itldev/*` development branch worktree.
 
-Run the helper directly from the current project directory:
+Run the helper from the current project directory:
 
-If the agent shell tool supports `timeout_ms`, run this lifecycle command with `timeout_ms >= 3900000` by default so the outer shell outlives the 3600-second Designer limit; if that limit is configured higher, raise the outer timeout too. Do not use `120000 ms` or other short defaults because the helper may launch 1C Designer/Enterprise operations.
+If the agent shell tool supports `timeout_ms`, use `timeout_ms >= 3900000` so the outer shell outlives the 3600-second Designer limit. If the Designer limit is higher, raise the outer timeout too. Do not use `120000 ms` or other short values.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action export-dev-branch-result
 ```
 
-If the JSON summary has `confirmationRequired=true`, ask the developer for explicit confirmation before continuing. For confirmed unverified export, rerun the same compact command with `-AllowUnverifiedResult`. If `VERIFICATION_POLICY=block`, do not ask for an override; run `/itl-check` first. For other failures, read only the last 80 lines of `logPath`.
+If the JSON contains `confirmationRequired=true`, ask for explicit confirmation. After the developer confirms an unverified export, repeat the command with `-AllowUnverifiedResult`. Under `VERIFICATION_POLICY=block`, do not offer an override: run `/itl-check` first. On success with a non-empty `userReport`, return exactly that Russian Markdown report; it contains the full CF/CFE and manifest paths. Do not paraphrase the report or read `console.log`. For other failures, read only the last 80 lines of `logPath`.

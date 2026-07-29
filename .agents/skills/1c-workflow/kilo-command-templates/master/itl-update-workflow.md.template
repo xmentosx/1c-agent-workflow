@@ -1,16 +1,16 @@
 ---
-description: Update the installed ITL workflow package
+description: Обновить установленный пакет ITL workflow
 agent: code
 ---
 
-Use this command only from the `master` worktree. It refreshes the installed ITL workflow files, regenerates local Kilo ITL commands, updates AI rules by default, and leaves tracked changes for review.
+Use this command only from the `master` worktree. It updates ITL workflow and AI rules files, regenerates the active client's commands, and commits only updater-owned tracked changes. It does not push.
 
-Run the helper directly from the current project directory:
+Run the helper from the current project directory:
 
-If the agent shell tool supports `timeout_ms`, run this lifecycle command with `timeout_ms >= 3900000` by default so the outer shell outlives the 3600-second Designer limit; if that limit is configured higher, raise the outer timeout too. Do not use `120000 ms` or other short defaults because the helper may launch 1C Designer/Enterprise operations.
+If the agent shell tool supports `timeout_ms`, use `timeout_ms >= 3900000` so the outer shell outlives the 3600-second Designer limit. If the Designer limit is higher, raise the outer timeout too. Do not use `120000 ms` or other short values.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action update-workflow
 ```
 
-If the helper reports a dirty tracked Git worktree, stop and ask the developer to commit or stash tracked changes before retrying. The compact runner returns a bounded JSON summary; read only the last 80 lines of its `logPath` on failure. Do not run this command from an `itldev/*` worktree; update development worktrees later by merging fresh `master` or running `/itl-refresh`.
+If the helper reports a dirty tracked Git worktree, stop and ask the developer to commit or remove the changes, then retry. On success with a non-empty `userReport`, return exactly that Russian Markdown report with no introduction, paraphrase, or `console.log` read. On failure, read only the last 80 lines of `logPath`. Do not run this command from `itldev/*`; development branches update separately through `/itl-refresh`.

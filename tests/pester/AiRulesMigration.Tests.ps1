@@ -25,18 +25,18 @@ BeforeAll {
         $targetConfig = [ordered]@{
             aiRules = [ordered]@{
                 repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-                ref = $(if ($ConfigureTarget) { "itl-main-72665287-r13" } else { "" })
+                ref = $(if ($ConfigureTarget) { "itl-main-72665287-r16" } else { "" })
                 tools = @($CurrentTool)
             }
         }
         $targetEntry = [ordered]@{
             repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            ref = "itl-main-72665287-r13"
-            commit = "b66569bebf46e0369efa53983fca69368e16d57a"
+            ref = "itl-main-72665287-r16"
+            commit = "0118493165fd9507169317be28d53c52803d52ed"
             upstreamRepo = "https://github.com/comol/ai_rules_1c.git"
             upstreamRef = "refs/heads/main"
             upstreamCommit = "72665287e77361aea3aaf866fef163d98f0fabcd"
-            downstreamRevision = 13
+            downstreamRevision = 16
             compatibilityStatus = $(if ($ConfigureTarget) { "passed" } else { "legacy-baseline" })
             compatibilityCheckedAt = "2026-07-11T00:00:00Z"
         }
@@ -127,7 +127,74 @@ Describe "ai_rules_1c migration planning" {
         }
     }
 
-    It "plans a controlled fork r4 to r13 migration by downstream revision and upstream provenance" {
+    It "clears a USER-RULES marker when the ITL overlay is the only change from installedHash" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-user-rules-overlay-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-AiRulesMigrationFixture -Root $tempRoot `
+                -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" -CurrentRef "itl-main-72665287-r13" `
+                -CurrentCommit "b66569bebf46e0369efa53983fca69368e16d57a" `
+                -CurrentUpstreamCommit "72665287e77361aea3aaf866fef163d98f0fabcd" -CurrentDownstreamRevision 13
+            $userRulesPath = Join-Path $tempRoot "USER-RULES.md"
+            $baseline = "# User Rules`r`n`r`n## Migrated content from a previous setup`r`n`r`n<!-- start of migrated content -->`r`n<!-- end of migrated content -->`r`n"
+            [System.IO.File]::WriteAllText($userRulesPath, $baseline, (New-Object System.Text.UTF8Encoding $false))
+            $installedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $userRulesPath).Hash.ToLowerInvariant()
+            $installedHash | Should -Be "26d9fa88b4972690f0e62d7faa51af3f312a938813139000065aab03fdf7f04d"
+            $overlay = "<!-- ITL-WORKFLOW-USER-RULES:START -->`r`n## 1C Project Lifecycle`r`nManaged by ITL.`r`n<!-- ITL-WORKFLOW-USER-RULES:END -->"
+            [System.IO.File]::AppendAllText($userRulesPath, "`r`n$overlay`r`n", (New-Object System.Text.UTF8Encoding $false))
+
+            $manifestPath = Join-Path $tempRoot ".ai-rules.json"
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $manifest.files | Add-Member -NotePropertyName "USER-RULES.md" -NotePropertyValue ([pscustomobject]@{
+                source = "USER-RULES.md"
+                template = $true
+                installedHash = $installedHash
+                userModified = $true
+            })
+            Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
+
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $plan.status | Should -Be "eligible"
+            $updatedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $updatedManifest.files.'USER-RULES.md'.userModified | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps USER-RULES blocking when content outside the ITL overlay changed" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-user-rules-custom-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-AiRulesMigrationFixture -Root $tempRoot `
+                -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" -CurrentRef "itl-main-72665287-r13" `
+                -CurrentCommit "b66569bebf46e0369efa53983fca69368e16d57a" `
+                -CurrentUpstreamCommit "72665287e77361aea3aaf866fef163d98f0fabcd" -CurrentDownstreamRevision 13
+            $userRulesPath = Join-Path $tempRoot "USER-RULES.md"
+            $baseline = "# User Rules`r`n"
+            [System.IO.File]::WriteAllText($userRulesPath, $baseline, (New-Object System.Text.UTF8Encoding $false))
+            $installedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $userRulesPath).Hash.ToLowerInvariant()
+            $overlay = "<!-- ITL-WORKFLOW-USER-RULES:START -->`r`n## 1C Project Lifecycle`r`nManaged by ITL.`r`n<!-- ITL-WORKFLOW-USER-RULES:END -->"
+            [System.IO.File]::WriteAllText($userRulesPath, ($baseline + "Keep my custom rule.`r`n`r`n" + $overlay + "`r`n"), (New-Object System.Text.UTF8Encoding $false))
+
+            $manifestPath = Join-Path $tempRoot ".ai-rules.json"
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $manifest.files | Add-Member -NotePropertyName "USER-RULES.md" -NotePropertyValue ([pscustomobject]@{
+                source = "USER-RULES.md"
+                template = $true
+                installedHash = $installedHash
+                userModified = $true
+            })
+            Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
+
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $plan.status | Should -Be "user-modified"
+            $updatedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $updatedManifest.files.'USER-RULES.md'.userModified | Should -BeTrue
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "plans a controlled fork r4 to r16 migration by downstream revision and upstream provenance" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-controlled-" + [guid]::NewGuid().ToString("N"))
         try {
             New-AiRulesMigrationFixture -Root $tempRoot `
@@ -142,14 +209,14 @@ Describe "ai_rules_1c migration planning" {
             $plan.fromCommit | Should -Be "6396b1538339ce1ff025cd6f2a24ccb8ff742e1e"
             $plan.comparisonCommit | Should -Be "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
             $plan.fromDownstreamRevision | Should -Be 4
-            $plan.target.downstreamRevision | Should -Be 13
+            $plan.target.downstreamRevision | Should -Be 16
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
-    It "plans the supported r11 to r13 migration" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-r11-r12-" + [guid]::NewGuid().ToString("N"))
+    It "plans the supported r11 to r16 migration" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-r11-r16-" + [guid]::NewGuid().ToString("N"))
         try {
             New-AiRulesMigrationFixture -Root $tempRoot `
                 -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" `
@@ -160,17 +227,17 @@ Describe "ai_rules_1c migration planning" {
             $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "eligible"
             $plan.fromDownstreamRevision | Should -Be 11
-            $plan.target.downstreamRevision | Should -Be 13
-            $plan.target.ref | Should -Be "itl-main-72665287-r13"
+            $plan.target.downstreamRevision | Should -Be 16
+            $plan.target.ref | Should -Be "itl-main-72665287-r16"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
-    It "plans r12 to r13 for every supported single-client installation" {
+    It "plans r12 to r16 for every supported single-client installation" {
         $clients = @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
         foreach ($client in $clients) {
-            $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-r12-r13-$($client.Replace('-', '_'))-" + [guid]::NewGuid().ToString("N"))
+            $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-r12-r16-$($client.Replace('-', '_'))-" + [guid]::NewGuid().ToString("N"))
             try {
                 New-AiRulesMigrationFixture -Root $tempRoot `
                     -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" `
@@ -182,9 +249,81 @@ Describe "ai_rules_1c migration planning" {
                 $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
                 $plan.status | Should -Be "eligible" -Because $client
                 $plan.fromDownstreamRevision | Should -Be 12 -Because $client
-                $plan.target.downstreamRevision | Should -Be 13 -Because $client
-                $plan.target.ref | Should -Be "itl-main-72665287-r13" -Because $client
-                $plan.target.commit | Should -Be "b66569bebf46e0369efa53983fca69368e16d57a" -Because $client
+                $plan.target.downstreamRevision | Should -Be 16 -Because $client
+                $plan.target.ref | Should -Be "itl-main-72665287-r16" -Because $client
+                $plan.target.commit | Should -Be "0118493165fd9507169317be28d53c52803d52ed" -Because $client
+            } finally {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "plans r13 to r16 for every supported single-client installation" {
+        $clients = @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
+        foreach ($client in $clients) {
+            $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-r13-r16-$($client.Replace('-', '_'))-" + [guid]::NewGuid().ToString("N"))
+            try {
+                New-AiRulesMigrationFixture -Root $tempRoot `
+                    -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" `
+                    -CurrentRef "itl-main-72665287-r13" `
+                    -CurrentCommit "b66569bebf46e0369efa53983fca69368e16d57a" `
+                    -CurrentUpstreamCommit "72665287e77361aea3aaf866fef163d98f0fabcd" `
+                    -CurrentDownstreamRevision 13 `
+                    -CurrentTool $client
+                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+                $plan.status | Should -Be "eligible" -Because $client
+                $plan.fromDownstreamRevision | Should -Be 13 -Because $client
+                $plan.target.downstreamRevision | Should -Be 16 -Because $client
+                $plan.target.ref | Should -Be "itl-main-72665287-r16" -Because $client
+                $plan.target.commit | Should -Be "0118493165fd9507169317be28d53c52803d52ed" -Because $client
+            } finally {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "plans r14 to r16 for every supported single-client installation" {
+        $clients = @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
+        foreach ($client in $clients) {
+            $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-r14-r16-$($client.Replace('-', '_'))-" + [guid]::NewGuid().ToString("N"))
+            try {
+                New-AiRulesMigrationFixture -Root $tempRoot `
+                    -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" `
+                    -CurrentRef "itl-main-72665287-r14" `
+                    -CurrentCommit "0888fcdaf223abf97cfba7450bf38454926ad384" `
+                    -CurrentUpstreamCommit "72665287e77361aea3aaf866fef163d98f0fabcd" `
+                    -CurrentDownstreamRevision 14 `
+                    -CurrentTool $client
+                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+                $plan.status | Should -Be "eligible" -Because $client
+                $plan.fromDownstreamRevision | Should -Be 14 -Because $client
+                $plan.target.downstreamRevision | Should -Be 16 -Because $client
+                $plan.target.ref | Should -Be "itl-main-72665287-r16" -Because $client
+                $plan.target.commit | Should -Be "0118493165fd9507169317be28d53c52803d52ed" -Because $client
+            } finally {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "plans r15 to r16 for every supported single-client installation" {
+        $clients = @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
+        foreach ($client in $clients) {
+            $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-r15-r16-$($client.Replace('-', '_'))-" + [guid]::NewGuid().ToString("N"))
+            try {
+                New-AiRulesMigrationFixture -Root $tempRoot `
+                    -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" `
+                    -CurrentRef "itl-main-72665287-r15" `
+                    -CurrentCommit "cf31a89deaee5d39bab5cce490330d204e6e1233" `
+                    -CurrentUpstreamCommit "72665287e77361aea3aaf866fef163d98f0fabcd" `
+                    -CurrentDownstreamRevision 15 `
+                    -CurrentTool $client
+                $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+                $plan.status | Should -Be "eligible" -Because $client
+                $plan.fromDownstreamRevision | Should -Be 15 -Because $client
+                $plan.target.downstreamRevision | Should -Be 16 -Because $client
+                $plan.target.ref | Should -Be "itl-main-72665287-r16" -Because $client
+                $plan.target.commit | Should -Be "0118493165fd9507169317be28d53c52803d52ed" -Because $client
             } finally {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -196,10 +335,10 @@ Describe "ai_rules_1c migration planning" {
         try {
             New-AiRulesMigrationFixture -Root $tempRoot `
                 -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" `
-                -CurrentRef "itl-main-72665287-r13" `
-                -CurrentCommit "b66569bebf46e0369efa53983fca69368e16d57a" `
+                -CurrentRef "itl-main-72665287-r16" `
+                -CurrentCommit "0118493165fd9507169317be28d53c52803d52ed" `
                 -CurrentUpstreamCommit "72665287e77361aea3aaf866fef163d98f0fabcd" `
-                -CurrentDownstreamRevision 13
+                -CurrentDownstreamRevision 16
             $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "current"
         } finally {
@@ -291,7 +430,39 @@ Describe "ai_rules_1c transactional migration" {
             $report.status | Should -Be "blocked"
             $report.migrationStatus | Should -Be "custom"
             $report.current.repo | Should -Be "https://example.invalid/custom-rules.git"
-            $report.target.ref | Should -Be "itl-main-72665287-r13"
+            $report.target.ref | Should -Be "itl-main-72665287-r16"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "reports blocking files and makes a blocked managed migration fail closed" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-blocked-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-AiRulesMigrationFixture -Root $tempRoot -UserModified $true
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Invoke-AiRulesBaselineMigration
+            }
+            $result.status | Should -Be "user-modified"
+            $report = Get-Content -LiteralPath $result.recoveryReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($report.userModifiedFiles) | Should -Contain ".codex/rules/example.md"
+
+            $assertion = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:RunErrorCategory = ""
+                $script:RunRequiredAction = ""
+                try {
+                    Assert-AiRulesBaselineMigrationResult -Migration $result
+                    [pscustomobject]@{ error = ""; category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+                } catch {
+                    [pscustomobject]@{ error = $_.Exception.Message; category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+                }
+            }
+            $assertion.error | Should -Match "migration is blocked \(user-modified\)"
+            $assertion.error | Should -Match ([regex]::Escape($result.recoveryReportPath))
+            $assertion.category | Should -Be "ai-rules-migration-blocked"
+            $assertion.requiredAction | Should -Match "/itl-update-workflow"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -325,8 +496,8 @@ Describe "ai_rules_1c transactional migration" {
             $config = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $lock = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $config.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            $config.aiRules.ref | Should -Be "itl-main-72665287-r13"
-            $lock.dependencies.aiRules1c.commit | Should -Be "b66569bebf46e0369efa53983fca69368e16d57a"
+            $config.aiRules.ref | Should -Be "itl-main-72665287-r16"
+            $lock.dependencies.aiRules1c.commit | Should -Be "0118493165fd9507169317be28d53c52803d52ed"
             $lock.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
             (Get-FileHash -Algorithm SHA256 -LiteralPath $kiloPath).Hash | Should -Be $kiloBefore
             (Get-FileHash -Algorithm SHA256 -LiteralPath $localStatePath).Hash | Should -Be $localStateBefore

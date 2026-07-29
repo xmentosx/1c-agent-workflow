@@ -26,7 +26,7 @@ itldev/*:
   /itl-litemode <mode>
 ```
 
-Render one active client: Codex, Kilo Code, Claude Code, Cursor, OpenCode, Kimi Code, Qwen Code, Command Code, Cline, or Pi. Use the capability registry (commands, skills, prompts); never infer syntax from a client name. `master` and `itldev/*` get matching surfaces. Synchronization removes hash-owned ITL assets and preserves user/config keys. Follow the reload instruction. `/itl` returns helper `-Action help` stdout verbatim: state, recommendation, lifecycle, native OpenSpec invocation or exact natural requests, then grouped helper actions. Never promise universal `/opsx*`; do not summarize, omit `Lifecycle:`/`Additional helper actions:`, or add a "no lifecycle actions executed" note. Use `/itl-check` for checkable changes or stale/failed/unknown verification. `/itl-verify-fix` is manual recovery, never the default.
+Render one active client: Codex, Kilo Code, Claude Code, Cursor, OpenCode, Kimi Code, Qwen Code, Command Code, Cline, or Pi. Use the capability registry (commands, skills, prompts); never infer syntax from a client name. `master` and `itldev/*` get matching surfaces. Synchronization removes hash-owned ITL assets and preserves user/config keys. Follow the reload instruction. `/itl` returns the Russian helper `-Action help` stdout verbatim: state, recommendation, lifecycle, native OpenSpec invocation or exact natural requests, then grouped helper actions. Never promise universal `/opsx*`; do not summarize, omit `Жизненный цикл:`/`Дополнительные действия:`, or add a "no lifecycle actions executed" note. Use `/itl-check` for checkable changes or stale/failed/unknown verification. `/itl-verify-fix` is manual recovery, never the default.
 
 For Codex, prefer `$1c-workflow-fast` for routine installed-project actions. Use this detailed skill only for initialization, recovery, unusual topology, or explanation.
 
@@ -36,7 +36,7 @@ For Codex, prefer `$1c-workflow-fast` for routine installed-project actions. Use
 - `mcp.md`: ROCTUP branch data MCP, vibecoding1c MCP selection/setup/status/update, branch-local Vanessa UI MCP, External MCP preservation, and legacy branch Data MCP publication fallback.
 - `branch-lifecycle.md`: Git/worktree rules, new configuration or extension branches, extension bootstrap/dump, branch context activation, base update, refresh, list, switch, and advanced close.
 - `verification-result.md`: `/itl-check`, `verify-dev-branch`, Vanessa Automation `TESTMANAGER -> TESTCLIENT`, `VANESSA_TEST_FOREIGN_WAIT_MODE=warn`, event-log baselines, `/itl-result`, result manifests, and `verificationPolicy`.
-- `dev-branch-development.md`: develop inside an existing `itldev/*` worktree using quick-fix or OpenSpec.
+- `dev-branch-development.md`: develop inside an existing `itldev/*` worktree using quick-fix, direct full-cycle, or OpenSpec.
 - `advanced-actions.md`: helper catalog and diagnostics-only actions.
 
 Open only the matching topic file. Do not load the whole reference set for normal lifecycle execution.

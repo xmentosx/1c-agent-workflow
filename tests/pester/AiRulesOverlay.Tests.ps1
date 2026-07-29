@@ -17,6 +17,7 @@ Describe "controlled ai_rules_1c release overlay" {
             & git -C $forkRoot config user.email "tests@example.invalid"
             & git -C $forkRoot config user.name "ITL Tests"
             [IO.File]::WriteAllText((Join-Path $forkRoot "AGENTS.md"), "# Root`n`n# Process`nold`n", $Utf8NoBom)
+            [IO.File]::WriteAllText((Join-Path $forkRoot "USER-RULES.md"), "# User rules`nupstream`n", $Utf8NoBom)
             [IO.File]::WriteAllText((Join-Path $forkRoot "base.txt"), "upstream`n", $Utf8NoBom)
             [IO.File]::WriteAllText((Join-Path $forkRoot "content\owner.md"), "owner`n", $Utf8NoBom)
             & git -C $forkRoot add .
@@ -24,6 +25,7 @@ Describe "controlled ai_rules_1c release overlay" {
             $upstream = (& git -C $forkRoot rev-parse HEAD).Trim()
 
             & git -C $forkRoot switch -q -c baseline-release *> $null
+            [IO.File]::WriteAllText((Join-Path $forkRoot "USER-RULES.md"), "# User rules`nold downstream routing`n", $Utf8NoBom)
             [IO.File]::WriteAllText((Join-Path $forkRoot "base.txt"), "downstream`n", $Utf8NoBom)
             [IO.File]::WriteAllText((Join-Path $forkRoot "content\new-owner.md"), "new owner`n", $Utf8NoBom)
             & git -C $forkRoot add .
@@ -49,22 +51,32 @@ Describe "controlled ai_rules_1c release overlay" {
                 baselineReleaseCommit = $release
                 targetPath = "AGENTS.md"
                 maximumTargetCharacters = 20000
-                downstreamPatch = [ordered]@{ disposition = "rewrite"; excludePaths = @("AGENTS.md") }
+                additionalTargets = @(
+                    [ordered]@{
+                        path = "USER-RULES.md"
+                        template = "USER-RULES.md"
+                        maximumCharacters = 1000
+                        requiredAnchors = @("direct full-cycle")
+                    }
+                )
+                downstreamPatch = [ordered]@{ disposition = "rewrite"; excludePaths = @("AGENTS.md", "USER-RULES.md") }
                 sections = $sections
                 requiredUpstreamAnchors = @()
                 requiredTargetAnchors = @("completion gate")
             }
             [IO.File]::WriteAllText((Join-Path $overlayRoot "sections.json"), (($manifest | ConvertTo-Json -Depth 8) + "`n"), $Utf8NoBom)
             [IO.File]::WriteAllText((Join-Path $overlayRoot "AGENTS.md"), "# Root`n`ncompact completion gate`n`n# Process`n`nrouted`n", $Utf8NoBom)
+            [IO.File]::WriteAllText((Join-Path $overlayRoot "USER-RULES.md"), "# User rules`ndirect full-cycle`n", $Utf8NoBom)
             $reportPath = Join-Path $tempRoot "report.json"
 
             & $BuilderPath -AiRulesRoot $forkRoot -UpstreamCommit $upstream -OverlayRoot $overlayRoot -ReportPath $reportPath
             (Get-Content -LiteralPath (Join-Path $forkRoot "base.txt") -Raw -Encoding UTF8).Trim() | Should -Be "downstream"
             (Test-Path -LiteralPath (Join-Path $forkRoot "content\new-owner.md") -PathType Leaf) | Should -BeTrue
             (Get-Content -LiteralPath (Join-Path $forkRoot "AGENTS.md") -Raw -Encoding UTF8) | Should -Match 'compact completion gate'
-            $firstHashes = @(Get-FileHash -LiteralPath (Join-Path $forkRoot "AGENTS.md"), (Join-Path $forkRoot "base.txt"), (Join-Path $forkRoot "content\new-owner.md") | Select-Object -ExpandProperty Hash)
+            (Get-Content -LiteralPath (Join-Path $forkRoot "USER-RULES.md") -Raw -Encoding UTF8) | Should -Match 'direct full-cycle'
+            $firstHashes = @(Get-FileHash -LiteralPath (Join-Path $forkRoot "AGENTS.md"), (Join-Path $forkRoot "USER-RULES.md"), (Join-Path $forkRoot "base.txt"), (Join-Path $forkRoot "content\new-owner.md") | Select-Object -ExpandProperty Hash)
             & $BuilderPath -AiRulesRoot $forkRoot -UpstreamCommit $upstream -OverlayRoot $overlayRoot -ReportPath $reportPath
-            $secondHashes = @(Get-FileHash -LiteralPath (Join-Path $forkRoot "AGENTS.md"), (Join-Path $forkRoot "base.txt"), (Join-Path $forkRoot "content\new-owner.md") | Select-Object -ExpandProperty Hash)
+            $secondHashes = @(Get-FileHash -LiteralPath (Join-Path $forkRoot "AGENTS.md"), (Join-Path $forkRoot "USER-RULES.md"), (Join-Path $forkRoot "base.txt"), (Join-Path $forkRoot "content\new-owner.md") | Select-Object -ExpandProperty Hash)
             $secondHashes | Should -Be $firstHashes
 
             & git -C $forkRoot reset --hard $upstream *> $null
@@ -86,5 +98,44 @@ Describe "controlled ai_rules_1c release overlay" {
             { & $BuilderPath -AiRulesRoot $forkRoot -UpstreamCommit $driftUpstream -OverlayRoot $overlayRoot -ReportPath $reportPath } | Should -Throw '*downstream-owned path*'
             ((Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json).downstreamPaths | Where-Object state -eq "changed").path | Should -Contain "base.txt"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "routes structural Form.xml edits through the specialized tool" {
+        $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\AGENTS.md") -Raw -Encoding UTF8
+        foreach ($marker in @(
+            'existing `Form.xml` must use `1c-form-edit`',
+            'never a manual one-line fix',
+            'state why the form tool does not apply before editing'
+        )) {
+            $agentsText | Should -Match ([regex]::Escape($marker))
+        }
+    }
+
+    It "keeps eligible local BSL fixes on quick-fix without weakening completion" {
+        $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\AGENTS.md") -Raw -Encoding UTF8
+        foreach ($marker in @(
+            'An internal BSL fix that preserves public contracts may remain a quick-fix',
+            'do not promote it solely because it corrects existing behavior',
+            'relevant Vanessa coverage exists or was updated',
+            'a fresh successful `/itl-check` completed after the last change'
+        )) {
+            $agentsText | Should -Match ([regex]::Escape($marker))
+        }
+
+        $agentsText | Should -Not -Match 'public APIs.*changes to existing behavior always promote'
+    }
+
+    It "keeps full-cycle execution separate from OpenSpec planning" {
+        $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\AGENTS.md") -Raw -Encoding UTF8
+        $forkUserRulesText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\USER-RULES.md") -Raw -Encoding UTF8
+        $projectUserRulesText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\USER-RULES.append.md") -Raw -Encoding UTF8
+
+        $agentsText | Should -Match 'Full-cycle is not OpenSpec'
+        foreach ($text in @($forkUserRulesText, $projectUserRulesText)) {
+            $text | Should -Match ([regex]::Escape('executionPath=quick-fix|full-cycle'))
+            $text | Should -Match ([regex]::Escape('planningMode=direct|OpenSpec'))
+            $text | Should -Match 'Promotion triggers.*never force OpenSpec'
+        }
+        $projectUserRulesText | Should -Not -Match 'classify each code/metadata edit as quick-fix or OpenSpec'
     }
 }
