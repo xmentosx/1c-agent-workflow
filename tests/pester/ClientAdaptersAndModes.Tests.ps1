@@ -187,10 +187,13 @@
 
     It "preserves the output format contracts across native command adapters" {
         $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\common"
+        $masterTemplateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master"
         $templates = [ordered]@{
             "itl.md" = Get-Content -LiteralPath (Join-Path $templateRoot "itl.md.template") -Raw -Encoding UTF8
             "itl-status.md" = Get-Content -LiteralPath (Join-Path $templateRoot "itl-status.md.template") -Raw -Encoding UTF8
             "itl-litemode.md" = Get-Content -LiteralPath (Join-Path $templateRoot "itl-litemode.md.template") -Raw -Encoding UTF8
+            "itl-new-config-branch.md" = Get-Content -LiteralPath (Join-Path $masterTemplateRoot "itl-new-config-branch.md.template") -Raw -Encoding UTF8
+            "itl-new-extension-branch.md" = Get-Content -LiteralPath (Join-Path $masterTemplateRoot "itl-new-extension-branch.md.template") -Raw -Encoding UTF8
         }
         $previousMode = [Environment]::GetEnvironmentVariable("ITL_ROUTINE_MODE", "Process")
         try {
@@ -208,8 +211,8 @@
             }
 
             foreach ($client in $adapted.Keys) {
-                $adapted[$client]["itl.md"] | Should -Match "весь финальный ответ"
-                $adapted[$client]["itl.md"] | Should -Match 'fenced-блока `text`'
+                $adapted[$client]["itl.md"] | Should -Match "entire final response"
+                $adapted[$client]["itl.md"] | Should -Match 'fenced `text` block'
                 $adapted[$client]["itl-status.md"] | Should -Match "structured Russian Markdown report"
                 $adapted[$client]["itl-status.md"] | Should -Match 'one `- Подпись: значение` field per line'
                 $adapted[$client]["itl-status.md"] | Should -Match "Kilo Browser Automation"
@@ -217,7 +220,12 @@
                 $adapted[$client]["itl-status.md"] | Should -Match "Контекст разработки"
                 $adapted[$client]["itl-litemode.md"] | Should -Match "complete helper stdout unchanged"
                 $adapted[$client]["itl-litemode.md"] | Should -Match 'exactly one fenced `text` code block'
+                foreach ($fileName in $templates.Keys) {
+                    $adapted[$client][$fileName] | Should -Match '(?m)^description:\s*[^\r\n]*[А-Яа-яЁё]'
+                }
             }
+            $adapted["opencode"]["itl-new-config-branch.md"] | Should -Match '(?m)^description:\s*Создать ветку конфигурации ITL'
+            $adapted["opencode"]["itl-new-extension-branch.md"] | Should -Match '(?m)^description:\s*Создать ветку расширения ITL'
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", $previousMode, "Process")
         }

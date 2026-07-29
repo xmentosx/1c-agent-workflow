@@ -1,5 +1,5 @@
 ---
-description: Repair omitted test coverage and verify the current ITL change
+description: Восстановить пропущенное тестовое покрытие и проверить текущее изменение ITL
 agent: code
 ---
 

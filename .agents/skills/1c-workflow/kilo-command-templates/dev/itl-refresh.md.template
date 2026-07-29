@@ -1,5 +1,5 @@
 ---
-description: Refresh the current ITL branch from master/source
+description: Обновить текущую ветку ITL из master/источника
 agent: code
 ---
 

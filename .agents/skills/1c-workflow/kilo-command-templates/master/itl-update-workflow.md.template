@@ -3,14 +3,14 @@ description: Обновить установленный пакет ITL workflow
 agent: code
 ---
 
-Используйте команду только из worktree `master`. Она обновляет файлы ITL workflow и AI rules, пересоздаёт команды активного клиента и коммитит только принадлежащие updater tracked-изменения. Push не выполняется.
+Use this command only from the `master` worktree. It updates ITL workflow and AI rules files, regenerates the active client's commands, and commits only updater-owned tracked changes. It does not push.
 
-Запустите helper из текущей папки проекта:
+Run the helper from the current project directory:
 
-Если shell-инструмент поддерживает `timeout_ms`, задайте `timeout_ms >= 3900000`, чтобы внешняя оболочка пережила 3600-секундный лимит Designer. При большем лимите Designer увеличьте и внешний тайм-аут. Не используйте `120000 ms` и другие короткие значения.
+If the agent shell tool supports `timeout_ms`, use `timeout_ms >= 3900000` so the outer shell outlives the 3600-second Designer limit. If the Designer limit is higher, raise the outer timeout too. Do not use `120000 ms` or other short values.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action update-workflow
 ```
 
-Если helper сообщает о dirty tracked Git worktree, остановитесь и попросите разработчика закоммитить или убрать изменения, затем повторите команду. При успехе и непустом `userReport` верните пользователю точно этот русский Markdown-отчёт без вступления, пересказа и чтения `console.log`. При ошибке читайте только последние 80 строк `logPath`. Не запускайте команду из `itldev/*`; ветки разработки обновляются отдельно через `/itl-refresh`.
+If the helper reports a dirty tracked Git worktree, stop and ask the developer to commit or remove the changes, then retry. On success with a non-empty `userReport`, return exactly that Russian Markdown report with no introduction, paraphrase, or `console.log` read. On failure, read only the last 80 lines of `logPath`. Do not run this command from `itldev/*`; development branches update separately through `/itl-refresh`.

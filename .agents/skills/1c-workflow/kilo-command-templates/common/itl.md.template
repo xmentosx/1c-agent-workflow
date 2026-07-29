@@ -3,15 +3,15 @@ description: Показать жизненный цикл ITL для текущ�
 agent: code
 ---
 
-Запустите helper-панель из текущей папки проекта:
+Run the helper panel from the current project directory:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action help
 ```
 
-При успехе весь финальный ответ должен состоять ровно из одного fenced-блока `text`, без текста снаружи. Внутри сначала укажите источник, затем полный stdout helper:
+On success, make the entire final response exactly one fenced `text` block with nothing outside it. Inside it, print the source line first, followed by the complete helper stdout:
 
-Формат ответа:
+Response format:
 
 ```text
 Источник истины для текущей папки: helper lifecycle panel.
@@ -19,4 +19,4 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 <вставьте сюда точный stdout helper без изменений>
 ```
 
-Сохраните все переносы строк, пустые строки и отступы helper. Не пересказывайте, не переводите, не делите на собственные разделы, не меняйте порядок, не пропускайте и не объединяйте разделы. Сохраните разделы `Жизненный цикл:`, `Команды ITL в этом контексте:`, `Унаследовано Kilo из основного checkout, но недоступно в этом контексте:`, `OpenSpec:` и `Дополнительные действия:` точно как напечатано. Не добавляйте отдельное сообщение о том, что lifecycle-действия не выполнялись. При ошибке сообщите фактическую ошибку, не создавая панель самостоятельно. Не запускайте lifecycle-действие, пока разработчик явно его не выбрал.
+Preserve every helper line break, blank line, and indentation. Do not paraphrase, translate, split it into your own sections, change the order, omit content, or merge sections. Preserve the sections `Жизненный цикл:`, `Команды ITL в этом контексте:`, `Унаследовано Kilo из основного checkout, но недоступно в этом контексте:`, `OpenSpec:`, and `Дополнительные действия:` exactly as printed. Do not add a separate message saying that lifecycle actions were not run. On failure, report the actual error instead of constructing the panel yourself. Do not run a lifecycle action until the developer explicitly selects it.
