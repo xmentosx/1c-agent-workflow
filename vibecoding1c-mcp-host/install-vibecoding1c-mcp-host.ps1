@@ -2562,7 +2562,7 @@ except Exception:
             continue
         }
         if ((Invoke-DockerCommand -Arguments @(
-            "exec", $containerName, "sh", "-lc", "command -v curl >/dev/null 2>&1"
+            "exec", $containerName, "ls", "/usr/local/bin/curl"
         ) -Quiet -TimeoutSec 20) -eq 0) {
             continue
         }
