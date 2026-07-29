@@ -354,6 +354,24 @@
         }
     }
 
+    It "keeps ITL command descriptions Russian and agent actions English" {
+        $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates"
+        $wrapperFiles = Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "itl*.md.template"
+        foreach ($file in $wrapperFiles) {
+            $text = Get-Content -Encoding UTF8 -Raw $file.FullName
+            $description = [regex]::Match($text, '(?m)^description:\s*(.+)$')
+            $description.Success | Should -Be $true
+            $description.Groups[1].Value | Should -Match '[А-Яа-яЁё]'
+        }
+
+        $itl = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "common\itl.md.template")
+        $result = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "dev\itl-result.md.template")
+        $update = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "master\itl-update-workflow.md.template")
+        $itl | Should -Match "Run the helper panel from the current project directory"
+        $result | Should -Match "Use this command only from an active"
+        $update | Should -Match 'Use this command only from the `master` worktree'
+    }
+
     It "guards context-specific lifecycle actions in the helper" {
         $HelperText | Should -Match "function Assert-MasterWorktreeContext"
         $HelperText | Should -Match "function Assert-DevelopmentBranchWorktreeContext"
@@ -447,12 +465,12 @@
         $wrapperText = Get-Content -Encoding UTF8 -Raw $wrapperPath
 
         $wrapperText | Should -Match "-Action\s+help"
-        $wrapperText | Should -Match "весь финальный ответ"
-        $wrapperText | Should -Match 'fenced-блока `text`'
-        $wrapperText | Should -Match "без текста снаружи"
-        $wrapperText | Should -Match "все переносы строк, пустые строки и отступы"
-        $wrapperText | Should -Match "Не пересказывайте"
-        $wrapperText | Should -Match "При ошибке сообщите фактическую ошибку"
+        $wrapperText | Should -Match "entire final response"
+        $wrapperText | Should -Match 'fenced `text` block'
+        $wrapperText | Should -Match "nothing outside it"
+        $wrapperText | Should -Match "every helper line break, blank line, and indentation"
+        $wrapperText | Should -Match "Do not paraphrase"
+        $wrapperText | Should -Match "On failure, report the actual error"
         $wrapperText | Should -Match "Дополнительные действия:"
         $wrapperText | Should -Match "Жизненный цикл:"
         $wrapperText | Should -Not -Match "Lifecycle-РґРµР№СЃС‚РІРёСЏ РЅРµ РІС‹РїРѕР»РЅСЏР»РёСЃСЊ"
