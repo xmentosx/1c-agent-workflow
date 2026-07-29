@@ -291,9 +291,9 @@
         $envReference = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "docs\itl-workflow\DEV-ENV-REFERENCE.ru.md")
 
         $projectWorkflow.IndexOf("## За пять минут") | Should -BeLessThan $projectWorkflow.IndexOf("## Модель проекта")
-        $projectWorkflow | Should -Match '(?s)```text.*master.*itldev/<задача>.*?/itl-check.*?/itl-result.*?```'
-        $projectWorkflow | Should -Match "полные абсолютные пути"
-        $projectWorkflow | Should -Match "allowlisted-коммит"
+        $projectWorkflow | Should -Match '(?s)```text.*master.*itldev/<имя-ветки>.*?/itl-check.*?/itl-result.*?```'
+        $projectWorkflow | Should -Match "полные пути"
+        $projectWorkflow | Should -Match "коммит только из разрешённых updater-путей"
         $featureWorkflow.IndexOf("## Процесс целиком") | Should -BeLessThan $featureWorkflow.IndexOf("## Перед началом")
         $featureWorkflow | Should -Match '(?s)```text.*quick-fix.*full-cycle.*OpenSpec.*?/itl-check.*?/itl-result.*?```'
         $modes.IndexOf("## Что использовать обычно") | Should -BeLessThan $modes.IndexOf("## Kilo Browser Automation")
@@ -802,7 +802,7 @@
         }
         $text | Should -Match "Сам факт исправления наблюдаемого поведения не переводит локальную BSL-правку в OpenSpec"
         $text | Should -Match "Direct full-cycle"
-        $text | Should -Match "verification risk сами по себе не принуждают к OpenSpec"
+        $text | Should -Match "высокий риск проверки сами по себе не принуждают к OpenSpec"
         $text | Should -Not -Match "Используется для новой функциональности, изменения поведения, нескольких модулей"
         $text | Should -Not -Match ([regex]::Escape('.agents/skills/1c-workflow/references/'))
     }

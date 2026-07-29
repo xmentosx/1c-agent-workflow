@@ -9,7 +9,8 @@
             param(
                 [string]$Root,
                 [string]$Client,
-                [ValidateSet("native", "natural")][string]$Mode
+                [ValidateSet("native", "natural")][string]$Mode,
+                [bool]$IncludeOpsxAliases = $true
             )
 
             New-Item -ItemType Directory -Force -Path (Join-Path $Root ".agent-1c"), (Join-Path $Root "openspec/specs"), (Join-Path $Root "openspec/changes"), (Join-Path $Root ".fixture-rules") | Out-Null
@@ -45,6 +46,19 @@
                     $files[$target] = [ordered]@{
                         source = "content/openspec-bundle/$Client/.codex/skills/$token/SKILL.md"
                         installedHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+                    }
+                }
+                if ($Client -eq "codex" -and $IncludeOpsxAliases) {
+                    foreach ($stage in @("propose", "explore", "apply", "archive")) {
+                        $token = "opsx-$stage"
+                        $target = ".agents/skills/$token/SKILL.md"
+                        $path = Join-Path $Root $target
+                        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+                        Set-Content -LiteralPath $path -Encoding UTF8 -Value "# explicit $stage"
+                        $files[$target] = [ordered]@{
+                            source = "content/openspec-bundle/$Client/.codex/skills/$token/SKILL.md"
+                            installedHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+                        }
                     }
                 }
             }
@@ -140,12 +154,26 @@
             $status = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus }
             $status.mode | Should -Be "native"
             $status.isAvailable | Should -BeTrue
-            $status.invocations.propose | Should -Be "skill openspec-propose"
+            $status.invocations.propose | Should -Be '$opsx-propose'
+            $status.invocations.explore | Should -Be '$opsx-explore'
+            $status.invocations.apply | Should -Be '$opsx-apply'
+            $status.invocations.archive | Should -Be '$opsx-archive'
 
             Remove-Item -LiteralPath (Join-Path $tempRoot ".agents/skills/openspec-apply-change/SKILL.md") -Force
             $broken = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus }
             $broken.mode | Should -Be "unavailable"
             $broken.reason | Should -Match "missing or damaged"
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "keeps older Codex bundles available through canonical skill names" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-openspec-native-legacy-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-OpenSpecModeFixture -Root $tempRoot -Client codex -Mode native -IncludeOpsxAliases $false
+            $status = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus }
+            $status.mode | Should -Be "native"
+            $status.invocations.propose | Should -Be '$openspec-propose'
+            $status.invocations.apply | Should -Be '$openspec-apply-change'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
@@ -756,9 +784,9 @@
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-doctor-openspec-natural-" + [guid]::NewGuid().ToString("N"))
         try {
             New-OpenSpecModeFixture -Root $tempRoot -Client qwen -Mode natural
-            $projectConfig = [ordered]@{ masterBranch = "master"; aiRules = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-72665287-r16"; tools = @("qwen") } }
+            $projectConfig = [ordered]@{ masterBranch = "master"; aiRules = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-72665287-r17"; tools = @("qwen") } }
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c/project.json") -Encoding UTF8 -Value (($projectConfig | ConvertTo-Json -Depth 6) + "`n")
-            $lock = [ordered]@{ dependencies = [ordered]@{ aiRules1c = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-72665287-r16"; commit = "0118493165fd9507169317be28d53c52803d52ed"; upstreamCommit = "72665287e77361aea3aaf866fef163d98f0fabcd"; downstreamRevision = 16; compatibilityStatus = "passed" } } }
+            $lock = [ordered]@{ dependencies = [ordered]@{ aiRules1c = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-72665287-r17"; commit = "27a898c426a1016fffc4a1b008e8ac0cb1490da2"; upstreamCommit = "72665287e77361aea3aaf866fef163d98f0fabcd"; downstreamRevision = 17; compatibilityStatus = "passed" } } }
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c/dependency-lock.json") -Encoding UTF8 -Value (($lock | ConvertTo-Json -Depth 8) + "`n")
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_VANESSA_TESTING=auto`nITL_CHECK_EVENT_LOG=manual`n"
             foreach ($skill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")) {
