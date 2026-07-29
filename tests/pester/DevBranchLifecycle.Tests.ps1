@@ -1337,6 +1337,12 @@
         }
     }
 
+    It "routes lifecycle Git path-list commands through the NUL-safe helper" {
+        $HelperText | Should -Not -Match 'Get-GitOutput\s+@\(\s*"diff"\s*,\s*"--name-only"'
+        $HelperText | Should -Not -Match 'Get-GitOutput\s+@\(\s*"(?:ls-files|ls-tree)"'
+        $HelperText | Should -Match 'Get-GitPathList\s+-Arguments\s+@\(\s*"ls-tree"\s*,\s*"-r"\s*,\s*"--name-only"\s*,\s*"-z"'
+    }
+
     It "detects workflow helper script changes after a merge base commit" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-helper-change-test-" + [guid]::NewGuid().ToString("N"))
 
@@ -3285,14 +3291,18 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
-    It "keeps the branch ConfigDumpInfo cursor when master is merged" {
+    It "keeps branch ConfigDumpInfo cursors with Unicode paths when master is merged" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-dump-info-merge-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            $unicodeExtensionRoot = Join-Path $tempRoot "src\cfe\Тестовое расширение"
+            New-Item -ItemType Directory -Force -Path $unicodeExtensionRoot | Out-Null
             & git -C $tempRoot init *> $null
             & git -C $tempRoot config user.email "test@example.com"
             & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot config core.quotePath true
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "base-cursor"
+            Set-Content -LiteralPath (Join-Path $unicodeExtensionRoot "ConfigDumpInfo.xml") -Encoding UTF8 -Value "base-extension-cursor"
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value "<Configuration />"
             & git -C $tempRoot add .
             & git -C $tempRoot commit -m "base" *> $null
@@ -3300,12 +3310,14 @@ if (`$?) { exit 0 } else { exit 1 }
 
             & git -C $tempRoot checkout -b itldev/test *> $null
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "branch-cursor"
+            Set-Content -LiteralPath (Join-Path $unicodeExtensionRoot "ConfigDumpInfo.xml") -Encoding UTF8 -Value "branch-extension-cursor"
             Set-Content -LiteralPath (Join-Path $tempRoot "branch.txt") -Encoding UTF8 -Value "branch"
             & git -C $tempRoot add .
             & git -C $tempRoot commit -m "branch cursor" *> $null
 
             & git -C $tempRoot checkout master *> $null
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "master-cursor"
+            Set-Content -LiteralPath (Join-Path $unicodeExtensionRoot "ConfigDumpInfo.xml") -Encoding UTF8 -Value "master-extension-cursor"
             Set-Content -LiteralPath (Join-Path $tempRoot "master.txt") -Encoding UTF8 -Value "master"
             & git -C $tempRoot add .
             & git -C $tempRoot commit -m "master cursor" *> $null
@@ -3317,6 +3329,7 @@ if (`$?) { exit 0 } else { exit 1 }
             }
 
             (Get-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Raw).Trim() | Should -Be "branch-cursor"
+            (Get-Content -LiteralPath (Join-Path $unicodeExtensionRoot "ConfigDumpInfo.xml") -Raw).Trim() | Should -Be "branch-extension-cursor"
             Test-Path -LiteralPath (Join-Path $tempRoot "master.txt") -PathType Leaf | Should -BeTrue
             @((& git -C $tempRoot rev-list --parents -n 1 HEAD) -split "\s+").Count | Should -Be 3
             ((& git -C $tempRoot status --porcelain) -join "") | Should -BeNullOrEmpty

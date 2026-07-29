@@ -335,7 +335,7 @@ function Test-WorkflowHelperChangedSince {
         return $false
     }
 
-    $changed = @(Get-GitOutput @("diff", "--name-only", $BeforeCommit, "HEAD", "--", ".agents/skills/1c-workflow/scripts"))
+    $changed = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", $BeforeCommit, "HEAD", "--", ".agents/skills/1c-workflow/scripts"))
     return (@($changed | Where-Object { $_ }).Count -gt 0)
 }
 
@@ -2870,7 +2870,7 @@ function Untrack-GeneratedKiloItlCommands {
         if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git") -ErrorAction SilentlyContinue)) {
             return
         }
-        $tracked = @(Get-GitOutput @("ls-files", "--", ".kilo/commands/itl*.md") | Where-Object { $_ })
+        $tracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--", ".kilo/commands/itl*.md"))
         if ($tracked.Count -gt 0) {
             Invoke-Git (@("rm", "--cached", "--ignore-unmatch", "--") + $tracked)
             Write-Host "Untracked generated Kilo ITL commands from Git index."
@@ -5269,7 +5269,7 @@ function Get-ConfigDumpInfoRepoPathsAtCommit {
     param([string]$Commit)
 
     $paths = @()
-    foreach ($path in @(Get-GitOutput @("ls-tree", "-r", "--name-only", $Commit))) {
+    foreach ($path in @(Get-GitPathList -Arguments @("ls-tree", "-r", "--name-only", "-z", $Commit))) {
         $normalizedPath = ([string]$path).Replace("\", "/").Trim()
         if ($normalizedPath -and ([System.IO.Path]::GetFileName($normalizedPath) -ieq "ConfigDumpInfo.xml")) {
             $paths += $normalizedPath
@@ -5312,7 +5312,7 @@ function Merge-MasterPreservingBranchConfigDumpInfo {
 
     if ($mergeException) {
         $unmergedPaths = @(
-            Get-GitOutput @("diff", "--name-only", "--diff-filter=U") |
+            Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=U") |
                 ForEach-Object { ([string]$_).Replace("\", "/").Trim() } |
                 Where-Object { $_ }
         )
@@ -5322,7 +5322,7 @@ function Merge-MasterPreservingBranchConfigDumpInfo {
         }
 
         Restore-BranchConfigDumpInfoFromCommit -Commit $branchCommit -RepoPaths $dumpInfoConflicts
-        $remainingConflicts = @(Get-GitOutput @("diff", "--name-only", "--diff-filter=U"))
+        $remainingConflicts = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=U"))
         if ($remainingConflicts.Count -gt 0) {
             throw "Master merge still has non-ConfigDumpInfo conflicts after preserving the branch synchronization cursor: $($remainingConflicts -join ', ')"
         }
