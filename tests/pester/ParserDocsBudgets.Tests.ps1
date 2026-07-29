@@ -888,6 +888,17 @@
             ".agent-1c/tools/roctup-mcp-toolkit/",
             "build/data-mcp-tools-loader/",
             ".codex/config.toml",
+            ".agents/skills/itl/",
+            ".agents/skills/itl-litemode/",
+            ".agents/skills/itl-status/",
+            ".agents/skills/itl-new-config-branch/",
+            ".agents/skills/itl-new-extension-branch/",
+            ".agents/skills/itl-switch-client/",
+            ".agents/skills/itl-update-workflow/",
+            ".agents/skills/itl-check/",
+            ".agents/skills/itl-refresh/",
+            ".agents/skills/itl-result/",
+            ".agents/skills/itl-verify-fix/",
             ".kilo/kilo.json",
             ".kilo/kilo.jsonc"
         )
@@ -896,6 +907,9 @@
             (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
             $HelperText | Should -Match ([regex]::Escape($requiredPath))
         }
+        @(& git -C $RepoRoot ls-files -- ".agents/skills/itl/SKILL.md").Count | Should -Be 0
+        @(& git -C $RepoRoot ls-files -- ".agents/skills/itl-roctup-1c-data/SKILL.md").Count | Should -Be 1
+        @(& git -C $RepoRoot ls-files -- ".agents/skills/itl-vanessa-ui-mcp/SKILL.md").Count | Should -Be 1
         $HelperText | Should -Match "Test-IgnorableLocalGitStatusLine"
     }
 }

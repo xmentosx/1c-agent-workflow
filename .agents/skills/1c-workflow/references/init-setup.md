@@ -15,7 +15,7 @@ Create and maintain:
 - `.dev.env`: local secrets and machine-specific values; never commit it.
 - `.agents/skills/1c-workflow/`, `.agents/skills/1c-workflow-fast/`, `.agents/skills/product-docs/`, `.agents/skills/itl-roctup-1c-data/`, and `.agents/skills/itl-vanessa-ui-mcp/`: shared skills installed with the workflow package.
 - `.agents/skills/1c-workflow/kilo-command-templates/`: tracked canonical Kilo templates.
-- Ignored native `itl*.md` commands for the one active Kilo/Claude/Cursor/OpenCode adapter; Codex uses `.agents/skills`. OpenSpec commands remain owned by `ai_rules_1c`.
+- Ignored native `itl*` commands, skills, or prompts for the one active client. Codex receives context-specific `.agents/skills/itl*/SKILL.md` wrappers with explicit-only invocation. OpenSpec commands remain owned by `ai_rules_1c`.
 - One active-client MCP config: Codex `.codex/config.toml`, Kilo `.kilo/kilo.json`, Claude `.mcp.json`, Cursor `.cursor/mcp.json`, or OpenCode root `opencode.json`.
 
 Never store passwords in committed files. Write workflow state and `.dev.env` as UTF-8 and preserve Cyrillic paths exactly.

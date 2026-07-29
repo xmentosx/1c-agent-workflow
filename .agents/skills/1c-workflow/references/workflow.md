@@ -28,7 +28,7 @@ itldev/*:
 
 Render one active client: Codex, Kilo Code, Claude Code, Cursor, OpenCode, Kimi Code, Qwen Code, Command Code, Cline, or Pi. Use the capability registry (commands, skills, prompts); never infer syntax from a client name. `master` and `itldev/*` get matching surfaces. Synchronization removes hash-owned ITL assets and preserves user/config keys. Follow the reload instruction. `/itl` returns the Russian helper `-Action help` stdout verbatim: state, recommendation, lifecycle, native OpenSpec invocation or exact natural requests, then grouped helper actions. Never promise universal `/opsx*`; do not summarize, omit `Жизненный цикл:`/`Дополнительные действия:`, or add a "no lifecycle actions executed" note. Use `/itl-check` for checkable changes or stale/failed/unknown verification. `/itl-verify-fix` is manual recovery, never the default.
 
-For Codex, prefer `$1c-workflow-fast` for routine installed-project actions. Use this detailed skill only for initialization, recovery, unusual topology, or explanation.
+For Codex, use the generated `$itl*` skills for routine installed-project actions; `$itl` shows the current context panel. Use this detailed skill only for initialization, recovery, unusual topology, or explanation.
 
 ## Topic References
 

@@ -7909,13 +7909,13 @@ function Show-Help {
         Write-Host "  master → создать ветку → открыть worktree → выполнить задачу → проверить → получить результат"
         Write-Host ""
         Write-Host "Команды ITL в этом контексте:"
-        Write-Host "  /itl"
-        Write-Host "  /itl-status"
-        Write-Host "  /itl-new-config-branch <name>"
-        Write-Host "  /itl-new-extension-branch <name>"
-        Write-Host "  /itl-update-workflow"
-        Write-Host "  /itl-switch-client <client>"
-        Write-Host "  /itl-litemode <mode>"
+        Write-ItlActiveClientCommandText "  /itl"
+        Write-ItlActiveClientCommandText "  /itl-status"
+        Write-ItlActiveClientCommandText "  /itl-new-config-branch <name>"
+        Write-ItlActiveClientCommandText "  /itl-new-extension-branch <name>"
+        Write-ItlActiveClientCommandText "  /itl-update-workflow"
+        Write-ItlActiveClientCommandText "  /itl-switch-client <client>"
+        Write-ItlActiveClientCommandText "  /itl-litemode <mode>"
         Write-Host ""
         Write-Host "Активные worktree разработки:"
         $states = @(Get-WorkflowActiveDevBranchStates)
@@ -7949,7 +7949,7 @@ function Show-Help {
         } catch {
             Write-Host "Состояние ветки разработки: отсутствует"
             Write-Host ""
-            Write-Host "Рекомендуемый шаг: выполните /itl-status и откройте сохранённый worktree этой ветки, если он существует."
+            Write-ItlActiveClientCommandText "Рекомендуемый шаг: выполните /itl-status и откройте сохранённый worktree этой ветки, если он существует."
         }
 
         if ($state) {
@@ -7987,7 +7987,7 @@ function Show-Help {
             if ($kind -eq "extension" -and $extensionInitializationStatus -ne "ready") {
                 Write-Host "Рекомендуемый шаг: сообщите агенту, нужно создать пустое расширение или загрузить CFE; укажите имя расширения и путь к CFE, если он нужен."
             } elseif ($hasCheckableChanges -or (@("failed", "stale", "unknown") -contains $verification.effectiveStatus)) {
-                Write-Host "Рекомендуемый шаг: /itl-check"
+                Write-ItlActiveClientCommandText "Рекомендуемый шаг: /itl-check"
             } elseif (-not $verification.isFreshPassed) {
                 if ($openSpec.mode -eq "native") {
                     Write-Host "Рекомендуемый шаг: выберите quick-fix или full-cycle. По умолчанию full-cycle выполняется напрямую; используйте $($openSpec.invocations.explore) или $($openSpec.invocations.propose), только если полезно формальное исследование или согласование."
@@ -7997,31 +7997,31 @@ function Show-Help {
                     Write-Host "Рекомендуемый шаг: выберите quick-fix или direct full-cycle. Восстанавливайте workspace и правила OpenSpec только для формального исследования или согласования."
                 }
             } elseif (-not (Get-StateValue -State $state -Name "lastResultPath" -Default "")) {
-                Write-Host "Рекомендуемый шаг: /itl-result"
+                Write-ItlActiveClientCommandText "Рекомендуемый шаг: /itl-result"
             } else {
-                Write-Host "Рекомендуемый шаг: продолжите работу и повторите /itl-check либо снова выполните /itl-result, когда понадобится артефакт."
+                Write-ItlActiveClientCommandText "Рекомендуемый шаг: продолжите работу и повторите /itl-check либо снова выполните /itl-result, когда понадобится артефакт."
             }
         }
 
         Write-Host ""
         Write-Host "Жизненный цикл:"
         if ($openSpec.mode -eq "native") {
-            Write-Host "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; OpenSpec explore/propose/apply/archive используется при необходимости."
+            Write-ItlActiveClientCommandText "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; OpenSpec explore/propose/apply/archive используется при необходимости."
         } elseif ($openSpec.mode -eq "natural") {
-            Write-Host "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; natural OpenSpec explore/propose/apply/archive используется при необходимости."
+            Write-ItlActiveClientCommandText "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; natural OpenSpec explore/propose/apply/archive используется при необходимости."
         } else {
-            Write-Host "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; восстанавливайте OpenSpec только для формального исследования или согласования."
+            Write-ItlActiveClientCommandText "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; восстанавливайте OpenSpec только для формального исследования или согласования."
         }
-        Write-Host "  используйте /itl-refresh, когда изменения master нужно перенести в эту ветку."
+        Write-ItlActiveClientCommandText "  используйте /itl-refresh, когда изменения master нужно перенести в эту ветку."
         Write-Host ""
         Write-Host "Команды ITL в этом контексте:"
-        Write-Host "  /itl"
-        Write-Host "  /itl-status"
-        Write-Host "  /itl-check"
-        Write-Host "  /itl-verify-fix"
-        Write-Host "  /itl-refresh"
-        Write-Host "  /itl-result"
-        Write-Host "  /itl-litemode <mode>"
+        Write-ItlActiveClientCommandText "  /itl"
+        Write-ItlActiveClientCommandText "  /itl-status"
+        Write-ItlActiveClientCommandText "  /itl-check"
+        Write-ItlActiveClientCommandText "  /itl-verify-fix"
+        Write-ItlActiveClientCommandText "  /itl-refresh"
+        Write-ItlActiveClientCommandText "  /itl-result"
+        Write-ItlActiveClientCommandText "  /itl-litemode <mode>"
         $inheritedPrimaryCommands = @()
         try {
             if ((Get-ItlActiveClient) -eq "kilocode") { $inheritedPrimaryCommands = @(Get-KiloInheritedPrimaryItlCommands) }
@@ -8060,19 +8060,19 @@ function Show-Help {
             Write-Host "  Native bundle не требуется; не запускайте npm install или openspec update."
         } else {
             Write-Host "  OpenSpec недоступен: $($openSpec.reason)"
-            Write-Host "  Восстановление: в master выполните update-ai-rules или update-workflow, перенесите обновление в ветку и запустите /itl-refresh."
+            Write-ItlActiveClientCommandText "  Восстановление: в master выполните update-ai-rules или update-workflow, перенесите обновление в ветку и запустите /itl-refresh."
         }
-        Write-Host "  используйте /itl-verify-fix только для исправления пропущенного покрытия или неуспешного цикла проверки."
+        Write-ItlActiveClientCommandText "  используйте /itl-verify-fix только для исправления пропущенного покрытия или неуспешного цикла проверки."
     } else {
         Write-Host ""
         Write-Host "Жизненный цикл:"
         Write-Host "  Откройте worktree master для создания веток либо worktree itldev/* для разработки, проверки и получения результата."
         Write-Host ""
         Write-Host "Команды ITL в этом контексте:"
-        Write-Host "  /itl"
-        Write-Host "  /itl-status"
+        Write-ItlActiveClientCommandText "  /itl"
+        Write-ItlActiveClientCommandText "  /itl-status"
         Write-Host ""
-        Write-Host "Следующий шаг: выполните /itl-status для проверки папки, затем откройте правильный worktree."
+        Write-ItlActiveClientCommandText "Следующий шаг: выполните /itl-status для проверки папки, затем откройте правильный worktree."
     }
 
     Write-ItlAdditionalHelperActions
