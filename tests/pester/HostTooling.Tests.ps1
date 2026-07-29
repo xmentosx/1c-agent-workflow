@@ -254,12 +254,6 @@
                     intervalMinutes = 7
                     startupDelaySeconds = 45
                     taskName = "ITL fixture watchdog"
-                    dockerDesktopRecovery = [ordered]@{
-                        enabled = $true
-                        timeoutSeconds = 90
-                        commandTimeoutSeconds = 60
-                        pollSeconds = 3
-                    }
                 }
             }
             Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
@@ -289,107 +283,8 @@
             & {
                 . $McpHostPath -Action status -ConfigPath $configPath *> $null
                 { Get-McpHostWatchdogSettings -Config ([pscustomobject]@{ watchdog = [pscustomobject]@{ enabled = $true; intervalMinutes = 0 } }) } | Should -Throw "*between 1 and 1440*"
-                { Get-McpHostWatchdogSettings -Config ([pscustomobject]@{ watchdog = [pscustomobject]@{ enabled = $true; dockerDesktopRecovery = [pscustomobject]@{ timeoutSeconds = 10 } } }) } | Should -Throw "*between 30 and 900*"
                 { Assert-McpHostWatchdogTaskOwned -Task ([pscustomobject]@{ Description = "another owner" }) -TaskName "ITL fixture watchdog" } | Should -Throw "*is not managed by this installer*"
                 { Assert-McpHostWatchdogTaskOwned -Task ([pscustomobject]@{ Description = $script:WatchdogDescription }) -TaskName "ITL fixture watchdog" } | Should -Not -Throw
-            }
-        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It "recovers an unavailable Docker Desktop daemon with one bounded restart" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-docker-recovery-" + [guid]::NewGuid().ToString("N"))
-        $configPath = Join-Path $tempRoot "host.config.json"
-        try {
-            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
-            & {
-                . $McpHostPath -Action status -ConfigPath $configPath *> $null
-                $script:DesktopRecoveryCalls = New-Object System.Collections.Generic.List[string]
-                function Test-DockerDaemonAvailable { param([int]$TimeoutSec = 20); return $false }
-                function Get-DockerDesktopRuntimeStatus { return "running" }
-                function Wait-DockerDaemonAvailable { param([int]$TimeoutSec, [int]$PollSeconds); return $true }
-                function Invoke-DockerCommandChecked {
-                    param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
-                    $script:DesktopRecoveryCalls.Add(($Arguments -join " "))
-                }
-                $settings = [pscustomobject]@{
-                    dockerDesktopRecoveryEnabled = $true
-                    dockerDesktopRecoveryTimeoutSeconds = 90
-                    dockerDesktopCommandTimeoutSeconds = 60
-                    dockerDesktopPollSeconds = 3
-                }
-
-                (Repair-DockerDesktopAvailability -Settings $settings) | Should -Be "restart"
-                @($script:DesktopRecoveryCalls) | Should -Be @("desktop restart --timeout 60")
-                Remove-Variable -Scope Script -Name DesktopRecoveryCalls -ErrorAction SilentlyContinue
-            }
-        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It "repairs tracked graph healthchecks without restart or indexing" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-graph-health-" + [guid]::NewGuid().ToString("N"))
-        $configPath = Join-Path $tempRoot "host.config.json"
-        $stateRoot = Join-Path $tempRoot "state"
-        $runtimePath = Join-Path $tempRoot "runtime"
-        try {
-            New-Item -ItemType Directory -Force -Path $stateRoot, $runtimePath | Out-Null
-            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($([ordered]@{
-                schemaVersion = 1; stateRoot = $stateRoot
-            }) | ConvertTo-Json) + [Environment]::NewLine)
-            Set-Content -LiteralPath (Join-Path $runtimePath "docker-compose.yml") -Encoding UTF8 -Value @'
-services:
-  mcp-app:
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8006/search"]
-'@
-            Set-Content -LiteralPath (Join-Path $stateRoot "host-state.json") -Encoding UTF8 -Value (($([ordered]@{
-                schemaVersion = 1
-                configurations = @()
-                servers = @([ordered]@{
-                    id = "graph"
-                    containerName = "itl-graph"
-                    runtimePath = $runtimePath
-                })
-            }) | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
-
-            & {
-                . $McpHostPath -Action status -ConfigPath $configPath *> $null
-                $hostConfig = Read-JsonFile -Path $configPath
-                $script:GraphHealthDockerCalls = New-Object System.Collections.Generic.List[string]
-                $script:GraphHealthShimInstalled = $false
-                function Get-HostContainerPublishState { param([string]$ContainerName); return "running" }
-                function Invoke-DockerCommandCapture {
-                    param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
-                    $script:GraphHealthDockerCalls.Add(($Arguments -join " "))
-                    if ($script:GraphHealthShimInstalled) {
-                        return @("ITL_GRAPH_HEALTH_OK")
-                    }
-                    return @('OCI runtime exec failed: exec: "curl": executable file not found in $PATH')
-                }
-                function Invoke-DockerCommand {
-                    param([string[]]$Arguments, [switch]$Quiet, [int]$TimeoutSec)
-                    $script:GraphHealthDockerCalls.Add(($Arguments -join " "))
-                    return 1
-                }
-                function Invoke-DockerCommandChecked {
-                    param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
-                    $script:GraphHealthDockerCalls.Add(($Arguments -join " "))
-                    if ($Arguments[0] -eq "cp") {
-                        $script:GraphHealthShimInstalled = $true
-                    }
-                }
-
-                (Repair-TrackedGraphHealthchecks -Config $hostConfig) | Should -Be 2
-                $composeText = Get-Content -LiteralPath (Join-Path $runtimePath "docker-compose.yml") -Raw
-                $composeText | Should -Match "python -c"
-                $composeText | Should -Not -Match '\["CMD", "curl"'
-                $callText = @($script:GraphHealthDockerCalls) -join "|"
-                $callText | Should -Match "cp .*itl-graph:/usr/local/bin/curl"
-                $callText | Should -Match "exec itl-graph chmod 0755 /usr/local/bin/curl"
-                $callText | Should -Match "exec itl-graph curl -f http://localhost:8006/search"
-                $callText | Should -Not -Match "restart|reindex|setup"
-                Remove-Variable -Scope Script -Name GraphHealthDockerCalls -ErrorAction SilentlyContinue
-                Remove-Variable -Scope Script -Name GraphHealthShimInstalled -ErrorAction SilentlyContinue
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
@@ -408,8 +303,6 @@ services:
             & {
                 . $McpHostPath -Action status -ConfigPath $configPath *> $null
                 $hostConfig = Read-JsonFile -Path $configPath
-                function Repair-DockerDesktopAvailability { param([object]$Settings); return "already-available" }
-                function Repair-TrackedGraphHealthchecks { param([object]$Config); return 0 }
                 function Repair-TrackedMcpHostAndPublish { param([object]$Config); if ($script:WatchdogFailure) { throw "fixture failure" } }
 
                 $script:WatchdogFailure = $false
@@ -428,41 +321,6 @@ services:
                 $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $hostConfig)
                 $state.status | Should -Be "disabled"
                 Remove-Variable -Scope Script -Name WatchdogFailure -ErrorAction SilentlyContinue
-            }
-        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It "publishes unavailable host state without runtime refresh when Docker recovery fails" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-docker-failure-" + [guid]::NewGuid().ToString("N"))
-        $configPath = Join-Path $tempRoot "host.config.json"
-        try {
-            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            $config = [ordered]@{
-                schemaVersion = 1
-                stateRoot = (Join-Path $tempRoot "state")
-                watchdog = [ordered]@{ enabled = $true }
-            }
-            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
-            & {
-                . $McpHostPath -Action status -ConfigPath $configPath *> $null
-                $hostConfig = Read-JsonFile -Path $configPath
-                $script:UnavailableStatus = ""
-                $script:UnavailablePublished = $false
-                function Repair-DockerDesktopAvailability { param([object]$Settings); throw "fixture docker failure" }
-                function Set-TrackedHostRuntimeStatus { param([object]$Config, [string]$Status); $script:UnavailableStatus = $Status }
-                function Publish-Registry {
-                    param([object]$Config, [switch]$SkipUnchangedHost, [switch]$SkipRuntimeRefresh)
-                    $script:UnavailablePublished = [bool]$SkipRuntimeRefresh
-                }
-
-                { Invoke-McpHostWatchdogRun -Config $hostConfig *> $null } | Should -Throw "*fixture docker failure*"
-                $script:UnavailableStatus | Should -Be "unavailable"
-                $script:UnavailablePublished | Should -BeTrue
-                $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $hostConfig)
-                $state.status | Should -Be "failed"
-                $state.message | Should -Be "fixture docker failure"
-                Remove-Variable -Scope Script -Name UnavailableStatus -ErrorAction SilentlyContinue
-                Remove-Variable -Scope Script -Name UnavailablePublished -ErrorAction SilentlyContinue
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
@@ -615,10 +473,6 @@ services:
         $hostConfig.watchdog.intervalMinutes | Should -Be 5
         $hostConfig.watchdog.startupDelaySeconds | Should -Be 30
         $hostConfig.watchdog.taskName | Should -Be "ITL MCP Host Watchdog"
-        $hostConfig.watchdog.dockerDesktopRecovery.enabled | Should -BeTrue
-        $hostConfig.watchdog.dockerDesktopRecovery.timeoutSeconds | Should -Be 120
-        $hostConfig.watchdog.dockerDesktopRecovery.commandTimeoutSeconds | Should -Be 90
-        $hostConfig.watchdog.dockerDesktopRecovery.pollSeconds | Should -Be 5
         $hostConfig.graphMetadataSearchServer.autoUpdateOnStartup | Should -Be $true
         $hostConfig.configurations[0].configId | Should -Be "trade"
         $hostConfig.configurations[0].sourceRepo | Should -Match "trade-config-dump"
@@ -728,8 +582,6 @@ services:
         $readmeText | Should -Match ([regex]::Escape("-Action watchdog-status -ConfigPath .\host.config.json"))
         $readmeText | Should -Match ([regex]::Escape("-Action watchdog-run -ConfigPath .\host.config.json"))
         $readmeText | Should -Match ([regex]::Escape("-Action watchdog-uninstall -ConfigPath .\host.config.json"))
-        $readmeText | Should -Match "Docker Desktop CLI"
-        $readmeText | Should -Match "without a container restart or indexing"
         $readmeText | Should -Match "restart=unless-stopped"
         $runbookText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\RUNBOOK.ru.md")
         $runbookText | Should -Match ([regex]::Escape("-Action setup -ConfigPath .\host.config.json -ServerId bookstack"))
@@ -751,8 +603,6 @@ services:
         $runbookText | Should -Match ([regex]::Escape("-Action watchdog-status -ConfigPath .\host.config.json"))
         $runbookText | Should -Match ([regex]::Escape("-Action watchdog-run -ConfigPath .\host.config.json"))
         $runbookText | Should -Match ([regex]::Escape("-Action watchdog-uninstall -ConfigPath .\host.config.json"))
-        $runbookText | Should -Match "dockerDesktopRecovery"
-        $runbookText | Should -Match "без перезапуска контейнера и без индексации"
         $McpHostDumpText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1")
         $nativeEmptyStringFunction = [regex]::Match($McpHostDumpText, '(?s)function ConvertTo-NativeEmptyStringArgument \{.*?\n\}')
         $nativeEmptyStringFunction.Success | Should -Be $true

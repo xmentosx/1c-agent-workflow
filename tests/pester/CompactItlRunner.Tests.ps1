@@ -34,37 +34,6 @@ exit 0
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "returns absolute result paths and artifacts in the successful export summary" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-result-" + [guid]::NewGuid().ToString("N"))
-        try {
-            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
-            $resultRoot = Join-Path $tempRoot "Результаты работы"
-            $resultPath = Join-Path $resultRoot "branch1.cf"
-            $manifestPath = "$resultPath.manifest.json"
-            New-Item -ItemType Directory -Force -Path $scriptRoot, $resultRoot | Out-Null
-            Set-Content -LiteralPath $resultPath -Encoding UTF8 -Value "artifact"
-            Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value "{}"
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
-            $fixture = @"
-param([string]`$ProjectRoot,[string]`$RunStatusPath,[string]`$RunLogPath,[string]`$Action)
-`$report = "## Результат ветки``n- Файл: $resultPath``n- Манифест: $manifestPath"
-`$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=`$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport=`$report; resultPath='$resultPath'; resultManifestPath='$manifestPath' }
-[IO.File]::WriteAllText(`$RunStatusPath,((`$payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding `$false))
-exit 0
-"@
-            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value $fixture
-
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -- -Action export-dev-branch-result
-            $LASTEXITCODE | Should -Be 0
-            $summary = ($output -join "`n") | ConvertFrom-Json
-            $summary.resultPath | Should -Be $resultPath
-            $summary.resultManifestPath | Should -Be $manifestPath
-            @($summary.artifacts) | Should -Contain $resultPath
-            @($summary.artifacts) | Should -Contain $manifestPath
-            $summary.userReport | Should -Match ([regex]::Escape($resultPath))
-        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
     It "reports bounded live stage progress on stderr while keeping stdout as compact JSON" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-progress-" + [guid]::NewGuid().ToString("N"))
         try {

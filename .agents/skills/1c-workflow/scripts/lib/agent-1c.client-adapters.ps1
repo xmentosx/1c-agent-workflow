@@ -757,7 +757,7 @@ function Convert-ItlCommandForClient {
     $adapter = Get-ItlClientAdapter -Client $Client
     if ($Client -eq "opencode" -and $FileName -in @("itl-new-config-branch.md", "itl-new-extension-branch.md")) {
         $kind = if ($FileName -eq "itl-new-extension-branch.md") { "extension" } else { "configuration" }
-        $description = if ($kind -eq "extension") { "Создать ветку расширения ITL в нативном workspace OpenCode" } else { "Создать ветку конфигурации ITL в нативном workspace OpenCode" }
+        $description = if ($kind -eq "extension") { "Create an ITL extension branch in a native OpenCode workspace" } else { "Create an ITL configuration branch in a native OpenCode workspace" }
         $extension = if ($kind -eq "extension") { @"
 Before calling the tool, collect the extension initialization mode (`Empty` or `Cfe`), extension name, and CFE path when applicable. If the developer explicitly does not know them yet, omit all extension arguments so initialization remains pending.
 "@ } else { "" }

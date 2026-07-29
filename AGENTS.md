@@ -17,7 +17,6 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 - Fix shared package code, templates, docs, and tests rather than patching an example project.
 - Preserve unrelated user changes and keep the dirty-state guards strict.
 - Prefer script-owned prompts, sequencing, recovery, and state transitions. Do not duplicate helper-owned flows in agent prose.
-- Treat Git path lists as NUL-delimited data: use `git -c core.quotepath=false ... -z` through the shared path-list helper, never parse newline-delimited or C-quoted Git path output. Cover Cyrillic and space-containing paths in focused regressions.
 - Run monitored bootstrap in the foreground with `timeout_ms >= 3900000`. On interruption repeat the same bootstrap command; never delete `index.lock`, finish lifecycle manually, or edit `status.json`.
 - Keep secrets/runtime out of Git: `.dev.env`, infobases, tools, state, logs, and client MCP config stay ignored.
 - Keep entrypoints compact and route detail to one relevant reference; do not load or duplicate the full lifecycle.

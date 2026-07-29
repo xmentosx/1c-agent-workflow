@@ -107,31 +107,6 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf) -or -not (Test-Pa
     throw "AI rules overlay assets are incomplete under $overlayRoot"
 }
 $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-$additionalTargets = if ($manifest.PSObject.Properties["additionalTargets"]) { @($manifest.additionalTargets) } else { @() }
-$managedTargets = @(
-    [pscustomobject]@{
-        path = [string]$manifest.targetPath
-        template = "AGENTS.md"
-        maximumCharacters = [int]$manifest.maximumTargetCharacters
-        requiredAnchors = @($manifest.requiredTargetAnchors)
-    }
-)
-foreach ($additionalTarget in $additionalTargets) {
-    $managedTargets += [pscustomobject]@{
-        path = [string]$additionalTarget.path
-        template = [string]$additionalTarget.template
-        maximumCharacters = [int]$additionalTarget.maximumCharacters
-        requiredAnchors = @($additionalTarget.requiredAnchors)
-    }
-}
-foreach ($managedTarget in $managedTargets) {
-    if (-not $managedTarget.path -or -not $managedTarget.template -or
-        -not (Test-Path -LiteralPath (Join-Path $overlayRoot $managedTarget.template) -PathType Leaf)) {
-        throw "AI rules overlay managed target is incomplete: path='$($managedTarget.path)'; template='$($managedTarget.template)'."
-    }
-}
-$managedTargetPaths = @($managedTargets | ForEach-Object { $_.path })
-$excludePathspecs = @($managedTargetPaths | ForEach-Object { ":(exclude)$_" })
 $baselineUpstream = [string]$manifest.baselineUpstreamCommit
 $baselineRelease = [string]$manifest.baselineReleaseCommit
 if (-not $UpstreamCommit) { $UpstreamCommit = $baselineUpstream }
@@ -177,8 +152,7 @@ foreach ($anchor in @($manifest.requiredUpstreamAnchors)) {
     if (-not $upstreamAgents.Contains([string]$anchor)) { $sectionBlockers.Add("Required upstream anchor disappeared: $anchor") }
 }
 
-$patchPathArguments = @("diff", "--name-only", $baselineUpstream, $baselineRelease, "--", ".") + $excludePathspecs
-$patchPaths = @((Invoke-AiRulesGit -Arguments $patchPathArguments).stdout -split "`r?`n" | Where-Object { $_ })
+$patchPaths = @((Invoke-AiRulesGit -Arguments @("diff", "--name-only", $baselineUpstream, $baselineRelease, "--", ".", ":(exclude)AGENTS.md")).stdout -split "`r?`n" | Where-Object { $_ })
 $pathLedger = [System.Collections.Generic.List[object]]::new()
 $pathBlockers = [System.Collections.Generic.List[string]]::new()
 foreach ($path in $patchPaths) {
@@ -189,7 +163,7 @@ foreach ($path in $patchPaths) {
     if ($state -ne "unchanged") { $pathBlockers.Add("Upstream changed downstream-owned path '$path'; classify it explicitly before rebuilding the release.") }
 }
 
-$allowedPaths = @($patchPaths + $managedTargetPaths)
+$allowedPaths = @($patchPaths + @([string]$manifest.targetPath))
 $committedPaths = @((Invoke-AiRulesGit -Arguments @("diff", "--name-only", $UpstreamCommit, "HEAD", "--")).stdout -split "`r?`n" | Where-Object { $_ })
 foreach ($path in $committedPaths) {
     if ($path -notin $allowedPaths) { $pathBlockers.Add("Release history changes unclassified path '$path'.") }
@@ -208,23 +182,6 @@ if ($targetText.Length -gt [int]$manifest.maximumTargetCharacters) {
 foreach ($anchor in @($manifest.requiredTargetAnchors)) {
     if (-not $targetText.Contains([string]$anchor)) { $sectionBlockers.Add("Compact AGENTS.md lost required anchor: $anchor") }
 }
-$managedTargetLedger = [System.Collections.Generic.List[object]]::new()
-foreach ($managedTarget in $managedTargets) {
-    $templatePath = Join-Path $overlayRoot $managedTarget.template
-    $text = [IO.File]::ReadAllText($templatePath, [Text.Encoding]::UTF8).Replace("`r`n", "`n")
-    if ($managedTarget.maximumCharacters -gt 0 -and $text.Length -gt $managedTarget.maximumCharacters) {
-        $sectionBlockers.Add("Managed target '$($managedTarget.path)' is $($text.Length) characters; budget is $($managedTarget.maximumCharacters).")
-    }
-    foreach ($anchor in @($managedTarget.requiredAnchors)) {
-        if (-not $text.Contains([string]$anchor)) { $sectionBlockers.Add("Managed target '$($managedTarget.path)' lost required anchor: $anchor") }
-    }
-    $managedTargetLedger.Add([pscustomobject]@{
-        path = $managedTarget.path
-        template = $managedTarget.template
-        characters = $text.Length
-        sha256 = Get-TextSha256 -Text $text
-    })
-}
 
 $reportPathFull = if ($ReportPath) { [IO.Path]::GetFullPath($ReportPath) } else { Join-Path $workflowRoot "build\ai-rules-overlay-report.json" }
 $report = [ordered]@{
@@ -238,7 +195,6 @@ $report = [ordered]@{
     baselineReleaseCommit = $baselineRelease
     targetPath = [string]$manifest.targetPath
     targetCharacters = $targetText.Length
-    managedTargets = @($managedTargetLedger)
     sections = @($sectionLedger)
     downstreamPaths = @($pathLedger)
     blockers = @($sectionBlockers) + @($pathBlockers)
@@ -256,8 +212,7 @@ if (-not $CheckOnly) {
         if ($dirtyEntries.Count -gt 0 -or $head -ne $UpstreamCommit) {
             throw "Downstream patch is not fully applied, but the release worktree/history is not a clean upstream starting point. Recreate the release branch from $UpstreamCommit."
         }
-        $patchArguments = @("diff", "--binary", $baselineUpstream, $baselineRelease, "--", ".") + $excludePathspecs
-        $patchResult = Invoke-AiRulesGit -Arguments $patchArguments
+        $patchResult = Invoke-AiRulesGit -Arguments @("diff", "--binary", $baselineUpstream, $baselineRelease, "--", ".", ":(exclude)AGENTS.md")
         $tempPatch = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-rules-overlay-" + [guid]::NewGuid().ToString("N") + ".patch")
         try {
             [IO.File]::WriteAllText($tempPatch, $patchResult.stdout, $utf8)
@@ -267,12 +222,8 @@ if (-not $CheckOnly) {
             Remove-Item -LiteralPath $tempPatch -Force -ErrorAction SilentlyContinue
         }
     }
-    foreach ($managedTarget in $managedTargets) {
-        $templatePath = Join-Path $overlayRoot $managedTarget.template
-        $managedText = [IO.File]::ReadAllText($templatePath, [Text.Encoding]::UTF8).Replace("`r`n", "`n")
-        $managedTargetPath = Join-Path $script:AiRulesRootFull $managedTarget.path
-        [IO.File]::WriteAllText($managedTargetPath, ($managedText.TrimEnd("`n") + "`n"), $utf8)
-    }
+    $targetPath = Join-Path $script:AiRulesRootFull ([string]$manifest.targetPath)
+    [IO.File]::WriteAllText($targetPath, ($targetText.TrimEnd("`n") + "`n"), $utf8)
     foreach ($section in $expectedSections) {
         $owner = [string]$section.owner
         if ($owner -like "content/*" -and -not (Test-Path -LiteralPath (Join-Path $script:AiRulesRootFull $owner) -PathType Leaf)) {
@@ -280,16 +231,11 @@ if (-not $CheckOnly) {
         }
     }
     $report.status = "generated"
-    $targetPath = Join-Path $script:AiRulesRootFull ([string]$manifest.targetPath)
     $report.targetSha256 = Get-TextSha256 -Text ([IO.File]::ReadAllText($targetPath, [Text.Encoding]::UTF8).Replace("`r`n", "`n"))
     $patchReportPath = [IO.Path]::ChangeExtension($reportPathFull, ".patch")
-    $baselineDiffArguments = @("diff", "--binary", $baselineUpstream, $baselineRelease, "--", ".") + $excludePathspecs
-    $baselineDiff = Invoke-AiRulesGit -Arguments $baselineDiffArguments
-    $managedDiffs = foreach ($managedTargetPath in $managedTargetPaths) {
-        (Invoke-AiRulesGit -Arguments @("diff", "--binary", $UpstreamCommit, "--", $managedTargetPath)).stdout.TrimEnd()
-    }
-    $patchText = @($baselineDiff.stdout.TrimEnd()) + @($managedDiffs | Where-Object { $_ })
-    [IO.File]::WriteAllText($patchReportPath, (($patchText -join [Environment]::NewLine) + [Environment]::NewLine), $utf8)
+    $baselineDiff = Invoke-AiRulesGit -Arguments @("diff", "--binary", $baselineUpstream, $baselineRelease, "--", ".", ":(exclude)AGENTS.md")
+    $agentsDiff = Invoke-AiRulesGit -Arguments @("diff", "--binary", $UpstreamCommit, "--", [string]$manifest.targetPath)
+    [IO.File]::WriteAllText($patchReportPath, ($baselineDiff.stdout.TrimEnd() + [Environment]::NewLine + $agentsDiff.stdout), $utf8)
     $report.patchReportPath = $patchReportPath
 }
 Write-OverlayReport -Payload $report -Path $reportPathFull

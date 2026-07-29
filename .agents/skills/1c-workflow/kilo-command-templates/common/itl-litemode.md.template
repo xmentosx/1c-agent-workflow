@@ -1,5 +1,5 @@
 ---
-description: Показать или изменить режимы проверки Vanessa и журнала регистрации ITL
+description: Show or change ITL Vanessa and event-log verification modes
 agent: code
 ---
 

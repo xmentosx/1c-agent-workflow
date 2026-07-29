@@ -1,16 +1,6 @@
 # Справочник `.dev.env`
 
-`.dev.env` содержит локальные настройки и секреты, не коммитится и может отличаться между worktree. В обычной работе этот файл не нужно просматривать целиком: используйте `/itl`, `/itl-status` и команды режимов, а сюда обращайтесь для конкретного параметра.
-
-```text
-нужно изменить поведение
-  ├─ режим проверки или агента ─► «Режимы агента и зависимостей»
-  ├─ путь к базе/платформе ─────► «Платформа, исходная база и хранилище»
-  ├─ Vanessa/ROCTUP/MCP ────────► соответствующий раздел
-  └─ неизвестный параметр ──────► поиск по точному имени ключа
-```
-
-В таблицах `user` означает настройку пользователя, `helper` — встроенные скрипты workflow, а `runtime` — автоматически запущенные процессы. Значения с владельцем `helper` или `runtime` не редактируйте вручную без задачи по восстановлению. Пустое значение означает указанное значение по умолчанию либо отсутствие настройки.
+`.dev.env` содержит локальные настройки и секреты, не коммитится и может отличаться между worktree. Значения `helper`/`runtime` не редактируйте вручную без recovery-задачи. Пустое значение означает указанный default либо отсутствие настройки.
 
 Для защиты от `MAX_PATH=260` абсолютный путь начального корня проекта ограничен 35 символами, а путь нового worktree `<родитель>\<проект>-<ветка>` — 50 символами. Допустимая длина имени ветки вычисляется только как остаток от 50 после родительского пути, имени папки проекта, разделителя и дефиса; содержимое исходников не анализируется. Временные транзакции выгрузки конфигурации, расширения и установки Vanessa используют игнорируемую папку `.tx` внутри проекта.
 
@@ -56,8 +46,8 @@
 | `DEPENDENCY_MODE` | Разрешение зависимостей | `fresh`/`locked`, default `fresh` | user |
 | `QUICKFIX_MAX_LINES` | Лимит BSL-строк quick-fix | default `40` | user |
 | `DEBUG_FAST_PATH` | Сокращенный цикл отладки | `standard`/`extended`/`off`, default `standard` | user |
-| `VERIFICATION_DEPTH` | Глубина статических проверок `ai_rules_1c` | `full`/`standard`/`lite`, default `full` | user/`/litemode` |
-| `UI_TESTING` | Проверка веб-интерфейса по правилам `ai_rules_1c` | `auto`/`manual`/`off`, default `manual` | user/`/litemode` |
+| `VERIFICATION_DEPTH` | Глубина upstream static QA | `full`/`standard`/`lite`, default `full` | user/`/litemode` |
+| `UI_TESTING` | Upstream browser UI testing | `auto`/`manual`/`off`, default `manual` | user/`/litemode` |
 | `ORCHESTRATION` | Режим оркестрации | `standard`/`economy`, default `standard` | user/`/economymode` |
 | `SUBAGENT_MODEL_CODING` | Модель coding tier | model id; пусто = модель клиента | user/installer |
 | `SUBAGENT_MODEL_ANALYSIS` | Модель analysis tier | model id; пусто = модель клиента | user/installer |
@@ -68,7 +58,7 @@
 
 Для native workspace OpenCode workflow также готовит игнорируемый project-local runtime `.opencode/node_modules` из записи `opencodePlugin` в `.agent-1c/dependency-lock.json`. Требуются Node.js 22+ и npm; после init/update/switch OpenCode Desktop нужно полностью перезапустить, чтобы зарегистрировать ITL workspace tools.
 
-## Проверка ITL
+## ITL verification
 
 | Ключ | Назначение | Значения/default | Владелец |
 |---|---|---|---|
@@ -88,7 +78,7 @@
 | `DEV_BRANCH_WORKTREE_ROOT` | Родительский каталог worktree | пусто = рядом с проектом; папка `<project>-<safe-branch>` | user |
 | `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP` | Fallback-подтверждение для копии при отсутствии master-маркера | `manual-confirm`/`skip`, default `manual-confirm` | user/init |
 
-## Веб-публикация
+## Web publication
 
 | Ключ | Назначение | Значения/default | Владелец |
 |---|---|---|---|

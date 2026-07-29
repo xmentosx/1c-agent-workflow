@@ -1,22 +1,22 @@
 ---
-description: Показать жизненный цикл ITL для текущего контекста проекта
+description: Show the ITL lifecycle panel for the current project context
 agent: code
 ---
 
-Run the helper panel from the current project directory:
+Run the helper lifecycle panel from the current project directory:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action help
 ```
 
-On success, make the entire final response exactly one fenced `text` block with nothing outside it. Inside it, print the source line first, followed by the complete helper stdout:
+On success, the entire final response must be exactly one fenced `text` code block with nothing outside it. Inside that block, return the source line and helper stdout as follows:
 
-Response format:
+Required response format:
 
 ```text
 Источник истины для текущей папки: helper lifecycle panel.
 
-<вставьте сюда точный stdout helper без изменений>
+<paste the exact helper stdout here, unchanged>
 ```
 
-Preserve every helper line break, blank line, and indentation. Do not paraphrase, translate, split it into your own sections, change the order, omit content, or merge sections. Preserve the sections `Жизненный цикл:`, `Команды ITL в этом контексте:`, `Унаследовано Kilo из основного checkout, но недоступно в этом контексте:`, `OpenSpec:`, and `Дополнительные действия:` exactly as printed. Do not add a separate message saying that lifecycle actions were not run. On failure, report the actual error instead of constructing the panel yourself. Do not run a lifecycle action until the developer explicitly selects it.
+Preserve every helper newline, blank line, and indentation inside the block. Do not summarize, translate, split into your own sections, reorder, omit, or merge helper sections. Preserve the helper's `Lifecycle:`, `ITL commands valid in this context:`, `Inherited by Kilo from primary checkout; invalid in this context:`, `OpenSpec:`, and `Additional helper actions:` sections exactly as printed. Do not add a separate "Lifecycle-действия не выполнялись" / "no lifecycle actions executed" note. If the helper fails, report the actual error instead of fabricating a panel. Do not execute a lifecycle action unless the developer clearly chooses one.

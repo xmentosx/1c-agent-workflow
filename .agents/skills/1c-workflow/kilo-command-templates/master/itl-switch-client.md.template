@@ -1,5 +1,5 @@
 ---
-description: Транзакционно переключить единственный активный агент-клиент проекта
+description: Transactionally switch the single active project agent client
 agent: code
 ---
 

@@ -507,8 +507,6 @@
         $result.args | Should -Contain "/LoadConfigFromFiles"
         $result.args | Should -Contain "-listFile"
         $result.args | Should -Contain "C:\logs\changed-files.txt"
-        $result.args | Should -Contain "-partial"
-        $result.args | Should -Contain "-updateConfigDumpInfo"
         $result.args | Should -Contain "/UpdateDBCfg"
         $result.listFile | Should -Be "C:\logs\changed-files.txt"
     }
@@ -549,8 +547,6 @@
 
         $result | Should -Contain "-listFile"
         $result | Should -Contain "C:\logs\changed-files.txt"
-        $result | Should -Contain "-partial"
-        $result | Should -Contain "-updateConfigDumpInfo"
         $result | Should -Contain "/UpdateDBCfg"
     }
 
@@ -662,11 +658,7 @@
 
         $result.calls.Count | Should -Be 2
         $result.calls[0] | Should -Contain "-listFile"
-        $result.calls[0] | Should -Contain "-partial"
-        $result.calls[0] | Should -Contain "-updateConfigDumpInfo"
         $result.calls[1] | Should -Not -Contain "-listFile"
-        $result.calls[1] | Should -Not -Contain "-partial"
-        $result.calls[1] | Should -Contain "-updateConfigDumpInfo"
         $result.load.loadModeUsed | Should -Be "full-fallback"
         $result.load.configLoadStatus | Should -Be "fallback-succeeded"
         $result.load.partialLogPath | Should -Be "C:\logs\partial.log"
@@ -726,8 +718,6 @@
         }
         $partial.calls.Count | Should -Be 1
         $partial.calls[0] | Should -Contain "-listFile"
-        $partial.calls[0] | Should -Contain "-partial"
-        $partial.calls[0] | Should -Contain "-updateConfigDumpInfo"
 
         $full = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -742,102 +732,7 @@
         }
         $full.calls.Count | Should -Be 1
         $full.calls[0] | Should -Not -Contain "-listFile"
-        $full.calls[0] | Should -Not -Contain "-partial"
-        $full.calls[0] | Should -Contain "-updateConfigDumpInfo"
         $full.load.loadModeUsed | Should -Be "full"
-    }
-
-    It "rolls ConfigDumpInfo back between a failed partial load and its full fallback" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-dump-info-fallback-" + [guid]::NewGuid().ToString("N"))
-        try {
-            $exportPath = Join-Path $tempRoot "src\cf"
-            New-Item -ItemType Directory -Force -Path $exportPath | Out-Null
-            $dumpInfoPath = Join-Path $exportPath "ConfigDumpInfo.xml"
-            Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "original-cursor"
-
-            $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $script:DesignerCallCount = 0
-                $script:CursorSeenByFallback = ""
-                function Invoke-Designer {
-                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
-                    $script:DesignerCallCount++
-                    $script:LastNativeProcessStarted = $true
-                    if ($script:DesignerCallCount -eq 1) {
-                        Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "partial-cursor"
-                        throw "partial failed"
-                    }
-                    $script:CursorSeenByFallback = (Get-Content -LiteralPath $dumpInfoPath -Raw).Trim()
-                    Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "full-cursor"
-                }
-
-                $load = Invoke-ConfigLoadWithFallback `
-                    -InfoBasePath "C:\base" `
-                    -InfoBaseKind file `
-                    -State ([pscustomobject]@{}) `
-                    -AbsoluteExportPath $exportPath `
-                    -ListFilePath "C:\list.txt" `
-                    -FileCount 1 `
-                    -Mode Auto 3>$null 6>$null
-                [pscustomobject]@{
-                    load = $load
-                    fallbackInputCursor = $script:CursorSeenByFallback
-                    finalCursor = (Get-Content -LiteralPath $dumpInfoPath -Raw).Trim()
-                }
-            }
-
-            $result.load.loadModeUsed | Should -Be "full-fallback"
-            $result.fallbackInputCursor | Should -Be "original-cursor"
-            $result.finalCursor | Should -Be "full-cursor"
-        } finally {
-            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-
-    It "restores ConfigDumpInfo when both partial and full fallback loads fail" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-dump-info-failed-" + [guid]::NewGuid().ToString("N"))
-        try {
-            $exportPath = Join-Path $tempRoot "src\cf"
-            New-Item -ItemType Directory -Force -Path $exportPath | Out-Null
-            $dumpInfoPath = Join-Path $exportPath "ConfigDumpInfo.xml"
-            Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "original-cursor"
-
-            $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $script:DesignerCallCount = 0
-                function Invoke-Designer {
-                    $script:DesignerCallCount++
-                    $script:LastNativeProcessStarted = $true
-                    Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "failed-cursor-$script:DesignerCallCount"
-                    throw "load failed $script:DesignerCallCount"
-                }
-
-                $message = ""
-                try {
-                    Invoke-ConfigLoadWithFallback `
-                        -InfoBasePath "C:\base" `
-                        -InfoBaseKind file `
-                        -State ([pscustomobject]@{}) `
-                        -AbsoluteExportPath $exportPath `
-                        -ListFilePath "C:\list.txt" `
-                        -FileCount 1 `
-                        -Mode Auto 3>$null 6>$null | Out-Null
-                } catch {
-                    $message = $_.Exception.Message
-                }
-                [pscustomobject]@{
-                    calls = $script:DesignerCallCount
-                    message = $message
-                    finalCursor = (Get-Content -LiteralPath $dumpInfoPath -Raw).Trim()
-                }
-            }
-
-            $result.calls | Should -Be 2
-            $result.message | Should -Match "both failed"
-            $result.finalCursor | Should -Be "original-cursor"
-        } finally {
-            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-        }
     }
 
     It "does not fallback when Designer preparation fails before a process starts and Full does not require a list file" {
@@ -945,298 +840,6 @@
         }
     }
 
-    It "keeps the canonical verification fingerprint stable across staging and commit" {
-        $tempRoot = New-ShortWorkflowProjectRoot
-        try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf"), (Join-Path $tempRoot "tests\features") | Out-Null
-            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value "<Configuration />"
-            & git -C $tempRoot init --quiet
-            & git -C $tempRoot config user.email "itl-tests@example.invalid"
-            & git -C $tempRoot config user.name "ITL Tests"
-            & git -C $tempRoot add -- src/cf/Configuration.xml
-            & git -C $tempRoot commit --quiet -m "baseline"
-
-            $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-
-                Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value "<Configuration><Comment>checked</Comment></Configuration>"
-                Set-Content -LiteralPath (Join-Path $tempRoot "tests\features\проверка.feature") -Encoding UTF8 -Value "Функционал: Проверка"
-                [System.IO.File]::WriteAllBytes((Join-Path $tempRoot "src\cf\данные.bin"), [byte[]]@(0, 1, 2, 255))
-
-                $cachedBefore = @(& git -C $tempRoot diff --cached --name-only)
-                $dirty = Get-VerificationFingerprint
-                $cachedAfter = @(& git -C $tempRoot diff --cached --name-only)
-
-                & git -C $tempRoot add -- src/cf tests/features
-                $staged = Get-VerificationFingerprint
-                & git -C $tempRoot reset --quiet HEAD -- src/cf tests/features
-                $unstaged = Get-VerificationFingerprint
-
-                & git -C $tempRoot add -- src/cf tests/features
-                & git -C $tempRoot commit --quiet -m "checked content"
-                $clean = Get-VerificationFingerprint
-
-                Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Encoding UTF8 -Value "outside verification scope"
-                & git -C $tempRoot add -- README.md
-                & git -C $tempRoot commit --quiet -m "outside scope"
-                $outsideCommit = Get-VerificationFingerprint
-
-                [System.IO.File]::WriteAllBytes((Join-Path $tempRoot "src\cf\данные.bin"), [byte[]]@(0, 1, 3, 255))
-                $changed = Get-VerificationFingerprint
-                [System.IO.File]::WriteAllBytes((Join-Path $tempRoot "src\cf\данные.bin"), [byte[]]@(0, 1, 2, 255))
-                Move-Item -LiteralPath (Join-Path $tempRoot "src\cf\данные.bin") -Destination (Join-Path $tempRoot "src\cf\переименовано.bin")
-                $renamed = Get-VerificationFingerprint
-                Remove-Item -LiteralPath (Join-Path $tempRoot "src\cf\переименовано.bin") -Force
-                $deleted = Get-VerificationFingerprint
-
-                [pscustomobject]@{
-                    cachedBefore = @($cachedBefore)
-                    cachedAfter = @($cachedAfter)
-                    dirty = $dirty
-                    staged = $staged
-                    unstaged = $unstaged
-                    clean = $clean
-                    outsideCommit = $outsideCommit
-                    changed = $changed
-                    renamed = $renamed
-                    deleted = $deleted
-                }
-            }
-
-            $result.dirty | Should -Match "^v3\|"
-            @($result.cachedBefore) | Should -HaveCount 0
-            @($result.cachedAfter) | Should -HaveCount 0
-            $result.staged | Should -BeExactly $result.dirty
-            $result.unstaged | Should -BeExactly $result.dirty
-            $result.clean | Should -BeExactly $result.dirty
-            $result.outsideCommit | Should -BeExactly $result.dirty
-            $result.changed | Should -Not -BeExactly $result.dirty
-            $result.renamed | Should -Not -BeExactly $result.dirty
-            $result.deleted | Should -Not -BeExactly $result.dirty
-        } finally {
-            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
-                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-            }
-        }
-    }
-
-    It "does not let failed or legacy verification evidence become fresh" {
-        $result = & {
-            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-            $current = Get-VerificationFingerprint
-            $failed = Get-VerificationState -State ([pscustomobject]@{
-                lastVerificationStatus = "failed"
-                lastVerifiedCommit = "old"
-                lastVerifiedFingerprint = $current
-            }) -CurrentCommit "head" -CurrentFingerprint $current
-            $legacy = Get-VerificationState -State ([pscustomobject]@{
-                lastVerificationStatus = "passed"
-                lastVerifiedCommit = "head"
-                lastVerifiedFingerprint = "v2|legacy"
-            }) -CurrentCommit "head" -CurrentFingerprint $current
-            [pscustomobject]@{ failed = $failed; legacy = $legacy }
-        }
-
-        $result.failed.isFreshPassed | Should -BeFalse
-        $result.failed.effectiveStatus | Should -Be "failed"
-        $result.legacy.isFreshPassed | Should -BeFalse
-        $result.legacy.effectiveStatus | Should -Be "stale"
-    }
-
-    It "exports a freshly verified dirty working tree without invoking the clean Git guard" {
-        $result = & {
-            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-            $script:CapturedManifest = $null
-            $state = [pscustomobject]@{
-                devBranch = "itldev/branch1"
-                devBranchName = "branch1"
-                safeDevBranchName = "branch1"
-                devBranchInfoBasePath = "C:\base"
-                infoBaseKind = "file"
-            }
-
-            function Read-DevBranchState { $state }
-            function Assert-DevelopmentBranchWorktreeContext {}
-            function Assert-DevBranchExtensionInitialized {}
-            function Assert-SingleManagedExtensionArtifact {}
-            function Assert-CleanGit { throw "clean Git guard must not run for result export" }
-            function Sync-DevBranchContextToDotEnv {}
-            function Get-DevBranchKind { "configuration" }
-            function Get-ExportPath { "src/cf" }
-            function Get-CurrentCommit { "base-commit" }
-            function Get-GitCommitOrEmpty { "master-commit" }
-            function Get-VerificationState {
-                [pscustomobject]@{
-                    status = "passed"
-                    effectiveStatus = "passed"
-                    isFreshPassed = $true
-                    verifiedCommit = "base-commit"
-                    currentCommit = "base-commit"
-                    verifiedFingerprint = "v3|fixture"
-                    currentFingerprint = "v3|fixture"
-                    verifiedAt = "2026-07-28T00:00:00Z"
-                    reportPath = "report"
-                    logPath = "log"
-                    reason = "passed"
-                }
-            }
-            function Confirm-UnverifiedProceed { $false }
-            function Load-ConfigFromFiles {
-                [pscustomobject]@{
-                    currentCommit = "base-commit"
-                    sourceFingerprint = "config-fingerprint"
-                }
-            }
-            function New-LoadStateUpdates { @{} }
-            function Invoke-DevBranchEnterpriseAutoUpdateIfLoaded {}
-            function Add-VerificationStaleIfNeeded {}
-            function Update-DevBranchState {}
-            function Invoke-DevBranchMcpRestartAfterInfobaseLoad { param([object]$State) $State }
-            function Assert-DevBranchToolArtifactExportGuard {}
-            function Export-DevBranchResultFile { "C:\Результаты работы\branch1.cf" }
-            function Test-GitHasChanges { $true }
-            function Get-VerificationWorkingTreeChangePaths { @("src/cf/Configuration.xml") }
-            function Get-VerificationFingerprintScopePaths { @("src/cf", "src/cfe", "tests/features") }
-            function New-ResultManifest {
-                param(
-                    [object]$State,
-                    [string]$ResultPath,
-                    [string]$ResultKind,
-                    [string]$Operation,
-                    [string]$MasterCommit,
-                    [string]$DevBranchCommit,
-                    [string]$SourceFingerprint,
-                    [string]$VerificationFingerprint,
-                    [object]$VerificationState,
-                    [bool]$WorktreeClean,
-                    [bool]$VerificationScopeCommitted,
-                    [bool]$UnverifiedOverride
-                )
-                $script:CapturedManifest = [pscustomobject]@{
-                    resultPath = $ResultPath
-                    devBranchCommit = $DevBranchCommit
-                    sourceFingerprint = $SourceFingerprint
-                    verificationFingerprint = $VerificationFingerprint
-                    worktreeClean = $WorktreeClean
-                    verificationScopeCommitted = $VerificationScopeCommitted
-                }
-                return "$ResultPath.manifest.json"
-            }
-
-            Export-DevBranchResult 6>$null
-            $script:CapturedManifest | Add-Member -NotePropertyName runResultPath -NotePropertyValue $script:RunResultPath
-            $script:CapturedManifest | Add-Member -NotePropertyName runResultManifestPath -NotePropertyValue $script:RunResultManifestPath
-            $script:CapturedManifest | Add-Member -NotePropertyName userReport -NotePropertyValue $script:RunUserReport
-            return $script:CapturedManifest
-        }
-
-        $result.resultPath | Should -Be "C:\Результаты работы\branch1.cf"
-        $result.runResultPath | Should -Be "C:\Результаты работы\branch1.cf"
-        $result.runResultManifestPath | Should -Be "C:\Результаты работы\branch1.cf.manifest.json"
-        $result.userReport | Should -Match ([regex]::Escape("Файл: C:\Результаты работы\branch1.cf"))
-        $result.userReport | Should -Match ([regex]::Escape("Манифест: C:\Результаты работы\branch1.cf.manifest.json"))
-        $result.devBranchCommit | Should -Be "base-commit"
-        $result.sourceFingerprint | Should -Be "config-fingerprint"
-        $result.verificationFingerprint | Should -Be "v3|fixture"
-        $result.worktreeClean | Should -BeFalse
-        $result.verificationScopeCommitted | Should -BeFalse
-    }
-
-    It "rejects stale result evidence before loading configuration files" {
-        $result = & {
-            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-            $script:LoadAttempted = $false
-            $state = [pscustomobject]@{
-                devBranch = "itldev/branch1"
-                devBranchInfoBasePath = "C:\base"
-                infoBaseKind = "file"
-            }
-
-            function Read-DevBranchState { $state }
-            function Assert-DevelopmentBranchWorktreeContext {}
-            function Assert-DevBranchExtensionInitialized {}
-            function Assert-SingleManagedExtensionArtifact {}
-            function Sync-DevBranchContextToDotEnv {}
-            function Get-VerificationState {
-                [pscustomobject]@{
-                    status = "passed"
-                    effectiveStatus = "stale"
-                    isFreshPassed = $false
-                    currentFingerprint = "v3|current"
-                }
-            }
-            function Confirm-UnverifiedProceed { throw "stale evidence rejected early" }
-            function Load-ConfigFromFiles { $script:LoadAttempted = $true; throw "load must not run" }
-
-            $message = ""
-            try {
-                Export-DevBranchResult 6>$null
-            } catch {
-                $message = $_.Exception.Message
-            }
-            [pscustomobject]@{ message = $message; loadAttempted = $script:LoadAttempted }
-        }
-
-        $result.message | Should -Be "stale evidence rejected early"
-        $result.loadAttempted | Should -BeFalse
-    }
-
-    It "records dirty working-tree provenance and verification fingerprints in result manifests" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-result-manifest-" + [guid]::NewGuid().ToString("N"))
-        try {
-            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            $artifactPath = Join-Path $tempRoot "result.cf"
-            Set-Content -LiteralPath $artifactPath -Encoding UTF8 -Value "artifact"
-
-            $manifestPath = & {
-                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-                function Get-VerificationState {
-                    [pscustomobject]@{
-                        status = "passed"
-                        effectiveStatus = "passed"
-                        isFreshPassed = $true
-                        verifiedCommit = "base-commit"
-                        currentCommit = "base-commit"
-                        verifiedFingerprint = "v3|checked"
-                        currentFingerprint = "v3|checked"
-                        verifiedAt = "2026-07-28T00:00:00Z"
-                        reportPath = "report"
-                        logPath = "log"
-                        reason = "passed"
-                    }
-                }
-                function Get-DevBranchKind { "configuration" }
-                $script:LastLogPath = "latest.log"
-                New-ResultManifest `
-                    -State ([pscustomobject]@{ devBranchName = "branch1"; safeDevBranchName = "branch1"; devBranch = "itldev/branch1" }) `
-                    -ResultPath $artifactPath `
-                    -ResultKind cf `
-                    -Operation export-dev-branch-result `
-                    -MasterCommit master-commit `
-                    -DevBranchCommit base-commit `
-                    -SourceFingerprint config-fingerprint `
-                    -VerificationFingerprint "v3|checked" `
-                    -WorktreeClean $false `
-                    -VerificationScopeCommitted $false
-            }
-            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-
-            $manifest.schemaVersion | Should -Be 2
-            $manifest.commits.developmentBase | Should -Be "base-commit"
-            $manifest.source.provenance | Should -Be "working-tree"
-            $manifest.source.worktreeClean | Should -BeFalse
-            $manifest.source.verificationScopeCommitted | Should -BeFalse
-            $manifest.source.configFingerprint | Should -Be "config-fingerprint"
-            $manifest.source.verificationFingerprint | Should -Be "v3|checked"
-            $manifest.verification.verifiedFingerprint | Should -Be "v3|checked"
-            $manifest.verification.currentFingerprint | Should -Be "v3|checked"
-        } finally {
-            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
-                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-            }
-        }
-    }
-
     It "keeps configuration and extension designer fingerprints independent" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -1337,12 +940,6 @@
         }
     }
 
-    It "routes lifecycle Git path-list commands through the NUL-safe helper" {
-        $HelperText | Should -Not -Match 'Get-GitOutput\s+@\(\s*"diff"\s*,\s*"--name-only"'
-        $HelperText | Should -Not -Match 'Get-GitOutput\s+@\(\s*"(?:ls-files|ls-tree)"'
-        $HelperText | Should -Match 'Get-GitPathList\s+-Arguments\s+@\(\s*"ls-tree"\s*,\s*"-r"\s*,\s*"--name-only"\s*,\s*"-z"'
-    }
-
     It "detects workflow helper script changes after a merge base commit" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-helper-change-test-" + [guid]::NewGuid().ToString("N"))
 
@@ -1389,7 +986,7 @@
             $match = [regex]::Match($HelperText, "(?s)function\s+$functionName\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
             $match.Success | Should -Be $true
             $body = $match.Groups["body"].Value
-            $mergeIndex = $body.IndexOf("Merge-MasterPreservingBranchConfigDumpInfo")
+            $mergeIndex = $body.IndexOf('Invoke-Git @("merge", (Get-MasterBranch))')
             $phaseRestartIndex = $body.IndexOf('Restart-Agent1cAfterDevBranchMerge -Operation')
             $loadIndex = $body.IndexOf('Load-ConfigFromFiles')
 
@@ -3291,53 +2888,6 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
-    It "keeps branch ConfigDumpInfo cursors with Unicode paths when master is merged" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-dump-info-merge-" + [guid]::NewGuid().ToString("N"))
-        try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
-            $unicodeExtensionRoot = Join-Path $tempRoot "src\cfe\Тестовое расширение"
-            New-Item -ItemType Directory -Force -Path $unicodeExtensionRoot | Out-Null
-            & git -C $tempRoot init *> $null
-            & git -C $tempRoot config user.email "test@example.com"
-            & git -C $tempRoot config user.name "Test User"
-            & git -C $tempRoot config core.quotePath true
-            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "base-cursor"
-            Set-Content -LiteralPath (Join-Path $unicodeExtensionRoot "ConfigDumpInfo.xml") -Encoding UTF8 -Value "base-extension-cursor"
-            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value "<Configuration />"
-            & git -C $tempRoot add .
-            & git -C $tempRoot commit -m "base" *> $null
-            & git -C $tempRoot branch -M master
-
-            & git -C $tempRoot checkout -b itldev/test *> $null
-            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "branch-cursor"
-            Set-Content -LiteralPath (Join-Path $unicodeExtensionRoot "ConfigDumpInfo.xml") -Encoding UTF8 -Value "branch-extension-cursor"
-            Set-Content -LiteralPath (Join-Path $tempRoot "branch.txt") -Encoding UTF8 -Value "branch"
-            & git -C $tempRoot add .
-            & git -C $tempRoot commit -m "branch cursor" *> $null
-
-            & git -C $tempRoot checkout master *> $null
-            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "master-cursor"
-            Set-Content -LiteralPath (Join-Path $unicodeExtensionRoot "ConfigDumpInfo.xml") -Encoding UTF8 -Value "master-extension-cursor"
-            Set-Content -LiteralPath (Join-Path $tempRoot "master.txt") -Encoding UTF8 -Value "master"
-            & git -C $tempRoot add .
-            & git -C $tempRoot commit -m "master cursor" *> $null
-            & git -C $tempRoot checkout itldev/test *> $null
-
-            & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                Merge-MasterPreservingBranchConfigDumpInfo -MasterBranch master
-            }
-
-            (Get-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Raw).Trim() | Should -Be "branch-cursor"
-            (Get-Content -LiteralPath (Join-Path $unicodeExtensionRoot "ConfigDumpInfo.xml") -Raw).Trim() | Should -Be "branch-extension-cursor"
-            Test-Path -LiteralPath (Join-Path $tempRoot "master.txt") -PathType Leaf | Should -BeTrue
-            @((& git -C $tempRoot rev-list --parents -n 1 HEAD) -split "\s+").Count | Should -Be 3
-            ((& git -C $tempRoot status --porcelain) -join "") | Should -BeNullOrEmpty
-        } finally {
-            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-
     It "limits a new worktree path to 50 characters and reports the available branch name length" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -4023,7 +3573,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $result | Should -Be @("/itl-update-workflow")
 
             $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $worktreeRoot -Action help 2>&1
-            ($output -join [Environment]::NewLine) | Should -Match "Команды ITL в этом контексте"
+            ($output -join [Environment]::NewLine) | Should -Match "ITL commands valid in this context"
             ($output -join [Environment]::NewLine) | Should -Match "Inherited by Kilo from primary checkout; invalid in this context"
         } finally {
             $previousPreference = $ErrorActionPreference

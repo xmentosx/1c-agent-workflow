@@ -66,13 +66,7 @@
     "enabled": true,
     "intervalMinutes": 5,
     "startupDelaySeconds": 30,
-    "taskName": "ITL MCP Host Watchdog",
-    "dockerDesktopRecovery": {
-      "enabled": true,
-      "timeoutSeconds": 120,
-      "commandTimeoutSeconds": 90,
-      "pollSeconds": 5
-    }
+    "taskName": "ITL MCP Host Watchdog"
   },
   "enabledServers": {
     "global": [ "docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis" ],

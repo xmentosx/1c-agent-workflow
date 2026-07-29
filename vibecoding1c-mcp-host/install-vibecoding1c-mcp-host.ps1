@@ -382,101 +382,6 @@ function Invoke-DockerCommandCapture {
     return @($result.lines)
 }
 
-function Test-DockerDaemonAvailable {
-    param([int]$TimeoutSec = 20)
-
-    try {
-        return ((Invoke-DockerCommand -Arguments @("info") -Quiet -TimeoutSec $TimeoutSec) -eq 0)
-    } catch {
-        Write-Host "WARNING: Docker availability probe failed: $($_.Exception.Message)"
-        return $false
-    }
-}
-
-function Wait-DockerDaemonAvailable {
-    param(
-        [int]$TimeoutSec = 180,
-        [int]$PollSeconds = 5
-    )
-
-    $deadline = (Get-Date).AddSeconds($TimeoutSec)
-    do {
-        if (Test-DockerDaemonAvailable -TimeoutSec ([Math]::Min(20, [Math]::Max(5, $PollSeconds * 2)))) {
-            return $true
-        }
-        if ((Get-Date) -ge $deadline) {
-            break
-        }
-        Start-Sleep -Seconds $PollSeconds
-    } while ((Get-Date) -lt $deadline)
-    return $false
-}
-
-function Get-DockerDesktopRuntimeStatus {
-    try {
-        $lines = @(Invoke-DockerCommandCapture -Arguments @("desktop", "status", "--format", "json") -TimeoutSec 30 -Description "docker desktop status")
-        $text = (($lines | Where-Object { $_ }) -join [Environment]::NewLine).Trim()
-        if (-not $text) {
-            return "unknown"
-        }
-        try {
-            $payload = $text | ConvertFrom-Json
-            $status = [string](Get-ObjectValue -Object $payload -Name "Status" -Default (Get-ObjectValue -Object $payload -Name "status" -Default ""))
-            if ($status) {
-                return $status.Trim().ToLowerInvariant()
-            }
-        } catch {
-            if ($text -match '(?im)^\s*Status\s+(\S+)\s*$') {
-                return $Matches[1].Trim().ToLowerInvariant()
-            }
-        }
-    } catch {
-        Write-Host "WARNING: Could not read Docker Desktop status: $($_.Exception.Message)"
-    }
-    return "unknown"
-}
-
-function Repair-DockerDesktopAvailability {
-    param([object]$Settings)
-
-    if (Test-DockerDaemonAvailable) {
-        return "already-available"
-    }
-    if (-not $Settings.dockerDesktopRecoveryEnabled) {
-        throw "Docker is unavailable and watchdog Docker Desktop recovery is disabled."
-    }
-
-    $desktopStatus = Get-DockerDesktopRuntimeStatus
-    $desktopAction = $(if ($desktopStatus -eq "stopped") { "start" } else { "restart" })
-    Write-Host "Docker daemon is unavailable; running bounded Docker Desktop $desktopAction (reported status: $desktopStatus)."
-    $commandFailure = ""
-    try {
-        Invoke-DockerCommandChecked -Arguments @(
-            "desktop", $desktopAction, "--timeout", [string]$Settings.dockerDesktopCommandTimeoutSeconds
-        ) -TimeoutSec ($Settings.dockerDesktopCommandTimeoutSeconds + 30) -Description "docker desktop $desktopAction"
-    } catch {
-        $commandFailure = $_.Exception.Message
-        Write-Host "WARNING: Docker Desktop $desktopAction command failed; probing the daemon before declaring recovery failed. $commandFailure"
-    }
-
-    if (Wait-DockerDaemonAvailable -TimeoutSec $Settings.dockerDesktopRecoveryTimeoutSeconds -PollSeconds $Settings.dockerDesktopPollSeconds) {
-        Write-Host "Docker Desktop recovery completed; docker info is available."
-        return $desktopAction
-    }
-
-    $logTail = ""
-    try {
-        $logLines = @(Invoke-DockerCommandCapture -Arguments @(
-            "desktop", "logs", "--since", "10 minutes ago", "--priority", "1", "--no-color"
-        ) -TimeoutSec 45 -Description "docker desktop logs")
-        $logTail = ((@($logLines | Select-Object -Last 40) | Where-Object { $_ }) -join [Environment]::NewLine).Trim()
-    } catch {
-        $logTail = "Docker Desktop logs unavailable: $($_.Exception.Message)"
-    }
-    $details = @($commandFailure, $logTail) | Where-Object { $_ }
-    throw "Docker Desktop $desktopAction did not restore docker info within $($Settings.dockerDesktopRecoveryTimeoutSeconds) seconds. $($details -join [Environment]::NewLine)"
-}
-
 function Invoke-ProcessCapture {
     param(
         [string]$FilePath,
@@ -1979,21 +1884,6 @@ function Start-DockerServer {
     Write-Host "Container ready: $containerName -> $($Runtime.url)"
 }
 
-function Get-GraphHealthcheckComposeLine {
-    $urlBytes = "104,116,116,112,58,47,47,108,111,99,97,108,104,111,115,116,58,56,48,48,54,47,115,101,97,114,99,104"
-    return "      test: [`"CMD-SHELL`", `"python -c 'import urllib.request;u=bytes([$urlBytes]).decode();r=urllib.request.urlopen(u,timeout=10);print(r.status)'`"]"
-}
-
-function Repair-GraphComposeHealthcheckText {
-    param([string]$ComposeText)
-
-    $brokenLine = '      test: ["CMD", "curl", "-f", "http://localhost:8006/search"]'
-    if ($ComposeText.Contains($brokenLine)) {
-        return $ComposeText.Replace($brokenLine, (Get-GraphHealthcheckComposeLine))
-    }
-    return $ComposeText
-}
-
 function Start-ComposeServer {
     param(
         [object]$Config,
@@ -2016,9 +1906,6 @@ function Start-ComposeServer {
     $composeText = $composeText -replace '(?m)^\s*container_name:\s*1c_graph_metadata\s*$', "    container_name: $($Runtime.containerName)"
     $composeText = [regex]::Replace($composeText, '(?ms)^    ports:\r?\n      - "7474:7474"\r?\n      - "7687:7687"\r?\n', '')
     $composeText = $composeText -replace '"8006:8006"', "`"$($Runtime.hostPort):$($Runtime.internalPort)`""
-    if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "graph") {
-        $composeText = Repair-GraphComposeHealthcheckText -ComposeText $composeText
-    }
     Write-Text -Path $targetCompose -Value $composeText
     $envFilePath = Join-Path $runtimeDir ".env"
     Write-DotEnv -Path $envFilePath -Values (Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase)
@@ -2513,101 +2400,6 @@ function Repair-TrackedMcpHostAndPublish {
     }
 }
 
-function Repair-TrackedGraphHealthchecks {
-    param([object]$Config)
-
-    $state = Read-HostState -Config $Config
-    $repairCount = 0
-    $shimText = @'
-#!/usr/local/bin/python
-import sys
-import urllib.request
-
-try:
-    response = urllib.request.urlopen(sys.argv[-1], timeout=10)
-    if 200 <= response.status < 400:
-        print("ITL_GRAPH_HEALTH_OK")
-        raise SystemExit(0)
-    raise SystemExit(22)
-except Exception:
-    raise SystemExit(22)
-'@
-
-    foreach ($server in As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @())) {
-        if ([string](Get-ObjectValue -Object $server -Name "id" -Default "") -ne "graph") {
-            continue
-        }
-
-        $runtimePath = [string](Get-ObjectValue -Object $server -Name "runtimePath" -Default "")
-        if ($runtimePath) {
-            $composePath = Join-Path $runtimePath "docker-compose.yml"
-            if (Test-Path -LiteralPath $composePath -PathType Leaf) {
-                $before = Read-Text -Path $composePath
-                $after = Repair-GraphComposeHealthcheckText -ComposeText $before
-                if ($after -cne $before) {
-                    Write-Text -Path $composePath -Value $after
-                    Write-Host "Updated tracked graph compose healthcheck without recreating containers: $composePath"
-                    $repairCount++
-                }
-            }
-        }
-
-        $containerName = [string](Get-ObjectValue -Object $server -Name "containerName" -Default "")
-        if (-not $containerName -or (Get-HostContainerPublishState -ContainerName $containerName) -ne "running") {
-            continue
-        }
-        $healthProbeLines = @(Invoke-DockerCommandCapture -Arguments @(
-            "exec", $containerName, "curl", "-f", "http://localhost:8006/search"
-        ) -TimeoutSec 20 -Description "probe graph healthcheck compatibility shim in $containerName")
-        if (@($healthProbeLines | ForEach-Object { ([string]$_).Trim() }) -contains "ITL_GRAPH_HEALTH_OK") {
-            continue
-        }
-
-        $shimPath = [System.IO.Path]::GetTempFileName()
-        try {
-            [System.IO.File]::WriteAllText($shimPath, ($shimText -replace "`r`n", "`n"), $script:Utf8NoBom)
-            Invoke-DockerCommandChecked -Arguments @(
-                "cp", $shimPath, "$containerName`:/usr/local/bin/curl"
-            ) -TimeoutSec 30 -Description "install graph healthcheck compatibility shim in $containerName"
-            Invoke-DockerCommandChecked -Arguments @(
-                "exec", $containerName, "chmod", "0755", "/usr/local/bin/curl"
-            ) -TimeoutSec 30 -Description "enable graph healthcheck compatibility shim in $containerName"
-            $validationLines = @(Invoke-DockerCommandCapture -Arguments @(
-                "exec", $containerName, "curl", "-f", "http://localhost:8006/search"
-            ) -TimeoutSec 30 -Description "validate graph healthcheck compatibility shim in $containerName")
-            if (@($validationLines | ForEach-Object { ([string]$_).Trim() }) -notcontains "ITL_GRAPH_HEALTH_OK") {
-                $validationOutput = (($validationLines | Where-Object { $_ }) -join [Environment]::NewLine).Trim()
-                throw "Graph healthcheck compatibility shim validation failed in $containerName. Output: $validationOutput"
-            }
-            Write-Host "Repaired running graph healthcheck without restart or indexing: $containerName"
-            $repairCount++
-        } finally {
-            Remove-Item -LiteralPath $shimPath -Force -ErrorAction SilentlyContinue
-        }
-    }
-    return $repairCount
-}
-
-function Set-TrackedHostRuntimeStatus {
-    param(
-        [object]$Config,
-        [string]$Status
-    )
-
-    $state = Read-HostState -Config $Config
-    $stateHash = Convert-ToHash -Object $state
-    $servers = @()
-    foreach ($server in As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @())) {
-        $serverHash = Convert-ToHash -Object $server
-        $serverHash["status"] = $Status
-        $serverHash["health"] = $Status
-        $servers += [pscustomobject]$serverHash
-    }
-    $stateHash["servers"] = $servers
-    Write-HostState -Config $Config -State $stateHash
-    Write-Host "Tracked MCP runtime status set to '$Status'."
-}
-
 function Get-McpHostWatchdogSettings {
     param([object]$Config)
 
@@ -2616,11 +2408,6 @@ function Get-McpHostWatchdogSettings {
     $intervalMinutes = [int](Get-ObjectValue -Object $raw -Name "intervalMinutes" -Default 5)
     $startupDelaySeconds = [int](Get-ObjectValue -Object $raw -Name "startupDelaySeconds" -Default 30)
     $taskName = [string](Get-ObjectValue -Object $raw -Name "taskName" -Default "ITL MCP Host Watchdog")
-    $dockerDesktopRecovery = Get-ObjectValue -Object $raw -Name "dockerDesktopRecovery" -Default $null
-    $dockerDesktopRecoveryEnabled = [System.Convert]::ToBoolean((Get-ObjectValue -Object $dockerDesktopRecovery -Name "enabled" -Default $true))
-    $dockerDesktopRecoveryTimeoutSeconds = [int](Get-ObjectValue -Object $dockerDesktopRecovery -Name "timeoutSeconds" -Default 120)
-    $dockerDesktopCommandTimeoutSeconds = [int](Get-ObjectValue -Object $dockerDesktopRecovery -Name "commandTimeoutSeconds" -Default 90)
-    $dockerDesktopPollSeconds = [int](Get-ObjectValue -Object $dockerDesktopRecovery -Name "pollSeconds" -Default 5)
 
     if ($intervalMinutes -lt 1 -or $intervalMinutes -gt 1440) {
         throw "watchdog.intervalMinutes must be between 1 and 1440."
@@ -2631,25 +2418,12 @@ function Get-McpHostWatchdogSettings {
     if ([string]::IsNullOrWhiteSpace($taskName) -or $taskName.IndexOfAny([char[]]@("\", "/")) -ge 0) {
         throw "watchdog.taskName must be a non-empty scheduled task name without path separators."
     }
-    if ($dockerDesktopRecoveryTimeoutSeconds -lt 30 -or $dockerDesktopRecoveryTimeoutSeconds -gt 900) {
-        throw "watchdog.dockerDesktopRecovery.timeoutSeconds must be between 30 and 900."
-    }
-    if ($dockerDesktopCommandTimeoutSeconds -lt 30 -or $dockerDesktopCommandTimeoutSeconds -gt 600) {
-        throw "watchdog.dockerDesktopRecovery.commandTimeoutSeconds must be between 30 and 600."
-    }
-    if ($dockerDesktopPollSeconds -lt 1 -or $dockerDesktopPollSeconds -gt 30) {
-        throw "watchdog.dockerDesktopRecovery.pollSeconds must be between 1 and 30."
-    }
 
     return [pscustomobject]@{
         enabled = $enabled
         intervalMinutes = $intervalMinutes
         startupDelaySeconds = $startupDelaySeconds
         taskName = $taskName
-        dockerDesktopRecoveryEnabled = $dockerDesktopRecoveryEnabled
-        dockerDesktopRecoveryTimeoutSeconds = $dockerDesktopRecoveryTimeoutSeconds
-        dockerDesktopCommandTimeoutSeconds = $dockerDesktopCommandTimeoutSeconds
-        dockerDesktopPollSeconds = $dockerDesktopPollSeconds
     }
 }
 
@@ -2689,33 +2463,8 @@ function Invoke-McpHostWatchdogRun {
     }
 
     try {
-        try {
-            $dockerRecovery = Repair-DockerDesktopAvailability -Settings $settings
-        } catch {
-            $dockerFailure = $_.Exception.Message
-            try {
-                Set-TrackedHostRuntimeStatus -Config $Config -Status "unavailable"
-                Publish-Registry -Config $Config -SkipRuntimeRefresh
-            } catch {
-                Write-Warning "Could not publish unavailable MCP host state after Docker recovery failure: $($_.Exception.Message)"
-            }
-            throw $dockerFailure
-        }
-
-        $graphRepairMessage = ""
-        try {
-            $graphRepairCount = Repair-TrackedGraphHealthchecks -Config $Config
-            if ($graphRepairCount -gt 0) {
-                $graphRepairMessage = " Graph healthchecks repaired: $graphRepairCount."
-            }
-        } catch {
-            $graphRepairMessage = " Graph healthcheck repair warning: $($_.Exception.Message)"
-            Write-Warning $graphRepairMessage.Trim()
-        }
-
         Repair-TrackedMcpHostAndPublish -Config $Config -SkipUnchangedRegistryPublish
-        $message = "Tracked MCP runtimes, proxies, and registry reconciled. Docker availability: $dockerRecovery.$graphRepairMessage"
-        Write-McpHostWatchdogRunState -Config $Config -StartedAt $startedAt -Status "succeeded" -Message $message
+        Write-McpHostWatchdogRunState -Config $Config -StartedAt $startedAt -Status "succeeded" -Message "Tracked MCP runtimes, proxies, and registry reconciled."
         Write-Host "MCP host watchdog reconcile completed."
     } catch {
         $message = $_.Exception.Message
@@ -3411,12 +3160,9 @@ function Write-MergedRegistryPayload {
     param(
         [object]$Config,
         [string]$RegistryPath,
-        [string]$PublishedAt,
-        [switch]$SkipRuntimeRefresh
+        [string]$PublishedAt
     )
-    if (-not $SkipRuntimeRefresh) {
-        Update-HostStateForPublish -Config $Config
-    }
+    Update-HostStateForPublish -Config $Config
     $state = Read-HostState -Config $Config
     $hostId = Get-HostId -Config $Config
     $currentPayload = Read-RegistryPayload -RegistryPath $RegistryPath
@@ -3434,13 +3180,10 @@ function Write-MergedRegistryPayload {
 function Test-RegistryCurrentHostMatchesState {
     param(
         [object]$Config,
-        [string]$RegistryPath,
-        [switch]$SkipRuntimeRefresh
+        [string]$RegistryPath
     )
 
-    if (-not $SkipRuntimeRefresh) {
-        Update-HostStateForPublish -Config $Config
-    }
+    Update-HostStateForPublish -Config $Config
     $state = Read-HostState -Config $Config
     $hostId = Get-HostId -Config $Config
     $currentPayload = Read-RegistryPayload -RegistryPath $RegistryPath
@@ -3463,20 +3206,19 @@ function Test-RegistryCurrentHostMatchesState {
 function Publish-Registry {
     param(
         [object]$Config,
-        [switch]$SkipUnchangedHost,
-        [switch]$SkipRuntimeRefresh
+        [switch]$SkipUnchangedHost
     )
     $registryRepo = [string](Get-ObjectValue -Object $Config -Name "registryRepo" -Default "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git")
     $registryRoot = Get-RegistryRoot -Config $Config
     Ensure-GitCheckout -Repo $registryRepo -Path $registryRoot
     $registryPath = Join-Path $registryRoot "registry.json"
-    if ($SkipUnchangedHost -and (Test-RegistryCurrentHostMatchesState -Config $Config -RegistryPath $registryPath -SkipRuntimeRefresh:$SkipRuntimeRefresh)) {
+    if ($SkipUnchangedHost -and (Test-RegistryCurrentHostMatchesState -Config $Config -RegistryPath $registryPath)) {
         Write-Host "Registry already matches the qualified host state; publish skipped."
         return
     }
     $publishedAt = (Get-Date).ToString("o")
     for ($attempt = 0; $attempt -le 1; $attempt++) {
-        Write-MergedRegistryPayload -Config $Config -RegistryPath $registryPath -PublishedAt $publishedAt -SkipRuntimeRefresh:$SkipRuntimeRefresh
+        Write-MergedRegistryPayload -Config $Config -RegistryPath $registryPath -PublishedAt $publishedAt
         Write-Host "Registry written: $registryPath"
         if ($DryRun) {
             return

@@ -21,11 +21,11 @@ Workflow для разработки конфигураций и расшире�
 
 ## Поддерживаемые клиенты
 
-Поддерживаются Codex, Kilo Code, Claude Code, Cursor, OpenCode, Kimi Code, Qwen Code, Command Code, Cline и Pi. При инициализации выбирается ровно один активный клиент. Позже выбор можно изменить из чистой ветки `master` через `/itl-switch-client <client>`; созданные ветки разработки обновляются отдельно.
+Поддерживаются Codex, Kilo Code, Claude Code, Cursor, OpenCode, Kimi Code, Qwen Code, Command Code, Cline и Pi. При инициализации выбирается ровно один активный клиент; generic `other` и multi-client установка не поддерживаются. Позже выбор можно изменить из чистой ветки `master` через `/itl-switch-client <client>`; созданные ветки разработки обновляются отдельно.
+
+OpenSpec workspace и правила устанавливаются для всех десяти клиентов. Для прежних пяти клиентов upstream предоставляет native commands/skills (`native`), а Kimi, Qwen, Command Code, Cline и Pi запускают те же фазы обычными запросами агенту (`natural`). `/opsx*` не является универсальным интерфейсом; `/itl` показывает только реально доступный способ запуска. Workflow не устанавливает `@fission-ai/openspec` и не выполняет `openspec update`.
 
 ## Документация
-
-Начните с первых двух руководств; режимы и `.dev.env` используйте как справочники:
 
 - [Работа с проектом](docs/itl-workflow/PROJECT-WORKFLOW.ru.md) — инициализация, ветки, базы, проверка, обновление и выгрузка результата.
 - [Разработка изменения](docs/itl-workflow/FEATURE-DEVELOPMENT.ru.md) — quick-fix, OpenSpec, тестирование и завершение задачи.
