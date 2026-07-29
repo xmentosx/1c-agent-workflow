@@ -76,9 +76,10 @@ Ask only for values the helper cannot collect or infer:
 - 1C platform executable. First inspect standard `C:\Program Files\1cv8` and `C:\Program Files (x86)\1cv8` version folders and offer installed versions.
 - Whether branch infobases should be web-published by default. If no, store `WEB_PUBLISH_BY_DEFAULT=false` and `WEB_PUBLISH_AUTO=false`.
 - If branch infobases should be web-published, whether to attempt automatic publication during branch creation. Store `WEB_PUBLISH_AUTO=true|false`; if automatic publication is requested, collect existing `webinst`/publication settings but never install a web server.
-- Whether dependencies are `fresh` or `locked`. Default is `fresh`; `locked` requires a complete `.agent-1c/dependency-lock.json`.
 - Source unsafe-action protection mode: `manual-confirm` asks against the source infobase and stores a local context-bound confirmation, `defer` leaves branch creation to confirm its copy, and `confirmed` trusts an explicit external confirmation. JSON/configured init must provide this value; the wizard uses `manual-confirm`.
 - Missing Vanessa Automation, ROCTUP MCP Toolkit, and Vanessa UI MCP CFE artifacts are cached automatically during init/update; do not ask whether they are needed. CFE installation into a branch infobase and the UI MCP server itself remain on demand.
+
+The normal wizard does not ask for dependency mode and always records `fresh`. Keep `locked` available only through an explicit JSON/configured answer or a deliberate post-init configuration change; it requires a complete `.agent-1c/dependency-lock.json`.
 
 Ask one raw value at a time unless the agent surface supports structured fields. Do not ask for `KEY=value` blocks. For optional passwords, first ask whether the password is set.
 

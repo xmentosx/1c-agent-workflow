@@ -1436,7 +1436,6 @@ exit 0
             "0J/Rg9GC0Ywg0Log0YXRgNCw0L3QuNC70LjRidGDINC60L7QvdGE0LjQs9GD0YDQsNGG0LjQuA==",
             "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40Lg=",
             "0J/QsNGA0L7Qu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk=",
-            "0JjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMINGB0LLQtdC20LjQtSDQstC10YDRgdC40Lgg0LfQsNCy0LjRgdC40LzQvtGB0YLQtdC5INC/0YDQuCDQuNC90LjRhtC40LDQu9C40LfQsNGG0LjQuD8g0J7RgtCy0LXRgtGM0YLQtSDQvdC10YIsINGH0YLQvtCx0Ysg0LjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMIHBpbnMg0LjQtyAuYWdlbnQtMWMvZGVwZW5kZW5jeS1sb2NrLmpzb24u",
             "0JLRi9Cx0LXRgNC40YLQtSDQtdC00LjQvdGB0YLQstC10L3QvdGL0Lkg0LDQs9C10L3RgtGB0LrQuNC5INC60LvQuNC10L3RgiDQtNC70Y8g0L/RgNC+0LXQutGC0LA6",
             "0JrQu9C40LXQvdGCINCw0LPQtdC90YLQsA==",
             "0JLRi9Cx0LXRgNC40YLQtSDQvtC00LjQvSDQuNC3Og==",
@@ -1472,6 +1471,9 @@ exit 0
 
         $HelperText | Should -Match ([regex]::Escape("IFvQlC/QvV0="))
         $HelperText | Should -Match ([regex]::Escape("IFvQtC/QnV0="))
+        $HelperText | Should -Not -Match 'function Read-InitDependencyMode'
+        $HelperText | Should -Not -Match 'answers\.dependencyMode\s*=\s*Read-InitDependencyMode'
+        $HelperText | Should -Match 'answers\.dependencyMode\s*=\s*"fresh"'
         $HelperText | Should -Match 'vibecoding1cMcpSetupDuringInit\s*=\s*\$true'
         $HelperText | Should -Not -Match 'answers\.webPublishByDefault\s*=\s*Read-InitYesNo'
         $HelperText | Should -Match 'webPublishByDefault\s*=\s*\$false'
@@ -1546,7 +1548,7 @@ exit 0
         $result.sourceInfoBasePath | Should -Be "C:\bases\source-2"
     }
 
-    It "always enables vibecoding1c setup and disables web publication during init" {
+    It "uses fixed init defaults while preserving explicit locked configuration" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
 
@@ -1555,7 +1557,6 @@ exit 0
                 infoBaseKind = "file"
                 sourceUsesRepository = $false
                 sourceInfoBasePath = "C:\bases\source"
-                dependencyMode = "fresh"
             }
             $defaulted = Normalize-InitAnswers -Answers $baseAnswers
 
@@ -1564,7 +1565,7 @@ exit 0
                 infoBaseKind = "file"
                 sourceUsesRepository = $false
                 sourceInfoBasePath = "C:\bases\source"
-                dependencyMode = "fresh"
+                dependencyMode = "locked"
                 VIBECODING1C_MCP_SETUP_DURING_INIT = "false"
                 WEB_PUBLISH_BY_DEFAULT = "true"
                 WEB_PUBLISH_AUTO = "true"
@@ -1574,6 +1575,8 @@ exit 0
             [pscustomobject]@{
                 defaulted = [bool]$defaulted.vibecoding1cMcpSetupDuringInit
                 explicit = [bool]$explicit.vibecoding1cMcpSetupDuringInit
+                defaultDependencyMode = [string]$defaulted.dependencyMode
+                explicitDependencyMode = [string]$explicit.dependencyMode
                 webPublishByDefault = [bool]$explicit.webPublishByDefault
                 webPublishAuto = [bool]$explicit.webPublishAuto
             }
@@ -1581,6 +1584,8 @@ exit 0
 
         $result.defaulted | Should -BeTrue
         $result.explicit | Should -BeTrue
+        $result.defaultDependencyMode | Should -Be "fresh"
+        $result.explicitDependencyMode | Should -Be "locked"
         $result.webPublishByDefault | Should -BeFalse
         $result.webPublishAuto | Should -BeFalse
     }

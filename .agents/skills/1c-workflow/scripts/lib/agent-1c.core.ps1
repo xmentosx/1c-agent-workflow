@@ -3328,14 +3328,6 @@ function Read-InitBaseConfigurationVersion {
     }
 }
 
-function Read-InitDependencyMode {
-    $useLatest = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0JjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMINGB0LLQtdC20LjQtSDQstC10YDRgdC40Lgg0LfQsNCy0LjRgdC40LzQvtGB0YLQtdC5INC/0YDQuCDQuNC90LjRhtC40LDQu9C40LfQsNGG0LjQuD8g0J7RgtCy0LXRgtGM0YLQtSDQvdC10YIsINGH0YLQvtCx0Ysg0LjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMIHBpbnMg0LjQtyAuYWdlbnQtMWMvZGVwZW5kZW5jeS1sb2NrLmpzb24u") -Default $true
-    if ($useLatest) {
-        return "fresh"
-    }
-    return "locked"
-}
-
 function Read-InitPlatformPath {
     $platforms = @(Find-Installed1CPlatforms)
     if ($platforms.Count -gt 0) {
@@ -3444,7 +3436,7 @@ function Read-InitWizardAnswersOnce {
         $answers.repositoryPassword = ConvertFrom-OptionalPasswordAnswer (Read-InitOptional (Get-Agent1cUtf8Text "0J/QsNGA0L7Qu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk="))
     }
 
-    $answers.dependencyMode = Read-InitDependencyMode
+    $answers.dependencyMode = "fresh"
     $answers.vibecoding1cMcpSetupDuringInit = $true
 
     return [pscustomobject]$answers
