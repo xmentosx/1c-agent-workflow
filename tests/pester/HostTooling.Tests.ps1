@@ -359,7 +359,7 @@ services:
                 function Get-HostContainerPublishState { param([string]$ContainerName); return "running" }
                 function Invoke-DockerCommandCapture {
                     param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
-                    return @('["CMD","curl","-f","http://localhost:8006/search"]')
+                    throw "Graph repair must not depend on Docker healthcheck inspect formatting."
                 }
                 function Invoke-DockerCommand {
                     param([string[]]$Arguments, [switch]$Quiet, [int]$TimeoutSec)
@@ -376,7 +376,6 @@ services:
                 $composeText | Should -Match "python -c"
                 $composeText | Should -Not -Match '\["CMD", "curl"'
                 $callText = @($script:GraphHealthDockerCalls) -join "|"
-                $callText | Should -Match "exec itl-graph ls /usr/local/bin/curl"
                 $callText | Should -Match "cp .*itl-graph:/usr/local/bin/curl"
                 $callText | Should -Match "exec itl-graph chmod 0755 /usr/local/bin/curl"
                 $callText | Should -Match "exec itl-graph curl -f http://localhost:8006/search"
