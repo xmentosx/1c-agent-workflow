@@ -2518,7 +2518,6 @@ function Repair-TrackedGraphHealthchecks {
 
     $state = Read-HostState -Config $Config
     $repairCount = 0
-    $brokenHealthcheckPattern = '"CMD","curl","-f","http://localhost:8006/search"'
     $shimText = @'
 #!/usr/local/bin/python
 import sys
@@ -2554,15 +2553,8 @@ except Exception:
         if (-not $containerName -or (Get-HostContainerPublishState -ContainerName $containerName) -ne "running") {
             continue
         }
-        $healthcheckLines = @(Invoke-DockerCommandCapture -Arguments @(
-            "inspect", "-f", "{{json .Config.Healthcheck.Test}}", $containerName
-        ) -TimeoutSec 30 -Description "inspect graph healthcheck $containerName")
-        $healthcheckText = (($healthcheckLines | Where-Object { $_ }) -join "").Trim()
-        if ($healthcheckText -notmatch [regex]::Escape($brokenHealthcheckPattern)) {
-            continue
-        }
         if ((Invoke-DockerCommand -Arguments @(
-            "exec", $containerName, "ls", "/usr/local/bin/curl"
+            "exec", $containerName, "curl", "-f", "http://localhost:8006/search"
         ) -Quiet -TimeoutSec 20) -eq 0) {
             continue
         }
