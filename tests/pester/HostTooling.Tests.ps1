@@ -356,10 +356,15 @@ services:
                 . $McpHostPath -Action status -ConfigPath $configPath *> $null
                 $hostConfig = Read-JsonFile -Path $configPath
                 $script:GraphHealthDockerCalls = New-Object System.Collections.Generic.List[string]
+                $script:GraphHealthShimInstalled = $false
                 function Get-HostContainerPublishState { param([string]$ContainerName); return "running" }
                 function Invoke-DockerCommandCapture {
                     param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
-                    throw "Graph repair must not depend on Docker healthcheck inspect formatting."
+                    $script:GraphHealthDockerCalls.Add(($Arguments -join " "))
+                    if ($script:GraphHealthShimInstalled) {
+                        return @("ITL_GRAPH_HEALTH_OK")
+                    }
+                    return @('OCI runtime exec failed: exec: "curl": executable file not found in $PATH')
                 }
                 function Invoke-DockerCommand {
                     param([string[]]$Arguments, [switch]$Quiet, [int]$TimeoutSec)
@@ -369,6 +374,9 @@ services:
                 function Invoke-DockerCommandChecked {
                     param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
                     $script:GraphHealthDockerCalls.Add(($Arguments -join " "))
+                    if ($Arguments[0] -eq "cp") {
+                        $script:GraphHealthShimInstalled = $true
+                    }
                 }
 
                 (Repair-TrackedGraphHealthchecks -Config $hostConfig) | Should -Be 2
@@ -381,6 +389,7 @@ services:
                 $callText | Should -Match "exec itl-graph curl -f http://localhost:8006/search"
                 $callText | Should -Not -Match "restart|reindex|setup"
                 Remove-Variable -Scope Script -Name GraphHealthDockerCalls -ErrorAction SilentlyContinue
+                Remove-Variable -Scope Script -Name GraphHealthShimInstalled -ErrorAction SilentlyContinue
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
