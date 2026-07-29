@@ -284,7 +284,13 @@ runtime и выполняется одна повторная попытка. О
   "enabled": true,
   "intervalMinutes": 5,
   "startupDelaySeconds": 30,
-  "taskName": "ITL MCP Host Watchdog"
+  "taskName": "ITL MCP Host Watchdog",
+  "dockerDesktopRecovery": {
+    "enabled": true,
+    "timeoutSeconds": 120,
+    "commandTimeoutSeconds": 90,
+    "pollSeconds": 5
+  }
 }
 ```
 
@@ -299,6 +305,16 @@ Installer регистрирует Windows Scheduled Task от текущего 
 `reconcile`. Результат последнего запуска сохраняется в `<stateRoot>\watchdog-state.json`.
 Если квалифицированное состояние host не изменилось, watchdog не создаёт новый commit registry
 на каждом интервале.
+
+Если `docker info` недоступен, watchdog ограниченно вызывает Docker Desktop CLI: читает `status`,
+выполняет `start` для остановленного Desktop или `restart` для зависшего backend и ожидает
+восстановления daemon. При неуспехе registry публикуется со статусом `unavailable` без долгой
+серии `docker inspect`. Этот recovery не вызывает `setup`, refresh конфигураций или `reindex`.
+
+Для graph MCP установщик заменяет ошибочный image healthcheck с отсутствующим `curl` на проверку
+`/search` через штатный Python. У уже запущенного старого контейнера watchdog устанавливает
+минимальный совместимый `curl`-shim без перезапуска контейнера и без индексации; runtime compose
+одновременно исправляется для следующего штатного создания контейнера.
 
 Проверка, ручной запуск и удаление:
 
