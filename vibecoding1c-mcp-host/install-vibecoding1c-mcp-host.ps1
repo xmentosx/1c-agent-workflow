@@ -2525,7 +2525,10 @@ import urllib.request
 
 try:
     response = urllib.request.urlopen(sys.argv[-1], timeout=10)
-    raise SystemExit(0 if 200 <= response.status < 400 else 22)
+    if 200 <= response.status < 400:
+        print("ITL_GRAPH_HEALTH_OK")
+        raise SystemExit(0)
+    raise SystemExit(22)
 except Exception:
     raise SystemExit(22)
 '@
@@ -2553,9 +2556,10 @@ except Exception:
         if (-not $containerName -or (Get-HostContainerPublishState -ContainerName $containerName) -ne "running") {
             continue
         }
-        if ((Invoke-DockerCommand -Arguments @(
+        $healthProbeLines = @(Invoke-DockerCommandCapture -Arguments @(
             "exec", $containerName, "curl", "-f", "http://localhost:8006/search"
-        ) -Quiet -TimeoutSec 20) -eq 0) {
+        ) -TimeoutSec 20 -Description "probe graph healthcheck compatibility shim in $containerName")
+        if (@($healthProbeLines | ForEach-Object { ([string]$_).Trim() }) -contains "ITL_GRAPH_HEALTH_OK") {
             continue
         }
 
@@ -2568,9 +2572,13 @@ except Exception:
             Invoke-DockerCommandChecked -Arguments @(
                 "exec", $containerName, "chmod", "0755", "/usr/local/bin/curl"
             ) -TimeoutSec 30 -Description "enable graph healthcheck compatibility shim in $containerName"
-            Invoke-DockerCommandChecked -Arguments @(
+            $validationLines = @(Invoke-DockerCommandCapture -Arguments @(
                 "exec", $containerName, "curl", "-f", "http://localhost:8006/search"
-            ) -TimeoutSec 30 -Description "validate graph healthcheck compatibility shim in $containerName"
+            ) -TimeoutSec 30 -Description "validate graph healthcheck compatibility shim in $containerName")
+            if (@($validationLines | ForEach-Object { ([string]$_).Trim() }) -notcontains "ITL_GRAPH_HEALTH_OK") {
+                $validationOutput = (($validationLines | Where-Object { $_ }) -join [Environment]::NewLine).Trim()
+                throw "Graph healthcheck compatibility shim validation failed in $containerName. Output: $validationOutput"
+            }
             Write-Host "Repaired running graph healthcheck without restart or indexing: $containerName"
             $repairCount++
         } finally {
