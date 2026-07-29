@@ -1612,13 +1612,18 @@ function Get-ItlOpenSpecNaturalRequests {
 function Get-ItlOpenSpecNativeInvocation {
     param(
         [string]$Stage,
+        [string]$Client,
         [AllowNull()][object]$Entry
     )
 
     $target = [string](Get-ConfigValueFromObject -Object $Entry -Path "target" -Default "")
     $target = $target.Replace('\', '/')
     if ($target -match '(?i)/skills/([^/]+)/SKILL\.md$') {
-        return "skill $($Matches[1])"
+        $skillName = $Matches[1]
+        if ($Client -eq "codex") {
+            return "`$$skillName"
+        }
+        return "skill $skillName"
     }
     if ($target -match '(?i)/commands/opsx/[^/]+\.md$') {
         return "/opsx:$Stage"
@@ -1744,7 +1749,16 @@ function Get-AiRules1cOpenSpecStatus {
             $missing += $stage
             continue
         }
-        $invocations[$stage] = Get-ItlOpenSpecNativeInvocation -Stage $stage -Entry $matches[0]
+        if ($client -eq "codex") {
+            $aliasToken = "opsx-$stage"
+            $aliasMatches = @($matches | Where-Object {
+                $_.source.Replace('\', '/') -match ("/" + [regex]::Escape($aliasToken) + "/SKILL\.md$")
+            })
+            if ($aliasMatches.Count -gt 0) {
+                $matches = $aliasMatches
+            }
+        }
+        $invocations[$stage] = Get-ItlOpenSpecNativeInvocation -Stage $stage -Client $client -Entry $matches[0]
     }
 
     if ($missing.Count -gt 0) {
