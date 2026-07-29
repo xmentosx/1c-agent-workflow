@@ -111,6 +111,13 @@ to `<stateRoot>/watchdog-state.json`. An unchanged qualified host does not creat
 commit on every interval. The installing account must be able to run `docker info` and push the
 registry checkout. Manage the shipped task from the same console:
 
+When `docker info` is unavailable, the watchdog uses the bounded Docker Desktop CLI
+`status` plus `start` or `restart`, then waits for the daemon before reconciling containers.
+If recovery fails, it publishes the tracked host as `unavailable` without Docker inspection.
+The watchdog never invokes `setup`, source refresh, or `reindex`. It also replaces the broken
+graph image `curl` healthcheck in generated compose files. Existing running graph containers
+receive a small compatibility shim without a container restart or indexing.
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action watchdog-status -ConfigPath .\host.config.json
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action watchdog-run -ConfigPath .\host.config.json
