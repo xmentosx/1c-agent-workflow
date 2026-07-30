@@ -139,6 +139,43 @@ Describe "Release gate scripts" {
         }
     }
 
+    It "proves helper overlap from timestamps captured before process handles go stale" {
+        $tokens = $null
+        $errors = $null
+        $runnerPath = Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1"
+        $runnerAst = [System.Management.Automation.Language.Parser]::ParseFile(
+            $runnerPath,
+            [ref]$tokens,
+            [ref]$errors
+        )
+        @($errors) | Should -BeNullOrEmpty
+        $functionAst = $runnerAst.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq "Test-E2EInvocationOverlap"
+        }, $true)
+        . ([scriptblock]::Create($functionAst.Extent.Text))
+
+        $origin = [DateTime]::UtcNow
+        Test-E2EInvocationOverlap -Invocations @(
+            [pscustomobject]@{ process = $null; startedAtUtc = $origin; exitedAtUtc = $origin.AddSeconds(10) },
+            [pscustomobject]@{ process = $null; startedAtUtc = $origin.AddSeconds(5); exitedAtUtc = $origin.AddSeconds(15) }
+        ) | Should -BeTrue
+        Test-E2EInvocationOverlap -Invocations @(
+            [pscustomobject]@{ process = $null; startedAtUtc = $origin; exitedAtUtc = $origin.AddSeconds(5) },
+            [pscustomobject]@{ process = $null; startedAtUtc = $origin.AddSeconds(5); exitedAtUtc = $origin.AddSeconds(10) }
+        ) | Should -BeFalse
+        Test-E2EInvocationOverlap -Invocations @(
+            [pscustomobject]@{ process = $null; startedAtUtc = $origin; exitedAtUtc = $null },
+            [pscustomobject]@{ process = $null; startedAtUtc = $origin; exitedAtUtc = $origin.AddSeconds(1) }
+        ) | Should -BeFalse
+
+        $runnerText = Get-Content -LiteralPath $runnerPath -Raw -Encoding UTF8
+        $runnerText | Should -Match 'startedAtUtc\s*=\s*\$startedAtUtc'
+        $runnerText | Should -Match '\$Invocation\.exitedAtUtc\s*=\s*\$exitedAtUtc'
+        $functionAst.Extent.Text | Should -Not -Match '\.process|StartTime|ExitTime|\.Refresh\('
+    }
+
     It "removes a closed disposable worktree before deleting its branch" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-seed-cleanup-" + [guid]::NewGuid().ToString("N"))
         $mainRoot = Join-Path $tempRoot "main"

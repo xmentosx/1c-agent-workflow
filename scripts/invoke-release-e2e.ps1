@@ -175,12 +175,21 @@ function Start-E2EHelperAtRoot {
     $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($parts -join " ") `
         -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $stdoutPath `
         -RedirectStandardError $stderrPath -PassThru
+    $startedAtUtc = [DateTime]::UtcNow
+    try {
+        $processStartTime = $process.StartTime
+        if ($null -ne $processStartTime) {
+            $startedAtUtc = $processStartTime.ToUniversalTime()
+        }
+    } catch {}
     return [pscustomobject]@{
         process = $process
         action = $Action
         root = $Root
         stdoutPath = $stdoutPath
         stderrPath = $stderrPath
+        startedAtUtc = $startedAtUtc
+        exitedAtUtc = $null
     }
 }
 
@@ -201,6 +210,14 @@ function Complete-E2EHelperProcess {
     }
     $process.WaitForExit()
     $process.Refresh()
+    $exitedAtUtc = [DateTime]::UtcNow
+    try {
+        $processExitTime = $process.ExitTime
+        if ($null -ne $processExitTime) {
+            $exitedAtUtc = $processExitTime.ToUniversalTime()
+        }
+    } catch {}
+    $Invocation.exitedAtUtc = $exitedAtUtc
     $exitCode = [int]$process.ExitCode
     if ($exitCode -ne 0 -and -not $AllowFailure) {
         throw "$($Invocation.action) failed with exit code $exitCode. See $($Invocation.stdoutPath) and $($Invocation.stderrPath)"
@@ -212,13 +229,15 @@ function Test-E2EInvocationOverlap {
     param([object[]]$Invocations)
 
     if (@($Invocations).Count -ne 2) { return $false }
-    $first = $Invocations[0].process
-    $second = $Invocations[1].process
-    $first.Refresh()
-    $second.Refresh()
+    $first = $Invocations[0]
+    $second = $Invocations[1]
+    if ($null -eq $first.startedAtUtc -or $null -eq $first.exitedAtUtc -or
+        $null -eq $second.startedAtUtc -or $null -eq $second.exitedAtUtc) {
+        return $false
+    }
     return (
-        $first.StartTime.ToUniversalTime() -lt $second.ExitTime.ToUniversalTime() -and
-        $second.StartTime.ToUniversalTime() -lt $first.ExitTime.ToUniversalTime()
+        ([DateTime]$first.startedAtUtc) -lt ([DateTime]$second.exitedAtUtc) -and
+        ([DateTime]$second.startedAtUtc) -lt ([DateTime]$first.exitedAtUtc)
     )
 }
 
