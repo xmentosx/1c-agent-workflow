@@ -48,6 +48,7 @@ get-dev-workspace-plan
 get-dev-workspace-close-plan
 set-dev-workspace-deregistration
 adopt-dev-worktree
+initialize-dev-branch-runtime
 new-dev-branch
 new-extension-dev-branch
 configure-dev-branch-unsafe-action-protection
@@ -64,6 +65,7 @@ stop-vanessa-profile
 check-dev-branch
 verify-dev-branch
 refresh-dev-branch
+refresh-dev-branch-lite
 export-dev-branch-result
 close-dev-branch
 switch-master

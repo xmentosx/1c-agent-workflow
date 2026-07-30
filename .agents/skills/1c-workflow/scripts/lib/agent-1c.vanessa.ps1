@@ -1804,10 +1804,66 @@ function Save-DevBranchEventLogBaseline {
     return $State
 }
 
+function Install-DevBranchEventLogSeedBaseline {
+    param(
+        [object]$State,
+        [string]$SeedBaselinePath
+    )
+
+    if (-not (Test-Path -LiteralPath $SeedBaselinePath -PathType Leaf)) {
+        throw "BRANCH_SEED_BASELINE_MISSING: $SeedBaselinePath"
+    }
+    $seedBaseline = Read-Utf8Text -Path $SeedBaselinePath | ConvertFrom-Json
+    $signatures = @($seedBaseline.signatures | Where-Object { $_ } | Sort-Object -Unique)
+    $baselinePath = Get-DevBranchEventLogBaselinePath -State $State
+    $createdAt = (Get-Date).ToString("o")
+    $baseline = [ordered]@{
+        schemaVersion = 2
+        createdAt = $createdAt
+        reason = "source-seed"
+        reader = [string]$seedBaseline.reader
+        logDirectory = Join-Path (Resolve-InfoBasePath (Get-StateValue -State $State -Name "devBranchInfoBasePath")) "1Cv8Log"
+        errorCount = [int]$seedBaseline.errorCount
+        signatureCount = $signatures.Count
+        signatures = $signatures
+        durationMs = [int64]$seedBaseline.durationMs
+        cache = [ordered]@{
+            status = "seeded"
+            path = [string]$seedBaseline.cache.path
+            sourceKey = [string]$seedBaseline.cache.sourceKey
+            segmentCount = [int]$seedBaseline.cache.segmentCount
+        }
+        seedBaselinePath = $SeedBaselinePath
+    }
+    Write-Utf8Text -Path $baselinePath -Value (($baseline | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    $hash = Get-StringSha256 -Value (($signatures -join "`n"))
+    Update-DevBranchState -State $State -Updates @{
+        eventLogBaselinePath = $baselinePath
+        eventLogBaselineCreatedAt = $createdAt
+        eventLogBaselineReader = [string]$seedBaseline.reader
+        eventLogBaselineErrorCount = [int]$seedBaseline.errorCount
+        eventLogBaselineSignatureCount = $signatures.Count
+        eventLogBaselineHash = $hash
+        eventLogBaselineCacheStatus = "seeded"
+        eventLogBaselineCachePath = [string]$seedBaseline.cache.path
+        eventLogBaselineDurationMs = [int64]$seedBaseline.durationMs
+        eventLogBaselineSegmentCount = [int]$seedBaseline.cache.segmentCount
+        eventLogSeedBaselinePath = $SeedBaselinePath
+    }
+    Write-Host "Event log baseline installed from branch seed: $baselinePath"
+    return (Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default ""))
+}
+
 function Initialize-DevBranchEventLogBaseline {
-    param([object]$State)
+    param(
+        [object]$State,
+        [string]$SeedBaselinePath = ""
+    )
 
     Write-Section "Initialize event log baseline"
+    if ($SeedBaselinePath) {
+        return (Install-DevBranchEventLogSeedBaseline -State $State -SeedBaselinePath $SeedBaselinePath)
+    }
     return (Save-DevBranchEventLogBaseline -State $State -Reason "created")
 }
 

@@ -1,6 +1,6 @@
 # 1C Agent Workflow Reference Index
 
-Lifecycle routing index. Open a topic only when helper output, failure, or the request needs it.
+Lifecycle routing index. Open a topic only when needed.
 
 ## User-Facing Menu
 
@@ -12,6 +12,7 @@ master:
   /itl-status
   /itl-new-config-branch <name>
   /itl-new-extension-branch <name>
+  /itl-sync-master
   /itl-update-workflow
   /itl-switch-client <client>
   /itl-litemode <mode>
@@ -22,6 +23,7 @@ itldev/*:
   /itl-check
   /itl-verify-fix
   /itl-refresh
+  /itl-refresh-lite
   /itl-result
   /itl-litemode <mode>
 ```

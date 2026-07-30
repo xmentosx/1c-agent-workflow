@@ -96,7 +96,7 @@ function Find-LauncherRunDirectory {
 $allowedActions = @(
     "new-dev-branch", "new-extension-dev-branch", "adopt-dev-worktree", "close-dev-branch", "check-dev-branch",
     "init-dev-branch-extension", "update-dev-branch-base", "verify-dev-branch",
-    "refresh-dev-branch", "export-dev-branch-result", "update-workflow",
+    "refresh-dev-branch", "refresh-dev-branch-lite", "sync-master", "export-dev-branch-result", "update-workflow",
     "itl-switch-client"
 )
 $action = Get-ArgumentValue -Arguments @($helperArgs) -Name "-Action"

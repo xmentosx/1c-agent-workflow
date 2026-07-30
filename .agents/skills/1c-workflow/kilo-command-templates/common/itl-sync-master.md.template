@@ -1,0 +1,16 @@
+---
+description: Синхронизировать master и пересоздать latest-only seed
+agent: code
+---
+
+Run the helper directly from the current project directory. The command may be started from `master` or an active `itldev/*` worktree; the helper delegates source/master work to the main worktree.
+
+If the agent shell tool supports `timeout_ms`, run this lifecycle command with `timeout_ms >= 3900000` by default so the outer shell outlives the 3600-second Designer limit; if that limit is configured higher, raise the outer timeout too. Do not use `120000 ms` or other short defaults because the helper may launch 1C Designer/Enterprise operations.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action sync-master
+```
+
+The helper updates the source infobase from its configuration repository when that integration is configured, exports and commits the current source configuration to installed-project `master`, and always rebuilds the single latest branch seed including its event-log signature baseline. It does not refresh the current development branch. On failure, read only the last 80 lines of `logPath`; a failed seed must be recovered by repeating this command and must never be bypassed by copying source directly.
+
+On success with a non-empty `userReport`, make the final response exactly that report rendered as Markdown. Otherwise report the exact seed sync ID and committed `master` SHA from the bounded result/log without adding unrelated actions.

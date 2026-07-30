@@ -1385,7 +1385,7 @@
     }
 
     It "restarts after refresh and close merges before loading config files" {
-        foreach ($functionName in @("Refresh-DevBranch", "Close-DevBranch")) {
+        foreach ($functionName in @("Invoke-RefreshDevBranchCore", "Close-DevBranch")) {
             $match = [regex]::Match($HelperText, "(?s)function\s+$functionName\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
             $match.Success | Should -Be $true
             $body = $match.Groups["body"].Value
@@ -1402,10 +1402,10 @@
     }
 
     It "writes the refresh user report only after MCP reconciliation" {
-        $match = [regex]::Match($HelperText, "(?s)function\s+Refresh-DevBranch\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
+        $match = [regex]::Match($HelperText, "(?s)function\s+Invoke-RefreshDevBranchCore\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
         $match.Success | Should -Be $true
         $body = $match.Groups["body"].Value
-        $reconcileIndex = $body.IndexOf('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "refresh-dev-branch MCP reconcile"')
+        $reconcileIndex = $body.IndexOf('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "$OperationName MCP reconcile"')
         $reportIndex = $body.IndexOf('Write-DevBranchRunUserReport -State $updatedState')
 
         $reconcileIndex | Should -BeGreaterOrEqual 0
@@ -2394,6 +2394,10 @@
                         incremental = $false
                         logPath = $script:LastLogPath
                     }
+                }
+
+                function Ensure-BranchSeed {
+                    return [pscustomobject]@{ status = "ready"; syncId = "test-fixture" }
                 }
 
                 function Install-AiRules1c {
@@ -3512,6 +3516,7 @@ if (`$?) { exit 0 } else { exit 1 }
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".kilo") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value '{"instructions":["USER-RULES.md","docs/custom.md"],"permission":{"bash":"ask"}}' -Encoding ASCII
 
+            New-TestBranchSeedFixture -ProjectRoot $tempRoot -SourceInfoBasePath $sourceBase
             $env:APPDATA = Join-Path $tempRoot "appdata"
             & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action new-dev-branch -DevBranchName "Fixture Branch" *> $null
             $LASTEXITCODE | Should -Be 0
@@ -3557,7 +3562,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $kiloConfig.permission.bash | Should -Be "ask"
             $kiloConfig.PSObject.Properties.Name | Should -Not -Contain "plugin"
             $branchKiloCommands = @(Get-ChildItem -LiteralPath (Join-Path $worktreePath ".kilo\commands") -File -Filter "itl*.md" | Select-Object -ExpandProperty Name | Sort-Object)
-            $branchKiloCommands | Should -Be @("itl.md", "itl-check.md", "itl-litemode.md", "itl-refresh.md", "itl-result.md", "itl-status.md", "itl-verify-fix.md")
+            $branchKiloCommands | Should -Be @("itl.md", "itl-check.md", "itl-litemode.md", "itl-refresh.md", "itl-refresh-lite.md", "itl-result.md", "itl-status.md", "itl-sync-master.md", "itl-verify-fix.md")
             $branchKiloCommands | Should -Not -Contain "itl-new-config-branch.md"
             $branchKiloCommands | Should -Not -Contain "itl-new-extension-branch.md"
             $branchKiloCommands | Should -Not -Contain "itl-update-workflow.md"
@@ -3651,6 +3656,7 @@ if (`$?) { exit 0 } else { exit 1 }
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".kilo") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Value "{}" -Encoding ASCII
 
+            New-TestBranchSeedFixture -ProjectRoot $tempRoot -SourceInfoBasePath $sourceBase
             $env:APPDATA = Join-Path $tempRoot "appdata"
             $firstResult = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "new-dev-branch", "-DevBranchName", "Partial Branch", "-DevBranchWorktreePath", $worktreePath)
             $firstResult.exitCode | Should -Not -Be 0
@@ -3682,7 +3688,7 @@ if (`$?) { exit 0 } else { exit 1 }
             }
 
             $resumeResult = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "new-dev-branch", "-DevBranchName", "Partial Branch")
-            $resumeResult.exitCode | Should -Be 0
+            $resumeResult.exitCode | Should -Be 0 -Because $resumeResult.combinedText
             $resumeResult.combinedText | Should -Match "Resuming development branch initialization: itldev/partial-branch"
             (Test-Path -LiteralPath "$tempRoot-partial-branch" -ErrorAction SilentlyContinue) | Should -Be $false
 
@@ -3787,6 +3793,7 @@ if (`$?) { exit 0 } else { exit 1 }
             & git -C $tempRoot commit -m init | Out-Null
             & git -C $tempRoot branch -M master
 
+            New-TestBranchSeedFixture -ProjectRoot $tempRoot -SourceInfoBasePath $sourceBase
             $env:APPDATA = Join-Path $tempRoot "appdata"
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $registryRoot, "Process")
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", (Join-Path $tempRoot "local-home"), "Process")
@@ -3990,6 +3997,7 @@ if (`$?) { exit 0 } else { exit 1 }
             & git -C $tempRoot commit -m init | Out-Null
             & git -C $tempRoot branch -M master
 
+            New-TestBranchSeedFixture -ProjectRoot $tempRoot -SourceInfoBasePath $sourceBase
             $env:APPDATA = Join-Path $tempRoot "appdata"
             & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action new-dev-branch -DevBranchName "Legacy Branch" -UseCurrentWorktree *> $null
             $LASTEXITCODE | Should -Be 0

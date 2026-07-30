@@ -102,12 +102,121 @@ $onDemandMcpEvidencePath = Join-Path $outputRoot "ondemand-mcp.json"
 $onDemandMcpEvidence = $null
 $onDemandMcpTestFixture = [Environment]::GetEnvironmentVariable("ITL_TEST_RELEASE_ONDEMAND_PROBE") -eq "true"
 $configCadenceEvidencePath = Join-Path $outputRoot "config-cadence.json"
+$seedParallelEvidencePath = Join-Path $outputRoot "seed-parallel.json"
+$seedParallelEvidence = $null
+$seedParallelTestFixture = [Environment]::GetEnvironmentVariable("ITL_TEST_RELEASE_SEED_PARALLEL") -eq "true"
 $extensionSmokeName = "ITLReleaseSmoke" + [DateTime]::UtcNow.ToString("yyyyMMddHHmmss")
 
 function ConvertTo-NativeArgument {
     param([string]$Value)
     if ($null -eq $Value) { return '""' }
     return '"' + $Value.Replace('"', '\"') + '"'
+}
+
+function Start-E2EHelperAtRoot {
+    param(
+        [string]$Root,
+        [string]$BranchName,
+        [string]$Action,
+        [string[]]$AdditionalArguments = @(),
+        [string]$LogPrefix = ""
+    )
+    if (-not $LogPrefix) { $LogPrefix = $Action }
+    $stdoutPath = Join-Path $outputRoot ($LogPrefix + ".stdout.log")
+    $stderrPath = Join-Path $outputRoot ($LogPrefix + ".stderr.log")
+    $parts = @(
+        "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", (ConvertTo-NativeArgument $HelperPath),
+        "-ProjectRoot", (ConvertTo-NativeArgument $Root),
+        "-Action", (ConvertTo-NativeArgument $Action)
+    )
+    if ($BranchName) {
+        $parts += @("-DevBranchName", (ConvertTo-NativeArgument $BranchName))
+    }
+    foreach ($argument in @($AdditionalArguments)) {
+        $parts += (ConvertTo-NativeArgument ([string]$argument))
+    }
+    $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($parts -join " ") `
+        -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $stdoutPath `
+        -RedirectStandardError $stderrPath -PassThru
+    return [pscustomobject]@{
+        process = $process
+        action = $Action
+        root = $Root
+        stdoutPath = $stdoutPath
+        stderrPath = $stderrPath
+    }
+}
+
+function Complete-E2EHelperProcess {
+    param(
+        [object]$Invocation,
+        [int]$TimeoutSeconds,
+        [switch]$AllowFailure
+    )
+    $process = $Invocation.process
+    # Windows PowerShell 5.1 may expose a null ExitCode after timed WaitForExit
+    # unless the native process handle is materialized before the wait.
+    $null = $process.Handle
+    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+        try { $process.Kill() } catch {}
+        if ($AllowFailure) { return [pscustomobject]@{ exitCode = -1; stdoutPath = $Invocation.stdoutPath; stderrPath = $Invocation.stderrPath } }
+        throw "$($Invocation.action) timed out after $TimeoutSeconds seconds."
+    }
+    $process.WaitForExit()
+    $process.Refresh()
+    $exitCode = [int]$process.ExitCode
+    if ($exitCode -ne 0 -and -not $AllowFailure) {
+        throw "$($Invocation.action) failed with exit code $exitCode. See $($Invocation.stdoutPath) and $($Invocation.stderrPath)"
+    }
+    return [pscustomobject]@{ exitCode = $exitCode; stdoutPath = $Invocation.stdoutPath; stderrPath = $Invocation.stderrPath }
+}
+
+function Test-E2EInvocationOverlap {
+    param([object[]]$Invocations)
+
+    if (@($Invocations).Count -ne 2) { return $false }
+    $first = $Invocations[0].process
+    $second = $Invocations[1].process
+    $first.Refresh()
+    $second.Refresh()
+    return (
+        $first.StartTime.ToUniversalTime() -lt $second.ExitTime.ToUniversalTime() -and
+        $second.StartTime.ToUniversalTime() -lt $first.ExitTime.ToUniversalTime()
+    )
+}
+
+function Assert-E2ELiteRefreshDidNotEnterSourceSync {
+    param([object[]]$Invocations)
+
+    foreach ($invocation in @($Invocations)) {
+        $text = @(
+            $(if (Test-Path -LiteralPath $invocation.stdoutPath -PathType Leaf) { Get-Content -LiteralPath $invocation.stdoutPath -Raw -Encoding UTF8 }),
+            $(if (Test-Path -LiteralPath $invocation.stderrPath -PathType Leaf) { Get-Content -LiteralPath $invocation.stderrPath -Raw -Encoding UTF8 })
+        ) -join [Environment]::NewLine
+        if ($text -match '(?im)^==\s*Sync master\s*==\s*$|^Branch seed(?: sync ID)?:') {
+            throw "Lite refresh entered a source/master seed synchronization stage. Log: $($invocation.stdoutPath)"
+        }
+    }
+}
+
+function Invoke-E2EHelperAtRoot {
+    param(
+        [string]$Root,
+        [string]$BranchName,
+        [string]$Action,
+        [int]$TimeoutSeconds,
+        [string[]]$AdditionalArguments = @(),
+        [string]$LogPrefix = "",
+        [switch]$AllowFailure
+    )
+    $invocation = Start-E2EHelperAtRoot `
+        -Root $Root `
+        -BranchName $BranchName `
+        -Action $Action `
+        -AdditionalArguments $AdditionalArguments `
+        -LogPrefix $LogPrefix
+    return (Complete-E2EHelperProcess -Invocation $invocation -TimeoutSeconds $TimeoutSeconds -AllowFailure:$AllowFailure)
 }
 
 function Invoke-E2EHelper {
@@ -117,36 +226,13 @@ function Invoke-E2EHelper {
         [string[]]$AdditionalArguments = @(),
         [switch]$AllowFailure
     )
-    $stdoutPath = Join-Path $outputRoot ($Action + ".stdout.log")
-    $stderrPath = Join-Path $outputRoot ($Action + ".stderr.log")
-    $parts = @(
-        "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
-        "-File", (ConvertTo-NativeArgument $HelperPath),
-        "-ProjectRoot", (ConvertTo-NativeArgument $worktreePath),
-        "-Action", (ConvertTo-NativeArgument $Action),
-        "-DevBranchName", (ConvertTo-NativeArgument $devBranchName)
-    )
-    foreach ($argument in @($AdditionalArguments)) {
-        $parts += (ConvertTo-NativeArgument ([string]$argument))
-    }
-    $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($parts -join " ") `
-        -WorkingDirectory $worktreePath -WindowStyle Hidden -RedirectStandardOutput $stdoutPath `
-        -RedirectStandardError $stderrPath -PassThru
-    # Windows PowerShell 5.1 may expose a null ExitCode after timed WaitForExit
-    # unless the native process handle is materialized before the wait.
-    $null = $process.Handle
-    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-        try { $process.Kill() } catch {}
-        if ($AllowFailure) { return [pscustomobject]@{ exitCode = -1; stdoutPath = $stdoutPath; stderrPath = $stderrPath } }
-        throw "$Action timed out after $TimeoutSeconds seconds."
-    }
-    $process.WaitForExit()
-    $process.Refresh()
-    $exitCode = [int]$process.ExitCode
-    if ($exitCode -ne 0 -and -not $AllowFailure) {
-        throw "$Action failed with exit code $exitCode. See $stdoutPath and $stderrPath"
-    }
-    return [pscustomobject]@{ exitCode = $exitCode; stdoutPath = $stdoutPath; stderrPath = $stderrPath }
+    return (Invoke-E2EHelperAtRoot `
+        -Root $worktreePath `
+        -BranchName $devBranchName `
+        -Action $Action `
+        -TimeoutSeconds $TimeoutSeconds `
+        -AdditionalArguments $AdditionalArguments `
+        -AllowFailure:$AllowFailure)
 }
 
 function Get-E2ERootConfigurationComment {
@@ -580,6 +666,257 @@ function Sync-E2EWorktreeFromMaster {
     return $true
 }
 
+function Get-E2ESeedManifest {
+    param([string]$MainRoot)
+
+    $projectConfigPath = Join-Path $MainRoot ".agent-1c\project.json"
+    $seedRoot = Join-Path $MainRoot ".agent-1c\branch-seed"
+    if (Test-Path -LiteralPath $projectConfigPath -PathType Leaf) {
+        $projectConfig = Get-Content -LiteralPath $projectConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([string]$projectConfig.branchSeedRoot) {
+            $configured = [Environment]::ExpandEnvironmentVariables([string]$projectConfig.branchSeedRoot)
+            $seedRoot = if ([IO.Path]::IsPathRooted($configured)) { [IO.Path]::GetFullPath($configured) } else { [IO.Path]::GetFullPath((Join-Path $MainRoot $configured)) }
+        }
+    }
+    $envPath = Join-Path $MainRoot ".dev.env"
+    if (Test-Path -LiteralPath $envPath -PathType Leaf) {
+        foreach ($line in @(Get-Content -LiteralPath $envPath -Encoding UTF8)) {
+            if ($line -match '^\s*BRANCH_SEED_ROOT=(?<value>.*)$' -and $Matches.value.Trim()) {
+                $configured = [Environment]::ExpandEnvironmentVariables($Matches.value.Trim().Trim('"'))
+                $seedRoot = if ([IO.Path]::IsPathRooted($configured)) { [IO.Path]::GetFullPath($configured) } else { [IO.Path]::GetFullPath((Join-Path $MainRoot $configured)) }
+            }
+        }
+    }
+    $manifests = @(Get-ChildItem -LiteralPath $seedRoot -Recurse -File -Filter "manifest.json" -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            $value = Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string]$value.status -eq "ready") {
+                [pscustomobject]@{ path = $_.FullName; value = $value; completedAt = [datetime]$value.completedAt }
+            }
+        } catch {
+        }
+    } | Sort-Object completedAt -Descending)
+    if ($manifests.Count -eq 0) {
+        throw "RELEASE_E2E_SEED_MISSING: no ready manifest under $seedRoot"
+    }
+    return $manifests[0]
+}
+
+function Get-E2EBranchStateAtRoot {
+    param([string]$Root, [string]$Name)
+
+    $safe = ($Name -replace '[^A-Za-z0-9_.-]', '_').Trim('_')
+    $path = Join-Path $Root ".agent-1c\dev-branches\$safe.json"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        $candidate = @(Get-ChildItem -LiteralPath (Join-Path $Root ".agent-1c\dev-branches") -File -Filter "*.json" -ErrorAction SilentlyContinue | Where-Object {
+            try { [string](Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json).devBranchName -eq $Name } catch { $false }
+        } | Select-Object -First 1)
+        if ($candidate.Count -gt 0) { $path = $candidate[0].FullName }
+    }
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "RELEASE_E2E_SEED_BRANCH_STATE_MISSING: name=$Name root=$Root"
+    }
+    return [pscustomobject]@{ path = $path; value = (Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json) }
+}
+
+function Get-E2ESourceFileObservation {
+    param([string]$MainRoot)
+
+    $envPath = Join-Path $MainRoot ".dev.env"
+    if (-not (Test-Path -LiteralPath $envPath -PathType Leaf)) { return [ordered]@{ path = ""; length = 0; lastWriteTimeUtc = "" } }
+    $sourcePath = ""
+    foreach ($line in @(Get-Content -LiteralPath $envPath -Encoding UTF8)) {
+        if ($line -match '^\s*SOURCE_INFOBASE_PATH=(?<value>.*)$') {
+            $sourcePath = [Environment]::ExpandEnvironmentVariables($Matches.value.Trim().Trim('"'))
+        }
+    }
+    if (-not $sourcePath) { return [ordered]@{ path = ""; length = 0; lastWriteTimeUtc = "" } }
+    $resolvedSourcePath = if ([IO.Path]::IsPathRooted($sourcePath)) {
+        [IO.Path]::GetFullPath($sourcePath)
+    } else {
+        [IO.Path]::GetFullPath((Join-Path $MainRoot $sourcePath))
+    }
+    $artifact = Join-Path $resolvedSourcePath "1Cv8.1CD"
+    if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) { return [ordered]@{ path = $artifact; length = 0; lastWriteTimeUtc = "" } }
+    $file = Get-Item -LiteralPath $artifact
+    return [ordered]@{ path = $artifact; length = [int64]$file.Length; lastWriteTimeUtc = $file.LastWriteTimeUtc.ToString("o") }
+}
+
+function Invoke-E2ESeedParallelProof {
+    param([string]$MainRoot)
+
+    $masterBranch = "master"
+    $projectConfigPath = Join-Path $MainRoot ".agent-1c\project.json"
+    if (Test-Path -LiteralPath $projectConfigPath -PathType Leaf) {
+        $projectConfig = Get-Content -LiteralPath $projectConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([string]$projectConfig.infoBaseKind -and [string]$projectConfig.infoBaseKind -ne "file") {
+            throw "RELEASE_E2E_FILE_SEED_REQUIRED: infoBaseKind=$($projectConfig.infoBaseKind)"
+        }
+        if ([string]$projectConfig.masterBranch) { $masterBranch = [string]$projectConfig.masterBranch }
+    }
+    $mainStatus = @(& git -C $MainRoot status --porcelain --untracked-files=all)
+    if ($LASTEXITCODE -ne 0 -or $mainStatus.Count -gt 0) {
+        throw "RELEASE_E2E_SEED_MAIN_NOT_CLEAN: $MainRoot"
+    }
+
+    Invoke-E2EHelperAtRoot -Root $MainRoot -Action "sync-master" -TimeoutSeconds 7200 -LogPrefix "seed-parallel-sync-master" | Out-Null
+    $masterAfterSync = (& git -C $MainRoot rev-parse "refs/heads/$masterBranch").Trim()
+    & git -C $worktreePath merge-base --is-ancestor $masterAfterSync HEAD *> $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "RELEASE_E2E_PRIMARY_BRANCH_STALE_AFTER_SEED_SYNC: refresh the configured E2E branch from $masterAfterSync before Release."
+    }
+    $seedBeforeRecord = Get-E2ESeedManifest -MainRoot $MainRoot
+    $seedBefore = $seedBeforeRecord.value
+    if ([string]$seedBefore.artifactKind -ne "file-1cd" -or -not (Test-Path -LiteralPath ([string]$seedBefore.artifactPath) -PathType Leaf)) {
+        throw "RELEASE_E2E_FILE_SEED_REQUIRED: artifactKind=$($seedBefore.artifactKind)"
+    }
+    $sourceBefore = Get-E2ESourceFileObservation -MainRoot $MainRoot
+
+    $suffix = [guid]::NewGuid().ToString("N").Substring(0, 8)
+    $nameA = "release-seed-a-$suffix"
+    $nameB = "release-seed-b-$suffix"
+    $branchA = "itldev/$nameA"
+    $branchB = "itldev/$nameB"
+    $worktreeParent = Split-Path -Parent $MainRoot
+    $worktreeA = Join-Path $worktreeParent ("itlsa-$suffix")
+    $worktreeB = Join-Path $worktreeParent ("itlsb-$suffix")
+    $probePath = Join-Path $MainRoot "itl-release-seed-parallel.txt"
+    $runtimeInvocations = @()
+    $refreshInvocations = @()
+    $stateA = $null
+    $stateB = $null
+    $targetMasterCommit = ""
+    $branchRuntimeConcurrent = $false
+    $liteRefreshConcurrent = $false
+    $cleanupErrors = [System.Collections.Generic.List[string]]::new()
+    try {
+        & git -C $MainRoot worktree add --quiet -b $branchA $worktreeA $masterAfterSync
+        if ($LASTEXITCODE -ne 0) { throw "Could not create seed proof worktree A." }
+        & git -C $MainRoot worktree add --quiet -b $branchB $worktreeB $masterAfterSync
+        if ($LASTEXITCODE -ne 0) { throw "Could not create seed proof worktree B." }
+        foreach ($target in @($worktreeA, $worktreeB)) {
+            Copy-Item -LiteralPath (Join-Path $MainRoot ".dev.env") -Destination (Join-Path $target ".dev.env") -Force
+        }
+
+        $runtimeInvocations += Start-E2EHelperAtRoot -Root $worktreeA -BranchName $nameA -Action "initialize-dev-branch-runtime" -LogPrefix "seed-parallel-runtime-a" -AdditionalArguments @(
+            "-DevBranch", $branchA, "-DevBranchKind", "configuration", "-MainWorktreePath", $MainRoot, "-DevBranchWorktreePath", $worktreeA
+        )
+        $runtimeInvocations += Start-E2EHelperAtRoot -Root $worktreeB -BranchName $nameB -Action "initialize-dev-branch-runtime" -LogPrefix "seed-parallel-runtime-b" -AdditionalArguments @(
+            "-DevBranch", $branchB, "-DevBranchKind", "configuration", "-MainWorktreePath", $MainRoot, "-DevBranchWorktreePath", $worktreeB
+        )
+        foreach ($invocation in $runtimeInvocations) {
+            Complete-E2EHelperProcess -Invocation $invocation -TimeoutSeconds 7200 | Out-Null
+        }
+        $branchRuntimeConcurrent = Test-E2EInvocationOverlap -Invocations $runtimeInvocations
+        if (-not $branchRuntimeConcurrent) {
+            throw "Seed branch runtime invocations did not overlap."
+        }
+        $stateA = Get-E2EBranchStateAtRoot -Root $worktreeA -Name $nameA
+        $stateB = Get-E2EBranchStateAtRoot -Root $worktreeB -Name $nameB
+        if ([string]$stateA.value.initializationStatus -ne "ready" -or [string]$stateB.value.initializationStatus -ne "ready") {
+            throw "Parallel seed branch initialization did not reach ready."
+        }
+        if ([string]$stateA.value.branchSeedSyncId -cne [string]$seedBefore.syncId -or [string]$stateB.value.branchSeedSyncId -cne [string]$seedBefore.syncId) {
+            throw "Parallel branches did not restore the exact synchronized seed."
+        }
+        if ([string]$stateA.value.devBranchInfoBasePath -ceq [string]$stateB.value.devBranchInfoBasePath) {
+            throw "Parallel seed branches share one branch infobase path."
+        }
+        if ([string]$stateA.value.eventLogBaselineCacheStatus -ne "seeded" -or [string]$stateB.value.eventLogBaselineCacheStatus -ne "seeded") {
+            throw "Parallel seed branches scanned their new logs instead of installing the seed baseline."
+        }
+
+        [IO.File]::WriteAllText($probePath, "ITL Release seed parallel $suffix`r`n", [Text.UTF8Encoding]::new($false))
+        & git -C $MainRoot add -- "itl-release-seed-parallel.txt"
+        if ($LASTEXITCODE -ne 0) { throw "Could not stage seed parallel probe commit." }
+        & git -C $MainRoot commit -m "test: advance master for parallel lite refresh" *> $null
+        if ($LASTEXITCODE -ne 0) { throw "Could not create seed parallel probe commit." }
+        $targetMasterCommit = (& git -C $MainRoot rev-parse HEAD).Trim()
+
+        $refreshInvocations += Start-E2EHelperAtRoot -Root $worktreeA -BranchName $nameA -Action "refresh-dev-branch-lite" -LogPrefix "seed-parallel-refresh-a"
+        $refreshInvocations += Start-E2EHelperAtRoot -Root $worktreeB -BranchName $nameB -Action "refresh-dev-branch-lite" -LogPrefix "seed-parallel-refresh-b"
+        foreach ($invocation in $refreshInvocations) {
+            Complete-E2EHelperProcess -Invocation $invocation -TimeoutSeconds 7200 | Out-Null
+        }
+        $liteRefreshConcurrent = Test-E2EInvocationOverlap -Invocations $refreshInvocations
+        if (-not $liteRefreshConcurrent) {
+            throw "Lite refresh invocations did not overlap."
+        }
+        Assert-E2ELiteRefreshDidNotEnterSourceSync -Invocations $refreshInvocations
+        $stateA = Get-E2EBranchStateAtRoot -Root $worktreeA -Name $nameA
+        $stateB = Get-E2EBranchStateAtRoot -Root $worktreeB -Name $nameB
+        foreach ($stateRecord in @($stateA, $stateB)) {
+            if ([string]$stateRecord.value.lastRefreshMode -ne "lite" -or [string]$stateRecord.value.lastRefreshMasterCommit -cne $targetMasterCommit) {
+                throw "Parallel lite refresh did not record the exact target master SHA."
+            }
+        }
+        $seedAfter = (Get-E2ESeedManifest -MainRoot $MainRoot).value
+        $sourceAfter = Get-E2ESourceFileObservation -MainRoot $MainRoot
+        if ([string]$seedAfter.syncId -cne [string]$seedBefore.syncId -or [string]$seedAfter.artifactSha256 -cne [string]$seedBefore.artifactSha256) {
+            throw "Lite refresh unexpectedly changed the seed."
+        }
+        if (($sourceBefore | ConvertTo-Json -Compress) -cne ($sourceAfter | ConvertTo-Json -Compress)) {
+            throw "Lite refresh changed the observed source infobase artifact metadata."
+        }
+
+        return [ordered]@{
+            schemaVersion = 1
+            testFixture = $false
+            status = "passed"
+            seedSyncId = [string]$seedBefore.syncId
+            seedArtifactKind = [string]$seedBefore.artifactKind
+            seedArtifactSha256 = [string]$seedBefore.artifactSha256
+            seedBaselineHash = [string]$seedBefore.baselineHash
+            seedBaselineCount = [int]$seedBefore.baselineCount
+            seedPreservedByLiteRefresh = $true
+            sourceObservationPreservedByLiteRefresh = $true
+            liteRefreshSourceCallCount = 0
+            branchRuntimeConcurrent = $branchRuntimeConcurrent
+            liteRefreshConcurrent = $liteRefreshConcurrent
+            targetMasterCommit = $targetMasterCommit
+            branchA = [ordered]@{
+                branch = $branchA; worktreePath = $worktreeA; infoBasePath = [string]$stateA.value.devBranchInfoBasePath
+                seedSyncId = [string]$stateA.value.branchSeedSyncId; refreshMasterCommit = [string]$stateA.value.lastRefreshMasterCommit
+                baselineCacheStatus = [string]$stateA.value.eventLogBaselineCacheStatus
+            }
+            branchB = [ordered]@{
+                branch = $branchB; worktreePath = $worktreeB; infoBasePath = [string]$stateB.value.devBranchInfoBasePath
+                seedSyncId = [string]$stateB.value.branchSeedSyncId; refreshMasterCommit = [string]$stateB.value.lastRefreshMasterCommit
+                baselineCacheStatus = [string]$stateB.value.eventLogBaselineCacheStatus
+            }
+            capturedAt = [DateTime]::UtcNow.ToString("o")
+        }
+    } finally {
+        foreach ($spec in @(
+            [pscustomobject]@{ root = $worktreeA; name = $nameA; branch = $branchA },
+            [pscustomobject]@{ root = $worktreeB; name = $nameB; branch = $branchB }
+        )) {
+            if (Test-Path -LiteralPath $spec.root -PathType Container) {
+                try {
+                    Invoke-E2EHelperAtRoot -Root $spec.root -BranchName $spec.name -Action "close-dev-branch" -TimeoutSeconds 1800 -LogPrefix ("seed-parallel-close-" + $spec.name) -AdditionalArguments @("-AllowUnverifiedClose") | Out-Null
+                } catch {
+                    $cleanupErrors.Add("$($spec.branch): $($_.Exception.Message)") | Out-Null
+                    & git -C $MainRoot worktree remove --force $spec.root *> $null
+                }
+            }
+            & git -C $MainRoot branch -D $spec.branch *> $null
+        }
+        & git -C $MainRoot checkout $masterBranch *> $null
+        if ($masterAfterSync) {
+            & git -C $MainRoot merge-base --is-ancestor $masterAfterSync HEAD *> $null
+            if ($LASTEXITCODE -eq 0) {
+                & git -C $MainRoot reset --hard $masterAfterSync *> $null
+            } else {
+                $cleanupErrors.Add("Refusing to reset unexpected $masterBranch history to $masterAfterSync.") | Out-Null
+            }
+        }
+        & git -C $MainRoot worktree prune *> $null
+        if ($cleanupErrors.Count -gt 0) {
+            throw "RELEASE_E2E_SEED_CLEANUP_FAILED: $($cleanupErrors -join '; ')"
+        }
+    }
+}
+
 $branch = (& git -C $worktreePath branch --show-current).Trim()
 if ($LASTEXITCODE -ne 0 -or $branch -notlike "itldev/*") { throw "E2E worktree must be an itldev/* Git worktree: $worktreePath" }
 $unsafeActionProtectionState = Assert-E2EUnsafeActionProtectionConfirmed
@@ -618,7 +955,7 @@ $helperSha256 = Get-E2EFileSha256 -Path $HelperPath
 $projectConfigSha256 = Get-E2EFileSha256 -Path (Join-Path $worktreePath ".agent-1c\project.json")
 $stageModuleRoot = Join-Path $PSScriptRoot "release-e2e"
 . (Join-Path $stageModuleRoot "common.ps1")
-foreach ($stageModule in @("config-cadence.ps1", "config-roundtrip.ps1", "extension-smoke.ps1", "ondemand-mcp.ps1", "result-cleanup.ps1")) {
+foreach ($stageModule in @("seed-parallel.ps1", "config-cadence.ps1", "config-roundtrip.ps1", "extension-smoke.ps1", "ondemand-mcp.ps1", "result-cleanup.ps1")) {
     . (Join-Path $stageModuleRoot $stageModule)
 }
 
@@ -798,6 +1135,68 @@ if (-not $checkpoint) {
 
 try {
     [void](Get-E2EState)
+    if (-not (Test-E2EStagePassed -Name "seed-parallel")) {
+        Set-E2EStageStatus -Name "seed-parallel" -Status "running"
+        $executedStages += "seed-parallel"
+        try {
+            if ($seedParallelTestFixture) {
+                $seedParallelEvidence = [ordered]@{
+                    schemaVersion = 1
+                    testFixture = $true
+                    status = "passed"
+                    seedSyncId = "test-fixture"
+                    seedArtifactKind = "file-1cd"
+                    seedArtifactSha256 = ("0" * 64)
+                    seedBaselineHash = ("0" * 64)
+                    seedBaselineCount = 1
+                    seedPreservedByLiteRefresh = $true
+                    sourceObservationPreservedByLiteRefresh = $true
+                    liteRefreshSourceCallCount = 0
+                    branchRuntimeConcurrent = $true
+                    liteRefreshConcurrent = $true
+                    targetMasterCommit = ("1" * 40)
+                    branchA = [ordered]@{ branch = "itldev/test-a"; worktreePath = "test-a"; infoBasePath = "base-a"; seedSyncId = "test-fixture"; refreshMasterCommit = ("1" * 40); baselineCacheStatus = "seeded" }
+                    branchB = [ordered]@{ branch = "itldev/test-b"; worktreePath = "test-b"; infoBasePath = "base-b"; seedSyncId = "test-fixture"; refreshMasterCommit = ("1" * 40); baselineCacheStatus = "seeded" }
+                    capturedAt = [DateTime]::UtcNow.ToString("o")
+                }
+            } else {
+                $mainRoot = [string](Get-E2EState).value.mainWorktreePath
+                if (-not $mainRoot -or -not (Test-Path -LiteralPath $mainRoot -PathType Container)) {
+                    throw "RELEASE_E2E_SEED_MAIN_WORKTREE_MISSING: $mainRoot"
+                }
+                $seedParallelEvidence = Invoke-E2ESeedParallelProof -MainRoot ([IO.Path]::GetFullPath($mainRoot))
+            }
+            if ([string]$seedParallelEvidence.status -ne "passed" -or
+                [string]$seedParallelEvidence.seedArtifactKind -ne "file-1cd" -or
+                -not [bool]$seedParallelEvidence.seedPreservedByLiteRefresh -or
+                -not [bool]$seedParallelEvidence.sourceObservationPreservedByLiteRefresh -or
+                [int]$seedParallelEvidence.liteRefreshSourceCallCount -ne 0 -or
+                -not [bool]$seedParallelEvidence.branchRuntimeConcurrent -or
+                -not [bool]$seedParallelEvidence.liteRefreshConcurrent -or
+                [string]$seedParallelEvidence.branchA.seedSyncId -cne [string]$seedParallelEvidence.branchB.seedSyncId -or
+                [string]$seedParallelEvidence.branchA.refreshMasterCommit -cne [string]$seedParallelEvidence.targetMasterCommit -or
+                [string]$seedParallelEvidence.branchB.refreshMasterCommit -cne [string]$seedParallelEvidence.targetMasterCommit -or
+                [string]$seedParallelEvidence.branchA.infoBasePath -ceq [string]$seedParallelEvidence.branchB.infoBasePath -or
+                [string]$seedParallelEvidence.branchA.baselineCacheStatus -ne "seeded" -or
+                [string]$seedParallelEvidence.branchB.baselineCacheStatus -ne "seeded") {
+                throw "Release E2E seed-parallel evidence is incomplete."
+            }
+            [IO.File]::WriteAllText(
+                $seedParallelEvidencePath,
+                (($seedParallelEvidence | ConvertTo-Json -Depth 10) + [Environment]::NewLine),
+                [Text.UTF8Encoding]::new($false)
+            )
+            Set-E2EStageStatus -Name "seed-parallel" -Status "passed" -EvidencePath $seedParallelEvidencePath
+        } catch {
+            Set-E2EStageStatus -Name "seed-parallel" -Status "failed" -ErrorText $_.Exception.Message
+            throw
+        }
+    } else {
+        $resumedStages += "seed-parallel"
+        Set-E2EStageReused -Name "seed-parallel" -Reason $(if ($crossReleaseReuse) { "exact stage fingerprint across workflow release" } else { "same release checkpoint" })
+        $seedParallelEvidence = Get-Content -LiteralPath $seedParallelEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+
     if (-not (Test-E2EStagePassed -Name "config-cadence")) {
         if ($checkpoint["stages"].Contains("config-cadence")) {
             Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["baseline"] -StateFiles $checkpoint["stateFiles"]["baseline"]
@@ -1278,6 +1677,14 @@ try {
         expectedComment = $expectedComment
         configLoadMode = "partial"
         configCadenceEvidencePath = $configCadenceEvidencePath
+        seedParallelEvidencePath = $seedParallelEvidencePath
+        seedParallelTestFixture = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.testFixture } else { $false })
+        seedParallelSyncId = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.seedSyncId } else { "" })
+        seedParallelTargetMasterCommit = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.targetMasterCommit } else { "" })
+        seedParallelBranchRuntimeConcurrent = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.branchRuntimeConcurrent } else { $false })
+        seedParallelLiteRefreshConcurrent = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.liteRefreshConcurrent } else { $false })
+        seedParallelLiteRefreshSourceCallCount = $(if ($seedParallelEvidence) { [int]$seedParallelEvidence.liteRefreshSourceCallCount } else { -1 })
+        seedParallelBaselineCount = $(if ($seedParallelEvidence) { [int]$seedParallelEvidence.seedBaselineCount } else { 0 })
         roundtripEvidencePath = $roundtripEvidencePath
         roundtripParentConfigurationsPresent = $(if ($roundtripEvidence) { [bool]$roundtripEvidence.parentConfigurationsPresentInDump } else { $false })
         extensionSmokeEvidencePath = $extensionSmokeEvidencePath

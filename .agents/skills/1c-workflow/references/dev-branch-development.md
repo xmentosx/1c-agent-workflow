@@ -20,6 +20,8 @@ vibecoding1c-mcp helper action            Настроить, запустить
 update-base helper action                  Обновить базу ветки без тестов.
 verify helper action                       Совместимый alias для /itl-check.
 /itl-refresh                      Обновить ветку разработки свежим master.
+/itl-sync-master                  Обновить master и принудительно пересоздать latest-only seed.
+/itl-refresh-lite                 Обновить ветку из текущего master без обращения к source и seed.
 /itl-result                       Выгрузить CF/CFE по текущей ветке.
 ```
 

@@ -144,9 +144,17 @@ the unchanged qualified distribution and must retain the recorded EPF SHA-256.
 The lock URL remains a contract only until a separate publication step changes
 `publicationStatus`; this checklist does not assert that the asset exists.
 
+The real file-infobase release gate must rebuild the single latest seed, restore
+two disposable branches from that same seed under overlapping read leases,
+advance installed-project `master` with a controlled commit, and run two
+overlapping `refresh-dev-branch-lite` operations. Evidence must record the same
+exact target SHA in both branches, unchanged seed/source observations, seeded
+event-log baselines without a full branch-log scan, distinct branch infobases,
+and successful cleanup while retaining only the current seed.
+
 ## Resume after interruption
 
-The runner checkpoints `config-cadence`, `config-roundtrip`, `extension-smoke`,
+The runner checkpoints `seed-parallel`, `config-cadence`, `config-roundtrip`, `extension-smoke`,
 `ondemand-mcp`, verification refresh and `result-cleanup` under the ignored branch-local
 `.agent-1c/runs/release-e2e/<branch>/` directory. Baseline and post-config `.dt`
 snapshots, state, `.dev.env`, evidence and expected HEAD are SHA-checked.

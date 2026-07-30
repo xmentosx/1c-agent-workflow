@@ -9,11 +9,11 @@ Use this reference for creating, refreshing, switching, listing, or maintaining 
 - Stop on unexpected dirty tracked Git state before worktree creation, legacy switching, copying bases, dumping config files, refresh, or advanced close. Result export is the exception: it accepts the exact dirty working tree covered by fresh verification and records working-tree provenance in its manifest.
 - Worktree-created `itldev/*` lifecycle commands must run from the branch worktree unless the helper explicitly delegates to the main worktree.
 - Existing branch state remains authoritative: worktrees previously created under `<project-folder>-worktrees/<branch>` are resumed in place and are not moved to the flat layout.
-- Runtime folders such as `.agent-1c/dev-branches/`, `.agent-1c/event-log-baselines/`, `.agent-1c/event-log-signature-cache/`, `.agent-1c/infobases/`, `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/tools/`, `.codex/config.toml`, and `.kilo/kilo.json*` are local ignored state.
+- Runtime folders such as `.agent-1c/dev-branches/`, `.agent-1c/branch-seed/`, `.agent-1c/event-log-baselines/`, `.agent-1c/event-log-signature-cache/`, `.agent-1c/infobases/`, `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/tools/`, `.codex/config.toml`, and `.kilo/kilo.json*` are local ignored state.
 
 ## Lifecycle Operation Lock
 
-Every mutating helper action holds `.agent-1c/locks/lifecycle.lock` in its current worktree and publishes phase/status evidence in the ignored `lifecycle-operation.json`. A second mutating action in the same worktree fails before mutation with `LIFECYCLE_OPERATION_CONFLICT`; use `status` to see its action, PID, phase and state path. Ordinary actions in different development worktrees may run concurrently. `refresh-dev-branch`, `close-dev-branch`, and a delegated `sync-master` hold both the branch and main-worktree locks in canonical path order, so master cannot change midway through those operations.
+Every mutating helper action holds `.agent-1c/locks/lifecycle.lock` in its current worktree and publishes phase/status evidence in the ignored `lifecycle-operation.json`. A second mutating action in the same worktree fails before mutation with `LIFECYCLE_OPERATION_CONFLICT`; use `status` to see its action, PID, phase and state path. Ordinary actions in different development worktrees may run concurrently. `refresh-dev-branch`, `close-dev-branch`, and a delegated `sync-master` hold both the branch and main-worktree locks in canonical path order. `refresh-dev-branch-lite` holds only its branch lock. Branch creation releases the main lock after its short Git worktree phase and continues the long seed restore under the new worktree lock.
 
 `help`, `status`, `list-dev-branches`, `validate`, `check-tools`, platform/publication detection and MCP status actions do not acquire the lifecycle lock. A fresh helper process after workflow copy or branch merge continues the exact operation ID while its parent owns the locks; forged or stale continuation arguments fail with `LIFECYCLE_OPERATION_CONTINUATION_INVALID`. A leftover JSON record without a held file lock is shown as `orphaned` and does not require manual deletion. There is no force-unlock command.
 
@@ -27,9 +27,9 @@ Use the monitored launcher by default when `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_
 2. Sync/checkout `master` in the main worktree and pull `--ff-only` when a remote/upstream exists.
 3. Create `itldev/<safe-dev-branch-name>` in a sibling worktree unless explicit branch/worktree paths are supplied. In a new OpenCode project, the managed plugin asks the native workspace adapter to create that exact branch, waits for checkout readiness, and lets the helper adopt the existing worktree without issuing another `git worktree add`.
 4. Copy `.dev.env` into the new worktree.
-5. Copy the source infobase into the new worktree.
-   - File base: recursive directory copy under `.agent-1c/infobases/dev-branches` unless explicitly overridden.
-   - Server base: run configured `serverBaseCopyScript`; do not invent server copy commands.
+5. Restore the branch infobase from the single compatible latest-only seed. Never fall back to a direct source copy.
+   - File base: copy only the closed seed `1Cv8.1CD`; raw `1Cv8Log` is never copied.
+   - Server base: restore the seed DT through `serverBaseCopyScript` schema v2 capabilities `restore-seed` and `event-log-baseline`; legacy providers fail with `SERVER_SEED_PROVIDER_UPGRADE_REQUIRED`.
    - The `ConfigDumpInfo.xml` committed in `master` is the initial synchronization cursor for this one-time source-base copy. After creation, the development worktree and its copied infobase own that cursor; later master refreshes must not replace it.
 6. If `sourceUsesRepository=true`, unbind the development branch copy from 1C configuration repository storage without repository parameters.
 7. Resolve unsafe-action protection immediately after repository unbind. Reuse a context-matching source confirmation from the main worktree; otherwise run the visible Russian confirmation/Configurator loop for the copied base. Persist `unsafe-action-protection-resolved` before continuing so resume never recopies the base or repeats a proven answer.
@@ -37,7 +37,7 @@ Use the monitored launcher by default when `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_
 9. Save branch state to `.agent-1c/dev-branches/<safe-dev-branch-name>.json` inside the worktree, including `createdWithWorktree`, `worktreePath`, `mainWorktreePath`, launcher metadata, `devBranchKind`, publication status fields, legacy MCP migration fields, and Vanessa Automation verification fields. Provider-marked OpenCode branches are the only exception: their canonical state and non-recoverable runtime live below the main worktree's ignored `.agent-1c`, and their adopted Git worktree is locked after validation.
 10. Activate branch context in `.dev.env`, inherit compatible ROCTUP/Vanessa artifacts, and register the stable `itl-roctup-data` and `itl-vanessa-ui` stdio facades with compact `resolve_tool`/`call_tool` surfaces for the active client. Neither backend nor 1C starts until the first inner call. If `master` has a complete vibecoding1c MCP selection, copy and rematerialize it for the new worktree.
 11. If web publication is enabled, run the helper-owned publication cycle: automatic publication only when `WEB_PUBLISH_AUTO=true`, otherwise manual URL entry or skip. Best-effort legacy branch Data MCP connects only after a publication URL exists.
-12. Build the event-log baseline and store its reader/cache/count/duration evidence.
+12. Install the source error-signature baseline stored beside the seed. The new branch starts with its own clean event log; no raw source log files are transferred.
 13. Persist `initializationStatus=enterprise-normalization-pending`, then run Enterprise with the bundled auto-update EPF against the copied branch infobase only. Save `enterpriseNormalizationStatus`, reason, error, time, EPF and log evidence; set `initializationStatus=ready` only after success.
 14. Report branch, worktree/base paths, launcher, MCP/publication state, event-log scan evidence, and Enterprise normalization state.
 15. For an extension branch, run the separately transactional initialization phase inside the new worktree when `ExtensionInitMode`, `ExtensionName`, and optional CFE path were collected in chat. If they are explicitly unknown, persist `extensionInitializationStatus=pending`; every development action blocks with `EXTENSION_INIT_REQUIRED` until the agent collects the values on first entry and completes initialization. Never hand a PowerShell command to the developer.
@@ -90,13 +90,15 @@ Development branch changes must never be loaded directly into the source infobas
 Goal: refresh the current development branch from fresh `master` and source state.
 
 1. Require an active `itldev/*` worktree and clean tracked Git state.
-2. Refresh `master` from storage/source through the main worktree.
+2. Refresh `master` from storage/source through the main worktree and reuse a compatible seed. Explicit `sync-master` always rebuilds the seed so its data and baseline are current.
 3. Merge fresh `master` into the branch while retaining every `ConfigDumpInfo.xml` version from the branch head. Cursor-only conflicts are resolved automatically in favor of the branch; any other merge conflict remains fail-closed for normal resolution.
 4. If workflow helper scripts changed, re-exec the helper in the correct phase.
 5. Regenerate context-specific Kilo wrappers if workflow files changed.
 6. Update the branch infobase from changed files.
 7. Keep the stable facade config and let the next tool call create fresh backend instances after a real load.
 8. Re-check whether verification is fresh; stale or unknown verification must be handled before result export.
+
+`refresh-dev-branch-lite` executes steps 1 and 3–8 against the exact current `master` SHA. It never updates or reads source and never touches the seed. For concurrent branch updates, run one `sync-master`, then run `refresh-dev-branch-lite` in each branch worktree.
 
 ## CLOSE_DEV_BRANCH
 

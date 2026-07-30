@@ -989,7 +989,14 @@ function Ensure-DevBranchEnterpriseNormalized {
     return (Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default ""))
 }
 
-function Dump-ConfigToFiles {
+function Dump-ConfigToFilesFromInfoBase {
+    param(
+        [string]$InfoBasePath,
+        [ValidateSet("file", "server")]
+        [string]$InfoBaseKind,
+        [switch]$IncludeRepositoryConnection
+    )
+
     $exportPath = Get-ExportPath
     $absoluteExportPath = Assert-ExportPathInsideProject $exportPath
     $transaction = Initialize-Agent1cProjectTransactionSlot -Kind "c" -Target $absoluteExportPath
@@ -1007,14 +1014,14 @@ function Dump-ConfigToFiles {
     try {
         New-Item -ItemType Directory -Force -Path $stagedPath | Out-Null
         $designerArgs = @()
-        if (Get-SourceUsesRepository) {
+        if ($IncludeRepositoryConnection) {
             $designerArgs += New-RepositoryConnectionArgs
         }
         $designerArgs += @("/DumpConfigToFiles", $stagedPath, "-Format", "Hierarchical")
 
         Invoke-Designer `
-            -InfoBasePath (Get-SourceInfoBasePath) `
-            -InfoBaseKind (Get-InfoBaseKind) `
+            -InfoBasePath $InfoBasePath `
+            -InfoBaseKind $InfoBaseKind `
             -DesignerArgs $designerArgs | Out-Null
 
         $dumpState = Get-DesignerDumpArtifactState -Path $stagedPath
@@ -1057,6 +1064,13 @@ function Dump-ConfigToFiles {
         Write-Warning "1C configuration dump failed. Diagnostic staging was preserved: $transactionRoot"
         throw "1C configuration dump failed. $originalError Diagnostic staging: $transactionRoot"
     }
+}
+
+function Dump-ConfigToFiles {
+    return (Dump-ConfigToFilesFromInfoBase `
+        -InfoBasePath (Get-SourceInfoBasePath) `
+        -InfoBaseKind (Get-InfoBaseKind) `
+        -IncludeRepositoryConnection:(Get-SourceUsesRepository))
 }
 
 function Dump-ExtensionToFiles {
@@ -3937,6 +3951,9 @@ function Write-DevBranchRunUserReport {
     Add-RunUserReportLine -Lines $lines -Label "Worktree разработки" -Value (Get-StateValue -State $State -Name "worktreePath" -Default $AdvisoryRoot)
     Add-RunUserReportLine -Lines $lines -Label "Информационная база" -Value (Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
     if ($isRefresh) {
+        $refreshMode = [string](Get-StateValue -State $State -Name "lastRefreshMode" -Default "full")
+        Add-RunUserReportLine -Lines $lines -Label "Режим" -Value $(if ($refreshMode -eq "lite") { "облегчённый, без исходной базы и seed" } else { "полный, с синхронизацией master" })
+        Add-RunUserReportLine -Lines $lines -Label "Использованный коммит master" -Value (Get-StateValue -State $State -Name "lastRefreshMasterCommit" -Default "")
         Add-RunUserReportLine -Lines $lines -Label "Коммит ветки" -Value (Get-StateValue -State $LoadResult -Name "currentCommit" -Default (Get-StateValue -State $State -Name "lastConfigBaseUpdatedCommit" -Default ""))
         $configurationUpdate = if ($null -ne $LoadResult -and [bool](Get-StateValue -State $LoadResult -Name "loaded" -Default $false)) { "выполнено" } else { "не требовалось" }
         Add-RunUserReportLine -Lines $lines -Label "Обновление конфигурации базы" -Value $configurationUpdate
@@ -5237,12 +5254,31 @@ function Initialize-Project {
         Update-BaseFromRepository
         Set-RunStage -Stage "init.dump-config" -Detail "Dumping 1C configuration files"
         $dumpResult = Dump-ConfigToFiles
+        $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+        Ensure-BranchSeed `
+            -Policy "Rebuild" `
+            -ConfigurationFingerprint $configSource.fingerprint `
+            -ConfigurationFileCount $configSource.fileCount | Out-Null
+        $dumpResult = [pscustomobject]@{
+            exportPath = Get-ExportPath
+            absoluteExportPath = Assert-ExportPathInsideProject (Get-ExportPath)
+            incremental = $false
+            logPath = $script:LastLogPath
+        }
     } else {
         $dumpResult = [pscustomobject]@{
             exportPath = Get-ExportPath
             absoluteExportPath = Assert-ExportPathInsideProject (Get-ExportPath)
             incremental = $true
             logPath = ""
+        }
+        $existingSeed = Read-BranchSeedManifest -AllowMissing
+        if ($null -eq $existingSeed -or -not (Test-BranchSeedArtifactReady -Manifest $existingSeed)) {
+            $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+            Ensure-BranchSeed `
+                -Policy "Rebuild" `
+                -ConfigurationFingerprint $configSource.fingerprint `
+                -ConfigurationFileCount $configSource.fileCount | Out-Null
         }
     }
     $dumpMessage = if ($sourceUsesRepository) { "sync: export 1C configuration from repository" } else { "sync: export 1C configuration from source infobase" }
@@ -5281,7 +5317,11 @@ function Initialize-Project {
 }
 
 function Sync-Master {
-    param([switch]$NoDelegate)
+    param(
+        [switch]$NoDelegate,
+        [ValidateSet("EnsureCompatible", "Rebuild")]
+        [string]$SeedPolicy = "Rebuild"
+    )
 
     Set-RunStage -Stage "master-sync" -Detail "Synchronizing the master worktree."
     Write-Section "Sync master"
@@ -5299,7 +5339,7 @@ function Sync-Master {
                 Restart-Agent1cFromMainWorktreeIfNeeded -MainWorktreePath $mainWorktreePath
                 Write-Host "Syncing master in main worktree: $mainWorktreePath"
                 Invoke-InProjectContext -Root $mainWorktreePath -ScriptBlock {
-                    Sync-Master -NoDelegate
+                    Sync-Master -NoDelegate -SeedPolicy $SeedPolicy
                 }
                 return
             }
@@ -5311,10 +5351,38 @@ function Sync-Master {
     Clear-DevBranchContext
     $sourceUsesRepository = Get-SourceUsesRepository
     Update-BaseFromRepository
-    $dumpResult = Dump-ConfigToFiles
+    if ($SeedPolicy -eq "Rebuild" -and (Get-InfoBaseKind) -eq "file") {
+        $seed = Ensure-BranchSeed -Policy "Rebuild" -ConfigurationFingerprint "" -ConfigurationFileCount 0
+        $dumpResult = [pscustomobject]@{
+            exportPath = Get-ExportPath
+            absoluteExportPath = Assert-ExportPathInsideProject (Get-ExportPath)
+            incremental = $false
+            logPath = $script:LastLogPath
+        }
+    } else {
+        $dumpResult = Dump-ConfigToFiles
+        $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+        $seed = Ensure-BranchSeed `
+            -Policy $SeedPolicy `
+            -ConfigurationFingerprint $configSource.fingerprint `
+            -ConfigurationFileCount $configSource.fileCount
+    }
     $dumpMessage = if ($sourceUsesRepository) { "sync: refresh 1C configuration from repository" } else { "sync: refresh 1C configuration from source infobase" }
     Commit-IfChanged -Message $dumpMessage -PathSpec @($dumpResult.exportPath) -ForceAdd | Out-Null
     Sync-KiloItlCommandSurface
+    Write-Host "Branch seed: $($seed.artifactPath)"
+    Write-Host "Branch seed sync ID: $($seed.syncId)"
+    $report = [System.Collections.Generic.List[string]]::new()
+    $report.Add("## Синхронизация master и seed")
+    Add-RunUserReportLine -Lines $report -Label "Результат" -Value "успешно"
+    Add-RunUserReportLine -Lines $report -Label "Коммит master" -Value (Get-CurrentCommit)
+    Add-RunUserReportLine -Lines $report -Label "Seed sync ID" -Value ([string]$seed.syncId)
+    Add-RunUserReportLine -Lines $report -Label "Seed" -Value ([string]$seed.artifactPath)
+    Add-RunUserReportLine -Lines $report -Label "Тип seed" -Value ([string]$seed.artifactKind)
+    Add-RunUserReportLine -Lines $report -Label "Fingerprint конфигурации" -Value ([string]$seed.configurationFingerprint)
+    Add-RunUserReportLine -Lines $report -Label "Baseline-сигнатуры" -Value ([int]$seed.baselineCount)
+    Add-RunUserReportLine -Lines $report -Label "Состояние seed" -Value ([string]$seed.status)
+    Write-AndSetRunUserReport -Lines $report
 }
 
 function Get-ConfigDumpInfoRepoPathsAtCommit {
@@ -5404,7 +5472,8 @@ function Initialize-DevBranchRuntime {
         [string]$WorkspaceProvider = "",
         [string]$ClientWorkspaceId = "",
         [string]$RuntimeRoot = "",
-        [bool]$WorktreeLocked = $false
+        [bool]$WorktreeLocked = $false,
+        [object]$BranchSeedLease = $null
     )
 
     $kind = Get-InfoBaseKind
@@ -5547,6 +5616,7 @@ function Initialize-DevBranchRuntime {
     }
 
     $copyPerformed = $false
+    $seedManifest = $null
     try {
         if ($currentStatus -eq "enterprise-normalization-pending") {
             Write-Host "Resuming final Enterprise normalization for existing development branch copy: $DevBranchInfoBasePath"
@@ -5587,27 +5657,20 @@ function Initialize-DevBranchRuntime {
                 }
                 Write-Host "Using existing development branch infobase copy: $DevBranchInfoBasePath"
             } else {
-                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $DevBranchInfoBasePath) | Out-Null
-                Copy-Item -LiteralPath $source -Destination $DevBranchInfoBasePath -Recurse
+                $seedManifest = Restore-DevBranchFromSeed `
+                    -DevBranchName $DevBranchName `
+                    -DevBranchInfoBasePath $DevBranchInfoBasePath `
+                    -ExistingLease $BranchSeedLease
                 $copyPerformed = $true
             }
         } else {
             if (@("infobase-copied", "repository-unbound", "launcher-registered") -contains $currentStatus) {
                 Write-Host "Using existing development branch infobase copy: $DevBranchInfoBasePath"
             } else {
-                $copyScript = Get-ConfigValue -Path "serverBaseCopyScript" -Default ""
-                if (-not $copyScript) {
-                    throw "serverBaseCopyScript is required for server infobase copies."
-                }
-                $copyScriptPath = Resolve-ProjectPath $copyScript
-                & powershell -ExecutionPolicy Bypass -File $copyScriptPath `
-                    -ProjectRoot $script:ProjectRoot `
+                $seedManifest = Restore-DevBranchFromSeed `
                     -DevBranchName $DevBranchName `
-                    -SourceInfoBasePath $source `
-                    -DevBranchInfoBasePath $DevBranchInfoBasePath
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Server infobase copy script failed with exit code $LASTEXITCODE"
-                }
+                    -DevBranchInfoBasePath $DevBranchInfoBasePath `
+                    -ExistingLease $BranchSeedLease
                 $copyPerformed = $true
             }
         }
@@ -5625,6 +5688,13 @@ function Initialize-DevBranchRuntime {
             }
             $stateHash["designerInvoked"] = $false
             $stateHash["enterpriseInvoked"] = $false
+            $stateHash["branchSeedSourceKey"] = [string]$seedManifest.sourceKey
+            $stateHash["branchSeedSyncId"] = [string]$seedManifest.syncId
+            $stateHash["branchSeedArtifactKind"] = [string]$seedManifest.artifactKind
+            $stateHash["branchSeedConfigurationFingerprint"] = [string]$seedManifest.configurationFingerprint
+            $stateHash["branchSeedBaselinePath"] = [string]$seedManifest.baselinePath
+            $stateHash["branchSeedBaselineHash"] = [string]$seedManifest.baselineHash
+            $stateHash["branchSeedBaselineCount"] = [int]$seedManifest.baselineCount
         }
         $statePath = Save-DevBranchInitializationState -SafeDevBranchName $SafeDevBranchName -State $stateHash -Status "infobase-copied" -ProjectRootOverride $stateProjectRoot
         $currentStatus = "infobase-copied"
@@ -5691,7 +5761,12 @@ function Initialize-DevBranchRuntime {
                 Write-Host "Publication status: $savedPublicationStatus"
             }
         }
-        $state = Initialize-DevBranchEventLogBaseline -State $state
+        $seedBaselinePath = if ($seedManifest) {
+            [string]$seedManifest.baselinePath
+        } else {
+            [string](Get-StateValue -State $state -Name "branchSeedBaselinePath" -Default "")
+        }
+        $state = Initialize-DevBranchEventLogBaseline -State $state -SeedBaselinePath $seedBaselinePath
         $pendingHash = ConvertTo-Agent1cHashtable $state
         [void]$pendingHash.Remove("statePath")
         [void]$pendingHash.Remove("stateProjectRoot")
@@ -6002,6 +6077,57 @@ function Get-ResumableDevBranchState {
     return $state
 }
 
+function Initialize-DevBranchRuntimeAction {
+    Require-Value "DevBranchName" $DevBranchName | Out-Null
+    Require-Value "DevBranch" $DevBranch | Out-Null
+    Require-Value "MainWorktreePath" $MainWorktreePath | Out-Null
+    $worktreePath = if ($DevBranchWorktreePath) {
+        Resolve-Agent1cFullPath -Path $DevBranchWorktreePath
+    } else {
+        $script:ProjectRoot
+    }
+    if ((Resolve-Agent1cFullPath -Path $script:ProjectRoot) -ne $worktreePath) {
+        throw "BRANCH_RUNTIME_WORKTREE_MISMATCH: projectRoot=$($script:ProjectRoot); worktree=$worktreePath"
+    }
+    Initialize-DevBranchRuntime `
+        -DevBranchKind $DevBranchKind `
+        -SafeDevBranchName (ConvertTo-SafeName $DevBranchName) `
+        -GitBranch $DevBranch `
+        -MainProjectRoot (Resolve-Agent1cFullPath -Path $MainWorktreePath) `
+        -WorktreePath $worktreePath `
+        -CreatedWithWorktree $true
+}
+
+function Invoke-DevBranchRuntimeAfterGitPhase {
+    param(
+        [ValidateSet("configuration", "extension")]
+        [string]$DevBranchKind,
+        [string]$GitBranch,
+        [string]$MainProjectRoot,
+        [string]$WorktreePath,
+        [object]$BranchSeedLease
+    )
+
+    try {
+        Set-RunStage -Stage "branch.git-phase-complete" -Detail "Git worktree phase completed; releasing the main lifecycle lock before branch runtime initialization."
+        Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
+        Exit-Agent1cLifecycleOperation
+        Invoke-InProjectContext -Root $WorktreePath -ScriptBlock {
+            Enter-Agent1cLifecycleOperation -RequestedAction "initialize-dev-branch-runtime"
+            Initialize-DevBranchRuntime `
+                -DevBranchKind $DevBranchKind `
+                -SafeDevBranchName (ConvertTo-SafeName $DevBranchName) `
+                -GitBranch $GitBranch `
+                -MainProjectRoot $MainProjectRoot `
+                -WorktreePath $WorktreePath `
+                -CreatedWithWorktree $true `
+                -BranchSeedLease $BranchSeedLease
+        }
+    } finally {
+        $BranchSeedLease.Dispose()
+    }
+}
+
 function New-DevBranchCore {
     param(
         [ValidateSet("configuration", "extension")]
@@ -6019,6 +6145,14 @@ function New-DevBranchCore {
     Assert-CleanGit
     Assert-DevBranchUnsafeActionProtectionPromptAvailable
     Checkout-Master
+
+    $seedManifest = Read-BranchSeedManifest -AllowMissing
+    if ($null -eq $seedManifest) {
+        Write-Host "Legacy project has no branch seed. Running a compatible master sync before branch creation."
+        Sync-Master -NoDelegate -SeedPolicy "EnsureCompatible"
+    } else {
+        Assert-BranchSeedReady | Out-Null
+    }
 
     $mainProjectRoot = Get-MainWorktreePath
     $branchExists = Test-GitBranchExists -Branch $DevBranch
@@ -6045,15 +6179,13 @@ function New-DevBranchCore {
             Write-Host "Resuming development branch initialization: $DevBranch"
             Write-Host "Development branch worktree: $resumeWorktreePath"
             Copy-KiloProjectConfigToWorktree -MainProjectRoot $mainProjectRoot -WorktreePath $resumeWorktreePath
-            Invoke-InProjectContext -Root $resumeWorktreePath -ScriptBlock {
-                Initialize-DevBranchRuntime `
-                    -DevBranchKind $DevBranchKind `
-                    -SafeDevBranchName $safe `
-                    -GitBranch $DevBranch `
-                    -MainProjectRoot $mainProjectRoot `
-                    -WorktreePath $resumeWorktreePath `
-                    -CreatedWithWorktree $true
-            }
+            $seedLease = Open-BranchSeedLease -Mode read
+            Invoke-DevBranchRuntimeAfterGitPhase `
+                -DevBranchKind $DevBranchKind `
+                -GitBranch $DevBranch `
+                -MainProjectRoot $mainProjectRoot `
+                -WorktreePath $resumeWorktreePath `
+                -BranchSeedLease $seedLease
 
             if (-not $DeferHandoff) {
                 Write-DevBranchWorktreeOpenMessage -MainProjectPath $mainProjectRoot -WorktreePath $resumeWorktreePath
@@ -6077,15 +6209,13 @@ function New-DevBranchCore {
     Copy-DotEnvToWorktree -WorktreePath $worktreePath
     Copy-KiloProjectConfigToWorktree -MainProjectRoot $mainProjectRoot -WorktreePath $worktreePath
 
-    Invoke-InProjectContext -Root $worktreePath -ScriptBlock {
-        Initialize-DevBranchRuntime `
-            -DevBranchKind $DevBranchKind `
-            -SafeDevBranchName $safe `
-            -GitBranch $DevBranch `
-            -MainProjectRoot $mainProjectRoot `
-            -WorktreePath $worktreePath `
-            -CreatedWithWorktree $true
-    }
+    $seedLease = Open-BranchSeedLease -Mode read
+    Invoke-DevBranchRuntimeAfterGitPhase `
+        -DevBranchKind $DevBranchKind `
+        -GitBranch $DevBranch `
+        -MainProjectRoot $mainProjectRoot `
+        -WorktreePath $worktreePath `
+        -BranchSeedLease $seedLease
 
     if (-not $DeferHandoff) {
         Write-DevBranchWorktreeOpenMessage -MainProjectPath $mainProjectRoot -WorktreePath $worktreePath
@@ -6710,24 +6840,45 @@ function Update-DevBranchBase {
     }
 }
 
-function Refresh-DevBranch {
+function Invoke-RefreshDevBranchCore {
+    param(
+        [switch]$SynchronizeMaster,
+        [string]$OperationName
+    )
+
     $state = Read-DevBranchState -Name $DevBranchName
-    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "refresh-dev-branch"
-    Assert-DevBranchExtensionInitialized -State $state -Operation "refresh-dev-branch"
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation $OperationName
+    Assert-DevBranchExtensionInitialized -State $state -Operation $OperationName
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
 
     if ($LifecyclePhase -ne "post-merge") {
-        Set-RunStage -Stage "refresh.master" -Detail "Synchronizing master before refreshing the development branch."
         Assert-CleanGit
-        Sync-Master
+        if ($SynchronizeMaster) {
+            Set-RunStage -Stage "refresh.master" -Detail "Synchronizing master and ensuring a compatible branch seed."
+            Sync-Master -SeedPolicy "EnsureCompatible"
+        }
         if ((Get-CurrentBranch) -ne $state.devBranch) {
             Invoke-Git @("checkout", $state.devBranch)
         }
+        $masterRef = "refs/heads/$(Get-MasterBranch)"
+        $targetMasterCommit = (Get-GitOutput @("rev-parse", $masterRef)).Trim()
+        if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
+            throw "REFRESH_MASTER_COMMIT_INVALID: $targetMasterCommit"
+        }
+        Update-DevBranchState -State $state -Updates @{
+            pendingRefreshMasterCommit = $targetMasterCommit
+            pendingRefreshOperation = $OperationName
+        }
         Set-RunStage -Stage "refresh.merge" -Detail "Merging master into the development branch."
-        Merge-MasterPreservingBranchConfigDumpInfo
-        Restart-Agent1cAfterDevBranchMerge -Operation "refresh-dev-branch"
+        Merge-MasterPreservingBranchConfigDumpInfo -MasterBranch $targetMasterCommit
+        Restart-Agent1cAfterDevBranchMerge -Operation $OperationName
     }
 
+    $state = Read-DevBranchState -Name $DevBranchName
+    $targetMasterCommit = [string](Get-StateValue -State $state -Name "pendingRefreshMasterCommit" -Default "")
+    if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
+        throw "REFRESH_MASTER_COMMIT_MISSING: the exact master SHA was not preserved across the merge."
+    }
     Set-RunStage -Stage "refresh.load" -Detail "Updating the branch infobase after the merge."
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     $state = Invoke-DevBranchDefaultMcpSetup -State $state
@@ -6735,18 +6886,30 @@ function Refresh-DevBranch {
     $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
     Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
     $updates["lastRefreshAt"] = (Get-Date).ToString("o")
+    $updates["lastRefreshMasterCommit"] = $targetMasterCommit
+    $updates["lastRefreshMode"] = $(if ($SynchronizeMaster) { "full" } else { "lite" })
+    $updates["pendingRefreshMasterCommit"] = ""
+    $updates["pendingRefreshOperation"] = ""
     Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch was refreshed from master." -CurrentCommit $loadResult.currentCommit
     Update-DevBranchState -State $state -Updates $updates
     $updatedState = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "refresh-dev-branch"
-    Write-Host "Development branch refreshed from master: $($state.devBranch)"
+    Write-Host "Development branch refreshed from exact master commit: $targetMasterCommit"
     Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch configuration"
     if ((Get-DevBranchKind -State $state) -eq "extension") {
         Write-Host "Extension files were not loaded during refresh. Run update-dev-branch-base when you need to update the extension in the branch infobase."
     }
     Sync-KiloItlCommandSurface
-    Invoke-AiRules1cManagedMcpConfigReconcile -Operation "refresh-dev-branch MCP reconcile" | Out-Null
+    Invoke-AiRules1cManagedMcpConfigReconcile -Operation "$OperationName MCP reconcile" | Out-Null
     $updatedState = Read-DevBranchState -Name $DevBranchName
     Write-DevBranchRunUserReport -State $updatedState -AdvisoryRoot $script:ProjectRoot -Operation refreshed -LoadResult $loadResult
+}
+
+function Refresh-DevBranch {
+    Invoke-RefreshDevBranchCore -SynchronizeMaster -OperationName "refresh-dev-branch"
+}
+
+function Refresh-DevBranchLite {
+    Invoke-RefreshDevBranchCore -OperationName "refresh-dev-branch-lite"
 }
 
 function Dump-DevBranchExtension {
@@ -7966,6 +8129,7 @@ function Show-Help {
         Write-ItlActiveClientCommandText "  /itl-status"
         Write-ItlActiveClientCommandText "  /itl-new-config-branch <name>"
         Write-ItlActiveClientCommandText "  /itl-new-extension-branch <name>"
+        Write-ItlActiveClientCommandText "  /itl-sync-master"
         Write-ItlActiveClientCommandText "  /itl-update-workflow"
         Write-ItlActiveClientCommandText "  /itl-switch-client <client>"
         Write-ItlActiveClientCommandText "  /itl-litemode <mode>"
@@ -8065,14 +8229,16 @@ function Show-Help {
         } else {
             Write-ItlActiveClientCommandText "  настройка расширения при pending → quick-fix или direct full-cycle → /itl-check → /itl-result; восстанавливайте OpenSpec только для формального исследования или согласования."
         }
-        Write-ItlActiveClientCommandText "  используйте /itl-refresh, когда изменения master нужно перенести в эту ветку."
+        Write-ItlActiveClientCommandText "  используйте /itl-refresh для полного source → master → branch цикла; для параллельных веток сначала один /itl-sync-master, затем /itl-refresh-lite в каждой ветке."
         Write-Host ""
         Write-Host "Команды ITL в этом контексте:"
         Write-ItlActiveClientCommandText "  /itl"
         Write-ItlActiveClientCommandText "  /itl-status"
         Write-ItlActiveClientCommandText "  /itl-check"
         Write-ItlActiveClientCommandText "  /itl-verify-fix"
+        Write-ItlActiveClientCommandText "  /itl-sync-master"
         Write-ItlActiveClientCommandText "  /itl-refresh"
+        Write-ItlActiveClientCommandText "  /itl-refresh-lite"
         Write-ItlActiveClientCommandText "  /itl-result"
         Write-ItlActiveClientCommandText "  /itl-litemode <mode>"
         $inheritedPrimaryCommands = @()

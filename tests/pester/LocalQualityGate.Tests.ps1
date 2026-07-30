@@ -27,6 +27,9 @@ Describe "Local quality gate contract" {
         $text | Should -Match 'test-release-readiness\.ps1'
         $text | Should -Match 'release-context\.json'
         $text | Should -Match 'ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE'
+        $text | Should -Match 'seedParallelTestFixture'
+        $text | Should -Match 'seedParallelBranchRuntimeConcurrent'
+        $text | Should -Match 'seedParallelLiteRefreshSourceCallCount'
     }
 
     It "reuses exact or ancestor same-tree Full qualifications and checkpoints static proof before runtime" {

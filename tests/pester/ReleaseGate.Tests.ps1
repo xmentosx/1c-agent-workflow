@@ -79,7 +79,9 @@ Describe "Release E2E orchestration" {
         $aiRulesRoot = Join-Path $tempRoot "ai-rules"
         $summaryPath = Join-Path $tempRoot "release-summary.json"
         $oldOnDemandFixture = $env:ITL_TEST_RELEASE_ONDEMAND_PROBE
+        $oldSeedParallelFixture = $env:ITL_TEST_RELEASE_SEED_PARALLEL
         $env:ITL_TEST_RELEASE_ONDEMAND_PROBE = "true"
+        $env:ITL_TEST_RELEASE_SEED_PARALLEL = "true"
         try {
             New-Item -ItemType Directory -Force -Path $mainRoot, $aiRulesRoot | Out-Null
             & git -C $aiRulesRoot init *> $null
@@ -330,6 +332,11 @@ switch ($Action) {
             $summary.onDemandVanessaInstances | Should -Be 2
             $summary.onDemandVanessaSecondSurvived | Should -BeTrue
             $summary.onDemandMcpTestFixture | Should -BeTrue
+            $summary.seedParallelTestFixture | Should -BeTrue
+            $summary.seedParallelBranchRuntimeConcurrent | Should -BeTrue
+            $summary.seedParallelLiteRefreshConcurrent | Should -BeTrue
+            $summary.seedParallelLiteRefreshSourceCallCount | Should -Be 0
+            $summary.seedParallelTargetMasterCommit | Should -Match '^[a-f0-9]{40}$'
             $summary.extensionSmokeName | Should -Match '^ITLReleaseSmoke\d{14}$'
             $summary.cleanupFailures.Count | Should -Be 0
             $actions = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\release-e2e-actions.log") -Encoding UTF8
@@ -361,7 +368,7 @@ switch ($Action) {
             $LASTEXITCODE | Should -Be 0
             $promotionSummary = Get-Content -LiteralPath $promotionSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $promotionSummary.crossReleaseReuse | Should -BeTrue
-            foreach ($stageName in @("config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
+            foreach ($stageName in @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
                 $promotionSummary.stages.$stageName.execution | Should -Be "reused"
             }
             @($promotionSummary.executedStages) | Should -Contain "verification-refresh"
@@ -479,6 +486,7 @@ switch ($Action) {
             @(& git -C $worktreeRoot status --porcelain).Count | Should -Be 0
         } finally {
             $env:ITL_TEST_RELEASE_ONDEMAND_PROBE = $oldOnDemandFixture
+            $env:ITL_TEST_RELEASE_SEED_PARALLEL = $oldSeedParallelFixture
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }

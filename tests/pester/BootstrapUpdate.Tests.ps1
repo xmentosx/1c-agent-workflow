@@ -484,7 +484,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Match ([regex]::Escape("В окне Kilo Code"))
         $HelperText | Should -Match ([regex]::Escape("выполните /reload"))
         $HelperText | Should -Match ([regex]::Escape("Новое окно worktree"))
-        $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "refresh-dev-branch MCP reconcile"'))
+        $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "$OperationName MCP reconcile"'))
         $HelperText | Should -Match "updatedAt"
         $HelperText | Should -Match "Remove-LegacyWorkflowManagedFiles"
         $HelperText | Should -Match "docs\\itl-workflow"
@@ -1016,7 +1016,10 @@ local after
             $copiedRoctupSkill | Should -Match '(?m)^name:\s*itl-roctup-1c-data\s*$'
             $copiedRoctupSkill | Should -Match '(?m)^description:\s*\S.+'
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md.template") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl-sync-master.md.template") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh-lite.md.template") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.seed.ps1") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\event-log-exporter\EventLogExporter.xml") -PathType Leaf) | Should -Be $true
             @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\auto-update") -File -Filter "*.epf").Count | Should -Be 2
             (Test-Path -LiteralPath (Join-Path $tempRoot "templates\project.json") -PathType Leaf) | Should -Be $true
@@ -1389,8 +1392,10 @@ exit 0
         }
 
         $longTemplatePaths = @(
+            ".agents\skills\1c-workflow\kilo-command-templates\common\itl-sync-master.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh-lite.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template",
@@ -1405,8 +1410,10 @@ exit 0
         }
 
         $platformTemplatePaths = @(
+            ".agents\skills\1c-workflow\kilo-command-templates\common\itl-sync-master.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh-lite.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template"
@@ -2270,6 +2277,10 @@ Start-Sleep -Seconds 20
                         $calls.Add("dump") | Out-Null
                         return [pscustomobject]@{ exportPath = "src/cf"; absoluteExportPath = (Join-Path $Root "src\cf"); incremental = $true; logPath = "" }
                     }
+                    function Get-ConfigSourceFingerprint { return [pscustomobject]@{ fingerprint = "fixture"; fileCount = 1 } }
+                    function Read-BranchSeedManifest { return $null }
+                    function Test-BranchSeedArtifactReady { return $false }
+                    function Ensure-BranchSeed { return [pscustomobject]@{ status = "ready"; syncId = "fixture" } }
                     function Commit-BaselineDumpIfNeeded { param([string]$Message, [string]$ExportPath); $calls.Add("commit-dump") | Out-Null; return $false }
                     function Assert-BaselineDumpCommitted { param([string]$ExportPath) }
                     function Test-InitAiRulesReady { return $true }
