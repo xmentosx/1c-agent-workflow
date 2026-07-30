@@ -3594,7 +3594,7 @@ function Invoke-ItlNativeProcessCapture {
 function Protect-ItlVanessaProfileDiagnosticText {
     param(
         [string]$Text,
-        [ValidateRange(80, 4000)][int]$MaxLength = 1200
+        [ValidateRange(80, 4000)][int]$MaxLength = 3000
     )
 
     if ([string]::IsNullOrWhiteSpace($Text)) {

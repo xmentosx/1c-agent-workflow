@@ -110,7 +110,7 @@ Describe "Interactive Vanessa profiling lifecycle" {
             $result.message | Should -Match "license is not available"
             $result.message | Should -Match "retryAction=start-vanessa-profile"
             $result.message | Should -Not -Match "stderr-secret|log-secret|private-data"
-            $result.message.Length | Should -BeLessThan 2000
+            $result.message.Length | Should -BeLessThan 3800
             $result.category | Should -Be "runner"
             $result.requiredAction | Should -Be "release-1c-license-and-retry-start-vanessa-profile"
         } finally {
