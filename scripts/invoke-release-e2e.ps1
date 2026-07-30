@@ -127,6 +127,8 @@ $secondMetadataCommit = ""
 $stopOnErrorProbeTests = 0
 $stopOnErrorProbeFailures = 0
 $stopOnErrorProbeErrors = 0
+$partialConfigDumpInfoCommit = ""
+$recoveryConfigDumpInfoCommit = ""
 $vanessaJUnitTests = 0
 $vanessaPostProcessDurationMs = 0
 $expectedComment = ""
@@ -372,6 +374,45 @@ function New-E2ERootConfigurationCommentCommit {
         configurationPath = $configurationPath
         parentConfigurationsPath = $parentConfigurationsPath
     }
+}
+
+function Save-E2EConfigDumpInfoCursorCommit {
+    param([string]$Phase)
+
+    $repoPath = "src/cf/ConfigDumpInfo.xml"
+    $absolutePath = Join-Path $worktreePath $repoPath.Replace("/", "\")
+    if (-not (Test-Path -LiteralPath $absolutePath -PathType Leaf)) {
+        throw "Release E2E ConfigDumpInfo cursor is missing after $Phase metadata check: $absolutePath"
+    }
+
+    & git -C $worktreePath diff --quiet -- $repoPath
+    $diffExitCode = $LASTEXITCODE
+    if ($diffExitCode -eq 0) {
+        return ""
+    }
+    if ($diffExitCode -ne 1) {
+        throw "Unable to inspect the Release E2E ConfigDumpInfo cursor after $Phase metadata check."
+    }
+    & git -C $worktreePath diff --cached --quiet --
+    if ($LASTEXITCODE -ne 0) {
+        throw "Release E2E found unexpected staged changes before persisting the $Phase ConfigDumpInfo cursor."
+    }
+
+    & git -C $worktreePath add -- $repoPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to stage the Release E2E $Phase ConfigDumpInfo cursor."
+    }
+    & git -C $worktreePath commit -m "test: persist release E2E $Phase ConfigDumpInfo cursor" -- $repoPath | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to commit the Release E2E $Phase ConfigDumpInfo cursor."
+    }
+    if (@(& git -C $worktreePath status --porcelain --untracked-files=all).Count -gt 0) {
+        throw "E2E worktree is dirty after committing the $Phase ConfigDumpInfo cursor."
+    }
+
+    $commit = (& git -C $worktreePath rev-parse HEAD).Trim()
+    Register-E2EGeneratedCommit -Kind "config-dump-info-$Phase" -Commit $commit
+    return $commit
 }
 
 function New-E2EVanessaFixtureCommit {
@@ -1360,6 +1401,7 @@ try {
             $designerLoadedAt = [string]$partialState.lastConfigDesignerLoadedAt
             $firstJunit = Get-E2EJunitTotals -RunDirectory ([string]$partialState.lastVanessaReportPath)
             if ($firstJunit.tests -ne 4 -or ($firstJunit.failures + $firstJunit.errors) -ne 0) { throw "Release E2E first check must produce four passing JUnit tests." }
+            $partialConfigDumpInfoCommit = Save-E2EConfigDumpInfoCursorCommit -Phase "partial"
 
             # Configuration check 2/3: a feature-only edit deliberately fails one
             # scenario; Designer and Enterprise must remain skipped.
@@ -1393,6 +1435,7 @@ try {
             $vanessaPostProcessDurationMs = [int64]$recoveryState.lastVanessaPostProcessDurationMs
             if ($vanessaJUnitTests -ne 4 -or ($recoveryJunit.failures + $recoveryJunit.errors) -ne 0) { throw "Release E2E recovery must restore four passing JUnit tests." }
             if ($vanessaPostProcessDurationMs -gt 30000) { throw "Release E2E recovery post-processing exceeded 30 seconds: $vanessaPostProcessDurationMs ms." }
+            $recoveryConfigDumpInfoCommit = Save-E2EConfigDumpInfoCursorCommit -Phase "recovery"
 
             $checkpoint["stateFiles"]["postConfig"] = Save-E2EStateFiles -StateCopyPath $postConfigStateCopyPath -EnvCopyPath $postConfigEnvCopyPath
             $checkpoint["snapshots"]["postConfig"] = Invoke-E2EInfobaseSnapshot -Path $postConfigSnapshotPath
@@ -1402,6 +1445,7 @@ try {
                 featurePath = $vanessaFixture.path; expectedComment = $expectedComment; designerLoadedAt = [string]$recoveryState.lastConfigDesignerLoadedAt
                 junitTests = $vanessaJUnitTests; postProcessDurationMs = $vanessaPostProcessDurationMs
                 probeTests = $stopOnErrorProbeTests; probeFailures = $stopOnErrorProbeFailures; probeErrors = $stopOnErrorProbeErrors
+                partialConfigDumpInfoCommit = $partialConfigDumpInfoCommit; recoveryConfigDumpInfoCommit = $recoveryConfigDumpInfoCommit
             }
             [System.IO.File]::WriteAllText(
                 $configCadenceEvidencePath,
@@ -1423,6 +1467,15 @@ try {
         $stopOnErrorRecoveryCommit = [string]$configEvidence.recoveryCommit; $expectedComment = [string]$configEvidence.expectedComment
         $vanessaJUnitTests = [int]$configEvidence.junitTests; $vanessaPostProcessDurationMs = [int64]$configEvidence.postProcessDurationMs
         $stopOnErrorProbeTests = [int]$configEvidence.probeTests; $stopOnErrorProbeFailures = [int]$configEvidence.probeFailures; $stopOnErrorProbeErrors = [int]$configEvidence.probeErrors
+        if ($configEvidence -is [System.Collections.IDictionary]) {
+            $partialConfigDumpInfoCommit = if ($configEvidence.Contains("partialConfigDumpInfoCommit")) { [string]$configEvidence["partialConfigDumpInfoCommit"] } else { "" }
+            $recoveryConfigDumpInfoCommit = if ($configEvidence.Contains("recoveryConfigDumpInfoCommit")) { [string]$configEvidence["recoveryConfigDumpInfoCommit"] } else { "" }
+        } else {
+            $partialCursorProperty = $configEvidence.PSObject.Properties["partialConfigDumpInfoCommit"]
+            $recoveryCursorProperty = $configEvidence.PSObject.Properties["recoveryConfigDumpInfoCommit"]
+            $partialConfigDumpInfoCommit = if ($null -ne $partialCursorProperty) { [string]$partialCursorProperty.Value } else { "" }
+            $recoveryConfigDumpInfoCommit = if ($null -ne $recoveryCursorProperty) { [string]$recoveryCursorProperty.Value } else { "" }
+        }
         $vanessaFixture = [pscustomobject]@{ path = [string]$configEvidence.featurePath; commit = $vanessaFixtureCommit }
     }
 
@@ -1800,6 +1853,8 @@ try {
         secondMetadataCommit = $secondMetadataCommit
         stopOnErrorProbeCommit = $stopOnErrorProbeCommit
         stopOnErrorRecoveryCommit = $stopOnErrorRecoveryCommit
+        partialConfigDumpInfoCommit = $partialConfigDumpInfoCommit
+        recoveryConfigDumpInfoCommit = $recoveryConfigDumpInfoCommit
         stopOnErrorProbeTests = $stopOnErrorProbeTests
         stopOnErrorProbeFailures = $stopOnErrorProbeFailures
         stopOnErrorProbeErrors = $stopOnErrorProbeErrors

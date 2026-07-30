@@ -308,6 +308,7 @@ Describe "Release E2E orchestration" {
   </Configuration>
 </MetaDataObject>
 '@
+            Set-Content -LiteralPath (Join-Path $mainRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "<ConfigDumpInfo>fixture</ConfigDumpInfo>"
             Set-Content -LiteralPath (Join-Path $mainRoot "src\cf\Ext\ParentConfigurations.bin") -Encoding Byte -Value ([byte[]](1, 2, 3, 4))
             & git -C $mainRoot add .
             & git -C $mainRoot commit -m "fixture" *> $null
@@ -379,6 +380,9 @@ switch ($Action) {
         $state | Add-Member -NotePropertyName lastVerifiedAt -NotePropertyValue ([DateTime]::UtcNow.ToString("o")) -Force
         $state | Add-Member -NotePropertyName lastVerifiedCommit -NotePropertyValue ((& git -C $ProjectRoot rev-parse HEAD).Trim()) -Force
         Set-Content -LiteralPath $statePath -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 8)
+        if ($metadataChanged) {
+            Set-Content -LiteralPath (Join-Path $ProjectRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "<ConfigDumpInfo>cursor-$releaseCheckCount</ConfigDumpInfo>"
+        }
         if ($isStopOnErrorProbe) { [Environment]::Exit(1) }
     }
     "release-e2e-snapshot" {
@@ -501,7 +505,9 @@ switch ($Action) {
             $summary.testOnlyCommit | Should -Not -BeNullOrEmpty
             $summary.vanessaJUnitTests | Should -Be 4
             $summary.stopOnErrorProbeCommit | Should -Not -BeNullOrEmpty
-            $summary.stopOnErrorRecoveryCommit | Should -Be (& git -C $worktreeRoot rev-parse HEAD).Trim()
+            $summary.stopOnErrorRecoveryCommit | Should -Not -BeNullOrEmpty
+            $summary.partialConfigDumpInfoCommit | Should -Match '^[a-f0-9]{40}$'
+            $summary.recoveryConfigDumpInfoCommit | Should -Be (& git -C $worktreeRoot rev-parse HEAD).Trim()
             $summary.stopOnErrorProbeTests | Should -Be 4
             ($summary.stopOnErrorProbeFailures + $summary.stopOnErrorProbeErrors) | Should -Be 1
             $summary.vanessaPostProcessDurationMs | Should -BeLessOrEqual 30000
