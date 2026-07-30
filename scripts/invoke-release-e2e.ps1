@@ -787,6 +787,49 @@ function Remove-E2ESeedDisposableBranch {
     }
 }
 
+function Restore-E2ESeedMainBranch {
+    param(
+        [string]$MainRoot,
+        [string]$MasterBranch,
+        [string]$MasterAfterSync,
+        [System.Collections.Generic.List[string]]$CleanupErrors
+    )
+
+    $currentBranch = (& git -C $MainRoot branch --show-current 2>$null).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        $CleanupErrors.Add("Could not determine the current main-worktree branch.") | Out-Null
+        return
+    }
+    if ($currentBranch -ne $MasterBranch) {
+        try {
+            & git -C $MainRoot checkout --quiet $MasterBranch 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                $CleanupErrors.Add("Could not checkout $MasterBranch during seed cleanup.") | Out-Null
+                return
+            }
+        } catch {
+            $CleanupErrors.Add("Could not checkout $MasterBranch during seed cleanup: $($_.Exception.Message)") | Out-Null
+            return
+        }
+    }
+
+    if ($MasterAfterSync) {
+        & git -C $MainRoot merge-base --is-ancestor $MasterAfterSync HEAD *> $null
+        if ($LASTEXITCODE -eq 0) {
+            & git -C $MainRoot reset --hard $MasterAfterSync *> $null
+            if ($LASTEXITCODE -ne 0) {
+                $CleanupErrors.Add("Could not reset $MasterBranch to $MasterAfterSync.") | Out-Null
+            }
+        } else {
+            $CleanupErrors.Add("Refusing to reset unexpected $MasterBranch history to $MasterAfterSync.") | Out-Null
+        }
+    }
+    & git -C $MainRoot worktree prune *> $null
+    if ($LASTEXITCODE -ne 0) {
+        $CleanupErrors.Add("Git worktree prune failed during seed cleanup.") | Out-Null
+    }
+}
+
 function Invoke-E2ESeedParallelProof {
     param([string]$MainRoot)
 
@@ -938,16 +981,7 @@ function Invoke-E2ESeedParallelProof {
         )) {
             Remove-E2ESeedDisposableBranch -MainRoot $MainRoot -Spec $spec -CleanupErrors $cleanupErrors
         }
-        & git -C $MainRoot checkout $masterBranch *> $null
-        if ($masterAfterSync) {
-            & git -C $MainRoot merge-base --is-ancestor $masterAfterSync HEAD *> $null
-            if ($LASTEXITCODE -eq 0) {
-                & git -C $MainRoot reset --hard $masterAfterSync *> $null
-            } else {
-                $cleanupErrors.Add("Refusing to reset unexpected $masterBranch history to $masterAfterSync.") | Out-Null
-            }
-        }
-        & git -C $MainRoot worktree prune *> $null
+        Restore-E2ESeedMainBranch -MainRoot $MainRoot -MasterBranch $masterBranch -MasterAfterSync $masterAfterSync -CleanupErrors $cleanupErrors
         if ($cleanupErrors.Count -gt 0) {
             throw "RELEASE_E2E_SEED_CLEANUP_FAILED: $($cleanupErrors -join '; ')"
         }

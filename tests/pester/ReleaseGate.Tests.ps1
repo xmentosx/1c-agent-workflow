@@ -144,6 +144,49 @@ Describe "Release gate scripts" {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+
+    It "restores the seed probe while the main worktree is already on master" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-seed-main-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.invalid"
+            & git -C $tempRoot config user.name "ITL Test"
+            Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Encoding ASCII -Value "baseline"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "baseline" *> $null
+            & git -C $tempRoot branch -M master
+            $baselineCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+            Add-Content -LiteralPath (Join-Path $tempRoot "README.md") -Encoding ASCII -Value "probe"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "probe" *> $null
+
+            $tokens = $null
+            $errors = $null
+            $runnerAst = [System.Management.Automation.Language.Parser]::ParseFile(
+                (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1"),
+                [ref]$tokens,
+                [ref]$errors
+            )
+            @($errors) | Should -BeNullOrEmpty
+            $functionAst = $runnerAst.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq "Restore-E2ESeedMainBranch"
+            }, $true)
+            . ([scriptblock]::Create($functionAst.Extent.Text))
+
+            $cleanupErrors = New-Object System.Collections.Generic.List[string]
+            Restore-E2ESeedMainBranch -MainRoot $tempRoot -MasterBranch "master" -MasterAfterSync $baselineCommit -CleanupErrors $cleanupErrors
+
+            $cleanupErrors.Count | Should -Be 0
+            (& git -C $tempRoot branch --show-current).Trim() | Should -Be "master"
+            (& git -C $tempRoot rev-parse HEAD).Trim() | Should -Be $baselineCommit
+            @(& git -C $tempRoot status --porcelain).Count | Should -Be 0
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 Describe "Release E2E orchestration" {
