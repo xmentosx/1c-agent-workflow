@@ -6883,6 +6883,36 @@ function Update-DevBranchBase {
     }
 }
 
+function Complete-RefreshConfigDumpInfoPostcondition {
+    param(
+        [Parameter(Mandatory = $true)][object]$LoadResult,
+        [string]$ExportPath = (Get-ExportPath)
+    )
+
+    $normalizedExportPath = (($ExportPath -replace "\\", "/").Trim("/"))
+    $dumpInfoRepoPath = "$normalizedExportPath/ConfigDumpInfo.xml"
+    $trackedPaths = @(
+        @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--"))
+        @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--"))
+    ) | Sort-Object -Unique
+    $unexpectedPaths = @($trackedPaths | Where-Object {
+        ([string]$_ -replace "\\", "/") -cne $dumpInfoRepoPath
+    })
+    if ($unexpectedPaths.Count -gt 0) {
+        throw "REFRESH_TRACKED_STATE_UNEXPECTED: refresh changed tracked files other than the branch synchronization cursor: $($unexpectedPaths -join ', ')"
+    }
+
+    if (@($trackedPaths | Where-Object { ([string]$_ -replace "\\", "/") -ceq $dumpInfoRepoPath }).Count -gt 0) {
+        Commit-IfChanged `
+            -Message "chore: persist branch configuration synchronization cursor" `
+            -PathSpec @($dumpInfoRepoPath) `
+            -RequireChanges | Out-Null
+    }
+
+    $LoadResult.currentCommit = Get-CurrentCommit
+    Assert-CleanGit
+}
+
 function Invoke-RefreshDevBranchCore {
     param(
         [switch]$SynchronizeMaster,
@@ -6926,6 +6956,7 @@ function Invoke-RefreshDevBranchCore {
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     $state = Invoke-DevBranchDefaultMcpSetup -State $state
     $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration" -Mode $ConfigLoadMode
+    Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath (Get-ExportPath)
     $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
     Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
     $updates["lastRefreshAt"] = (Get-Date).ToString("o")
