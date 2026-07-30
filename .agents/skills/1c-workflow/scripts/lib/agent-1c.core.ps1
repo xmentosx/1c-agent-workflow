@@ -2079,6 +2079,31 @@ function Get-PlatformPath {
     return Resolve-PlatformExecutablePath -Path $value
 }
 
+function Resolve-EnterpriseClientExecutablePath {
+    param(
+        [ValidateSet("Thin", "Thick")]
+        [string]$ClientType = "Thin"
+    )
+
+    $platformPath = Get-PlatformPath
+    $executablePath = if ($ClientType -eq "Thin") {
+        $extension = [System.IO.Path]::GetExtension($platformPath)
+        if (-not $extension) { $extension = ".exe" }
+        Join-Path (Split-Path -Parent $platformPath) "1cv8c$extension"
+    } else {
+        $platformPath
+    }
+    if (-not (Test-Path -LiteralPath $executablePath -PathType Leaf)) {
+        $errorCode = if ($ClientType -eq "Thin") {
+            "ITL_THIN_CLIENT_EXECUTABLE_MISSING"
+        } else {
+            "ITL_THICK_CLIENT_EXECUTABLE_MISSING"
+        }
+        throw "${errorCode}: $executablePath"
+    }
+    return $executablePath
+}
+
 function Get-SourceUsesRepository {
     $value = Get-Setting -EnvName "SOURCE_USES_REPOSITORY" -ConfigName "sourceUsesRepository" -Default $true
     return ConvertTo-BoolSetting -Value $value -Default $true
@@ -5450,6 +5475,8 @@ function Start-EnterpriseBackground {
         [string]$InfoBasePath,
         [string]$InfoBaseKind,
         [string[]]$EnterpriseArgs,
+        [ValidateSet("Thin", "Thick")]
+        [string]$ClientType = "Thin",
         [switch]$UseTestManager,
         [switch]$UseTestClient,
         [int]$TestClientPort = 0,
@@ -5464,10 +5491,7 @@ function Start-EnterpriseBackground {
         throw "TestClientPort must be positive when UseTestClient is set."
     }
 
-    $platformPath = Get-PlatformPath
-    if (-not (Test-Path -LiteralPath $platformPath)) {
-        throw "1cv8.exe was not found: $platformPath"
-    }
+    $platformPath = Resolve-EnterpriseClientExecutablePath -ClientType $ClientType
 
     Assert-InfoBaseAvailable -Kind $InfoBaseKind -Path $InfoBasePath -SettingName "infobase path"
 
@@ -5496,6 +5520,7 @@ function Start-EnterpriseBackground {
     return [pscustomobject]@{
         process = $process
         logPath = $logPath
+        executablePath = $platformPath
     }
 }
 
@@ -5504,6 +5529,8 @@ function Invoke-Enterprise {
         [string]$InfoBasePath,
         [string]$InfoBaseKind,
         [string[]]$EnterpriseArgs,
+        [ValidateSet("Thin", "Thick")]
+        [string]$ClientType = "Thin",
         [int]$TestClientPort = 0,
         [int]$VanessaTestPort = 0,
         [int]$TimeoutSeconds = 0,
@@ -5514,10 +5541,7 @@ function Invoke-Enterprise {
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
     )
 
-    $platformPath = Get-PlatformPath
-    if (-not (Test-Path -LiteralPath $platformPath)) {
-        throw "1cv8.exe was not found: $platformPath"
-    }
+    $platformPath = Resolve-EnterpriseClientExecutablePath -ClientType $ClientType
 
     Assert-InfoBaseAvailable -Kind $InfoBaseKind -Path $InfoBasePath -SettingName "infobase path"
 

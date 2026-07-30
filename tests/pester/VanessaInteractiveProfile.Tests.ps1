@@ -29,6 +29,95 @@ Describe "Interactive Vanessa profiling lifecycle" {
         $helperText | Should -Match '"verify-dev-branch" \{ Verify-DevBranch \}'
     }
 
+    It "captures native stdout and stderr independently without treating informational stderr as failure" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-profile-capture-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $child = "[Console]::Out.WriteLine('ITL_MARKER=ok'); [Console]::Error.WriteLine('informational diagnostic'); exit 0"
+                $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($child))
+                Invoke-ItlNativeProcessCapture -FilePath "powershell.exe" -Arguments @("-NoProfile", "-EncodedCommand", $encoded)
+            }
+            $result.exitCode | Should -Be 0
+            $result.stdout | Should -Match "ITL_MARKER=ok"
+            $result.stderr | Should -Match "informational diagnostic"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "parses the profile marker only from stdout when stderr is informational" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-profile-stdout-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-ItlOnDemandMcpExecutablePath { return "fixture.exe" }
+                function Get-ItlOnDemandMcpFamilyDefinition { return [pscustomobject]@{ catalogPath = "catalog.json" } }
+                function Invoke-ItlNativeProcessCapture {
+                    return [pscustomobject]@{
+                        exitCode = 0
+                        stdout = "ITL_VANESSA_PROFILE_RESULT={`"status`":`"running`",`"testClientState`":`"manager-connected`"}`r`n"
+                        stderr = '{"level":"INFO","stage":"broker-start"}'
+                    }
+                }
+                Invoke-ItlOnDemandVanessaProfileStart -InstanceId ("e" * 32) -FeaturePath (Join-Path $tempRoot "manual.feature")
+            }
+            $result.status | Should -Be "running"
+            $result.testClientState | Should -Be "manager-connected"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "returns a bounded redacted broker cause, log path, and required action on profile start failure" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-profile-diagnostic-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $logPath = Join-Path $tempRoot "broker startup.log"
+            Set-Content -LiteralPath $logPath -Encoding UTF8 -Value "license is not available password=log-secret configuration=private-data"
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:RunErrorCategory = ""
+                $script:RunRequiredAction = ""
+                function Get-ItlOnDemandMcpExecutablePath { return "fixture.exe" }
+                function Get-ItlOnDemandMcpFamilyDefinition { return [pscustomobject]@{ catalogPath = "catalog.json" } }
+                function Invoke-ItlNativeProcessCapture {
+                    return [pscustomobject]@{
+                        exitCode = 17
+                        stdout = ""
+                        stderr = "backend broker ensure failed token=stderr-secret; log=$logPath"
+                    }
+                }
+                $message = ""
+                try {
+                    Invoke-ItlOnDemandVanessaProfileStart -InstanceId ("f" * 32) -FeaturePath (Join-Path $tempRoot "manual.feature") | Out-Null
+                } catch {
+                    $message = $_.Exception.Message
+                }
+                [pscustomobject]@{
+                    message = $message
+                    category = $script:RunErrorCategory
+                    requiredAction = $script:RunRequiredAction
+                }
+            }
+            $result.message | Should -Match "^ITL_VANESSA_PROFILE_START_FAILED: exitCode=17"
+            $result.message | Should -Match ([regex]::Escape("brokerLog=$logPath"))
+            $result.message | Should -Match "license is not available"
+            $result.message | Should -Match "retryAction=start-vanessa-profile"
+            $result.message | Should -Not -Match "stderr-secret|log-secret|private-data"
+            $result.message.Length | Should -BeLessThan 2000
+            $result.category | Should -Be "runner"
+            $result.requiredAction | Should -Be "release-1c-license-and-retry-start-vanessa-profile"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "starts one owned pair, reuses its markers, and emits only a safe persistent report" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-profile-start-" + [guid]::NewGuid().ToString("N"))
         try {

@@ -25,8 +25,10 @@
             Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\tools\auto-update") -Destination $target -Recurse
 
             $fakePlatform = Join-Path $TargetRoot "source-base\test-platform\1cv8.cmd"
+            $fakeThinPlatform = Join-Path $TargetRoot "source-base\test-platform\1cv8c.cmd"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $fakePlatform) | Out-Null
             Set-Content -LiteralPath $fakePlatform -Encoding ASCII -Value "@exit /b 0"
+            Set-Content -LiteralPath $fakeThinPlatform -Encoding ASCII -Value "@exit /b 0"
             return $fakePlatform
         }
 
@@ -2035,7 +2037,9 @@
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
             $fakePlatform = Join-Path $tempRoot "1cv8.exe"
+            $fakeThinClient = Join-Path $tempRoot "1cv8c.exe"
             Set-Content -LiteralPath $fakePlatform -Encoding ASCII -Value "fake"
+            Set-Content -LiteralPath $fakeThinClient -Encoding ASCII -Value "fake"
             $ibPath = Join-Path $tempRoot "ib"
             New-Item -ItemType Directory -Force -Path $ibPath | Out-Null
 
@@ -2058,6 +2062,7 @@
                         [int]$PostExitProbeSeconds = 0,
                         [int]$MaxWorkingSetMb = 0
                     )
+                    $script:LastNativeProcessFilePath = $FilePath
                     $script:LastNativeProcessArguments = @($Arguments)
                     return [pscustomobject]@{
                         timedOut = $false
@@ -2073,15 +2078,107 @@
                     -TestClientPort 48051 `
                     -TimeoutSeconds 60 | Out-Null
 
-                $script:LastNativeProcessArguments
+                [pscustomobject]@{
+                    filePath = $script:LastNativeProcessFilePath
+                    arguments = @($script:LastNativeProcessArguments)
+                }
             }
 
-            $captured | Should -Contain "/TESTMANAGER"
-            ($captured -join " ") | Should -Not -Match ([regex]::Escape("-TPort"))
+            $captured.filePath | Should -Be $fakeThinClient
+            $captured.arguments | Should -Contain "/TESTMANAGER"
+            ($captured.arguments -join " ") | Should -Not -Match ([regex]::Escape("-TPort"))
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "uses the thin client by default for Enterprise roles and keeps thick client explicit" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-enterprise-client-type-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $thickPath = Join-Path $tempRoot "1cv8.exe"
+            $thinPath = Join-Path $tempRoot "1cv8c.exe"
+            Set-Content -LiteralPath $thickPath -Encoding ASCII -Value "fake"
+            Set-Content -LiteralPath $thinPath -Encoding ASCII -Value "fake"
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:Starts = @()
+                $script:Invokes = @()
+                function Get-PlatformPath { return $thickPath }
+                function Assert-InfoBaseAvailable {}
+                function Start-NativeProcessBackground {
+                    param([string]$FilePath, [string[]]$Arguments)
+                    $script:Starts += [pscustomobject]@{ filePath = $FilePath; arguments = @($Arguments) }
+                    return [pscustomobject]@{ Id = 8100 + $script:Starts.Count }
+                }
+                function Invoke-NativeProcessAndWaitResult {
+                    param(
+                        [string]$FilePath,
+                        [string[]]$Arguments,
+                        [int]$TimeoutSeconds = 0,
+                        [scriptblock]$OnTimeout = $null,
+                        [scriptblock]$CompletionProbe = $null,
+                        [int]$CompletionGraceSeconds = 10,
+                        [int]$PostExitProbeSeconds = 0,
+                        [int]$MaxWorkingSetMb = 0
+                    )
+                    $script:Invokes += [pscustomobject]@{ filePath = $FilePath; arguments = @($Arguments) }
+                    return [pscustomobject]@{ timedOut = $false; exitCode = 0; processId = 8200 + $script:Invokes.Count }
+                }
+
+                $thinTestClient = Start-EnterpriseBackground -InfoBasePath $tempRoot -InfoBaseKind file -UseTestClient -TestClientPort 48151
+                $thickManager = Start-EnterpriseBackground -InfoBasePath $tempRoot -InfoBaseKind file -ClientType Thick -UseTestManager -TestClientPort 48152
+                Invoke-Enterprise -InfoBasePath $tempRoot -InfoBaseKind file -EnterpriseArgs @() -TestClientPort 48153 | Out-Null
+                Invoke-Enterprise -InfoBasePath $tempRoot -InfoBaseKind file -EnterpriseArgs @() -ClientType Thick | Out-Null
+
+                [pscustomobject]@{
+                    starts = @($script:Starts)
+                    invokes = @($script:Invokes)
+                    thinResultPath = $thinTestClient.executablePath
+                    thickResultPath = $thickManager.executablePath
+                }
+            }
+
+            $result.starts[0].filePath | Should -Be $thinPath
+            $result.starts[0].arguments | Should -Contain "/TESTCLIENT"
+            $result.starts[0].arguments | Should -Not -Contain "/TESTMANAGER"
+            $result.starts[1].filePath | Should -Be $thickPath
+            $result.starts[1].arguments | Should -Contain "/TESTMANAGER"
+            $result.starts[1].arguments | Should -Not -Contain "/TESTCLIENT"
+            $result.invokes[0].filePath | Should -Be $thinPath
+            $result.invokes[0].arguments | Should -Contain "/TESTMANAGER"
+            $result.invokes[1].filePath | Should -Be $thickPath
+            $result.invokes[1].arguments | Should -Not -Contain "/TESTMANAGER"
+            $result.thinResultPath | Should -Be $thinPath
+            $result.thickResultPath | Should -Be $thickPath
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "reports distinct missing thin and thick Enterprise executables" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-enterprise-client-missing-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $thickPath = Join-Path $tempRoot "1cv8.exe"
+            Set-Content -LiteralPath $thickPath -Encoding ASCII -Value "fake"
+            $messages = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-PlatformPath { return $thickPath }
+                $thinMessage = ""
+                try { Resolve-EnterpriseClientExecutablePath | Out-Null } catch { $thinMessage = $_.Exception.Message }
+                Remove-Item -LiteralPath $thickPath -Force
+                $thickMessage = ""
+                try { Resolve-EnterpriseClientExecutablePath -ClientType Thick | Out-Null } catch { $thickMessage = $_.Exception.Message }
+                [pscustomobject]@{ thin = $thinMessage; thick = $thickMessage }
+            }
+            $messages.thin | Should -Match "^ITL_THIN_CLIENT_EXECUTABLE_MISSING:"
+            $messages.thick | Should -Match "^ITL_THICK_CLIENT_EXECUTABLE_MISSING:"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
@@ -3366,20 +3463,20 @@ if (`$?) { exit 0 } else { exit 1 }
             & git -C $tempRoot commit -m "base" *> $null
             & git -C $tempRoot branch -M master
 
-            & git -C $tempRoot checkout -b itldev/test *> $null
+            & git -C $tempRoot checkout --quiet -b itldev/test
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "branch-cursor"
             Set-Content -LiteralPath (Join-Path $unicodeExtensionRoot "ConfigDumpInfo.xml") -Encoding UTF8 -Value "branch-extension-cursor"
             Set-Content -LiteralPath (Join-Path $tempRoot "branch.txt") -Encoding UTF8 -Value "branch"
             & git -C $tempRoot add .
             & git -C $tempRoot commit -m "branch cursor" *> $null
 
-            & git -C $tempRoot checkout master *> $null
+            & git -C $tempRoot checkout --quiet master
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "master-cursor"
             Set-Content -LiteralPath (Join-Path $unicodeExtensionRoot "ConfigDumpInfo.xml") -Encoding UTF8 -Value "master-extension-cursor"
             Set-Content -LiteralPath (Join-Path $tempRoot "master.txt") -Encoding UTF8 -Value "master"
             & git -C $tempRoot add .
             & git -C $tempRoot commit -m "master cursor" *> $null
-            & git -C $tempRoot checkout itldev/test *> $null
+            & git -C $tempRoot checkout --quiet itldev/test
 
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
@@ -3394,6 +3491,134 @@ if (`$?) { exit 0 } else { exit 1 }
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It "commits only a changed refresh cursor and leaves the worktree clean" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-refresh-cursor-commit-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "before"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value "<Configuration />"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            & git -C $tempRoot branch -M itldev/test
+            $beforeCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "after"
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $loadResult = [pscustomobject]@{ currentCommit = $beforeCommit }
+                Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath "src/cf"
+                [pscustomobject]@{
+                    currentCommit = $loadResult.currentCommit
+                    head = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+                    subject = ((& git -C $tempRoot log -1 --format=%s) -join "").Trim()
+                    paths = @(& git -C $tempRoot show --format= --name-only HEAD | Where-Object { $_ })
+                    status = @(& git -C $tempRoot status --porcelain)
+                }
+            }
+
+            $result.head | Should -Not -Be $beforeCommit
+            $result.currentCommit | Should -Be $result.head
+            $result.subject | Should -Be "chore: persist branch configuration synchronization cursor"
+            @($result.paths).Count | Should -Be 1
+            $result.paths[0] | Should -Be "src/cf/ConfigDumpInfo.xml"
+            @($result.status).Count | Should -Be 0
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "does not create an empty refresh cursor commit" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-refresh-cursor-clean-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            $beforeCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $loadResult = [pscustomobject]@{ currentCommit = "stale" }
+                Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath "src/cf"
+                [pscustomobject]@{
+                    currentCommit = $loadResult.currentCommit
+                    head = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+                    status = @(& git -C $tempRoot status --porcelain)
+                }
+            }
+
+            $result.head | Should -Be $beforeCommit
+            $result.currentCommit | Should -Be $beforeCommit
+            @($result.status).Count | Should -Be 0
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "fails before committing when refresh changes another tracked file" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-refresh-cursor-unexpected-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "before"
+            Set-Content -LiteralPath (Join-Path $tempRoot "tracked.txt") -Encoding UTF8 -Value "before"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            $beforeCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "after"
+            Set-Content -LiteralPath (Join-Path $tempRoot "tracked.txt") -Encoding UTF8 -Value "after"
+
+            $message = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                try {
+                    Complete-RefreshConfigDumpInfoPostcondition -LoadResult ([pscustomobject]@{ currentCommit = $beforeCommit }) -ExportPath "src/cf"
+                } catch {
+                    $_.Exception.Message
+                }
+            }
+
+            $message | Should -Match "^REFRESH_TRACKED_STATE_UNEXPECTED:"
+            $message | Should -Match "tracked.txt"
+            ((& git -C $tempRoot rev-parse HEAD) -join "").Trim() | Should -Be $beforeCommit
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "does not run the refresh cursor postcondition after a failed configuration load" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $LifecyclePhase = "post-merge"
+            $script:PostconditionCalls = 0
+            $state = [pscustomobject]@{
+                pendingRefreshMasterCommit = ("a" * 40)
+                devBranchInfoBasePath = "D:\fixture\base"
+                infoBaseKind = "file"
+            }
+            function Read-DevBranchState { return $state }
+            function Assert-DevelopmentBranchWorktreeContext {}
+            function Assert-DevBranchExtensionInitialized {}
+            function Assert-CleanGit {}
+            function Sync-DevBranchContextToDotEnv {}
+            function Invoke-DevBranchDefaultMcpSetup { param([object]$State) return $State }
+            function Load-ConfigFromFiles { throw "simulated load failure after ConfigDumpInfo rollback" }
+            function Complete-RefreshConfigDumpInfoPostcondition { $script:PostconditionCalls++ }
+            $message = ""
+            try { Invoke-RefreshDevBranchCore -OperationName "refresh-dev-branch" } catch { $message = $_.Exception.Message }
+            [pscustomobject]@{ message = $message; postconditionCalls = $script:PostconditionCalls }
+        }
+        $result.message | Should -Be "simulated load failure after ConfigDumpInfo rollback"
+        $result.postconditionCalls | Should -Be 0
     }
 
     It "limits a new worktree path to 50 characters and reports the available branch name length" {

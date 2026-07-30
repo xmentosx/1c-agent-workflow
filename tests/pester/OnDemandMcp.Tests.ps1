@@ -547,6 +547,55 @@ Describe "ITL on-demand MCP facade" {
         $result.starts | Should -Be 0
     }
 
+    It "records the actual thin TestClient executable returned by the launcher" {
+        $result = & {
+            $runtime = [pscustomobject]@{
+                schemaVersion = 3; status = "running"; family = "vanessa-ui"; instanceId = ("d" * 32)
+                pid = 75001; port = 9877; url = "http://127.0.0.1:9877/mcp"
+                testClientPid = 0; testClientPort = 48151; testClientState = "not-started"
+                testClientPortFamily = "vanessa-test"; testClientPortKey = "fixture"
+            }
+            $script:WrittenRuntime = $null
+            function Read-ItlOnDemandRuntimeState { return $runtime }
+            function Test-ItlOnDemandOwnedProcess { return $true }
+            function Test-TcpPortOpen { return $true }
+            function Read-CurrentDevBranchStateForRoctupMcp {
+                return [pscustomobject]@{ devBranchInfoBasePath = "D:\owned\base"; infoBaseKind = "file" }
+            }
+            function Test-VanessaTestPortOwnedByState { return $false }
+            function Test-VanessaTestPortUsedByForeignProcess { return $false }
+            function Assert-VanessaTestClientCapacity {}
+            function Start-EnterpriseBackground {
+                return [pscustomobject]@{
+                    process = [pscustomobject]@{ Id = 75002 }
+                    executablePath = "D:\platform\bin\1cv8c.exe"
+                    logPath = "D:\logs\test-client.log"
+                }
+            }
+            function Get-Process {
+                return [pscustomobject]@{ Id = 75002; StartTime = [datetime]"2026-07-31T08:00:00Z" }
+            }
+            function Write-ItlOnDemandRuntimeState {
+                param([object]$RuntimeState)
+                $script:WrittenRuntime = $RuntimeState
+                return "state.json"
+            }
+            function Wait-ItlOnDemandTestClientPortReady { return $true }
+            function Set-ItlManagedPortAllocationStatus {}
+
+            $ensured = Ensure-ItlOnDemandVanessaTestClient -InstanceId ("d" * 32)
+            [pscustomobject]@{
+                returnedPath = $ensured.testClientExecutablePath
+                writtenPath = $script:WrittenRuntime.testClientExecutablePath
+                state = $ensured.testClientState
+            }
+        }
+
+        $result.returnedPath | Should -Be "D:\platform\bin\1cv8c.exe"
+        $result.writtenPath | Should -Be "D:\platform\bin\1cv8c.exe"
+        $result.state | Should -Be "port-ready"
+    }
+
     It "refuses to claim a process when the ownership markers do not match" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-owner-" + [guid]::NewGuid().ToString("N"))
         try {

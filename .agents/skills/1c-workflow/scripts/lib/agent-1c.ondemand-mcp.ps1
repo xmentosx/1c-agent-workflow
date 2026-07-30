@@ -600,7 +600,7 @@ function Ensure-ItlOnDemandVanessaTestClient {
             -TestClientPort $testClientPort `
             -EnterpriseArgs @()
         $process = Get-Process -Id $testClientResult.process.Id -ErrorAction Stop
-        $platformPath = Resolve-Agent1cFullPath -Path (Get-PlatformPath)
+        $platformPath = Resolve-Agent1cFullPath -Path $testClientResult.executablePath
         $runtimeState = Set-ItlOnDemandRuntimeStateValues -RuntimeState $runtimeState -Values @{
             schemaVersion = 3
             testClientState = "process-started"

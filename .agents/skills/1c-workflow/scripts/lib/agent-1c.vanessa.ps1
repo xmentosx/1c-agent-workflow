@@ -3557,6 +3557,118 @@ function Publish-VanessaInteractiveProfileUserReport {
     return $Report
 }
 
+function Invoke-ItlNativeProcessCapture {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$Arguments = @()
+    )
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $FilePath
+    $startInfo.Arguments = Join-NativeCommandLineArguments -Arguments $Arguments
+    $startInfo.WorkingDirectory = $script:ProjectRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) {
+            throw "Native process did not start: $FilePath"
+        }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit()
+        return [pscustomobject]@{
+            exitCode = $process.ExitCode
+            stdout = [string]$stdoutTask.Result
+            stderr = [string]$stderrTask.Result
+        }
+    } finally {
+        $process.Dispose()
+    }
+}
+
+function Protect-ItlVanessaProfileDiagnosticText {
+    param(
+        [string]$Text,
+        [ValidateRange(80, 4000)][int]$MaxLength = 1200
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return ""
+    }
+    $safe = $Text -replace '\s+', ' '
+    $safe = $safe -replace '(?i)\b(password|passwd|pwd|token|secret|authorization)\s*[:=]\s*(?:"[^"]*"|''[^'']*''|\S+)', '$1=<redacted>'
+    $safe = $safe -replace '(?i)\bBearer\s+\S+', 'Bearer <redacted>'
+    $safe = $safe -replace '(?i)(://)[^/\s:@]+:[^@\s/]+@', '$1<redacted>@'
+    $safe = $safe -replace '(?i)([?&](?:token|access_token|password|secret)=)[^&\s]+', '$1<redacted>'
+    $safe = $safe -replace '(?i)(/(?:P|Password)\s+)(?:"[^"]*"|\S+)', '$1<redacted>'
+    $safe = $safe -replace '(?i)\b(configuration|connectionString|infobase)\s*[:=]\s*(?:"[^"]*"|''[^'']*''|\S+)', '$1=<redacted>'
+    $safe = $safe.Trim()
+    if ($safe.Length -gt $MaxLength) {
+        return ($safe.Substring(0, $MaxLength - 3) + "...")
+    }
+    return $safe
+}
+
+function Get-ItlVanessaProfileBrokerLogPath {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return ""
+    }
+    $jsonMatch = [regex]::Match($Text, '(?i)"logPath"\s*:\s*"(?<path>(?:\\.|[^"])*)"')
+    if ($jsonMatch.Success) {
+        try {
+            return ('"' + $jsonMatch.Groups["path"].Value + '"' | ConvertFrom-Json)
+        } catch {
+            return $jsonMatch.Groups["path"].Value
+        }
+    }
+    $plainMatch = [regex]::Match($Text, '(?i)(?:brokerLog|logPath|log)\s*=\s*(?<path>.+?)\s*$')
+    if ($plainMatch.Success) {
+        return $plainMatch.Groups["path"].Value.Trim().Trim('"', "'")
+    }
+    return ""
+}
+
+function Get-ItlVanessaProfileFailureRequiredAction {
+    param(
+        [string]$Diagnostic,
+        [string]$BrokerLogPath
+    )
+
+    if ($Diagnostic -match '(?i)(ITL_THIN_CLIENT_EXECUTABLE_MISSING|1cv8c\.exe.+not found)') {
+        return "install-thin-client-and-retry-start-vanessa-profile"
+    }
+    if ($Diagnostic -match '(?i)license') {
+        return "release-1c-license-and-retry-start-vanessa-profile"
+    }
+    if ($Diagnostic -match '(?i)(address already in use|port.+(?:busy|used))') {
+        return "free-vanessa-port-and-retry-start-vanessa-profile"
+    }
+    if ($BrokerLogPath) {
+        return "inspect-broker-log-and-retry-start-vanessa-profile"
+    }
+    return "retry-start-vanessa-profile"
+}
+
+function Read-ItlVanessaProfileSafeLogTail {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return ""
+    }
+    try {
+        return Protect-ItlVanessaProfileDiagnosticText -Text ((Get-Content -LiteralPath $Path -Tail 30 -ErrorAction Stop) -join " ")
+    } catch {
+        return ""
+    }
+}
+
 function Invoke-ItlOnDemandVanessaProfileStart {
     param(
         [Parameter(Mandatory = $true)][string]$InstanceId,
@@ -3565,20 +3677,35 @@ function Invoke-ItlOnDemandVanessaProfileStart {
 
     $executable = Get-ItlOnDemandMcpExecutablePath
     $definition = Get-ItlOnDemandMcpFamilyDefinition -Family "vanessa-ui"
-    $output = @(& $executable `
-        "vanessa-profile-start" `
-        "--project-root" $script:ProjectRoot `
-        "--catalog" $definition.catalogPath `
-        "--helper" $script:Agent1cScriptPath `
-        "--instance-id" $InstanceId `
-        "--feature" $FeaturePath 2>&1)
-    if ($LASTEXITCODE -ne 0) {
-        throw "ITL_VANESSA_PROFILE_START_FAILED: $($output -join ' ')"
+    $arguments = @(
+        "vanessa-profile-start",
+        "--project-root", $script:ProjectRoot,
+        "--catalog", $definition.catalogPath,
+        "--helper", $script:Agent1cScriptPath,
+        "--instance-id", $InstanceId,
+        "--feature", $FeaturePath
+    )
+    $processResult = Invoke-ItlNativeProcessCapture -FilePath $executable -Arguments $arguments
+    if ($processResult.exitCode -ne 0) {
+        $combined = @($processResult.stderr, $processResult.stdout) -join " "
+        $brokerLogPath = Get-ItlVanessaProfileBrokerLogPath -Text $combined
+        $diagnostic = Protect-ItlVanessaProfileDiagnosticText -Text $combined
+        $logTail = Read-ItlVanessaProfileSafeLogTail -Path $brokerLogPath
+        if ($logTail) {
+            $diagnostic = Protect-ItlVanessaProfileDiagnosticText -Text "$diagnostic brokerLogTail=$logTail"
+        }
+        $requiredAction = Get-ItlVanessaProfileFailureRequiredAction -Diagnostic $diagnostic -BrokerLogPath $brokerLogPath
+        Set-RunFailureContext -Category "runner" -RequiredAction $requiredAction
+        $safeLogPath = Protect-ItlVanessaProfileDiagnosticText -Text $brokerLogPath -MaxLength 600
+        throw "ITL_VANESSA_PROFILE_START_FAILED: exitCode=$($processResult.exitCode); requiredAction=$requiredAction; retryAction=start-vanessa-profile; brokerLog=$safeLogPath; cause=$diagnostic"
     }
     $marker = "ITL_VANESSA_PROFILE_RESULT="
-    $line = @($output | ForEach-Object { [string]$_ } | Where-Object { $_.StartsWith($marker, [System.StringComparison]::Ordinal) } | Select-Object -Last 1)
+    $line = @(([string]$processResult.stdout -split "`r?`n") | Where-Object {
+        $_.StartsWith($marker, [System.StringComparison]::Ordinal)
+    } | Select-Object -Last 1)
     if ($line.Count -ne 1) {
-        throw "ITL_VANESSA_PROFILE_START_FAILED: facade did not return a structured result."
+        $diagnostic = Protect-ItlVanessaProfileDiagnosticText -Text $processResult.stderr
+        throw "ITL_VANESSA_PROFILE_START_FAILED: facade did not return a structured result on stdout; stderr=$diagnostic"
     }
     try {
         return ($line[0].Substring($marker.Length) | ConvertFrom-Json)
