@@ -130,7 +130,24 @@ Describe "1C workflow ai_rules_1c client checks" {
     }
 
     It "keeps hardcoded shared skill paths limited to workflow-owned skills" {
-        $allowed = @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")
+        $allowed = @(
+            "1c-workflow",
+            "1c-workflow-fast",
+            "product-docs",
+            "itl-roctup-1c-data",
+            "itl-vanessa-ui-mcp",
+            "itl",
+            "itl-litemode",
+            "itl-status",
+            "itl-new-config-branch",
+            "itl-new-extension-branch",
+            "itl-switch-client",
+            "itl-update-workflow",
+            "itl-check",
+            "itl-refresh",
+            "itl-result",
+            "itl-verify-fix"
+        )
         $violations = @()
         $scriptsRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts"
         foreach ($file in @(Get-ChildItem -LiteralPath $scriptsRoot -Recurse -File -Filter "*.ps1")) {
