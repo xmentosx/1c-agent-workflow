@@ -33,6 +33,8 @@ Describe "latest-only branch seed and two-level refresh" {
                 }
                 function Dump-ConfigToFilesFromInfoBase {
                     param([string]$InfoBasePath, [string]$InfoBaseKind)
+                    New-Item -ItemType Directory -Force -Path (Join-Path $InfoBasePath "1Cv8Log") | Out-Null
+                    [IO.File]::WriteAllBytes((Join-Path $InfoBasePath "1Cv8Log\1Cv8.lgf"), [byte[]](7, 7))
                     return [pscustomobject]@{ exportPath = "src/cf" }
                 }
                 function Get-ConfigSourceFingerprint {
