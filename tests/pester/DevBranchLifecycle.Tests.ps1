@@ -4041,9 +4041,14 @@ if (`$?) { exit 0 } else { exit 1 }
             }
             $result | Should -Be @("/itl-update-workflow")
 
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $worktreeRoot -Action help 2>&1
-            ($output -join [Environment]::NewLine) | Should -Match "Команды ITL в этом контексте"
-            ($output -join [Environment]::NewLine) | Should -Match "Inherited by Kilo from primary checkout; invalid in this context"
+            $helpResult = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
+                "-ProjectRoot", $worktreeRoot,
+                "-Action", "help"
+            )
+            $helpResult.exitCode | Should -Be 0
+            $helpResult.combinedText | Should -Match "Команды ITL в этом контексте"
+            $helpResult.combinedText | Should -Match "Унаследовано Kilo из основного checkout, но недоступно в этом контексте"
+            $helpResult.combinedText | Should -Match "/itl-update-workflow"
         } finally {
             $previousPreference = $ErrorActionPreference
             $ErrorActionPreference = "Continue"

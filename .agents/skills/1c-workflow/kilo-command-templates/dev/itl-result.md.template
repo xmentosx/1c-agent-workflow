@@ -7,7 +7,7 @@ Use this command only from an active `itldev/*` development branch worktree.
 
 Run the helper from the current project directory:
 
-If the agent shell tool supports `timeout_ms`, use `timeout_ms >= 3900000` so the outer shell outlives the 3600-second Designer limit. If the Designer limit is higher, raise the outer timeout too. Do not use `120000 ms` or other short values.
+If the agent shell tool supports `timeout_ms`, use `timeout_ms >= 3900000` so the outer shell outlives the 3600-second 1C Designer/Enterprise limit. If the Designer limit is higher, raise the outer timeout too. Do not use `120000 ms` or other short values.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action export-dev-branch-result

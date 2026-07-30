@@ -480,7 +480,10 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Match "Update-UserRules"
         $HelperText | Should -Match "Assert-WorkflowPackageUpdateContext"
         $HelperText | Should -Match "Assert-WorkflowTrackedGitClean"
-        $HelperText | Should -Match ([regex]::Escape("Kilo Code: run /reload or open a new session"))
+        $HelperText | Should -Match "function Write-PostInitClientReloadHandoff"
+        $HelperText | Should -Match ([regex]::Escape("В окне Kilo Code"))
+        $HelperText | Should -Match ([regex]::Escape("выполните /reload"))
+        $HelperText | Should -Match ([regex]::Escape("Новое окно worktree"))
         $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "refresh-dev-branch MCP reconcile"'))
         $HelperText | Should -Match "updatedAt"
         $HelperText | Should -Match "Remove-LegacyWorkflowManagedFiles"
@@ -1078,22 +1081,26 @@ local after
             & git -C $sourceRoot branch -M master
             $localCommit = ((& git -C $sourceRoot rev-parse HEAD) -join "").Trim()
 
-            & git clone --bare $sourceRoot $remoteRoot *> $null
+            & git clone --quiet --bare $sourceRoot $remoteRoot *> $null
             & git -C $sourceRoot remote add origin $remoteRoot
-            & git clone $remoteRoot $updaterRoot *> $null
+            & git clone --quiet $remoteRoot $updaterRoot *> $null
             & git -C $updaterRoot config user.email "test@example.invalid"
             & git -C $updaterRoot config user.name "ITL Test"
             Set-Content -LiteralPath (Join-Path $updaterRoot "fresh-marker.txt") -Encoding ASCII -Value "fresh"
             & git -C $updaterRoot add fresh-marker.txt
             & git -C $updaterRoot commit -m "advance remote" *> $null
-            & git -C $updaterRoot push origin master *> $null
+            & git -C $updaterRoot push --quiet origin master *> $null
             $remoteCommit = ((& git -C $updaterRoot rev-parse HEAD) -join "").Trim()
 
             $env:ITL_WORKFLOW_REPO = $remoteRoot
             $env:ITL_WORKFLOW_REF = "master"
-            $output = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $InstallerPath -ProjectRoot $targetRoot -SourceRoot $sourceRoot -NoInit 2>&1)
-            $exitCode = $LASTEXITCODE
-            $combined = $output -join [Environment]::NewLine
+            $staleResult = Invoke-TestPowerShellFile -FilePath $InstallerPath -Arguments @(
+                "-ProjectRoot", $targetRoot,
+                "-SourceRoot", $sourceRoot,
+                "-NoInit"
+            )
+            $exitCode = $staleResult.exitCode
+            $combined = $staleResult.combinedText
 
             $exitCode | Should -Not -Be 0
             $combined | Should -Match "устарел"
@@ -1102,16 +1109,24 @@ local after
             $combined | Should -Match "новый.*clone"
             (Test-Path -LiteralPath $targetRoot -ErrorAction SilentlyContinue) | Should -BeFalse
 
-            & git -C $sourceRoot fetch origin master *> $null
+            & git -C $sourceRoot fetch --quiet origin master *> $null
             & git -C $sourceRoot merge --ff-only origin/master *> $null
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $InstallerPath -ProjectRoot $freshTargetRoot -SourceRoot $sourceRoot -NoInit *> $null
-            $LASTEXITCODE | Should -Be 0
+            $freshResult = Invoke-TestPowerShellFile -FilePath $InstallerPath -Arguments @(
+                "-ProjectRoot", $freshTargetRoot,
+                "-SourceRoot", $sourceRoot,
+                "-NoInit"
+            )
+            $freshResult.exitCode | Should -Be 0
             (Test-Path -LiteralPath (Join-Path $freshTargetRoot "install-agent-1c-workflow.ps1") -PathType Leaf) | Should -BeTrue
 
             Add-Content -LiteralPath (Join-Path $sourceRoot "AGENT-INSTALL.md") -Encoding UTF8 -Value "tracked test change"
-            $dirtyOutput = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $InstallerPath -ProjectRoot $dirtyTargetRoot -SourceRoot $sourceRoot -NoInit 2>&1)
-            $LASTEXITCODE | Should -Not -Be 0
-            ($dirtyOutput -join [Environment]::NewLine) | Should -Match "tracked-изменения"
+            $dirtyResult = Invoke-TestPowerShellFile -FilePath $InstallerPath -Arguments @(
+                "-ProjectRoot", $dirtyTargetRoot,
+                "-SourceRoot", $sourceRoot,
+                "-NoInit"
+            )
+            $dirtyResult.exitCode | Should -Not -Be 0
+            $dirtyResult.combinedText | Should -Match "tracked-изменения"
             (Test-Path -LiteralPath $dirtyTargetRoot -ErrorAction SilentlyContinue) | Should -BeFalse
         } finally {
             $env:ITL_WORKFLOW_REPO = $previousRepo
@@ -1387,7 +1402,18 @@ exit 0
             $text | Should -Match "agent shell tool supports"
             $text | Should -Match "timeout_ms\s*>=\s*3900000"
             $text | Should -Match 'do not use\s+`?120000 ms'
-            $text | Should -Match "1C Designer/Enterprise"
+        }
+
+        $platformTemplatePaths = @(
+            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template"
+        ) | ForEach-Object { Join-Path $RepoRoot $_ }
+
+        foreach ($path in $platformTemplatePaths) {
+            (Get-Content -Encoding UTF8 -Raw $path) | Should -Match "1C Designer/Enterprise"
         }
 
         $shortTemplatePaths = @(
