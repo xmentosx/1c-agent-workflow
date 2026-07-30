@@ -743,6 +743,50 @@ function Get-E2ESourceFileObservation {
     return [ordered]@{ path = $artifact; length = [int64]$file.Length; lastWriteTimeUtc = $file.LastWriteTimeUtc.ToString("o") }
 }
 
+function Remove-E2ESeedDisposableBranch {
+    param(
+        [string]$MainRoot,
+        [object]$Spec,
+        [System.Collections.Generic.List[string]]$CleanupErrors
+    )
+
+    $worktreeRemoved = $true
+    if (Test-Path -LiteralPath $Spec.root -PathType Container) {
+        try {
+            Invoke-E2EHelperAtRoot -Root $Spec.root -BranchName $Spec.name -Action "close-dev-branch" -TimeoutSeconds 1800 -LogPrefix ("seed-parallel-close-" + $Spec.name) -AdditionalArguments @("-AllowUnverifiedClose") | Out-Null
+        } catch {
+            $CleanupErrors.Add("$($Spec.branch) close: $($_.Exception.Message)") | Out-Null
+        }
+        try {
+            & git -C $MainRoot worktree remove --force -- $Spec.root *> $null
+            if ($LASTEXITCODE -ne 0) {
+                $worktreeRemoved = $false
+                $CleanupErrors.Add("$($Spec.branch): Git worktree removal failed with exit code $LASTEXITCODE.") | Out-Null
+            }
+        } catch {
+            $worktreeRemoved = $false
+            $CleanupErrors.Add("$($Spec.branch): $($_.Exception.Message)") | Out-Null
+        }
+    }
+
+    if ($worktreeRemoved) {
+        & git -C $MainRoot show-ref --verify --quiet "refs/heads/$($Spec.branch)"
+        $branchStatus = $LASTEXITCODE
+        if ($branchStatus -eq 0) {
+            try {
+                & git -C $MainRoot branch -D -- $Spec.branch *> $null
+                if ($LASTEXITCODE -ne 0) {
+                    $CleanupErrors.Add("$($Spec.branch): Git branch deletion failed with exit code $LASTEXITCODE.") | Out-Null
+                }
+            } catch {
+                $CleanupErrors.Add("$($Spec.branch): $($_.Exception.Message)") | Out-Null
+            }
+        } elseif ($branchStatus -ne 1) {
+            $CleanupErrors.Add("$($Spec.branch): Git branch inspection failed with exit code $branchStatus.") | Out-Null
+        }
+    }
+}
+
 function Invoke-E2ESeedParallelProof {
     param([string]$MainRoot)
 
@@ -892,15 +936,7 @@ function Invoke-E2ESeedParallelProof {
             [pscustomobject]@{ root = $worktreeA; name = $nameA; branch = $branchA },
             [pscustomobject]@{ root = $worktreeB; name = $nameB; branch = $branchB }
         )) {
-            if (Test-Path -LiteralPath $spec.root -PathType Container) {
-                try {
-                    Invoke-E2EHelperAtRoot -Root $spec.root -BranchName $spec.name -Action "close-dev-branch" -TimeoutSeconds 1800 -LogPrefix ("seed-parallel-close-" + $spec.name) -AdditionalArguments @("-AllowUnverifiedClose") | Out-Null
-                } catch {
-                    $cleanupErrors.Add("$($spec.branch): $($_.Exception.Message)") | Out-Null
-                    & git -C $MainRoot worktree remove --force $spec.root *> $null
-                }
-            }
-            & git -C $MainRoot branch -D $spec.branch *> $null
+            Remove-E2ESeedDisposableBranch -MainRoot $MainRoot -Spec $spec -CleanupErrors $cleanupErrors
         }
         & git -C $MainRoot checkout $masterBranch *> $null
         if ($masterAfterSync) {
