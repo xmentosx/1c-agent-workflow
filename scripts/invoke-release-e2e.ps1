@@ -673,8 +673,9 @@ function Get-E2ESeedManifest {
     $seedRoot = Join-Path $MainRoot ".agent-1c\branch-seed"
     if (Test-Path -LiteralPath $projectConfigPath -PathType Leaf) {
         $projectConfig = Get-Content -LiteralPath $projectConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ([string]$projectConfig.branchSeedRoot) {
-            $configured = [Environment]::ExpandEnvironmentVariables([string]$projectConfig.branchSeedRoot)
+        $branchSeedRootProperty = $projectConfig.PSObject.Properties["branchSeedRoot"]
+        if ($null -ne $branchSeedRootProperty -and [string]$branchSeedRootProperty.Value) {
+            $configured = [Environment]::ExpandEnvironmentVariables([string]$branchSeedRootProperty.Value)
             $seedRoot = if ([IO.Path]::IsPathRooted($configured)) { [IO.Path]::GetFullPath($configured) } else { [IO.Path]::GetFullPath((Join-Path $MainRoot $configured)) }
         }
     }

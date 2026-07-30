@@ -68,6 +68,36 @@ Describe "Release gate scripts" {
         $runnerText | Should -Match '\[Console\]::Error\.WriteLine\(\$failure\)'
         (Get-Content -LiteralPath (Join-Path $RepoRoot "docs\release-checklist.md") -Raw -Encoding UTF8) | Should -Match 'source-snapshot'
     }
+
+    It "uses the default seed root for a legacy project config" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-seed-root-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $seedRoot = Join-Path $tempRoot ".agent-1c\branch-seed\source"
+            New-Item -ItemType Directory -Force -Path $seedRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"schemaVersion":1}'
+            Set-Content -LiteralPath (Join-Path $seedRoot "manifest.json") -Encoding UTF8 -Value '{"status":"ready","completedAt":"2026-07-30T00:00:00Z"}'
+
+            $tokens = $null
+            $errors = $null
+            $runnerAst = [System.Management.Automation.Language.Parser]::ParseFile(
+                (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1"),
+                [ref]$tokens,
+                [ref]$errors
+            )
+            @($errors) | Should -BeNullOrEmpty
+            $functionAst = $runnerAst.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq "Get-E2ESeedManifest"
+            }, $true)
+            . ([scriptblock]::Create($functionAst.Extent.Text))
+
+            $manifest = Get-E2ESeedManifest -MainRoot $tempRoot
+            $manifest.path | Should -Be (Join-Path $seedRoot "manifest.json")
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 Describe "Release E2E orchestration" {
