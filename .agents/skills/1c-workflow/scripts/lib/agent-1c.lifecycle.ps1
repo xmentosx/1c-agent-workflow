@@ -4225,7 +4225,50 @@ function Get-LauncherMaxIntValue {
     return $max
 }
 
+function Enter-LauncherListLock {
+    param(
+        [string]$ListPath,
+        [int]$TimeoutSeconds = 30
+    )
+
+    $lockPath = "$ListPath.itl.lock"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        try {
+            return [System.IO.File]::Open(
+                $lockPath,
+                [System.IO.FileMode]::OpenOrCreate,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+        } catch [System.IO.IOException] {
+            if ((Get-Date) -ge $deadline) {
+                throw "LAUNCHER_LIST_LOCK_TIMEOUT path='$lockPath' timeoutSeconds='$TimeoutSeconds'"
+            }
+            Start-Sleep -Milliseconds 50
+        }
+    } while ($true)
+}
+
 function Register-DevBranchInLauncher {
+    param(
+        [string]$InfoBaseKind,
+        [string]$InfoBasePath,
+        [string]$SafeDevBranchName,
+        [string]$ProjectRootForFolder = $script:ProjectRoot,
+        [string]$ExistingLauncherId = ""
+    )
+
+    $listLock = Enter-LauncherListLock -ListPath (Get-LauncherListPath)
+    try {
+        return (Register-DevBranchInLauncherUnlocked @PSBoundParameters)
+    } finally {
+        $listLock.Dispose()
+    }
+}
+
+function Register-DevBranchInLauncherUnlocked {
     param(
         [string]$InfoBaseKind,
         [string]$InfoBasePath,

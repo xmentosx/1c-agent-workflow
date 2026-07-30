@@ -169,6 +169,41 @@
         }
     }
 
+    It "serializes launcher-list mutations with a dedicated cross-process file lock" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-launcher-lock-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $listPath = Join-Path $tempRoot "1C\1CEStart\ibases.v8i"
+            $firstLock = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                Enter-LauncherListLock -ListPath $listPath -TimeoutSeconds 1
+            }
+            try {
+                {
+                    & {
+                        . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                        $secondLock = Enter-LauncherListLock -ListPath $listPath -TimeoutSeconds 1
+                        $secondLock.Dispose()
+                    }
+                } | Should -Throw "LAUNCHER_LIST_LOCK_TIMEOUT*"
+            } finally {
+                $firstLock.Dispose()
+            }
+
+            $reacquired = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                Enter-LauncherListLock -ListPath $listPath -TimeoutSeconds 1
+            }
+            $reacquired | Should -Not -BeNullOrEmpty
+            $reacquired.Dispose()
+
+            $HelperText | Should -Match '(?s)function Register-DevBranchInLauncher\s*\{.*?Enter-LauncherListLock.*?Register-DevBranchInLauncherUnlocked.*?finally\s*\{\s*\$listLock\.Dispose\(\)'
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "copies both dev branch auto-update EPFs but launches only the main EPF after a real load" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-auto-update-epf-test-" + [guid]::NewGuid().ToString("N"))
 
