@@ -320,9 +320,9 @@
     It "has context-specific Kilo command templates for the public surface" {
         $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates"
         $expected = @{
-            common = @("itl.md.template", "itl-litemode.md.template", "itl-status.md.template")
+            common = @("itl.md.template", "itl-litemode.md.template", "itl-status.md.template", "itl-sync-master.md.template")
             master = @("itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-switch-client.md.template", "itl-update-workflow.md.template")
-            dev = @("itl-check.md.template", "itl-refresh.md.template", "itl-result.md.template", "itl-verify-fix.md.template")
+            dev = @("itl-check.md.template", "itl-refresh.md.template", "itl-refresh-lite.md.template", "itl-result.md.template", "itl-verify-fix.md.template")
         }
 
         foreach ($setName in $expected.Keys) {
@@ -434,7 +434,9 @@
             "/itl-switch-client <client>",
             "/itl-check",
             "/itl-verify-fix",
+            "/itl-sync-master",
             "/itl-refresh",
+            "/itl-refresh-lite",
             "/itl-result"
         )) {
             $panelText | Should -Match ([regex]::Escape($command))
@@ -896,7 +898,9 @@
             ".agents/skills/itl-switch-client/",
             ".agents/skills/itl-update-workflow/",
             ".agents/skills/itl-check/",
+            ".agents/skills/itl-sync-master/",
             ".agents/skills/itl-refresh/",
+            ".agents/skills/itl-refresh-lite/",
             ".agents/skills/itl-result/",
             ".agents/skills/itl-verify-fix/",
             ".kilo/kilo.json",

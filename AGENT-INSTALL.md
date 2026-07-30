@@ -380,12 +380,14 @@ In an `itldev/*` development worktree, show only:
 /itl-status
 /itl-check
 /itl-refresh
+/itl-sync-master
+/itl-refresh-lite
 /itl-result
 ```
 
 New branch commands create a sibling Git worktree by default and leave the current project folder on `master`. On success with a non-empty `userReport`, make the final response exactly that report rendered as Markdown, with no added introduction, conclusion, or separate worktree instruction. Do not translate it, convert it to a table, rename or merge fields, reorder or omit lines, summarize it, or replace it with `requiredAction`; the Russian report already contains branch paths, MCP/Browser state, instructions, advice, and the window-opening action. For Codex, that action tells the developer to add the existing worktree folder as a separate Codex project and start its task in `Local`, not ask Codex to create another `Worktree`. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
 
-`/itl-refresh` uses the same exact-response contract on success. Its Russian `userReport` explicitly confirms the outcome and contains the branch, infobase load, Enterprise auto-update, MCP/Browser state, `/reload`, `/itl-check`, and extension advice. Do not read or reproduce `console.log` on success, replace the report with a generic success sentence, or build a separate summary from diagnostic output.
+`/itl-refresh` remains the compatible full source → `master` → branch scenario and uses the same exact-response contract on success. `/itl-sync-master` performs the shared source/master synchronization and always rebuilds the single latest-only seed; `/itl-refresh-lite` then refreshes one branch from the exact current `master` SHA without source or seed access, so several branch worktrees may run it concurrently. Their Russian `userReport` is authoritative. Do not read or reproduce `console.log` on success, replace the report with a generic success sentence, or build a separate summary from diagnostic output.
 
 `/itl` must present the lifecycle as a process panel, not as a flat command list: current state, recommended next step, lifecycle path, visible client-native commands/skills or natural OpenSpec requests, then grouped additional helper actions. In a fresh clean `itldev/*` branch with `verification missing`, recommend choosing quick-fix or the available OpenSpec invocation mode, not `/itl-check`. Never promise universal `/opsx*`; for the qualified Codex bundle, show the explicit-only `$opsx-explore`, `$opsx-propose`, `$opsx-apply`, and `$opsx-archive` aliases while keeping the canonical `openspec-*` skills available for implicit routing. Recommend `/itl-check` after checkable configuration/extension/Vanessa feature changes or stale/failed/unknown verification.
 

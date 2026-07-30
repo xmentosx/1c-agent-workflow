@@ -50,9 +50,13 @@ annotated `itl-*` tag, совпадающем с tag и commit в workflow templ
 ```
 
 Стенд настраивается локальным `.agent-1c/release-e2e.json` по примеру
-`templates/release-e2e.example.json`. Дорогая конфигурационная часть состоит ровно из трёх
+`templates/release-e2e.example.json`. Сначала file-seed стадия пересоздаёт
+latest-only seed, параллельно восстанавливает две disposable-ветки, продвигает
+`master` контролируемым commit и параллельно выполняет два `/itl-refresh-lite`,
+доказывая точный target SHA, отсутствие source-вызовов и штатный cleanup.
+Дорогая конфигурационная часть затем состоит ровно из трёх
 configuration-проверок: первая metadata load, test-only отрицательный прогон
-без Designer/Enterprise и вторая metadata load с восстановленным тестом. Затем
+без Designer/Enterprise и вторая metadata load с восстановленным тестом. Далее
 идут fingerprint-стадии config roundtrip, extension smoke, on-demand MCP и
 result/cleanup. Checkpoint v2 хранит SHA-проверяемые `.dt`, state, `.dev.env`,
 тайминги и попытки. После обрыва `Auto` продолжает текущий релиз, а между

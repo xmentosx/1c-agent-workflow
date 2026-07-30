@@ -21,6 +21,8 @@ Map routine requests in an installed ITL project to one helper action. Use the m
 - explicitly requested base load without tests: `update-dev-branch-base`
 - compatibility verification: `verify-dev-branch`
 - refresh from source: `refresh-dev-branch`
+- synchronize master and rebuild the latest-only seed: `sync-master`
+- refresh only from the current master without source/seed access: `refresh-dev-branch-lite`
 - export CF/CFE: `export-dev-branch-result`
 - explicit advanced close: `close-dev-branch`
 

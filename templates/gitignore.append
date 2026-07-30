@@ -27,6 +27,7 @@ logs/
 .agent-1c/tmp/
 .agent-1c/release-e2e.json
 .agent-1c/infobases/
+.agent-1c/branch-seed/
 .agent-1c/workspaces/
 .agent-1c/tools/event-log-exporter/
 .agent-1c/tools/auto-update/
@@ -43,12 +44,14 @@ build/test-results/
 .agents/skills/itl/
 .agents/skills/itl-litemode/
 .agents/skills/itl-status/
+.agents/skills/itl-sync-master/
 .agents/skills/itl-new-config-branch/
 .agents/skills/itl-new-extension-branch/
 .agents/skills/itl-switch-client/
 .agents/skills/itl-update-workflow/
 .agents/skills/itl-check/
 .agents/skills/itl-refresh/
+.agents/skills/itl-refresh-lite/
 .agents/skills/itl-result/
 .agents/skills/itl-verify-fix/
 .kilo/commands/itl*.md

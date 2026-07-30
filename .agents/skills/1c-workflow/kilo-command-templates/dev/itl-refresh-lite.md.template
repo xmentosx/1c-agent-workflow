@@ -1,0 +1,18 @@
+---
+description: Обновить текущую ветку только из готового master
+agent: code
+---
+
+Use this command only from an active `itldev/*` development branch worktree.
+
+Run the helper directly from the current project directory:
+
+If the agent shell tool supports `timeout_ms`, run this lifecycle command with `timeout_ms >= 3900000` by default so the outer shell outlives the 3600-second Designer limit; if that limit is configured higher, raise the outer timeout too. Do not use `120000 ms` or other short defaults because the helper may launch 1C Designer/Enterprise operations.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action refresh-dev-branch-lite
+```
+
+The helper never updates or reads the source infobase and never rebuilds the seed. It records the exact current `master` SHA, merges that commit while preserving branch `ConfigDumpInfo.xml`, re-executes updated workflow helpers when needed, performs the fingerprint-gated branch load and Enterprise normalization, and reconciles branch MCP configuration. This is the parallel-friendly second step after one `/itl-sync-master`.
+
+On success with a non-empty `userReport`, make the final response exactly that report rendered as Markdown, with no introduction, conclusion, or separate success summary. Do not translate, summarize, reorder, or omit its lines. On failure, read only the last 80 lines of `logPath`.

@@ -25,6 +25,7 @@
   "dependencyMode": "fresh",
   "verificationPolicy": "warn",
   "devBranchInfoBaseRoot": ".agent-1c/infobases/dev-branches",
+  "branchSeedRoot": ".agent-1c/branch-seed",
   "devBranchWorktreeRoot": "",
   "serverBaseCopyScript": "",
   "aiRules": {

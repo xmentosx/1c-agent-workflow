@@ -78,6 +78,62 @@ function Invoke-TestPowerShellFile {
     }
 }
 
+function New-TestBranchSeedFixture {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectRoot,
+        [Parameter(Mandatory = $true)][string]$SourceInfoBasePath
+    )
+
+    $resolvedProjectRoot = [IO.Path]::GetFullPath($ProjectRoot)
+    $resolvedSourcePath = [IO.Path]::GetFullPath($SourceInfoBasePath)
+    $identity = "file|$($resolvedSourcePath.ToLowerInvariant())"
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $sourceKey = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($identity)))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+    $seedRoot = Join-Path $resolvedProjectRoot ".agent-1c\branch-seed\$sourceKey"
+    $artifactPath = Join-Path $seedRoot "infobase\1Cv8.1CD"
+    $baselinePath = Join-Path $seedRoot "event-log-baseline.json"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $artifactPath) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $resolvedSourcePath "1Cv8.1CD") -Destination $artifactPath -Force
+    $baseline = [ordered]@{
+        schemaVersion = 2
+        createdAt = [DateTime]::UtcNow.ToString("o")
+        reason = "test-fixture"
+        reader = "direct-stream"
+        logDirectory = Join-Path $resolvedSourcePath "1Cv8Log"
+        errorCount = 0
+        signatureCount = 0
+        signatures = @()
+        durationMs = 0
+        cache = [ordered]@{ status = "test-fixture"; path = ""; sourceKey = ""; segmentCount = 0 }
+        failureEvidence = ""
+    }
+    [IO.File]::WriteAllText($baselinePath, (($baseline | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    $manifest = [ordered]@{
+        schemaVersion = 1
+        status = "ready"
+        sourceKey = $sourceKey
+        syncId = "test-fixture"
+        artifactKind = "file-1cd"
+        artifactPath = $artifactPath
+        artifactSha256 = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        artifactBytes = (Get-Item -LiteralPath $artifactPath).Length
+        configurationFingerprint = "test-fixture"
+        configurationFileCount = 1
+        baselinePath = $baselinePath
+        baselineHash = ""
+        baselineCount = 0
+        startedAt = [DateTime]::UtcNow.ToString("o")
+        completedAt = [DateTime]::UtcNow.ToString("o")
+        failedAt = ""
+        failureEvidence = ""
+    }
+    [IO.File]::WriteAllText((Join-Path $seedRoot "manifest.json"), (($manifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+}
+
 function Get-TestShortPath {
     param([string]$Path)
 

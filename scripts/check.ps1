@@ -551,6 +551,13 @@ try {
             if ([int]$e2eSummary.schemaVersion -ne 3) { throw "Release E2E summary schema must be 3; actual: $($e2eSummary.schemaVersion)." }
             if ([string]$e2eSummary.status -ne "passed") { throw "Release E2E summary reports '$($e2eSummary.status)': $([string]$e2eSummary.error)" }
             if ([bool]$e2eSummary.onDemandMcpTestFixture) { throw "Release E2E used the test-only on-demand MCP fixture." }
+            if ([bool]$e2eSummary.seedParallelTestFixture) { throw "Release E2E used the test-only seed-parallel fixture." }
+            if (-not [bool]$e2eSummary.seedParallelBranchRuntimeConcurrent -or -not [bool]$e2eSummary.seedParallelLiteRefreshConcurrent -or
+                [string]$e2eSummary.seedParallelTargetMasterCommit -notmatch '^[a-f0-9]{40}$' -or
+                [int]$e2eSummary.seedParallelLiteRefreshSourceCallCount -ne 0 -or
+                [int]$e2eSummary.seedParallelBaselineCount -lt 0) {
+                throw "Release E2E did not prove latest-only file seed plus parallel branch runtime and lite refresh."
+            }
             if ([int]$e2eSummary.onDemandRoctupToolCount -ne 13 -or [int]$e2eSummary.onDemandVanessaToolCount -ne 38) { throw "Release E2E did not prove both complete on-demand MCP catalogs." }
             if ([int]$e2eSummary.onDemandRoctupPublicToolCount -ne 2 -or [int]$e2eSummary.onDemandVanessaPublicToolCount -ne 2) { throw "Release E2E did not prove both compact on-demand MCP gateway surfaces." }
             if ([int]$e2eSummary.onDemandVanessaInstances -ne 2 -or -not [bool]$e2eSummary.onDemandVanessaSecondSurvived) { throw "Release E2E did not prove isolated concurrent Vanessa facade instances." }

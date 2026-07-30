@@ -378,8 +378,8 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
             }
-            @($masterFiles.Keys).Count | Should -Be 14
-            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-new-config-branch", "itl-new-extension-branch", "itl-update-workflow", "itl-switch-client")) {
+            @($masterFiles.Keys).Count | Should -Be 16
+            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-new-config-branch", "itl-new-extension-branch", "itl-update-workflow", "itl-switch-client")) {
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/agents/openai.yaml"
             }
@@ -390,8 +390,8 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
             }
-            @($devFiles.Keys).Count | Should -Be 14
-            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-check", "itl-verify-fix", "itl-refresh", "itl-result")) {
+            @($devFiles.Keys).Count | Should -Be 18
+            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-result")) {
                 @($devFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match 'allow_implicit_invocation:\s*false'
             }
