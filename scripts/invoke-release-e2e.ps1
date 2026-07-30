@@ -45,6 +45,42 @@ function Get-E2EDotEnvValue {
     return ""
 }
 
+function Set-E2EDotEnvValue {
+    param(
+        [string]$Path,
+        [string]$Name,
+        [string]$Value
+    )
+
+    $replacement = "$Name=$Value"
+    $pattern = "^\s*$([regex]::Escape($Name))\s*="
+    $lines = if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        @([IO.File]::ReadAllLines($Path, [Text.Encoding]::UTF8))
+    } else {
+        @()
+    }
+    $updated = [System.Collections.Generic.List[string]]::new()
+    $replaced = $false
+    foreach ($line in $lines) {
+        if ([string]$line -match $pattern) {
+            if (-not $replaced) {
+                $updated.Add($replacement) | Out-Null
+                $replaced = $true
+            }
+            continue
+        }
+        $updated.Add([string]$line) | Out-Null
+    }
+    if (-not $replaced) {
+        $updated.Add($replacement) | Out-Null
+    }
+    [IO.File]::WriteAllText(
+        $Path,
+        (($updated -join [Environment]::NewLine) + [Environment]::NewLine),
+        [Text.UTF8Encoding]::new($false)
+    )
+}
+
 $sourceSnapshotValue = Get-E2EDotEnvValue -Name "SOURCE_INFOBASE_PATH"
 if (-not $sourceSnapshotValue) {
     throw "Dedicated E2E stand must define SOURCE_INFOBASE_PATH for its disposable source snapshot."
@@ -883,7 +919,12 @@ function Invoke-E2ESeedParallelProof {
         & git -C $MainRoot worktree add --quiet -b $branchB $worktreeB $masterAfterSync
         if ($LASTEXITCODE -ne 0) { throw "Could not create seed proof worktree B." }
         foreach ($target in @($worktreeA, $worktreeB)) {
-            Copy-Item -LiteralPath (Join-Path $MainRoot ".dev.env") -Destination (Join-Path $target ".dev.env") -Force
+            $targetEnvPath = Join-Path $target ".dev.env"
+            Copy-Item -LiteralPath (Join-Path $MainRoot ".dev.env") -Destination $targetEnvPath -Force
+            Set-E2EDotEnvValue `
+                -Path $targetEnvPath `
+                -Name "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP" `
+                -Value "skip"
         }
 
         $runtimeInvocations += Start-E2EHelperAtRoot -Root $worktreeA -BranchName $nameA -Action "initialize-dev-branch-runtime" -LogPrefix "seed-parallel-runtime-a" -AdditionalArguments @(
