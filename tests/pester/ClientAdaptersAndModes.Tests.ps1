@@ -844,9 +844,9 @@
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-doctor-openspec-natural-" + [guid]::NewGuid().ToString("N"))
         try {
             New-OpenSpecModeFixture -Root $tempRoot -Client qwen -Mode natural
-            $projectConfig = [ordered]@{ masterBranch = "master"; aiRules = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-72665287-r17"; tools = @("qwen") } }
+            $projectConfig = [ordered]@{ masterBranch = "master"; aiRules = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-5ae333ed-r18"; tools = @("qwen") } }
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c/project.json") -Encoding UTF8 -Value (($projectConfig | ConvertTo-Json -Depth 6) + "`n")
-            $lock = [ordered]@{ dependencies = [ordered]@{ aiRules1c = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-72665287-r17"; commit = "27a898c426a1016fffc4a1b008e8ac0cb1490da2"; upstreamCommit = "72665287e77361aea3aaf866fef163d98f0fabcd"; downstreamRevision = 17; compatibilityStatus = "passed" } } }
+            $lock = [ordered]@{ dependencies = [ordered]@{ aiRules1c = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-5ae333ed-r18"; commit = "841b30af5d87eb212f497754f1328b38146cb279"; upstreamCommit = "5ae333ed49dc66989e305b286acc93691bb96926"; downstreamRevision = 18; compatibilityStatus = "passed" } } }
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c/dependency-lock.json") -Encoding UTF8 -Value (($lock | ConvertTo-Json -Depth 8) + "`n")
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_VANESSA_TESTING=auto`nITL_CHECK_EVENT_LOG=manual`n"
             foreach ($skill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")) {

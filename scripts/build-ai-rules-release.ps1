@@ -5,6 +5,8 @@ param(
     [string]$UpstreamCommit = "",
     [string]$ReportPath = "",
     [string]$OverlayRoot = "",
+    [ValidateSet("Prepare", "Verify")]
+    [string]$Mode = "Prepare",
     [switch]$CheckOnly
 )
 
@@ -12,9 +14,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $utf8 = New-Object System.Text.UTF8Encoding $false
 $workflowRoot = Split-Path -Parent $PSScriptRoot
-$overlayRoot = if ($OverlayRoot) { [IO.Path]::GetFullPath($OverlayRoot) } else { Join-Path $workflowRoot "templates\ai-rules-overlay" }
-$manifestPath = Join-Path $overlayRoot "sections.json"
-$targetTemplatePath = Join-Path $overlayRoot "AGENTS.md"
+$overlayRootFull = if ($OverlayRoot) { [IO.Path]::GetFullPath($OverlayRoot) } else { Join-Path $workflowRoot "templates\ai-rules-overlay" }
+$manifestPath = Join-Path $overlayRootFull "sections.json"
+if ($CheckOnly) { $Mode = "Verify" }
 
 function ConvertTo-NativeArgument {
     param([string]$Value)
@@ -51,63 +53,85 @@ function Invoke-AiRulesGit {
     return Invoke-GitProcess -Arguments (@("-C", $script:AiRulesRootFull) + @($Arguments)) -AllowFailure:$AllowFailure
 }
 
-function Get-TextSha256 {
-    param([string]$Text)
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try { return ([BitConverter]::ToString($sha.ComputeHash($utf8.GetBytes($Text)))).Replace("-", "").ToLowerInvariant() }
-    finally { $sha.Dispose() }
+function Get-GitPathList {
+    param([string[]]$Arguments)
+    if ($Arguments.Count -eq 0) { return @() }
+    $nulArguments = @($Arguments[0], "-z") + @($Arguments | Select-Object -Skip 1)
+    $result = Invoke-AiRulesGit -Arguments (@("-c", "core.quotepath=false") + $nulArguments)
+    if (-not $result.stdout) { return @() }
+    return @($result.stdout.Split([char]0, [StringSplitOptions]::RemoveEmptyEntries) | Where-Object { $_ })
 }
 
-function Get-TopLevelSections {
+function Get-TextSha256 {
     param([string]$Text)
-    $matches = [regex]::Matches($Text, '(?m)^# ([^#\r\n].*)$')
-    $result = [System.Collections.Generic.List[object]]::new()
-    for ($index = 0; $index -lt $matches.Count; $index++) {
-        $start = $matches[$index].Index
-        $end = if (($index + 1) -lt $matches.Count) { $matches[$index + 1].Index } else { $Text.Length }
-        $sectionText = $Text.Substring($start, $end - $start)
-        $result.Add([pscustomobject]@{
-            heading = [string]$matches[$index].Groups[1].Value
-            sha256 = Get-TextSha256 -Text $sectionText
-            length = $sectionText.Length
-        })
+    $normalized = $Text.Replace("`r`n", "`n")
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha.ComputeHash($utf8.GetBytes($normalized)))).Replace("-", "").ToLowerInvariant()
     }
-    return @($result)
+    finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-GitTextSha256 {
+    param([string]$Commit, [string]$Path)
+    $result = Invoke-AiRulesGit -Arguments @("show", "$Commit`:$Path") -AllowFailure
+    if ($result.exitCode -ne 0) { return "<absent>" }
+    return Get-TextSha256 -Text $result.stdout
+}
+
+function Test-GitPathExists {
+    param([string]$Commit, [string]$Path)
+    return (Invoke-AiRulesGit -Arguments @("cat-file", "-e", "$Commit`:$Path") -AllowFailure).exitCode -eq 0
 }
 
 function Write-OverlayReport {
     param([object]$Payload, [string]$Path)
     $parent = Split-Path -Parent $Path
     if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-    [IO.File]::WriteAllText($Path, (($Payload | ConvertTo-Json -Depth 12) + [Environment]::NewLine), $utf8)
+    [IO.File]::WriteAllText($Path, (($Payload | ConvertTo-Json -Depth 16) + [Environment]::NewLine), $utf8)
 }
 
-function Test-WorktreeMatchesCommitPaths {
-    param([string]$Commit, [string[]]$Paths)
-    foreach ($path in @($Paths)) {
-        $expected = Invoke-AiRulesGit -Arguments @("rev-parse", "$Commit`:$path") -AllowFailure
-        $fullPath = Join-Path $script:AiRulesRootFull $path
-        if ($expected.exitCode -ne 0) {
-            if (Test-Path -LiteralPath $fullPath) { return $false }
-            continue
-        }
-        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) { return $false }
-        $actual = Invoke-AiRulesGit -Arguments @("hash-object", "--path=$path", $path)
-        if ($actual.stdout.Trim() -ne $expected.stdout.Trim()) { return $false }
-    }
-    return $true
+function Add-Blocker {
+    param([string]$Message)
+    $script:Blockers.Add($Message)
 }
 
 $script:AiRulesRootFull = [IO.Path]::GetFullPath($AiRulesRoot)
-if (-not (Test-Path -LiteralPath (Join-Path $script:AiRulesRootFull ".git") -ErrorAction SilentlyContinue) -and
-    -not (Test-Path -LiteralPath (Join-Path $script:AiRulesRootFull "AGENTS.md") -PathType Leaf)) {
-    throw "AiRulesRoot is not a usable ai_rules_1c checkout: $script:AiRulesRootFull"
+[void](Invoke-AiRulesGit -Arguments @("rev-parse", "--git-dir"))
+if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+    throw "AI rules decision ledger is missing: $manifestPath"
 }
-if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf) -or -not (Test-Path -LiteralPath $targetTemplatePath -PathType Leaf)) {
-    throw "AI rules overlay assets are incomplete under $overlayRoot"
-}
+
 $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-$additionalTargets = if ($manifest.PSObject.Properties["additionalTargets"]) { @($manifest.additionalTargets) } else { @() }
+if ([int]$manifest.schemaVersion -ne 2) {
+    throw "AI rules decision ledger schemaVersion must be 2."
+}
+
+$baselineUpstream = (Invoke-AiRulesGit -Arguments @("rev-parse", "$([string]$manifest.baselineUpstreamCommit)^{commit}")).stdout.Trim()
+$baselineRelease = (Invoke-AiRulesGit -Arguments @("rev-parse", "$([string]$manifest.baselineReleaseCommit)^{commit}")).stdout.Trim()
+if (-not $UpstreamCommit) { $UpstreamCommit = [string]$manifest.intakeUpstreamCommit }
+$UpstreamCommit = (Invoke-AiRulesGit -Arguments @("rev-parse", "$UpstreamCommit^{commit}")).stdout.Trim()
+if ($UpstreamCommit -ne [string]$manifest.intakeUpstreamCommit) {
+    throw "Requested upstream $UpstreamCommit differs from audited intake $($manifest.intakeUpstreamCommit)."
+}
+
+$branch = (Invoke-AiRulesGit -Arguments @("rev-parse", "--abbrev-ref", "HEAD")).stdout.Trim()
+if ($branch -in @("main", "master", "HEAD")) {
+    throw "AI rules intake must run on a dedicated release/upgrade branch, never on '$branch'."
+}
+$head = (Invoke-AiRulesGit -Arguments @("rev-parse", "HEAD")).stdout.Trim()
+$mergeBase = (Invoke-AiRulesGit -Arguments @("merge-base", $UpstreamCommit, $head)).stdout.Trim()
+if ($mergeBase -ne $UpstreamCommit) {
+    throw "Current branch is not based directly on audited upstream $UpstreamCommit (merge-base=$mergeBase)."
+}
+$mergeCommits = (Invoke-AiRulesGit -Arguments @("rev-list", "--merges", "$UpstreamCommit..$head")).stdout.Trim()
+if ($mergeCommits) {
+    throw "Release history after upstream contains merge commits; rebuild linearly from $UpstreamCommit."
+}
+
+$script:Blockers = [Collections.Generic.List[string]]::new()
 $managedTargets = @(
     [pscustomobject]@{
         path = [string]$manifest.targetPath
@@ -116,182 +140,173 @@ $managedTargets = @(
         requiredAnchors = @($manifest.requiredTargetAnchors)
     }
 )
-foreach ($additionalTarget in $additionalTargets) {
+foreach ($target in @($manifest.additionalTargets)) {
     $managedTargets += [pscustomobject]@{
-        path = [string]$additionalTarget.path
-        template = [string]$additionalTarget.template
-        maximumCharacters = [int]$additionalTarget.maximumCharacters
-        requiredAnchors = @($additionalTarget.requiredAnchors)
+        path = [string]$target.path
+        template = [string]$target.template
+        maximumCharacters = [int]$target.maximumCharacters
+        requiredAnchors = @($target.requiredAnchors)
     }
 }
-foreach ($managedTarget in $managedTargets) {
-    if (-not $managedTarget.path -or -not $managedTarget.template -or
-        -not (Test-Path -LiteralPath (Join-Path $overlayRoot $managedTarget.template) -PathType Leaf)) {
-        throw "AI rules overlay managed target is incomplete: path='$($managedTarget.path)'; template='$($managedTarget.template)'."
-    }
-}
-$managedTargetPaths = @($managedTargets | ForEach-Object { $_.path })
-$excludePathspecs = @($managedTargetPaths | ForEach-Object { ":(exclude)$_" })
-$baselineUpstream = [string]$manifest.baselineUpstreamCommit
-$baselineRelease = [string]$manifest.baselineReleaseCommit
-if (-not $UpstreamCommit) { $UpstreamCommit = $baselineUpstream }
-$UpstreamCommit = (Invoke-AiRulesGit -Arguments @("rev-parse", "$UpstreamCommit^{commit}")).stdout.Trim()
-foreach ($commit in @($baselineUpstream, $baselineRelease)) {
-    [void](Invoke-AiRulesGit -Arguments @("cat-file", "-e", "$commit^{commit}"))
-}
-
-$branch = (Invoke-AiRulesGit -Arguments @("rev-parse", "--abbrev-ref", "HEAD")).stdout.Trim()
-if ($branch -in @("main", "master", "HEAD")) {
-    throw "AI rules overlay must run on a dedicated release/upgrade branch, never on '$branch'."
-}
-$head = (Invoke-AiRulesGit -Arguments @("rev-parse", "HEAD")).stdout.Trim()
-$mergeBase = (Invoke-AiRulesGit -Arguments @("merge-base", $UpstreamCommit, $head)).stdout.Trim()
-if ($mergeBase -ne $UpstreamCommit) {
-    throw "Current branch is not based directly on upstream commit $UpstreamCommit (merge-base=$mergeBase)."
-}
-$mergeCommits = (Invoke-AiRulesGit -Arguments @("rev-list", "--merges", "$UpstreamCommit..$head")).stdout.Trim()
-if ($mergeCommits) { throw "Release history after upstream contains merge commits; rebuild directly from upstream instead of merging/rebasing an old downstream release." }
-
-$upstreamAgents = (Invoke-AiRulesGit -Arguments @("show", "$UpstreamCommit`:AGENTS.md")).stdout
-$actualSections = @(Get-TopLevelSections -Text $upstreamAgents)
-$expectedSections = @($manifest.sections)
-$sectionLedger = [System.Collections.Generic.List[object]]::new()
-$sectionBlockers = [System.Collections.Generic.List[string]]::new()
-foreach ($expected in $expectedSections) {
-    if ([string]$expected.disposition -notin @("keep", "drop", "rewrite")) {
-        $sectionBlockers.Add("Invalid disposition '$($expected.disposition)' for section '$($expected.heading)'.")
+$managedTargetPaths = @($managedTargets | ForEach-Object path)
+foreach ($target in $managedTargets) {
+    $templatePath = Join-Path $overlayRootFull $target.template
+    if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
+        Add-Blocker "Managed target template is missing: $($target.template)"
         continue
     }
-    $actual = @($actualSections | Where-Object { $_.heading -eq [string]$expected.heading } | Select-Object -First 1)
-    $state = if ($actual.Count -eq 0) { "removed" } elseif ($actual[0].sha256 -eq [string]$expected.sha256) { "unchanged" } else { "changed" }
-    $sectionLedger.Add([pscustomobject]@{ heading = [string]$expected.heading; state = $state; disposition = [string]$expected.disposition; owner = [string]$expected.owner; expectedSha256 = [string]$expected.sha256; actualSha256 = $(if ($actual.Count) { $actual[0].sha256 } else { "" }) })
-    if ($state -ne "unchanged") { $sectionBlockers.Add("Upstream AGENTS.md section '$($expected.heading)' is $state and requires a new keep/drop/rewrite decision.") }
-}
-foreach ($actual in $actualSections) {
-    if (@($expectedSections | Where-Object { [string]$_.heading -eq $actual.heading }).Count -eq 0) {
-        $sectionLedger.Add([pscustomobject]@{ heading = $actual.heading; state = "added"; disposition = "unclassified"; owner = ""; expectedSha256 = ""; actualSha256 = $actual.sha256 })
-        $sectionBlockers.Add("Upstream AGENTS.md added unclassified section '$($actual.heading)'.")
-    }
-}
-foreach ($anchor in @($manifest.requiredUpstreamAnchors)) {
-    if (-not $upstreamAgents.Contains([string]$anchor)) { $sectionBlockers.Add("Required upstream anchor disappeared: $anchor") }
-}
-
-$patchPathArguments = @("diff", "--name-only", $baselineUpstream, $baselineRelease, "--", ".") + $excludePathspecs
-$patchPaths = @((Invoke-AiRulesGit -Arguments $patchPathArguments).stdout -split "`r?`n" | Where-Object { $_ })
-$pathLedger = [System.Collections.Generic.List[object]]::new()
-$pathBlockers = [System.Collections.Generic.List[string]]::new()
-foreach ($path in $patchPaths) {
-    $comparison = Invoke-AiRulesGit -Arguments @("diff", "--quiet", $baselineUpstream, $UpstreamCommit, "--", $path) -AllowFailure
-    if ($comparison.exitCode -gt 1) { throw "Could not compare upstream path '$path': $($comparison.stderr.Trim())" }
-    $state = if ($comparison.exitCode -eq 0) { "unchanged" } else { "changed" }
-    $pathLedger.Add([pscustomobject]@{ path = $path; state = $state; disposition = [string]$manifest.downstreamPatch.disposition; owner = "baseline:$baselineRelease" })
-    if ($state -ne "unchanged") { $pathBlockers.Add("Upstream changed downstream-owned path '$path'; classify it explicitly before rebuilding the release.") }
-}
-
-$allowedPaths = @($patchPaths + $managedTargetPaths)
-$committedPaths = @((Invoke-AiRulesGit -Arguments @("diff", "--name-only", $UpstreamCommit, "HEAD", "--")).stdout -split "`r?`n" | Where-Object { $_ })
-foreach ($path in $committedPaths) {
-    if ($path -notin $allowedPaths) { $pathBlockers.Add("Release history changes unclassified path '$path'.") }
-}
-$dirtyEntries = @((Invoke-AiRulesGit -Arguments @("status", "--porcelain", "--untracked-files=all")).stdout -split "`r?`n" | Where-Object { $_ })
-foreach ($entry in $dirtyEntries) {
-    $path = if ($entry.Length -gt 3) { $entry.Substring(3) } else { $entry }
-    if ($path -match ' -> (.+)$') { $path = [string]$Matches[1] }
-    if ($path -notin $allowedPaths) { $pathBlockers.Add("Worktree has an unrelated change '$path'.") }
-}
-
-$targetText = [IO.File]::ReadAllText($targetTemplatePath, [Text.Encoding]::UTF8).Replace("`r`n", "`n")
-if ($targetText.Length -gt [int]$manifest.maximumTargetCharacters) {
-    $sectionBlockers.Add("Compact AGENTS.md is $($targetText.Length) characters; budget is $($manifest.maximumTargetCharacters).")
-}
-foreach ($anchor in @($manifest.requiredTargetAnchors)) {
-    if (-not $targetText.Contains([string]$anchor)) { $sectionBlockers.Add("Compact AGENTS.md lost required anchor: $anchor") }
-}
-$managedTargetLedger = [System.Collections.Generic.List[object]]::new()
-foreach ($managedTarget in $managedTargets) {
-    $templatePath = Join-Path $overlayRoot $managedTarget.template
     $text = [IO.File]::ReadAllText($templatePath, [Text.Encoding]::UTF8).Replace("`r`n", "`n")
-    if ($managedTarget.maximumCharacters -gt 0 -and $text.Length -gt $managedTarget.maximumCharacters) {
-        $sectionBlockers.Add("Managed target '$($managedTarget.path)' is $($text.Length) characters; budget is $($managedTarget.maximumCharacters).")
+    if ($target.maximumCharacters -gt 0 -and $text.Length -gt $target.maximumCharacters) {
+        Add-Blocker "Managed target '$($target.path)' is $($text.Length) characters; budget is $($target.maximumCharacters)."
     }
-    foreach ($anchor in @($managedTarget.requiredAnchors)) {
-        if (-not $text.Contains([string]$anchor)) { $sectionBlockers.Add("Managed target '$($managedTarget.path)' lost required anchor: $anchor") }
+    foreach ($anchor in $target.requiredAnchors) {
+        if (-not $text.Contains([string]$anchor)) {
+            Add-Blocker "Managed target '$($target.path)' lost required anchor: $anchor"
+        }
     }
-    $managedTargetLedger.Add([pscustomobject]@{
-        path = $managedTarget.path
-        template = $managedTarget.template
-        characters = $text.Length
-        sha256 = Get-TextSha256 -Text $text
-    })
+}
+
+$upstreamAgents = (Invoke-AiRulesGit -Arguments @("show", "$UpstreamCommit`:AGENTS.md")).stdout
+foreach ($anchor in @($manifest.requiredUpstreamAnchors)) {
+    if (-not $upstreamAgents.Contains([string]$anchor)) {
+        Add-Blocker "Required upstream anchor disappeared: $anchor"
+    }
+}
+
+$upstreamChangedPaths = @(Get-GitPathList -Arguments @("diff", "--name-only", $baselineUpstream, $UpstreamCommit, "--"))
+$baselineDownstreamPaths = @(Get-GitPathList -Arguments @("diff", "--name-only", $baselineUpstream, $baselineRelease, "--"))
+$upstreamSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+foreach ($path in $upstreamChangedPaths) { [void]$upstreamSet.Add($path) }
+$downstreamOnlyPaths = @($baselineDownstreamPaths | Where-Object { -not $upstreamSet.Contains($_) })
+
+$decisionsByPath = @{}
+foreach ($decision in @($manifest.pathDecisions)) {
+    $path = [string]$decision.path
+    if (-not $path) {
+        Add-Blocker "Path decision has an empty path."
+        continue
+    }
+    if ($decisionsByPath.ContainsKey($path)) {
+        Add-Blocker "Duplicate path decision: $path"
+        continue
+    }
+    if ([string]$decision.disposition -notin @("take-upstream", "keep-current", "resolved")) {
+        Add-Blocker "Invalid disposition '$($decision.disposition)' for '$path'."
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$decision.reason)) {
+        Add-Blocker "Path decision lacks a reason: $path"
+    }
+    $decisionsByPath[$path] = $decision
+}
+foreach ($path in $upstreamChangedPaths) {
+    if (-not $decisionsByPath.ContainsKey($path)) { Add-Blocker "Unclassified upstream path: $path" }
+}
+foreach ($path in @($decisionsByPath.Keys)) {
+    if (-not $upstreamSet.Contains($path)) { Add-Blocker "Decision describes a path not changed by this upstream intake: $path" }
 }
 
 $reportPathFull = if ($ReportPath) { [IO.Path]::GetFullPath($ReportPath) } else { Join-Path $workflowRoot "build\ai-rules-overlay-report.json" }
 $report = [ordered]@{
-    schemaVersion = 1
+    schemaVersion = 2
     generatedAt = (Get-Date).ToString("o")
+    mode = $Mode
     aiRulesRoot = $script:AiRulesRootFull
     branch = $branch
     head = $head
     upstreamCommit = $UpstreamCommit
     baselineUpstreamCommit = $baselineUpstream
     baselineReleaseCommit = $baselineRelease
-    targetPath = [string]$manifest.targetPath
-    targetCharacters = $targetText.Length
-    managedTargets = @($managedTargetLedger)
-    sections = @($sectionLedger)
-    downstreamPaths = @($pathLedger)
-    blockers = @($sectionBlockers) + @($pathBlockers)
+    upstreamChangedCount = $upstreamChangedPaths.Count
+    baselineDownstreamCount = $baselineDownstreamPaths.Count
+    downstreamOnlyCount = $downstreamOnlyPaths.Count
+    decisions = @()
+    blockers = @()
     status = "checked"
 }
-if ($report.blockers.Count -gt 0) {
-    $report.status = "blocked"
-    Write-OverlayReport -Payload $report -Path $reportPathFull
-    throw "AI rules release overlay is blocked. See $reportPathFull. $($report.blockers -join ' ')"
+
+if ($Mode -eq "Prepare" -and $script:Blockers.Count -eq 0) {
+    $dirty = @(Get-GitPathList -Arguments @("status", "--porcelain", "--untracked-files=all"))
+    if ($head -ne $UpstreamCommit -or $dirty.Count -gt 0) {
+        Add-Blocker "Prepare requires a clean branch whose HEAD is exactly audited upstream $UpstreamCommit."
+    }
+    else {
+        foreach ($path in $downstreamOnlyPaths) {
+            if ($path -in $managedTargetPaths) { continue }
+            if (Test-GitPathExists -Commit $baselineRelease -Path $path) {
+                [void](Invoke-AiRulesGit -Arguments @("checkout", $baselineRelease, "--", $path))
+            }
+            else {
+                [void](Invoke-AiRulesGit -Arguments @("rm", "--ignore-unmatch", "--", $path))
+            }
+        }
+        foreach ($decision in @($manifest.pathDecisions | Where-Object disposition -eq "keep-current")) {
+            [void](Invoke-AiRulesGit -Arguments @("checkout", $baselineRelease, "--", [string]$decision.path))
+        }
+        foreach ($target in $managedTargets) {
+            $templatePath = Join-Path $overlayRootFull $target.template
+            $targetPath = Join-Path $script:AiRulesRootFull $target.path
+            $text = [IO.File]::ReadAllText($templatePath, [Text.Encoding]::UTF8).Replace("`r`n", "`n").TrimEnd("`n") + "`n"
+            [IO.File]::WriteAllText($targetPath, $text, $utf8)
+        }
+        $report.pendingResolvedPaths = @($manifest.pathDecisions | Where-Object disposition -eq "resolved" | ForEach-Object path)
+        $report.status = "prepared"
+    }
 }
 
-if (-not $CheckOnly) {
-    $overlayApplied = Test-WorktreeMatchesCommitPaths -Commit $baselineRelease -Paths $patchPaths
-    if (-not $overlayApplied) {
-        if ($dirtyEntries.Count -gt 0 -or $head -ne $UpstreamCommit) {
-            throw "Downstream patch is not fully applied, but the release worktree/history is not a clean upstream starting point. Recreate the release branch from $UpstreamCommit."
+if ($Mode -eq "Verify" -and $script:Blockers.Count -eq 0) {
+    $dirty = @(Get-GitPathList -Arguments @("status", "--porcelain", "--untracked-files=all"))
+    if ($dirty.Count -gt 0) { Add-Blocker "Verify requires a clean committed release checkout." }
+
+    $allowed = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($path in @($baselineDownstreamPaths + $upstreamChangedPaths + $managedTargetPaths + @($manifest.additionalDownstreamPaths))) {
+        if ($path) { [void]$allowed.Add([string]$path) }
+    }
+    $committedPaths = @(Get-GitPathList -Arguments @("diff", "--name-only", $UpstreamCommit, "HEAD", "--"))
+    foreach ($path in $committedPaths) {
+        if (-not $allowed.Contains($path)) { Add-Blocker "Release changes unclassified path: $path" }
+    }
+
+    foreach ($decision in @($manifest.pathDecisions)) {
+        $path = [string]$decision.path
+        $upstreamSha = Get-GitTextSha256 -Commit $UpstreamCommit -Path $path
+        $resultSha = Get-GitTextSha256 -Commit "HEAD" -Path $path
+        $baselineSha = Get-GitTextSha256 -Commit $baselineRelease -Path $path
+        if ([string]$decision.upstreamSha256 -ne $upstreamSha) {
+            Add-Blocker "Upstream SHA-256 mismatch for '$path'."
         }
-        $patchArguments = @("diff", "--binary", $baselineUpstream, $baselineRelease, "--", ".") + $excludePathspecs
-        $patchResult = Invoke-AiRulesGit -Arguments $patchArguments
-        $tempPatch = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-rules-overlay-" + [guid]::NewGuid().ToString("N") + ".patch")
-        try {
-            [IO.File]::WriteAllText($tempPatch, $patchResult.stdout, $utf8)
-            [void](Invoke-AiRulesGit -Arguments @("apply", "--check", "--whitespace=nowarn", $tempPatch))
-            [void](Invoke-AiRulesGit -Arguments @("apply", "--whitespace=nowarn", $tempPatch))
-        } finally {
-            Remove-Item -LiteralPath $tempPatch -Force -ErrorAction SilentlyContinue
+        if ([string]$decision.resultSha256 -ne $resultSha) {
+            Add-Blocker "Result SHA-256 mismatch for '$path'."
+        }
+        if ([string]$decision.disposition -eq "take-upstream" -and $resultSha -ne $upstreamSha) {
+            Add-Blocker "take-upstream path differs from upstream: $path"
+        }
+        if ([string]$decision.disposition -eq "keep-current" -and $resultSha -ne $baselineSha) {
+            Add-Blocker "keep-current path differs from baseline release: $path"
+        }
+        $report.decisions += [pscustomobject]@{
+            path = $path
+            disposition = [string]$decision.disposition
+            upstreamSha256 = $upstreamSha
+            resultSha256 = $resultSha
         }
     }
-    foreach ($managedTarget in $managedTargets) {
-        $templatePath = Join-Path $overlayRoot $managedTarget.template
-        $managedText = [IO.File]::ReadAllText($templatePath, [Text.Encoding]::UTF8).Replace("`r`n", "`n")
-        $managedTargetPath = Join-Path $script:AiRulesRootFull $managedTarget.path
-        [IO.File]::WriteAllText($managedTargetPath, ($managedText.TrimEnd("`n") + "`n"), $utf8)
+
+    foreach ($target in $managedTargets) {
+        $templateText = [IO.File]::ReadAllText((Join-Path $overlayRootFull $target.template), [Text.Encoding]::UTF8)
+        $expected = Get-TextSha256 -Text $templateText
+        $actual = Get-GitTextSha256 -Commit "HEAD" -Path $target.path
+        if ($actual -ne $expected) { Add-Blocker "Managed target differs from template: $($target.path)" }
     }
-    foreach ($section in $expectedSections) {
-        $owner = [string]$section.owner
-        if ($owner -like "content/*" -and -not (Test-Path -LiteralPath (Join-Path $script:AiRulesRootFull $owner) -PathType Leaf)) {
-            throw "Overlay owner is missing after generation: $owner"
-        }
-    }
-    $report.status = "generated"
-    $targetPath = Join-Path $script:AiRulesRootFull ([string]$manifest.targetPath)
-    $report.targetSha256 = Get-TextSha256 -Text ([IO.File]::ReadAllText($targetPath, [Text.Encoding]::UTF8).Replace("`r`n", "`n"))
-    $patchReportPath = [IO.Path]::ChangeExtension($reportPathFull, ".patch")
-    $baselineDiffArguments = @("diff", "--binary", $baselineUpstream, $baselineRelease, "--", ".") + $excludePathspecs
-    $baselineDiff = Invoke-AiRulesGit -Arguments $baselineDiffArguments
-    $managedDiffs = foreach ($managedTargetPath in $managedTargetPaths) {
-        (Invoke-AiRulesGit -Arguments @("diff", "--binary", $UpstreamCommit, "--", $managedTargetPath)).stdout.TrimEnd()
-    }
-    $patchText = @($baselineDiff.stdout.TrimEnd()) + @($managedDiffs | Where-Object { $_ })
-    [IO.File]::WriteAllText($patchReportPath, (($patchText -join [Environment]::NewLine) + [Environment]::NewLine), $utf8)
-    $report.patchReportPath = $patchReportPath
+    if ($script:Blockers.Count -eq 0) { $report.status = "verified" }
 }
+
+$report.blockers = @($script:Blockers)
+if ($script:Blockers.Count -gt 0) {
+    $report.status = "blocked"
+    Write-OverlayReport -Payload $report -Path $reportPathFull
+    throw "AI rules release $Mode is blocked. See $reportPathFull. $($script:Blockers -join ' ')"
+}
+
 Write-OverlayReport -Payload $report -Path $reportPathFull
-Write-Host "AI rules overlay $($report.status): $reportPathFull"
-Write-Host "AGENTS.md characters: $($targetText.Length)"
+Write-Host "AI rules release $($report.status): $reportPathFull"
+Write-Host "Upstream paths: $($upstreamChangedPaths.Count); downstream-only paths: $($downstreamOnlyPaths.Count)"
