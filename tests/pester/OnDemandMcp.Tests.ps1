@@ -438,6 +438,38 @@ Describe "ITL on-demand MCP facade" {
         }
     }
 
+    It "records the actual executable returned for an on-demand backend manager" {
+        $runtime = & {
+            function Read-ItlOnDemandRuntimeState { return $null }
+            function Read-CurrentDevBranchStateForRoctupMcp {
+                return [pscustomobject]@{ devBranchInfoBasePath = "D:\owned\base"; infoBaseKind = "file" }
+            }
+            function Ensure-DevBranchEnterpriseNormalized { param([object]$State) return $State }
+            function Get-ItlOnDemandPortFamily { return "roctup-mcp" }
+            function Get-ItlOnDemandPortKey { return "roctup-key" }
+            function Install-RoctupMcpArtifact { return [pscustomobject]@{ path = "D:\tools\roctup.epf"; version = "1.0" } }
+            function Get-RoctupMcpPortRange { return [pscustomobject]@{ start = 48000; end = 48010 } }
+            function Resolve-ItlManagedPort { return 48001 }
+            function Get-RoctupMcpUrl { return "http://127.0.0.1:48001/mcp" }
+            function Start-EnterpriseBackground {
+                return [pscustomobject]@{
+                    process = [pscustomobject]@{ Id = 76001 }
+                    executablePath = "D:\platform\bin\1cv8c.exe"
+                    logPath = "D:\logs\roctup.log"
+                }
+            }
+            function Wait-RoctupMcpPort { return $true }
+            function Set-ItlManagedPortAllocationStatus {}
+            function Get-Process { return [pscustomobject]@{ Id = 76001; StartTime = [datetime]"2026-07-31T08:00:00Z" } }
+            function Write-ItlOnDemandRuntimeState { return "runtime.json" }
+
+            Start-ItlOnDemandBackendInstance -Family "roctup" -InstanceId ("a" * 32) -CatalogSha256 ("b" * 64)
+        }
+
+        $runtime.executablePath | Should -Be "D:\platform\bin\1cv8c.exe"
+        $runtime.pid | Should -Be 76001
+    }
+
     It "excludes only the proven on-demand manager from TestClient port conflict checks" {
         $result = & {
             $state = [pscustomobject]@{

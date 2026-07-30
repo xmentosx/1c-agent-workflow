@@ -702,7 +702,7 @@ function Start-ItlOnDemandBackendInstance {
     try {
         Set-ItlManagedPortAllocationStatus -Family $portFamily -Key $key -Status "running" -ProcessId $result.process.Id
         $process = Get-Process -Id $result.process.Id -ErrorAction Stop
-        $platformPath = Resolve-Agent1cFullPath -Path (Get-PlatformPath)
+        $platformPath = Resolve-Agent1cFullPath -Path $result.executablePath
         $runtimeState = [pscustomobject][ordered]@{
             schemaVersion = 3; status = "running"; family = $Family; instanceId = $InstanceId
             pid = $result.process.Id; processStartTime = $process.StartTime.ToUniversalTime().ToString("o")
