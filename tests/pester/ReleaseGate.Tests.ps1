@@ -98,6 +98,52 @@ Describe "Release gate scripts" {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+
+    It "removes a closed disposable worktree before deleting its branch" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-seed-cleanup-" + [guid]::NewGuid().ToString("N"))
+        $mainRoot = Join-Path $tempRoot "main"
+        $worktreeRoot = Join-Path $tempRoot "worktree"
+        $branch = "itldev/release-seed-cleanup"
+        try {
+            New-Item -ItemType Directory -Force -Path $mainRoot | Out-Null
+            & git -C $mainRoot init *> $null
+            & git -C $mainRoot config user.email "test@example.invalid"
+            & git -C $mainRoot config user.name "ITL Test"
+            Set-Content -LiteralPath (Join-Path $mainRoot "README.md") -Encoding ASCII -Value "fixture"
+            & git -C $mainRoot add .
+            & git -C $mainRoot commit -m "fixture" *> $null
+            & git -C $mainRoot branch -M master
+            & git -C $mainRoot worktree add -b $branch $worktreeRoot *> $null
+            $LASTEXITCODE | Should -Be 0
+
+            $tokens = $null
+            $errors = $null
+            $runnerAst = [System.Management.Automation.Language.Parser]::ParseFile(
+                (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1"),
+                [ref]$tokens,
+                [ref]$errors
+            )
+            @($errors) | Should -BeNullOrEmpty
+            $functionAst = $runnerAst.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq "Remove-E2ESeedDisposableBranch"
+            }, $true)
+            . ([scriptblock]::Create($functionAst.Extent.Text))
+            function Invoke-E2EHelperAtRoot { }
+
+            $cleanupErrors = New-Object System.Collections.Generic.List[string]
+            $spec = [pscustomobject]@{ root = $worktreeRoot; name = "release-seed-cleanup"; branch = $branch }
+            Remove-E2ESeedDisposableBranch -MainRoot $mainRoot -Spec $spec -CleanupErrors $cleanupErrors
+
+            $cleanupErrors.Count | Should -Be 0
+            Test-Path -LiteralPath $worktreeRoot | Should -BeFalse
+            & git -C $mainRoot show-ref --verify --quiet "refs/heads/$branch"
+            $LASTEXITCODE | Should -Be 1
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 Describe "Release E2E orchestration" {
