@@ -99,6 +99,46 @@ Describe "Release gate scripts" {
         }
     }
 
+    It "sets the noninteractive unsafe-action mode only in a disposable seed worktree" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-seed-env-" + [guid]::NewGuid().ToString("N"))
+        $envPath = Join-Path $tempRoot ".dev.env"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            [IO.File]::WriteAllText(
+                $envPath,
+                "KEEP=value`r`nDEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=manual-confirm`r`nDEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=duplicate`r`n",
+                [Text.UTF8Encoding]::new($false)
+            )
+
+            $tokens = $null
+            $errors = $null
+            $runnerAst = [System.Management.Automation.Language.Parser]::ParseFile(
+                (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1"),
+                [ref]$tokens,
+                [ref]$errors
+            )
+            @($errors) | Should -BeNullOrEmpty
+            $functionAst = $runnerAst.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq "Set-E2EDotEnvValue"
+            }, $true)
+            . ([scriptblock]::Create($functionAst.Extent.Text))
+
+            Set-E2EDotEnvValue -Path $envPath -Name "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP" -Value "skip"
+
+            $lines = @([IO.File]::ReadAllLines($envPath, [Text.Encoding]::UTF8))
+            $lines | Should -Contain "KEEP=value"
+            @($lines | Where-Object { $_ -match '^DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=' }) | Should -Be @(
+                "DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip"
+            )
+            $runnerText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") -Raw -Encoding UTF8
+            $runnerText | Should -Match '(?s)Copy-Item.*?Set-E2EDotEnvValue.*?DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP.*?skip.*?initialize-dev-branch-runtime'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "removes a closed disposable worktree before deleting its branch" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-seed-cleanup-" + [guid]::NewGuid().ToString("N"))
         $mainRoot = Join-Path $tempRoot "main"
