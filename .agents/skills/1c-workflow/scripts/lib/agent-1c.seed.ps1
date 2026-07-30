@@ -56,6 +56,16 @@ function Read-BranchSeedManifest {
     }
 }
 
+function Remove-BranchSeedFileRuntimeSidecars {
+    param([Parameter(Mandatory)][string]$ArtifactPath)
+
+    $infoBaseRoot = Split-Path -Parent $ArtifactPath
+    $eventLogPath = Join-Path $infoBaseRoot "1Cv8Log"
+    if (Test-Path -LiteralPath $eventLogPath -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $eventLogPath -Recurse -Force -ErrorAction Stop
+    }
+}
+
 function Write-BranchSeedManifest {
     param([System.Collections.IDictionary]$Manifest)
 
@@ -329,6 +339,9 @@ function New-BranchSeed {
         if (Test-Path -LiteralPath $paths.artifactPath -ErrorAction SilentlyContinue) {
             Remove-Item -LiteralPath $paths.artifactPath -Force
         }
+        if ($kind -eq "file") {
+            Remove-BranchSeedFileRuntimeSidecars -ArtifactPath $paths.artifactPath
+        }
         $artifactParent = Split-Path -Parent $paths.artifactPath
         New-Item -ItemType Directory -Force -Path $artifactParent | Out-Null
 
@@ -358,6 +371,7 @@ function New-BranchSeed {
             $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
             $ConfigurationFingerprint = $configSource.fingerprint
             $ConfigurationFileCount = $configSource.fileCount
+            Remove-BranchSeedFileRuntimeSidecars -ArtifactPath $paths.artifactPath
         }
 
         $baselineHash = Get-StringSha256 -Value ((@($baseline.signatures) -join "`n"))
@@ -392,6 +406,11 @@ function New-BranchSeed {
         $failure = $_.Exception.Message
         if ($null -ne $lease -and (Test-Path -LiteralPath $paths.artifactPath -ErrorAction SilentlyContinue)) {
             Remove-Item -LiteralPath $paths.artifactPath -Force -ErrorAction SilentlyContinue
+        }
+        if ($kind -eq "file") {
+            try {
+                Remove-BranchSeedFileRuntimeSidecars -ArtifactPath $paths.artifactPath
+            } catch {}
         }
         Write-BranchSeedManifest -Manifest ([ordered]@{
             schemaVersion = 1
