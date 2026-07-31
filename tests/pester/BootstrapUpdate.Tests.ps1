@@ -1055,6 +1055,104 @@ local after
         }
     }
 
+    It "repairs tracked damage in managed workflow checkouts without mutating explicit path sources" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-workflow-source-repair-" + [guid]::NewGuid().ToString("N"))
+        $sourceRoot = Join-Path $tempRoot "source"
+        $remoteRoot = Join-Path $tempRoot "remote.git"
+        $previousSourcePath = $env:ITL_WORKFLOW_SOURCE_PATH
+        $previousRepo = $env:ITL_WORKFLOW_REPO
+        $previousRef = $env:ITL_WORKFLOW_REF
+
+        try {
+            foreach ($relativePath in @(
+                "install-agent-1c-workflow.ps1",
+                "AGENT-INSTALL.md",
+                ".agents\skills\1c-workflow\scripts\agent-1c.ps1",
+                ".agents\skills\1c-workflow-fast\SKILL.md",
+                ".agents\skills\product-docs\SKILL.md",
+                ".agents\skills\itl-roctup-1c-data\SKILL.md",
+                ".agents\skills\itl-vanessa-ui-mcp\SKILL.md",
+                "templates\USER-RULES.append.md",
+                "tracked-marker.txt"
+            )) {
+                $path = Join-Path $sourceRoot $relativePath
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+                Set-Content -LiteralPath $path -Encoding UTF8 -Value "original: $relativePath"
+            }
+
+            & git -C $sourceRoot init --quiet
+            & git -C $sourceRoot config user.email "test@example.invalid"
+            & git -C $sourceRoot config user.name "ITL Test"
+            & git -C $sourceRoot add .
+            & git -C $sourceRoot commit --quiet -m "workflow source"
+            & git -C $sourceRoot branch -M master
+            & git -C $sourceRoot tag repair-tag
+            $expectedCommit = ((& git -C $sourceRoot rev-parse HEAD) -join "").Trim()
+            $expectedSkillHash = (Get-FileHash -LiteralPath (Join-Path $sourceRoot ".agents\skills\product-docs\SKILL.md") -Algorithm SHA256).Hash
+            & git clone --quiet --bare $sourceRoot $remoteRoot
+
+            $env:ITL_WORKFLOW_SOURCE_PATH = ""
+            $env:ITL_WORKFLOW_REPO = $remoteRoot
+            $repairResults = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $managedRoot = ""
+                function Get-WorkflowPackageTempRoot { return $managedRoot }
+
+                foreach ($case in @(
+                    [pscustomobject]@{ ref = "master"; root = (Join-Path $tempRoot "managed-branch") },
+                    [pscustomobject]@{ ref = "repair-tag"; root = (Join-Path $tempRoot "managed-tag") }
+                )) {
+                    $env:ITL_WORKFLOW_REF = $case.ref
+                    $managedRoot = $case.root
+                    Resolve-WorkflowPackageSource | Out-Null
+
+                    Remove-Item -LiteralPath (Join-Path $managedRoot ".agents\skills\product-docs\SKILL.md") -Force
+                    Set-Content -LiteralPath (Join-Path $managedRoot "tracked-marker.txt") -Encoding UTF8 -Value "damaged"
+                    Set-Content -LiteralPath (Join-Path $managedRoot "sentinel.local") -Encoding UTF8 -Value "keep"
+
+                    $resolved = Resolve-WorkflowPackageSource
+                    [pscustomobject]@{
+                        ref = $resolved.ref
+                        commit = $resolved.commit
+                        skillHash = (Get-FileHash -LiteralPath (Join-Path $managedRoot ".agents\skills\product-docs\SKILL.md") -Algorithm SHA256).Hash
+                        marker = (Get-Content -LiteralPath (Join-Path $managedRoot "tracked-marker.txt") -Raw -Encoding UTF8).Trim()
+                        trackedStatus = @(& git -C $managedRoot status --short --untracked-files=no)
+                        fullStatus = @(& git -C $managedRoot status --short)
+                    }
+                }
+            }
+
+            @($repairResults).Count | Should -Be 2
+            foreach ($result in @($repairResults)) {
+                $result.commit | Should -Be $expectedCommit
+                $result.skillHash | Should -Be $expectedSkillHash
+                $result.marker | Should -Be "original: tracked-marker.txt"
+                @($result.trackedStatus).Count | Should -Be 0
+                @($result.fullStatus) | Should -Contain "?? sentinel.local"
+            }
+            @($repairResults | Select-Object -ExpandProperty ref) | Should -Be @("master", "repair-tag")
+
+            Set-Content -LiteralPath (Join-Path $sourceRoot "tracked-marker.txt") -Encoding UTF8 -Value "explicit path change"
+            $env:ITL_WORKFLOW_SOURCE_PATH = $sourceRoot
+            $env:ITL_WORKFLOW_REF = "master"
+            $pathResult = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Resolve-WorkflowPackageSource
+            }
+
+            $pathResult.source | Should -Be "path"
+            (Get-Content -LiteralPath (Join-Path $sourceRoot "tracked-marker.txt") -Raw -Encoding UTF8).Trim() | Should -Be "explicit path change"
+            @(& git -C $sourceRoot status --short --untracked-files=no) | Should -Contain " M tracked-marker.txt"
+        } finally {
+            $env:ITL_WORKFLOW_SOURCE_PATH = $previousSourcePath
+            $env:ITL_WORKFLOW_REPO = $previousRepo
+            $env:ITL_WORKFLOW_REF = $previousRef
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "stops before copying when the canonical workflow source clone is stale" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-stale-bootstrap-source-" + [guid]::NewGuid().ToString("N"))
         $sourceRoot = Join-Path $tempRoot "source"

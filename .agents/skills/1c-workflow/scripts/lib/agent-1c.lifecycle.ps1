@@ -2510,11 +2510,12 @@ function Resolve-WorkflowPackageSource {
 
         Write-Host "Updating ITL workflow package checkout: $root"
         Invoke-GitAt -Root $root -Arguments @("fetch", "--all", "--tags", "--prune")
+        # This checkout is workflow-owned; force restores tracked damage in the shared cached copy.
         $remoteRef = "refs/remotes/origin/$ref"
         if (Test-GitRefExistsAt -Root $root -Ref $remoteRef) {
-            Invoke-GitAt -Root $root -Arguments @("checkout", "-B", $ref, "origin/$ref")
+            Invoke-GitAt -Root $root -Arguments @("checkout", "--force", "-B", $ref, "origin/$ref")
         } else {
-            Invoke-GitAt -Root $root -Arguments @("checkout", "--detach", $ref)
+            Invoke-GitAt -Root $root -Arguments @("checkout", "--force", "--detach", $ref)
         }
     }
 
