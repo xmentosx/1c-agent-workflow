@@ -200,9 +200,7 @@ function Assert-BootstrapWorkflowSourceFreshness {
     $originUrl = [string]$origin[0]
     $originIdentity = ConvertTo-BootstrapRepositoryIdentity -Repository $originUrl
     $canonicalIdentity = ConvertTo-BootstrapRepositoryIdentity -Repository "https://github.com/xmentosx/1c-agent-workflow.git"
-    if ($originIdentity -eq $canonicalIdentity) {
-        $ExpectedRef = "master"
-    } elseif ($originIdentity -ne (ConvertTo-BootstrapRepositoryIdentity -Repository $ExpectedRepository)) {
+    if ($originIdentity -ne $canonicalIdentity -and $originIdentity -ne (ConvertTo-BootstrapRepositoryIdentity -Repository $ExpectedRepository)) {
         return
     }
 
@@ -380,13 +378,20 @@ if (-not (Test-Path -LiteralPath $sourceRootFull -PathType Container -ErrorActio
     throw "ITL workflow package source was not found: $sourceRootFull"
 }
 
+$workflowProvenance = Resolve-BootstrapWorkflowPackageProvenance -Root $sourceRootFull
 if (-not $SkipWorkflowSourceFreshnessCheck) {
     $expectedWorkflowRepository = if ([string]::IsNullOrWhiteSpace($env:ITL_WORKFLOW_REPO)) {
         "https://github.com/xmentosx/1c-agent-workflow.git"
     } else {
         $env:ITL_WORKFLOW_REPO
     }
-    $expectedWorkflowRef = if ([string]::IsNullOrWhiteSpace($env:ITL_WORKFLOW_REF)) { "master" } else { $env:ITL_WORKFLOW_REF }
+    $expectedWorkflowRef = if (-not [string]::IsNullOrWhiteSpace($env:ITL_WORKFLOW_REF)) {
+        $env:ITL_WORKFLOW_REF
+    } elseif (-not [string]::IsNullOrWhiteSpace([string]$workflowProvenance.ref)) {
+        [string]$workflowProvenance.ref
+    } else {
+        "master"
+    }
     Assert-BootstrapWorkflowSourceFreshness -Root $sourceRootFull -ExpectedRepository $expectedWorkflowRepository -ExpectedRef $expectedWorkflowRef
 }
 
@@ -423,8 +428,6 @@ if ($NoInit) {
     Write-Host "Initialization skipped because -NoInit was specified."
     exit 0
 }
-
-$workflowProvenance = Resolve-BootstrapWorkflowPackageProvenance -Root $sourceRootFull
 
 $launcherPath = Join-Path $projectRootFull ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"
 if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf -ErrorAction SilentlyContinue)) {

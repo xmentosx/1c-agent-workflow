@@ -3,21 +3,21 @@
 This public file is the bootstrap contract for agents. A developer can say:
 
 ```text
-Initialize a 1C agent project using this file: https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTALL.md
+Initialize a 1C agent project using this file: https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/<workflow-ref>/AGENT-INSTALL.md
 ```
 
 The agent must read this file, run the one-step bootstrap script for the target project, and wait for it to finish. The bootstrap script installs the shared workflow files and starts the monitored PowerShell helper wizard. The wizard collects missing inputs, writes local settings, writes run status/log files, and runs the project initialization lifecycle.
 
-Canonical bootstrap source:
+Canonical bootstrap source selected by the developer's URL:
 
 - Repository: `https://github.com/xmentosx/1c-agent-workflow.git`
-- Branch: `master`
+- Branch: the exact `<workflow-ref>` segment in the provided raw URL (`master` for the stable channel or `develop` for the development channel)
 - Bootstrap file: `AGENT-INSTALL.md`
 - Bootstrap script: `install-agent-1c-workflow.ps1`
 
-Do not infer or try `main` for this package unless the user explicitly provides a different branch or URL.
+Do not replace the URL's branch with the repository default and do not infer or try `main` for this package.
 
-For every initialization, clone `master` into a newly created unique empty temporary directory. Never probe for an existing temporary clone and reuse it. Do not run bootstrap from a clone retained by an earlier agent session. Immediately before invoking the installer, `git rev-parse HEAD` in that clone must equal `git ls-remote origin refs/heads/master`. The installer repeats this check for the canonical repository and stops before copying files when the source has tracked changes, the remote commit cannot be verified, or `HEAD` differs from `origin/master`. `-NoInit` does not bypass source freshness. Never pass `-SkipWorkflowSourceFreshnessCheck` during normal bootstrap; it exists only for controlled maintainer tests of an unpublished source tree.
+For every initialization, derive `<workflow-ref>` from the exact bootstrap URL supplied by the developer and clone that branch into a newly created unique empty temporary directory. Never probe for an existing temporary clone and reuse it. Do not run bootstrap from a clone retained by an earlier agent session. Immediately before invoking the installer, `git rev-parse HEAD` in that clone must equal `git ls-remote origin refs/heads/<workflow-ref>`. The installer derives the expected ref from the fresh clone and repeats this check for the canonical repository; an explicit `ITL_WORKFLOW_REF` must name the same ref. It stops before copying files when the source has tracked changes, the remote commit cannot be verified, or `HEAD` differs from the selected remote branch. `-NoInit` does not bypass source freshness. Never pass `-SkipWorkflowSourceFreshnessCheck` during normal bootstrap; it exists only for controlled maintainer tests of an unpublished source tree.
 
 ## Supported Agents
 
@@ -49,7 +49,7 @@ powershell -ExecutionPolicy Bypass -File <source>\install-agent-1c-workflow.ps1 
 Create `<source>` with a fresh clone, for example:
 
 ```powershell
-git clone --branch master --single-branch https://github.com/xmentosx/1c-agent-workflow.git <new-empty-temp-path>
+git clone --branch <workflow-ref> --single-branch https://github.com/xmentosx/1c-agent-workflow.git <new-empty-temp-path>
 ```
 
 The bootstrap command copies `.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, `templates/`, the root docs/guides, and `install-agent-1c-workflow.ps1`. It does not copy `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, or generated `.kilo/commands/`.
@@ -162,8 +162,8 @@ Encoding rules:
 
 1. Determine the source directory containing this bootstrap package.
    - If this file was read from a cloned repository, use that repository root.
-   - If this file was read from the canonical URL and the repository root is unknown, clone `https://github.com/xmentosx/1c-agent-workflow.git` with `--branch master --single-branch` to a temporary directory, and use that clone.
-   - If the user provided a different bootstrap URL, derive the repository and branch from that URL. If the branch is not present in the URL, ask one short clarifying question instead of guessing `main`.
+   - If this file was read from a raw GitHub URL and the repository root is unknown, derive the repository and `<workflow-ref>` from that exact URL, clone with `--branch <workflow-ref> --single-branch` to a temporary directory, and use that clone.
+   - If the branch is not present in the URL, ask one short clarifying question instead of guessing the repository default or `main`.
 
 2. Run the one-step bootstrap script and wait for it to finish:
 
@@ -296,7 +296,7 @@ Optional source overrides:
 ```powershell
 $env:ITL_WORKFLOW_SOURCE_PATH = "D:\Git\1c-agent-workflow"
 $env:ITL_WORKFLOW_REPO = "https://github.com/xmentosx/1c-agent-workflow.git"
-$env:ITL_WORKFLOW_REF = "master"
+$env:ITL_WORKFLOW_REF = "<workflow-ref>"
 ```
 
 After every successful update, the helper creates one allowlisted local commit in `master` and verifies that tracked state is clean; it never pushes. A no-op update creates no commit. Active `itldev/*` worktrees do not update automatically; run `/itl-refresh` in each one so it receives the updated workflow and facade config. A facade install/upgrade needs one client reload; later backend starts do not.

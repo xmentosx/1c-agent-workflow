@@ -4,11 +4,13 @@ Workflow для разработки конфигураций и расшире�
 
 ## Быстрый старт
 
-Откройте папку будущего проекта в поддерживаемом AI-клиенте и напишите:
+Для инициализации на текущем канале разработки `develop` откройте папку будущего проекта в поддерживаемом AI-клиенте и напишите:
 
 ```text
-Инициализируй 1С-проект по файлу https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTALL.md
+Инициализируй 1С-проект по файлу https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/develop/AGENT-INSTALL.md
 ```
+
+Для стабильного канала используйте тот же URL с веткой `master`.
 
 ## Что делает workflow
 

@@ -115,7 +115,13 @@ exit 0
         $installText | Should -Match "## Manual Recovery Copy Steps"
         $installText | Should -Match "newly created unique empty temporary directory"
         $installText | Should -Match "Never probe for an existing temporary clone"
-        $installText | Should -Match ([regex]::Escape("git ls-remote origin refs/heads/master"))
+        $installText | Should -Match ([regex]::Escape("git ls-remote origin refs/heads/<workflow-ref>"))
+        $installText | Should -Match ([regex]::Escape("git clone --branch <workflow-ref> --single-branch"))
+        $installText | Should -Match "derive.*workflow-ref.*exact bootstrap URL"
+
+        $installerText = Get-Content -Encoding UTF8 -Raw $InstallerPath
+        $installerText | Should -Match ([regex]::Escape('$workflowProvenance.ref'))
+        ([regex]::Matches($installerText, '\$ExpectedRef\s*=\s*"master"')).Count | Should -Be 1
 
         $normalInstallText = $installText.Substring(0, $installText.IndexOf("## Manual Recovery Copy Steps"))
         $normalInstallText | Should -Not -Match "Copy the common skills into the target project"
@@ -1160,6 +1166,7 @@ local after
         $updaterRoot = Join-Path $tempRoot "updater"
         $targetRoot = Join-Path $tempRoot "target"
         $freshTargetRoot = Join-Path $tempRoot "fresh-target"
+        $inferredTargetRoot = Join-Path $tempRoot "inferred-target"
         $dirtyTargetRoot = Join-Path $tempRoot "dirty-target"
         $previousRepo = $env:ITL_WORKFLOW_REPO
         $previousRef = $env:ITL_WORKFLOW_REF
@@ -1179,7 +1186,7 @@ local after
             & git -C $sourceRoot config user.name "ITL Test"
             & git -C $sourceRoot add .
             & git -C $sourceRoot commit -m "stale source" *> $null
-            & git -C $sourceRoot branch -M master
+            & git -C $sourceRoot branch -M develop
             $localCommit = ((& git -C $sourceRoot rev-parse HEAD) -join "").Trim()
 
             & git clone --quiet --bare $sourceRoot $remoteRoot *> $null
@@ -1190,11 +1197,11 @@ local after
             Set-Content -LiteralPath (Join-Path $updaterRoot "fresh-marker.txt") -Encoding ASCII -Value "fresh"
             & git -C $updaterRoot add fresh-marker.txt
             & git -C $updaterRoot commit -m "advance remote" *> $null
-            & git -C $updaterRoot push --quiet origin master *> $null
+            & git -C $updaterRoot push --quiet origin develop *> $null
             $remoteCommit = ((& git -C $updaterRoot rev-parse HEAD) -join "").Trim()
 
             $env:ITL_WORKFLOW_REPO = $remoteRoot
-            $env:ITL_WORKFLOW_REF = "master"
+            $env:ITL_WORKFLOW_REF = "develop"
             $staleResult = Invoke-TestPowerShellFile -FilePath $InstallerPath -Arguments @(
                 "-ProjectRoot", $targetRoot,
                 "-SourceRoot", $sourceRoot,
@@ -1210,8 +1217,8 @@ local after
             $combined | Should -Match "новый.*clone"
             (Test-Path -LiteralPath $targetRoot -ErrorAction SilentlyContinue) | Should -BeFalse
 
-            & git -C $sourceRoot fetch --quiet origin master *> $null
-            & git -C $sourceRoot merge --ff-only origin/master *> $null
+            & git -C $sourceRoot fetch --quiet origin develop *> $null
+            & git -C $sourceRoot merge --ff-only origin/develop *> $null
             $freshResult = Invoke-TestPowerShellFile -FilePath $InstallerPath -Arguments @(
                 "-ProjectRoot", $freshTargetRoot,
                 "-SourceRoot", $sourceRoot,
@@ -1219,6 +1226,15 @@ local after
             )
             $freshResult.exitCode | Should -Be 0
             (Test-Path -LiteralPath (Join-Path $freshTargetRoot "install-agent-1c-workflow.ps1") -PathType Leaf) | Should -BeTrue
+
+            $env:ITL_WORKFLOW_REF = ""
+            $inferredResult = Invoke-TestPowerShellFile -FilePath $InstallerPath -Arguments @(
+                "-ProjectRoot", $inferredTargetRoot,
+                "-SourceRoot", $sourceRoot,
+                "-NoInit"
+            )
+            $inferredResult.exitCode | Should -Be 0
+            (Test-Path -LiteralPath (Join-Path $inferredTargetRoot "install-agent-1c-workflow.ps1") -PathType Leaf) | Should -BeTrue
 
             Add-Content -LiteralPath (Join-Path $sourceRoot "AGENT-INSTALL.md") -Encoding UTF8 -Value "tracked test change"
             $dirtyResult = Invoke-TestPowerShellFile -FilePath $InstallerPath -Arguments @(
