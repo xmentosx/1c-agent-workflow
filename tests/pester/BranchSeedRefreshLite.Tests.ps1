@@ -20,6 +20,7 @@ Describe "latest-only branch seed and two-level refresh" {
                 function Get-BranchSeedRoot { return $seedRoot }
                 function Get-InfoBaseKind { return "file" }
                 function Get-SourceInfoBasePath { return $sourceRoot }
+                function Get-SourceUsesRepository { return $false }
                 function Get-MainWorktreePath { return $RepoRoot }
                 function Get-SourceEventLogSeedBaseline {
                     return [ordered]@{
@@ -67,6 +68,75 @@ Describe "latest-only branch seed and two-level refresh" {
         }
     }
 
+    It "locally unbinds a copied repository-backed file seed before its validation dump" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-seed-repository-unbind-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $sourceRoot = Join-Path $tempRoot "source база"
+            $seedRoot = Join-Path $tempRoot "общий seed"
+            New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
+            [IO.File]::WriteAllBytes((Join-Path $sourceRoot "1Cv8.1CD"), [byte[]](1, 2, 3))
+
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:unbindCalls = @()
+                $script:unbindObservedBeforeDump = $false
+                function Get-BranchSeedRoot { return $seedRoot }
+                function Get-InfoBaseKind { return "file" }
+                function Get-SourceInfoBasePath { return $sourceRoot }
+                function Get-SourceUsesRepository { return $true }
+                function Get-MainWorktreePath { return $RepoRoot }
+                function Get-SourceEventLogSeedBaseline {
+                    return [ordered]@{
+                        schemaVersion = 2; createdAt = (Get-Date).ToString("o"); reason = "source-seed"
+                        reader = "direct-stream"; logDirectory = ""; errorCount = 0; signatureCount = 0
+                        signatures = @(); durationMs = 0
+                        cache = [ordered]@{ status = "empty"; path = ""; sourceKey = ""; segmentCount = 0 }
+                        failureEvidence = ""
+                    }
+                }
+                function Invoke-Designer {
+                    param(
+                        [string]$InfoBasePath,
+                        [string]$InfoBaseKind,
+                        [string[]]$DesignerArgs
+                    )
+                    $script:unbindCalls += [pscustomobject]@{
+                        infoBasePath = $InfoBasePath
+                        infoBaseKind = $InfoBaseKind
+                        designerArgs = @($DesignerArgs)
+                    }
+                }
+                function Dump-ConfigToFilesFromInfoBase {
+                    param([string]$InfoBasePath, [string]$InfoBaseKind)
+                    $script:unbindObservedBeforeDump = $script:unbindCalls.Count -eq 1
+                    return [pscustomobject]@{ exportPath = "src/cf" }
+                }
+                function Get-ConfigSourceFingerprint {
+                    return [pscustomobject]@{ fingerprint = "detached"; fileCount = 1 }
+                }
+
+                $manifest = New-BranchSeed -ConfigurationFingerprint "attached" -ConfigurationFileCount 1 -DumpConfigurationFromSeed
+                [pscustomobject]@{
+                    manifest = $manifest
+                    unbindCalls = @($script:unbindCalls)
+                    unbindObservedBeforeDump = $script:unbindObservedBeforeDump
+                    artifactExists = Test-Path -LiteralPath ([string]$manifest.artifactPath) -PathType Leaf
+                }
+            }
+
+            $result.manifest.status | Should -Be "ready"
+            $result.manifest.configurationFingerprint | Should -Be "detached"
+            $result.unbindCalls.Count | Should -Be 1
+            $result.unbindCalls[0].infoBasePath | Should -Be (Split-Path -Parent ([string]$result.manifest.artifactPath))
+            $result.unbindCalls[0].infoBaseKind | Should -Be "file"
+            @($result.unbindCalls[0].designerArgs) | Should -Be @("/ConfigurationRepositoryUnbindCfg", "-force")
+            $result.unbindObservedBeforeDump | Should -BeTrue
+            $result.artifactExists | Should -BeTrue
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "fails closed after replacement failure and requires explicit rebuild recovery" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-seed-failed-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -80,6 +150,7 @@ Describe "latest-only branch seed and two-level refresh" {
                 function Get-BranchSeedRoot { return $seedRoot }
                 function Get-InfoBaseKind { return "file" }
                 function Get-SourceInfoBasePath { return $sourceRoot }
+                function Get-SourceUsesRepository { return $false }
                 function Get-MainWorktreePath { return $RepoRoot }
                 function Get-SourceEventLogSeedBaseline {
                     return [ordered]@{

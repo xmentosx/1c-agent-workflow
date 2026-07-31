@@ -66,6 +66,20 @@ function Remove-BranchSeedFileRuntimeSidecars {
     }
 }
 
+function Disconnect-BranchSeedFileFromRepository {
+    param([Parameter(Mandatory)][string]$ArtifactPath)
+
+    if (-not (Get-SourceUsesRepository)) {
+        return
+    }
+
+    $infoBaseRoot = Split-Path -Parent $ArtifactPath
+    Invoke-Designer `
+        -InfoBasePath $infoBaseRoot `
+        -InfoBaseKind "file" `
+        -DesignerArgs @("/ConfigurationRepositoryUnbindCfg", "-force") | Out-Null
+}
+
 function Write-BranchSeedManifest {
     param([System.Collections.IDictionary]$Manifest)
 
@@ -363,6 +377,10 @@ function New-BranchSeed {
         }
         if (-not (Test-Path -LiteralPath $paths.artifactPath -PathType Leaf) -or (Get-Item -LiteralPath $paths.artifactPath).Length -le 0) {
             throw "BRANCH_SEED_ARTIFACT_EMPTY: $($paths.artifactPath)"
+        }
+
+        if ($kind -eq "file") {
+            Disconnect-BranchSeedFileFromRepository -ArtifactPath $paths.artifactPath
         }
 
         if ($DumpConfigurationFromSeed -and $kind -eq "file") {
