@@ -26,8 +26,8 @@
       "upstreamRef": "refs/heads/main",
       "upstreamCommit": "5f3d3f03b778d7de38cf2cfb18a20cf3e7ed79d8",
       "downstreamRevision": 20,
-      "compatibilityStatus": "pending",
-      "compatibilityCheckedAt": ""
+      "compatibilityStatus": "passed",
+      "compatibilityCheckedAt": "2026-07-31T20:35:07Z"
     },
     "agentBrowser": {
       "version": "0.33.1",
