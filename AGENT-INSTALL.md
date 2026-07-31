@@ -353,6 +353,7 @@ On a repeated bootstrap, only `succeeded` with `exitCode=0`, `stage=init.complet
    - The dump commit must stage and commit only `src/cf`. Unrelated staged files must not be included.
    - `src/cf` is tracked project content and must be force-added if a broad `.gitignore` rule such as `src/` would otherwise hide it.
    - 1C Designer commands must run strictly sequentially; the helper must wait for the repository update process to exit before starting the dump process.
+   - For a repository-backed file infobase, the copied branch seed must be locally unbound with `/ConfigurationRepositoryUnbindCfg -force` before validation. Do not pass repository credentials to this command: the source repository binding must remain unchanged.
 6. Commit of the baseline dump.
 7. Installation of `ai_rules_1c`.
 8. Commit of workflow/rules files.
