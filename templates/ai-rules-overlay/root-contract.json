@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "upstreamPath": "AGENTS.md",
+  "mappings": [
+    {"upstreamAnchor":"## Persona","destination":"AGENTS.md","destinationAnchor":"# 1C Development Rules","disposition":"compact-root"},
+    {"upstreamAnchor":"## Core Principles","destination":"AGENTS.md","destinationAnchor":"# 1C Development Rules","disposition":"compact-root"},
+    {"upstreamAnchor":"## Active model adaptation","destination":"AGENTS.md","destinationAnchor":"## Active model adaptation","disposition":"compact-root"},
+    {"upstreamAnchor":"## Development Procedure","destination":"AGENTS.md","destinationAnchor":"## Development Procedure","disposition":"compact-root"},
+    {"upstreamAnchor":"## Project info","destination":"AGENTS.md","destinationAnchor":"### Authority, language, and paths","disposition":"compact-root"},
+    {"upstreamAnchor":"## MCP Tool Calling","destination":"AGENTS.md","destinationAnchor":"## MCP Tool Calling","disposition":"compact-root"},
+    {"upstreamAnchor":"## Coding Standards","destination":"content/rules/coding-standards.md","destinationAnchor":"coding","disposition":"on-demand"},
+    {"upstreamAnchor":"## Skills and Subagents","destination":"AGENTS.md","destinationAnchor":"## Skills and Subagents","disposition":"compact-root"},
+    {"upstreamAnchor":"## Project memory","destination":"AGENTS.md","destinationAnchor":"## Project memory","disposition":"compact-root"},
+    {"upstreamAnchor":"## Rules self-improvement (`/evolve` + `LLM-RULES.md`)","destination":"AGENTS.md","destinationAnchor":"## Rules self-improvement","disposition":"compact-root"},
+    {"upstreamAnchor":"## Editing discipline","destination":"AGENTS.md","destinationAnchor":"### Surgical changes","disposition":"compact-root"},
+    {"upstreamAnchor":"## Development standards","destination":"content/rules/coding-standards.md","destinationAnchor":"coding","disposition":"on-demand"},
+    {"upstreamAnchor":"## Model adaptation","destination":"content/rules/model-adaptation.md","destinationAnchor":"model","disposition":"on-demand"},
+    {"upstreamAnchor":"## Subagents","destination":"content/rules/subagents.md","destinationAnchor":"subagent","disposition":"on-demand"},
+    {"upstreamAnchor":"## Forms","destination":"content/rules/forms.md","destinationAnchor":"form","disposition":"on-demand"},
+    {"upstreamAnchor":"## Tooling","destination":"content/rules/tooling-playbooks.md","destinationAnchor":"tool","disposition":"on-demand"},
+    {"upstreamAnchor":"## Workflow and integrations","destination":"AGENTS.md","destinationAnchor":"**UI testing:**","disposition":"compact-root"},
+    {"upstreamAnchor":"## Metadata","destination":"AGENTS.md","destinationAnchor":"**XDTO and UUID:**","disposition":"compact-root"},
+    {"upstreamAnchor":"## Quality","destination":"AGENTS.md","destinationAnchor":"### Verify and complete","disposition":"compact-root"},
+    {"upstreamAnchor":"Vendor support state","destination":"AGENTS.md","destinationAnchor":"Vendor support","disposition":"compact-root"},
+    {"upstreamAnchor":"ui-testing-tools","destination":"AGENTS.md","destinationAnchor":"UI testing","disposition":"compact-root"},
+    {"upstreamAnchor":"Host-tool built-in explorers","destination":"AGENTS.md","destinationAnchor":"project `1c-explorer`","disposition":"compact-root"},
+    {"upstreamAnchor":"1C infobase operations","destination":"USER-RULES.md","destinationAnchor":"ITL_LIFECYCLE_HELPER_REQUIRED","disposition":"user-rules"}
+  ]
+}

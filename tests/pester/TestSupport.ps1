@@ -1,4 +1,5 @@
 function Initialize-WorkflowPesterContext {
+    $env:ITL_UI_TOOLS_AUTO_INSTALL = "skip"
     $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
     $helperPath = Join-Path $repoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
     $helperModulePaths = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot ".agents\skills\1c-workflow\scripts\lib") -File -Filter "agent-1c.*.ps1" | Sort-Object Name | ForEach-Object { $_.FullName })

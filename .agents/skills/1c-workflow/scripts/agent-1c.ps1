@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "run-dev-branch-tests", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "refresh-dev-branch-lite", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "run-dev-branch-tests", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "refresh-dev-branch-lite", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -56,6 +56,8 @@ param(
     [ValidateSet("", "path")]
     [string]$BootstrapWorkflowSource = "",
     [string]$AgentTarget = "",
+    [ValidateSet("", "opus5", "sonnet5", "fable5", "gpt56")]
+    [string]$AgentModel = "",
     [string]$Client = "",
     [string]$Mode = "status",
     [ValidateSet("run", "analyze", "compare")]
@@ -233,6 +235,7 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "LauncherPid" -Value $(if ($LauncherPid -gt 0) { $LauncherPid } else { $null })
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DependencyMode" -Value $DependencyMode
     Add-Agent1cReexecArgument -Arguments $arguments -Name "AgentTarget" -Value $AgentTarget
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AgentModel" -Value $AgentModel
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Client" -Value $Client
     Add-Agent1cReexecArgument -Arguments $arguments -Name "Mode" -Value $Mode
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VerificationTrigger" -Value $VerificationTrigger
@@ -320,6 +323,7 @@ $script:Agent1cModuleFiles = @(
     "agent-1c.roctup-mcp.ps1",
     "agent-1c.lifecycle.ps1",
     "agent-1c.client-adapters.ps1",
+    "agent-1c.ui-tools.ps1",
     "agent-1c.context-diagnostics.ps1",
     "agent-1c.ondemand-mcp.ps1",
     "agent-1c.verification-modes.ps1",
@@ -386,10 +390,10 @@ try {
         "vibecoding1c-mcp-rotate-keys" { Rotate-Vibecoding1cMcpKeys }
         "vibecoding1c-mcp-ensure-model" { Ensure-Vibecoding1cMcpModel | Out-Null }
         "vibecoding1c-mcp-write-client-config" { Write-Vibecoding1cMcpClientConfig }
-        "update-workflow" { Update-WorkflowPackage; Sync-ItlClientUserEnvironment -Client (Get-ItlActiveClient) }
+        "update-workflow" { Update-WorkflowPackage; Install-ItlUiTools -BestEffort; Sync-ItlClientSurface; Sync-ItlClientUserEnvironment -Client (Get-ItlActiveClient) }
         "update-ai-rules" { Update-AiRules1c }
         "itl-litemode" { Set-ItlLiteMode -Mode $Mode }
-        "itl-switch-client" { Switch-ItlClient -Client $Client; Sync-ItlClientUserEnvironment -Client (Get-ItlActiveClient) }
+        "itl-switch-client" { Switch-ItlClient -Client $Client; Sync-ItlClientSurface; Sync-ItlClientUserEnvironment -Client (Get-ItlActiveClient) }
         "update1cbase" { Invoke-ItlUpdate1cBaseBridge }
         "loadfrom1cbase" { Invoke-ItlLoadFrom1cBaseBridge }
         "getconfigfiles" { Invoke-ItlGetConfigFilesBridge }
@@ -402,7 +406,11 @@ try {
         "stop-vanessa-profile" { Stop-DevBranchVanessaInteractiveProfile | Out-Null }
         "check-dev-branch" { Check-DevBranch }
         "verify-dev-branch" { Verify-DevBranch }
-        "init-project" { Initialize-Project; Sync-ItlClientUserEnvironment -Client (Get-ItlActiveClient) }
+        "init-project" { Initialize-Project; Install-ItlUiTools -BestEffort; Sync-ItlClientSurface; Sync-ItlClientUserEnvironment -Client (Get-ItlActiveClient) }
+        "install-agent-browser" { Install-ItlAgentBrowser; Sync-ItlUiToolsMcp; Show-ItlUiToolsStatus }
+        "install-windows-mcp" { Install-ItlWindowsMcp; Sync-ItlUiToolsMcp; Show-ItlUiToolsStatus }
+        "install-ui-tools" { Install-ItlUiTools; Sync-ItlUiToolsMcp; Show-ItlUiToolsStatus }
+        "ui-tools-status" { Show-ItlUiToolsStatus }
         "sync-master" { Sync-Master }
         "get-dev-workspace-plan" { Get-DevWorkspacePlan }
         "get-dev-workspace-close-plan" { Get-DevWorkspaceClosePlan }

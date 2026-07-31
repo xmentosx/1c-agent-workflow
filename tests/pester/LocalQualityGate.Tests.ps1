@@ -30,6 +30,9 @@ Describe "Local quality gate contract" {
         $text | Should -Match 'seedParallelTestFixture'
         $text | Should -Match 'seedParallelBranchRuntimeConcurrent'
         $text | Should -Match 'seedParallelLiteRefreshSourceCallCount'
+        $text | Should -Match 'ExplicitAiRulesSource'
+        $text | Should -Match 'Full may qualify pending only with an explicit local -AiRulesSource'
+        $text | Should -Match 'upstreamMergeBase'
     }
 
     It "reuses exact or ancestor same-tree Full qualifications and checkpoints static proof before runtime" {

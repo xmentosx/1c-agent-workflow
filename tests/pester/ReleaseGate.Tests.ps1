@@ -190,7 +190,7 @@ Describe "Release gate scripts" {
             & git -C $mainRoot add .
             & git -C $mainRoot commit -m "fixture" *> $null
             & git -C $mainRoot branch -M master
-            & git -C $mainRoot worktree add -b $branch $worktreeRoot *> $null
+            & git -C $mainRoot worktree add --quiet -b $branch $worktreeRoot *> $null
             $LASTEXITCODE | Should -Be 0
 
             $tokens = $null

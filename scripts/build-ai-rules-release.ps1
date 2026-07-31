@@ -108,6 +108,14 @@ $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | Convert
 if ([int]$manifest.schemaVersion -ne 2) {
     throw "AI rules decision ledger schemaVersion must be 2."
 }
+$rootContractPath = Join-Path $overlayRootFull "root-contract.json"
+if (-not (Test-Path -LiteralPath $rootContractPath -PathType Leaf)) {
+    throw "AI rules root contract ledger is missing: $rootContractPath"
+}
+$rootContract = Get-Content -LiteralPath $rootContractPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ([int]$rootContract.schemaVersion -ne 1) {
+    throw "AI rules root contract ledger schemaVersion must be 1."
+}
 
 $baselineUpstream = (Invoke-AiRulesGit -Arguments @("rev-parse", "$([string]$manifest.baselineUpstreamCommit)^{commit}")).stdout.Trim()
 $baselineRelease = (Invoke-AiRulesGit -Arguments @("rev-parse", "$([string]$manifest.baselineReleaseCommit)^{commit}")).stdout.Trim()
@@ -173,6 +181,57 @@ foreach ($anchor in @($manifest.requiredUpstreamAnchors)) {
     }
 }
 
+$rootMappings = @($rootContract.mappings)
+$rootMappingsByAnchor = @{}
+foreach ($mapping in $rootMappings) {
+    $upstreamAnchor = [string]$mapping.upstreamAnchor
+    $destination = [string]$mapping.destination
+    $destinationAnchor = [string]$mapping.destinationAnchor
+    $disposition = [string]$mapping.disposition
+    if ([string]::IsNullOrWhiteSpace($upstreamAnchor) -or [string]::IsNullOrWhiteSpace($destination) -or [string]::IsNullOrWhiteSpace($destinationAnchor)) {
+        Add-Blocker "Root contract mapping has an empty anchor or destination."
+        continue
+    }
+    if ($rootMappingsByAnchor.ContainsKey($upstreamAnchor)) {
+        Add-Blocker "Duplicate root contract mapping: $upstreamAnchor"
+        continue
+    }
+    if ($disposition -notin @("compact-root", "on-demand", "user-rules", "intentional-exclusion")) {
+        Add-Blocker "Invalid root contract disposition '$disposition' for '$upstreamAnchor'."
+    }
+    $rootMappingsByAnchor[$upstreamAnchor] = $mapping
+    if ($upstreamAgents.IndexOf($upstreamAnchor, [StringComparison]::Ordinal) -lt 0) {
+        Add-Blocker "Mapped upstream root anchor disappeared: $upstreamAnchor"
+    }
+
+    if ($disposition -eq "intentional-exclusion") { continue }
+    $destinationText = ""
+    $managedDestination = @($managedTargets | Where-Object path -eq $destination | Select-Object -First 1)
+    if ($managedDestination.Count -gt 0) {
+        $destinationTemplate = Join-Path $overlayRootFull ([string]$managedDestination[0].template)
+        if (Test-Path -LiteralPath $destinationTemplate -PathType Leaf) {
+            $destinationText = [IO.File]::ReadAllText($destinationTemplate, [Text.Encoding]::UTF8)
+        }
+    }
+    else {
+        $destinationResult = Invoke-AiRulesGit -Arguments @("show", "HEAD`:$destination") -AllowFailure
+        if ($destinationResult.exitCode -eq 0) { $destinationText = [string]$destinationResult.stdout }
+    }
+    if (-not $destinationText) {
+        Add-Blocker "Root contract destination is missing: $destination"
+    }
+    elseif ($destinationText.IndexOf($destinationAnchor, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        Add-Blocker "Root contract destination '$destination' lost anchor: $destinationAnchor"
+    }
+}
+
+$upstreamHeadings = @([regex]::Matches($upstreamAgents, '(?m)^## .+$') | ForEach-Object { $_.Value.TrimEnd("`r") })
+foreach ($heading in $upstreamHeadings) {
+    if (-not $rootMappingsByAnchor.ContainsKey($heading)) {
+        Add-Blocker "Unmapped upstream root section: $heading"
+    }
+}
+
 $upstreamChangedPaths = @(Get-GitPathList -Arguments @("diff", "--name-only", $baselineUpstream, $UpstreamCommit, "--"))
 $baselineDownstreamPaths = @(Get-GitPathList -Arguments @("diff", "--name-only", $baselineUpstream, $baselineRelease, "--"))
 $upstreamSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -219,6 +278,7 @@ $report = [ordered]@{
     upstreamChangedCount = $upstreamChangedPaths.Count
     baselineDownstreamCount = $baselineDownstreamPaths.Count
     downstreamOnlyCount = $downstreamOnlyPaths.Count
+    rootContractMappingCount = $rootMappings.Count
     decisions = @()
     blockers = @()
     status = "checked"

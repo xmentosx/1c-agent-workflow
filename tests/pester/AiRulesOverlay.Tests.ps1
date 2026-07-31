@@ -28,7 +28,7 @@ Describe "controlled ai_rules_1c release overlay" {
             & git -C $forkRoot init *> $null
             & git -C $forkRoot config user.email "tests@example.invalid"
             & git -C $forkRoot config user.name "ITL Tests"
-            [IO.File]::WriteAllText((Join-Path $forkRoot "AGENTS.md"), "# Root`nupstream`n", $Utf8NoBom)
+            [IO.File]::WriteAllText((Join-Path $forkRoot "AGENTS.md"), "# Root`nupstream`n## Upstream behavior`nrequired behavior`n", $Utf8NoBom)
             [IO.File]::WriteAllText((Join-Path $forkRoot "USER-RULES.md"), "# User rules`nupstream`n", $Utf8NoBom)
             [IO.File]::WriteAllText((Join-Path $forkRoot "base.txt"), "old upstream`n", $Utf8NoBom)
             [IO.File]::WriteAllText((Join-Path $forkRoot "content\owner.md"), "owner`n", $Utf8NoBom)
@@ -82,6 +82,19 @@ Describe "controlled ai_rules_1c release overlay" {
             [IO.File]::WriteAllText((Join-Path $overlayRoot "sections.json"), (($manifest | ConvertTo-Json -Depth 8) + "`n"), $Utf8NoBom)
             [IO.File]::WriteAllText((Join-Path $overlayRoot "AGENTS.md"), "# Root`ncompact completion gate`n", $Utf8NoBom)
             [IO.File]::WriteAllText((Join-Path $overlayRoot "USER-RULES.md"), "# User rules`ndirect full-cycle`n", $Utf8NoBom)
+            $rootContract = [ordered]@{
+                schemaVersion = 1
+                upstreamPath = "AGENTS.md"
+                mappings = @(
+                    [ordered]@{
+                        upstreamAnchor = "## Upstream behavior"
+                        destination = "AGENTS.md"
+                        destinationAnchor = "completion gate"
+                        disposition = "compact-root"
+                    }
+                )
+            }
+            [IO.File]::WriteAllText((Join-Path $overlayRoot "root-contract.json"), (($rootContract | ConvertTo-Json -Depth 8) + "`n"), $Utf8NoBom)
             $reportPath = Join-Path $tempRoot "report.json"
 
             & $BuilderPath -AiRulesRoot $forkRoot -UpstreamCommit $newUpstream -OverlayRoot $overlayRoot -ReportPath $reportPath -Mode Prepare

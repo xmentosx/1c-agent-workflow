@@ -555,7 +555,8 @@ function Write-ItlClientMcpEndpoints {
     param(
         [object[]]$Endpoints,
         [string]$Owner,
-        [string]$Client = ""
+        [string]$Client = "",
+        [string[]]$PreserveOwnedKeys = @()
     )
 
     if (-not $Client) { $Client = Get-ItlActiveClient }
@@ -640,7 +641,10 @@ function Write-ItlClientMcpEndpoints {
     if (-not $state.Contains("owners")) { $state["owners"] = [ordered]@{} }
     $owners = ConvertTo-Vibecoding1cMcpHashtable -Object $state["owners"]
     $stateKey = "$Client/$Owner"
-    foreach ($oldKey in @($owners[$stateKey])) { if ($container.Contains([string]$oldKey)) { $container.Remove([string]$oldKey) } }
+    foreach ($oldKey in @($owners[$stateKey])) {
+        if ($PreserveOwnedKeys -contains [string]$oldKey) { continue }
+        if ($container.Contains([string]$oldKey)) { $container.Remove([string]$oldKey) }
+    }
     $written = @()
     foreach ($endpoint in $normalized) {
         $entry = if ($endpoint.transport -eq "stdio" -and $adapter.mcpStdioFormat -eq "local-array") {
@@ -685,7 +689,7 @@ function Write-ItlClientMcpEndpoints {
     }
     $config[$containerName] = $container
     Write-Vibecoding1cMcpJsonFile -Path $path -Value $config
-    $owners[$stateKey] = @($written)
+    $owners[$stateKey] = @($written + @($PreserveOwnedKeys) | Select-Object -Unique)
     $state["owners"] = $owners
     Write-ItlManagedMcpState -State $state
     return $path
@@ -1218,6 +1222,7 @@ function Sync-ItlClientSurface {
     }
     Sync-ItlClientRequiredPackage -Client $client
     Write-ItlOnDemandMcpClientConfig -Client $client | Out-Null
+    Sync-ItlUiToolsMcp -Client $client
     $surface = Get-ItlCommandSurface
     if ($adapter.commandFormat -eq "none") {
         Write-Host "$client uses project-local skills and natural requests; no project slash prompts were written."
@@ -1442,6 +1447,17 @@ function Show-ItlDoctor {
     }
     $rtk = Get-ItlRtkStatus
     $checks.Add([pscustomobject]@{ status = $rtk.status; name = "rtk"; detail = $rtk.detail })
+    if ($client) {
+        foreach ($uiTool in @("agent-browser", "windows-mcp")) {
+            try {
+                $ui = Get-ItlUiToolStatus -Tool $uiTool -Client $client
+                $uiCheck = if ($ui.state -eq "configured") { "OK" } elseif ($ui.state -eq "external") { "SKIP" } else { "WARN" }
+                $checks.Add([pscustomobject]@{ status = $uiCheck; name = $uiTool; detail = "installed=$(if ($ui.installedVersion) { $ui.installedVersion } else { '<none>' }); expected=$($ui.expectedVersion); state=$($ui.state); configured does not prove active; install=$($ui.installCommand)" })
+            } catch {
+                $checks.Add([pscustomobject]@{ status = "WARN"; name = $uiTool; detail = $_.Exception.Message })
+            }
+        }
+    }
     foreach ($check in $checks) { Write-Host ("[{0}] {1}: {2}" -f $check.status, $check.name, $check.detail) }
     Write-Host "Doctor is read-only. Repair with pinned update-ai-rules, /itl-update-workflow, or /itl-refresh; on-demand backend control is private."
     if (@($checks | Where-Object { $_.status -eq "FAIL" }).Count -gt 0) { throw "ITL doctor found failed checks." }

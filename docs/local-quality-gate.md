@@ -30,6 +30,14 @@ worker по умолчанию получают детерминированно
 полный inventory тестов/gate-скриптов совпадают. `-PesterWorkers 1` оставляет
 последовательный диагностический путь.
 
+Для квалификации нового controlled fork lock сначала хранит
+`compatibilityStatus=pending`. Такой lock принимается только режимом `Full`,
+только с явно переданным локальным `-AiRulesSource` и только когда clean
+annotated tag, release branch, fork commit и upstream ancestry совпадают с
+lock. После успешного Full статус меняется на `passed` и фиксируется timestamp;
+обычный Full с неявным источником и режим `Release` по-прежнему требуют
+`compatibilityStatus=passed`.
+
 `Release` сохраняет статическую qualification после Pester, helper, fork,
 compatibility и проверки tracked state, поэтому runtime-сбой не повторяет эту
 часть. `git diff --check` и `helper -Action help` выполняются всегда;

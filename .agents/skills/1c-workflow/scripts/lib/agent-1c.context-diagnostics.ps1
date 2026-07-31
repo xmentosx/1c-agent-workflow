@@ -273,9 +273,23 @@ function Get-KiloBrowserAutomationDisplay {
             -Source ([string](Get-ItlObjectPropertyValue -Object $status -Name "source" -Default "")) `
             -Version ([string](Get-ItlObjectPropertyValue -Object $status -Name "version" -Default ""))
         if ($status.state -eq "enabled") {
+            $agentBrowserAvailable = $false
+            try {
+                if (Get-Command Get-ItlUiToolStatus -ErrorAction SilentlyContinue) {
+                    $browserStatus = Get-ItlUiToolStatus -Tool "agent-browser"
+                    $agentBrowserAvailable = $browserStatus.state -in @("configured", "external")
+                }
+            } catch {
+                $agentBrowserAvailable = $false
+            }
+            $installSuffix = if ($agentBrowserAvailable) {
+                ""
+            } else {
+                " Установите его: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action install-agent-browser."
+            }
             return [pscustomobject]@{
                 statusLine = "Kilo Browser Automation: включена (источник: $source)."
-                adviceLine = "Скрытый Playwright MCP добавляет тысячи токенов контекста, даже когда не используется. Включайте его только для задач в веб-браузере. ITL не изменяет эту настройку."
+                adviceLine = "Рекомендуем отключить Kilo Browser Automation: скрытый Playwright MCP заметно увеличивает набор tools, контекст и расход токенов. Для веб-задач используйте agent-browser из workflow.$installSuffix ITL не изменяет настройку Kilo автоматически."
             }
         } elseif ($status.state -eq "disabled") {
             return [pscustomobject]@{

@@ -20,14 +20,34 @@
     },
     "aiRules1c": {
       "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
-      "ref": "itl-main-5ae333ed-r19",
-      "commit": "7952e7d9bb050d67e145c0136e87b6855c353f58",
+      "ref": "itl-main-5f3d3f0-r20",
+      "commit": "151aa980b5e99b3d129e974925e734d9ef0afa3e",
       "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
       "upstreamRef": "refs/heads/main",
-      "upstreamCommit": "5ae333ed49dc66989e305b286acc93691bb96926",
-      "downstreamRevision": 19,
+      "upstreamCommit": "5f3d3f03b778d7de38cf2cfb18a20cf3e7ed79d8",
+      "downstreamRevision": 20,
       "compatibilityStatus": "passed",
-      "compatibilityCheckedAt": "2026-07-31T03:08:10Z"
+      "compatibilityCheckedAt": "2026-07-31T20:35:07Z"
+    },
+    "agentBrowser": {
+      "version": "0.33.1",
+      "source": "npm:agent-browser@0.33.1",
+      "tarball": "https://registry.npmjs.org/agent-browser/-/agent-browser-0.33.1.tgz",
+      "integrity": "sha512-lS0KbU9QdkD0I2n+uzrmNXKNGRjsd6GcB7bR6Wm1eyLcaxTCSf2zuxbWzf76fHCrDA4YoY3TikoOMSA8qA+wFA==",
+      "scope": "per-user-versioned",
+      "profile": "core",
+      "sourceRegistry": "https://registry.npmjs.org/",
+      "compatibilityStatus": "passed",
+      "compatibilityCheckedAt": "2026-07-31T00:00:00Z"
+    },
+    "windowsMcp": {
+      "version": "0.8.2",
+      "source": "pypi:windows-mcp==0.8.2",
+      "projectUrl": "https://pypi.org/project/windows-mcp/",
+      "scope": "uvx-cache",
+      "minimumPython": "3.13",
+      "compatibilityStatus": "passed",
+      "compatibilityCheckedAt": "2026-07-31T00:00:00Z"
     },
     "piMcpExtension": {
       "version": "1.5.0",

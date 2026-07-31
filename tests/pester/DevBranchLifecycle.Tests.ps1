@@ -944,6 +944,49 @@
         $prep.message | Should -Match "list preparation failed"
     }
 
+    It "rejects a staged dump that would remove the existing vendor support state" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-support-state-dump-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $export = Join-Path $tempRoot "src\cf"
+            $supportState = Join-Path $export "Ext\ParentConfigurations.bin"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $supportState) | Out-Null
+            Set-Content -LiteralPath (Join-Path $export "Configuration.xml") -Encoding UTF8 -Value "<Configuration><Comment>original</Comment></Configuration>"
+            Set-Content -LiteralPath (Join-Path $export "ConfigDumpInfo.xml") -Encoding UTF8 -Value "original-dump-info"
+            [System.IO.File]::WriteAllBytes($supportState, [byte[]]@(0, 17, 34, 255))
+            $beforeHash = (Get-FileHash -LiteralPath $supportState -Algorithm SHA256).Hash
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-ExportPath { "src/cf" }
+                function Invoke-Designer {
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                    $stage = [string]$DesignerArgs[1]
+                    New-Item -ItemType Directory -Force -Path $stage | Out-Null
+                    Set-Content -LiteralPath (Join-Path $stage "Configuration.xml") -Encoding UTF8 -Value "<Configuration><Comment>staged</Comment></Configuration>"
+                    Set-Content -LiteralPath (Join-Path $stage "ConfigDumpInfo.xml") -Encoding UTF8 -Value "staged-dump-info"
+                }
+
+                $message = ""
+                try {
+                    Dump-ConfigToFilesFromInfoBase -InfoBasePath "C:\base" -InfoBaseKind file 6>$null | Out-Null
+                } catch {
+                    $message = $_.Exception.Message
+                }
+                [pscustomobject]@{
+                    message = $message
+                    configuration = Get-Content -LiteralPath (Join-Path $export "Configuration.xml") -Raw -Encoding UTF8
+                    supportHash = (Get-FileHash -LiteralPath $supportState -Algorithm SHA256).Hash
+                }
+            }
+
+            $result.message | Should -Match "would lose Ext/ParentConfigurations\.bin"
+            $result.configuration | Should -Match "original"
+            $result.supportHash | Should -Be $beforeHash
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "uses content fingerprints to skip Designer and retry only Enterprise when needed" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-fingerprint-test-" + [guid]::NewGuid().ToString("N"))
         try {
