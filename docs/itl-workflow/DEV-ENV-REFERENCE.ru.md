@@ -19,6 +19,8 @@
 | Ключ | Назначение | Значения/default | Владелец |
 |---|---|---|---|
 | `PLATFORM_PATH` | Путь к `1cv8.exe` | определяется init или задается вручную | init/user |
+| `PLATFORM_ARGS` | Дополнительные аргументы запуска платформы для upstream-инструментов метаданных | пусто; строка аргументов | user |
+| `IBCMD_ARGS` | Дополнительные аргументы `ibcmd` для upstream-инструментов метаданных | пусто; строка аргументов | user |
 | `DESIGNER_MAX_WORKING_SET_MB` | Лимит памяти автоматического Designer | default `10240`; `0` отключает guard | user |
 | `DESIGNER_OPERATION_TIMEOUT_SECONDS` | Максимальное ожидание подтвержденного завершения автоматической операции Designer | default `3600`; `1..86400` | user |
 | `DESIGNER_STALL_WARNING_SECONDS` | Порог предупреждения без роста CPU/log и изменений owned-процессов; не останавливает Designer и не заменяет hard timeout | default `300`; `30..86400` | user |
@@ -56,9 +58,11 @@
 | `DEPENDENCY_MODE` | Разрешение зависимостей | `fresh`/`locked`, default `fresh` | user |
 | `QUICKFIX_MAX_LINES` | Лимит BSL-строк quick-fix | default `40` | user |
 | `DEBUG_FAST_PATH` | Сокращенный цикл отладки | `standard`/`extended`/`off`, default `standard` | user |
-| `VERIFICATION_DEPTH` | Глубина статических проверок `ai_rules_1c` | `full`/`standard`/`lite`, default `full` | user/`/litemode` |
+| `VERIFICATION_DEPTH` | Глубина статических проверок `ai_rules_1c` | `full`/`standard`/`lite`, default `standard` | user/`/litemode` |
 | `UI_TESTING` | Проверка веб-интерфейса по правилам `ai_rules_1c` | `auto`/`manual`/`off`, default `manual` | user/`/litemode` |
 | `ORCHESTRATION` | Режим оркестрации | `standard`/`economy`, default `standard` | user/`/economymode` |
+| `AGENT_MODEL` | Профиль правил для точной модели головного агента | `opus5`/`sonnet5`/`fable5`/`gpt56`; пусто = `auto`, управление через `/rulesmodel` | bootstrap/user |
+| `SUPPORT_GUARD` | Реакция upstream-инструментов на изменение заблокированного объекта типовой конфигурации на поддержке | `deny`/`warn`/`off`, default `deny` | user/`support-edit` |
 | `SUBAGENT_MODEL_CODING` | Модель coding tier | model id; пусто = модель клиента | user/installer |
 | `SUBAGENT_MODEL_ANALYSIS` | Модель analysis tier | model id; пусто = модель клиента | user/installer |
 | `SUBAGENT_MODEL_LIGHT` | Модель light tier | model id; пусто = модель клиента | user/installer |
@@ -67,6 +71,14 @@
 | `CAVEMAN` | Автоактивация краткого стиля | `on`/`auto`/`off`, default `on` | user/`/caveman` |
 
 Для native workspace OpenCode workflow также готовит игнорируемый project-local runtime `.opencode/node_modules` из записи `opencodePlugin` в `.agent-1c/dependency-lock.json`. Требуются Node.js 22+ и npm; после init/update/switch OpenCode Desktop нужно полностью перезапустить, чтобы зарегистрировать ITL workspace tools.
+
+`SUPPORT_GUARD` не заменяет lifecycle-защиту ITL. `deny` отказывает при заблокированном объекте, нечитаемом состоянии поддержки и удалении объекта на поддержке; `warn` продолжает с предупреждением, `off` отключает только этот upstream-гейт. Нормальный путь — изменение через расширение. `support-edit` применяют только для осознанного изменения `Ext/ParentConfigurations.bin`; ручной обход редактированием XML не предлагается.
+
+## UI-инструменты
+
+Workflow фиксирует версии `agent-browser` и Windows-MCP в `.agent-1c/dependency-lock.json`, best-effort готовит их при init/update и регистрирует напрямую как `stdio`. Они не используют on-demand facade, port registry или desktop lock. `agent-browser` получает отдельный `AGENT_BROWSER_SESSION` для каждого worktree и core skill profile; Windows-MCP запускается клиентом через `uvx ... serve` со штатным набором tools, без autostart и без изменения telemetry.
+
+Проверка и восстановление: `agent-1c.ps1 -Action ui-tools-status`, `-Action install-agent-browser`, `-Action install-windows-mcp` или `-Action install-ui-tools`. Статус `configured` означает только наличие MCP-записи, а не доказательство живого процесса. Пользовательская запись с тем же ключом сохраняется и показывается как `external`; отсутствие инструмента даёт WARN и точную команду установки.
 
 ## Проверка ITL
 

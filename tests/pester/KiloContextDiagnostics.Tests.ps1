@@ -81,7 +81,9 @@
 
             $status.status.state | Should -Be "enabled"
             $status.status.source | Should -Be "workspace"
-            $status.output | Should -Match "тысячи токенов контекста"
+            $status.output | Should -Match "рекомендуем отключить"
+            $status.output | Should -Match "agent-browser"
+            $status.output | Should -Match "install-agent-browser"
             (Get-FileHash -LiteralPath $workspacePath -Algorithm SHA256).Hash | Should -Be $beforeWorkspace
             (Get-FileHash -LiteralPath $userPath -Algorithm SHA256).Hash | Should -Be $beforeUser
         } finally {
@@ -161,7 +163,8 @@
         }
 
         $result.enabled.status | Should -Match "Kilo Browser Automation: включена \(источник: fixture\)"
-        $result.enabled.advice | Should -Match "тысячи токенов контекста"
+        $result.enabled.advice | Should -Match "Рекомендуем отключить"
+        $result.enabled.advice | Should -Match "agent-browser"
         $result.disabled.status | Should -Match "Kilo Browser Automation: отключена \(источник: fixture\)"
         $result.disabled.advice | Should -BeNullOrEmpty
         $result.unknown.status | Should -Match "Kilo Browser Automation: состояние не определено \(источник: fixture\)"

@@ -1627,6 +1627,32 @@ exit 0
         $HelperText | Should -Match 'Get-EnvValue\s+-Name\s+"VIBECODING1C_MCP_SETUP_DURING_INIT"\s+-Default\s+\$true\)\s+-Default\s+\$true'
     }
 
+    It "passes an explicit head-agent model profile without asking or inferring it from the client" {
+        $installer = Get-Content -LiteralPath $InstallerPath -Raw -Encoding UTF8
+        $entrypoint = Get-Content -LiteralPath $HelperPath -Raw -Encoding UTF8
+        $installer | Should -Match '\[ValidateSet\("", "opus5", "sonnet5", "fable5", "gpt56"\)\]\s*\[string\]\$AgentModel'
+        $installer | Should -Match '\$initArgs \+= @\("-AgentModel", \$AgentModel\)'
+        $entrypoint | Should -Match 'Add-Agent1cReexecArgument -Arguments \$arguments -Name "AgentModel" -Value \$AgentModel'
+        $HelperText | Should -Match 'agentModel = \$AgentModel\.Trim\(\)\.ToLowerInvariant\(\)'
+        $HelperText | Should -Not -Match 'Read-Host[^\r\n]*AgentModel|Read-Init[^\r\n]*AgentModel'
+
+        $validation = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $base = [pscustomobject]@{
+                agentTarget = "codex"; platformPath = "C:\1cv8.exe"; baseConfigurationVersion = "PM5"; infoBaseKind = "file"; sourceUsesRepository = $false
+                sourceInfoBasePath = "C:\base"; sourceServerName = ""; sourceInfoBaseName = ""; ibUser = ""; ibPassword = ""; repositoryPath = ""; repositoryUser = ""; repositoryPassword = ""
+                webPublishByDefault = $false; webPublishAuto = $false; dependencyMode = "fresh"; sourceInfoBaseUnsafeActionProtectionMode = "confirmed"; vibecoding1cMcpSetupDuringInit = $true; installVanessaIfMissing = $false
+            }
+            $valid = $base | Select-Object *
+            $valid | Add-Member -NotePropertyName agentModel -NotePropertyValue "gpt56"
+            Assert-InitAnswers -Answers $valid
+            $invalid = $base | Select-Object *
+            $invalid | Add-Member -NotePropertyName agentModel -NotePropertyValue "codex"
+            try { Assert-InitAnswers -Answers $invalid; "unexpected" } catch { $_.Exception.Message }
+        }
+        $validation | Should -Match 'agentModel\(opus5\|sonnet5\|fable5\|gpt56\|empty\)'
+    }
+
     It "restarts init wizard answers when the summary is rejected" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

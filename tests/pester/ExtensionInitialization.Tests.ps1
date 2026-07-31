@@ -132,7 +132,7 @@
         $HelperText | Should -Match ([regex]::Escape('"/LoadConfigFromFiles", $scaffoldPath, "-Extension", $ExtensionName'))
         $HelperText | Should -Match ([regex]::Escape('"/LoadCfg", $sourceCfe, "-Extension", $ExtensionName'))
         $HelperText | Should -Match ([regex]::Escape('-DesignerArgs @("/DumpDBCfgList", "-Extension", $Name)'))
-        $HelperText | Should -Not -Match "AgentMode"
+        $HelperText | Should -Not -Match '\bAgentMode\b'
         $HelperText | Should -Not -Match "v8unpack"
         $HelperText | Should -Not -Match '"/Extension"'
         $HelperText | Should -Match "extension-init.delegate"

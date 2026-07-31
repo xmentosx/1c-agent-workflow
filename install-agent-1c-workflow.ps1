@@ -9,6 +9,8 @@ param(
     [string]$ResumeRunStatusPath = "",
     [ValidateSet("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")]
     [string]$AgentTarget = "",
+    [ValidateSet("", "opus5", "sonnet5", "fable5", "gpt56")]
+    [string]$AgentModel = "",
     [int]$InitMaxWaitSeconds = 3600,
     [switch]$KeepWindowOnFailure,
     [switch]$SkipWorkflowSourceFreshnessCheck
@@ -437,6 +439,9 @@ if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf -ErrorAction Silen
 $initArgs = @("-Action", "init-project", "-InitMode", $InitMode)
 if ($AgentTarget) {
     $initArgs += @("-AgentTarget", $AgentTarget)
+}
+if ($AgentModel) {
+    $initArgs += @("-AgentModel", $AgentModel)
 }
 foreach ($provenanceArgument in @(
     @{ name = "-BootstrapWorkflowRepo"; value = [string]$workflowProvenance.repo },

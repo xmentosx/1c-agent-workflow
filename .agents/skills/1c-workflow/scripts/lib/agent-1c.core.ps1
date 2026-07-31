@@ -3444,6 +3444,7 @@ function Read-InitWizardAnswersOnce {
 
     $answers = [ordered]@{
         agentTarget = $agentTarget
+        agentModel = $AgentModel.Trim().ToLowerInvariant()
         platformPath = $platformPath
         baseConfigurationVersion = $baseConfigurationVersion
         infoBaseKind = $infoBaseKind
@@ -3487,6 +3488,7 @@ function Write-InitWizardAnswersSummary {
     Write-Section (Get-Agent1cUtf8Text "0KHQstC+0LTQutCwINC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNC4")
     Write-Host ((Get-Agent1cUtf8Text "0JrQvtGA0LXQvdGMINC/0YDQvtC10LrRgtCwOiA=") + $script:ProjectRoot)
     Write-Host ("Agent client: " + $answers.agentTarget)
+    Write-Host ("Agent model profile: " + $(if ($answers.agentModel) { $answers.agentModel } else { "auto" }))
     Write-Host ((Get-Agent1cUtf8Text "0J/Qu9Cw0YLRhNC+0YDQvNCwOiA=") + $answers.platformPath)
     Write-Host ("Base configuration version: " + $answers.baseConfigurationVersion)
     Write-Host ((Get-Agent1cUtf8Text "0KLQuNC/INC40YHRhdC+0LTQvdC+0Lkg0LHQsNC30Ys6IA==") + $answers.infoBaseKind)
@@ -3541,6 +3543,7 @@ function Normalize-InitAnswers {
 
     return [pscustomobject]@{
         agentTarget = ([string](Get-AnswerValue -Answers $Answers -Names @("agentTarget", "AGENT_TARGET") -Default $AgentTarget)).Trim().ToLowerInvariant()
+        agentModel = ([string](Get-AnswerValue -Answers $Answers -Names @("agentModel", "AGENT_MODEL") -Default $AgentModel)).Trim().ToLowerInvariant()
         platformPath = [string](Get-AnswerValue -Answers $Answers -Names @("platformPath", "PLATFORM_PATH"))
         baseConfigurationVersion = $baseConfigurationVersion
         infoBaseKind = ([string](Get-AnswerValue -Answers $Answers -Names @("infoBaseKind", "INFOBASE_KIND") -Default "file")).Trim().ToLowerInvariant()
@@ -3569,6 +3572,7 @@ function Assert-InitAnswers {
     $agentTargetContract = "agentTarget(" + ((Get-SupportedAgentTargets) -join "|") + ")"
     if (-not $Answers.agentTarget) { $missing += $agentTargetContract }
     if ($Answers.agentTarget -and $Answers.agentTarget -notin (Get-SupportedAgentTargets)) { $missing += $agentTargetContract }
+    if ($Answers.agentModel -and $Answers.agentModel -notin @("opus5", "sonnet5", "fable5", "gpt56")) { $missing += "agentModel(opus5|sonnet5|fable5|gpt56|empty)" }
     if (-not $Answers.platformPath) { $missing += "platformPath" }
     if ($Answers.infoBaseKind -ne "file" -and $Answers.infoBaseKind -ne "server") { $missing += "infoBaseKind(file|server)" }
     if ($Answers.infoBaseKind -eq "server") {
@@ -3593,6 +3597,7 @@ function Save-InitAnswers {
 
     $values = @{
         PLATFORM_PATH = $Answers.platformPath
+        AGENT_MODEL = $Answers.agentModel
         INFOBASE_KIND = $Answers.infoBaseKind
         SOURCE_USES_REPOSITORY = $(if ($Answers.sourceUsesRepository) { "true" } else { "false" })
         SOURCE_INFOBASE_PATH = $(if ($Answers.infoBaseKind -eq "file") { $Answers.sourceInfoBasePath } else { "" })
@@ -3621,6 +3626,7 @@ function Save-InitAnswers {
 function New-ConfiguredInitAnswers {
     $unsafeActionProtectionMode = ConvertTo-SourceInfoBaseUnsafeActionProtectionMode (Require-Value "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE or project.sourceInfoBaseUnsafeActionProtectionMode" (Get-Setting -EnvName "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE" -ConfigName "sourceInfoBaseUnsafeActionProtectionMode"))
     return [pscustomobject]@{
+        agentModel = $AgentModel.Trim().ToLowerInvariant()
         webPublishByDefault = (Get-WebPublishByDefault)
         webPublishAuto = (Get-WebPublishAuto)
         installVanessaIfMissing = [bool]$InstallVanessaIfMissing
@@ -3655,6 +3661,10 @@ function Prepare-ConfiguredInitProjectSettings {
     if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) {
         Set-ProjectAiRulesClient -Client $AgentTarget
         Read-ProjectConfig
+    }
+    if (-not [string]::IsNullOrWhiteSpace($AgentModel)) {
+        Set-DotEnvValues -Values @{ AGENT_MODEL = $AgentModel.Trim().ToLowerInvariant() }
+        Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
     }
     Get-AgentTargets | Out-Null
 

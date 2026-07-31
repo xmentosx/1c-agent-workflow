@@ -8,20 +8,22 @@
 
 ```text
 стандартная разработка
-  ├─ статические проверки: VERIFICATION_DEPTH=full
+  ├─ статические проверки: VERIFICATION_DEPTH=standard
   ├─ Vanessa: ITL_VANESSA_TESTING=auto
   ├─ журнал регистрации: ITL_CHECK_EVENT_LOG=auto
   ├─ зависимости: DEPENDENCY_MODE=fresh
   └─ непроверенный результат: VERIFICATION_POLICY=warn
 ```
 
-Штатные значения: `VERIFICATION_DEPTH=full`, `UI_TESTING=manual`, `ORCHESTRATION=standard`, `ITL_ROUTINE_MODE=off`, `CAVEMAN=on`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
+Штатные значения: `VERIFICATION_DEPTH=standard`, `UI_TESTING=manual`, `ORCHESTRATION=standard`, `ITL_ROUTINE_MODE=off`, `CAVEMAN=on`, `AGENT_MODEL=` (`auto`), `SUPPORT_GUARD=deny`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
 
 Меняйте режим только ради понятной цели: уменьшить глубину низкорисковой статической проверки, вручную отключить компонент executable verification, выбрать экономную оркестрацию или запретить непроверенную выгрузку.
 
 ## Kilo Browser Automation и контекст
 
-После инициализации, создания ветки и в `/itl-status` workflow показывает определённое состояние Kilo Browser Automation. Включённый параметр добавляет скрытый Playwright MCP и может расходовать несколько тысяч дополнительных токенов контекста даже без вызова браузера. Включайте его только для задач, которым действительно нужно управление веб-браузером.
+После инициализации, создания ветки и в `/itl-status` workflow показывает определённое состояние Kilo Browser Automation. Если `kilo-code.new.browserAutomation.enabled=true`, workflow рекомендует отключить этот скрытый Playwright MCP: он заметно увеличивает набор tools, контекст и расход токенов. Для веб-задач используйте workflow `agent-browser`; если он отсутствует, статус сразу показывает helper-команду установки. При `false` выводится только нормальный статус, при неизвестном состоянии — просьба проверить Kilo Settings. Workflow сам настройку Kilo не меняет.
+
+`agent-browser` и Windows-MCP регистрируются напрямую через `stdio`: первый предпочтителен для веб-клиента 1С, второй нужен только для неизбежной автоматизации desktop/thick-client UI. Оба процесса запускает сам MCP-клиент; on-demand facade, фиксированные UI-порты и desktop lock не используются.
 
 ITL не включает и не выключает Browser Automation и не создаёт для этого `.vscode/settings.json`. Если состояние нельзя однозначно определить из workspace, пользовательских настроек и default установленного Kilo, выводится `unknown`.
 
@@ -31,12 +33,14 @@ ITL не включает и не выключает Browser Automation и не 
 
 | Назначение | Команда/параметр | Значения | По умолчанию | Область действия |
 |---|---|---|---|---|
-| Глубина статических проверок `ai_rules_1c` | `/litemode`, `VERIFICATION_DEPTH` | `full`, `standard`, `lite` | `full` | проект |
+| Глубина статических проверок `ai_rules_1c` | `/litemode`, `VERIFICATION_DEPTH` | `full`, `standard`, `lite` | `standard` | проект |
 | Проверка веб-интерфейса по правилам `ai_rules_1c` | `UI_TESTING` | `auto`, `manual`, `off` | `manual` | проект |
 | ITL Vanessa Automation | `/itl-litemode`, `ITL_VANESSA_TESTING` | `auto`, `manual`, `off` | `auto` | проект/worktree |
 | ITL журнал регистрации | `/itl-litemode`, `ITL_CHECK_EVENT_LOG` | `auto`, `manual`, `off` | `auto` | проект/worktree |
 | Оркестрация | `/economymode`, `ORCHESTRATION` | `standard`, `economy` | `standard` | проект |
 | Модели субагентов | `SUBAGENT_MODEL_CODING`, `SUBAGENT_MODEL_ANALYSIS`, `SUBAGENT_MODEL_LIGHT` | model id клиента или пусто | модель клиента | после re-render/restart |
+| Профиль головной модели | `/rulesmodel`, `AGENT_MODEL` | `opus5`, `sonnet5`, `fable5`, `gpt56`, `auto` | `auto` | новый чат после смены |
+| Защита объектов на поддержке | `SUPPORT_GUARD` | `deny`, `warn`, `off` | `deny` | сразу |
 | Стиль ответов | `/caveman`, `CAVEMAN` | `on`, `auto`, `off` | `on` | проект; level может быть session-only |
 | Лимит quick-fix | `QUICKFIX_MAX_LINES` | положительное число | `40` | проект |
 | Быстрый путь отладки | `DEBUG_FAST_PATH` | `standard`, `extended`, `off` | `standard` | проект |

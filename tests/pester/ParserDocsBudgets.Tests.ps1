@@ -256,9 +256,10 @@
         $envTemplateText | Should -Match '(?m)^CAVEMAN=on\r?$'
         $envTemplateText | Should -Match '(?m)^ITL_ROUTINE_MODE=off\r?$'
         foreach ($marker in @(
-            'VERIFICATION_DEPTH=full', 'UI_TESTING=manual', 'ORCHESTRATION=standard',
+            'VERIFICATION_DEPTH=standard', 'UI_TESTING=manual', 'ORCHESTRATION=standard',
             'CAVEMAN=on', 'DEPENDENCY_MODE=fresh', 'VERIFICATION_POLICY=warn',
-            '/litemode', '/itl-litemode', 'rtk', 'SUBAGENT_MODEL_CODING', 'ITL_ROUTINE_MODE=off'
+            '/litemode', '/itl-litemode', '/rulesmodel', 'rtk', 'SUBAGENT_MODEL_CODING', 'ITL_ROUTINE_MODE=off',
+            'AGENT_MODEL=', 'SUPPORT_GUARD=deny', 'agent-browser', 'Windows-MCP'
         )) {
             $modesText | Should -Match ([regex]::Escape($marker))
         }

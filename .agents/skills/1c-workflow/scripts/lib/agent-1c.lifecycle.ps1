@@ -1028,6 +1028,11 @@ function Dump-ConfigToFilesFromInfoBase {
         if (-not $dumpState.ready) {
             throw "1C configuration dump did not create complete Configuration.xml and ConfigDumpInfo.xml artifacts. Check the 1C log: $script:LastLogPath"
         }
+        $existingSupportState = Join-Path $absoluteExportPath "Ext\ParentConfigurations.bin"
+        $stagedSupportState = Join-Path $stagedPath "Ext\ParentConfigurations.bin"
+        if ($targetExisted -and (Test-Path -LiteralPath $existingSupportState -PathType Leaf) -and -not (Test-Path -LiteralPath $stagedSupportState -PathType Leaf)) {
+            throw "1C configuration dump would lose Ext/ParentConfigurations.bin. The existing vendor-support state was preserved and the staged dump was rejected."
+        }
 
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $absoluteExportPath) | Out-Null
         if ($targetExisted) {
@@ -7564,6 +7569,7 @@ function Show-WorkflowStatus {
     Write-AiRules1cStatusLines
     Write-ItlOnDemandMcpStatusLines
     Write-ItlClientMcpEnablementStatusLines
+    Show-ItlUiToolsStatus
     Write-KiloBrowserAutomationSummary -ProjectRoot $script:ProjectRoot
 
     if ($currentBranch -notlike "itldev/*") {

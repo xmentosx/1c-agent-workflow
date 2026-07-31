@@ -13,6 +13,8 @@ param(
     [string]$ReleaseResumeMode = "Auto"
 )
 
+$script:ExplicitAiRulesSource = $PSBoundParameters.ContainsKey("AiRulesSource") -and -not [string]::IsNullOrWhiteSpace($AiRulesSource)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -222,8 +224,19 @@ function Get-LocalForkRelease {
     if (-not $releaseRoot) { throw "No local clean worktree is checked out at pinned release $tag@$commit. Create one from the immutable tag before Full/Release qualification." }
     $releaseRoot = [System.IO.Path]::GetFullPath($releaseRoot)
     if (@(& git -C $releaseRoot status --porcelain).Count -gt 0) { throw "Pinned fork release worktree must be clean: $releaseRoot" }
-    if ([string]$entry.compatibilityStatus -ne "passed" -or -not [string]$entry.upstreamRef -or -not [string]$entry.upstreamCommit) { throw "Workflow aiRules lock lacks passed compatibility and upstream provenance." }
-    return [ordered]@{ repo = $origin; tag = $tag; commit = $commit.ToLowerInvariant(); tree = $tree; sourceRoot = $releaseRoot; upstreamRef = [string]$entry.upstreamRef; upstreamCommit = [string]$entry.upstreamCommit }
+    $compatibilityStatus = [string]$entry.compatibilityStatus
+    $upstreamRef = [string]$entry.upstreamRef
+    $upstreamCommit = [string]$entry.upstreamCommit
+    $allowPendingQualification = $Mode -eq "Full" -and $script:ExplicitAiRulesSource -and $compatibilityStatus -eq "pending"
+    if (($compatibilityStatus -ne "passed" -and -not $allowPendingQualification) -or -not $upstreamRef -or $upstreamCommit -notmatch '^[0-9a-fA-F]{40}$') {
+        throw "Workflow aiRules lock lacks eligible compatibility and upstream provenance. Full may qualify pending only with an explicit local -AiRulesSource; Release and implicit sources require passed."
+    }
+    $upstreamObjectType = (& git -C $releaseRoot cat-file -t $upstreamCommit 2>$null).Trim()
+    $upstreamMergeBase = (& git -C $releaseRoot merge-base $upstreamCommit $commit 2>$null).Trim().ToLowerInvariant()
+    if ($upstreamObjectType -ne "commit" -or $upstreamMergeBase -ne $upstreamCommit.ToLowerInvariant()) {
+        throw "Pinned fork provenance mismatch: upstream $upstreamCommit is not an ancestor of $commit."
+    }
+    return [ordered]@{ repo = $origin; tag = $tag; commit = $commit.ToLowerInvariant(); tree = $tree; sourceRoot = $releaseRoot; upstreamRef = $upstreamRef; upstreamCommit = $upstreamCommit; compatibilityStatus = $compatibilityStatus }
 }
 
 function Test-HasExactInventory {

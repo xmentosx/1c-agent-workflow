@@ -1,101 +1,1036 @@
 {
-  "schemaVersion": 2,
-  "baselineUpstreamCommit": "72665287e77361aea3aaf866fef163d98f0fabcd",
-  "baselineReleaseCommit": "27a898c426a1016fffc4a1b008e8ac0cb1490da2",
-  "intakeUpstreamCommit": "5ae333ed49dc66989e305b286acc93691bb96926",
-  "targetPath": "AGENTS.md",
-  "maximumTargetCharacters": 22000,
-  "additionalTargets": [
-    {
-      "path": "USER-RULES.md",
-      "template": "USER-RULES.md",
-      "maximumCharacters": 3000,
-      "requiredAnchors": [
-        "executionPath=quick-fix|full-cycle",
-        "planningMode=direct|OpenSpec",
-        "ITL_LIFECYCLE_HELPER_REQUIRED"
-      ]
-    }
-  ],
-  "requiredUpstreamAnchors": [
-    "## Skills and Subagents",
-    "7. **Platform-capability check",
-    "8. **`templatesearch` `query` formulation",
-    "9. **`templatesearch`"
-  ],
-  "requiredTargetAnchors": [
-    "USER-RULES.md` / `memory.md` -> `LLM-RULES.md`",
-    "Quick-fix reduces planning overhead, never verification depth.",
-    "Full-cycle is not OpenSpec",
-    "do not promote it solely because it corrects existing behavior",
-    "do not report ready/done until relevant Vanessa coverage exists or was updated and a fresh successful `/itl-check` completed",
-    "## Skills and Subagents",
-    "### A.7 Platform capability discovery",
-    "### A.8 Query formulation for templatesearch",
-    "### A.9 Reuse a matching template",
-    "content/skills/mcp-1c-tools/SKILL.md",
-    "verification-gates",
-    "verification-delivery"
-  ],
-  "additionalDownstreamPaths": [
-    "content/skills/1c-metadata-manage/tools/_common/Assert-ItlLifecycleOwnership.ps1",
-    "content/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-stop.ps1",
-    "content/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-unpublish.ps1",
-    "tests/ItlLifecycleGuard.Tests.ps1",
-    "docs/releases/itl-main-5ae333ed-r18.md",
-    "docs/releases/itl-main-5ae333ed-r19.md"
-  ],
-  "pathDecisions": [
-    {"path":"AGENT-INSTALL.md","disposition":"resolved","reason":"Merge the upstream client/layout change with the existing pinned single-client ITL contract.","upstreamSha256":"f8d6b57d268681f255ee0032d749424e672c09c81f693bfd0b6e3efbc30d4175","resultSha256":"3ca11ef6dc32030c504cc17c5ed44d475b3242e100aacf9d523e5d220697d42a"},
-    {"path":"AGENTS.md","disposition":"resolved","reason":"Keep the compact ITL root contract and expose all new upstream addressable anchors.","upstreamSha256":"d28885f3ecbd144ec8ac1ba12cb4d7e758b0bfe01aba75ca947b82ddd0a29a5a","resultSha256":"a5c97a93eca1597dc17394264e4971898ceb42339ad3cc0c4cf69f07d4445a31"},
-    {"path":"README.md","disposition":"resolved","reason":"Merge the upstream client/layout change with the existing pinned single-client ITL contract.","upstreamSha256":"a6c04c52cf3bde57b35bed288ae9aeaa9327bf68c77b750d009ea15f1d83ec25","resultSha256":"53d95d15bbf2d2e5b43a664da4966e3e6f715b6e2ae2c7ec1ff4fcf1d3761f53"},
-    {"path":"adapters/claude-code.yaml","disposition":"resolved","reason":"Merge the upstream client/layout change with the existing pinned single-client ITL contract.","upstreamSha256":"935425e5d18389caddfe3cf3c6e43bdb202f77d1d58a9bf403120a8a14743a0c","resultSha256":"163cf4c88253e3952f702ddc829aed5d3139abcb1b257dad21b08888816dafbc"},
-    {"path":"content/agents/architect.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"cc36f742b6f2a71392246eeec125ace78d2081f3e9774a9d9442060030977dd8","resultSha256":"cc36f742b6f2a71392246eeec125ace78d2081f3e9774a9d9442060030977dd8"},
-    {"path":"content/agents/developer.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"1cdad564019217e010f777c64a84df863fc51d71cb4ac3f41f174aa5e131d63c","resultSha256":"1cdad564019217e010f777c64a84df863fc51d71cb4ac3f41f174aa5e131d63c"},
-    {"path":"content/agents/error-fixer.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"44f369686303056a50aaf001fd0972d68f5a08ac3a15c90db9d7885813ba3526","resultSha256":"44f369686303056a50aaf001fd0972d68f5a08ac3a15c90db9d7885813ba3526"},
-    {"path":"content/agents/explorer.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"21931e33314676004a416b0ef57eeff05b7cd4846874e575de4ef8d3235ec1b7","resultSha256":"21931e33314676004a416b0ef57eeff05b7cd4846874e575de4ef8d3235ec1b7"},
-    {"path":"content/agents/metadata-manager.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"303d4d760faf88351b5dd991a91f921ccaeb7edd0549fa5d6babd3390d7a559d","resultSha256":"303d4d760faf88351b5dd991a91f921ccaeb7edd0549fa5d6babd3390d7a559d"},
-    {"path":"content/agents/performance-optimizer.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"67c481ff816e874881af63be8177b4ba5da3ef2d793af3a7b9f78b93c63f28a5","resultSha256":"67c481ff816e874881af63be8177b4ba5da3ef2d793af3a7b9f78b93c63f28a5"},
-    {"path":"content/agents/planner.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"fc19f89975507399398a381bd5716926cac3942c33737f7cb2697f10bf8c9379","resultSha256":"fc19f89975507399398a381bd5716926cac3942c33737f7cb2697f10bf8c9379"},
-    {"path":"content/agents/refactoring.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"88dfc0b64de1b52785becebe63fff9f26c4b340e5265c8c9fd4a2ba816400057","resultSha256":"88dfc0b64de1b52785becebe63fff9f26c4b340e5265c8c9fd4a2ba816400057"},
-    {"path":"content/agents/tester.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"42a982fd9c15b20de4501ed29ba2904ccbc23b2595dd3f36825b2fe60aa524ba","resultSha256":"42a982fd9c15b20de4501ed29ba2904ccbc23b2595dd3f36825b2fe60aa524ba"},
-    {"path":"content/commands/deploy-and-test.md","disposition":"resolved","reason":"Keep the ITL verification bridge and reference the helper-owned retry loop.","upstreamSha256":"003fcf788132896d8bf9d1d2681272353ee80d91a3491e39cfd8e296971c5008","resultSha256":"ef61705c3ecbc5d01b9adb125bd4d252f91c4183256576302470910f563fbaa0"},
-    {"path":"content/commands/doctor.md","disposition":"resolved","reason":"Merge upstream diagnostics with the read-only ITL single-client contract.","upstreamSha256":"572c4856023ec4419e8830d5e000d6f6bdf79598537577b1ce5ab9a7d5b9d6ce","resultSha256":"f8beca1123ee7196c035aaf2ed06ae4172c4cce5302a882cb0425030804bef97"},
-    {"path":"content/commands/update1cbase.md","disposition":"resolved","reason":"Keep the ITL update bridge and restore the addressable helper-owned retry loop.","upstreamSha256":"6c952850d4f55f61966706b61393d8e012ce39ed101e9ebfd5a47bc776855f42","resultSha256":"ce02ef5c13a39c92f4fc04778d03df1e0f86441a86f2e0d75e293db9982614a5"},
-    {"path":"content/commands/updaterules.md","disposition":"take-upstream","reason":"Accept the source unchanged; ITL client allowlists continue to suppress materialization.","upstreamSha256":"0f252348eaced8b0bf60e47b55f43893edd7665dbfb467134ccaa733fb54e4c5","resultSha256":"0f252348eaced8b0bf60e47b55f43893edd7665dbfb467134ccaa733fb54e4c5"},
-    {"path":"content/rules/anti-patterns.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"c27d739ae6aac7e22df0efd3aeb9b664a2e02db31e39ad919f4e5efb31e0d407","resultSha256":"c27d739ae6aac7e22df0efd3aeb9b664a2e02db31e39ad919f4e5efb31e0d407"},
-    {"path":"content/rules/coding-standards.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"296f2e0edae98078b30e2216563f116526f72ad72e32694a463ea071b93c0890","resultSha256":"296f2e0edae98078b30e2216563f116526f72ad72e32694a463ea071b93c0890"},
-    {"path":"content/rules/dev-standards-architecture.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"db12e913d580d1a685f8c98944534580b51c5362df8fde0fe842c482a1e5e640","resultSha256":"db12e913d580d1a685f8c98944534580b51c5362df8fde0fe842c482a1e5e640"},
-    {"path":"content/rules/forms-add.md","disposition":"resolved","reason":"Combine the upstream metadata hard gate with the operation-specific 1c-form-edit contract.","upstreamSha256":"d21f82448517238daba33aa935feaa3b4aa64d0b026b2a3a29b7a67d22e7ff5b","resultSha256":"118fcc9381d0ed9fd102029a85505781c7a8905f728ec9d0ea71b16eed975272"},
-    {"path":"content/rules/forms.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"abf237566ccb1f6af90ec88d95d39aaf2272e668a0be71219fda281700090824","resultSha256":"abf237566ccb1f6af90ec88d95d39aaf2272e668a0be71219fda281700090824"},
-    {"path":"content/rules/integrations-add.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"1a579a2bfb95e9f9d17aa37acbe0a3bca35f3030069d6368757897063caa338e","resultSha256":"1a579a2bfb95e9f9d17aa37acbe0a3bca35f3030069d6368757897063caa338e"},
-    {"path":"content/rules/mcp-first-search.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"0af58a443fc9c69e997d4ed918f332b09865019dfb1d2e1916b9abdeea057a6d","resultSha256":"0af58a443fc9c69e997d4ed918f332b09865019dfb1d2e1916b9abdeea057a6d"},
-    {"path":"content/rules/metadata-xml-workarounds.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"5475b07b84c13ddc59201739d6839efa1298dff60c9dfd24d353fe32d86da060","resultSha256":"5475b07b84c13ddc59201739d6839efa1298dff60c9dfd24d353fe32d86da060"},
-    {"path":"content/rules/query-design.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"63119f52fd8b672ee5e9db7e34c86aa6336875df532318698cd946820569b955","resultSha256":"63119f52fd8b672ee5e9db7e34c86aa6336875df532318698cd946820569b955"},
-    {"path":"content/rules/subagents.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"4aca8cf0d0aad2f803a89aa25f3125e7cd14eb83c4d0f4ba2d395a9b1b2d427b","resultSha256":"4aca8cf0d0aad2f803a89aa25f3125e7cd14eb83c4d0f4ba2d395a9b1b2d427b"},
-    {"path":"content/rules/tooling-playbooks.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"9cb02f1c03a03eabbb60917ea00af1a2b25751bd95b8e04990e12d340a4ab7fd","resultSha256":"9cb02f1c03a03eabbb60917ea00af1a2b25751bd95b8e04990e12d340a4ab7fd"},
-    {"path":"content/rules/verification-delivery.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"0ccf9d59dd251f597dfeb05e9441e2456eb8e1e60b8d8c3db75fa1b2665aeae0","resultSha256":"0ccf9d59dd251f597dfeb05e9441e2456eb8e1e60b8d8c3db75fa1b2665aeae0"},
-    {"path":"content/rules/verification-gates.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"72432e74691d26332082835ca8fd6cfeda78f606540cea3a234551108a5ecbff","resultSha256":"72432e74691d26332082835ca8fd6cfeda78f606540cea3a234551108a5ecbff"},
-    {"path":"content/skills/1c-metadata-manage/SKILL.md","disposition":"resolved","reason":"Combine the upstream hard gate with ITL infobase ownership and form routing.","upstreamSha256":"72ba5ab3b5eb73b2951c32dee34e9883b68d4030c2c02888061b1d150a7d96a2","resultSha256":"bf5564889ed23d157701448bd0dcc2c1882b2d1b32970520e0ae480987f4afc6"},
-    {"path":"content/skills/1c-metadata-manage/docs/db-manage.md","disposition":"resolved","reason":"Keep upstream DB guidance outside managed projects and route managed projects to ITL.","upstreamSha256":"bb6dc0ce8265dd24cc2c9abdf3b0c163fd4a9332943c2d21b68997eea869e9f1","resultSha256":"1d803489a5c8f4960c4671597dd396adde86766acef5ce6ea40b5148fc9f01c5"},
-    {"path":"content/skills/1c-metadata-manage/docs/form-patterns.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"cc6009d0ae6dc3e970ab44ce7544c39a6556d31673f0166f72cf15a6e757fd68","resultSha256":"cc6009d0ae6dc3e970ab44ce7544c39a6556d31673f0166f72cf15a6e757fd68"},
-    {"path":"content/skills/1c-metadata-manage/docs/query-optimization.md","disposition":"take-upstream","reason":"Accept the audited upstream implementation unchanged.","upstreamSha256":"0076c58e8a0da0c63e850d15c3324fafa01e1937575796f52213440144c831f0","resultSha256":"0076c58e8a0da0c63e850d15c3324fafa01e1937575796f52213440144c831f0"},
-    {"path":"content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-create.ps1","disposition":"resolved","reason":"Accept upstream behavior and add the managed-project lifecycle guard before side effects.","upstreamSha256":"1f176cc2344d81cd3047e8c0392b5265178f11b467fa01566ee23fb4e2ce0c0a","resultSha256":"b5a4d48553d2796e2c42089f90892d5f6b62ff0da4972f5d08e5a492dce878b9"},
-    {"path":"content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-cf.ps1","disposition":"resolved","reason":"Accept upstream behavior and add the managed-project lifecycle guard before side effects.","upstreamSha256":"5d9910b181eb2c3b28238e0e1ad436301df7219aa57ea9fccaee69356218f815","resultSha256":"9fa83a9d9e35f2f1f91c34a20ead49c0516b8aba7a48f3c81258e87fe246f4bc"},
-    {"path":"content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-xml.ps1","disposition":"resolved","reason":"Accept upstream behavior and add the managed-project lifecycle guard before side effects.","upstreamSha256":"6152148047e44e7359ff9c61637a03660c3abedf71da7af8580a0522a8127df9","resultSha256":"13654fa45600ac7181becdfdde252b33601320923d7623dee7fd87ab12811ec9"},
-    {"path":"content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-cf.ps1","disposition":"resolved","reason":"Accept upstream behavior and add the managed-project lifecycle guard before side effects.","upstreamSha256":"4b4209735f878f58f1828112331e2c08efa16c19d914809f433d14d77318d5ec","resultSha256":"192528e0fd8b84e685b2b11dbeecf45e4e2ffedd44f30539f955b16a1519f325"},
-    {"path":"content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-git.ps1","disposition":"resolved","reason":"Accept upstream behavior and add the managed-project lifecycle guard before side effects.","upstreamSha256":"0675a6fbaf8ca2933e1b55e171488030af2379adf3ca1a0f76cc2699d3deb15a","resultSha256":"fed34d1fd26168603fae0f0f729612f13e6d4954d8d2f76b8f4be2d6516bdf36"},
-    {"path":"content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-xml.ps1","disposition":"resolved","reason":"Accept upstream behavior and add the managed-project lifecycle guard before side effects.","upstreamSha256":"4aca8873f8dbbd1e5bf40f1e342310d6a1142bd878a72a058dd23c8f181cc412","resultSha256":"5f6d40387625b9232e073b55131f1d3b6ef56d254be57708028b89e0215d59b0"},
-    {"path":"content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-run.ps1","disposition":"resolved","reason":"Accept upstream behavior and add the managed-project lifecycle guard before side effects.","upstreamSha256":"36adc219b8e46ed600b288c4dae28683e37935bee5a4d7b1baa0fcbceb028866","resultSha256":"ffbb8a774a4570e02cbb20b038d5806c6ab2eb7a8adc0ee0daa48d2871eb081f"},
-    {"path":"content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-update.ps1","disposition":"resolved","reason":"Accept upstream behavior and add the managed-project lifecycle guard before side effects.","upstreamSha256":"ac060ee7d463b00a547351462251e688a5c3d953950359611ab7e964f4524a34","resultSha256":"fe9f6918849134fefec212a94e7d4fd91a78392231445a701c829275ad0feedf"},
-    {"path":"content/skills/1c-metadata-manage/tools/1c-epf-build/scripts/epf-build.ps1","disposition":"take-upstream","reason":"Accept upstream EPF behavior without the project-infobase lifecycle guard.","upstreamSha256":"b00704774313a5eb84683b48456372609112914f73edba0ec7bbb1e3e281e581","resultSha256":"b00704774313a5eb84683b48456372609112914f73edba0ec7bbb1e3e281e581"},
-    {"path":"content/skills/1c-metadata-manage/tools/1c-epf-dump/scripts/epf-dump.ps1","disposition":"take-upstream","reason":"Accept upstream EPF behavior without the project-infobase lifecycle guard.","upstreamSha256":"e7e8a5cd39e3229725db18adba088a3435c381f713711ba69eec2a97609293a9","resultSha256":"e7e8a5cd39e3229725db18adba088a3435c381f713711ba69eec2a97609293a9"},
-    {"path":"content/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-publish.ps1","disposition":"resolved","reason":"Accept upstream behavior and add the managed-project lifecycle guard before side effects.","upstreamSha256":"082c77dd1ae3bd309b91c3953c6c90f88d05a8e056b138da1e92068241a6762a","resultSha256":"b711abb6e3a2b8b1e5181750189366e2b3e7d877c3405e218352324d90ae8725"},
-    {"path":"content/skills/1c-metadata-manage/tools/_common/Resolve-V8Exe.ps1","disposition":"take-upstream","reason":"Accept the new common upstream platform executable resolver unchanged.","upstreamSha256":"d6f31e0f046c6c4a888b7373a7f619ccfb91a91e3123992e6026a9d20242f8e2","resultSha256":"d6f31e0f046c6c4a888b7373a7f619ccfb91a91e3123992e6026a9d20242f8e2"},
-    {"path":"content/skills/mcp-1c-tools/SKILL.md","disposition":"take-upstream","reason":"Accept the audited platform/template-first behavior unchanged.","upstreamSha256":"d9f8e7cd284edccaa6c1f602c1fafd164a59df8b74295cdde00010e9cc2d7ced","resultSha256":"d9f8e7cd284edccaa6c1f602c1fafd164a59df8b74295cdde00010e9cc2d7ced"},
-    {"path":"content/skills/mcp-1c-tools/docs/1C-docs-mcp.md","disposition":"take-upstream","reason":"Accept the audited platform-capability guidance unchanged.","upstreamSha256":"fb830b3eae70c3219b5970657974c50ede3b69270b7b3d8295f3a581419441bf","resultSha256":"fb830b3eae70c3219b5970657974c50ede3b69270b7b3d8295f3a581419441bf"},
-    {"path":"content/skills/mcp-1c-tools/docs/1c-templates-mcp.md","disposition":"take-upstream","reason":"Accept the audited templatesearch query and reuse guidance unchanged.","upstreamSha256":"78b91b7f6c1df70a09b10e8679bb04497e08bb1c17df7ca089d0f19dddd69dfb","resultSha256":"78b91b7f6c1df70a09b10e8679bb04497e08bb1c17df7ca089d0f19dddd69dfb"},
-    {"path":"install.ps1","disposition":"resolved","reason":"Combine upstream Claude/OpenCode support with single-client, delegated-MCP, and safe legacy migration.","upstreamSha256":"e5c654bd7e17efb7d8a83ca526ba7867f3b5597ee0171579cb175d89bfd6e0d5","resultSha256":"0aad2f0374ec7bae50fabf74aa05ce3a81cc236bea26d9077fbcafd1b4ae7b31"},
-    {"path":"memory.md","disposition":"keep-current","reason":"Keep the r17 fallback so new and upgraded projects retain identical memory behavior.","upstreamSha256":"97bc96480a547c75a9bb045bd78379921ccb4cf7f4924b36d4390839541f84ce","resultSha256":"b1d2aed515914e82dcee28e2ca37337f6ce226e7faa8d3ee66d3ba23eb915b40"}
-  ]
+    "schemaVersion":  2,
+    "baselineUpstreamCommit":  "5ae333ed49dc66989e305b286acc93691bb96926",
+    "baselineReleaseCommit":  "7952e7d9bb050d67e145c0136e87b6855c353f58",
+    "intakeUpstreamCommit":  "5f3d3f03b778d7de38cf2cfb18a20cf3e7ed79d8",
+    "targetPath":  "AGENTS.md",
+    "maximumTargetCharacters":  22000,
+    "additionalTargets":  [
+                              {
+                                  "path":  "USER-RULES.md",
+                                  "template":  "USER-RULES.md",
+                                  "maximumCharacters":  3000,
+                                  "requiredAnchors":  [
+                                                          "executionPath=quick-fix|full-cycle",
+                                                          "planningMode=direct|OpenSpec",
+                                                          "ITL_LIFECYCLE_HELPER_REQUIRED"
+                                                      ]
+                              }
+                          ],
+    "requiredUpstreamAnchors":  [
+                                    "## Active model adaptation",
+                                    "Vendor support state",
+                                    "Host-tool built-in explorers",
+                                    "ui-testing-tools"
+                                ],
+    "requiredTargetAnchors":  [
+                                  "USER-RULES.md` / `memory.md` -\u003e `LLM-RULES.md`",
+                                  "Quick-fix reduces planning overhead, never verification depth.",
+                                  "Full-cycle is not OpenSpec",
+                                  "do not promote it solely because it corrects existing behavior",
+                                  "do not report ready/done until relevant Vanessa coverage exists or was updated and a fresh successful `/itl-check` completed",
+                                  "## Skills and Subagents",
+                                  "### A.7 Platform capability discovery",
+                                  "### A.8 Query formulation for templatesearch",
+                                  "### A.9 Reuse a matching template",
+                                  "content/skills/mcp-1c-tools/SKILL.md",
+                                  "verification-gates",
+                                  "verification-delivery",
+                                  "## Active model adaptation",
+                                  "VERIFICATION_DEPTH=standard",
+                                  "Gate 3a is conditional",
+                                  "Vendor support",
+                                  "XDTO and UUID",
+                                  "UI testing",
+                                  "project `1c-explorer`"
+                              ],
+    "additionalDownstreamPaths":  [
+                                      "content/skills/1c-metadata-manage/tools/_common/Assert-ItlLifecycleOwnership.ps1",
+                                      "tests/ItlLifecycleGuard.Tests.ps1",
+                                      "docs/releases/itl-main-5ae333ed-r18.md",
+                                      "docs/releases/itl-main-5ae333ed-r19.md",
+                                      "docs/releases/itl-main-5f3d3f0-r20.md"
+                                  ],
+    "pathDecisions":  [
+                          {
+                              "path":  ".dev.env.example",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "7abb49e884be7352f47e5fc09b50026443d4b03b4eca78aafe5361407467b0a8",
+                              "resultSha256":  "7abb49e884be7352f47e5fc09b50026443d4b03b4eca78aafe5361407467b0a8"
+                          },
+                          {
+                              "path":  ".github/workflows/validate-rules.yml",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "8d8e3795e758412f1d51cd614c324aa5c0a34a134acf4053311669b5bdce6371",
+                              "resultSha256":  "8d8e3795e758412f1d51cd614c324aa5c0a34a134acf4053311669b5bdce6371"
+                          },
+                          {
+                              "path":  "AGENT-INSTALL.md",
+                              "disposition":  "resolved",
+                              "reason":  "Merge the upstream client/layout change with the existing pinned single-client ITL contract.",
+                              "upstreamSha256":  "6bc99be2ab1690469dd3c5782d9be115a5c8ffac6e1833be89bf7cd6496df01a",
+                              "resultSha256":  "6e0c4a749ad1bebc6aeeab913a7cadb8d1595d9985e14a1951066bea1c6e1872"
+                          },
+                          {
+                              "path":  "AGENTS.md",
+                              "disposition":  "resolved",
+                              "reason":  "Keep the compact ITL root contract and expose all new upstream addressable anchors.",
+                              "upstreamSha256":  "0af764d24fbc2b6d25335daa9fdffd3125ee98a45b14735ac4d93f2cfe9faa22",
+                              "resultSha256":  "05d77edcdea25e665c46935ab2a393b4d097fb59bb802a0341403ee1e04e02cd"
+                          },
+                          {
+                              "path":  "README.md",
+                              "disposition":  "resolved",
+                              "reason":  "Merge the upstream client/layout change with the existing pinned single-client ITL contract.",
+                              "upstreamSha256":  "f9c6a2c905f87cc5d690e929e4cff5504934b246e566502d532f6f80ccb06da5",
+                              "resultSha256":  "ab70e48f31059d3203bfa05f8beb40a9b4cee73154024fc81cfcf8e1ad36b23a"
+                          },
+                          {
+                              "path":  "content/agents/analytic.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "08c47cc1d2ffcacc3c1224a661a93284d2dc8171bc6228e6495b48cbd78a658d",
+                              "resultSha256":  "08c47cc1d2ffcacc3c1224a661a93284d2dc8171bc6228e6495b48cbd78a658d"
+                          },
+                          {
+                              "path":  "content/agents/arch-reviewer.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "dbb7f5184390ff7b6641824f2e2c14ec30eb2a0184e692c9ad804d22183fb477",
+                              "resultSha256":  "dbb7f5184390ff7b6641824f2e2c14ec30eb2a0184e692c9ad804d22183fb477"
+                          },
+                          {
+                              "path":  "content/agents/architect.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "5e4ec49bf3dc2ed3ea1ab1120a3087aa0ccc74512f7052f8361c9119514f87b0",
+                              "resultSha256":  "5e4ec49bf3dc2ed3ea1ab1120a3087aa0ccc74512f7052f8361c9119514f87b0"
+                          },
+                          {
+                              "path":  "content/agents/code-reviewer.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "be0eb35ca8339d8c4da2548ae53d33ad51fa8ab5d2b3f2b4899cc1be10126dc7",
+                              "resultSha256":  "be0eb35ca8339d8c4da2548ae53d33ad51fa8ab5d2b3f2b4899cc1be10126dc7"
+                          },
+                          {
+                              "path":  "content/agents/developer.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "fa924ce11cabe914fa649984a3247098c5f00fd2dc50362c4e1342f91b6216c9",
+                              "resultSha256":  "fa924ce11cabe914fa649984a3247098c5f00fd2dc50362c4e1342f91b6216c9"
+                          },
+                          {
+                              "path":  "content/agents/doc-writer.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "4d9a22123a0539b4f2e748d21188e3c3a6904cbdbbdbf36b8adc2db2fbb0ccc7",
+                              "resultSha256":  "4d9a22123a0539b4f2e748d21188e3c3a6904cbdbbdbf36b8adc2db2fbb0ccc7"
+                          },
+                          {
+                              "path":  "content/agents/error-fixer.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "95d70fb3c6d83b2dd8ec39bef1470f7b0d0e89e13729b7c038bb16b02f46a317",
+                              "resultSha256":  "95d70fb3c6d83b2dd8ec39bef1470f7b0d0e89e13729b7c038bb16b02f46a317"
+                          },
+                          {
+                              "path":  "content/agents/explorer.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "75dc410d5df4fbf99b7119dd80e674d9714bfcfa781f24cae8301ba83ca9b17f",
+                              "resultSha256":  "75dc410d5df4fbf99b7119dd80e674d9714bfcfa781f24cae8301ba83ca9b17f"
+                          },
+                          {
+                              "path":  "content/agents/metadata-manager.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "41b33c19068c5215e19a0ab3010a18460076815e960a44ace041bebbbddcf387",
+                              "resultSha256":  "41b33c19068c5215e19a0ab3010a18460076815e960a44ace041bebbbddcf387"
+                          },
+                          {
+                              "path":  "content/agents/performance-optimizer.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "d842a1d3dec545b6813ccd4d52a41ab90f74a6133994928a9ac106efe7888043",
+                              "resultSha256":  "d842a1d3dec545b6813ccd4d52a41ab90f74a6133994928a9ac106efe7888043"
+                          },
+                          {
+                              "path":  "content/agents/planner.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "e91b4915c5e81aa22bb57d410c55b84c74f0b038af99b5630325211b5ee1545a",
+                              "resultSha256":  "e91b4915c5e81aa22bb57d410c55b84c74f0b038af99b5630325211b5ee1545a"
+                          },
+                          {
+                              "path":  "content/agents/refactoring.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "fb0b89ab5bbf080713eee79e7771dc5b7f56a3855b473481eed791a7917e99e0",
+                              "resultSha256":  "fb0b89ab5bbf080713eee79e7771dc5b7f56a3855b473481eed791a7917e99e0"
+                          },
+                          {
+                              "path":  "content/agents/tester.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "27b9c9593c41a763609e94ee22eb0949a60c1d0586bbda7bdc5bb316a2be4b3f",
+                              "resultSha256":  "27b9c9593c41a763609e94ee22eb0949a60c1d0586bbda7bdc5bb316a2be4b3f"
+                          },
+                          {
+                              "path":  "content/commands/check-uuid.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "6e7468d989cb4d520470b3ee5444f750c12fef0e6294e04011297b2fcfb74972",
+                              "resultSha256":  "6e7468d989cb4d520470b3ee5444f750c12fef0e6294e04011297b2fcfb74972"
+                          },
+                          {
+                              "path":  "content/commands/deploy-and-test.md",
+                              "disposition":  "resolved",
+                              "reason":  "Keep the ITL verification bridge and reference the helper-owned retry loop.",
+                              "upstreamSha256":  "fd7d72bcf151347851eaca8e32f2274fa13c79eb12bae487fedb92dbae3708af",
+                              "resultSha256":  "6ca3f73204001c67e6fe071d46d4f0049794255fb74be210f5894e2992670e2f"
+                          },
+                          {
+                              "path":  "content/commands/doctor.md",
+                              "disposition":  "resolved",
+                              "reason":  "Merge upstream diagnostics with the read-only ITL single-client contract.",
+                              "upstreamSha256":  "bdadb15fde26c9b9bcd9c645365f76fa9bae99de6bb54a27451eb21b3b9b0712",
+                              "resultSha256":  "efcaef57a58e503c5479b79b93317f58a1c9b8424bbb461359e77b2a0e24bb5b"
+                          },
+                          {
+                              "path":  "content/commands/evolve.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "4b30fa4976c02ac88862f06b05452e518a1078a6b66b02245ae021cdd5f7665e",
+                              "resultSha256":  "4b30fa4976c02ac88862f06b05452e518a1078a6b66b02245ae021cdd5f7665e"
+                          },
+                          {
+                              "path":  "content/commands/install-agent-browser.md",
+                              "disposition":  "resolved",
+                              "reason":  "Preserve upstream behavior outside ITL and delegate managed-project installation/configuration to the ITL helper.",
+                              "upstreamSha256":  "a96dd94a91e3ff67b4f3a179053d3fa3c0f76a2c3348e3f5dd7f1a0ea4b24b22",
+                              "resultSha256":  "2b7cebec5f00fe7cfa280f27d2533416cff4ffdf4a853bed02fd65b06957c3af"
+                          },
+                          {
+                              "path":  "content/commands/install-windows-mcp.md",
+                              "disposition":  "resolved",
+                              "reason":  "Preserve upstream behavior outside ITL and delegate managed-project installation/configuration to the ITL helper.",
+                              "upstreamSha256":  "bb07101dc6425cb210ba526c6db57ccb496adad58c580c9d1575299c28495bff",
+                              "resultSha256":  "f626fae3d7ea29bb9585b0bcb190c4c1b362fca7b020a23715897e5bc1efe9af"
+                          },
+                          {
+                              "path":  "content/commands/litemode.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "5144cb443c4ce5d3079828ba2a5d423f6315e268ced75eaeeccfa8415c82ec00",
+                              "resultSha256":  "5144cb443c4ce5d3079828ba2a5d423f6315e268ced75eaeeccfa8415c82ec00"
+                          },
+                          {
+                              "path":  "content/commands/rulesmodel.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "c2028352276f3d2d43081e1e5753fa1cbf02b9c964a160d1dacb8ff2a85f486a",
+                              "resultSha256":  "c2028352276f3d2d43081e1e5753fa1cbf02b9c964a160d1dacb8ff2a85f486a"
+                          },
+                          {
+                              "path":  "content/rules/bsp-access-rights.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "e76f4e67dfec51078fcf01a6891b1ab50ad1c6939536d3de4a2c99f103b4e127",
+                              "resultSha256":  "e76f4e67dfec51078fcf01a6891b1ab50ad1c6939536d3de4a2c99f103b4e127"
+                          },
+                          {
+                              "path":  "content/rules/dcs-advanced-composition.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "7d2c2c00c7357ccfbb266045ef3b8ed0ae59618663b1d6019eb19afecbfbc7fd",
+                              "resultSha256":  "7d2c2c00c7357ccfbb266045ef3b8ed0ae59618663b1d6019eb19afecbfbc7fd"
+                          },
+                          {
+                              "path":  "content/rules/dev-standards-env.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "9a1f694853c9a5984cafaa5049a1e9f3da5a7b3eba56fb01e10776155e27eea5",
+                              "resultSha256":  "9a1f694853c9a5984cafaa5049a1e9f3da5a7b3eba56fb01e10776155e27eea5"
+                          },
+                          {
+                              "path":  "content/rules/forms.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "4f78bd3596e1fedb27cde573b960c9ce96ec0a11d7e73b0d6bd8fa7c0f044b88",
+                              "resultSha256":  "4f78bd3596e1fedb27cde573b960c9ce96ec0a11d7e73b0d6bd8fa7c0f044b88"
+                          },
+                          {
+                              "path":  "content/rules/metadata-xml-workarounds.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "4793839ee705af7d8c0a2ac0ad3e9c7f233c94b27d13286da1d3a752c67a7382",
+                              "resultSha256":  "4793839ee705af7d8c0a2ac0ad3e9c7f233c94b27d13286da1d3a752c67a7382"
+                          },
+                          {
+                              "path":  "content/rules/model-adaptation.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "41fddcbb37d649b1faad9aaf30ebc9d6ff3e73f7fce473320adc4e37543ceb4e",
+                              "resultSha256":  "41fddcbb37d649b1faad9aaf30ebc9d6ff3e73f7fce473320adc4e37543ceb4e"
+                          },
+                          {
+                              "path":  "content/rules/model-fable5.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "993dab9d622e3fb9058d097bab16518fa136a00add850d27189ef7a84e5d6f1a",
+                              "resultSha256":  "993dab9d622e3fb9058d097bab16518fa136a00add850d27189ef7a84e5d6f1a"
+                          },
+                          {
+                              "path":  "content/rules/model-gpt56.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "dc1306feb03d71e2f440cfad8b0c57219596a35b51e73359af3baf0f8d524afb",
+                              "resultSha256":  "dc1306feb03d71e2f440cfad8b0c57219596a35b51e73359af3baf0f8d524afb"
+                          },
+                          {
+                              "path":  "content/rules/model-opus5.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "e0ff25cb3af1d6187690c987c5118dbdb1c9b8e96d95e2a95a43ebfa36d2a4f6",
+                              "resultSha256":  "e0ff25cb3af1d6187690c987c5118dbdb1c9b8e96d95e2a95a43ebfa36d2a4f6"
+                          },
+                          {
+                              "path":  "content/rules/model-sonnet5.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "133263944b2dabb5ee0166e0a98efc3a76481954c4bef7b8426222648db66bcb",
+                              "resultSha256":  "133263944b2dabb5ee0166e0a98efc3a76481954c4bef7b8426222648db66bcb"
+                          },
+                          {
+                              "path":  "content/rules/orchestrator-economy.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "e4db5f3c33b9de79b101de62c29aba639190a0cfa607738fde0e0e440be8feb7",
+                              "resultSha256":  "e4db5f3c33b9de79b101de62c29aba639190a0cfa607738fde0e0e440be8feb7"
+                          },
+                          {
+                              "path":  "content/rules/query-design.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "d7f821a175fb1be2a6b527a6a91ada44abb71cf2fe1147a6dba52f4cf2f2b277",
+                              "resultSha256":  "d7f821a175fb1be2a6b527a6a91ada44abb71cf2fe1147a6dba52f4cf2f2b277"
+                          },
+                          {
+                              "path":  "content/rules/subagent-pipeline.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "b89c4a04b41f41489b1594c5dcf87fd6a4e980034de51b36cee0af0e5ce592fb",
+                              "resultSha256":  "b89c4a04b41f41489b1594c5dcf87fd6a4e980034de51b36cee0af0e5ce592fb"
+                          },
+                          {
+                              "path":  "content/rules/subagents.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "0027e5dfb442a99d28292bbcde55af22d1bbc394c8729b9771c9e1e8ad1428a6",
+                              "resultSha256":  "0027e5dfb442a99d28292bbcde55af22d1bbc394c8729b9771c9e1e8ad1428a6"
+                          },
+                          {
+                              "path":  "content/rules/tooling-playbooks.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "1601ef413ecf3cd27e4e545069afb96f86bf7efc6a831e2f37d24c8de0a03627",
+                              "resultSha256":  "1601ef413ecf3cd27e4e545069afb96f86bf7efc6a831e2f37d24c8de0a03627"
+                          },
+                          {
+                              "path":  "content/rules/ui-testing-tools.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "aed478ba5c0b5f9dc522588a8c9eff556e509ff51b90b24ae682c6a6696962f6",
+                              "resultSha256":  "aed478ba5c0b5f9dc522588a8c9eff556e509ff51b90b24ae682c6a6696962f6"
+                          },
+                          {
+                              "path":  "content/rules/verification-delivery.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "4ac9d8773d98203bc842a51f44a0e372431c07ab8c6b30037a39359066457fe4",
+                              "resultSha256":  "4ac9d8773d98203bc842a51f44a0e372431c07ab8c6b30037a39359066457fe4"
+                          },
+                          {
+                              "path":  "content/rules/verification-gates.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "7d7fc8852461fad21b26a3dc7935e0bbef0cf694c2f655611d9d84aa40affa81",
+                              "resultSha256":  "7d7fc8852461fad21b26a3dc7935e0bbef0cf694c2f655611d9d84aa40affa81"
+                          },
+                          {
+                              "path":  "content/rules/verification-policy.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "bd93b9ada20c019d3044eef864e0b9bbff518f5b74bf34ca25ab68b25249165f",
+                              "resultSha256":  "bd93b9ada20c019d3044eef864e0b9bbff518f5b74bf34ca25ab68b25249165f"
+                          },
+                          {
+                              "path":  "content/rules/web-client-driving.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "f9b797aaff6b45e87f59c4b2ae9b9c943ea2f282344f04072a44a5e646b55c75",
+                              "resultSha256":  "f9b797aaff6b45e87f59c4b2ae9b9c943ea2f282344f04072a44a5e646b55c75"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/SKILL.md",
+                              "disposition":  "resolved",
+                              "reason":  "Combine the upstream hard gate with ITL infobase ownership and form routing.",
+                              "upstreamSha256":  "c287b9f8ea43637cb3e300842955afb5edcc23458c1d4f356c8dce4c1324b65b",
+                              "resultSha256":  "f17933598c9a00acf7d25978080240271aed5eede759b33597b41d229fc4c247"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/bsp-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "c2665a4411cf9bc8d33d907f0ca6a2f728e8b5904516aa66500752cccca0b2f0",
+                              "resultSha256":  "c2665a4411cf9bc8d33d907f0ca6a2f728e8b5904516aa66500752cccca0b2f0"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/cf-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "6d2ffd0c5c0266963d3da90ca9d4ad215f30dcb17a080c5592d0c44f710ba929",
+                              "resultSha256":  "6d2ffd0c5c0266963d3da90ca9d4ad215f30dcb17a080c5592d0c44f710ba929"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/cfe-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "04bc9bda33bf8ac6f363d375512a386087432c4038503f2cde1f59665978cfed",
+                              "resultSha256":  "04bc9bda33bf8ac6f363d375512a386087432c4038503f2cde1f59665978cfed"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/db-manage.md",
+                              "disposition":  "resolved",
+                              "reason":  "Keep upstream DB guidance outside managed projects and route managed projects to ITL.",
+                              "upstreamSha256":  "215486fb93eb571d90d6271f7650c1f89eb30320c889d96698acedca775eb6eb",
+                              "resultSha256":  "8dea5f61c230f11e515a4c2d5cdd5483d92f072ffcfbcaa5d0e7167351d15933"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/epf-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "5ccb2733d1ba2b5eb8be6b7580607f01fda1c1b04552eee72e2fd648f93beca6",
+                              "resultSha256":  "5ccb2733d1ba2b5eb8be6b7580607f01fda1c1b04552eee72e2fd648f93beca6"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/form-compile-dsl.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "1cd31fa980f5ceaa6fb0cc4fa40162d2c8a440e6ffbf1f88b0ad017dba77c519",
+                              "resultSha256":  "1cd31fa980f5ceaa6fb0cc4fa40162d2c8a440e6ffbf1f88b0ad017dba77c519"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/form-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "f54a0230948e5a5c45d2fa172c5db528d886481828d535895745a3094b49b3ef",
+                              "resultSha256":  "f54a0230948e5a5c45d2fa172c5db528d886481828d535895745a3094b49b3ef"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/help-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "27d9a7116b621547a72e70f87bd54f66b8a5f51f8cd1742cc9439f794f785132",
+                              "resultSha256":  "27d9a7116b621547a72e70f87bd54f66b8a5f51f8cd1742cc9439f794f785132"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/interface-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "f1831fa6c3728651fe7df4562feb00a7b584f6f885fc47ac519ed4c97c5ebf1f",
+                              "resultSha256":  "f1831fa6c3728651fe7df4562feb00a7b584f6f885fc47ac519ed4c97c5ebf1f"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/meta-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "3962ca6312d21ed2597165f780da40769df7a4fd7ac631cbb03e78e84f7fe1cc",
+                              "resultSha256":  "3962ca6312d21ed2597165f780da40769df7a4fd7ac631cbb03e78e84f7fe1cc"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/mxl-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "578e38eb7a4ff4a4e9cc269bd3e30fc617f6d3bfc62986c0fd9b543d33fb3d6f",
+                              "resultSha256":  "578e38eb7a4ff4a4e9cc269bd3e30fc617f6d3bfc62986c0fd9b543d33fb3d6f"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/role-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "99ad6bd1818524aa744e0464113b63268e0f28b6f92d18be1b776f47413c4690",
+                              "resultSha256":  "99ad6bd1818524aa744e0464113b63268e0f28b6f92d18be1b776f47413c4690"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/skd-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "25a34213e48720594b2f115feb5bdf8c0e29e20bc8603bb6ca3c659ff93e6cc3",
+                              "resultSha256":  "25a34213e48720594b2f115feb5bdf8c0e29e20bc8603bb6ca3c659ff93e6cc3"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/subsystem-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "1abf79c9237ff68e520cb1b55fe612cb829a58972be010db7dec63f8df98db93",
+                              "resultSha256":  "1abf79c9237ff68e520cb1b55fe612cb829a58972be010db7dec63f8df98db93"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/support-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "df57dc36121107e0e1e91c8f83acc6c1e8f76cd4c6bd1533d808611e4dd1622e",
+                              "resultSha256":  "df57dc36121107e0e1e91c8f83acc6c1e8f76cd4c6bd1533d808611e4dd1622e"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/template-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "723927b2aaae2c2cceede3445f65e8c95671b6d2be5c1ddd5a186cfc50f7a5ea",
+                              "resultSha256":  "723927b2aaae2c2cceede3445f65e8c95671b6d2be5c1ddd5a186cfc50f7a5ea"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/uuid-check.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "db4619d43cec090b20d9fd5f9db115c90a9f86e07cd2985e186bedadba2a2e03",
+                              "resultSha256":  "db4619d43cec090b20d9fd5f9db115c90a9f86e07cd2985e186bedadba2a2e03"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/web-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "d41bba1b8fb5c8e6e70444ce073dafce19b634c8ed7dead51fb6458aee69a4e8",
+                              "resultSha256":  "d41bba1b8fb5c8e6e70444ce073dafce19b634c8ed7dead51fb6458aee69a4e8"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/xdto-manage.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "131186aeb66a614a202176e24015fa9b0ed27246e65b9e1b6cefa5e591cdd9c7",
+                              "resultSha256":  "131186aeb66a614a202176e24015fa9b0ed27246e65b9e1b6cefa5e591cdd9c7"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-cf-manage/cf-edit-reference.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "a531c39e2c4966203d1e7737599567f727df43dec13d04a6afba8da6485f2fe7",
+                              "resultSha256":  "a531c39e2c4966203d1e7737599567f727df43dec13d04a6afba8da6485f2fe7"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-edit.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "7dce55efefb52f3e35716173d1883e967b47460ddb5f779a28f078f1173efeaf",
+                              "resultSha256":  "7dce55efefb52f3e35716173d1883e967b47460ddb5f779a28f078f1173efeaf"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-info.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "a8de68ec2e4cdaf9f17da72643eadbf2d8cac80b50165cd0596f9d8ac822a47f",
+                              "resultSha256":  "a8de68ec2e4cdaf9f17da72643eadbf2d8cac80b50165cd0596f9d8ac822a47f"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-init.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "9314c40c4f5f8d0b249c8f9b455847d97c2916758f6faa18b557ed2d73a9bc32",
+                              "resultSha256":  "9314c40c4f5f8d0b249c8f9b455847d97c2916758f6faa18b557ed2d73a9bc32"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-validate.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "cb4f62e84675544e90236074ba05a3c316a69a04c50a93dece6fc0b8d53f611b",
+                              "resultSha256":  "cb4f62e84675544e90236074ba05a3c316a69a04c50a93dece6fc0b8d53f611b"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-borrow.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "3926b47dad1e21ef481afc678d41f52ea48bb0a5b21f4424e46ff48cce23309c",
+                              "resultSha256":  "3926b47dad1e21ef481afc678d41f52ea48bb0a5b21f4424e46ff48cce23309c"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-init.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "9e0c22d5331f81ac678c8c7aba74999864e4ee67c14a26a27e3ce128a88d4542",
+                              "resultSha256":  "9e0c22d5331f81ac678c8c7aba74999864e4ee67c14a26a27e3ce128a88d4542"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-patch-method.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "49e792321edba0acc2181eae6878e696ebb75ed088e21ebb6ff96c0a06f988c2",
+                              "resultSha256":  "49e792321edba0acc2181eae6878e696ebb75ed088e21ebb6ff96c0a06f988c2"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-cfe-manage/scripts/cfe-validate.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "fd8099951fb4b9bda941ed442efccc809fd7c1f188f3d67cb496135eeab2cb8d",
+                              "resultSha256":  "fd8099951fb4b9bda941ed442efccc809fd7c1f188f3d67cb496135eeab2cb8d"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-create.ps1",
+                              "disposition":  "resolved",
+                              "reason":  "Accept upstream behavior and add the managed-project lifecycle guard before side effects.",
+                              "upstreamSha256":  "834e1686f9d37986c9bbb23e53dda650930ec0733273ca7929002fe3a440ec0f",
+                              "resultSha256":  "c36ab77d62fde2930f5f9f8cece67f270925cb1224ed696d1165557cc6387015"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-cf.ps1",
+                              "disposition":  "resolved",
+                              "reason":  "Accept upstream behavior and add the managed-project lifecycle guard before side effects.",
+                              "upstreamSha256":  "095e2e790bd0ce3a93f08240d6d8d492fa9b44385dcec153bdf15b811e34adbc",
+                              "resultSha256":  "26371b3b8ae4e2bab809baba2515233d401af1bed572ce490b95edc01ddd77f2"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-dt.ps1",
+                              "disposition":  "resolved",
+                              "reason":  "Accept upstream DT dump behavior and add the managed-project lifecycle guard before side effects.",
+                              "upstreamSha256":  "6ce94f612a5fa0a1ea60696e162f17f6b91cbe614f2c7794955b337c1a165fdf",
+                              "resultSha256":  "89bb2160e42dac0aa7ed01a170d80b80b8dfc9c2d8d4b6a4d7edb8c1078bc48d"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-dump-xml.ps1",
+                              "disposition":  "resolved",
+                              "reason":  "Accept upstream behavior and add the managed-project lifecycle guard before side effects.",
+                              "upstreamSha256":  "da07102d797f6f7903ff835d10fc9e0514055135349a5d84537c67e0508484fb",
+                              "resultSha256":  "1b6a322603a7d1c6c4f6ff3316517f922873762449cb8ac907c618fdcb832b75"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-cf.ps1",
+                              "disposition":  "resolved",
+                              "reason":  "Accept upstream behavior and add the managed-project lifecycle guard before side effects.",
+                              "upstreamSha256":  "f7b315d1cfd24ba355eeeb11a9298edb4cb2658da66b1419e004c5cbe5685581",
+                              "resultSha256":  "07fc6333a19b526651087caf99618c3d65dc29c588ee8d2e97e4071ae6bfdb47"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-dt.ps1",
+                              "disposition":  "resolved",
+                              "reason":  "Accept upstream DT load behavior and add the managed-project lifecycle guard before side effects.",
+                              "upstreamSha256":  "fd076c9cc9159285990d8909716519852a920ac3b9d9039a9eb26d6525763946",
+                              "resultSha256":  "1f258c9cdca1e7a8ef736e79c45440d02b88841d0015bb853e1c0f320579fb64"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-git.ps1",
+                              "disposition":  "resolved",
+                              "reason":  "Accept upstream behavior and add the managed-project lifecycle guard before side effects.",
+                              "upstreamSha256":  "1187bf1304f086da2031493cc9157a0079181b099ce5b7877def27d12e6d791a",
+                              "resultSha256":  "5fcdd2cd4e72226cf12b59afc3948cf385a4adea4e6adcd405ec03eb244e987d"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-load-xml.ps1",
+                              "disposition":  "resolved",
+                              "reason":  "Accept upstream behavior and add the managed-project lifecycle guard before side effects.",
+                              "upstreamSha256":  "17ee4e2a4450efdb43ab440431313a85585006a4c2c30b3ea789932ece6eb70c",
+                              "resultSha256":  "a493d8d5e2bf7e0dc1e0d9e8e51db1159a68b6b65b0d695fe54492ffc699825a"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-run.ps1",
+                              "disposition":  "resolved",
+                              "reason":  "Accept upstream behavior and add the managed-project lifecycle guard before side effects.",
+                              "upstreamSha256":  "536fde625061cdb2bd0e8cf81b5f9b9517beabd4d07ccc28f53ac6761aaa971a",
+                              "resultSha256":  "1aa7ca44af02e14c5b9fbc6b8cb5159c1e10c9027e67ed62734918bc5afed95b"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-update.ps1",
+                              "disposition":  "resolved",
+                              "reason":  "Accept upstream behavior and add the managed-project lifecycle guard before side effects.",
+                              "upstreamSha256":  "5b6c7c76d9b56a01f81d36b9b79f6db43ca7020958203c3272ec994ab1635fc4",
+                              "resultSha256":  "e7f781f96a6300b1396415db08fcd1045e0929057d9f21020191455202cffb94"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-epf-build/scripts/epf-build.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept upstream EPF behavior without the project-infobase lifecycle guard.",
+                              "upstreamSha256":  "abe4624135cc9265ebb20edf4bed0b4d371c5e7833b34d4bbb6fe0c1b8202f09",
+                              "resultSha256":  "abe4624135cc9265ebb20edf4bed0b4d371c5e7833b34d4bbb6fe0c1b8202f09"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-epf-build/scripts/stub-db-create.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "a08a56ed42f1bcc124b75124a8679a55a057be9246f35466093f034851f348a8",
+                              "resultSha256":  "a08a56ed42f1bcc124b75124a8679a55a057be9246f35466093f034851f348a8"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-epf-dump/scripts/epf-dump.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept upstream EPF behavior without the project-infobase lifecycle guard.",
+                              "upstreamSha256":  "bc7ca5e96409ea36aa16d07dbc422d42b7d28cef17a0f6f3cf9cfe1f18b59e92",
+                              "resultSha256":  "bc7ca5e96409ea36aa16d07dbc422d42b7d28cef17a0f6f3cf9cfe1f18b59e92"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-form-compile/form-dsl-spec.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "315bd596d7c835cdbe0b089fe49f143350c50529be6b0c535dfb64d3e8470fbf",
+                              "resultSha256":  "315bd596d7c835cdbe0b089fe49f143350c50529be6b0c535dfb64d3e8470fbf"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-form-compile/scripts/form-compile.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "33ae320f7341f4612c2850bff48255f639cce92254198948d80c340edf741c4f",
+                              "resultSha256":  "33ae320f7341f4612c2850bff48255f639cce92254198948d80c340edf741c4f"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-form-edit/scripts/form-edit.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "f5cd3caed89354eb2edb5e8c84b3221637d2330fa68fca016eb830c3e23326a1",
+                              "resultSha256":  "f5cd3caed89354eb2edb5e8c84b3221637d2330fa68fca016eb830c3e23326a1"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-form-info/scripts/form-info.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "6f7ab48de2923a7d59662b67c46e7cccd35e19741fe2993a5469642e5e549858",
+                              "resultSha256":  "6f7ab48de2923a7d59662b67c46e7cccd35e19741fe2993a5469642e5e549858"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/form-add.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "624c47d16a7da73be3b99960bbf4eacd56f479d58612c62be9b02f32ecea9aed",
+                              "resultSha256":  "624c47d16a7da73be3b99960bbf4eacd56f479d58612c62be9b02f32ecea9aed"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/remove-form.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "da73b42df114838bc4c004769de3f9dbe13768ce615f7608db710011ddb2c525",
+                              "resultSha256":  "da73b42df114838bc4c004769de3f9dbe13768ce615f7608db710011ddb2c525"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-form-validate/scripts/form-validate.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "9de1616f65c2a208625f118b950b6a50a5309d1d65b14dfb8ae7f5d39c5968a9",
+                              "resultSha256":  "9de1616f65c2a208625f118b950b6a50a5309d1d65b14dfb8ae7f5d39c5968a9"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-help-manage/scripts/add-help.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "023000c58eb83bdf9b31590caed57cd47a3f8935547f568cf33949e19b29077c",
+                              "resultSha256":  "023000c58eb83bdf9b31590caed57cd47a3f8935547f568cf33949e19b29077c"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-interface-manage/scripts/interface-edit.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "0402b847075f4a058b1736169653ea70a36abd467d2e4eda3fad737db3d8d425",
+                              "resultSha256":  "0402b847075f4a058b1736169653ea70a36abd467d2e4eda3fad737db3d8d425"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-meta-compile/meta-dsl-spec.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "3589adb636a5d21800a977a0119cc9ffa16bab770c935de2a6effc093c69bdb5",
+                              "resultSha256":  "3589adb636a5d21800a977a0119cc9ffa16bab770c935de2a6effc093c69bdb5"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-meta-compile/scripts/meta-compile.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "dd879b481622141e924572a4023da08c8e28437116bb0daae6296ff82a1b9881",
+                              "resultSha256":  "dd879b481622141e924572a4023da08c8e28437116bb0daae6296ff82a1b9881"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-meta-edit/child-operations.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "b6f85a2a777f18ea40cd1c35cf3053a1149a3f793d805ecbf2e73a4387b8f113",
+                              "resultSha256":  "b6f85a2a777f18ea40cd1c35cf3053a1149a3f793d805ecbf2e73a4387b8f113"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-meta-edit/json-dsl.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "81fa6fd8fcf32f5a47fa7fe42273bb24e37bbb6f7f8ad56328036ad5f8d58441",
+                              "resultSha256":  "81fa6fd8fcf32f5a47fa7fe42273bb24e37bbb6f7f8ad56328036ad5f8d58441"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-meta-edit/properties-reference.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "162f7dea3657b9ba0a8a6345dab778d17601e6b636ea1677add71369966569c5",
+                              "resultSha256":  "162f7dea3657b9ba0a8a6345dab778d17601e6b636ea1677add71369966569c5"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-meta-edit/scripts/meta-edit.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "86d38d90978b9a8f658993a0fb476efb89072c1fa70fc968d0ec262081f7beaa",
+                              "resultSha256":  "86d38d90978b9a8f658993a0fb476efb89072c1fa70fc968d0ec262081f7beaa"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-meta-info/scripts/meta-info.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "e02c5be5e88211ec94ea4d9f0860a00eb491136517c7e72c41ba8f4d8aaaef96",
+                              "resultSha256":  "e02c5be5e88211ec94ea4d9f0860a00eb491136517c7e72c41ba8f4d8aaaef96"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-meta-remove/scripts/meta-remove.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "a491d2b96d3044ea7ee66efa3166ab45a7b0093c7f470bbb8c458776b4a32ec1",
+                              "resultSha256":  "a491d2b96d3044ea7ee66efa3166ab45a7b0093c7f470bbb8c458776b4a32ec1"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-meta-validate/scripts/meta-validate.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "63a97e7c6467c74b3cec2d29424b2bf00570287b3d012417491d63eba8d86deb",
+                              "resultSha256":  "63a97e7c6467c74b3cec2d29424b2bf00570287b3d012417491d63eba8d86deb"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-mxl-compile/scripts/mxl-compile.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "f363df9835f547a74c19a7185630355d492422bd23be375de778d4fb5e4831e8",
+                              "resultSha256":  "f363df9835f547a74c19a7185630355d492422bd23be375de778d4fb5e4831e8"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-mxl-info/scripts/mxl-info.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "53ce34708787d8d6a241a4d35bc7cee87abe832dfe17518be7440cd5834ff77b",
+                              "resultSha256":  "53ce34708787d8d6a241a4d35bc7cee87abe832dfe17518be7440cd5834ff77b"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-role-compile/scripts/role-compile.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "20160642d57292d4094ffe644879e0520a063310c6924abb9bcc07113e53a16a",
+                              "resultSha256":  "20160642d57292d4094ffe644879e0520a063310c6924abb9bcc07113e53a16a"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-role-info/scripts/role-info.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "f2ba03605b40acfaecd17e381b1142397b65798a0eaa7f7226f94fea0117e75f",
+                              "resultSha256":  "f2ba03605b40acfaecd17e381b1142397b65798a0eaa7f7226f94fea0117e75f"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-skd-compile/scripts/skd-compile.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "f66d17b10e55f6a50943d63ad3913b5a9d4397860edc4a77be9868ab9152e324",
+                              "resultSha256":  "f66d17b10e55f6a50943d63ad3913b5a9d4397860edc4a77be9868ab9152e324"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-skd-compile/skd-dsl-spec.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "1f8aa5decc26dfec4384b1028b343a395a3ba03ecfbe20321733c874418cbeea",
+                              "resultSha256":  "1f8aa5decc26dfec4384b1028b343a395a3ba03ecfbe20321733c874418cbeea"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-skd-decompile/scripts/skd-decompile.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "70384db0f847eb6475e7f86cfe6b39dfd52b96af41293c42dd317d8057e1ce3b",
+                              "resultSha256":  "70384db0f847eb6475e7f86cfe6b39dfd52b96af41293c42dd317d8057e1ce3b"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-skd-edit/scripts/skd-edit.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "f8c504a93f0a7501b0ac6c1270bfe42ec5059a23714a07f5be89149e7db53d4c",
+                              "resultSha256":  "f8c504a93f0a7501b0ac6c1270bfe42ec5059a23714a07f5be89149e7db53d4c"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-skd-info/scripts/skd-info.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "d1fdc49dd0a7c05c4738ac007f6394e98bae270cc4885c7a42e8df8d710b6f9f",
+                              "resultSha256":  "d1fdc49dd0a7c05c4738ac007f6394e98bae270cc4885c7a42e8df8d710b6f9f"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-compile.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "2492616af2e2fab5fc6d43a34f025d39133ec4a9208e913234cc0b4dbb4628aa",
+                              "resultSha256":  "2492616af2e2fab5fc6d43a34f025d39133ec4a9208e913234cc0b4dbb4628aa"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-edit.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "823f5f7f579c68d136a1b52fc687ef2b84dab348097f365d19c23e5b0b9bfb72",
+                              "resultSha256":  "823f5f7f579c68d136a1b52fc687ef2b84dab348097f365d19c23e5b0b9bfb72"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-info.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "12c455d8e309faa44b35e957f5c0d10eda3c2b94a4dfd6a474dd3e1f8dae0a18",
+                              "resultSha256":  "12c455d8e309faa44b35e957f5c0d10eda3c2b94a4dfd6a474dd3e1f8dae0a18"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-support-manage/scripts/support-edit.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "b224077162fc43d19ce03854836cfd355e3155e68325013b911944ec41706922",
+                              "resultSha256":  "b224077162fc43d19ce03854836cfd355e3155e68325013b911944ec41706922"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-template-manage/scripts/add-template.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "c5574ef66fde3d60a8c4fe09859a12b0fcd7417123a1fb75ce486da6321a7e83",
+                              "resultSha256":  "c5574ef66fde3d60a8c4fe09859a12b0fcd7417123a1fb75ce486da6321a7e83"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-template-manage/scripts/remove-template.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "6f8c5c89ecae0359a832c196bdda4f9382e1060d91f2b8fbbcab705769215f3f",
+                              "resultSha256":  "6f8c5c89ecae0359a832c196bdda4f9382e1060d91f2b8fbbcab705769215f3f"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-uuid-check/scripts/uuid-check.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "207430556e6e302e5f45b7f89232cedba8b2268935713aa1cdeb260fd3233538",
+                              "resultSha256":  "207430556e6e302e5f45b7f89232cedba8b2268935713aa1cdeb260fd3233538"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-info.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "1ccffd4aba46646767bf3a4c324b3ec1afc9decbf0b06876257bf44807be28e9",
+                              "resultSha256":  "1ccffd4aba46646767bf3a4c324b3ec1afc9decbf0b06876257bf44807be28e9"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-publish.ps1",
+                              "disposition":  "resolved",
+                              "reason":  "Accept upstream behavior and add the managed-project lifecycle guard before side effects.",
+                              "upstreamSha256":  "ec854f6d4572f02aab75c083b0a48bce779bb334e9ec64a26cb5de01669dfa14",
+                              "resultSha256":  "990b6d7d39ab9e1adee5e66922bef5f92fc70169c0f30f05db0f2285f4477485"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-stop.ps1",
+                              "disposition":  "resolved",
+                              "reason":  "Accept upstream behavior and retain the managed-project lifecycle guard before side effects.",
+                              "upstreamSha256":  "ffb20c3f1f97550c8c04dffba35e190c2f0c4f7391437bcfbd19ecd85bd837dc",
+                              "resultSha256":  "76e718bae4704ca87aa9a456f22f8d1126c4c3fea1b0af03ea0b5d23657a914b"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-unpublish.ps1",
+                              "disposition":  "resolved",
+                              "reason":  "Accept upstream behavior and retain the managed-project lifecycle guard before side effects.",
+                              "upstreamSha256":  "daefa47fb54b4fcef839402a1158d81fa3a9730829dffa9a58d29ab0c222b0a5",
+                              "resultSha256":  "a3ccab1acfa90655a9552e59bd4dbe5e23cca721f2e646eb874fb6c57a317468"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-compile.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "9f8f57cd5e8522114b0705f8f92808a5c73df9f198c2547a93869966c096b571",
+                              "resultSha256":  "9f8f57cd5e8522114b0705f8f92808a5c73df9f198c2547a93869966c096b571"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-decompile.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "492b77ec833576bcfee5f8bb925effbc3cff8793ba504c3f90165cb717677566",
+                              "resultSha256":  "492b77ec833576bcfee5f8bb925effbc3cff8793ba504c3f90165cb717677566"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-edit.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "408ffa10150a552e47a93f4a3a1e5641662861cb7558b0aaab0540762e006f60",
+                              "resultSha256":  "408ffa10150a552e47a93f4a3a1e5641662861cb7558b0aaab0540762e006f60"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-info.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "4d4903e2a02295ca41958e53da4040ff9c730670546e29340600181ba774f51a",
+                              "resultSha256":  "4d4903e2a02295ca41958e53da4040ff9c730670546e29340600181ba774f51a"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-validate.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "a33b7094ed090f4338db8c0de74dea95b963b08a4994c7c7433ccd24173101f3",
+                              "resultSha256":  "a33b7094ed090f4338db8c0de74dea95b963b08a4994c7c7433ccd24173101f3"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-xdto-manage/xsd-reference.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "40031baef197006e614036e4f3144ee86b6deb86a6f89aa57781934e2c782e2e",
+                              "resultSha256":  "40031baef197006e614036e4f3144ee86b6deb86a6f89aa57781934e2c782e2e"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/_common/DevEnv.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "00c7d0e928cf0bff277979b4ec04f90662df254c4703a5c35f18d826bf42b34b",
+                              "resultSha256":  "00c7d0e928cf0bff277979b4ec04f90662df254c4703a5c35f18d826bf42b34b"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/_common/Resolve-V8Exe.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the new common upstream platform executable resolver unchanged.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "\u003cabsent\u003e"
+                          },
+                          {
+                              "path":  "content/skills/mcp-1c-tools/SKILL.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited platform/template-first behavior unchanged.",
+                              "upstreamSha256":  "cad4ed64f038b368748e2292d76914fc9f2532c0cbf56a18e694a9730c62f691",
+                              "resultSha256":  "cad4ed64f038b368748e2292d76914fc9f2532c0cbf56a18e694a9730c62f691"
+                          },
+                          {
+                              "path":  "content/skills/mcp-1c-tools/docs/1c-code-metadata-mcp.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "16784cdf6c10a66324855d1332962a92341e08b8ea8c017855262c7bbe914e20",
+                              "resultSha256":  "16784cdf6c10a66324855d1332962a92341e08b8ea8c017855262c7bbe914e20"
+                          },
+                          {
+                              "path":  "content/skills/mcp-1c-tools/docs/1c-templates-mcp.md",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited templatesearch query and reuse guidance unchanged.",
+                              "upstreamSha256":  "562b5975cb3354aac218ff210d784d6a2ad138e14b46c81be9b7c1c1efe70609",
+                              "resultSha256":  "562b5975cb3354aac218ff210d784d6a2ad138e14b46c81be9b7c1c1efe70609"
+                          },
+                          {
+                              "path":  "install.ps1",
+                              "disposition":  "resolved",
+                              "reason":  "Combine upstream Claude/OpenCode support with single-client, delegated-MCP, and safe legacy migration.",
+                              "upstreamSha256":  "ddbe979e6d33a32176341452845ea7cb439dcc87e940905b8e0d87ebab04ef53",
+                              "resultSha256":  "2a79921865be2d8acb7a875ff9a8af715e5e02c436ea58ebcf51ea0a387d5510"
+                          },
+                          {
+                              "path":  "memory.md",
+                              "disposition":  "keep-current",
+                              "reason":  "Keep the r17 fallback so new and upgraded projects retain identical memory behavior.",
+                              "upstreamSha256":  "5c7962c80a1a4077377302551ef4594ddf00f4a666592d0aced47be2ac5ec3e1",
+                              "resultSha256":  "b1d2aed515914e82dcee28e2ca37337f6ce226e7faa8d3ee66d3ba23eb915b40"
+                          },
+                          {
+                              "path":  "tools/validate-rules.ps1",
+                              "disposition":  "take-upstream",
+                              "reason":  "Accept the audited upstream implementation unchanged.",
+                              "upstreamSha256":  "e979380b3513f90672ac6f41f057df0d2e9a5bebba96cadd287f9351491a1602",
+                              "resultSha256":  "e979380b3513f90672ac6f41f057df0d2e9a5bebba96cadd287f9351491a1602"
+                          }
+                      ]
 }
