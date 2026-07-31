@@ -42,7 +42,8 @@
     "content/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-stop.ps1",
     "content/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-unpublish.ps1",
     "tests/ItlLifecycleGuard.Tests.ps1",
-    "docs/releases/itl-main-5ae333ed-r18.md"
+    "docs/releases/itl-main-5ae333ed-r18.md",
+    "docs/releases/itl-main-5ae333ed-r19.md"
   ],
   "pathDecisions": [
     {"path":"AGENT-INSTALL.md","disposition":"resolved","reason":"Merge the upstream client/layout change with the existing pinned single-client ITL contract.","upstreamSha256":"f8d6b57d268681f255ee0032d749424e672c09c81f693bfd0b6e3efbc30d4175","resultSha256":"3ca11ef6dc32030c504cc17c5ed44d475b3242e100aacf9d523e5d220697d42a"},
@@ -94,7 +95,7 @@
     {"path":"content/skills/mcp-1c-tools/SKILL.md","disposition":"take-upstream","reason":"Accept the audited platform/template-first behavior unchanged.","upstreamSha256":"d9f8e7cd284edccaa6c1f602c1fafd164a59df8b74295cdde00010e9cc2d7ced","resultSha256":"d9f8e7cd284edccaa6c1f602c1fafd164a59df8b74295cdde00010e9cc2d7ced"},
     {"path":"content/skills/mcp-1c-tools/docs/1C-docs-mcp.md","disposition":"take-upstream","reason":"Accept the audited platform-capability guidance unchanged.","upstreamSha256":"fb830b3eae70c3219b5970657974c50ede3b69270b7b3d8295f3a581419441bf","resultSha256":"fb830b3eae70c3219b5970657974c50ede3b69270b7b3d8295f3a581419441bf"},
     {"path":"content/skills/mcp-1c-tools/docs/1c-templates-mcp.md","disposition":"take-upstream","reason":"Accept the audited templatesearch query and reuse guidance unchanged.","upstreamSha256":"78b91b7f6c1df70a09b10e8679bb04497e08bb1c17df7ca089d0f19dddd69dfb","resultSha256":"78b91b7f6c1df70a09b10e8679bb04497e08bb1c17df7ca089d0f19dddd69dfb"},
-    {"path":"install.ps1","disposition":"resolved","reason":"Combine upstream Claude/OpenCode support with single-client, delegated-MCP, and safe legacy migration.","upstreamSha256":"e5c654bd7e17efb7d8a83ca526ba7867f3b5597ee0171579cb175d89bfd6e0d5","resultSha256":"2c096cf5976112c436bd921f02f112f98459a273b58e8a48be996d3584b73e68"},
+    {"path":"install.ps1","disposition":"resolved","reason":"Combine upstream Claude/OpenCode support with single-client, delegated-MCP, and safe legacy migration.","upstreamSha256":"e5c654bd7e17efb7d8a83ca526ba7867f3b5597ee0171579cb175d89bfd6e0d5","resultSha256":"0aad2f0374ec7bae50fabf74aa05ce3a81cc236bea26d9077fbcafd1b4ae7b31"},
     {"path":"memory.md","disposition":"keep-current","reason":"Keep the r17 fallback so new and upgraded projects retain identical memory behavior.","upstreamSha256":"97bc96480a547c75a9bb045bd78379921ccb4cf7f4924b36d4390839541f84ce","resultSha256":"b1d2aed515914e82dcee28e2ca37337f6ce226e7faa8d3ee66d3ba23eb915b40"}
   ]
 }
