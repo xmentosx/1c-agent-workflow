@@ -1316,7 +1316,8 @@ exit 0
                 function Ensure-GitIgnore { $script:postCalls++ }
                 function Update-AgentGuidanceBridge { $script:postCalls++ }
                 function Update-UserRules { $script:postCalls++ }
-                function Update-RoctupMcp { $script:postCalls++ }
+                function Sync-WorkflowManagedDependencyLockEntries { $script:postCalls++; $script:dependencySyncOrder = $script:postCalls }
+                function Update-RoctupMcp { $script:postCalls++; $script:roctupOrder = $script:postCalls }
                 function Sync-VanessaAutomationDependencyLock { $script:postCalls++; $script:vanessaSyncOrder = $script:postCalls }
                 function Install-VanessaAutomation { $script:postCalls++; $script:vanessaInstallOrder = $script:postCalls }
                 function Update-VanessaMcpArtifacts { $script:postCalls++; $script:vanessaArtifactsOrder = $script:postCalls }
@@ -1336,6 +1337,8 @@ exit 0
                     finalCopyCalls = $script:copyCalls
                     reexecArgs = @($script:reexecArgs)
                     postCalls = $script:postCalls
+                    dependencySyncOrder = $script:dependencySyncOrder
+                    roctupOrder = $script:roctupOrder
                     vanessaSyncOrder = $script:vanessaSyncOrder
                     vanessaInstallOrder = $script:vanessaInstallOrder
                     vanessaArtifactsOrder = $script:vanessaArtifactsOrder
@@ -1348,6 +1351,8 @@ exit 0
             $result.finalCopyCalls | Should -Be $result.preCopyCalls
             $result.reexecArgs | Should -Be @("-LifecyclePhase", "post-copy")
             $result.postCalls | Should -BeGreaterThan 4
+            $result.dependencySyncOrder | Should -BeLessThan $result.roctupOrder
+            $result.roctupOrder | Should -BeLessThan $result.vanessaSyncOrder
             $result.vanessaSyncOrder | Should -BeLessThan $result.vanessaInstallOrder
             $result.vanessaInstallOrder | Should -BeLessThan $result.vanessaArtifactsOrder
             $result.vanessaArtifactsOrder | Should -BeLessThan $result.syncOrder
