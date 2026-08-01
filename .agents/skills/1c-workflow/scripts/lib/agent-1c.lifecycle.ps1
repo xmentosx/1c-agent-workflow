@@ -1264,6 +1264,27 @@ function Restore-DevBranchInfobaseFromSnapshot {
         -DesignerArgs @("/RestoreIB", $SnapshotPath) | Out-Null
 }
 
+function Remove-CompletedInfobaseSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][string]$SnapshotPath
+    )
+
+    $snapshotRoot = Assert-ExportPathInsideProject -ExportPath ".agent-1c/snapshots"
+    $snapshotRootPrefix = $snapshotRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $absoluteSnapshotPath = [System.IO.Path]::GetFullPath($SnapshotPath)
+    if (-not $absoluteSnapshotPath.StartsWith($snapshotRootPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+        [System.IO.Path]::GetExtension($absoluteSnapshotPath) -ine ".dt") {
+        throw "Refusing to remove an infobase snapshot outside the project snapshot directory: $SnapshotPath"
+    }
+
+    if (Test-Path -LiteralPath $absoluteSnapshotPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $absoluteSnapshotPath -Force -ErrorAction Stop
+    }
+    if (Test-Path -LiteralPath $absoluteSnapshotPath -ErrorAction SilentlyContinue) {
+        throw "Infobase snapshot still exists after cleanup: $absoluteSnapshotPath"
+    }
+}
+
 function Load-ConfigFromFiles {
     param(
         [string]$InfoBasePath,
@@ -6680,6 +6701,7 @@ function Init-DevBranchExtension {
     $snapshotDir = ""
     $snapshotPath = ""
     $snapshotCreated = $false
+    $snapshotCleanupError = ""
     $roctupWasRunning = $false
     $vanessaWasRunning = $false
 
@@ -6778,6 +6800,13 @@ function Init-DevBranchExtension {
         $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
         Sync-DevBranchContextToDotEnv -State $state
 
+        try {
+            Remove-CompletedInfobaseSnapshot -SnapshotPath $snapshotPath
+        } catch {
+            $snapshotCleanupError = $_.Exception.Message
+            Write-Warning "Extension initialized, but rollback snapshot cleanup failed. Snapshot retained: $snapshotPath Detail: $snapshotCleanupError"
+        }
+
         Write-Host "Extension initialized: $ExtensionName ($ExtensionInitMode)"
         Write-Host "Normalized extension dump: $dumpPath"
         Write-Host "Run /itl-check before reporting the development task complete."
@@ -6799,6 +6828,12 @@ function Init-DevBranchExtension {
                     enterpriseInvoked = $false
                     enterpriseNormalizationStatus = "pending"
                     enterpriseNormalizationReason = "extension-init-rollback"
+                }
+                try {
+                    Remove-CompletedInfobaseSnapshot -SnapshotPath $snapshotPath
+                } catch {
+                    $snapshotCleanupError = $_.Exception.Message
+                    Write-Warning "Extension initialization rollback succeeded, but snapshot cleanup failed. Snapshot retained: $snapshotPath Detail: $snapshotCleanupError"
                 }
             } catch {
                 $rollbackError = $_.Exception.Message
@@ -6824,6 +6859,8 @@ function Init-DevBranchExtension {
         }
         $failureMessage = if ($rollbackError) {
             "Extension initialization failed: $originalError Rollback also failed: $rollbackError Snapshot retained: $snapshotPath"
+        } elseif ($snapshotCleanupError) {
+            "Extension initialization failed and the infobase snapshot was restored, but snapshot cleanup failed: $originalError Cleanup: $snapshotCleanupError Snapshot retained: $snapshotPath"
         } elseif ($snapshotCreated) {
             "Extension initialization failed and the infobase snapshot was restored: $originalError"
         } else {
@@ -7257,6 +7294,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
     $vanessaWasRunning = [bool](Get-VanessaMcpRuntimeInfo -State $state).processAlive
     $failure = $null
     $rollbackFailure = $null
+    $snapshotCleanupFailure = $null
     $emptyDumpSha256 = ""
     $cfeSha256 = ""
     $cfeDumpSha256 = ""
@@ -7605,6 +7643,13 @@ function Invoke-ReleaseE2EExtensionSmoke {
         if (Test-Path -LiteralPath $smokeRoot -PathType Container -ErrorAction SilentlyContinue) {
             Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+        if ($snapshotCreated -and $databaseRestored) {
+            try {
+                Remove-CompletedInfobaseSnapshot -SnapshotPath $snapshotPath
+            } catch {
+                $snapshotCleanupFailure = $_.Exception.Message
+            }
+        }
         if ($hadToolOverride) {
             $script:ExtensionLifecycleToolRootOverride = $previousToolOverride
         } else {
@@ -7614,12 +7659,24 @@ function Invoke-ReleaseE2EExtensionSmoke {
 
     if ($failure) {
         if ($rollbackFailure) {
+            if ($databaseRestored) {
+                throw "Release extension smoke failed: $failure Cleanup also failed: $rollbackFailure"
+            }
             throw "Release extension smoke failed: $failure Rollback also failed: $rollbackFailure Snapshot retained: $snapshotPath"
+        }
+        if ($snapshotCleanupFailure) {
+            throw "Release extension smoke failed and the disposable infobase was restored, but snapshot cleanup failed: $failure Cleanup: $snapshotCleanupFailure Snapshot retained: $snapshotPath"
         }
         throw "Release extension smoke failed and the disposable infobase was restored: $failure"
     }
     if ($rollbackFailure) {
-        throw "Release extension smoke passed but cleanup failed: $rollbackFailure Snapshot retained: $snapshotPath"
+        if ($databaseRestored) {
+            throw "Release extension smoke passed but cleanup failed: $rollbackFailure"
+        }
+        throw "Release extension smoke passed but rollback failed: $rollbackFailure Snapshot retained: $snapshotPath"
+    }
+    if ($snapshotCleanupFailure) {
+        throw "Release extension smoke passed but snapshot cleanup failed: $snapshotCleanupFailure Snapshot retained: $snapshotPath"
     }
 }
 

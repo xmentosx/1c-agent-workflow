@@ -48,6 +48,8 @@ Describe "Release gate scripts" {
         $lifecycleText | Should -Match 'Run-DevBranchTests'
         $lifecycleText | Should -Match 'extensionUiTestClientPassed'
         $lifecycleText | Should -Match '(?s)Restore-ReleaseE2EExtensionLocalState\s+if \(Test-Path -LiteralPath \$smokeRoot.*?Remove-Item -LiteralPath \$smokeRoot -Recurse -Force\s+}\s+\s*if \(@\(& git -C \$script:ProjectRoot status --porcelain\)\.Count -ne 0\)'
+        $lifecycleText | Should -Match '(?s)if \(\$snapshotCreated -and \$databaseRestored\).*?Remove-CompletedInfobaseSnapshot -SnapshotPath \$snapshotPath'
+        $lifecycleText | Should -Match 'snapshot cleanup failed.*Snapshot retained'
     }
 
     It "requires the lock-pinned annotated fork tag and explicit E2E stand" {

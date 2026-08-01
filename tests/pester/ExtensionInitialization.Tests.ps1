@@ -75,6 +75,7 @@
                     function Add-VerificationStaleIfNeeded {}
                     function Sync-DevBranchContextToDotEnv {}
                     function Get-CurrentCommit { return "head" }
+                    function Get-ConfigSourceFingerprint { return [pscustomobject]@{ fingerprint = "source" } }
                     function Update-DevBranchState {
                         param([object]$State, [hashtable]$Updates)
                         if ($null -eq $script:extensionInitUpdatesCaptured) { $script:extensionInitUpdatesCaptured = @{} }
@@ -118,6 +119,7 @@
                         rollbackCalled = $script:extensionInitRollbackCalled
                         error = $errorText
                         targetExists = Test-Path -LiteralPath (Join-Path $tempRoot "src\cfe\ShipModel")
+                        snapshotFiles = @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\snapshots") -File -ErrorAction SilentlyContinue)
                     }
                 }
             } finally {
@@ -149,6 +151,7 @@
         $result.updates.extensionExportPath | Should -Be "src/cfe/ShipModel"
         $result.updates.extensionInitializedAt | Should -Not -BeNullOrEmpty
         $result.updates.extensionInitializationStatus | Should -Be "ready"
+        $result.snapshotFiles | Should -BeNullOrEmpty
         ($result.toolCalls -join "`n") | Should -Match ([regex]::Escape(".kilo\skills\1c-metadata-manage\tools\1c-cfe-manage\scripts"))
         ($result.calls | ForEach-Object { $_ -join " " }) -join "`n" | Should -Match "/LoadConfigFromFiles.*-Extension ShipModel.*-Format Hierarchical.*\/UpdateDBCfg"
     }
@@ -172,6 +175,7 @@
         $result.updates.enterpriseNormalizationStatus | Should -Be "pending"
         $result.updates.extensionInitializationStatus | Should -Be "failed"
         $result.targetExists | Should -BeFalse
+        $result.snapshotFiles | Should -BeNullOrEmpty
     }
 
     It "stops safely on existing extension or a nonempty exact dump target" {
@@ -200,6 +204,7 @@
         $rollback.error | Should -Match "mock rollback failure"
         $rollback.updates.extensionInitializationStatus | Should -Be "failed"
         $rollback.updates.extensionInitializationError | Should -Match "Rollback also failed"
+        $rollback.snapshotFiles.Count | Should -Be 1
     }
 
     It "persists failed state when setup fails before the snapshot" {
