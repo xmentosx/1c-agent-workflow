@@ -994,6 +994,11 @@
             New-Item -ItemType Directory -Force -Path $export | Out-Null
             Set-Content -LiteralPath (Join-Path $export "Configuration.xml") -Encoding UTF8 -Value "<Configuration />"
             Set-Content -LiteralPath (Join-Path $export "ConfigDumpInfo.xml") -Encoding UTF8 -Value "one"
+            & git -C $tempRoot init --quiet
+            & git -C $tempRoot config user.email "itl-tests@example.invalid"
+            & git -C $tempRoot config user.name "ITL Tests"
+            & git -C $tempRoot add -- src/cf
+            & git -C $tempRoot commit --quiet -m "baseline"
 
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
@@ -1023,6 +1028,168 @@
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It "keeps the source fingerprint canonical without hashing every file" {
+        $tempRoot = New-ShortWorkflowProjectRoot
+        try {
+            $export = Join-Path $tempRoot "src\cf"
+            New-Item -ItemType Directory -Force -Path $export | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Encoding UTF8 -Value "src/cf/ignored.bin"
+            Set-Content -LiteralPath (Join-Path $export "Configuration.xml") -Encoding UTF8 -Value "<Configuration />"
+            Set-Content -LiteralPath (Join-Path $export "ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor-one"
+            & git -C $tempRoot init --quiet
+            & git -C $tempRoot config user.email "itl-tests@example.invalid"
+            & git -C $tempRoot config user.name "ITL Tests"
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+
+                $unborn = Get-ConfigSourceFingerprint -ExportPath "src/cf"
+                & git -C $tempRoot add -- .gitignore src/cf
+                $stagedUnborn = Get-ConfigSourceFingerprint -ExportPath "src/cf"
+                & git -C $tempRoot commit --quiet -m "baseline"
+                $clean = Get-ConfigSourceFingerprint -ExportPath "src/cf"
+                $absolute = Get-ConfigSourceFingerprint -ExportPath $export
+
+                Set-Content -LiteralPath (Join-Path $export "ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor-two"
+                $cursorOnly = Get-ConfigSourceFingerprint -ExportPath "src/cf"
+
+                Set-Content -LiteralPath (Join-Path $export "Configuration.xml") -Encoding UTF8 -Value "<Configuration><Comment>changed</Comment></Configuration>"
+                [System.IO.File]::WriteAllBytes((Join-Path $export "данные.bin"), [byte[]]@(0, 1, 2, 255))
+                $cachedBefore = @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z", "--"))
+                $dirty = Get-ConfigSourceFingerprint -ExportPath "src/cf"
+                $cachedAfter = @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z", "--"))
+
+                & git -C $tempRoot add -- src/cf
+                $staged = Get-ConfigSourceFingerprint -ExportPath "src/cf"
+                & git -C $tempRoot commit --quiet -m "changed source"
+                $committed = Get-ConfigSourceFingerprint -ExportPath "src/cf"
+
+                Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Encoding UTF8 -Value "outside source scope"
+                $outside = Get-ConfigSourceFingerprint -ExportPath "src/cf"
+
+                [System.IO.File]::WriteAllBytes((Join-Path $export "ignored.bin"), [byte[]]@(9, 8, 7))
+                $withIgnored = Get-ConfigSourceFingerprint -ExportPath "src/cf"
+                Remove-Item -LiteralPath (Join-Path $export "ignored.bin") -Force
+                $ignoredRemoved = Get-ConfigSourceFingerprint -ExportPath "src/cf"
+
+                Move-Item -LiteralPath (Join-Path $export "Configuration.xml") -Destination (Join-Path $export "Переименованная.xml")
+                $renamed = Get-ConfigSourceFingerprint -ExportPath "src/cf"
+                Remove-Item -LiteralPath (Join-Path $export "данные.bin") -Force
+                $deleted = Get-ConfigSourceFingerprint -ExportPath "src/cf"
+
+                [pscustomobject]@{
+                    unborn = $unborn
+                    stagedUnborn = $stagedUnborn
+                    clean = $clean
+                    absolute = $absolute
+                    cursorOnly = $cursorOnly
+                    dirty = $dirty
+                    staged = $staged
+                    committed = $committed
+                    outside = $outside
+                    withIgnored = $withIgnored
+                    ignoredRemoved = $ignoredRemoved
+                    renamed = $renamed
+                    deleted = $deleted
+                    cachedBefore = $cachedBefore
+                    cachedAfter = $cachedAfter
+                }
+            }
+
+            $result.unborn.fingerprint | Should -Match '^v2\|git-tree-sha256\|[0-9a-f]{64}$'
+            $result.stagedUnborn.fingerprint | Should -Be $result.unborn.fingerprint
+            $result.clean.fingerprint | Should -Be $result.unborn.fingerprint
+            $result.absolute.fingerprint | Should -Be $result.clean.fingerprint
+            $result.clean.fileCount | Should -Be 1
+            $result.cursorOnly.fingerprint | Should -Be $result.clean.fingerprint
+            $result.dirty.fingerprint | Should -Not -Be $result.clean.fingerprint
+            $result.dirty.fileCount | Should -Be 2
+            $result.staged.fingerprint | Should -Be $result.dirty.fingerprint
+            $result.committed.fingerprint | Should -Be $result.dirty.fingerprint
+            $result.outside.fingerprint | Should -Be $result.dirty.fingerprint
+            $result.withIgnored.fingerprint | Should -Not -Be $result.dirty.fingerprint
+            $result.withIgnored.fileCount | Should -Be 3
+            $result.ignoredRemoved.fingerprint | Should -Be $result.dirty.fingerprint
+            $result.renamed.fingerprint | Should -Not -Be $result.dirty.fingerprint
+            $result.deleted.fingerprint | Should -Not -Be $result.renamed.fingerprint
+            @($result.cachedBefore).Count | Should -Be 0
+            @($result.cachedAfter).Count | Should -Be 0
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "migrates a legacy source fingerprint only when the scoped source is unchanged" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:ChangedFiles = @()
+            $script:ChangeSetCalls = 0
+            $script:LoadCalls = 0
+            $script:LegacyFingerprint = ("a" * 64)
+            $script:LegacyFingerprintCalls = 0
+            function Get-ConfigSourceFingerprint {
+                [pscustomobject]@{ fingerprint = ("v2|git-tree-sha256|" + ("b" * 64)); fileCount = 7; absoluteExportPath = "C:\src" }
+            }
+            function Get-LegacyConfigSourceFingerprint {
+                $script:LegacyFingerprintCalls++
+                return $script:LegacyFingerprint
+            }
+            function Get-ConfigLoadChangeSet {
+                $script:ChangeSetCalls++
+                [pscustomobject]@{ files = @($script:ChangedFiles); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" }
+            }
+            function Get-CurrentCommit { "head" }
+            function New-ConfigLoadListFile { "C:\list.txt" }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
+            function Invoke-ConfigLoadWithFallback {
+                $script:LoadCalls++
+                [pscustomobject]@{
+                    lastLogPath = ""
+                    loadModeUsed = "partial"
+                    partialLogPath = ""
+                    fullFallbackLogPath = ""
+                    configLoadStatus = "passed"
+                    partialError = ""
+                    fullFallbackError = ""
+                }
+            }
+
+            $state = [pscustomobject]@{
+                lastConfigDesignerFingerprint = ("a" * 64)
+                enterpriseNormalizationStatus = "passed"
+            }
+            $unchanged = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State $state -ExportPath "src/cf" 6>$null
+            $script:LegacyFingerprint = ("c" * 64)
+            $ignoredChanged = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State $state -ExportPath "src/cf" 6>$null
+            $script:ChangedFiles = @("Configuration.xml")
+            $changed = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State $state -ExportPath "src/cf" 6>$null
+            [pscustomobject]@{
+                unchanged = $unchanged
+                ignoredChanged = $ignoredChanged
+                changed = $changed
+                changeSetCalls = $script:ChangeSetCalls
+                loadCalls = $script:LoadCalls
+                legacyFingerprintCalls = $script:LegacyFingerprintCalls
+            }
+        }
+
+        $result.unchanged.loaded | Should -BeFalse
+        $result.unchanged.designerInvoked | Should -BeFalse
+        $result.unchanged.loadReason | Should -Be "legacy-source-fingerprint-migrated"
+        $result.unchanged.sourceFingerprint | Should -Match '^v2\|git-tree-sha256\|'
+        $result.ignoredChanged.loaded | Should -BeTrue
+        $result.ignoredChanged.designerInvoked | Should -BeTrue
+        $result.ignoredChanged.loadReason | Should -Be "fingerprint-changed-full-load"
+        $result.changed.loaded | Should -BeTrue
+        $result.changed.designerInvoked | Should -BeTrue
+        $result.changed.loadReason | Should -Be "source-fingerprint-changed"
+        $result.changeSetCalls | Should -Be 2
+        $result.loadCalls | Should -Be 2
+        $result.legacyFingerprintCalls | Should -Be 3
     }
 
     It "keeps the canonical verification fingerprint stable across staging and commit" {

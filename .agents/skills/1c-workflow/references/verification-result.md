@@ -54,6 +54,8 @@ Goal: export a CF or CFE artifact from the current development branch.
 The result manifest records artifact SHA256, operation, branch metadata, master/development base commits, whether the source came from a clean commit or the effective working tree, configuration and verification fingerprints, verification status/report/log, latest 1C log path, publication URL, manual import note, and whether an unverified override was used. A development commit in a dirty-tree manifest is the base commit, not a claim that the exported content was committed.
 
 Verification freshness uses a versioned canonical Git tree fingerprint of configured configuration, extension, and feature paths. A temporary index materializes the effective scoped working tree without changing the user's index. Committing exactly that checked content preserves the fingerprint; staging, unstaging, or committing files outside the scope also preserves it. Any effective scoped content change makes previous evidence stale.
+
+Configuration and extension loads use a separate versioned Git-tree source fingerprint. It hashes canonical Git tree records instead of reopening every source file, includes effective staged, unstaged, untracked, and ignored source files, and excludes `ConfigDumpInfo.xml`. An existing legacy SHA256 source fingerprint is recalculated once and migrates without Designer only on an exact match; a mismatch still follows the normal partial/full load safety path.
 The `v3` rollout intentionally treats stored legacy `v2` evidence as stale once; run one fresh `/itl-check` after updating the workflow.
 
 ## Verification Policy
