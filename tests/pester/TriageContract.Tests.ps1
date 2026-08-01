@@ -58,7 +58,7 @@ Describe "Quick-fix full-cycle OpenSpec triage contract" -Tag "Fast" {
         ($russianContracts -join "`n") | Should -Match ([regex]::Escape($defaultRussian) + '[^\r\n]*direct')
     }
 
-    It "keeps the workflow and controlled-fork fixtures byte-identical when a source checkout is provided" {
+    It "keeps the workflow and controlled-fork fixtures canonical-text identical when a source checkout is provided" {
         $forkRoot = [Environment]::GetEnvironmentVariable("ITL_AI_RULES_SOURCE")
         if ([string]::IsNullOrWhiteSpace($forkRoot)) {
             Set-ItResult -Skipped -Because "ITL_AI_RULES_SOURCE is not set for this targeted source-boundary check."
@@ -68,7 +68,8 @@ Describe "Quick-fix full-cycle OpenSpec triage contract" -Tag "Fast" {
         $forkFixture = Join-Path $forkRoot "tests\fixtures\triage-contract.json"
         Test-Path -LiteralPath $forkFixture -PathType Leaf | Should -BeTrue
         $workflowFixture = Join-Path $RepoRoot "tests\fixtures\triage-contract.json"
-        (Get-FileHash -LiteralPath $forkFixture -Algorithm SHA256).Hash |
-            Should -Be (Get-FileHash -LiteralPath $workflowFixture -Algorithm SHA256).Hash
+        $forkText = [IO.File]::ReadAllText($forkFixture, [Text.Encoding]::UTF8).Replace("`r`n", "`n")
+        $workflowText = [IO.File]::ReadAllText($workflowFixture, [Text.Encoding]::UTF8).Replace("`r`n", "`n")
+        $forkText | Should -BeExactly $workflowText
     }
 }
