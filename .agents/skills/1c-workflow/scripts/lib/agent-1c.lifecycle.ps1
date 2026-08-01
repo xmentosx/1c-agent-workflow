@@ -3285,6 +3285,7 @@ function Update-WorkflowPackage {
     Sync-ItlVanessaLibraries
     Update-AgentGuidanceBridge
     Update-UserRules
+    Sync-WorkflowManagedDependencyLockEntries | Out-Null
     Update-RoctupMcp
     Sync-VanessaAutomationDependencyLock | Out-Null
     Install-VanessaAutomation
@@ -5348,6 +5349,7 @@ function Initialize-Project {
         Prepare-ConfiguredInitProjectSettings
     }
     Apply-BootstrapWorkflowPackageProvenance | Out-Null
+    Sync-WorkflowManagedDependencyLockEntries | Out-Null
     $dumpWasCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.commit-dump") -and (Test-InitDumpArtifactsReady))
     $unsafeActionProtectionWasCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.unsafe-action-protection-complete"))
     if (-not $dumpWasCompleted) {

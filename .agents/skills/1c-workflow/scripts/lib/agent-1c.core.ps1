@@ -2878,6 +2878,160 @@ function ConvertTo-DependencyLockComparableValue {
     return $Value
 }
 
+function Get-WorkflowManagedDependencyLockEntryNames {
+    param([object]$TemplateManifest = $null)
+
+    if ($null -eq $TemplateManifest) {
+        $TemplateManifest = New-DefaultDependencyLockManifest
+    }
+    $templateDependenciesValue = Get-ConfigValueFromObject -Object $TemplateManifest -Path "dependencies" -Default $null
+    if ($null -eq $templateDependenciesValue) {
+        throw "WORKFLOW_MANAGED_DEPENDENCY_TEMPLATE_INVALID: templates/dependency-lock.json has no dependencies object."
+    }
+    $templateDependencies = ConvertTo-Agent1cHashtable -Object $templateDependenciesValue
+    $names = @($templateDependencies.Keys | Where-Object { [string]$_ -notin @("workflowPackage", "aiRules1c") } | Sort-Object)
+    if ($names.Count -eq 0) {
+        throw "WORKFLOW_MANAGED_DEPENDENCY_TEMPLATE_INVALID: templates/dependency-lock.json has no workflow-managed dependency entries."
+    }
+    return @($names)
+}
+
+function Get-MissingDependencyLockValuePaths {
+    param(
+        [AllowNull()][object]$Current,
+        [AllowNull()][object]$Template,
+        [string]$Prefix
+    )
+
+    $templateIsMap = $Template -is [System.Collections.IDictionary] -or $Template -is [pscustomobject]
+    if ($templateIsMap) {
+        $currentIsMap = $Current -is [System.Collections.IDictionary] -or $Current -is [pscustomobject]
+        if (-not $currentIsMap) {
+            return @($Prefix)
+        }
+        $templateMap = ConvertTo-Agent1cHashtable -Object $Template
+        $currentMap = ConvertTo-Agent1cHashtable -Object $Current
+        $missing = [System.Collections.Generic.List[string]]::new()
+        foreach ($key in @($templateMap.Keys | Sort-Object)) {
+            if ([string]$key -eq "updatedAt") { continue }
+            $path = "$Prefix.$key"
+            if (-not $currentMap.Contains($key)) {
+                $missing.Add($path) | Out-Null
+                continue
+            }
+            foreach ($nestedPath in @(Get-MissingDependencyLockValuePaths -Current $currentMap[$key] -Template $templateMap[$key] -Prefix $path)) {
+                $missing.Add([string]$nestedPath) | Out-Null
+            }
+        }
+        return @($missing)
+    }
+
+    $templateRequiresValue = $null -ne $Template -and (-not ($Template -is [string]) -or -not [string]::IsNullOrWhiteSpace([string]$Template))
+    if ($templateRequiresValue -and ($null -eq $Current -or ($Current -is [string] -and [string]::IsNullOrWhiteSpace([string]$Current)))) {
+        return @($Prefix)
+    }
+    return @()
+}
+
+function Merge-WorkflowManagedDependencyLockValue {
+    param(
+        [AllowNull()][object]$Current,
+        [AllowNull()][object]$Template
+    )
+
+    $templateIsMap = $Template -is [System.Collections.IDictionary] -or $Template -is [pscustomobject]
+    if (-not $templateIsMap) {
+        $before = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $Current) -Depth 100 -Compress
+        $after = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $Template) -Depth 100 -Compress
+        $changed = $before -cne $after
+        return [pscustomobject]@{ value = $(if ($changed) { $Template } else { $Current }); changed = [bool]$changed }
+    }
+
+    $currentIsMap = $Current -is [System.Collections.IDictionary] -or $Current -is [pscustomobject]
+    $currentMap = if ($currentIsMap) { ConvertTo-Agent1cHashtable -Object $Current } else { [ordered]@{} }
+    $templateMap = ConvertTo-Agent1cHashtable -Object $Template
+    $changed = -not $currentIsMap
+    foreach ($key in @($templateMap.Keys)) {
+        if ([string]$key -eq "updatedAt") { continue }
+        $hasCurrent = $currentMap.Contains($key)
+        if ([string]$key -eq "source" -and [string]$templateMap[$key] -eq "template baseline" -and
+            $hasCurrent -and -not [string]::IsNullOrWhiteSpace([string]$currentMap[$key])) {
+            continue
+        }
+        $merged = Merge-WorkflowManagedDependencyLockValue `
+            -Current $(if ($hasCurrent) { $currentMap[$key] } else { $null }) `
+            -Template $templateMap[$key]
+        if ($merged.changed -or -not $hasCurrent) {
+            $currentMap[$key] = $merged.value
+            $changed = $true
+        }
+    }
+    if ($changed -and ($templateMap.Contains("updatedAt") -or $currentMap.Contains("updatedAt"))) {
+        $currentMap["updatedAt"] = (Get-Date).ToString("o")
+    }
+    return [pscustomobject]@{ value = $currentMap; changed = [bool]$changed }
+}
+
+function Sync-WorkflowManagedDependencyLockEntries {
+    $template = New-DefaultDependencyLockManifest
+    $templateDependencies = ConvertTo-Agent1cHashtable -Object (Get-ConfigValueFromObject -Object $template -Path "dependencies" -Default $null)
+    $managedNames = @(Get-WorkflowManagedDependencyLockEntryNames -TemplateManifest $template)
+    $mode = Get-DependencyMode
+    $lockPath = Get-DependencyLockPath
+
+    if ($mode -eq "locked" -and -not (Test-Path -LiteralPath $lockPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "DEPENDENCY_LOCK_UPGRADE_REQUIRED: dependency mode is locked, but .agent-1c/dependency-lock.json is missing."
+    }
+    if ($mode -eq "fresh") {
+        Ensure-DependencyLockManifest
+    }
+
+    $manifest = ConvertTo-Agent1cHashtable -Object (Read-DependencyLockManifest)
+    $dependenciesValue = Get-ConfigValueFromObject -Object $manifest -Path "dependencies" -Default $null
+    $dependencies = if ($null -eq $dependenciesValue) { [ordered]@{} } else { ConvertTo-Agent1cHashtable -Object $dependenciesValue }
+
+    if ($mode -eq "locked") {
+        $missing = [System.Collections.Generic.List[string]]::new()
+        foreach ($name in $managedNames) {
+            if (-not $dependencies.Contains($name)) {
+                $missing.Add("dependencies.$name") | Out-Null
+                continue
+            }
+            foreach ($path in @(Get-MissingDependencyLockValuePaths -Current $dependencies[$name] -Template $templateDependencies[$name] -Prefix "dependencies.$name")) {
+                $missing.Add([string]$path) | Out-Null
+            }
+        }
+        if ($missing.Count -gt 0) {
+            throw "DEPENDENCY_LOCK_UPGRADE_REQUIRED: dependency mode is locked and the workflow dependency lock is incomplete. Missing: $($missing -join ', ')."
+        }
+        return [pscustomobject]@{ mode = "locked"; changed = $false; entries = @() }
+    }
+
+    $changedEntries = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in $managedNames) {
+        $hasCurrent = $dependencies.Contains($name)
+        $merged = Merge-WorkflowManagedDependencyLockValue `
+            -Current $(if ($hasCurrent) { $dependencies[$name] } else { $null }) `
+            -Template $templateDependencies[$name]
+        if ($merged.changed -or -not $hasCurrent) {
+            $dependencies[$name] = $merged.value
+            $changedEntries.Add([string]$name) | Out-Null
+        }
+    }
+
+    if ($changedEntries.Count -gt 0) {
+        $manifest["dependencies"] = $dependencies
+        $manifest["mode"] = "fresh"
+        Write-DependencyLockManifest -Manifest $manifest
+        Write-Host "Workflow-managed dependency lock synchronized: $($changedEntries -join ', ')."
+    }
+    return [pscustomobject]@{
+        mode = "fresh"
+        changed = ($changedEntries.Count -gt 0)
+        entries = @($changedEntries)
+    }
+}
+
 function Update-DependencyLockEntry {
     param(
         [string]$Name,
