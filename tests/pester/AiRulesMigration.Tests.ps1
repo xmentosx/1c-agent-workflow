@@ -502,6 +502,36 @@ Describe "ai_rules_1c migration planning" {
 }
 
 Describe "ai_rules_1c transactional migration" {
+    It "excludes Kilo runtime worktrees from snapshots and preserves them during restore" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-kilo-runtime-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-AiRulesMigrationFixture -Root $tempRoot
+            $kiloRoot = Join-Path $tempRoot ".kilo"
+            $kiloConfig = Join-Path $kiloRoot "kilo.json"
+            $runtimeSentinel = Join-Path $kiloRoot "worktrees\concrete-macadamia\sentinel.txt"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $runtimeSentinel) | Out-Null
+            [System.IO.File]::WriteAllText($kiloConfig, "original", (New-Object System.Text.UTF8Encoding $false))
+            [System.IO.File]::WriteAllText($runtimeSentinel, "runtime", (New-Object System.Text.UTF8Encoding $false))
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $snapshot = New-AiRulesMigrationSnapshot
+                $payloadWorktrees = Join-Path $snapshot.payloadRoot ".kilo\worktrees"
+                [System.IO.File]::WriteAllText((Join-Path $script:ProjectRoot ".kilo\kilo.json"), "changed", (New-Object System.Text.UTF8Encoding $false))
+                [System.IO.File]::WriteAllText((Join-Path $script:ProjectRoot ".kilo\new-managed.txt"), "new", (New-Object System.Text.UTF8Encoding $false))
+                Restore-AiRulesMigrationSnapshot -Snapshot $snapshot
+                [pscustomobject]@{ payloadWorktrees = $payloadWorktrees }
+            }
+
+            Test-Path -LiteralPath $result.payloadWorktrees | Should -BeFalse
+            (Get-Content -LiteralPath $kiloConfig -Raw -Encoding UTF8) | Should -Be "original"
+            (Get-Content -LiteralPath $runtimeSentinel -Raw -Encoding UTF8) | Should -Be "runtime"
+            Test-Path -LiteralPath (Join-Path $kiloRoot "new-managed.txt") | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "leaves custom repositories untouched and writes a recovery report" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-recovery-" + [guid]::NewGuid().ToString("N"))
         try {
