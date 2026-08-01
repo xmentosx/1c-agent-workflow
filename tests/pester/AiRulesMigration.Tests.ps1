@@ -3,6 +3,9 @@
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
     $HelperPath = $context.HelperPath
+    $script:TargetAiRulesRef = "itl-main-410951e7-r22"
+    $script:TargetAiRulesCommit = "bcd94d1723f26a0b0568869845484c8572c402a6"
+    $script:TargetAiRulesRevision = 22
 
     function New-AiRulesMigrationFixture {
         param(
@@ -25,18 +28,18 @@
         $targetConfig = [ordered]@{
             aiRules = [ordered]@{
                 repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-                ref = $(if ($ConfigureTarget) { "itl-main-410951e7-r21" } else { "" })
+                ref = $(if ($ConfigureTarget) { $script:TargetAiRulesRef } else { "" })
                 tools = @($CurrentTool)
             }
         }
         $targetEntry = [ordered]@{
             repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            ref = "itl-main-410951e7-r21"
-            commit = "37362c6fa0e29b8aee0f70e01d85bf77e41cc683"
+            ref = $script:TargetAiRulesRef
+            commit = $script:TargetAiRulesCommit
             upstreamRepo = "https://github.com/comol/ai_rules_1c.git"
             upstreamRef = "refs/heads/main"
             upstreamCommit = "410951e74fd3e6b7a763cf49757935b9a34d3f31"
-            downstreamRevision = 21
+            downstreamRevision = $script:TargetAiRulesRevision
             compatibilityStatus = $(if ($ConfigureTarget) { "passed" } else { "legacy-baseline" })
             compatibilityCheckedAt = "2026-07-11T00:00:00Z"
         }
@@ -236,7 +239,7 @@ Describe "ai_rules_1c migration planning" {
             $plan.fromCommit | Should -Be "6396b1538339ce1ff025cd6f2a24ccb8ff742e1e"
             $plan.comparisonCommit | Should -Be "a421cf44eb1f5859cf2a2b74884f8fbcaefc4826"
             $plan.fromDownstreamRevision | Should -Be 4
-            $plan.target.downstreamRevision | Should -Be 21
+            $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -254,8 +257,8 @@ Describe "ai_rules_1c migration planning" {
             $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "eligible"
             $plan.fromDownstreamRevision | Should -Be 11
-            $plan.target.downstreamRevision | Should -Be 21
-            $plan.target.ref | Should -Be "itl-main-410951e7-r21"
+            $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision
+            $plan.target.ref | Should -Be $script:TargetAiRulesRef
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -276,9 +279,9 @@ Describe "ai_rules_1c migration planning" {
                 $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
                 $plan.status | Should -Be "eligible" -Because $client
                 $plan.fromDownstreamRevision | Should -Be 12 -Because $client
-                $plan.target.downstreamRevision | Should -Be 21 -Because $client
-                $plan.target.ref | Should -Be "itl-main-410951e7-r21" -Because $client
-                $plan.target.commit | Should -Be "37362c6fa0e29b8aee0f70e01d85bf77e41cc683" -Because $client
+                $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because $client
+                $plan.target.ref | Should -Be $script:TargetAiRulesRef -Because $client
+                $plan.target.commit | Should -Be $script:TargetAiRulesCommit -Because $client
             } finally {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -300,9 +303,9 @@ Describe "ai_rules_1c migration planning" {
                 $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
                 $plan.status | Should -Be "eligible" -Because $client
                 $plan.fromDownstreamRevision | Should -Be 13 -Because $client
-                $plan.target.downstreamRevision | Should -Be 21 -Because $client
-                $plan.target.ref | Should -Be "itl-main-410951e7-r21" -Because $client
-                $plan.target.commit | Should -Be "37362c6fa0e29b8aee0f70e01d85bf77e41cc683" -Because $client
+                $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because $client
+                $plan.target.ref | Should -Be $script:TargetAiRulesRef -Because $client
+                $plan.target.commit | Should -Be $script:TargetAiRulesCommit -Because $client
             } finally {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -324,9 +327,9 @@ Describe "ai_rules_1c migration planning" {
                 $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
                 $plan.status | Should -Be "eligible" -Because $client
                 $plan.fromDownstreamRevision | Should -Be 14 -Because $client
-                $plan.target.downstreamRevision | Should -Be 21 -Because $client
-                $plan.target.ref | Should -Be "itl-main-410951e7-r21" -Because $client
-                $plan.target.commit | Should -Be "37362c6fa0e29b8aee0f70e01d85bf77e41cc683" -Because $client
+                $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because $client
+                $plan.target.ref | Should -Be $script:TargetAiRulesRef -Because $client
+                $plan.target.commit | Should -Be $script:TargetAiRulesCommit -Because $client
             } finally {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -348,9 +351,9 @@ Describe "ai_rules_1c migration planning" {
                 $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
                 $plan.status | Should -Be "eligible" -Because $client
                 $plan.fromDownstreamRevision | Should -Be 15 -Because $client
-                $plan.target.downstreamRevision | Should -Be 21 -Because $client
-                $plan.target.ref | Should -Be "itl-main-410951e7-r21" -Because $client
-                $plan.target.commit | Should -Be "37362c6fa0e29b8aee0f70e01d85bf77e41cc683" -Because $client
+                $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because $client
+                $plan.target.ref | Should -Be $script:TargetAiRulesRef -Because $client
+                $plan.target.commit | Should -Be $script:TargetAiRulesCommit -Because $client
             } finally {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -372,9 +375,9 @@ Describe "ai_rules_1c migration planning" {
                 $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
                 $plan.status | Should -Be "eligible" -Because $client
                 $plan.fromDownstreamRevision | Should -Be 16 -Because $client
-                $plan.target.downstreamRevision | Should -Be 21 -Because $client
-                $plan.target.ref | Should -Be "itl-main-410951e7-r21" -Because $client
-                $plan.target.commit | Should -Be "37362c6fa0e29b8aee0f70e01d85bf77e41cc683" -Because $client
+                $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because $client
+                $plan.target.ref | Should -Be $script:TargetAiRulesRef -Because $client
+                $plan.target.commit | Should -Be $script:TargetAiRulesCommit -Because $client
             } finally {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -396,9 +399,9 @@ Describe "ai_rules_1c migration planning" {
                 $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
                 $plan.status | Should -Be "eligible" -Because $client
                 $plan.fromDownstreamRevision | Should -Be 17 -Because $client
-                $plan.target.downstreamRevision | Should -Be 21 -Because $client
-                $plan.target.ref | Should -Be "itl-main-410951e7-r21" -Because $client
-                $plan.target.commit | Should -Be "37362c6fa0e29b8aee0f70e01d85bf77e41cc683" -Because $client
+                $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because $client
+                $plan.target.ref | Should -Be $script:TargetAiRulesRef -Because $client
+                $plan.target.commit | Should -Be $script:TargetAiRulesCommit -Because $client
             } finally {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -420,9 +423,9 @@ Describe "ai_rules_1c migration planning" {
                 $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
                 $plan.status | Should -Be "eligible" -Because $client
                 $plan.fromDownstreamRevision | Should -Be 18 -Because $client
-                $plan.target.downstreamRevision | Should -Be 21 -Because $client
-                $plan.target.ref | Should -Be "itl-main-410951e7-r21" -Because $client
-                $plan.target.commit | Should -Be "37362c6fa0e29b8aee0f70e01d85bf77e41cc683" -Because $client
+                $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because $client
+                $plan.target.ref | Should -Be $script:TargetAiRulesRef -Because $client
+                $plan.target.commit | Should -Be $script:TargetAiRulesCommit -Because $client
             }
             finally {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -435,10 +438,10 @@ Describe "ai_rules_1c migration planning" {
         try {
             New-AiRulesMigrationFixture -Root $tempRoot `
                 -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" `
-                -CurrentRef "itl-main-410951e7-r21" `
-                -CurrentCommit "37362c6fa0e29b8aee0f70e01d85bf77e41cc683" `
+                -CurrentRef $script:TargetAiRulesRef `
+                -CurrentCommit $script:TargetAiRulesCommit `
                 -CurrentUpstreamCommit "410951e74fd3e6b7a763cf49757935b9a34d3f31" `
-                -CurrentDownstreamRevision 21
+                -CurrentDownstreamRevision $script:TargetAiRulesRevision
             $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "current"
         } finally {
@@ -446,7 +449,7 @@ Describe "ai_rules_1c migration planning" {
         }
     }
 
-    It "plans monotonic r11 through r20 to r21 migration for all ten clients" {
+    It "plans monotonic r11 through r21 to r22 migration for all ten clients" {
         $releases = @(
             [pscustomobject]@{ revision = 11; ref = "itl-main-b4d9875b-r11"; commit = "af82570afca06c40a9588c8a678bf3665bba4870"; upstream = "b4d9875b15c6d93f493035aee51f077126e72a21" },
             [pscustomobject]@{ revision = 12; ref = "itl-main-72665287-r12"; commit = "16e9e44318a79d9e82c12b19e6759cdf6492d9a4"; upstream = "72665287e77361aea3aaf866fef163d98f0fabcd" },
@@ -457,18 +460,19 @@ Describe "ai_rules_1c migration planning" {
             [pscustomobject]@{ revision = 17; ref = "itl-main-72665287-r17"; commit = "27a898c426a1016fffc4a1b008e8ac0cb1490da2"; upstream = "72665287e77361aea3aaf866fef163d98f0fabcd" },
             [pscustomobject]@{ revision = 18; ref = "itl-main-5ae333ed-r18"; commit = "841b30af5d87eb212f497754f1328b38146cb279"; upstream = "5ae333ed49dc66989e305b286acc93691bb96926" },
             [pscustomobject]@{ revision = 19; ref = "itl-main-5ae333ed-r19"; commit = "7952e7d9bb050d67e145c0136e87b6855c353f58"; upstream = "5ae333ed49dc66989e305b286acc93691bb96926" },
-            [pscustomobject]@{ revision = 20; ref = "itl-main-5f3d3f0-r20"; commit = "151aa980b5e99b3d129e974925e734d9ef0afa3e"; upstream = "5f3d3f03b778d7de38cf2cfb18a20cf3e7ed79d8" }
+            [pscustomobject]@{ revision = 20; ref = "itl-main-5f3d3f0-r20"; commit = "151aa980b5e99b3d129e974925e734d9ef0afa3e"; upstream = "5f3d3f03b778d7de38cf2cfb18a20cf3e7ed79d8" },
+            [pscustomobject]@{ revision = 21; ref = "itl-main-410951e7-r21"; commit = "37362c6fa0e29b8aee0f70e01d85bf77e41cc683"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" }
         )
         $clients = @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
         foreach ($release in $releases) {
             foreach ($client in $clients) {
-                $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-r21-$($release.revision)-$($client.Replace('-', '_'))-" + [guid]::NewGuid().ToString("N"))
+                $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-r22-$($release.revision)-$($client.Replace('-', '_'))-" + [guid]::NewGuid().ToString("N"))
                 try {
                     New-AiRulesMigrationFixture -Root $tempRoot -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" -CurrentRef $release.ref -CurrentCommit $release.commit -CurrentUpstreamCommit $release.upstream -CurrentDownstreamRevision $release.revision -CurrentTool $client
                     $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
                     $plan.status | Should -Be "eligible" -Because "r$($release.revision) $client"
-                    $plan.target.downstreamRevision | Should -Be 21 -Because "r$($release.revision) $client"
-                    $plan.target.ref | Should -Be "itl-main-410951e7-r21" -Because "r$($release.revision) $client"
+                    $plan.target.downstreamRevision | Should -Be $script:TargetAiRulesRevision -Because "r$($release.revision) $client"
+                    $plan.target.ref | Should -Be $script:TargetAiRulesRef -Because "r$($release.revision) $client"
                 } finally {
                     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
                 }
@@ -651,7 +655,7 @@ Describe "ai_rules_1c transactional migration" {
             $report.status | Should -Be "blocked"
             $report.migrationStatus | Should -Be "custom"
             $report.current.repo | Should -Be "https://example.invalid/custom-rules.git"
-            $report.target.ref | Should -Be "itl-main-410951e7-r21"
+            $report.target.ref | Should -Be $script:TargetAiRulesRef
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -717,8 +721,8 @@ Describe "ai_rules_1c transactional migration" {
             $config = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $lock = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $config.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-            $config.aiRules.ref | Should -Be "itl-main-410951e7-r21"
-            $lock.dependencies.aiRules1c.commit | Should -Be "37362c6fa0e29b8aee0f70e01d85bf77e41cc683"
+            $config.aiRules.ref | Should -Be $script:TargetAiRulesRef
+            $lock.dependencies.aiRules1c.commit | Should -Be $script:TargetAiRulesCommit
             $lock.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
             (Get-FileHash -Algorithm SHA256 -LiteralPath $kiloPath).Hash | Should -Be $kiloBefore
             (Get-FileHash -Algorithm SHA256 -LiteralPath $localStatePath).Hash | Should -Be $localStateBefore
