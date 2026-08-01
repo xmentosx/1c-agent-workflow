@@ -216,4 +216,115 @@
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+
+    It "reconciles every workflow-managed entry in a sparse fresh lock and preserves special and foreign entries" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lock-sparse-fresh-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"dependencyMode":"fresh"}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{"workflowPackage":{"commit":"keep-workflow"},"aiRules1c":{"commit":"keep-rules"},"apache":{"value":"keep-foreign"}}}'
+            $lockPath = Join-Path $tempRoot ".agent-1c\dependency-lock.json"
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $sync = Sync-WorkflowManagedDependencyLockEntries
+                $manifest = Read-DependencyLockManifest
+                $template = New-DefaultDependencyLockManifest
+                $names = @(Get-WorkflowManagedDependencyLockEntryNames -TemplateManifest $template)
+                [pscustomobject]@{ sync = $sync; manifest = $manifest; template = $template; names = $names }
+            }
+
+            $result.sync.changed | Should -BeTrue
+            @($result.sync.entries | Sort-Object) | Should -Be @($result.names | Sort-Object)
+            foreach ($name in $result.names) {
+                $actualComparable = & {
+                    . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    ConvertTo-DependencyLockComparableValue -Value $result.manifest.dependencies.$name
+                }
+                $templateComparable = & {
+                    . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    ConvertTo-DependencyLockComparableValue -Value $result.template.dependencies.$name
+                }
+                ($actualComparable | ConvertTo-Json -Depth 100 -Compress) | Should -Be ($templateComparable | ConvertTo-Json -Depth 100 -Compress)
+            }
+            $result.manifest.dependencies.workflowPackage.commit | Should -Be "keep-workflow"
+            $result.manifest.dependencies.aiRules1c.commit | Should -Be "keep-rules"
+            $result.manifest.dependencies.apache.value | Should -Be "keep-foreign"
+
+            $beforeRepeat = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8
+            $repeat = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Sync-WorkflowManagedDependencyLockEntries
+            }
+            $repeat.changed | Should -BeFalse
+            (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $beforeRepeat
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "updates canonical pins without replacing compatibility runtime metadata" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lock-runtime-metadata-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"dependencyMode":"fresh"}'
+            $manifest = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $manifest.dependencies.roctupMcpToolkit.version = "v0"
+            $manifest.dependencies.roctupMcpToolkit.source = "compatibility-manifest"
+            $manifest.dependencies.roctupMcpToolkit.updatedAt = "runtime-roctup"
+            $manifest.dependencies.vanessaMcp.clientMcp.version = "v0"
+            $manifest.dependencies.vanessaMcp.clientMcp.source = "compatibility-manifest"
+            $manifest.dependencies.vanessaMcp.clientMcp.updatedAt = "runtime-vanessa"
+            $lockPath = Join-Path $tempRoot ".agent-1c\dependency-lock.json"
+            Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value (($manifest | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+
+            $first = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Sync-WorkflowManagedDependencyLockEntries | Out-Null
+                Read-DependencyLockManifest
+            }
+            $canonical = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $first.dependencies.roctupMcpToolkit.version | Should -Be $canonical.dependencies.roctupMcpToolkit.version
+            $first.dependencies.roctupMcpToolkit.source | Should -Be "compatibility-manifest"
+            $first.dependencies.vanessaMcp.clientMcp.version | Should -Be $canonical.dependencies.vanessaMcp.clientMcp.version
+            $first.dependencies.vanessaMcp.clientMcp.source | Should -Be "compatibility-manifest"
+
+            $beforeRepeat = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Sync-WorkflowManagedDependencyLockEntries | Out-Null
+            }
+            (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $beforeRepeat
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "reports every missing locked dependency path without mutating the lock" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lock-sparse-locked-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"dependencyMode":"locked"}'
+            $lockPath = Join-Path $tempRoot ".agent-1c\dependency-lock.json"
+            Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"locked","dependencies":{"workflowPackage":{"commit":"keep"},"aiRules1c":{"commit":"keep"},"apache":{"value":"keep"}}}'
+            $before = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $template = New-DefaultDependencyLockManifest
+                $names = @(Get-WorkflowManagedDependencyLockEntryNames -TemplateManifest $template)
+                $errorText = ""
+                try { Sync-WorkflowManagedDependencyLockEntries | Out-Null } catch { $errorText = $_.Exception.Message }
+                [pscustomobject]@{ names = $names; error = $errorText }
+            }
+
+            $result.error | Should -Match "DEPENDENCY_LOCK_UPGRADE_REQUIRED"
+            foreach ($name in $result.names) {
+                $result.error | Should -Match ([regex]::Escape("dependencies.$name"))
+            }
+            (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $before
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
