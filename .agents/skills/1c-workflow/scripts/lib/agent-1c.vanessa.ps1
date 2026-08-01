@@ -2253,15 +2253,24 @@ function Get-VerificationFingerprintScopePaths {
 function Get-VerificationWorkingTreeChangePaths {
     param([string[]]$PathSpec)
 
-    $tracked = @(Get-GitPathList -Arguments (@(
-        "diff",
-        "--name-only",
-        "-z",
-        "--no-renames",
-        "--diff-filter=ACDMRTUXB",
-        "HEAD",
-        "--"
-    ) + @($PathSpec)))
+    if (Test-GitHasAnyCommit) {
+        $tracked = @(Get-GitPathList -Arguments (@(
+            "diff",
+            "--name-only",
+            "-z",
+            "--no-renames",
+            "--diff-filter=ACDMRTUXB",
+            "HEAD",
+            "--"
+        ) + @($PathSpec)))
+    } else {
+        $tracked = @(Get-GitPathList -Arguments (@(
+            "ls-files",
+            "-z",
+            "--cached",
+            "--"
+        ) + @($PathSpec)))
+    }
     $untracked = @(Get-GitPathList -Arguments (@(
         "ls-files",
         "-z",
@@ -2288,7 +2297,8 @@ function New-VerificationEffectiveTree {
     param([string[]]$ChangedPaths)
 
     $paths = @($ChangedPaths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
-    if ($paths.Count -eq 0) {
+    $hasHead = Test-GitHasAnyCommit
+    if ($hasHead -and $paths.Count -eq 0) {
         return "HEAD"
     }
 
@@ -2298,18 +2308,24 @@ function New-VerificationEffectiveTree {
     $hadGitIndexFile = Test-Path Env:GIT_INDEX_FILE
     $previousGitIndexFile = $env:GIT_INDEX_FILE
     try {
-        $pathspecText = (@($paths) -join ([string][char]0)) + [char]0
-        [System.IO.File]::WriteAllText($pathspecPath, $pathspecText, (Get-Utf8Encoding))
-
         $env:GIT_INDEX_FILE = $indexPath
-        Invoke-Git @("read-tree", "HEAD")
-        Invoke-Git @(
-            "--literal-pathspecs",
-            "add",
-            "-A",
-            "--pathspec-from-file=$pathspecPath",
-            "--pathspec-file-nul"
-        )
+        if ($hasHead) {
+            Invoke-Git @("read-tree", "HEAD")
+        } else {
+            Invoke-Git @("read-tree", "--empty")
+        }
+        if ($paths.Count -gt 0) {
+            $pathspecText = (@($paths) -join ([string][char]0)) + [char]0
+            [System.IO.File]::WriteAllText($pathspecPath, $pathspecText, (Get-Utf8Encoding))
+            Invoke-Git @(
+                "--literal-pathspecs",
+                "add",
+                "-A",
+                "--force",
+                "--pathspec-from-file=$pathspecPath",
+                "--pathspec-file-nul"
+            )
+        }
         $tree = [string](Get-GitOutput @("write-tree"))
         if ([string]::IsNullOrWhiteSpace($tree)) {
             throw "Git did not return an effective verification tree."

@@ -495,6 +495,75 @@ function Get-ConfigSourceFingerprint {
     param([string]$ExportPath)
 
     $absoluteExportPath = Assert-ExportPathInsideProject $ExportPath
+    if (-not (Test-Path -LiteralPath $absoluteExportPath -PathType Container)) {
+        throw "Config source path was not found: $absoluteExportPath"
+    }
+    $projectRoot = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd("\", "/")
+    $normalizedExportPath = $absoluteExportPath.Substring($projectRoot.Length).TrimStart("\", "/").Replace("\", "/")
+    if (-not $normalizedExportPath) {
+        throw "Config source path must be a project subdirectory: $absoluteExportPath"
+    }
+    $changedPaths = @(Get-VerificationWorkingTreeChangePaths -PathSpec @($normalizedExportPath))
+    $ignoredPaths = @(Get-GitPathList -Arguments @(
+        "ls-files",
+        "-z",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--",
+        $normalizedExportPath
+    ))
+
+    $pathSet = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::Ordinal)
+    foreach ($repoPath in @($changedPaths) + @($ignoredPaths)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$repoPath)) {
+            [void]$pathSet.Add((([string]$repoPath -replace "\\", "/").TrimStart("/")))
+        }
+    }
+    [string[]]$effectivePaths = @($pathSet)
+    [System.Array]::Sort($effectivePaths, [System.StringComparer]::Ordinal)
+
+    $treeish = New-VerificationEffectiveTree -ChangedPaths $effectivePaths
+    $treeObjectId = Get-GitObjectIdForTreePath -Treeish $treeish -RepoPath $normalizedExportPath
+    $entries = New-Object System.Collections.Generic.List[string]
+    if ($treeObjectId -ne "<missing>") {
+        foreach ($entry in @(Get-GitPathList -Arguments @("ls-tree", "-r", "-z", "${treeish}:$normalizedExportPath"))) {
+            $separator = $entry.IndexOf("`t")
+            if ($separator -lt 0) {
+                throw "Git returned an invalid source tree entry for '$normalizedExportPath'."
+            }
+            $relative = $entry.Substring($separator + 1).Replace("\\", "/")
+            $leafName = ($relative -split "/")[-1]
+            if ($leafName -ieq "ConfigDumpInfo.xml") { continue }
+            $entries.Add($entry)
+        }
+    }
+
+    $payload = [System.Text.Encoding]::UTF8.GetBytes(($entries.ToArray() -join ([string][char]0)))
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $treeHash = ([System.BitConverter]::ToString($sha.ComputeHash($payload))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+    return [pscustomobject]@{
+        fingerprint = "v2|git-tree-sha256|$treeHash"
+        fileCount = $entries.Count
+        absoluteExportPath = $absoluteExportPath
+        treeObjectId = $treeObjectId
+    }
+}
+
+function Test-LegacyConfigSourceFingerprint {
+    param([string]$Fingerprint)
+
+    return (-not [string]::IsNullOrWhiteSpace($Fingerprint) -and $Fingerprint -match '^[0-9a-fA-F]{64}$')
+}
+
+function Get-LegacyConfigSourceFingerprint {
+    param([string]$ExportPath)
+
+    $absoluteExportPath = Assert-ExportPathInsideProject $ExportPath
     $root = $absoluteExportPath.TrimEnd("\", "/")
     $entries = New-Object System.Collections.Generic.List[string]
     foreach ($file in @(Get-ChildItem -LiteralPath $absoluteExportPath -Recurse -File -Force -ErrorAction Stop)) {
@@ -507,14 +576,9 @@ function Get-ConfigSourceFingerprint {
     $payload = [System.Text.Encoding]::UTF8.GetBytes(($ordered -join "`n"))
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
-        $fingerprint = ([System.BitConverter]::ToString($sha.ComputeHash($payload))).Replace("-", "").ToLowerInvariant()
+        return ([System.BitConverter]::ToString($sha.ComputeHash($payload))).Replace("-", "").ToLowerInvariant()
     } finally {
         $sha.Dispose()
-    }
-    return [pscustomobject]@{
-        fingerprint = $fingerprint
-        fileCount = $ordered.Count
-        absoluteExportPath = $absoluteExportPath
     }
 }
 
@@ -1220,12 +1284,25 @@ function Load-ConfigFromFiles {
     $previousFingerprint = [string](Get-StateValue -State $State -Name $fingerprintField -Default "")
     $normalizationStatus = [string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "")
     $currentCommit = Get-CurrentCommit
+    $changeSet = $null
+    $legacyFingerprintMigrated = $false
 
-    if ($previousFingerprint -and $previousFingerprint -eq $source.fingerprint) {
+    if ($previousFingerprint -and $previousFingerprint -ne $source.fingerprint -and (Test-LegacyConfigSourceFingerprint -Fingerprint $previousFingerprint)) {
+        Write-Host "Confirming the legacy $ContentKind source fingerprint once before migration."
+        $legacyFingerprintMigrated = ($previousFingerprint -ceq (Get-LegacyConfigSourceFingerprint -ExportPath $ExportPath))
+    }
+
+    if ($previousFingerprint -and ($previousFingerprint -eq $source.fingerprint -or $legacyFingerprintMigrated)) {
         $normalizationRequired = $normalizationStatus -ne "passed"
-        $reason = if ($normalizationRequired) { "source-fingerprint-match-normalization-required" } else { "source-fingerprint-match" }
-        Write-Host "Config source fingerprint unchanged for $ContentKind. Designer skipped."
-        Set-RunStage -Stage "config-load.skipped" -Detail "The $ContentKind fingerprint is unchanged; Designer was skipped."
+        if ($legacyFingerprintMigrated) {
+            $reason = if ($normalizationRequired) { "legacy-source-fingerprint-migrated-normalization-required" } else { "legacy-source-fingerprint-migrated" }
+            Write-Host "Legacy config source fingerprint migrated for $ContentKind without a Designer load."
+            Set-RunStage -Stage "config-load.skipped" -Detail "The unchanged $ContentKind source was migrated to the Git-tree fingerprint; Designer was skipped."
+        } else {
+            $reason = if ($normalizationRequired) { "source-fingerprint-match-normalization-required" } else { "source-fingerprint-match" }
+            Write-Host "Config source fingerprint unchanged for $ContentKind. Designer skipped."
+            Set-RunStage -Stage "config-load.skipped" -Detail "The $ContentKind fingerprint is unchanged; Designer was skipped."
+        }
         if ($normalizationRequired) { Write-Host "Enterprise normalization remains $normalizationStatus and will be retried without Designer." }
         return [pscustomobject]@{
             loaded = $false
@@ -1247,7 +1324,9 @@ function Load-ConfigFromFiles {
         }
     }
 
-    $changeSet = Get-ConfigLoadChangeSet -State $State -ExportPath $ExportPath -ContentKind $ContentKind
+    if ($null -eq $changeSet) {
+        $changeSet = Get-ConfigLoadChangeSet -State $State -ExportPath $ExportPath -ContentKind $ContentKind
+    }
     if ($changeSet.files.Count -eq 0) {
         if ($previousFingerprint) {
             Write-Warning "Source fingerprint changed but Git produced no partial list. Running a full load to preserve correctness."
