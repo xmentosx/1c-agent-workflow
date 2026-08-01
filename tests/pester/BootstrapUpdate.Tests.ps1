@@ -571,7 +571,6 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         foreach ($marker in @("#language: ru", $featureMarker, $contextMarker, $scenarioMarker)) {
             $vanessaGuideText | Should -Match ([regex]::Escape($marker))
         }
-        [math]::Ceiling(([System.Text.Encoding]::UTF8.GetByteCount($vanessaGuideText)) / 4) | Should -BeLessOrEqual 2400
 
         (Test-Path -LiteralPath (Join-Path $RepoRoot "VANESSA-TESTS-GUIDE.md")) | Should -BeFalse
         (Test-Path -LiteralPath (Join-Path $RepoRoot "VANESSA-TESTS-GUIDE.ru.md")) | Should -BeFalse

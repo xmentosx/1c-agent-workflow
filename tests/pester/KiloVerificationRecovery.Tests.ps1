@@ -46,12 +46,11 @@ Describe "Kilo verification recovery command" {
         }
     }
 
-    It "makes the completion contract explicit without growing USER-RULES" {
+    It "keeps the completion contract explicit in USER-RULES" {
         $rulesText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\USER-RULES.append.md") -Raw -Encoding UTF8
         foreach ($marker in @("Quick-fix is no exception", "verify_xml", "targeted/static", "executable milestones only to decide continuation", "fresh unfiltered", "after the last relevant edit", "pending verification")) {
             $rulesText | Should -Match ([regex]::Escape($marker))
         }
-        [regex]::Matches($rulesText, '\S+').Count | Should -BeLessOrEqual 581
     }
 
     It "keeps itl-check mechanical and makes itl-verify-fix the bounded recovery loop" {

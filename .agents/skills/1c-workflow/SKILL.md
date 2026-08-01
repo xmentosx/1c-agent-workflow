@@ -15,7 +15,10 @@ Use `scripts/agent-1c.ps1` when PowerShell is available. Open only the matching 
 - `references/mcp.md`: ROCTUP data MCP, vibecoding1c MCP, branch Vanessa UI MCP, External MCP, legacy Data MCP.
 - `references/branch-lifecycle.md`: branches, worktrees, extension helpers, context activation, refresh, list/switch, advanced close.
 - `references/verification-result.md`: `/itl-check`, Vanessa Automation, event-log baseline, result export, `verificationPolicy`.
-- `references/dev-branch-development.md`: work inside an existing `itldev/*` branch.
+- `references/dev-branch-development.md`: unclear development mode, the complete branch-development menu, or pending extension setup inside an existing `itldev/*` branch.
+- `references/dev-branch-quick-fix.md`: an already classified direct quick-fix inside `itldev/*`.
+- `references/dev-branch-direct.md`: an already classified direct full-cycle change inside `itldev/*`.
+- `references/dev-branch-openspec.md`: an already selected OpenSpec planning flow, with quick-fix or full-cycle execution chosen independently, inside `itldev/*`.
 - `references/vanessa-tests.md`: author or edit focused Vanessa Automation feature tests.
 - `references/vanessa-authoring.md`: use MCP selectively while developing or diagnosing Vanessa tests.
 - `references/advanced-actions.md`: diagnostics and full helper action catalog.
