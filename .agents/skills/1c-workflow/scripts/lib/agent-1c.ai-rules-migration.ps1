@@ -505,7 +505,14 @@ function New-AiRulesMigrationSnapshot {
         if ($present) {
             $destination = Join-Path $payloadRoot $relativePath
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
-            Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
+            if ($isDirectory -and ($relativePath -replace '/', '\').TrimEnd('\') -eq ".kilo") {
+                New-Item -ItemType Directory -Force -Path $destination | Out-Null
+                foreach ($child in @(Get-ChildItem -LiteralPath $source -Force | Where-Object { $_.Name -ne "worktrees" })) {
+                    Copy-Item -LiteralPath $child.FullName -Destination $destination -Recurse -Force
+                }
+            } else {
+                Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
+            }
         }
         $entries += [ordered]@{ path = $relativePath; present = [bool]$present; isDirectory = [bool]$isDirectory }
     }
@@ -536,7 +543,26 @@ function Restore-AiRulesMigrationSnapshot {
     param([object]$Snapshot)
 
     foreach ($entry in @($Snapshot.entries)) {
-        $target = Join-Path $script:ProjectRoot ([string]$entry.path)
+        $relativePath = [string]$entry.path
+        $target = Join-Path $script:ProjectRoot $relativePath
+        if (($relativePath -replace '/', '\').TrimEnd('\') -eq ".kilo") {
+            if ((Test-Path -LiteralPath $target) -and -not (Test-Path -LiteralPath $target -PathType Container)) {
+                Remove-Item -LiteralPath $target -Force
+            }
+            if (Test-Path -LiteralPath $target -PathType Container) {
+                foreach ($child in @(Get-ChildItem -LiteralPath $target -Force | Where-Object { $_.Name -ne "worktrees" })) {
+                    Remove-Item -LiteralPath $child.FullName -Recurse -Force
+                }
+            }
+            if ([bool]$entry.present) {
+                $source = Join-Path $Snapshot.payloadRoot $relativePath
+                New-Item -ItemType Directory -Force -Path $target | Out-Null
+                foreach ($child in @(Get-ChildItem -LiteralPath $source -Force)) {
+                    Copy-Item -LiteralPath $child.FullName -Destination $target -Recurse -Force
+                }
+            }
+            continue
+        }
         if (Test-Path -LiteralPath $target) {
             Remove-Item -LiteralPath $target -Recurse -Force
         }
