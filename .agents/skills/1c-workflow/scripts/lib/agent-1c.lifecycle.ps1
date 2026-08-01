@@ -7806,12 +7806,19 @@ function Invoke-DevBranchCheck {
     $trigger = $(if ($VerificationTrigger) { $VerificationTrigger } else { "command" })
     $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
     $state = Read-DevBranchState -Name $DevBranchName
+    $checkExportPath = if ((Get-DevBranchKind -State $state) -eq "extension") { Assert-ExtensionFilesReady -State $state } else { Get-ExportPath }
+    $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Resolve-Agent1cFullPath -Path $checkExportPath)
+    try {
     Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "check-dev-branch preflight" | Out-Null
     Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $explicit
     Use-ItlVerificationRepairAttempt
     Update-DevBranchBase
+    Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
     Invoke-ItlVerificationCycle -Trigger $trigger -ExplicitComponents $explicit
     Complete-ItlVerificationRepairSession
+    } finally {
+        try { Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot } finally { Remove-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot }
+    }
 }
 
 function Check-DevBranch {
@@ -7891,12 +7898,17 @@ function Export-DevBranchResult {
     Confirm-UnverifiedProceed -State $state -Operation "export-dev-branch-result" -VerificationState $initialVerification -Allow:$AllowUnverifiedResult | Out-Null
 
     $kind = Get-DevBranchKind -State $state
+    $loadExportPath = if ($kind -eq "extension") { Assert-ExtensionFilesReady -State $state } else { Get-ExportPath }
+    $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Resolve-Agent1cFullPath -Path $loadExportPath)
+    try {
     if ($kind -eq "extension") {
         $extensionName = Require-DevBranchExtensionName -State $state
-        $extensionExportPath = Assert-ExtensionFilesReady -State $state
-        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath $extensionExportPath -ContentKind "extension" -ExtensionName $extensionName -Mode $ConfigLoadMode
+        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath $loadExportPath -ContentKind "extension" -ExtensionName $extensionName -Mode $ConfigLoadMode
     } else {
-        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration" -Mode $ConfigLoadMode
+        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath $loadExportPath -ContentKind "configuration" -Mode $ConfigLoadMode
+    }
+    } finally {
+        try { Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot } finally { Remove-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot }
     }
     $devBranchCommit = Get-CurrentCommit
     $masterCommit = Get-GitCommitOrEmpty (Get-MasterBranch)

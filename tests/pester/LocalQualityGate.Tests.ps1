@@ -1,91 +1,82 @@
-BeforeAll {
+﻿BeforeAll {
     . (Join-Path $PSScriptRoot "TestSupport.ps1")
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
 }
 
 Describe "Local quality gate contract" {
-    It "parses scripts/check.ps1" {
+    It "keeps the short modes cheap and reserves broad proof for Develop and Release" {
+        $path = Join-Path $RepoRoot "scripts\check.ps1"
         $tokens = $null
         $errors = $null
-        [void][System.Management.Automation.Language.Parser]::ParseFile(
-            (Join-Path $RepoRoot "scripts\check.ps1"),
-            [ref]$tokens,
-            [ref]$errors
-        )
+        [void][Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
         @($errors) | Should -BeNullOrEmpty
+        $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8
+        $text | Should -Match '\[ValidateSet\("Targeted", "Smoke", "Fast", "Full", "Develop", "Release"\)\]'
+        $text | Should -Match '\[string\]\$Mode = "Smoke"'
+        $text | Should -Match 'Fast is deprecated and now aliases Smoke'
+        $text | Should -Match 'resolve-targeted-tests\.ps1'
+        $text | Should -Match 'smokeTests'
+        $text | Should -Match 'TimeoutSeconds 5400'
+        $text | Should -Match 'TimeoutSeconds 7200'
+        $text | Should -Not -Match 'TimeoutSeconds 14400'
+
+        . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog | Should -BeTrue
+        @(Get-PublicLifecycleActions -RepositoryRoot $RepoRoot).Count | Should -BeGreaterThan 50
+        $known = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("docs/путь с пробелами/пример.md", "scripts/source-delivery.ps1")
+        @($known.unknownPaths) | Should -BeNullOrEmpty
+        @($known.tests) | Should -Contain "tests/pester/SourceDelivery.Tests.ps1"
+        $unknown = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("unowned/новый файл.ps1")
+        @($unknown.unknownPaths) | Should -Be @("unowned/новый файл.ps1")
+        $retired = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("tests/pester/TriageContract.Tests.ps1")
+        @($retired.tests) | Should -Be @("tests/pester/ParserDocsBudgets.Tests.ps1")
+        @($catalog.contracts.paths | ForEach-Object { @($_) } | Where-Object { [string]$_ -in @("*", "**", "*/*") }) | Should -BeNullOrEmpty
+
+        $testFiles = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot "tests\pester") -File -Filter "*.Tests.ps1")
+        $caseCount = 0
+        $lineCount = 0
+        foreach ($testFile in $testFiles) {
+            $testText = Get-Content -LiteralPath $testFile.FullName -Raw -Encoding UTF8
+            $caseCount += ([regex]::Matches($testText, '(?m)^\s*It\s+["'']')).Count
+            $lineCount += (Get-Content -LiteralPath $testFile.FullName -Encoding UTF8).Count
+        }
+        $testFiles.Count | Should -BeLessThan ([int]$catalog.baseline.testFiles)
+        $caseCount | Should -BeLessThan ([int]$catalog.baseline.testCases)
+        $lineCount | Should -BeLessThan ([int]$catalog.baseline.testLines)
     }
 
-    It "makes Full the default and exposes Fast Full Release modes" {
-        $text = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
-        $text | Should -Match '\[ValidateSet\("Fast", "Full", "Release"\)\]'
-        $text | Should -Match '\[string\]\$Mode = "Full"'
-        $text | Should -Match 'ITL_AI_RULES_SOURCE_PATH'
-        $text | Should -Match 'Get-LocalForkRelease'
-        $text | Should -Match 'invoke-release-e2e\.ps1'
-        $text | Should -Match 'LifecycleOperationLock\.Tests\.ps1'
-        $text | Should -Match 'test-release-readiness\.ps1'
-        $text | Should -Match 'release-context\.json'
-        $text | Should -Match 'ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE'
-        $text | Should -Match 'seedParallelTestFixture'
-        $text | Should -Match 'seedParallelBranchRuntimeConcurrent'
-        $text | Should -Match 'seedParallelLiteRefreshSourceCallCount'
-        $text | Should -Match 'ExplicitAiRulesSource'
-        $text | Should -Match 'Full may qualify pending only with an explicit local -AiRulesSource'
-        $text | Should -Match 'upstreamMergeBase'
-        $text | Should -Match 'promote-ai-rules-compatibility\.ps1'
-        $text | Should -Match 'AiRulesCompatibilityPromotion\.Tests\.ps1'
-    }
-
-    It "requires evidence-backed compatibility promotion before the final Full gate" {
-        $promoterPath = Join-Path $RepoRoot "scripts\promote-ai-rules-compatibility.ps1"
-        Test-Path -LiteralPath $promoterPath -PathType Leaf | Should -BeTrue
-        $promoter = Get-Content -LiteralPath $promoterPath -Raw -Encoding UTF8
-        $promoter | Should -Match 'itl-workflow-full-qualification'
-        $promoter | Should -Match 'repository\.worktreeClean'
-        $promoter | Should -Match 'compatibilityStatus'
-        $promoter | Should -Match 'compatibilityCheckedAt'
+    It "qualifies static and live candidate evidence without repeating Develop during Release" {
+        $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
+        $qualification = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-qualification.ps1") -Raw -Encoding UTF8
+        $promoter = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\promote-ai-rules-compatibility.ps1") -Raw -Encoding UTF8
+        $delivery = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\source-delivery.ps1") -Raw -Encoding UTF8
+        $developJourney = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-develop-e2e.ps1") -Raw -Encoding UTF8
+        $check | Should -Match 'itl-workflow-full-qualification'
+        $check | Should -Match 'itl-workflow-develop-qualification'
+        $check | Should -Match 'Test-DevelopQualification'
+        $check | Should -Match 'Write-DevelopQualification'
+        $check | Should -Match 'Add-ReusedStage -Name "develop-e2e"'
+        $check | Should -Match 'Test-HasExactInventory'
+        $check | Should -Match 'static-tracked-state'; $check | Should -Match ([regex]::Escape("-split ','"))
+        $qualification | Should -Match 'merge-base --is-ancestor'
         $promoter | Should -Match 'qualificationSha256'
-
-        $docs = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\local-quality-gate.md") -Raw -Encoding UTF8
-        $docs | Should -Match 'promote-ai-rules-compatibility\.ps1'
-        $docs | Should -Match '(?s)promote-ai-rules-compatibility\.ps1.*Full.*compatibilityStatus=passed'
+        $promoter | Should -Match 'compatibilityStatus'
+        $delivery | Should -Match 'Restore-DeliveryQualification'
+        $delivery | Should -Match 'itl\\qualifications'; $check | Should -Match ([regex]::Escape('Stop-GateChildProcessTree -Process $process'))
+        foreach ($marker in @('update-workflow', 'SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE=confirmed', 'fresh-bootstrap-init-project', 'Assert-InitializedProject', 'lifecycle-operation.json', 'fresh-status', 'Git worktree: clean', '-Windowed', '$process.Handle', 'ITL develop E2E step', 'Stop-DevelopProcessTree', 'taskkill.exe /PID $processId /T /F', 'fresh-missing-suite', 'fresh-stale-export', 'Assert-FreshVerificationResult', '.agent-1c\dev-branches\{0}.json', 'Assert-ExportResult', 'Read-CompactSummary -ProcessResult $result')) {
+            $developJourney | Should -Match ([regex]::Escape($marker))
+        }
     }
 
-    It "reuses exact or ancestor same-tree Full qualifications and checkpoints static proof before runtime" {
-        $text = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
-        $text | Should -Match 'itl-workflow-full-qualification'
-        $text | Should -Match 'Test-WorkflowQualification'
-        $text | Should -Match 'repository\.worktreeClean'
-        $text | Should -Match 'Test-HasExactInventory'
-        $text | Should -Match 'qualificationJunitPath'
-        $text | Should -Match 'ancestor-same-tree'
-        (Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-qualification.ps1") -Raw -Encoding UTF8) | Should -Match 'merge-base --is-ancestor'
-        $text | Should -Match 'static-tracked-state'
-        $text | Should -Match 'invoke-release-e2e\.ps1'
-        $text | Should -Match 'test-ai-rules-compatibility\.ps1'
-        $text | Should -Match 'invoke-pester-shards\.ps1'
-        $text | Should -Match 'Start-PowerShellChildProcess'
-        $text | Should -Match 'Complete-ParallelGateStage'
-        $text | Should -Match 'forkReadyForParallel'
-        $text | Should -Match '\[int\]\$PesterWorkers = 3'
-        $text | Should -Match ([regex]::Escape('execution = $Execution'))
-        $text | Should -Match 'Add-ReusedStage -Name "pester"'
-        $text | Should -Match 'Invoke-GateStage -Name "helper-help" -Reason "always-run helper parse preflight"'
-        $text | Should -Match 'Invoke-GateStage -Name "release-e2e" -Reason "always-run release runtime proof"'
-        $text | Should -Match ([regex]::Escape('"-ResumeMode", $ReleaseResumeMode'))
-    }
-
-    It "balances every Pester file across isolated workers and merges JUnit" {
+    It "runs complete Pester in isolated balanced workers" {
         $runner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
         $worker = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\run-pester-shard.ps1") -Raw -Encoding UTF8
         $runner | Should -Match '\*\.Tests\.ps1'
         $runner | Should -Match 'Sort-Object.*weight'
-        $runner | Should -Match 'Start-Process'
-        $runner | Should -Match 'RedirectStandardInput'
         $runner | Should -Match 'assignment omitted or duplicated'
-        $runner | Should -Match 'ReleaseGate\.Tests\.ps1'
-        $runner | Should -Match 'only after all parallel workers finish'
+        $runner | Should -Match 'Keep them away from the parallel lifecycle workers'
         $runner | Should -Match 'CreateElement\("testsuites"\)'
         $worker | Should -Match 'Invoke-Pester -Configuration'
     }
@@ -115,22 +106,13 @@ Describe "Local quality gate contract" {
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "does not install repository-managed git hooks" {
+    It "keeps repository-only guidance out of installed packages and preserves the five skills" {
         Test-Path -LiteralPath (Join-Path $RepoRoot ".githooks") | Should -BeFalse
-        $text = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\local-quality-gate.md") -Raw -Encoding UTF8
-        $text | Should -Match "Git hooks"
-        $text | Should -Match "GitHub Actions"
-    }
-
-    It "keeps the five local skill directories present" {
-        $expected = @(
-            "1c-workflow",
-            "1c-workflow-fast",
-            "itl-roctup-1c-data",
-            "itl-vanessa-ui-mcp",
-            "product-docs"
-        ) | Sort-Object
+        $expected = @("1c-workflow", "1c-workflow-fast", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "product-docs") | Sort-Object
         $actual = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills") -Directory | Select-Object -ExpandProperty Name | Sort-Object)
         $actual | Should -Be $expected
+        $docs = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\local-quality-gate.md") -Raw -Encoding UTF8
+        $docs | Should -Match "Git hooks"
+        $docs | Should -Match "GitHub Actions"
     }
 }

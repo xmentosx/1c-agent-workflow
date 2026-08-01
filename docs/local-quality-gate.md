@@ -1,104 +1,100 @@
-# Локальная проверка workflow
+# Проверки и доставка исходного workflow
 
-Действующий quality gate запускается из корня репозитория одной командой:
+Обычная доработка не запускает общий gate. Агент создаёт один связный локальный
+коммит и регистрирует его:
 
 ```powershell
-.\scripts\check.ps1
+.\scripts\source-delivery.ps1 -Action RegisterChange `
+  -CoverageContract <existing-contract-id>
 ```
 
-По умолчанию используется `Full`: все Pester-тесты, smoke-проверка helper и
-compatibility-проверка `ai_rules_1c`. Результаты сохраняются в
-`build/test-results/local` и не коммитятся.
+`-CoverageContract` не нужен, если диапазон уже содержит изменённый Pester-тест.
+Регистрация сама выполняет `Targeted` и только после успеха атомарно записывает
+`base/head` под `refs/itl/develop-queue/*`. Эти refs общие для worktree, но не
+публикуются. Посмотреть очередь можно через `-Action Status`.
 
-Для короткого цикла разработки используйте:
+## Уровни проверки
 
-```powershell
-.\scripts\check.ps1 -Mode Fast
-```
+| Режим | Когда | Hard limit |
+|---|---|---:|
+| `Targeted` | регистрация одной доработки | 15 мин |
+| `Smoke` | короткая проверка runner/catalog/delivery | 2 мин |
+| `Full` | все изолированные Pester и fork compatibility | 20 мин |
+| `Develop` | один Full и реальные стандартные journey | 90 мин |
+| `Release` | только доказательства стабильной поставки после Develop | 120 мин |
 
-Для совместной проверки с локальным fork:
+Без параметров `check.ps1` запускает `Smoke`. Старый `Fast` временно является
+deprecated alias для `Smoke`; в штатном процессе он не используется.
+`Targeted` получает изменённые пути через NUL-delimited Git output и
+`tests/quality-contracts.json`. Неизвестный путь останавливает проверку и требует
+назначить владельца — полного fallback-прогона нет.
 
-```powershell
-.\scripts\check.ps1 -AiRulesSource D:\Git\itl_ai_rules_1c
-```
+Каждый дочерний этап имеет hard timeout, no-progress timeout, heartbeat и запись
+длительности в `build/test-results/local/check-summary.json`. Провал либо
+превышение бюджета блокирует публикацию.
 
-Успешный `Full` на clean workflow commit и точном clean/tagged fork сохраняет
-qualification v2 в `build/test-results/qualification/full.json`. Три Pester
-worker по умолчанию получают детерминированно сбалансированные файлы и собирают
-один SHA-проверяемый JUnit. Qualification переносится на merge-коммит только
-когда evidence commit является его предком, tree идентичен, а fork, окружение и
-полный inventory тестов/gate-скриптов совпадают. `-PesterWorkers 1` оставляет
-последовательный диагностический путь.
-
-Для квалификации нового controlled fork lock сначала хранит
-`compatibilityStatus=pending`. Такой lock принимается только режимом `Full`,
-только с явно переданным локальным `-AiRulesSource` и только когда clean
-annotated tag, release branch, fork commit и upstream ancestry совпадают с
-lock. После успешного Full единственный штатный переход выполняет
-`scripts/promote-ai-rules-compatibility.ps1`: он требует exact clean HEAD/tree,
-сверяет fork qualification и меняет только status/timestamp без переформатирования
-lock. После promotion выполните целевые lock/overlay-тесты, закоммитьте только
-lock и один раз запустите Full на финальном дереве. Обычный Full с неявным
-источником и режим `Release` по-прежнему требуют `compatibilityStatus=passed`.
-
-`Release` сохраняет статическую qualification после Pester, helper, fork,
-compatibility и проверки tracked state, поэтому runtime-сбой не повторяет эту
-часть. `git diff --check` и `helper -Action help` выполняются всегда;
-`check-summary.json` показывает `executed|reused|skipped`, причину и длительность.
-
-Путь можно передать через `ITL_AI_RULES_SOURCE_PATH`. `-Offline` пропускает
-network compatibility, если локальный источник не указан; такой результат не
-квалифицирует release.
-
-`Release` принимает только clean checkout контролируемого fork на единственном
-annotated `itl-*` tag, совпадающем с tag и commit в workflow templates. Режим
-требует отдельный E2E-стенд и запускается вручную:
+## Публикация develop
 
 ```powershell
-.\scripts\check.ps1 -Mode Release `
-  -AiRulesSource D:\Git\itl_ai_rules_1c `
+.\scripts\source-delivery.ps1 -Action PublishDevelop `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r22-rebuild `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
-Стенд настраивается локальным `.agent-1c/release-e2e.json` по примеру
-`templates/release-e2e.example.json`. Сначала file-seed стадия пересоздаёт
-latest-only seed, параллельно восстанавливает две disposable-ветки, продвигает
-`master` контролируемым commit и параллельно выполняет два `/itl-refresh-lite`,
-доказывая точный target SHA, отсутствие source-вызовов и штатный cleanup.
-Дорогая конфигурационная часть затем состоит ровно из трёх
-configuration-проверок: первая metadata load, test-only отрицательный прогон
-без Designer/Enterprise и вторая metadata load с восстановленным тестом. Далее
-идут fingerprint-стадии config roundtrip, extension smoke, on-demand MCP и
-result/cleanup. Checkpoint v2 хранит SHA-проверяемые `.dt`, state, `.dev.env`,
-тайминги и попытки. После обрыва `Auto` продолжает текущий релиз, а между
-релизами переиспользует capability-стадию только при точном fingerprint.
-Финальные passing `/itl-check`, export/SHA и cleanup остаются свежими. Старый
-checkpoint v1 один раз мигрируется штатным `Restart`.
-Для осознанного возврата к зафиксированному baseline используйте
-`-ReleaseResumeMode Restart`; произвольное удаление checkpoint или ручная
-правка state не являются штатным восстановлением.
+Оркестратор получает свежий `origin/develop`, строит временного кандидата из
+локального `develop` и только зарегистрированных диапазонов, запускает один
+`Develop`, выполняет обычный fast-forward push без force и сверяет удалённый
+SHA/tree. Конфликт, сдвиг remote или ошибка gate сохраняют очередь.
 
-Перед Pester или запуском 1С `Full` и `Release` автоматически выполняют
-`scripts/test-release-readiness.ps1` и сохраняют
-`build/test-results/local/release-context.json`. Preflight агрегирует все
-обнаруженные проблемы: immutable Vanessa archive, согласованность lock и
-compatibility manifest, pinned controlled fork, UTF-8/AST изменённых PowerShell
-файлов. Для `Release` дополнительно проверяются exact workflow commit и managed
-package обоих worktree E2E-стенда, чистая ветка и подтверждение unsafe-action
-protection. Дорогой gate не начинается при `CANDIDATE_INCOMPLETE`,
-`DEPENDENCY_DRIFT`, `STAND_STALE` или `ENVIRONMENT`.
+Develop journey используют публичные поверхности workflow:
 
-Если immutable Vanessa archive отсутствует, online preflight скачивает его по
-URL из lock в канонический ignored cache `build/third-party/vanessa-automation`;
-`Offline` только проверяет уже имеющийся файл. Ручная подготовка
-`ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE` не требуется.
+- обновление установленного N-1 стенда через `update-workflow`;
+- refresh активной ветки, реальный `/itl-check`/Vanessa и экспорт результата;
+- свежий bootstrap и `init-project` в коротком disposable-пути;
+- `new-dev-branch`, минимальная конфигурационная правка и application feature;
+- check, result, `refresh-dev-branch-lite`, повторный check и close.
 
-Release требует fresh passed `/itl-check`, экспортирует CF/CFE, сверяет SHA256
-и останавливает Vanessa UI MCP и ROCTUP MCP. Extension smoke создаёт Empty-
-расширение, проверяет повторные form/template операции, сохранность
-пользовательских `Form.xml`, `Module.bsl`, template content и явные
-Synonym/default/`SetMainSKD`, открывает форму в реальном TestClient, повторно
-загружает CFE и восстанавливает базу из snapshot.
+Qualification `develop.json` связывает точный tree с SHA статического Full и
+live-отчёта. Повторное использование допускается только для exact/ancestor
+same-tree доказательства с тем же inventory.
 
-Git hooks автоматически не устанавливаются. GitHub Actions сейчас не является
-частью гарантий проекта; локальная команда выше — единственный канонический gate.
+## Controlled fork и Full
+
+Новый fork lock сначала имеет `compatibilityStatus=pending`. Его может
+квалифицировать только `Full`/`Develop` с явным clean annotated-tag checkout:
+
+```powershell
+.\scripts\check.ps1 -Mode Full -AiRulesSource D:\Git\itl_ai_rules_1c-r22-rebuild
+```
+
+После успешного Full `scripts/promote-ai-rules-compatibility.ps1` сверяет exact
+HEAD/tree, fork qualification и меняет только status/timestamp. Неявный Full и
+Release требуют `compatibilityStatus=passed`.
+
+## Release в master
+
+```powershell
+.\scripts\source-delivery.ps1 -Action ReleaseMaster `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r22-rebuild `
+  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
+```
+
+Очередь должна быть пустой, а локальный `develop` совпадать с
+`origin/develop`. Оркестратор включает отсутствующие изменения текущего
+`origin/master`, получает/reuses Develop proof точного дерева, запускает
+release-only E2E, затем без squash/force продвигает тот же commit в `develop` и
+`master` и повторно читает remote refs.
+
+`-Version itl-workflow-vX.Y.Z` отдельно создаёт annotated tag и GitHub Release
+после успешного продвижения веток. Без `-Version` происходит только перенос в
+стабильный канал.
+
+Release сохраняет provenance/immutable dependencies, live MCP и Vanessa
+isolation, snapshot rollback, config/extension roundtrip, fresh passed check,
+CF/CFE SHA и cleanup. Он требует существующий Develop proof и не повторяет
+standard journeys. `-ReleaseResumeMode Restart` остаётся единственным штатным
+началом нового checkpoint; state/status вручную не редактируются.
+
+Git hooks автоматически не устанавливаются. GitHub Actions не являются
+каноническим источником локальной квалификации; доказательства создают команды
+выше и их SHA-проверяемые JSON/JUnit artifacts.

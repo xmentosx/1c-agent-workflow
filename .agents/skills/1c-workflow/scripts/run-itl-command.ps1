@@ -194,6 +194,7 @@ if ($windowed) {
 }
 
 $status = Read-JsonFile -Path $statusPath
+if ([string](Get-ObjectValue -Object $status -Name "status" -Default "") -eq "failed" -and $exitCode -eq 0) { $exitCode = [Math]::Max(1, [int](Get-ObjectValue -Object $status -Name "exitCode" -Default 1)) }
 if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status" -Default "") -notin @("succeeded", "failed")) {
     $now = Get-Date
     $effectiveExitCode = if ($exitCode -ne 0) { $exitCode } else { 1 }
@@ -226,7 +227,6 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
     Set-ObjectValue -Object $status -Name "stageDetail" -Value $detail
     $exitCode = $effectiveExitCode
 }
-
 $errorText = Limit-Text -Value (Get-ObjectValue -Object $status -Name "errorMessage" -Default "") -Length 1400
 $errorCategory = [string](Get-ObjectValue -Object $status -Name "errorCategory" -Default "")
 $requiredAction = [string](Get-ObjectValue -Object $status -Name "requiredAction" -Default "")

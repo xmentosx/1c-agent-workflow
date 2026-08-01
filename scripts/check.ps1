@@ -1,12 +1,16 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("Fast", "Full", "Release")]
-    [string]$Mode = "Full",
+    [ValidateSet("Targeted", "Smoke", "Fast", "Full", "Develop", "Release")]
+    [string]$Mode = "Smoke",
+    [string]$BaseRef = "",
+    [string[]]$ChangedPath = @(),
+    [string[]]$CoverageContract = @(),
     [string]$AiRulesSource = "",
     [switch]$Offline,
     [string]$E2EProjectRoot = "",
     [string]$OutputDirectory = "build\test-results\local",
     [string]$QualificationPath = "build\test-results\qualification\full.json",
+    [string]$DevelopQualificationPath = "build\test-results\qualification\develop.json",
     [ValidateRange(1, 4)]
     [int]$PesterWorkers = 3,
     [ValidateSet("Auto", "Restart")]
@@ -14,10 +18,14 @@ param(
 )
 
 $script:ExplicitAiRulesSource = $PSBoundParameters.ContainsKey("AiRulesSource") -and -not [string]::IsNullOrWhiteSpace($AiRulesSource)
+$effectiveMode = $(if ($Mode -eq "Fast") { "Smoke" } else { $Mode })
+$modeHardBudgetSeconds = switch ($effectiveMode) { "Targeted" { 900 } "Smoke" { 120 } "Full" { 1200 } "Develop" { 5400 } "Release" { 7200 } }
+if ($Mode -eq "Fast") { Write-Warning "Mode Fast is deprecated and now aliases Smoke. Use Targeted for a change or Smoke for a short source sanity check." }
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+$CoverageContract = @($CoverageContract | ForEach-Object { @(([string]$_) -split ',') } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
 function Resolve-RepositoryPath {
     param([string]$Path, [string]$Root)
@@ -60,6 +68,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "release-qualification.ps1")
 $outputRoot = Resolve-RepositoryPath -Path $OutputDirectory -Root $repoRoot
 $qualificationFullPath = Resolve-RepositoryPath -Path $QualificationPath -Root $repoRoot
+$developQualificationFullPath = Resolve-RepositoryPath -Path $DevelopQualificationPath -Root $repoRoot
 $summaryPath = Join-Path $outputRoot "check-summary.json"
 $junitPath = Join-Path $outputRoot "pester.xml"
 $startedAt = [DateTime]::UtcNow
@@ -74,6 +83,7 @@ $forkSourceRoot = ""
 $forkQualificationPath = ""
 $forkQualificationSha256 = ""
 $e2eReportPath = ""
+$developE2EReportPath = ""
 $reuseQualification = $false
 $qualificationReuseKind = ""
 $existingQualification = $null
@@ -155,12 +165,45 @@ function Start-PowerShellChildProcess {
     return [pscustomobject]@{ process = $process; stdoutPath = $stdoutPath; stderrPath = $stderrPath; logName = $LogName; startedAt = [DateTime]::UtcNow }
 }
 
+function Stop-GateChildProcessTree {
+    param([object]$Process)
+    if (-not $Process -or $Process.HasExited) { return }
+    $processId = [int]$Process.Id
+    if ($env:OS -eq "Windows_NT") { & taskkill.exe /PID $processId /T /F *> $null } else { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue }
+    try { $Process.WaitForExit() } catch {}
+}
+
 function Wait-PowerShellChildProcess {
-    param([Parameter(Mandatory = $true)][object]$Child, [int]$TimeoutSeconds = 300)
+    param(
+        [Parameter(Mandatory = $true)][object]$Child,
+        [int]$TimeoutSeconds = 300,
+        [int]$NoProgressSeconds = 600
+    )
     $process = $Child.process
-    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-        try { $process.Kill() } catch {}
-        throw "$($Child.logName) timed out after $TimeoutSeconds seconds. See $($Child.stdoutPath) and $($Child.stderrPath)"
+    $started = [DateTime]::UtcNow
+    $lastProgress = $started
+    $lastHeartbeat = $started
+    $remainingOverallSeconds = [Math]::Max(1, $modeHardBudgetSeconds - [int][Math]::Ceiling($overallStopwatch.Elapsed.TotalSeconds))
+    $effectiveTimeoutSeconds = [Math]::Min($TimeoutSeconds, $remainingOverallSeconds)
+    $lastLength = -1L
+    while (-not $process.WaitForExit(5000)) {
+        $now = [DateTime]::UtcNow
+        $length = 0L
+        foreach ($path in @($Child.stdoutPath, $Child.stderrPath)) {
+            if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) { $length += (Get-Item -LiteralPath $path).Length }
+        }
+        if ($length -ne $lastLength) { $lastLength = $length; $lastProgress = $now }
+        $elapsedSeconds = [int]($now - $started).TotalSeconds
+        $idleSeconds = [int]($now - $lastProgress).TotalSeconds
+        if ($elapsedSeconds -ge $effectiveTimeoutSeconds -or ($NoProgressSeconds -gt 0 -and $idleSeconds -ge $NoProgressSeconds)) {
+            Stop-GateChildProcessTree -Process $process
+            $reason = if ($elapsedSeconds -ge $effectiveTimeoutSeconds) { "remaining mode budget $effectiveTimeoutSeconds seconds" } else { "no progress for $NoProgressSeconds seconds" }
+            throw "$($Child.logName) stopped after $reason. See $($Child.stdoutPath) and $($Child.stderrPath)"
+        }
+        if (($now - $lastHeartbeat).TotalSeconds -ge 30) {
+            Write-Host "ITL gate stage '$($Child.logName)': elapsed=${elapsedSeconds}s; noProgress=${idleSeconds}s; hardRemaining=$($effectiveTimeoutSeconds - $elapsedSeconds)s."
+            $lastHeartbeat = $now
+        }
     }
     $process.WaitForExit(); $process.Refresh()
     if ([int]$process.ExitCode -ne 0) { throw "$($Child.logName) failed with exit code $($process.ExitCode). See $($Child.stdoutPath) and $($Child.stderrPath)" }
@@ -171,10 +214,11 @@ function Invoke-PowerShellChild {
         [Parameter(Mandatory = $true)][string]$ScriptPath,
         [string[]]$Arguments = @(),
         [int]$TimeoutSeconds = 300,
+        [int]$NoProgressSeconds = 600,
         [string]$LogName = "child"
     )
     $child = Start-PowerShellChildProcess -ScriptPath $ScriptPath -Arguments $Arguments -LogName $LogName
-    Wait-PowerShellChildProcess -Child $child -TimeoutSeconds $TimeoutSeconds
+    Wait-PowerShellChildProcess -Child $child -TimeoutSeconds $TimeoutSeconds -NoProgressSeconds $NoProgressSeconds
 }
 
 function Complete-ParallelGateStage {
@@ -227,7 +271,7 @@ function Get-LocalForkRelease {
     $compatibilityStatus = [string]$entry.compatibilityStatus
     $upstreamRef = [string]$entry.upstreamRef
     $upstreamCommit = [string]$entry.upstreamCommit
-    $allowPendingQualification = $Mode -eq "Full" -and $script:ExplicitAiRulesSource -and $compatibilityStatus -eq "pending"
+    $allowPendingQualification = $effectiveMode -in @("Full", "Develop") -and $script:ExplicitAiRulesSource -and $compatibilityStatus -eq "pending"
     if (($compatibilityStatus -ne "passed" -and -not $allowPendingQualification) -or -not $upstreamRef -or $upstreamCommit -notmatch '^[0-9a-fA-F]{40}$') {
         throw "Workflow aiRules lock lacks eligible compatibility and upstream provenance. Full may qualify pending only with an explicit local -AiRulesSource; Release and implicit sources require passed."
     }
@@ -274,6 +318,11 @@ function Test-ForkQualification {
 function Get-WorkflowGateScriptPaths {
     $paths = @(
         (Join-Path $repoRoot "scripts\check.ps1"),
+        (Join-Path $repoRoot "scripts\git-path-list.ps1"),
+        (Join-Path $repoRoot "scripts\quality-contracts.ps1"),
+        (Join-Path $repoRoot "scripts\resolve-targeted-tests.ps1"),
+        (Join-Path $repoRoot "scripts\source-delivery.ps1"),
+        (Join-Path $repoRoot "scripts\invoke-develop-e2e.ps1"),
         (Join-Path $repoRoot "scripts\test-release-readiness.ps1"),
         (Join-Path $repoRoot "scripts\invoke-release-e2e.ps1"),
         (Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"),
@@ -374,23 +423,62 @@ function Write-WorkflowQualification {
     return $qualification
 }
 
+function Test-DevelopQualification {
+    param([string]$Commit, [string]$Tree)
+    if (-not (Test-Path -LiteralPath $developQualificationFullPath -PathType Leaf) -or -not (Test-Path -LiteralPath $qualificationFullPath -PathType Leaf)) { return $null }
+    try {
+        $qualification = Get-Content -LiteralPath $developQualificationFullPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([int]$qualification.schemaVersion -ne 1 -or [string]$qualification.kind -ne "itl-workflow-develop-qualification" -or [string]$qualification.status -ne "passed") { return $null }
+        $reuseKind = Get-WorkflowQualificationReuseKind -RepositoryRoot $repoRoot -SchemaVersion 2 -QualifiedCommit ([string]$qualification.repository.commit) -EvidenceCommit ([string]$qualification.repository.evidenceCommit) -QualifiedTree ([string]$qualification.repository.tree) -CurrentCommit $Commit -CurrentTree $Tree
+        if (-not $reuseKind) { return $null }
+        if ((Get-FileHash -LiteralPath $qualificationFullPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$qualification.fullQualificationSha256).ToLowerInvariant()) { return $null }
+        $reportPath = if ([IO.Path]::IsPathRooted([string]$qualification.e2e.path)) { [string]$qualification.e2e.path } else { Join-Path $repoRoot ([string]$qualification.e2e.path).Replace('/', '\') }
+        if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { return $null }
+        if ((Get-FileHash -LiteralPath $reportPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$qualification.e2e.sha256).ToLowerInvariant()) { return $null }
+        return [pscustomobject]@{ qualification = $qualification; reuseKind = $reuseKind }
+    } catch { return $null }
+}
+
+function Write-DevelopQualification {
+    param([string]$Commit, [string]$Tree, [string]$ReportPath)
+    if (-not (Test-Path -LiteralPath $qualificationFullPath -PathType Leaf)) { throw "Develop qualification requires reusable Full evidence." }
+    $root = Split-Path -Parent $developQualificationFullPath
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $canonicalReport = Join-Path $root "develop-e2e-summary.json"
+    Copy-Item -LiteralPath $ReportPath -Destination $canonicalReport -Force
+    $qualification = [ordered]@{
+        schemaVersion = 1
+        kind = "itl-workflow-develop-qualification"
+        status = "passed"
+        reusable = $true
+        repository = [ordered]@{ commit = $Commit; tree = $Tree; evidenceCommit = $Commit; worktreeClean = $true }
+        fullQualificationSha256 = (Get-FileHash -LiteralPath $qualificationFullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        e2e = [ordered]@{ path = Get-RelativeRepositoryPath -Path $canonicalReport -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $canonicalReport -Algorithm SHA256).Hash.ToLowerInvariant() }
+        finishedAt = [DateTime]::UtcNow.ToString("o")
+    }
+    [IO.File]::WriteAllText($developQualificationFullPath, (($qualification | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    return $qualification
+}
+
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 Push-Location $repoRoot
 try {
     $commit = (& git rev-parse HEAD).Trim()
     $tree = (& git rev-parse 'HEAD^{tree}').Trim()
     $worktreeCleanAtStart = @(& git status --porcelain).Count -eq 0
-    $resolvedAiRulesSource = Resolve-AiRulesSource
-    $sourceIsLocal = Test-Path -LiteralPath $resolvedAiRulesSource -PathType Container
+    $resolvedAiRulesSource = $(if ($effectiveMode -in @("Full", "Develop", "Release")) { Resolve-AiRulesSource } else { "" })
+    $sourceIsLocal = $resolvedAiRulesSource -and (Test-Path -LiteralPath $resolvedAiRulesSource -PathType Container)
 
-    if ($Mode -eq "Release") {
+    if ($effectiveMode -in @("Develop", "Release")) {
+        if ([string]::IsNullOrWhiteSpace($E2EProjectRoot)) { throw "$effectiveMode mode requires -E2EProjectRoot for the dedicated stand." }
+        if (-not $worktreeCleanAtStart) { throw "$effectiveMode requires a clean candidate worktree." }
+    }
+    if ($effectiveMode -eq "Release") {
         if ($Offline) { throw "Release mode cannot run with -Offline." }
-        if ([string]::IsNullOrWhiteSpace($E2EProjectRoot)) { throw "Release mode requires -E2EProjectRoot for the dedicated stand." }
-        if (-not $worktreeCleanAtStart) { throw "ITL worktree must be clean for Release." }
         if (-not $sourceIsLocal) { throw "Release requires -AiRulesSource (or ITL_AI_RULES_SOURCE_PATH) pointing to a local controlled fork checkout." }
     }
     if ($sourceIsLocal) {
-        try { $aiRulesRelease = Get-LocalForkRelease -SourceRoot ([System.IO.Path]::GetFullPath($resolvedAiRulesSource)) } catch { if ($Mode -eq "Release") { throw } }
+        try { $aiRulesRelease = Get-LocalForkRelease -SourceRoot ([System.IO.Path]::GetFullPath($resolvedAiRulesSource)) } catch { if ($effectiveMode -eq "Release") { throw } }
     }
 
     $trackedBefore = @(& git status --porcelain --untracked-files=no)
@@ -399,15 +487,15 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "git diff --check failed." }
     } | Out-Null
 
-    if ($Mode -in @("Full", "Release")) {
+    if ($effectiveMode -in @("Full", "Develop", "Release")) {
         $releaseContextPath = Join-Path $outputRoot "release-context.json"
         $readinessScript = Join-Path $repoRoot "scripts\test-release-readiness.ps1"
         Invoke-GateStage -Name "release-readiness" -Reason "aggregate dependency, candidate, encoding, and stand preflight" -Detail $releaseContextPath -Body {
-            $readinessArguments = @("-Mode", $Mode, "-RepositoryRoot", $repoRoot, "-OutputPath", $releaseContextPath)
+            $readinessArguments = @("-Mode", $effectiveMode, "-RepositoryRoot", $repoRoot, "-OutputPath", $releaseContextPath)
             if ($Offline) { $readinessArguments += "-Offline" }
             $readinessRulesSource = if ($aiRulesRelease -and [string]$aiRulesRelease.sourceRoot) { [string]$aiRulesRelease.sourceRoot } elseif ($sourceIsLocal) { [System.IO.Path]::GetFullPath($resolvedAiRulesSource) } else { "" }
             if ($readinessRulesSource) { $readinessArguments += @("-AiRulesSource", $readinessRulesSource) }
-            if ($Mode -eq "Release") { $readinessArguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot))) }
+            if ($effectiveMode -eq "Release") { $readinessArguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot))) }
             Invoke-PowerShellChild -ScriptPath $readinessScript -Arguments $readinessArguments -TimeoutSeconds 300 -LogName "release-readiness"
             if (-not (Test-Path -LiteralPath $releaseContextPath -PathType Leaf)) { throw "Release readiness context was not created." }
             $script:releaseContext = Get-Content -LiteralPath $releaseContextPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -419,7 +507,7 @@ try {
     }
 
     $reuseQualification = $false
-    if ($Mode -in @("Full", "Release") -and $aiRulesRelease) {
+    if ($effectiveMode -in @("Full", "Develop", "Release") -and $aiRulesRelease) {
         $qualificationMatch = Test-WorkflowQualification -Path $qualificationFullPath -Commit $commit -Tree $tree -ForkIdentity $aiRulesRelease
         if ($qualificationMatch) {
             $reuseQualification = $true
@@ -435,7 +523,7 @@ try {
         $preflightForkQualificationPath = Join-Path ([string]$aiRulesRelease.sourceRoot) "build\test-results\qualification\full.json"
         $forkReadyForParallel = Test-ForkQualification -SourceRoot ([string]$aiRulesRelease.sourceRoot) -Path $preflightForkQualificationPath -Identity $aiRulesRelease
     }
-    if ($Mode -in @("Full", "Release") -and -not $reuseQualification -and -not ($Offline -and -not $sourceIsLocal) -and $forkReadyForParallel) {
+    if ($effectiveMode -in @("Full", "Develop", "Release") -and -not $reuseQualification -and -not ($Offline -and -not $sourceIsLocal) -and $forkReadyForParallel) {
         $compatibilityPath = Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"
         $compatibilitySource = $(if ($aiRulesRelease -and [string]$aiRulesRelease.sourceRoot) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
         $parallelCompatibility = Start-PowerShellChildProcess -ScriptPath $compatibilityPath -Arguments @("-AiRulesSource", $compatibilitySource) -LogName "ai-rules-compatibility"
@@ -444,18 +532,32 @@ try {
     if ($reuseQualification) {
         Add-ReusedStage -Name "pester" -Reason $(if ($qualificationReuseKind -eq "ancestor-same-tree") { "ancestor same-tree Full qualification" } else { "exact clean Full qualification" }) -Detail $qualificationFullPath
     } else {
-        Invoke-GateStage -Name "pester" -Reason $(if ($Mode -eq "Fast") { "Fast inventory" } else { "complete workflow inventory" }) -Body {
-            if ($Mode -eq "Fast") {
-                Import-Module Pester -MinimumVersion 5.0.0 -Force
-                $script:pesterVersion = [string](Get-Module Pester | Select-Object -First 1 -ExpandProperty Version)
-                $configuration = New-PesterConfiguration
-                $configuration.Run.Path = @(".\tests\pester\ParserDocsBudgets.Tests.ps1", ".\tests\pester\LifecycleOperationLock.Tests.ps1", ".\tests\pester\DesignerMemoryGuard.Tests.ps1", ".\tests\pester\DesignerCompletion.Tests.ps1", ".\tests\pester\HostTooling.Tests.ps1", ".\tests\pester\DependencyLocks.Tests.ps1", ".\tests\pester\AiRulesClients.Tests.ps1", ".\tests\pester\ClientAdaptersAndModes.Tests.ps1", ".\tests\pester\AiRulesMigration.Tests.ps1", ".\tests\pester\AiRulesCompatibilityPromotion.Tests.ps1", ".\tests\pester\ReleaseGate.Tests.ps1", ".\tests\pester\ReleaseReadiness.Tests.ps1", ".\tests\pester\LocalQualityGate.Tests.ps1")
-                $configuration.Run.PassThru = $true
-                $configuration.Output.Verbosity = "Normal"
-                $configuration.TestResult.Enabled = $true
-                $configuration.TestResult.OutputFormat = "JUnitXml"
-                $configuration.TestResult.OutputPath = $junitPath
-                $script:pesterResult = Invoke-Pester -Configuration $configuration
+        Invoke-GateStage -Name "pester" -Reason $(if ($effectiveMode -in @("Targeted", "Smoke")) { "$effectiveMode owner inventory" } else { "complete workflow inventory" }) -Body {
+            if ($effectiveMode -in @("Targeted", "Smoke")) {
+                $selectionPath = Join-Path $outputRoot "test-selection.json"
+                if ($effectiveMode -eq "Targeted") {
+                    $selector = Join-Path $repoRoot "scripts\resolve-targeted-tests.ps1"
+                    $selectorArguments = @("-RepositoryRoot", $repoRoot, "-OutputPath", $selectionPath)
+                    if ($BaseRef) { $selectorArguments += @("-BaseRef", $BaseRef) }
+                    foreach ($path in @($ChangedPath | Where-Object { $_ })) { $selectorArguments += @("-ChangedPath", [string]$path) }
+                    if ($CoverageContract.Count -gt 0) { $selectorArguments += @("-CoverageContract", ($CoverageContract -join ",")) }
+                    Invoke-PowerShellChild -ScriptPath $selector -Arguments $selectorArguments -TimeoutSeconds 30 -NoProgressSeconds 20 -LogName "targeted-selector"
+                } else {
+                    $catalog = Get-Content -LiteralPath (Join-Path $repoRoot "tests\quality-contracts.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $selection = [ordered]@{ schemaVersion = 1; paths = @("<smoke>"); contracts = @(); tests = @($catalog.smokeTests) }
+                    [System.IO.File]::WriteAllText($selectionPath, (($selection | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+                }
+                $selection = Get-Content -LiteralPath $selectionPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $planPath = Join-Path $outputRoot "pester-selection-plan.json"
+                $resultPath = Join-Path $outputRoot "pester-selection-result.json"
+                $plan = [ordered]@{ schemaVersion = 1; worker = 0; paths = @($selection.tests) }
+                [System.IO.File]::WriteAllText($planPath, (($plan | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+                $worker = Join-Path $repoRoot "scripts\run-pester-shard.ps1"
+                $timeout = $(if ($effectiveMode -eq "Smoke") { 120 } else { 900 })
+                Invoke-PowerShellChild -ScriptPath $worker -Arguments @("-PlanPath", $planPath, "-JunitPath", $junitPath, "-ResultPath", $resultPath) -TimeoutSeconds $timeout -NoProgressSeconds $(if ($effectiveMode -eq "Smoke") { 90 } else { 300 }) -LogName "pester-selection"
+                $selectionResult = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $script:pesterVersion = [string]$selectionResult.pesterVersion
+                $script:pesterResult = [pscustomobject]@{ Result = $(if ([string]$selectionResult.status -eq "passed") { "Passed" } else { "Failed" }); PassedCount = [int]$selectionResult.passed; FailedCount = [int]$selectionResult.failed; SkippedCount = [int]$selectionResult.skipped }
             } else {
                 $shardRunner = Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"
                 Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$PesterWorkers) -TimeoutSeconds 1200 -LogName "pester-shards"
@@ -469,7 +571,7 @@ try {
         } | Out-Null
     }
 
-    if ($Mode -in @("Full", "Release")) {
+    if ($effectiveMode -in @("Full", "Develop", "Release")) {
         $helperPath = Join-Path $repoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
         Invoke-GateStage -Name "helper-help" -Reason "always-run helper parse preflight" -Body {
             Invoke-PowerShellChild -ScriptPath $helperPath -Arguments @("-Action", "help") -TimeoutSeconds 60 -LogName "helper-help"
@@ -512,7 +614,7 @@ try {
         }
     }
 
-    if ($Mode -in @("Full", "Release")) {
+    if ($effectiveMode -in @("Full", "Develop", "Release")) {
         Invoke-GateStage -Name "static-tracked-state" -Reason "static qualification must preserve tracked state" -Body {
             & git diff --check HEAD -- .
             if ($LASTEXITCODE -ne 0) { throw "git diff --check failed after static qualification." }
@@ -534,7 +636,24 @@ try {
         }
     }
 
-    if ($Mode -eq "Release") {
+    if ($effectiveMode -eq "Develop") {
+        $developE2EReportPath = Join-Path $outputRoot "develop-e2e-summary.json"
+        $developScript = Join-Path $repoRoot "scripts\invoke-develop-e2e.ps1"
+        Invoke-GateStage -Name "develop-e2e" -Reason "public bootstrap, update, branch, Vanessa, refresh, and result journeys" -Detail $developE2EReportPath -Body {
+            $developRulesSource = $(if ($forkSourceRoot) { $forkSourceRoot } elseif ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
+            if (-not $developRulesSource) { throw "Develop E2E requires a local exact controlled-fork checkout." }
+            Invoke-PowerShellChild -ScriptPath $developScript -Arguments @("-CandidateRoot", $repoRoot, "-ProjectRoot", ([IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $developRulesSource, "-OutputPath", $developE2EReportPath) -TimeoutSeconds 5400 -NoProgressSeconds 900 -LogName "develop-e2e"
+            if (-not (Test-Path -LiteralPath $developE2EReportPath -PathType Leaf)) { throw "Develop E2E summary was not created." }
+            $developSummary = Get-Content -LiteralPath $developE2EReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string]$developSummary.status -ne "passed" -or [string]$developSummary.candidate.tree -ne $tree) { throw "Develop E2E did not qualify the exact candidate tree: $([string]$developSummary.error)" }
+            [void](Write-DevelopQualification -Commit $commit -Tree $tree -ReportPath $developE2EReportPath)
+        } | Out-Null
+    }
+
+    if ($effectiveMode -eq "Release") {
+        $developProof = Test-DevelopQualification -Commit $commit -Tree $tree
+        if (-not $developProof) { throw "Release requires a reusable Develop qualification for the exact candidate tree. Run Develop once before Release." }
+        Add-ReusedStage -Name "develop-e2e" -Reason "exact or ancestor same-tree Develop qualification" -Detail $developQualificationFullPath
         Invoke-GateStage -Name "ondemand-mcp-catalogs" -Reason "real backend catalogs are mandatory for release" -Detail "assets/ondemand-mcp/compatibility.json" -Body {
             $compatibilityPath = Join-Path $repoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json"
             $compatibility = Get-Content -LiteralPath $compatibilityPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -559,7 +678,7 @@ try {
         $releaseHelperPath = Join-Path $repoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
         Invoke-GateStage -Name "release-e2e" -Reason "always-run release runtime proof" -Detail $e2eReportPath -Body {
             $releaseRulesSource = $(if ($forkSourceRoot) { $forkSourceRoot } elseif ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
-            Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments @("-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode) -TimeoutSeconds 14400 -LogName "release-e2e"
+            Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments @("-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode) -TimeoutSeconds 7200 -NoProgressSeconds 900 -LogName "release-e2e"
             if (-not (Test-Path -LiteralPath $e2eReportPath -PathType Leaf)) { throw "Release E2E summary was not created: $e2eReportPath" }
             $e2eSummary = Get-Content -LiteralPath $e2eReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ([int]$e2eSummary.schemaVersion -ne 3) { throw "Release E2E summary schema must be 3; actual: $($e2eSummary.schemaVersion)." }
@@ -578,6 +697,8 @@ try {
         } | Out-Null
     }
 
+    if ($overallStopwatch.Elapsed.TotalSeconds -gt $modeHardBudgetSeconds) { throw "$effectiveMode exceeded its overall hard budget of $modeHardBudgetSeconds seconds." }
+
     Invoke-GateStage -Name "tracked-state" -Reason "tests must preserve tracked state" -Body {
         & git diff --check HEAD -- .
         if ($LASTEXITCODE -ne 0) { throw "git diff --check failed after tests." }
@@ -586,7 +707,7 @@ try {
     } | Out-Null
 } catch {
     if ($parallelCompatibility -and -not $parallelCompatibility.process.HasExited) {
-        try { $parallelCompatibility.process.Kill(); $parallelCompatibility.process.WaitForExit() } catch {}
+        Stop-GateChildProcessTree -Process $parallelCompatibility.process
     }
     $failure = $_.Exception.Message
 } finally {
@@ -613,6 +734,8 @@ try {
         offline = [bool]$Offline
         aiRulesRelease = $aiRulesRelease
         qualificationPath = $qualificationFullPath
+        developQualificationPath = $developQualificationFullPath
+        developE2eReportPath = $developE2EReportPath
         e2eReportPath = $e2eReportPath
         releaseContextPath = $releaseContextPath
         qualificationReuseKind = $qualificationReuseKind
@@ -628,4 +751,5 @@ try {
 
 if ($failure) { [Console]::Error.WriteLine($failure); exit 1 }
 Write-Host "ITL $Mode gate passed. Summary: $summaryPath"
-if ($Mode -eq "Full") { Write-Host "Qualification: $qualificationFullPath" }
+if ($effectiveMode -in @("Full", "Develop")) { Write-Host "Qualification: $qualificationFullPath" }
+if ($effectiveMode -eq "Develop") { Write-Host "Develop qualification: $developQualificationFullPath" }

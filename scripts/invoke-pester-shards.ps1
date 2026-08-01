@@ -26,7 +26,7 @@ $timingPath = Join-Path $PSScriptRoot "pester-timings.json"
 $timings = Get-Content -LiteralPath $timingPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $testFiles = @(Get-ChildItem -LiteralPath (Join-Path $RepositoryRoot "tests\pester") -File -Filter "*.Tests.ps1" | Sort-Object Name)
 if ($testFiles.Count -eq 0) { throw "No Pester test files were discovered." }
-$serialTestNames = @("ReleaseGate.Tests.ps1")
+$serialTestNames = @("DependencyLocks.Tests.ps1", "ReleaseGate.Tests.ps1")
 $serialTestFiles = @($testFiles | Where-Object { $serialTestNames -contains $_.Name })
 $parallelTestFiles = @($testFiles | Where-Object { $serialTestNames -notcontains $_.Name })
 $weights = @{}
@@ -72,6 +72,7 @@ foreach ($plan in $plans) {
     [System.IO.File]::WriteAllText($planPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
     $args = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (ConvertTo-NativeArgument $workerScript), "-PlanPath", (ConvertTo-NativeArgument $planPath), "-JunitPath", (ConvertTo-NativeArgument $workerJunit), "-ResultPath", (ConvertTo-NativeArgument $resultPath))
     $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($args -join " ") -WorkingDirectory $RepositoryRoot -WindowStyle Hidden -RedirectStandardInput $stdinPath -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
+    $null = $process.Handle
     $processes += [pscustomobject]@{ worker = $index; process = $process; resultPath = $resultPath; junitPath = $workerJunit; stdoutPath = $stdoutPath; stderrPath = $stderrPath }
 }
 
@@ -86,16 +87,17 @@ foreach ($entry in $processes) {
     }
     $entry.process.WaitForExit(); $entry.process.Refresh()
     if (Test-Path -LiteralPath $entry.resultPath -PathType Leaf) {
-        $results += Get-Content -LiteralPath $entry.resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $workerResult = Get-Content -LiteralPath $entry.resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $results += $workerResult
+        if ([string]$workerResult.status -ne "passed") { $failures += "worker $($entry.worker) reported $([string]$workerResult.status): $([string]$workerResult.error)" }
     } else {
         $failures += "worker $($entry.worker) produced no result: $($entry.stderrPath)"
     }
     if ([int]$entry.process.ExitCode -ne 0) { $failures += "worker $($entry.worker) exit=$($entry.process.ExitCode): $($entry.stderrPath)" }
 }
 
-# ReleaseGate owns a process-heavy release-E2E fixture. Running it beside the
-# lifecycle shards makes unrelated child-process tests contend for the same
-# Windows host resources, so execute it only after all parallel workers finish.
+# DependencyLocks and ReleaseGate own process-wide helper state or process-heavy
+# fixtures. Keep them away from the parallel lifecycle workers.
 if ($serialTestFiles.Count -gt 0) {
     $serialWorker = $WorkerCount + 1
     $serialPlanPath = Join-Path $workerRoot ("worker-{0}.plan.json" -f $serialWorker)
@@ -135,7 +137,9 @@ if ($serialTestFiles.Count -gt 0) {
         $serialProcess.WaitForExit()
         $serialProcess.Refresh()
         if (Test-Path -LiteralPath $serialResultPath -PathType Leaf) {
-            $results += Get-Content -LiteralPath $serialResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $serialResult = Get-Content -LiteralPath $serialResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $results += $serialResult
+            if ([string]$serialResult.status -ne "passed") { $failures += "worker $serialWorker reported $([string]$serialResult.status): $([string]$serialResult.error)" }
         } else {
             $failures += "worker $serialWorker produced no result: $serialStderrPath"
         }

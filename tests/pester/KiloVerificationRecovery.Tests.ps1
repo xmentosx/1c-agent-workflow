@@ -46,14 +46,11 @@ Describe "Kilo verification recovery command" {
         }
     }
 
-    It "keeps the completion contract explicit in USER-RULES" {
+    It "keeps one structured completion and bounded recovery contract across agent surfaces" {
         $rulesText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\USER-RULES.append.md") -Raw -Encoding UTF8
         foreach ($marker in @("Quick-fix is no exception", "verify_xml", "targeted/static", "executable milestones only to decide continuation", "fresh unfiltered", "after the last relevant edit", "pending verification")) {
             $rulesText | Should -Match ([regex]::Escape($marker))
         }
-    }
-
-    It "keeps itl-check mechanical and makes itl-verify-fix the bounded recovery loop" {
         $checkText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md.template") -Raw -Encoding UTF8
         $recoveryText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-verify-fix.md.template") -Raw -Encoding UTF8
 
@@ -87,9 +84,6 @@ Describe "Kilo verification recovery command" {
         )) {
             $recoveryText | Should -Match ([regex]::Escape($marker))
         }
-    }
-
-    It "routes natural-language lifecycle completion through structured compact status" {
         $fastSkill = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md") -Raw -Encoding UTF8
         $compactRunner = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\run-itl-command.ps1") -Raw -Encoding UTF8
 

@@ -1962,16 +1962,13 @@ exit 0
         }
     }
 
-    It "writes run status on successful helper completion" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-status-success-" + [guid]::NewGuid().ToString("N"))
-        $statusPath = Join-Path $tempRoot "status.json"
-        $logPath = Join-Path $tempRoot "console.log"
-
+    It "atomically writes run status on successful helper completion and transient reader contention" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-status-success-" + [guid]::NewGuid().ToString("N")); $statusPath = Join-Path $tempRoot "status.json"; $logPath = Join-Path $tempRoot "console.log"
+        $markerPath = Join-Path $tempRoot "reader.locked"; $job = $null
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
             & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action help -RunStatusPath $statusPath -RunLogPath $logPath *> $null
             $LASTEXITCODE | Should -Be 0
-
             (Test-Path -LiteralPath $statusPath -PathType Leaf) | Should -Be $true
             $status = Get-Content -Encoding UTF8 -Raw $statusPath | ConvertFrom-Json
             $status.status | Should -Be "succeeded"
@@ -1988,9 +1985,18 @@ exit 0
             [string]$status.resumedFrom | Should -Be ""
             [string]$status.recoveryReason | Should -Be ""
             [string]$status.userReport | Should -Be ""
-            $bytes = [System.IO.File]::ReadAllBytes($statusPath)
-            ($bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) | Should -Be $false
+            $bytes = [System.IO.File]::ReadAllBytes($statusPath); ($bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) | Should -Be $false
+            $job = Start-Job -ArgumentList $statusPath, $markerPath -ScriptBlock {
+                param($Path, $Marker)
+                $stream = [System.IO.File]::Open($Path, "Open", "Read", "None"); [System.IO.File]::WriteAllText($Marker, "locked")
+                Start-Sleep -Milliseconds 350; $stream.Dispose()
+            }
+            $deadline = (Get-Date).AddSeconds(10); while (-not (Test-Path -LiteralPath $markerPath) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 25 }
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Write-Utf8TextAtomic -Path $statusPath -Value '{"status":"succeeded"}' }
+            (Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json).status | Should -Be "succeeded"
+            @(Get-ChildItem -LiteralPath $tempRoot -File -Filter ".status.json.*.tmp*").Count | Should -Be 0
         } finally {
+            if ($job) { Wait-Job -Job $job -Timeout 5 | Out-Null; Remove-Job -Job $job -Force -ErrorAction SilentlyContinue }
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }

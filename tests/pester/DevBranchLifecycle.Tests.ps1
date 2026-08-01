@@ -1328,18 +1328,17 @@
                 }
             }
             function Confirm-UnverifiedProceed { $false }
+            function New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }; function Restore-ConfigDumpInfoLoadSnapshot { $script:DumpInfoDirty = $false; $script:DumpInfoRestored = $true }; function Remove-ConfigDumpInfoLoadSnapshot {}
+            function Invoke-DevBranchVanessaRuntimeRelease {}; function Assert-VanessaVerificationPreflight {}; function Use-ItlVerificationRepairAttempt {}; function Update-DevBranchBase { $script:DumpInfoDirty = $true }; function Invoke-ItlVerificationCycle { $script:VerificationSawDirtyDumpInfo = $script:DumpInfoDirty }; function Complete-ItlVerificationRepairSession {}
             function Load-ConfigFromFiles {
                 [pscustomobject]@{
                     currentCommit = "base-commit"
                     sourceFingerprint = "config-fingerprint"
                 }
             }
-            function New-LoadStateUpdates { @{} }
-            function Invoke-DevBranchEnterpriseAutoUpdateIfLoaded {}
-            function Add-VerificationStaleIfNeeded {}
-            function Update-DevBranchState {}
-            function Invoke-DevBranchMcpRestartAfterInfobaseLoad { param([object]$State) $State }
-            function Assert-DevBranchToolArtifactExportGuard {}
+            function New-LoadStateUpdates { @{} }; function Invoke-DevBranchEnterpriseAutoUpdateIfLoaded {}
+            function Add-VerificationStaleIfNeeded {}; function Update-DevBranchState {}
+            function Invoke-DevBranchMcpRestartAfterInfobaseLoad { param([object]$State) $State }; function Assert-DevBranchToolArtifactExportGuard {}
             function Export-DevBranchResultFile { "C:\Результаты работы\branch1.cf" }
             function Test-GitHasChanges { $true }
             function Get-VerificationWorkingTreeChangePaths { @("src/cf/Configuration.xml") }
@@ -1370,10 +1369,11 @@
                 return "$ResultPath.manifest.json"
             }
 
-            Export-DevBranchResult 6>$null
-            $script:CapturedManifest | Add-Member -NotePropertyName runResultPath -NotePropertyValue $script:RunResultPath
-            $script:CapturedManifest | Add-Member -NotePropertyName runResultManifestPath -NotePropertyValue $script:RunResultManifestPath
-            $script:CapturedManifest | Add-Member -NotePropertyName userReport -NotePropertyValue $script:RunUserReport
+            $script:DumpInfoDirty = $false; $script:DumpInfoRestored = $false; $script:VerificationSawDirtyDumpInfo = $true; Invoke-DevBranchCheck; $script:CheckDumpInfoRestored = $script:DumpInfoRestored; $script:DumpInfoRestored = $false; Export-DevBranchResult 6>$null
+            $script:CapturedManifest | Add-Member -NotePropertyName runResultPath -NotePropertyValue $script:RunResultPath; $script:CapturedManifest | Add-Member -NotePropertyName runResultManifestPath -NotePropertyValue $script:RunResultManifestPath
+            $script:CapturedManifest | Add-Member -NotePropertyName userReport -NotePropertyValue $script:RunUserReport; $script:CapturedManifest | Add-Member -NotePropertyName checkDumpInfoRestored -NotePropertyValue $script:CheckDumpInfoRestored
+            $script:CapturedManifest | Add-Member -NotePropertyName verificationSawDirtyDumpInfo -NotePropertyValue $script:VerificationSawDirtyDumpInfo
+            $script:CapturedManifest | Add-Member -NotePropertyName dumpInfoRestored -NotePropertyValue $script:DumpInfoRestored
             return $script:CapturedManifest
         }
 
@@ -1384,7 +1384,7 @@
         $result.userReport | Should -Match ([regex]::Escape("Манифест: C:\Результаты работы\branch1.cf.manifest.json"))
         $result.devBranchCommit | Should -Be "base-commit"
         $result.sourceFingerprint | Should -Be "config-fingerprint"
-        $result.verificationFingerprint | Should -Be "v3|fixture"
+        $result.verificationFingerprint | Should -Be "v3|fixture"; $result.checkDumpInfoRestored | Should -BeTrue; $result.verificationSawDirtyDumpInfo | Should -BeFalse; $result.dumpInfoRestored | Should -BeTrue
         $result.worktreeClean | Should -BeFalse
         $result.verificationScopeCommitted | Should -BeFalse
     }

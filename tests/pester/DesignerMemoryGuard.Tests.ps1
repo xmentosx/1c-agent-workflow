@@ -348,10 +348,10 @@ while ($true) {
         $result.load.configLoadStatus | Should -Be "fallback-succeeded"
     }
 
-    It "keeps the package defaults and Fast inventory discoverable" {
+    It "keeps the package defaults and Smoke safety inventory discoverable" {
         $projectTemplate = Get-Content -Raw -Encoding UTF8 (Join-Path $RepoRoot "templates\project.json") | ConvertFrom-Json
         $envTemplate = Get-Content -Raw -Encoding UTF8 (Join-Path $RepoRoot "templates\dev.env.example")
-        $checkText = Get-Content -Raw -Encoding UTF8 (Join-Path $RepoRoot "scripts\check.ps1")
+        $catalog = Get-Content -Raw -Encoding UTF8 (Join-Path $RepoRoot "tests\quality-contracts.json") | ConvertFrom-Json
         $coreText = Get-Content -Raw -Encoding UTF8 $CorePath
         $lifecycleText = Get-Content -Raw -Encoding UTF8 $LifecyclePath
 
@@ -361,7 +361,7 @@ while ($true) {
         $envTemplate | Should -Match "DESIGNER_MAX_WORKING_SET_MB"
         $envTemplate | Should -Match "DESIGNER_STALL_WARNING_SECONDS"
         $envTemplate | Should -Match "DESIGNER_STALL_TIMEOUT_SECONDS"
-        $checkText | Should -Match ([regex]::Escape(".\tests\pester\DesignerMemoryGuard.Tests.ps1"))
+        @($catalog.smokeTests) | Should -Contain "tests/pester/DesignerMemoryGuard.Tests.ps1"
         $coreText | Should -Match "DESIGNER_MEMORY_MONITOR_FAILED"
         $coreText | Should -Match "DESIGNER_STALL_TIMEOUT"
         $coreText | Should -Match 'MaxWorkingSetMb \$maxWorkingSetMb'

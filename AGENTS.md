@@ -16,6 +16,9 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 
 - Fix shared package code, templates, docs, and tests rather than patching an example project.
 - Preserve unrelated user changes and keep the dirty-state guards strict.
+- A normal source change is accumulated for `develop`. On a clean local `develop`, fetch and fast-forward `origin/develop` without asking. For concurrent tasks use an isolated worktree; never mix two tasks in one dirty checkout.
+- Finish one coherent local commit, then run `scripts/source-delivery.ps1 -Action RegisterChange`. Registration owns the one `Targeted` run and writes an atomic local base/head queue ref only after it passes. Do not push, open a PR, or run `Smoke`, `Full`, `Develop`, or `Release` for an ordinary change.
+- If executable behavior changed without a test file change, pass the existing owner id through `-CoverageContract`. A missing test change and missing reusable contract blocks registration; do not add a test merely to satisfy a count.
 - Prefer script-owned prompts, sequencing, recovery, and state transitions. Do not duplicate helper-owned flows in agent prose.
 - Treat Git path lists as NUL-delimited data: use `git -c core.quotepath=false ... -z` through the shared path-list helper, never parse newline-delimited or C-quoted Git path output. Cover Cyrillic and space-containing paths in focused regressions.
 - Run monitored bootstrap in the foreground with `timeout_ms >= 3900000`. On interruption repeat the same bootstrap command; never delete `index.lock`, finish lifecycle manually, or edit `status.json`.
@@ -31,9 +34,11 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 
 ## Verification
 
-- Read-only source maintenance does not run `Fast`, `Full`, or `Release`; use targeted non-mutating evidence commands only.
-- During edits run only tests that directly cover the change. After a coherent change, run `scripts/check.ps1 -Mode Fast` once unless `Full` is next. Final delivery does not justify a gate; reuse fresh proof and never run `Fast` immediately before `Full`.
-- Run `scripts/check.ps1 -Mode Full` once on the final tree only before a PR; add `-AiRulesSource <controlled-fork-checkout>` for integration-boundary changes. Run `Release` only for an explicit release; follow `docs/local-quality-gate.md`.
+- Read-only source maintenance does not run `Targeted`, `Smoke`, `Full`, `Develop`, or `Release`; use focused non-mutating evidence only.
+- During edits run only the directly owned tests. Do not run a broad gate merely because a chat is ending. `Fast` is a deprecated alias for `Smoke` and is never the normal source-development step.
+- For the explicit request to check and publish accumulated `develop`, run `scripts/source-delivery.ps1 -Action PublishDevelop` with the exact controlled fork and dedicated E2E stand. It integrates only registered ranges, runs one `Develop` gate on the final candidate, and performs a non-force fast-forward push.
+- For the explicit request to release `develop` to `master`, run `scripts/source-delivery.ps1 -Action ReleaseMaster`. The queue must be empty and local `develop` must equal `origin/develop`; the action reconciles current `master`, reuses exact Develop proof, runs release-only evidence, advances both remote channels, and creates a tag/GitHub Release only when `-Version` is supplied.
+- Do not ask which gate to run unless the user explicitly overrides this model. A failure, conflict, remote movement, timeout, or no-progress stop leaves the queue intact and forbids publication.
 - Do not weaken the Vanessa completion gate, fresh passed `/itl-check`, snapshot rollback, or artifact SHA checks.
 - Tests must leave tracked state unchanged. A passing gate with a dirty worktree is not a release qualification.
 

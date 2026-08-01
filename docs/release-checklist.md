@@ -23,36 +23,44 @@ do not repoint the stand at the original external infobase.
 
 ## Each fork/workflow release
 
-From a clean workflow checkout and a clean fork checkout at the annotated
-`itl-*` tag, run:
+First publish and qualify the exact accumulated development candidate:
 
 ```powershell
-.\scripts\check.ps1 -Mode Release `
-  -AiRulesSource D:\Git\itl_ai_rules_1c `
+.\scripts\source-delivery.ps1 -Action PublishDevelop `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r22-rebuild `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
-Run `Full` once on the clean topic commit before the PR. Qualification v2 records
-the exact tests, gate scripts, merged shard JUnit, environment, workflow tree and
-fork qualification. A merge commit may reuse it only when the evidence commit is
-its ancestor and the tree plus every inventoried SHA remain identical. If no
-valid proof exists, `Release` executes and persists the static prefix before E2E,
-so a runtime retry does not repeat Pester/fork/compatibility. Cheap preflights
-still run every time.
+This is the only broad check for a batch of ordinary source tasks. It runs one
+`Develop` gate on the final temporary candidate, publishes only after success,
+and leaves the queue intact on failure. No topic chat runs Full/Develop first.
 
-`Full` and `Release` first create one immutable
+When that remote development commit is ready for the stable channel, run:
+
+```powershell
+.\scripts\source-delivery.ps1 -Action ReleaseMaster `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r22-rebuild `
+  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
+```
+
+Qualification records the exact tests, gate scripts, merged shard JUnit,
+environment, workflow tree, fork qualification and Develop live report. A
+descendant commit may reuse it only when the evidence commit is its ancestor and
+the tree plus every inventoried SHA remain identical. Release refuses to start
+without matching Develop evidence, so standard user journeys are not repeated.
+
+`Full`, `Develop`, and `Release` first create one immutable
 `build/test-results/local/release-context.json`. Do not start Designer,
 Enterprise or a manual recovery while this context reports `failed`. Resolve
 every listed issue and rerun the same gate. The preflight intentionally reports
 all candidate, dependency, encoding and stand drift in one pass instead of
 failing after an expensive stage.
 
-The dedicated E2E master and configured branch must be installed from the exact
-workflow candidate commit. Their managed package inventory and both
+The Develop journey installs the dedicated E2E master and configured branch from
+the exact workflow candidate through normal `update-workflow`. Their managed package inventory and both
 `.agent-1c/dependency-lock.json` files must match the candidate before Release.
-Use normal `update-workflow`, commit the managed stand update, then create or
-refresh the disposable branch. Never copy a lock or helper into the stand by
-hand.
+The script commits the managed stand update and refreshes the disposable branch.
+Never copy a lock or helper into the stand by hand.
 
 The command runs or exactly reuses the qualified static/fork/compatibility
 stages, then makes two sequential generated commits that each change only the

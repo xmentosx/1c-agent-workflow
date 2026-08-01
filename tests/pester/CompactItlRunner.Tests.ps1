@@ -182,7 +182,7 @@ exit 0
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "marks an unverified export as requiring confirmation" {
+    It "normalizes a zero helper exit and marks an unverified export as requiring confirmation" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-confirm-" + [guid]::NewGuid().ToString("N"))
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
@@ -193,7 +193,7 @@ param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$A
 $payload = [ordered]@{ schemaVersion=1; status='failed'; action=$Action; stage='verification'; stageDetail='missing'; errorMessage='Fresh verification is missing. Rerun with -AllowUnverifiedResult.'; exitCode=1; lastLogPath='' }
 [IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
 Write-Output 'unverified export refused'
-exit 1
+exit 0
 '@
             $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -- -Action export-dev-branch-result
             $LASTEXITCODE | Should -Be 1

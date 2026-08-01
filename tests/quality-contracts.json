@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "baseline": {
+    "testFiles": 36,
+    "testCases": 581,
+    "testLines": 23366
+  },
+  "budgets": {
+    "smokeTargetSeconds": 60,
+    "smokeHardSeconds": 120,
+    "targetedTargetSeconds": 300,
+    "targetedHardSeconds": 900,
+    "fullTargetSeconds": 600,
+    "fullHardSeconds": 1200,
+    "developTargetSeconds": 1800,
+    "developHardSeconds": 5400,
+    "releaseTargetSeconds": 3600,
+    "releaseHardSeconds": 7200
+  },
+  "smokeTests": [
+    "tests/pester/LocalQualityGate.Tests.ps1",
+    "tests/pester/SourceDelivery.Tests.ps1",
+    "tests/pester/LifecycleOperationLock.Tests.ps1",
+    "tests/pester/DesignerMemoryGuard.Tests.ps1",
+    "tests/pester/DesignerCompletion.Tests.ps1",
+    "tests/pester/DependencyLocks.Tests.ps1"
+  ],
+  "retiredTests": {
+    "tests/pester/TriageContract.Tests.ps1": "tests/pester/ParserDocsBudgets.Tests.ps1",
+    "tests/pester/VanessaTestGuide.Tests.ps1": "tests/pester/ParserDocsBudgets.Tests.ps1"
+  },
+  "contracts": [
+    {
+      "id": "source-quality-gate",
+      "owner": "source quality and qualification",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/LocalQualityGate.Tests.ps1",
+      "paths": ["scripts/check.ps1", "scripts/quality-contracts.ps1", "scripts/resolve-targeted-tests.ps1", "scripts/invoke-pester-*.ps1", "scripts/run-pester-*.ps1", "scripts/pester-timings.json", "scripts/release-qualification.ps1", "scripts/test-release-readiness.ps1", "tests/quality-contracts.json"],
+      "tests": ["tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1"]
+    },
+    {
+      "id": "source-delivery",
+      "owner": "develop and master delivery",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/SourceDelivery.Tests.ps1",
+      "paths": ["scripts/source-delivery.ps1", "scripts/git-path-list.ps1", "AGENTS.md", "docs/local-quality-gate.md", "docs/release-checklist.md"],
+      "tests": ["tests/pester/SourceDelivery.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1"]
+    },
+    {
+      "id": "release-runtime",
+      "owner": "release and live journey",
+      "gate": "develop",
+      "budgetSeconds": 5400,
+      "primaryTest": "tests/pester/ReleaseGate.Tests.ps1",
+      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/test-release-readiness.ps1"],
+      "tests": ["tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1"]
+    },
+    {
+      "id": "bootstrap-update",
+      "owner": "bootstrap and package update",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/BootstrapUpdate.Tests.ps1",
+      "paths": ["AGENT-INSTALL.md", "install-agent-1c-workflow.ps1", "templates/*", ".agents/skills/1c-workflow/kilo-command-templates/*"],
+      "tests": ["tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/DependencyLocks.Tests.ps1"]
+    },
+    {
+      "id": "lifecycle",
+      "owner": "project and branch lifecycle",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/DevBranchLifecycle.Tests.ps1",
+      "paths": [".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/run-*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.bootstrap.ps1"],
+      "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1"]
+    },
+    {
+      "id": "branch-refresh-result",
+      "owner": "branch refresh verification and result",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/BranchSeedRefreshLite.Tests.ps1",
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.branch*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.result*.ps1"],
+      "tests": ["tests/pester/BranchSeedRefreshLite.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/ExtensionInitialization.Tests.ps1"]
+    },
+    {
+      "id": "vanessa-verification",
+      "owner": "Vanessa authoring runtime and verification",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/VanessaAuthoring.Tests.ps1",
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/references/vanessa-tests.md", ".agents/skills/itl-vanessa-ui-mcp/*", "scripts/build-vanessa-automation-patched.ps1"],
+      "tests": ["tests/pester/VanessaAuthoring.Tests.ps1", "tests/pester/VanessaRuntimeCleanup.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1"]
+    },
+    {
+      "id": "mcp-hosts",
+      "owner": "MCP configuration and runtime",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/McpConfig.Tests.ps1",
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.mcp.ps1", ".agents/skills/1c-workflow/assets/ondemand-mcp/*", "mcp-host/*", "tools/*"],
+      "tests": ["tests/pester/McpConfig.Tests.ps1", "tests/pester/OnDemandMcp.Tests.ps1", "tests/pester/HostTooling.Tests.ps1"]
+    },
+    {
+      "id": "clients-rules",
+      "owner": "client adapters and controlled rules",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/AiRulesClients.Tests.ps1",
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.client*.ps1", ".agents/skills/1c-workflow-fast/*", ".agents/skills/product-docs/*", ".agents/skills/itl-roctup-1c-data/*", "templates/ai-rules-*", "scripts/build-ai-rules-release.ps1", "scripts/test-ai-rules-compatibility.ps1", "scripts/promote-ai-rules-compatibility.ps1"],
+      "tests": ["tests/pester/AiRulesClients.Tests.ps1", "tests/pester/ClientAdaptersAndModes.Tests.ps1", "tests/pester/AiRulesMigration.Tests.ps1"]
+    },
+    {
+      "id": "documentation",
+      "owner": "source documentation",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/ParserDocsBudgets.Tests.ps1",
+      "paths": ["README.md", "LICENSE*", "docs/*", ".gitignore", ".gitattributes", ".agents/skills/*/SKILL.md", ".agents/skills/1c-workflow/references/*"],
+      "tests": ["tests/pester/ParserDocsBudgets.Tests.ps1"]
+    },
+    {
+      "id": "test-infrastructure",
+      "owner": "Pester fixtures and test support",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/LocalQualityGate.Tests.ps1",
+      "paths": ["tests/pester/TestSupport.ps1", "tests/fixtures/*", "scripts/test.ps1"],
+      "tests": ["tests/pester/LocalQualityGate.Tests.ps1"]
+    }
+  ],
+  "lifecycleActions": {
+    "journey": [
+      "check-dev-branch", "close-dev-branch", "export-dev-branch-result", "init-dev-branch-extension", "init-project", "new-dev-branch", "new-extension-dev-branch", "refresh-dev-branch", "refresh-dev-branch-lite", "status", "sync-master", "update-workflow"
+    ],
+    "boundary": [
+      "activate-dev-branch-context", "adopt-dev-worktree", "begin-verification-repair", "check-tools", "configure-dev-branch-unsafe-action-protection", "configure-web-publication", "context-benchmark", "deploy-and-test", "detect-apache", "detect-web-publication", "doctor", "dump-dev-branch-extension", "get-dev-workspace-close-plan", "get-dev-workspace-plan", "getconfigfiles", "help", "initialize-dev-branch-runtime", "install-agent-browser", "install-ui-tools", "install-vanessa-automation", "install-windows-mcp", "itl-litemode", "itl-switch-client", "list-dev-branches", "list-platforms", "loadfrom1cbase", "publish-dev-branch", "release-e2e-config-roundtrip", "release-e2e-extension-smoke", "release-e2e-prepare-ondemand", "release-e2e-restore", "release-e2e-snapshot", "run-dev-branch-tests", "set-dev-branch-extension", "set-dev-workspace-deregistration", "start-vanessa-profile", "status-vanessa-profile", "stop-dev-branch-test-clients", "stop-vanessa-profile", "switch-dev-branch", "switch-master", "ui-tools-status", "update-ai-rules", "update-dev-branch-base", "update1cbase", "validate", "verify-dev-branch", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-select", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-start", "vibecoding1c-mcp-status", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-update", "vibecoding1c-mcp-write-client-config"
+    ]
+  }
+}

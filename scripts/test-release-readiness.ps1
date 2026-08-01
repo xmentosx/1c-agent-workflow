@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("Full", "Release")]
+    [ValidateSet("Full", "Develop", "Release")]
     [string]$Mode = "Full",
     [string]$RepositoryRoot = "",
     [string]$AiRulesSource = "",

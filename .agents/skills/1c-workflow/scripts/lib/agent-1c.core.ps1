@@ -36,6 +36,50 @@ function Write-Utf8Text {
     [System.IO.File]::WriteAllText($Path, $Value, (Get-Utf8Encoding))
 }
 
+function Write-Utf8TextAtomic {
+    param(
+        [string]$Path,
+        [string]$Value,
+        [int]$RetryCount = 40,
+        [int]$RetryDelayMilliseconds = 50
+    )
+
+    $directory = Split-Path -Parent $Path
+    if ($directory) {
+        New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    } else {
+        $directory = (Get-Location).Path
+    }
+    $temporaryPath = Join-Path $directory (".{0}.{1}.{2}.tmp" -f (Split-Path -Leaf $Path), $PID, ([guid]::NewGuid().ToString("N")))
+    $backupPath = $temporaryPath + ".bak"
+    [System.IO.File]::WriteAllText($temporaryPath, $Value, (Get-Utf8Encoding))
+    try {
+        for ($attempt = 1; $attempt -le $RetryCount; $attempt++) {
+            try {
+                if (Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction SilentlyContinue) {
+                    [System.IO.File]::Replace($temporaryPath, $Path, $backupPath, $true)
+                } else {
+                    [System.IO.File]::Move($temporaryPath, $Path)
+                }
+                return
+            } catch [System.IO.IOException] {
+                if ($attempt -ge $RetryCount) { throw }
+                Start-Sleep -Milliseconds $RetryDelayMilliseconds
+            } catch [System.UnauthorizedAccessException] {
+                if ($attempt -ge $RetryCount) { throw }
+                Start-Sleep -Milliseconds $RetryDelayMilliseconds
+            }
+        }
+    } finally {
+        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $backupPath -PathType Leaf -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Write-Utf8TextIfChanged {
     param(
         [string]$Path,
@@ -286,7 +330,7 @@ function Write-RunStatus {
         resultManifestPath = $(if ($script:RunResultManifestPath) { [string]$script:RunResultManifestPath } else { "" })
     }
 
-    Write-Utf8Text -Path $script:ResolvedRunStatusPath -Value (($payload | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+    Write-Utf8TextAtomic -Path $script:ResolvedRunStatusPath -Value (($payload | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
 }
 
 function Set-RunUserReport {

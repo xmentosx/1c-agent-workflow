@@ -13,39 +13,15 @@
         $LauncherText = $context.LauncherText
         $McpHostText = $context.McpHostText
     }
-    It "parses the PowerShell helper" {
-        $tokens = $null
-        $errors = $null
-        [System.Management.Automation.Language.Parser]::ParseFile($HelperPath, [ref]$tokens, [ref]$errors) | Out-Null
-
-        @($errors).Count | Should -Be 0
-    }
-
-    It "parses helper modules" {
+    It "parses the helper modules launcher and installer" {
+        $parsePaths = @($HelperPath) + @($HelperModulePaths) + @($LauncherPath, $InstallerPath)
         $HelperModulePaths.Count | Should -BeGreaterThan 0
-        foreach ($modulePath in $HelperModulePaths) {
+        foreach ($modulePath in $parsePaths) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile($modulePath, [ref]$tokens, [ref]$errors) | Out-Null
-
             @($errors).Count | Should -Be 0
         }
-    }
-
-    It "parses the monitored window launcher" {
-        $tokens = $null
-        $errors = $null
-        [System.Management.Automation.Language.Parser]::ParseFile($LauncherPath, [ref]$tokens, [ref]$errors) | Out-Null
-
-        @($errors).Count | Should -Be 0
-    }
-
-    It "parses the one-step workflow installer" {
-        $tokens = $null
-        $errors = $null
-        [System.Management.Automation.Language.Parser]::ParseFile($InstallerPath, [ref]$tokens, [ref]$errors) | Out-Null
-
-        @($errors).Count | Should -Be 0
     }
 
     It "keeps Markdown files valid UTF-8 without mojibake markers" {
@@ -136,7 +112,7 @@
 
     It "documentation budgets keep review thresholds below hard limits" {
         $budgets = @(
-            @{ path = "AGENTS.md"; maxWords = 700; reviewApproxTokens = 1100; maxApproxTokens = 1200; rationale = "source-maintainer router" },
+            @{ path = "AGENTS.md"; maxWords = 850; reviewApproxTokens = 1500; maxApproxTokens = 1700; rationale = "source-maintainer router plus source delivery contract" },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1600; rationale = "routine helper router" },
             @{ path = "templates\USER-RULES.append.md"; maxWords = 750; reviewApproxTokens = 1200; maxApproxTokens = 1400; rationale = "always-on ITL safety overlay" },
@@ -160,15 +136,16 @@
         }
     }
 
-    It "keeps root AGENTS source-only and routes maintainers to canonical contracts" {
+    It "keeps root AGENTS source-only and enforces accumulated delivery defaults" {
         $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "AGENTS.md") -Raw -Encoding UTF8
         $agentsText | Should -Match "source repository"
         $agentsText | Should -Match "not installed-project guidance"
         $agentsText | Should -Match ([regex]::Escape('Never add this root `AGENTS.md` to bootstrap or `update-workflow` managed-copy lists'))
         $agentsText | Should -Match "ITL owns project bootstrap and lifecycle"
         $agentsText | Should -Match ([regex]::Escape('controlled `ai_rules_1c` fork owns'))
-        $agentsText | Should -Match ([regex]::Escape("scripts/check.ps1 -Mode Fast"))
-        $agentsText | Should -Match ([regex]::Escape("scripts/check.ps1 -Mode Full"))
+        $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action RegisterChange"))
+        $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action PublishDevelop"))
+        $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action ReleaseMaster"))
         $agentsText | Should -Match ([regex]::Escape('fresh passed `/itl-check`'))
         foreach ($relativePath in @(
             ".agents/skills/1c-workflow/SKILL.md",
@@ -179,17 +156,12 @@
         )) {
             Test-Path -LiteralPath (Join-Path $RepoRoot $relativePath) -PathType Leaf | Should -BeTrue
         }
-    }
-
-    It "bounds source maintenance checks, skill activation, and exploration" {
-        $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "AGENTS.md") -Raw -Encoding UTF8
-
-        $agentsText | Should -Match 'Read-only source maintenance.*does not run `Fast`, `Full`, or `Release`'
-        $agentsText | Should -Match 'During edits run only tests that directly cover the change'
-        $agentsText | Should -Match 'Mode Fast` once unless `Full` is next'
-        $agentsText | Should -Match 'Final delivery does not justify a gate'
-        $agentsText | Should -Match 'never run `Fast` immediately before `Full`'
-        $agentsText | Should -Match 'Mode Full` once on the final tree only before a PR'
+        $agentsText | Should -Match 'Read-only source maintenance.*does not run `Targeted`, `Smoke`, `Full`, `Develop`, or `Release`'
+        $agentsText | Should -Match 'Do not run a broad gate merely because a chat is ending'
+        $agentsText | Should -Match '`Fast` is a deprecated alias for `Smoke`'
+        $agentsText | Should -Match 'integrates only registered ranges, runs one `Develop` gate'
+        $agentsText | Should -Match 'queue must be empty and local `develop` must equal `origin/develop`'
+        $agentsText | Should -Match 'Do not ask which gate to run'
         $agentsText | Should -Match 'Do not activate them for source-repository maintenance'
         $agentsText | Should -Match 'separate installed project whose root the user identifies'
         $agentsText | Should -Match 'targeted `rg`.*one matching contract or reference'
@@ -321,8 +293,9 @@
         $testScriptText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot 'scripts\test.ps1')
         Test-Path -LiteralPath (Join-Path $RepoRoot '.github\workflows\ci.yml') | Should -BeFalse
         $checkText | Should -Match ([regex]::Escape('build\test-results\local'))
-        $checkText | Should -Match 'New-PesterConfiguration'
-        $checkText | Should -Match 'TestResult\.OutputPath'
+        $checkText | Should -Match 'run-pester-shard\.ps1'
+        $checkText | Should -Match 'pester-selection-plan\.json'
+        $checkText | Should -Match 'pester\.xml'
         $testScriptText | Should -Match 'New-PesterConfiguration'
         $testScriptText | Should -Match 'TestResult\.OutputPath'
 
@@ -875,6 +848,16 @@
         $text | Should -Match "высокий риск проверки сами по себе не принуждают к OpenSpec"
         $text | Should -Not -Match "Используется для новой функциональности, изменения поведения, нескольких модулей"
         $text | Should -Not -Match ([regex]::Escape('.agents/skills/1c-workflow/references/'))
+
+        $vanessaGuide = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\vanessa-tests.md")
+        foreach ($marker in @(
+            "single-quoted Gherkin parameters and table cells", "stable business key", "selection restores/adds values",
+            "runtime-visible, available elements", "targeted graph/code evidence", "Vanessa UI MCP for dynamic state",
+            "scripts/get-form-element-context.ps1", "acceptance scenarios fully automated", "Interactive profiling is separate tooling",
+            "Classify every executable BSL block", "Never combine both contexts in one block", "VAExtension cross-step transport",
+            "freeze it during infrastructure diagnosis"
+        )) { $vanessaGuide | Should -Match ([regex]::Escape($marker)) }
+        $vanessaGuide | Should -Not -Match "PM5"
     }
 
     It "documents native examples and natural OpenSpec requests at matching development steps" {
@@ -900,7 +883,7 @@
         $agentText | Should -Match "(?s)### 9\..*?/opsx-archive"
     }
 
-    It "ignores local runtime branch state in all gitignore surfaces" {
+    It "ignores every workflow runtime surface without hiding tracked skills" {
         $requiredPath = ".agent-1c/dev-branches/"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
@@ -915,24 +898,15 @@
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($cachePath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($cachePath))
         $HelperText | Should -Match ([regex]::Escape($cachePath))
-    }
-
-    It "ignores monitored run status and log artifacts" {
         $requiredPath = ".agent-1c/runs/"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
         $HelperText | Should -Match ([regex]::Escape($requiredPath))
         $LauncherText | Should -Match ([regex]::Escape(".agent-1c\runs"))
-    }
-
-    It "ignores lifecycle operation locks in every package surface" {
         $requiredPath = ".agent-1c/locks/"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
         $HelperText | Should -Match ([regex]::Escape($requiredPath))
-    }
-
-    It "ignores transactional runtime staging in every package surface" {
         $requiredPaths = @(
             ".tx/",
             ".agent-1c/branch-dumps/",
@@ -949,9 +923,6 @@
             (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
             $HelperText | Should -Match ([regex]::Escape($requiredPath))
         }
-    }
-
-    It "ignores local agent client and MCP runtime state without blocking branch creation" {
         $requiredPaths = @(
             ".agent-1c/mcp/",
             ".agent-1c/tools/data-mcp/",
