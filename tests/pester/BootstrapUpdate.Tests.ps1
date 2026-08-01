@@ -292,6 +292,8 @@ exit 0
         $userRulesTemplateText | Should -Match "product-docs/SKILL.md"
         $userRulesTemplateText | Should -Match "BookStack-product-docs-mcp"
         $userRulesTemplateText | Should -Match "before broad repository traversal"
+        $userRulesTemplateText | Should -Match "same OpenSpec scope"
+        $userRulesTemplateText | Should -Match "reuse current/proposal"
         $userRulesTemplateText | Should -Match ([regex]::Escape("executionPath=quick-fix|full-cycle"))
         $userRulesTemplateText | Should -Match ([regex]::Escape("planningMode=direct|OpenSpec"))
         $userRulesTemplateText | Should -Match 'Promotion triggers set only `executionPath=full-cycle`'
@@ -330,6 +332,25 @@ exit 0
         $productDocsSkillText | Should -Match "1c-code-metadata-mcp"
         $productDocsSkillText | Should -Match "1C-docs-mcp"
         $productDocsSkillText | Should -Match "Code/MCP evidence"
+        foreach ($marker in @(
+            "### OpenSpec Context Reuse",
+            "### Lookup When Reuse Does Not Apply",
+            "same OpenSpec change and unchanged scope",
+            'do not repeat `search_docs` or `read_page`',
+            "proposal.md",
+            'exact `updated_at` returned by BookStack',
+            "page update is known or suspected",
+            "unresolved product-context gap",
+            'provenance, not proof of live freshness',
+            "Reuse applies only to BookStack product context"
+        )) {
+            $productDocsSkillText | Should -Match ([regex]::Escape($marker))
+        }
+
+        $guardIndex = $productDocsSkillText.IndexOf("Evaluate the PM4/PM5 guard", [StringComparison]::Ordinal)
+        $reuseIndex = $productDocsSkillText.IndexOf("For the same OpenSpec change", [StringComparison]::Ordinal)
+        $guardIndex | Should -BeGreaterOrEqual 0
+        $guardIndex | Should -BeLessThan $reuseIndex
 
         $productDocsOpenAiText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\product-docs\agents\openai.yaml")
         $productDocsOpenAiText | Should -Match "technical architecture through BookStack"
@@ -374,9 +395,11 @@ exit 0
             $result.pm4 | Should -Match "For PM4 projects"
             $result.pm4 | Should -Match "technical or implementation architecture"
             $result.pm4 | Should -Not -Match "BookStack-product-docs-mcp"
+            $result.pm4 | Should -Not -Match "reuse current/proposal"
             $result.pm5 | Should -Match "BookStack-product-docs-mcp"
             $result.pm5 | Should -Match ([regex]::Escape("planningMode=direct|OpenSpec"))
             $result.pm5 | Should -Match "product-docs/SKILL.md"
+            $result.pm5 | Should -Match "reuse current/proposal"
             ([regex]::Matches($result.pm5, 'ITL-WORKFLOW-USER-RULES:START')).Count | Should -Be 1
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

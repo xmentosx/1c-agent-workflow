@@ -13,6 +13,18 @@ Before using BookStack, inspect `.agent-1c/project.json` when it exists. If `bas
 
 Use the `BookStack-product-docs-mcp` MCP server as the source of product context and intended behavior when answering, researching, planning, proposing, applying, or changing anything that may depend on business rules, technical or implementation architecture, the internal design of a subsystem, adopted technical decisions and their constraints or rationale, user-facing behavior, product terms, permissions, reports, integrations, test scenarios, or any OpenSpec explore/propose/apply phase.
 
+### OpenSpec Context Reuse
+
+Evaluate the PM4/PM5 guard before either BookStack lookup or reuse. A PM4 project must not reuse recorded PM5 BookStack context as product evidence.
+
+For the same OpenSpec change and unchanged scope, do not repeat `search_docs` or `read_page` when the current conversation or the proposal's `## Context Sources` already contains a sufficient BookStack handoff. A durable handoff in `proposal.md` records each material page title, URL, exact `updated_at` returned by BookStack, and the short scope-relevant conclusion that influenced the proposal. Explore may reuse results already present in the current conversation; propose writes the durable handoff; apply reads it from the OpenSpec `contextFiles`.
+
+Reuse the handoff only when its entries are complete, relevant to the current scope, and not marked provisional or unavailable. Re-query BookStack when the scope changes, a required URL or `updated_at` is missing, a page update is known or suspected, the user explicitly requests current documentation, code/MCP evidence conflicts with the recorded conclusion, or an unresolved product-context gap remains. When the same page needs freshness validation, call `read_page` directly by page ID or URL; repeat broad `search_docs` only when scope or source relevance changed.
+
+Stored `updated_at` is provenance, not proof of live freshness. Never describe reused context as confirmed current unless BookStack was queried in the current phase. Reuse applies only to BookStack product context: still verify current code, tests, 1C metadata, runtime behavior, and domain MCP evidence, and preserve the conflict policy below.
+
+### Lookup When Reuse Does Not Apply
+
 1. Search first with `search_docs`, before a broad repository traversal. Use 2-4 focused queries with `limit=3` to `5`: user-facing terms, subsystem/architecture terms, 1C object names, report names, integration names, and Russian synonyms when relevant. Stop searching when the same relevant pages recur or the evidence is sufficient. When the task explicitly requires exhaustive coverage, follow `next_cursor` until `has_more=false`; do not increase the per-call limit merely to avoid pagination. A question such as "как устроена архитектура редактора планов" is a mandatory BookStack-first case.
 2. Read only the 1-2 relevant pages with `read_page`, preferring markdown and narrowing the first call with `query` or `heading`. The default response is bounded; follow `next_cursor` only while the missing continuation is relevant. Use `max_chars=0` only when the task explicitly requires the entire page. Keep the BookStack page URL and `updated_at` in your notes when available.
 3. Use `list_structure` only when search terms are unclear or when you need to locate the right shelf/book/chapter. Prefer a specific `scope` and keep `limit` at 30 or less.
