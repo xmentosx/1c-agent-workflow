@@ -411,8 +411,8 @@
         $devBlock | Should -Match "Get-ItlOpenSpecNaturalRequests"
         $devBlock | Should -Match "Исследовать задачу"
         $devBlock | Should -Match "proposal"
-        $devBlock | Should -Match "выберите quick-fix или full-cycle"
-        $devBlock | Should -Match "По умолчанию full-cycle выполняется напрямую"
+        $devBlock | Should -Match "независимо выберите execution path quick-fix или full-cycle"
+        $devBlock | Should -Match "По умолчанию используйте direct"
         $devBlock | Should -Match "Есть проверяемые изменения"
     }
 
@@ -594,9 +594,9 @@
             $text = ($output | Out-String)
 
             $text | Should -Match "Есть проверяемые изменения: False"
-            $text | Should -Match "Рекомендуемый шаг: выберите quick-fix или full-cycle"
-            $text | Should -Match "По умолчанию full-cycle выполняется напрямую"
-            $text | Should -Match "используйте /opsx-explore или /opsx-propose, только если полезно формальное исследование или согласование"
+            $text | Should -Match "Рекомендуемый шаг: независимо выберите execution path quick-fix или full-cycle и planning mode direct или OpenSpec"
+            $text | Should -Match "По умолчанию используйте direct"
+            $text | Should -Match "выбирайте /opsx-explore или /opsx-propose, только если полезно формальное исследование или согласование"
             foreach ($command in @("/opsx-propose", "/opsx-explore", "/opsx-apply", "/opsx-archive")) {
                 $text | Should -Match ([regex]::Escape($command))
             }
@@ -735,7 +735,7 @@
         foreach ($marker in @(
             "executionPath=quick-fix|full-cycle",
             "planningMode=direct|OpenSpec",
-            "never force OpenSpec",
+            'Promotion triggers set only `executionPath=full-cycle`',
             "QUICKFIX_MAX_LINES",
             "/itl-check",
             "OpenSpec phases read rules",
@@ -806,7 +806,7 @@
         foreach ($marker in @('native', 'natural', 'Исследуй задачу в режиме OpenSpec', 'Подготовь OpenSpec proposal', 'не запускает `openspec update`')) {
             $text | Should -Match ([regex]::Escape($marker))
         }
-        $text | Should -Match "Сам факт исправления наблюдаемого поведения не переводит локальную BSL-правку в OpenSpec"
+        $text | Should -Match 'явный запрос на OpenSpec.*не превращают его в `full-cycle`'
         $text | Should -Match "Direct full-cycle"
         $text | Should -Match "высокий риск проверки сами по себе не принуждают к OpenSpec"
         $text | Should -Not -Match "Используется для новой функциональности, изменения поведения, нескольких модулей"

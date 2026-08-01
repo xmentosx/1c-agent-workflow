@@ -206,8 +206,9 @@ Describe "controlled ai_rules_1c release overlay" {
         foreach ($text in @($forkUserRulesText, $projectUserRulesText)) {
             $text | Should -Match ([regex]::Escape('executionPath=quick-fix|full-cycle'))
             $text | Should -Match ([regex]::Escape('planningMode=direct|OpenSpec'))
-            $text | Should -Match 'Promotion triggers.*never force OpenSpec'
         }
+        $forkUserRulesText | Should -Match 'Promotion triggers.*never change.*planningMode'
+        $projectUserRulesText | Should -Match 'Promotion triggers set only `executionPath=full-cycle`'
         $projectUserRulesText | Should -Not -Match 'classify each code/metadata edit as quick-fix or OpenSpec'
     }
 }

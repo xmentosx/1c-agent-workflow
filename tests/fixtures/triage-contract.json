@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "executionPaths": [
+    "quick-fix",
+    "full-cycle"
+  ],
+  "planningModes": [
+    "direct",
+    "OpenSpec"
+  ],
+  "defaultPlanningMode": "direct",
+  "planningModeChangesVerificationDepth": false,
+  "promotionTriggerSetsExecutionPath": "full-cycle",
+  "promotionTriggerSetsPlanningMode": null,
+  "requiresPersistedRuntimeState": false,
+  "validCombinations": [
+    { "executionPath": "quick-fix", "planningMode": "direct" },
+    { "executionPath": "quick-fix", "planningMode": "OpenSpec" },
+    { "executionPath": "full-cycle", "planningMode": "direct" },
+    { "executionPath": "full-cycle", "planningMode": "OpenSpec" }
+  ]
+}

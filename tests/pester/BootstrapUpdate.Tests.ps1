@@ -294,7 +294,7 @@ exit 0
         $userRulesTemplateText | Should -Match "before broad repository traversal"
         $userRulesTemplateText | Should -Match ([regex]::Escape("executionPath=quick-fix|full-cycle"))
         $userRulesTemplateText | Should -Match ([regex]::Escape("planningMode=direct|OpenSpec"))
-        $userRulesTemplateText | Should -Match "Promotion triggers.*never force OpenSpec"
+        $userRulesTemplateText | Should -Match 'Promotion triggers set only `executionPath=full-cycle`'
         $userRulesTemplateText | Should -Match "OpenSpec phases read rules"
         $userRulesTemplateText | Should -Match 'Never install missing `openspec` or run `openspec update`'
         $userRulesTemplateText | Should -Match "activate required skills"

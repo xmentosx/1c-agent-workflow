@@ -1,7 +1,7 @@
 {
     "schemaVersion":  3,
-    "baselineUpstreamCommit":  "5f3d3f03b778d7de38cf2cfb18a20cf3e7ed79d8",
-    "baselineReleaseCommit":  "151aa980b5e99b3d129e974925e734d9ef0afa3e",
+    "baselineUpstreamCommit":  "410951e74fd3e6b7a763cf49757935b9a34d3f31",
+    "baselineReleaseCommit":  "37362c6fa0e29b8aee0f70e01d85bf77e41cc683",
     "intakeUpstreamCommit":  "410951e74fd3e6b7a763cf49757935b9a34d3f31",
     "targetPath":  "AGENTS.md",
     "maximumTargetCharacters":  22000,
@@ -165,11 +165,11 @@
                           {
                               "path":  "AGENTS.md",
                               "requirementId":  "ITL-CONTEXT-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-CONTEXT-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 independent execution-path and planning-mode contract required by ITL-CONTEXT-001.",
                               "upstreamSha256":  "0af764d24fbc2b6d25335daa9fdffd3125ee98a45b14735ac4d93f2cfe9faa22",
                               "baselineSha256":  "05d77edcdea25e665c46935ab2a393b4d097fb59bb802a0341403ee1e04e02cd",
-                              "resultSha256":  "05d77edcdea25e665c46935ab2a393b4d097fb59bb802a0341403ee1e04e02cd"
+                              "resultSha256":  "36c6dff82e759138ffb7ae3eea3f13bebe2afdfcc26d38b7de667fd3142f0503"
                           },
                           {
                               "path":  "content/commands/deploy-and-test.md",
@@ -246,11 +246,11 @@
                           {
                               "path":  "content/openspec-bundle/claude-code/.claude/commands/opsx/apply.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 conditional apply routing required by ITL-OPENSPEC-001.",
                               "upstreamSha256":  "0c7162a4ed3b95235c1af1a9b837dc218162fdb8ae1a10b3799668243b9d090b",
                               "baselineSha256":  "a9c74691e8840ec6117d295d937695e3a6702620062f529631f4ad11d51757cd",
-                              "resultSha256":  "a9c74691e8840ec6117d295d937695e3a6702620062f529631f4ad11d51757cd"
+                              "resultSha256":  "fce9cf8b923563a52ca41487f1c44039b2750e95b4a9aafda4882370a52aa5ba"
                           },
                           {
                               "path":  "content/openspec-bundle/claude-code/.claude/commands/opsx/explore.md",
@@ -273,11 +273,11 @@
                           {
                               "path":  "content/openspec-bundle/claude-code/.claude/skills/openspec-apply-change/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 conditional apply routing required by ITL-OPENSPEC-001.",
                               "upstreamSha256":  "93dc7b3b4af8e5257a2a8bb3c72e0239cc241b5e31f28660bb4effb67ecf9803",
                               "baselineSha256":  "055bea535dc4579ec3090b516a8c4916e2d96852ec992bfc5894b5433f2a6a43",
-                              "resultSha256":  "055bea535dc4579ec3090b516a8c4916e2d96852ec992bfc5894b5433f2a6a43"
+                              "resultSha256":  "8ff9f8db3ba2ed52d4adcd83a06318cb61163a1011d3dca3b6bbe98fa1e454ad"
                           },
                           {
                               "path":  "content/openspec-bundle/claude-code/.claude/skills/openspec-explore/SKILL.md",
@@ -300,11 +300,11 @@
                           {
                               "path":  "content/openspec-bundle/codex/.codex/skills/openspec-apply-change/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 conditional apply routing required by ITL-OPENSPEC-001.",
                               "upstreamSha256":  "93dc7b3b4af8e5257a2a8bb3c72e0239cc241b5e31f28660bb4effb67ecf9803",
                               "baselineSha256":  "055bea535dc4579ec3090b516a8c4916e2d96852ec992bfc5894b5433f2a6a43",
-                              "resultSha256":  "055bea535dc4579ec3090b516a8c4916e2d96852ec992bfc5894b5433f2a6a43"
+                              "resultSha256":  "8ff9f8db3ba2ed52d4adcd83a06318cb61163a1011d3dca3b6bbe98fa1e454ad"
                           },
                           {
                               "path":  "content/openspec-bundle/codex/.codex/skills/openspec-explore/SKILL.md",
@@ -399,11 +399,11 @@
                           {
                               "path":  "content/openspec-bundle/cursor/.cursor/commands/opsx-apply.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 conditional apply routing required by ITL-OPENSPEC-001.",
                               "upstreamSha256":  "81ad6a976f9cb9f2094fc0d3047dad7561d91a9d80abd03ca3d896c9612324f6",
                               "baselineSha256":  "1869447da646b368c85b49a17d46476ab325941ac28294d8bb2de9fe7bb08e27",
-                              "resultSha256":  "1869447da646b368c85b49a17d46476ab325941ac28294d8bb2de9fe7bb08e27"
+                              "resultSha256":  "ec769380a53e5942f8a3c3e797e0725cb8586b4510bde2275e19d9bc4caf1ba5"
                           },
                           {
                               "path":  "content/openspec-bundle/cursor/.cursor/commands/opsx-explore.md",
@@ -426,11 +426,11 @@
                           {
                               "path":  "content/openspec-bundle/cursor/.cursor/skills/openspec-apply-change/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 conditional apply routing required by ITL-OPENSPEC-001.",
                               "upstreamSha256":  "93dc7b3b4af8e5257a2a8bb3c72e0239cc241b5e31f28660bb4effb67ecf9803",
                               "baselineSha256":  "055bea535dc4579ec3090b516a8c4916e2d96852ec992bfc5894b5433f2a6a43",
-                              "resultSha256":  "055bea535dc4579ec3090b516a8c4916e2d96852ec992bfc5894b5433f2a6a43"
+                              "resultSha256":  "8ff9f8db3ba2ed52d4adcd83a06318cb61163a1011d3dca3b6bbe98fa1e454ad"
                           },
                           {
                               "path":  "content/openspec-bundle/cursor/.cursor/skills/openspec-explore/SKILL.md",
@@ -453,11 +453,11 @@
                           {
                               "path":  "content/openspec-bundle/kilocode/.kilocode/skills/openspec-apply-change/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 conditional apply routing required by ITL-OPENSPEC-001.",
                               "upstreamSha256":  "93dc7b3b4af8e5257a2a8bb3c72e0239cc241b5e31f28660bb4effb67ecf9803",
                               "baselineSha256":  "055bea535dc4579ec3090b516a8c4916e2d96852ec992bfc5894b5433f2a6a43",
-                              "resultSha256":  "055bea535dc4579ec3090b516a8c4916e2d96852ec992bfc5894b5433f2a6a43"
+                              "resultSha256":  "8ff9f8db3ba2ed52d4adcd83a06318cb61163a1011d3dca3b6bbe98fa1e454ad"
                           },
                           {
                               "path":  "content/openspec-bundle/kilocode/.kilocode/skills/openspec-explore/SKILL.md",
@@ -480,11 +480,11 @@
                           {
                               "path":  "content/openspec-bundle/kilocode/.kilocode/workflows/opsx-apply.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 conditional apply routing required by ITL-OPENSPEC-001.",
                               "upstreamSha256":  "2bac7d66fcbe4f3584b0bd056c9f4ada6bd942e52105d75b0817c4669a5bcd61",
                               "baselineSha256":  "17ec1b57f485a788fdb2e35efed0062d39b712f4aa68ad98f24d4855c2e179cb",
-                              "resultSha256":  "17ec1b57f485a788fdb2e35efed0062d39b712f4aa68ad98f24d4855c2e179cb"
+                              "resultSha256":  "8fc5d540f36daa18f5cd1868f4b2eac87bf37292f69912c4272ff497bb543d1e"
                           },
                           {
                               "path":  "content/openspec-bundle/kilocode/.kilocode/workflows/opsx-explore.md",
@@ -507,11 +507,11 @@
                           {
                               "path":  "content/openspec-bundle/opencode/.opencode/command/opsx-apply.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 conditional apply routing required by ITL-OPENSPEC-001.",
                               "upstreamSha256":  "babdd8c6b064cb8ab31a5c805e89e5b19a8770423213a1f271757a41104d8fb2",
                               "baselineSha256":  "8e831c1dd86cccee07340e2ab8c73caf49649286b1136869be8a880247aa5d99",
-                              "resultSha256":  "8e831c1dd86cccee07340e2ab8c73caf49649286b1136869be8a880247aa5d99"
+                              "resultSha256":  "d8e7b91863336bb020a21045c3e3be15b9703ab36840a885bc66488a873f1dc4"
                           },
                           {
                               "path":  "content/openspec-bundle/opencode/.opencode/command/opsx-explore.md",
@@ -534,11 +534,11 @@
                           {
                               "path":  "content/openspec-bundle/opencode/.opencode/skills/openspec-apply-change/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 conditional apply routing required by ITL-OPENSPEC-001.",
                               "upstreamSha256":  "9760f6a545ca53a30e7e47451ee7784ac8cb299d9f781528761168838eb10739",
                               "baselineSha256":  "d4059e8d08955cea720ee30ed0f8716b02306e615645e6581e4ac94e1de4d2b9",
-                              "resultSha256":  "d4059e8d08955cea720ee30ed0f8716b02306e615645e6581e4ac94e1de4d2b9"
+                              "resultSha256":  "742926ec990b9afad44d3d05717e43ef303312760909302e869ceef0a4ce942a"
                           },
                           {
                               "path":  "content/openspec-bundle/opencode/.opencode/skills/openspec-explore/SKILL.md",
@@ -570,11 +570,11 @@
                           {
                               "path":  "content/rules/development-process.md",
                               "requirementId":  "ITL-UPSTREAM-ANCHORS-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-UPSTREAM-ANCHORS-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 two-axis triage process required by ITL-UPSTREAM-ANCHORS-001.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "04d0b3c8869d5942957d4376831333d0245c9d3771f153600beda12819e9133f",
-                              "resultSha256":  "04d0b3c8869d5942957d4376831333d0245c9d3771f153600beda12819e9133f"
+                              "resultSha256":  "c60c3970e0e3762415c5e25d32b6cf80003634b779071c94754932c7d5a382b5"
                           },
                           {
                               "path":  "content/rules/dev-standards-architecture.md",
@@ -582,7 +582,7 @@
                               "disposition":  "take-upstream",
                               "reason":  "Accept the audited upstream result unchanged.",
                               "upstreamSha256":  "408846169abc871d3a1b8bd5cea3e6e8b88e14757e2285a146ef6b92d9f70ea3",
-                              "baselineSha256":  "db12e913d580d1a685f8c98944534580b51c5362df8fde0fe842c482a1e5e640",
+                              "baselineSha256":  "408846169abc871d3a1b8bd5cea3e6e8b88e14757e2285a146ef6b92d9f70ea3",
                               "resultSha256":  "408846169abc871d3a1b8bd5cea3e6e8b88e14757e2285a146ef6b92d9f70ea3"
                           },
                           {
@@ -591,7 +591,7 @@
                               "disposition":  "take-upstream",
                               "reason":  "Accept the audited upstream result unchanged.",
                               "upstreamSha256":  "541a739bf7e250fe9e1ed92d54263544639327c421d95fe1be6d41c655b07d43",
-                              "baselineSha256":  "307f11d56c76007cc9967b8150359c4a83160c2431896ba04e19daf65de0e949",
+                              "baselineSha256":  "541a739bf7e250fe9e1ed92d54263544639327c421d95fe1be6d41c655b07d43",
                               "resultSha256":  "541a739bf7e250fe9e1ed92d54263544639327c421d95fe1be6d41c655b07d43"
                           },
                           {
@@ -624,11 +624,11 @@
                           {
                               "path":  "content/rules/sdd-integrations.md",
                               "requirementId":  "ITL-UPSTREAM-ANCHORS-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-UPSTREAM-ANCHORS-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 conditional apply routing required by ITL-UPSTREAM-ANCHORS-001.",
                               "upstreamSha256":  "744c725411bdfb2e9f26ac76b908ed265bc6ac97bbcdf2cb40b921b98f53e338",
                               "baselineSha256":  "383536c8baa664e8edbcd9ee5975bdf303c711794d24cc87184bb3888332e659",
-                              "resultSha256":  "383536c8baa664e8edbcd9ee5975bdf303c711794d24cc87184bb3888332e659"
+                              "resultSha256":  "5045c60643a53761afb378add79b1201a6634636e963034b5879b0c631562581"
                           },
                           {
                               "path":  "content/skills/1c-metadata-manage/docs/db-manage.md",
@@ -777,35 +777,44 @@
                           {
                               "path":  "docs/DOWNSTREAM-PATCHES.md",
                               "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "resolved",
-                              "reason":  "Record the reviewed r21 resolution required by ITL-INFRA-001.",
+                              "disposition":  "carry-forward",
+                              "reason":  "Carry forward the qualified r21 infrastructure contract unchanged.",
                               "upstreamSha256":  "\u003cabsent\u003e",
-                              "baselineSha256":  "5226b11360fad0f5d3b265f70c44baf98fb50e57ddc9774ca13d44b0d66cc5f2",
+                              "baselineSha256":  "bf06a8b85b2985fc9a8c5e09c701b0324901e52799bf113ce9dc325788f8b301",
                               "resultSha256":  "bf06a8b85b2985fc9a8c5e09c701b0324901e52799bf113ce9dc325788f8b301"
                           },
                           {
                               "path":  "docs/FORK-POLICY.md",
                               "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "resolved",
-                              "reason":  "Record the reviewed r21 resolution required by ITL-INFRA-001.",
+                              "disposition":  "carry-forward",
+                              "reason":  "Carry forward the qualified r21 fork policy unchanged.",
                               "upstreamSha256":  "\u003cabsent\u003e",
-                              "baselineSha256":  "15fc5c1451108dc21ddff6ee9b16adabb07457cfde0c27557f712e683bffec5a",
+                              "baselineSha256":  "4e3888ea1212f6ac0f0e6dbea93a905471684cd6e535d17473090c200008d56a",
                               "resultSha256":  "4e3888ea1212f6ac0f0e6dbea93a905471684cd6e535d17473090c200008d56a"
                           },
                           {
                               "path":  "docs/releases/itl-main-410951e7-r21.md",
                               "requirementId":  "ITL-INFRA-001",
+                              "disposition":  "carry-forward",
+                              "reason":  "Carry forward the qualified r21 release note unchanged.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "50b6c30056f406a761e2e8afdc3a6ea4e832276c8c3468559c55312efc758123",
+                              "resultSha256":  "50b6c30056f406a761e2e8afdc3a6ea4e832276c8c3468559c55312efc758123"
+                          },
+                          {
+                              "path":  "docs/releases/itl-main-410951e7-r22.md",
+                              "requirementId":  "ITL-INFRA-001",
                               "disposition":  "downstream-only",
-                              "reason":  "Add the reviewed r21 path required by ITL-INFRA-001.",
+                              "reason":  "Record the immutable r22 scope and qualification contract.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "\u003cabsent\u003e",
-                              "resultSha256":  "50b6c30056f406a761e2e8afdc3a6ea4e832276c8c3468559c55312efc758123"
+                              "resultSha256":  "0b1d214a3ffaf62e63fa2543d19b610b1f50d1d866a16aa8538097ab13ae70cf"
                           },
                           {
                               "path":  "docs/releases/itl-main-5ae333ed-r18.md",
                               "requirementId":  "ITL-INFRA-001",
                               "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-INFRA-001.",
+                              "reason":  "Carry forward the qualified r18 release note unchanged.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "a2edaf8d916acc507f2d969908dd575234259176a258e1ecce14ab8685551a11",
                               "resultSha256":  "a2edaf8d916acc507f2d969908dd575234259176a258e1ecce14ab8685551a11"
@@ -930,10 +939,10 @@
                           {
                               "path":  "docs/UPSTREAM-UPGRADE.md",
                               "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "resolved",
-                              "reason":  "Record the reviewed r21 resolution required by ITL-INFRA-001.",
+                              "disposition":  "carry-forward",
+                              "reason":  "Carry forward the qualified r21 upstream-upgrade contract unchanged.",
                               "upstreamSha256":  "\u003cabsent\u003e",
-                              "baselineSha256":  "208ff6a1ce5a8a0a33c8d3110bebf0759624d11f11e506ad373c864484ecc4c7",
+                              "baselineSha256":  "2ab3e5bb9f9c3dbc7d28b9fa56bfeecb32fd46e5a872890ace1edbbbc12076bc",
                               "resultSha256":  "2ab3e5bb9f9c3dbc7d28b9fa56bfeecb32fd46e5a872890ace1edbbbc12076bc"
                           },
                           {
@@ -948,10 +957,10 @@
                           {
                               "path":  "memory.md",
                               "requirementId":  "ITL-MEMORY-001",
-                              "disposition":  "resolved",
-                              "reason":  "Record the reviewed r21 resolution required by ITL-MEMORY-001.",
+                              "disposition":  "carry-forward",
+                              "reason":  "Carry forward the qualified r21 memory contract unchanged.",
                               "upstreamSha256":  "5c7962c80a1a4077377302551ef4594ddf00f4a666592d0aced47be2ac5ec3e1",
-                              "baselineSha256":  "b1d2aed515914e82dcee28e2ca37337f6ce226e7faa8d3ee66d3ba23eb915b40",
+                              "baselineSha256":  "992389105b98e1e161264181ccfcf6cd24eba5b409dba375482ade8824b22fdc",
                               "resultSha256":  "992389105b98e1e161264181ccfcf6cd24eba5b409dba375482ade8824b22fdc"
                           },
                           {
@@ -975,10 +984,10 @@
                           {
                               "path":  "scripts/check.ps1",
                               "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "resolved",
-                              "reason":  "Record the reviewed r21 resolution required by ITL-INFRA-001.",
+                              "disposition":  "carry-forward",
+                              "reason":  "Carry forward the qualified r21 check gate unchanged.",
                               "upstreamSha256":  "\u003cabsent\u003e",
-                              "baselineSha256":  "00bf3ea73a156014a473475d4cf3d6295aa33b6863e4b8ffaed77507b90cbe51",
+                              "baselineSha256":  "7852bd14c53e76e0fa7c443a100d1c55699760892b07242a773f13fe0fd0bd37",
                               "resultSha256":  "7852bd14c53e76e0fa7c443a100d1c55699760892b07242a773f13fe0fd0bd37"
                           },
                           {
@@ -993,20 +1002,20 @@
                           {
                               "path":  "scripts/publish-fork-release.ps1",
                               "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "resolved",
-                              "reason":  "Record the reviewed r21 resolution required by ITL-INFRA-001.",
+                              "disposition":  "carry-forward",
+                              "reason":  "Carry forward the qualified r21 publication tooling unchanged.",
                               "upstreamSha256":  "\u003cabsent\u003e",
-                              "baselineSha256":  "886bfc10734f1f3c3598ce081673c72078dac387e1f5983c08d64f5b1f704efb",
+                              "baselineSha256":  "b9b54a61d2e81faf465cdb8cd6f9574d5d67803048aca7adfd1684781239e004",
                               "resultSha256":  "b9b54a61d2e81faf465cdb8cd6f9574d5d67803048aca7adfd1684781239e004"
                           },
                           {
                               "path":  "tests/Installer.Tests.ps1",
                               "requirementId":  "ITL-INFRA-001",
                               "disposition":  "resolved",
-                              "reason":  "Record the reviewed r21 resolution required by ITL-INFRA-001.",
+                              "reason":  "Record the reviewed r22 OpenSpec transformer parser regression required by ITL-INFRA-001.",
                               "upstreamSha256":  "\u003cabsent\u003e",
-                              "baselineSha256":  "224f0614de92767923009a34196d181cadf872e39b8f8a297712f493e25a7afc",
-                              "resultSha256":  "f31d5a7bb0ef5e52ace75e7081d33f9e53caa768f094de30b3bce199d474e982"
+                              "baselineSha256":  "f31d5a7bb0ef5e52ace75e7081d33f9e53caa768f094de30b3bce199d474e982",
+                              "resultSha256":  "d40cb13a12addd6e6fe8b13db0d55549ba39bf1bb8798362f4decc5e0b03a941"
                           },
                           {
                               "path":  "tests/ItlLifecycleGuard.Tests.ps1",
@@ -1029,26 +1038,26 @@
                           {
                               "path":  "tests/R8Policy.Tests.ps1",
                               "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-INFRA-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 triage contract regression required by ITL-INFRA-001.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "fab112e04e5e4c9bf2eda840d551bd8a0ab84378662d247691dc54fe5fab23a8",
-                              "resultSha256":  "fab112e04e5e4c9bf2eda840d551bd8a0ab84378662d247691dc54fe5fab23a8"
+                              "resultSha256":  "9c64e70c476fb2733e44aa87e9165ccec07607f41acd3768d1c8c0c8ad87b92d"
                           },
                           {
                               "path":  "tests/ReleaseTooling.Tests.ps1",
                               "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "resolved",
-                              "reason":  "Record the reviewed r21 resolution required by ITL-INFRA-001.",
+                              "disposition":  "carry-forward",
+                              "reason":  "Carry forward the qualified r21 release-tooling tests unchanged.",
                               "upstreamSha256":  "\u003cabsent\u003e",
-                              "baselineSha256":  "03b197353c3b3146dcb6e7bcbe1a9e63f5692bc187cdc6c38fc20c7d6cfa8a14",
+                              "baselineSha256":  "afd14b50b19d7c651c06aa6f53c1a3e61a982d1eb29c44db0612be9f3e772a60",
                               "resultSha256":  "afd14b50b19d7c651c06aa6f53c1a3e61a982d1eb29c44db0612be9f3e772a60"
                           },
                           {
                               "path":  "tests/TestSupport.ps1",
                               "requirementId":  "ITL-INFRA-001",
                               "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-INFRA-001.",
+                              "reason":  "Carry forward the qualified test support unchanged.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "da9b001ccad1c6d7640ba659abc3c6e4d89e97028731f3797d306ad8c784f485",
                               "resultSha256":  "da9b001ccad1c6d7640ba659abc3c6e4d89e97028731f3797d306ad8c784f485"
@@ -1056,20 +1065,29 @@
                           {
                               "path":  "tests/WorkflowHardening.Tests.ps1",
                               "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-INFRA-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 triage-state and conditional apply regressions required by ITL-INFRA-001.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "d85d8b6b8a81d3ea0f4214339ecd127fcc5823c744c5a1dbfaff0cec8580e9c5",
-                              "resultSha256":  "d85d8b6b8a81d3ea0f4214339ecd127fcc5823c744c5a1dbfaff0cec8580e9c5"
+                              "resultSha256":  "57c3a59a5a563ab23a3212dec6f2d5691ad02f55062b6f3c8b059a5c4429256a"
+                          },
+                          {
+                              "path":  "tests/fixtures/triage-contract.json",
+                              "requirementId":  "ITL-INFRA-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the r22 machine-readable two-axis triage contract fixture required by ITL-INFRA-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "3b2b47b0e88352940e62bde4ef261ee533bccf9f67aa5d25b71a6632caf478e0"
                           },
                           {
                               "path":  "tools/apply-openspec-downstream-overlay.ps1",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 conditional apply transformer required by ITL-OPENSPEC-001.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "045ebc694df396271e4c6516b3b225a9c210becc16f3b40a854a6d60c1393148",
-                              "resultSha256":  "045ebc694df396271e4c6516b3b225a9c210becc16f3b40a854a6d60c1393148"
+                              "resultSha256":  "a710bf11c9b366638f6596d85d858a65a0452f7d6778c85fdabfc0518b0f954e"
                           },
                           {
                               "path":  "tools/refresh-openspec-bundle.ps1",
@@ -1083,11 +1101,11 @@
                           {
                               "path":  "USER-RULES.md",
                               "requirementId":  "ITL-LIFECYCLE-DB-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r20 implementation of ITL-LIFECYCLE-DB-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r22 independent execution-path and planning-mode preflight required by ITL-LIFECYCLE-DB-001.",
                               "upstreamSha256":  "0ad234f88d65f2a0fefaf3110768fb85d626699a28f7472ea7ac9f6ee6ec9623",
                               "baselineSha256":  "2aece69fb7740914fa1e9c15b138e12e97150870835979f40a7a393e2f5f8d44",
-                              "resultSha256":  "2aece69fb7740914fa1e9c15b138e12e97150870835979f40a7a393e2f5f8d44"
+                              "resultSha256":  "d525a681cc61f62f2f06a1ec88928abc0c68e0cf75b25df7bea670fd7fa24a9e"
                           }
                       ]
 }
