@@ -774,7 +774,9 @@
                 "quick-fix",
                 "hybrid cadence",
                 "focused Vanessa scenario",
+                "targeted/static",
                 "pending verification",
+                "unfiltered",
                 "test-report.md"
             )) {
                 $text | Should -Match ([regex]::Escape($marker))
@@ -783,6 +785,10 @@
             $text | Should -Match "quick-fix.*переиспользуйте.*Vanessa-покрытие"
             $text | Should -Match "Второй сценарий.*только.*отдельной значимой границы"
             $text | Should -Match "OpenSpec.*hybrid cadence"
+            $text | Should -Match "milestone.*результат решает.*продолж"
+            $text | Should -Match 'последней verification-relevant правки.*unfiltered `/itl-check`'
+            $text | Should -Not -Match 'Для каждого среза.*выполняет `/itl-check`'
+            $text | Should -Not -Match 'после каждого значимого среза.*обязательно.*`/itl-check`'
             $text | Should -Match "2-3 Vanessa"
             $text | Should -Match "четвертая проверка.*обоснован"
             $text | Should -Match "git branch --show-current.*не каталог"
@@ -799,7 +805,7 @@
         foreach ($marker in @(
             "/itl-check", "/itl-verify-fix", "fresh passed", "quick-fix",
             "/opsx-explore", "/opsx-propose", "/opsx-apply", "/opsx-archive",
-            "focused Vanessa", "pending verification", "VERIFICATION_POLICY"
+            "focused Vanessa", "targeted/static", "pending verification", "unfiltered", "VERIFICATION_POLICY"
         )) {
             $text | Should -Match ([regex]::Escape($marker))
         }
@@ -809,6 +815,9 @@
         $text | Should -Match 'явный запрос на OpenSpec.*не превращают его в `full-cycle`'
         $text | Should -Match "Direct full-cycle"
         $text | Should -Match "высокий риск проверки сами по себе не принуждают к OpenSpec"
+        $text | Should -Match "milestone.*runtime-результат решает.*продолжать"
+        $text | Should -Match 'последней verification-relevant правки.*unfiltered `/itl-check`'
+        $text | Should -Not -Match "(?m)^Для большой задачи нужен полный прогон.*каждого среза"
         $text | Should -Not -Match "Используется для новой функциональности, изменения поведения, нескольких модулей"
         $text | Should -Not -Match ([regex]::Escape('.agents/skills/1c-workflow/references/'))
     }
