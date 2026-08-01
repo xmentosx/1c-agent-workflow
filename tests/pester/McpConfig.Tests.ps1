@@ -491,6 +491,26 @@
                 $complete = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry
                 $complete.isComplete | Should -Be $true
             }
+
+            & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help -McpProvider remote -McpConfigId trade *> $null
+                Set-Vibecoding1cMcpSelection *> $null
+                $selection = Read-Vibecoding1cMcpSelection
+                foreach ($serverId in @("docs", "templates", "syntax", "codechecker", "ssl")) {
+                    $entry = $selection.servers | Where-Object { $_.id -eq $serverId } | Select-Object -First 1
+                    $entry.configId | Should -Be "" -Because "global server '$serverId' must not inherit the project configId"
+                }
+                foreach ($serverId in @("code", "graph")) {
+                    $entry = $selection.servers | Where-Object { $_.id -eq $serverId } | Select-Object -First 1
+                    $entry.configId | Should -Be "trade"
+                }
+                $ready = @(Get-Vibecoding1cMcpReadyClientConfigNames)
+                $ready | Should -Contain "1C-docs-mcp"
+                $ready | Should -Contain "1c-templates-mcp"
+                $ready | Should -Contain "1c-syntax-checker-mcp"
+                $ready | Should -Contain "1c-code-check-mcp"
+                $ready | Should -Contain "1c-ssl-mcp"
+            }
         } finally {
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_REGISTRY_PATH", $oldRegistryPath, "Process")
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $oldHome, "Process")

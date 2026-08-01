@@ -629,6 +629,9 @@ function Get-Vibecoding1cMcpSelectedConfigId {
     )
 
     $id = [string](Get-Vibecoding1cMcpObjectValue -Object $Server -Name "id" -Default "")
+    if (-not (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $Server)) {
+        return ""
+    }
     if ($McpConfigId -and ((-not $McpServerId) -or $McpServerId -eq $id)) {
         return $McpConfigId
     }
@@ -641,20 +644,10 @@ function Get-Vibecoding1cMcpSelectedConfigId {
         }
     }
 
-    if (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $Server) {
-        if (-not $AllowPrompt) {
-            return ""
-        }
-
-        return (Read-Vibecoding1cMcpRemoteConfigChoice -Server $Server -Selection $Selection)
+    if (-not $AllowPrompt) {
+        return ""
     }
-
-    $selectionConfigId = [string](Get-Vibecoding1cMcpObjectValue -Object $Selection -Name "remoteConfigId" -Default "")
-    if ($selectionConfigId) {
-        return $selectionConfigId
-    }
-
-    return ""
+    return (Read-Vibecoding1cMcpRemoteConfigChoice -Server $Server -Selection $Selection)
 }
 
 function Get-Vibecoding1cMcpSelectedHostId {
@@ -1608,7 +1601,9 @@ function Set-Vibecoding1cMcpSelection {
         }
         $requiresRemoteConfig = Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $server
         $configurationSkipped = $false
-        $configId = if ($McpConfigId) {
+        $configId = if (-not $requiresRemoteConfig) {
+            ""
+        } elseif ($McpConfigId) {
             $McpConfigId
         } elseif ($provider -eq "remote" -and $requiresRemoteConfig -and (Test-InteractiveInputAvailable)) {
             $selectedConfigId = Read-Vibecoding1cMcpRemoteConfigChoice -Server $server -Selection $selection -AllowSkip
@@ -1618,10 +1613,8 @@ function Set-Vibecoding1cMcpSelection {
             $selectedConfigId
         } elseif ($existingConfigId) {
             $existingConfigId
-        } elseif ($requiresRemoteConfig) {
-            ""
         } else {
-            [string](Get-Vibecoding1cMcpObjectValue -Object $selectionHash -Name "remoteConfigId" -Default "")
+            ""
         }
         if ($provider -eq "remote" -and $requiresRemoteConfig -and -not $configId) {
             if (-not $configurationSkipped) {
