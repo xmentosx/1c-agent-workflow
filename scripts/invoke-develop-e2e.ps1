@@ -236,12 +236,23 @@ function Get-BranchWorktree {
 }
 
 function Remove-FreshProject {
-    param([string]$Path)
+    param([string]$Path, [string]$BranchPath = "")
     if (-not $Path) { return }
     $resolved = [IO.Path]::GetFullPath($Path)
     $allowed = [IO.Path]::GetFullPath($FreshProjectsRoot).TrimEnd('\') + '\'
     if (-not $resolved.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $resolved) -notlike "d-*") {
         throw "Refusing to remove unexpected fresh journey path: $resolved"
+    }
+    if ($BranchPath) {
+        $branchResolved = [IO.Path]::GetFullPath($BranchPath)
+        $expectedBranchLeaf = (Split-Path -Leaf $resolved) + "-*"
+        if (-not $branchResolved.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $branchResolved) -notlike $expectedBranchLeaf) {
+            throw "Refusing to remove unexpected fresh journey branch path: $branchResolved"
+        }
+        if ((Test-Path -LiteralPath $resolved -PathType Container) -and (Test-Path -LiteralPath $branchResolved -PathType Container)) {
+            & git -C $resolved worktree remove --force $branchResolved
+            if ($LASTEXITCODE -ne 0) { throw "Unable to remove fresh journey branch worktree: $branchResolved" }
+        }
     }
     if (Test-Path -LiteralPath $resolved -PathType Container) { Remove-Item -LiteralPath $resolved -Recurse -Force }
 }
@@ -300,8 +311,8 @@ try {
     [void](Invoke-InstalledAction -Name "fresh-refresh-lite" -Root $freshBranchRoot -Action "refresh-dev-branch-lite" -TimeoutSeconds 5400)
     [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-recheck" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
     [void](Invoke-InstalledAction -Name "fresh-close" -Root $freshBranchRoot -Action "close-dev-branch" -TimeoutSeconds 3600)
+    Remove-FreshProject -Path $freshRoot -BranchPath $freshBranchRoot
     $freshBranchRoot = ""
-    Remove-FreshProject -Path $freshRoot
     $freshRoot = ""
 } catch {
     $failure = $_.Exception.Message
