@@ -74,6 +74,9 @@
         $skillText | Should -Match ([regex]::Escape('references/branch-lifecycle.md'))
         $skillText | Should -Match ([regex]::Escape('references/verification-result.md'))
         $skillText | Should -Match ([regex]::Escape('references/vanessa-tests.md'))
+        $skillText | Should -Match ([regex]::Escape('references/dev-branch-quick-fix.md'))
+        $skillText | Should -Match ([regex]::Escape('references/dev-branch-direct.md'))
+        $skillText | Should -Match ([regex]::Escape('references/dev-branch-openspec.md'))
         $skillText | Should -Match 'human-facing'
 
         $humanDocPaths = @(
@@ -131,20 +134,26 @@
         }
     }
 
-    It "entrypoint token budgets stay within limits" {
+    It "documentation budgets keep review thresholds below hard limits" {
         $budgets = @(
-            @{ path = "AGENTS.md"; maxWords = 600; maxApproxTokens = 1000 },
-            @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 750; maxApproxTokens = 1500 },
-            @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 750; maxApproxTokens = 1500 },
-            @{ path = "templates\USER-RULES.append.md"; maxWords = 650; maxApproxTokens = 1160 },
-            @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 900; maxApproxTokens = 1500 }
+            @{ path = "AGENTS.md"; maxWords = 700; reviewApproxTokens = 1100; maxApproxTokens = 1200; rationale = "source-maintainer router" },
+            @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
+            @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1600; rationale = "routine helper router" },
+            @{ path = "templates\USER-RULES.append.md"; maxWords = 750; reviewApproxTokens = 1200; maxApproxTokens = 1400; rationale = "always-on ITL safety overlay" },
+            @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 1000; reviewApproxTokens = 1600; maxApproxTokens = 1800; rationale = "on-demand command menu" },
+            @{ path = ".agents\skills\1c-workflow\references\vanessa-tests.md"; maxWords = 1400; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "on-demand Vanessa authoring contract" }
         )
 
         foreach ($budget in $budgets) {
+            $budget.reviewApproxTokens | Should -BeLessThan $budget.maxApproxTokens
             $path = Join-Path $RepoRoot $budget.path
             $text = Get-Content -Encoding UTF8 -Raw $path
             $wordCount = ([regex]::Matches($text, '\S+')).Count
             $approxTokens = [math]::Ceiling(([System.Text.Encoding]::UTF8.GetByteCount($text)) / 4)
+
+            if ($approxTokens -gt $budget.reviewApproxTokens) {
+                Write-Warning ("Documentation budget review threshold exceeded for '{0}': {1} > {2} approximate tokens ({3}). This is a review signal, not permission to remove required meaning." -f $budget.path, $approxTokens, $budget.reviewApproxTokens, $budget.rationale)
+            }
 
             $wordCount | Should -BeLessOrEqual $budget.maxWords
             $approxTokens | Should -BeLessOrEqual $budget.maxApproxTokens
@@ -186,6 +195,9 @@
         $agentsText | Should -Match 'targeted `rg`.*one matching contract or reference'
         $agentsText | Should -Match 'Widen one layer only for a concrete gap'
         $agentsText | Should -Match 'Browse or use MCP only when external or current state is required'
+        $agentsText | Should -Match 'budgets protect routing and readability'
+        $agentsText | Should -Match 'Never delete, weaken, or telegraphically compress safety, verification, or behavioral contracts merely to pass a budget'
+        $agentsText | Should -Match 'propose an explicit limit change with a short rationale'
 
         foreach ($skillId in @('1c-workflow', '1c-workflow-fast')) {
             $skillText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\$skillId\SKILL.md") -Raw -Encoding UTF8
@@ -411,8 +423,8 @@
         $devBlock | Should -Match "Get-ItlOpenSpecNaturalRequests"
         $devBlock | Should -Match "Исследовать задачу"
         $devBlock | Should -Match "proposal"
-        $devBlock | Should -Match "выберите quick-fix или full-cycle"
-        $devBlock | Should -Match "По умолчанию full-cycle выполняется напрямую"
+        $devBlock | Should -Match "независимо выберите execution path quick-fix или full-cycle"
+        $devBlock | Should -Match "По умолчанию используйте direct"
         $devBlock | Should -Match "Есть проверяемые изменения"
     }
 
@@ -594,9 +606,9 @@
             $text = ($output | Out-String)
 
             $text | Should -Match "Есть проверяемые изменения: False"
-            $text | Should -Match "Рекомендуемый шаг: выберите quick-fix или full-cycle"
-            $text | Should -Match "По умолчанию full-cycle выполняется напрямую"
-            $text | Should -Match "используйте /opsx-explore или /opsx-propose, только если полезно формальное исследование или согласование"
+            $text | Should -Match "Рекомендуемый шаг: независимо выберите execution path quick-fix или full-cycle"
+            $text | Should -Match "По умолчанию используйте direct"
+            $text | Should -Match "выбирайте /opsx-explore или /opsx-propose, только если полезно формальное исследование или согласование"
             foreach ($command in @("/opsx-propose", "/opsx-explore", "/opsx-apply", "/opsx-archive")) {
                 $text | Should -Match ([regex]::Escape($command))
             }
@@ -721,6 +733,9 @@
             "docs\itl-workflow\FEATURE-DEVELOPMENT.ru.md",
             ".agents\skills\1c-workflow\references\workflow.md",
             ".agents\skills\1c-workflow\references\dev-branch-development.md",
+            ".agents\skills\1c-workflow\references\dev-branch-quick-fix.md",
+            ".agents\skills\1c-workflow\references\dev-branch-direct.md",
+            ".agents\skills\1c-workflow\references\dev-branch-openspec.md",
             ".agents\skills\1c-workflow-fast\SKILL.md",
             "templates\USER-RULES.append.md"
         )) {
@@ -735,7 +750,8 @@
         foreach ($marker in @(
             "executionPath=quick-fix|full-cycle",
             "planningMode=direct|OpenSpec",
-            "never force OpenSpec",
+            "all four pairs are valid",
+            'Promotion triggers set only `executionPath=full-cycle`',
             "QUICKFIX_MAX_LINES",
             "/itl-check",
             "OpenSpec phases read rules",
@@ -761,37 +777,85 @@
     }
 
     It "documents the detailed development completion gate in the agent reference" {
-        $text = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\dev-branch-development.md")
+        $developmentPaths = @(
+            ".agents\skills\1c-workflow\references\dev-branch-development.md",
+            ".agents\skills\1c-workflow\references\dev-branch-quick-fix.md",
+            ".agents\skills\1c-workflow\references\dev-branch-direct.md",
+            ".agents\skills\1c-workflow\references\dev-branch-openspec.md"
+        )
+        $developmentTexts = @{}
+        foreach ($relativePath in $developmentPaths) {
+            $developmentTexts[$relativePath] = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot $relativePath)
+        }
+        $text = ($developmentTexts.Values -join [Environment]::NewLine)
 
-            foreach ($marker in @(
-                "src/cf",
-                "src/cfe",
-                "tests/features",
-                "references/vanessa-tests.md",
-                "/itl-check",
-                "fresh passed",
-                "/opsx-apply",
-                "quick-fix",
-                "hybrid cadence",
-                "focused Vanessa scenario",
-                "pending verification",
-                "test-report.md"
-            )) {
-                $text | Should -Match ([regex]::Escape($marker))
+        foreach ($marker in @(
+            "src/cf",
+            "src/cfe",
+            "tests/features",
+            "references/vanessa-tests.md",
+            "/itl-check",
+            "fresh passed",
+            "/opsx-apply",
+            "quick-fix",
+            "hybrid cadence",
+            "focused Vanessa scenario",
+            "targeted/static",
+            "pending verification",
+            "unfiltered",
+            "test-report.md"
+        )) {
+            $text | Should -Match ([regex]::Escape($marker))
+        }
+
+        $text | Should -Match "quick-fix.*переиспользуйте.*Vanessa-покрытие"
+        $text | Should -Match "Второй сценарий.*только.*отдельной значимой границы"
+        $text | Should -Match "OpenSpec.*hybrid cadence"
+        $text | Should -Match "milestone.*результат решает.*продолж"
+        $text | Should -Match 'последней verification-relevant правки.*unfiltered `/itl-check`'
+        $text | Should -Not -Match 'Для каждого среза.*выполняет `/itl-check`'
+        $text | Should -Not -Match 'после каждого значимого среза.*обязательно.*`/itl-check`'
+        $text | Should -Match "2-3 Vanessa"
+        $text | Should -Match "четвертая проверка.*обоснован"
+        $text | Should -Match "git branch --show-current.*не каталог"
+        $text | Should -Match "exportPath.*extensionsPath"
+        $text | Should -Match "master.*branch-safety blocker"
+        $text | Should -Match "изменение существующей формы или wired metadata"
+        $text | Should -Match "Promotion trigger.*сам по себе не требует OpenSpec"
+        $text | Should -Not -Match "(?m)^- изменение поведения системы;$"
+        $text | Should -Not -Match "2-4 Vanessa"
+
+        foreach ($relativePath in @(
+            ".agents\skills\1c-workflow\references\dev-branch-quick-fix.md",
+            ".agents\skills\1c-workflow\references\dev-branch-direct.md",
+            ".agents\skills\1c-workflow\references\dev-branch-openspec.md"
+        )) {
+            $routeText = $developmentTexts[$relativePath]
+            foreach ($marker in @("git branch --show-current", "exportPath", "extensionsPath", "testsPath", "references/vanessa-tests.md", "fresh passed", "/itl-check", "master", "branch-safety blocker")) {
+                $routeText | Should -Match ([regex]::Escape($marker))
             }
+        }
 
-            $text | Should -Match "quick-fix.*переиспользуйте.*Vanessa-покрытие"
-            $text | Should -Match "Второй сценарий.*только.*отдельной значимой границы"
-            $text | Should -Match "OpenSpec.*hybrid cadence"
-            $text | Should -Match "2-3 Vanessa"
-            $text | Should -Match "четвертая проверка.*обоснован"
-            $text | Should -Match "git branch --show-current.*не каталог"
-            $text | Should -Match "exportPath.*extensionsPath"
-            $text | Should -Match "master.*branch-safety blocker"
-            $text | Should -Match "изменение существующей формы или wired metadata"
-            $text | Should -Match "Promotion trigger.*сам по себе не требует OpenSpec"
-            $text | Should -Not -Match "(?m)^- изменение поведения системы;$"
-            $text | Should -Not -Match "2-4 Vanessa"
+        $routerText = $developmentTexts[".agents\skills\1c-workflow\references\dev-branch-development.md"]
+        foreach ($marker in @("dev-branch-quick-fix.md", "dev-branch-direct.md", "dev-branch-openspec.md", "ровно один matching reference")) {
+            $routerText | Should -Match ([regex]::Escape($marker))
+        }
+
+        $quickText = $developmentTexts[".agents\skills\1c-workflow\references\dev-branch-quick-fix.md"]
+        $quickText | Should -Match "quick-fix.*переиспользуйте.*Vanessa-покрытие"
+        $quickText | Should -Not -Match "/opsx-(?:explore|propose|apply|archive)"
+
+        $directText = $developmentTexts[".agents\skills\1c-workflow\references\dev-branch-direct.md"]
+        $directText | Should -Match "executionPath=full-cycle"
+        $directText | Should -Match "planningMode=direct"
+        $directText | Should -Not -Match "/opsx-(?:explore|propose|apply|archive)"
+
+        $openSpecText = $developmentTexts[".agents\skills\1c-workflow\references\dev-branch-openspec.md"]
+        $openSpecText | Should -Match "planningMode=OpenSpec"
+        $openSpecText | Should -Match "executionPath=quick-fix\|full-cycle"
+        $openSpecText | Should -Match "OpenSpec.*hybrid cadence"
+        $openSpecText | Should -Match "2-3 Vanessa"
+        $openSpecText | Should -Match "test-report.md"
     }
 
     It "keeps the human feature guide outcome-focused and complete" {
@@ -806,7 +870,7 @@
         foreach ($marker in @('native', 'natural', 'Исследуй задачу в режиме OpenSpec', 'Подготовь OpenSpec proposal', 'не запускает `openspec update`')) {
             $text | Should -Match ([regex]::Escape($marker))
         }
-        $text | Should -Match "Сам факт исправления наблюдаемого поведения не переводит локальную BSL-правку в OpenSpec"
+        $text | Should -Match "Сам факт исправления наблюдаемого поведения.*не меняет planning mode"
         $text | Should -Match "Direct full-cycle"
         $text | Should -Match "высокий риск проверки сами по себе не принуждают к OpenSpec"
         $text | Should -Not -Match "Используется для новой функциональности, изменения поведения, нескольких модулей"
@@ -816,7 +880,7 @@
     It "documents native examples and natural OpenSpec requests at matching development steps" {
         foreach ($relativePath in @(
             "docs\itl-workflow\FEATURE-DEVELOPMENT.ru.md",
-            ".agents\skills\1c-workflow\references\dev-branch-development.md"
+            ".agents\skills\1c-workflow\references\dev-branch-openspec.md"
         )) {
             $text = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot $relativePath)
             foreach ($command in @("/opsx-propose", "/opsx-apply", "/opsx-archive", "/opsx-explore")) {
@@ -827,7 +891,7 @@
             }
             $text | Should -Match "не считайте.*универсальным|не универсаль"
         }
-        $agentText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\dev-branch-development.md")
+        $agentText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\dev-branch-openspec.md")
         $agentText | Should -Match "/opsx-propose.*proposal"
         $agentText | Should -Match "/opsx-explore.*optional"
         $agentText | Should -Match "(?s)### 0\..*?/opsx-explore"

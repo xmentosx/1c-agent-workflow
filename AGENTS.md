@@ -27,6 +27,7 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 - Start from Routing and targeted `rg` in likely owner paths. Open one matching contract or reference; read only matches or needed line ranges.
 - Widen one layer only for a concrete gap; stop when evidence suffices. Do not bulk-read skills, docs, tests, build/runtime output, or an upstream checkout.
 - Browse or use MCP only when external or current state is required. Read ignored runtime only for a named run or artifact.
+- Documentation budgets protect routing and readability; they are not a mandate to minimize text at any cost. Never delete, weaken, or telegraphically compress safety, verification, or behavioral contracts merely to pass a budget. Remove actual duplication or route detail on demand first; if necessary content still exceeds a hard limit, propose an explicit limit change with a short rationale.
 
 ## Verification
 

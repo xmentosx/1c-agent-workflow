@@ -20,12 +20,12 @@
     },
     "aiRules1c": {
       "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
-      "ref": "itl-main-410951e7-r21",
-      "commit": "37362c6fa0e29b8aee0f70e01d85bf77e41cc683",
+      "ref": "itl-main-410951e7-r22",
+      "commit": "bcd94d1723f26a0b0568869845484c8572c402a6",
       "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
       "upstreamRef": "refs/heads/main",
       "upstreamCommit": "410951e74fd3e6b7a763cf49757935b9a34d3f31",
-      "downstreamRevision": 21,
+      "downstreamRevision": 22,
       "compatibilityStatus": "pending",
       "compatibilityCheckedAt": ""
     },

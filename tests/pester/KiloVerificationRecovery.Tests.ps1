@@ -46,12 +46,11 @@ Describe "Kilo verification recovery command" {
         }
     }
 
-    It "makes the completion contract explicit without growing USER-RULES" {
+    It "keeps the completion contract explicit in USER-RULES" {
         $rulesText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\USER-RULES.append.md") -Raw -Encoding UTF8
-        foreach ($marker in @("Quick-fix is no exception", "verify_xml", "after the last edit", "pending verification")) {
+        foreach ($marker in @("Quick-fix is no exception", "verify_xml", "targeted/static", "executable milestones only to decide continuation", "fresh unfiltered", "after the last relevant edit", "pending verification")) {
             $rulesText | Should -Match ([regex]::Escape($marker))
         }
-        [regex]::Matches($rulesText, '\S+').Count | Should -BeLessOrEqual 581
     }
 
     It "keeps itl-check mechanical and makes itl-verify-fix the bounded recovery loop" {
@@ -61,6 +60,16 @@ Describe "Kilo verification recovery command" {
         $checkText | Should -Match "-Action check-dev-branch"
         $checkText | Should -Not -Match "Search configured"
         $checkText | Should -Not -Match "three failed runs"
+        foreach ($marker in @(
+            "targeted/static checks",
+            "milestone whose runtime result decides whether implementation can continue",
+            "last verification-relevant edit",
+            "final pass is unfiltered",
+            "VanessaFeaturePath",
+            "VanessaFilterTags"
+        )) {
+            $checkText | Should -Match ([regex]::Escape($marker))
+        }
 
         foreach ($marker in @(
             "current agent-made configuration/extension change",
@@ -86,6 +95,8 @@ Describe "Kilo verification recovery command" {
 
         $fastSkill | Should -Match 'run-itl-command\.ps1 -- -Action <action>'
         $fastSkill | Should -Not -Match 'scripts\\agent-1c\.ps1 -Action <action>'
+        $fastSkill | Should -Match 'executable milestone or completion check'
+        $fastSkill | Should -Match 'Do not add `VanessaFeaturePath` or `VanessaFilterTags` to a final run'
         foreach ($marker in @(
             'status=failed',
             'Never relabel it as skipped',

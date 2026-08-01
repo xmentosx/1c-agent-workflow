@@ -8426,11 +8426,11 @@ function Show-Help {
                 Write-ItlActiveClientCommandText "Рекомендуемый шаг: /itl-check"
             } elseif (-not $verification.isFreshPassed) {
                 if ($openSpec.mode -eq "native") {
-                    Write-Host "Рекомендуемый шаг: выберите quick-fix или full-cycle. По умолчанию full-cycle выполняется напрямую; используйте $($openSpec.invocations.explore) или $($openSpec.invocations.propose), только если полезно формальное исследование или согласование."
+                    Write-Host "Рекомендуемый шаг: независимо выберите execution path quick-fix или full-cycle и planning mode direct или OpenSpec. По умолчанию используйте direct; выбирайте $($openSpec.invocations.explore) или $($openSpec.invocations.propose), только если полезно формальное исследование или согласование."
                 } elseif ($openSpec.mode -eq "natural") {
-                    Write-Host "Рекомендуемый шаг: выберите quick-fix или full-cycle. По умолчанию full-cycle выполняется напрямую; запросите natural OpenSpec explore/propose, только если полезно формальное исследование или согласование."
+                    Write-Host "Рекомендуемый шаг: независимо выберите execution path quick-fix или full-cycle и planning mode direct или OpenSpec. По умолчанию используйте direct; запросите natural OpenSpec explore/propose, только если полезно формальное исследование или согласование."
                 } else {
-                    Write-Host "Рекомендуемый шаг: выберите quick-fix или direct full-cycle. Восстанавливайте workspace и правила OpenSpec только для формального исследования или согласования."
+                    Write-Host "Рекомендуемый шаг: выберите execution path quick-fix или full-cycle; planning mode временно ограничен direct. Восстанавливайте workspace и правила OpenSpec только для формального исследования или согласования."
                 }
             } elseif (-not (Get-StateValue -State $state -Name "lastResultPath" -Default "")) {
                 Write-ItlActiveClientCommandText "Рекомендуемый шаг: /itl-result"
