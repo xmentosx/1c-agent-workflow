@@ -104,6 +104,9 @@ function Test-AiRulesUserRulesContainsOnlyWorkflowOverlayChange {
 
     $before = $text.Substring(0, $managedMatch.Index)
     $after = $text.Substring($managedMatch.Index + $managedMatch.Length)
+    if ([string]::IsNullOrWhiteSpace($before + $after)) {
+        return $true
+    }
     $beforeWithoutOneNewLine = [regex]::Replace($before, '(?:\r\n|\n|\r)$', '', 1)
     $afterWithoutOneNewLine = [regex]::Replace($after, '^(?:\r\n|\n|\r)', '', 1)
     $candidates = @(
@@ -215,6 +218,59 @@ function Test-AiRulesMcpSnapshotHasUnknownEntries {
     return $false
 }
 
+function Test-AiRulesMcpSnapshotContainsOnlyVibecoding1cManagedEntries {
+    param(
+        [object]$Snapshot,
+        [string[]]$Paths
+    )
+
+    $foundManagedEntry = $false
+    foreach ($path in @($Paths | Select-Object -Unique)) {
+        if (-not $Snapshot.Contains($path) -or -not [bool]$Snapshot[$path].exists) {
+            return $false
+        }
+        $text = [System.Text.Encoding]::UTF8.GetString([byte[]]$Snapshot[$path].bytes)
+        if ($path -like "*.toml") {
+            $sections = @([regex]::Matches($text, '(?m)^\[mcp_servers\.(?:"[^"]+"|[^\]\s]+)\]\s*$'))
+            if ($sections.Count -eq 0) {
+                return $false
+            }
+            foreach ($section in $sections) {
+                if (-not (Test-TextIndexInsideVibecoding1cMcpManagedBlock -Text $text -Index $section.Index)) {
+                    return $false
+                }
+                $foundManagedEntry = $true
+            }
+            continue
+        }
+
+        if ($path -notlike "*.json") {
+            return $false
+        }
+        try {
+            $config = $text | ConvertFrom-Json
+        } catch {
+            return $false
+        }
+        $properties = @()
+        if ($config.mcp) {
+            $properties = @($config.mcp.PSObject.Properties)
+        }
+        if ($properties.Count -eq 0) {
+            return $false
+        }
+        foreach ($property in $properties) {
+            $managedBy = [string](Get-ConfigValueFromObject -Object $property.Value -Path "managedBy" -Default "")
+            $family = [string](Get-ConfigValueFromObject -Object $property.Value -Path "family" -Default "")
+            if ($managedBy -ne "vibecoding1c-mcp" -or $family -ne "vibecoding1c") {
+                return $false
+            }
+            $foundManagedEntry = $true
+        }
+    }
+    return $foundManagedEntry
+}
+
 function Clear-StaleAiRulesMcpUserModifiedIfWorkflowOwned {
     $manifestPath = Join-Path $script:ProjectRoot ".ai-rules.json"
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
@@ -257,6 +313,7 @@ function Clear-StaleAiRulesMcpUserModifiedIfWorkflowOwned {
     if (Test-AiRulesMcpSnapshotHasUnknownEntries -Snapshot $snapshot -Paths $candidatePaths -KnownServerIds (@($managedServerIds) + @($readyClientNames))) {
         return $false
     }
+    $containsOnlyWorkflowOwnedEntries = Test-AiRulesMcpSnapshotContainsOnlyVibecoding1cManagedEntries -Snapshot $snapshot -Paths $candidatePaths
     $matchesWorkflowState = $false
     try {
         Write-Vibecoding1cMcpClientConfig
@@ -266,7 +323,7 @@ function Clear-StaleAiRulesMcpUserModifiedIfWorkflowOwned {
     } finally {
         Restore-AiRules1cMcpConfigSnapshot -Snapshot $snapshot
     }
-    if (-not $matchesWorkflowState) {
+    if (-not $matchesWorkflowState -and -not $containsOnlyWorkflowOwnedEntries) {
         return $false
     }
 
@@ -274,7 +331,7 @@ function Clear-StaleAiRulesMcpUserModifiedIfWorkflowOwned {
         $candidate.Value | Add-Member -NotePropertyName userModified -NotePropertyValue $false -Force
     }
     Write-Utf8Text -Path $manifestPath -Value (($manifest | ConvertTo-Json -Depth 30) + [Environment]::NewLine)
-    Write-Host "Cleared stale ai_rules_1c MCP userModified markers because client config already matches computed ITL ownership state."
+    Write-Host "Cleared stale ai_rules_1c MCP userModified markers because client config matches or contains only explicit ITL ownership state."
     return $true
 }
 

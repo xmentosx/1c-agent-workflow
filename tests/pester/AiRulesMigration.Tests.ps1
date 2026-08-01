@@ -194,6 +194,33 @@ Describe "ai_rules_1c migration planning" {
         }
     }
 
+    It "clears a USER-RULES marker when the file contains only the ITL overlay" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-user-rules-only-overlay-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-AiRulesMigrationFixture -Root $tempRoot
+            $userRulesPath = Join-Path $tempRoot "USER-RULES.md"
+            $overlay = "<!-- ITL-WORKFLOW-USER-RULES:START -->`r`n## 1C Project Lifecycle`r`nManaged by ITL.`r`n<!-- ITL-WORKFLOW-USER-RULES:END -->"
+            [System.IO.File]::WriteAllText($userRulesPath, ($overlay + "`r`n"), (New-Object System.Text.UTF8Encoding $false))
+
+            $manifestPath = Join-Path $tempRoot ".ai-rules.json"
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $manifest.files | Add-Member -NotePropertyName "USER-RULES.md" -NotePropertyValue ([pscustomobject]@{
+                source = "USER-RULES.md"
+                template = $true
+                installedHash = "351fddfb4e2fc3cc95642f56ea4e94f9995e9741cd04c85e2ad9595888bcb70e"
+                userModified = $true
+            })
+            Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
+
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $plan.status | Should -Be "eligible"
+            $updatedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $updatedManifest.files.'USER-RULES.md'.userModified | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "plans a controlled fork r4 to r19 migration by downstream revision and upstream provenance" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-controlled-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -512,6 +539,67 @@ Describe "ai_rules_1c migration planning" {
             $unknownManifest.files.'.codex/config.toml'.userModified | Should -BeTrue
         } finally {
             Remove-Item -LiteralPath $matchingRoot, $changedRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "clears a Kilo marker when byte regeneration differs but every MCP entry is workflow-owned" {
+        $managedRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-mcp-owned-" + [guid]::NewGuid().ToString("N"))
+        $customRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-mcp-owned-name-custom-" + [guid]::NewGuid().ToString("N"))
+        try {
+            foreach ($root in @($managedRoot, $customRoot)) {
+                New-AiRulesMigrationFixture -Root $root -CurrentTool "kilocode"
+                New-Item -ItemType Directory -Force -Path (Join-Path $root ".kilo") | Out-Null
+                $manifestPath = Join-Path $root ".ai-rules.json"
+                $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $manifest.files | Add-Member -NotePropertyName ".kilo/kilo.json" -NotePropertyValue ([pscustomobject]@{ source = "content/mcp-servers.json"; installedHash = "old"; userModified = $true })
+                Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
+            }
+            $managedKiloJson = (@{
+                snapshot = $false
+                mcp = @{
+                    "1c-code-metadata-mcp" = @{ type = "remote"; url = "http://127.0.0.1:17001/mcp"; managedBy = "vibecoding1c-mcp"; family = "vibecoding1c" }
+                    "1c-graph-metadata-mcp" = @{ type = "remote"; url = "http://127.0.0.1:17002/mcp"; managedBy = "vibecoding1c-mcp"; family = "vibecoding1c" }
+                }
+            } | ConvertTo-Json -Depth 10)
+            [System.IO.File]::WriteAllText((Join-Path $managedRoot ".kilo\kilo.json"), $managedKiloJson, (New-Object System.Text.UTF8Encoding $false))
+            $customKiloJson = (@{
+                mcp = @{
+                    "1c-code-metadata-mcp" = @{ type = "remote"; url = "https://custom.invalid/mcp" }
+                }
+            } | ConvertTo-Json -Depth 10)
+            [System.IO.File]::WriteAllText((Join-Path $customRoot ".kilo\kilo.json"), $customKiloJson, (New-Object System.Text.UTF8Encoding $false))
+
+            $managedPlan = & {
+                . $HelperPath -ProjectRoot $managedRoot -Action help *> $null
+                function Get-AiRules1cMcpClientConfigPaths { @((Join-Path $script:ProjectRoot ".kilo\kilo.json")) }
+                function Get-Vibecoding1cMcpSelectionCompleteness { [pscustomobject]@{ isComplete = $true; reasons = @() } }
+                function Get-Vibecoding1cMcpReadyClientConfigNames { @("1c-code-metadata-mcp", "1c-graph-metadata-mcp") }
+                function Write-Vibecoding1cMcpClientConfig {}
+                function Remove-AiRules1cManagedMcpConfig {}
+                function Remove-StaleAiRules1cDataMcpConfig {}
+                function Test-AiRulesMcpSnapshotMatchesCurrent { return $false }
+                $candidatePath = Join-Path $script:ProjectRoot ".kilo\kilo.json"
+                $snapshot = New-AiRules1cMcpConfigSnapshot -Paths @($candidatePath)
+                (Test-AiRulesMcpSnapshotHasUnknownEntries -Snapshot $snapshot -Paths @($candidatePath) -KnownServerIds @("1c-code-metadata-mcp", "1c-graph-metadata-mcp")) | Should -BeFalse
+                (Test-AiRulesMcpSnapshotContainsOnlyVibecoding1cManagedEntries -Snapshot $snapshot -Paths @($candidatePath)) | Should -BeTrue
+                Get-AiRulesMigrationPlan
+            }
+            $managedPlan.status | Should -Be "eligible"
+
+            $customPlan = & {
+                . $HelperPath -ProjectRoot $customRoot -Action help *> $null
+                function Get-AiRules1cMcpClientConfigPaths { @((Join-Path $script:ProjectRoot ".kilo\kilo.json")) }
+                function Get-Vibecoding1cMcpSelectionCompleteness { [pscustomobject]@{ isComplete = $true; reasons = @() } }
+                function Get-Vibecoding1cMcpReadyClientConfigNames { @("1c-code-metadata-mcp") }
+                function Write-Vibecoding1cMcpClientConfig {}
+                function Remove-AiRules1cManagedMcpConfig {}
+                function Remove-StaleAiRules1cDataMcpConfig {}
+                function Test-AiRulesMcpSnapshotMatchesCurrent { return $false }
+                Get-AiRulesMigrationPlan
+            }
+            $customPlan.status | Should -Be "user-modified"
+        } finally {
+            Remove-Item -LiteralPath $managedRoot, $customRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }
