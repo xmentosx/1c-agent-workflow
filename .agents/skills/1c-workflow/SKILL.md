@@ -9,7 +9,7 @@ Detailed ITL workflow router. For routine installed-project work, prefer `1c-wor
 
 ## Routing
 
-Use `scripts/agent-1c.ps1` when PowerShell is available. Open `references/workflow.md`, then only the matching topic:
+Use `scripts/agent-1c.ps1` when PowerShell is available. Open only the matching topic below. Open `references/workflow.md` only for help, an unclear request, or the complete client-aware command menu:
 
 - `references/init-setup.md`: init, checks, web publication/Vanessa setup, `update-workflow`, `update-ai-rules`.
 - `references/mcp.md`: ROCTUP data MCP, vibecoding1c MCP, branch Vanessa UI MCP, External MCP, legacy Data MCP.

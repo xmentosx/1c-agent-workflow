@@ -52,7 +52,7 @@ Describe "controlled ai_rules_1c release overlay" {
             & git -C $forkRoot switch -q -c release/test $newUpstream *> $null
 
             $manifest = [ordered]@{
-                schemaVersion = 2
+                schemaVersion = 3
                 baselineUpstreamCommit = $oldUpstream
                 baselineReleaseCommit = $baselineRelease
                 intakeUpstreamCommit = $newUpstream
@@ -68,14 +68,42 @@ Describe "controlled ai_rules_1c release overlay" {
                 )
                 requiredUpstreamAnchors = @("upstream")
                 requiredTargetAnchors = @("completion gate")
-                additionalDownstreamPaths = @()
                 pathDecisions = @(
                     [ordered]@{
+                        path = "AGENTS.md"
+                        requirementId = "ITL-CONTEXT-001"
+                        disposition = "resolved"
+                        reason = "Install the compact managed root contract."
+                        upstreamSha256 = Get-NormalizedTextSha256 "# Root`nupstream`n## Upstream behavior`nrequired behavior`n"
+                        baselineSha256 = Get-NormalizedTextSha256 "# Root`nupstream`n## Upstream behavior`nrequired behavior`n"
+                        resultSha256 = Get-NormalizedTextSha256 "# Root`ncompact completion gate`n"
+                    }
+                    [ordered]@{
+                        path = "USER-RULES.md"
+                        requirementId = "ITL-CONTEXT-001"
+                        disposition = "resolved"
+                        reason = "Install the managed project hard gates."
+                        upstreamSha256 = Get-NormalizedTextSha256 "# User rules`nupstream`n"
+                        baselineSha256 = Get-NormalizedTextSha256 "# User rules`nold downstream routing`n"
+                        resultSha256 = Get-NormalizedTextSha256 "# User rules`ndirect full-cycle`n"
+                    }
+                    [ordered]@{
                         path = "base.txt"
+                        requirementId = "ITL-BASE-001"
                         disposition = "resolved"
                         reason = "Merge the upstream change with the downstream behavior."
                         upstreamSha256 = Get-NormalizedTextSha256 "new upstream`n"
+                        baselineSha256 = Get-NormalizedTextSha256 "old downstream`n"
                         resultSha256 = Get-NormalizedTextSha256 "resolved`n"
+                    }
+                    [ordered]@{
+                        path = "content/new-owner.md"
+                        requirementId = "ITL-OWNER-001"
+                        disposition = "carry-forward"
+                        reason = "Carry the unchanged downstream-owned path exactly."
+                        upstreamSha256 = "<absent>"
+                        baselineSha256 = Get-NormalizedTextSha256 "new owner`n"
+                        resultSha256 = Get-NormalizedTextSha256 "new owner`n"
                     }
                 )
             }
@@ -117,15 +145,24 @@ Describe "controlled ai_rules_1c release overlay" {
             $manifest.pathDecisions = @()
             [IO.File]::WriteAllText((Join-Path $overlayRoot "sections.json"), (($manifest | ConvertTo-Json -Depth 8) + "`n"), $Utf8NoBom)
             { & $BuilderPath -AiRulesRoot $forkRoot -UpstreamCommit $newUpstream -OverlayRoot $overlayRoot -ReportPath $reportPath -Mode Verify } |
-                Should -Throw "*Unclassified upstream path: base.txt*"
+                Should -Throw "*Unclassified release path:*"
 
             $manifest.pathDecisions = @(
                 [ordered]@{
-                    path = "base.txt"
-                    disposition = "resolved"
-                    reason = "Merge the upstream change with the downstream behavior."
-                    upstreamSha256 = Get-NormalizedTextSha256 "new upstream`n"
-                    resultSha256 = Get-NormalizedTextSha256 "wrong result`n"
+                    path = "AGENTS.md"; requirementId = "ITL-CONTEXT-001"; disposition = "resolved"; reason = "Install the compact managed root contract."
+                    upstreamSha256 = Get-NormalizedTextSha256 "# Root`nupstream`n## Upstream behavior`nrequired behavior`n"; baselineSha256 = Get-NormalizedTextSha256 "# Root`nupstream`n## Upstream behavior`nrequired behavior`n"; resultSha256 = Get-NormalizedTextSha256 "# Root`ncompact completion gate`n"
+                }
+                [ordered]@{
+                    path = "USER-RULES.md"; requirementId = "ITL-CONTEXT-001"; disposition = "resolved"; reason = "Install the managed project hard gates."
+                    upstreamSha256 = Get-NormalizedTextSha256 "# User rules`nupstream`n"; baselineSha256 = Get-NormalizedTextSha256 "# User rules`nold downstream routing`n"; resultSha256 = Get-NormalizedTextSha256 "# User rules`ndirect full-cycle`n"
+                }
+                [ordered]@{
+                    path = "base.txt"; requirementId = "ITL-BASE-001"; disposition = "resolved"; reason = "Merge the upstream change with the downstream behavior."
+                    upstreamSha256 = Get-NormalizedTextSha256 "new upstream`n"; baselineSha256 = Get-NormalizedTextSha256 "old downstream`n"; resultSha256 = Get-NormalizedTextSha256 "wrong result`n"
+                }
+                [ordered]@{
+                    path = "content/new-owner.md"; requirementId = "ITL-OWNER-001"; disposition = "carry-forward"; reason = "Carry the unchanged downstream-owned path exactly."
+                    upstreamSha256 = "<absent>"; baselineSha256 = Get-NormalizedTextSha256 "new owner`n"; resultSha256 = Get-NormalizedTextSha256 "new owner`n"
                 }
             )
             [IO.File]::WriteAllText((Join-Path $overlayRoot "sections.json"), (($manifest | ConvertTo-Json -Depth 8) + "`n"), $Utf8NoBom)

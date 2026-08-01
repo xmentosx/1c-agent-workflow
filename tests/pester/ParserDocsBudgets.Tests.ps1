@@ -67,6 +67,8 @@
         ([regex]::Matches($skillText, '\S+')).Count | Should -BeLessOrEqual 750
         $skillText | Should -Match 'detailed ITL workflow router'
         $skillText | Should -Match ([regex]::Escape('references/workflow.md'))
+        $skillText | Should -Match 'workflow\.md` only for help, an unclear request'
+        $skillText | Should -Match 'Open only the matching topic'
         $skillText | Should -Match ([regex]::Escape('references/init-setup.md'))
         $skillText | Should -Match ([regex]::Escape('references/mcp.md'))
         $skillText | Should -Match ([regex]::Escape('references/branch-lifecycle.md'))

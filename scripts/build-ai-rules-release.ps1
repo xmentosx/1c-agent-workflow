@@ -105,8 +105,8 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
 }
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-if ([int]$manifest.schemaVersion -ne 2) {
-    throw "AI rules decision ledger schemaVersion must be 2."
+if ([int]$manifest.schemaVersion -ne 3) {
+    throw "AI rules decision ledger schemaVersion must be 3."
 }
 $rootContractPath = Join-Path $overlayRootFull "root-contract.json"
 if (-not (Test-Path -LiteralPath $rootContractPath -PathType Leaf)) {
@@ -236,7 +236,9 @@ $upstreamChangedPaths = @(Get-GitPathList -Arguments @("diff", "--name-only", $b
 $baselineDownstreamPaths = @(Get-GitPathList -Arguments @("diff", "--name-only", $baselineUpstream, $baselineRelease, "--"))
 $upstreamSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($path in $upstreamChangedPaths) { [void]$upstreamSet.Add($path) }
-$downstreamOnlyPaths = @($baselineDownstreamPaths | Where-Object { -not $upstreamSet.Contains($_) })
+$baselineSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+foreach ($path in $baselineDownstreamPaths) { [void]$baselineSet.Add($path) }
+$requiredDecisionPaths = @($baselineDownstreamPaths + $upstreamChangedPaths | Sort-Object -Unique)
 
 $decisionsByPath = @{}
 foreach ($decision in @($manifest.pathDecisions)) {
@@ -249,24 +251,38 @@ foreach ($decision in @($manifest.pathDecisions)) {
         Add-Blocker "Duplicate path decision: $path"
         continue
     }
-    if ([string]$decision.disposition -notin @("take-upstream", "keep-current", "resolved")) {
+    if ([string]$decision.disposition -notin @("take-upstream", "carry-forward", "resolved", "downstream-only")) {
         Add-Blocker "Invalid disposition '$($decision.disposition)' for '$path'."
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$decision.requirementId) -or [string]$decision.requirementId -notmatch '^[A-Z0-9][A-Z0-9-]+$') {
+        Add-Blocker "Path decision lacks a valid requirementId: $path"
     }
     if ([string]::IsNullOrWhiteSpace([string]$decision.reason)) {
         Add-Blocker "Path decision lacks a reason: $path"
     }
     $decisionsByPath[$path] = $decision
 }
-foreach ($path in $upstreamChangedPaths) {
-    if (-not $decisionsByPath.ContainsKey($path)) { Add-Blocker "Unclassified upstream path: $path" }
+foreach ($path in $requiredDecisionPaths) {
+    if (-not $decisionsByPath.ContainsKey($path)) { Add-Blocker "Unclassified release path: $path" }
 }
 foreach ($path in @($decisionsByPath.Keys)) {
-    if (-not $upstreamSet.Contains($path)) { Add-Blocker "Decision describes a path not changed by this upstream intake: $path" }
+    $decision = $decisionsByPath[$path]
+    $disposition = [string]$decision.disposition
+    $knownPath = $upstreamSet.Contains($path) -or $baselineSet.Contains($path) -or (Test-GitPathExists -Commit $UpstreamCommit -Path $path)
+    if (-not $knownPath -and $disposition -ne "downstream-only") {
+        Add-Blocker "Decision for new path '$path' must use downstream-only."
+    }
+    if ($knownPath -and $disposition -eq "downstream-only") {
+        Add-Blocker "downstream-only path already exists in upstream or baseline ledger: $path"
+    }
+    if ($disposition -eq "carry-forward" -and -not $baselineSet.Contains($path)) {
+        Add-Blocker "carry-forward path is absent from the baseline release delta: $path"
+    }
 }
 
 $reportPathFull = if ($ReportPath) { [IO.Path]::GetFullPath($ReportPath) } else { Join-Path $workflowRoot "build\ai-rules-overlay-report.json" }
 $report = [ordered]@{
-    schemaVersion = 2
+    schemaVersion = 3
     generatedAt = (Get-Date).ToString("o")
     mode = $Mode
     aiRulesRoot = $script:AiRulesRootFull
@@ -277,7 +293,7 @@ $report = [ordered]@{
     baselineReleaseCommit = $baselineRelease
     upstreamChangedCount = $upstreamChangedPaths.Count
     baselineDownstreamCount = $baselineDownstreamPaths.Count
-    downstreamOnlyCount = $downstreamOnlyPaths.Count
+    decisionCount = $decisionsByPath.Count
     rootContractMappingCount = $rootMappings.Count
     decisions = @()
     blockers = @()
@@ -290,8 +306,10 @@ if ($Mode -eq "Prepare" -and $script:Blockers.Count -eq 0) {
         Add-Blocker "Prepare requires a clean branch whose HEAD is exactly audited upstream $UpstreamCommit."
     }
     else {
-        foreach ($path in $downstreamOnlyPaths) {
+        foreach ($decision in @($manifest.pathDecisions | Where-Object disposition -in @("carry-forward", "resolved"))) {
+            $path = [string]$decision.path
             if ($path -in $managedTargetPaths) { continue }
+            if ([string]$decision.disposition -eq "resolved" -and $upstreamSet.Contains($path)) { continue }
             if (Test-GitPathExists -Commit $baselineRelease -Path $path) {
                 [void](Invoke-AiRulesGit -Arguments @("checkout", $baselineRelease, "--", $path))
             }
@@ -299,16 +317,13 @@ if ($Mode -eq "Prepare" -and $script:Blockers.Count -eq 0) {
                 [void](Invoke-AiRulesGit -Arguments @("rm", "--ignore-unmatch", "--", $path))
             }
         }
-        foreach ($decision in @($manifest.pathDecisions | Where-Object disposition -eq "keep-current")) {
-            [void](Invoke-AiRulesGit -Arguments @("checkout", $baselineRelease, "--", [string]$decision.path))
-        }
         foreach ($target in $managedTargets) {
             $templatePath = Join-Path $overlayRootFull $target.template
             $targetPath = Join-Path $script:AiRulesRootFull $target.path
             $text = [IO.File]::ReadAllText($templatePath, [Text.Encoding]::UTF8).Replace("`r`n", "`n").TrimEnd("`n") + "`n"
             [IO.File]::WriteAllText($targetPath, $text, $utf8)
         }
-        $report.pendingResolvedPaths = @($manifest.pathDecisions | Where-Object disposition -eq "resolved" | ForEach-Object path)
+        $report.pendingResolvedPaths = @($manifest.pathDecisions | Where-Object disposition -in @("resolved", "downstream-only") | ForEach-Object path)
         $report.status = "prepared"
     }
 }
@@ -317,13 +332,9 @@ if ($Mode -eq "Verify" -and $script:Blockers.Count -eq 0) {
     $dirty = @(Get-GitPathList -Arguments @("status", "--porcelain", "--untracked-files=all"))
     if ($dirty.Count -gt 0) { Add-Blocker "Verify requires a clean committed release checkout." }
 
-    $allowed = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($path in @($baselineDownstreamPaths + $upstreamChangedPaths + $managedTargetPaths + @($manifest.additionalDownstreamPaths))) {
-        if ($path) { [void]$allowed.Add([string]$path) }
-    }
     $committedPaths = @(Get-GitPathList -Arguments @("diff", "--name-only", $UpstreamCommit, "HEAD", "--"))
     foreach ($path in $committedPaths) {
-        if (-not $allowed.Contains($path)) { Add-Blocker "Release changes unclassified path: $path" }
+        if (-not $decisionsByPath.ContainsKey($path)) { Add-Blocker "Release changes unclassified path: $path" }
     }
 
     foreach ($decision in @($manifest.pathDecisions)) {
@@ -334,19 +345,27 @@ if ($Mode -eq "Verify" -and $script:Blockers.Count -eq 0) {
         if ([string]$decision.upstreamSha256 -ne $upstreamSha) {
             Add-Blocker "Upstream SHA-256 mismatch for '$path'."
         }
+        if ([string]$decision.baselineSha256 -ne $baselineSha) {
+            Add-Blocker "Baseline SHA-256 mismatch for '$path'."
+        }
         if ([string]$decision.resultSha256 -ne $resultSha) {
             Add-Blocker "Result SHA-256 mismatch for '$path'."
         }
         if ([string]$decision.disposition -eq "take-upstream" -and $resultSha -ne $upstreamSha) {
             Add-Blocker "take-upstream path differs from upstream: $path"
         }
-        if ([string]$decision.disposition -eq "keep-current" -and $resultSha -ne $baselineSha) {
-            Add-Blocker "keep-current path differs from baseline release: $path"
+        if ([string]$decision.disposition -eq "carry-forward" -and $resultSha -ne $baselineSha) {
+            Add-Blocker "carry-forward path differs from baseline release: $path"
+        }
+        if ([string]$decision.disposition -eq "downstream-only" -and ($upstreamSha -ne "<absent>" -or $baselineSha -ne "<absent>" -or $resultSha -eq "<absent>")) {
+            Add-Blocker "downstream-only path has invalid provenance: $path"
         }
         $report.decisions += [pscustomobject]@{
             path = $path
+            requirementId = [string]$decision.requirementId
             disposition = [string]$decision.disposition
             upstreamSha256 = $upstreamSha
+            baselineSha256 = $baselineSha
             resultSha256 = $resultSha
         }
     }
@@ -369,4 +388,4 @@ if ($script:Blockers.Count -gt 0) {
 
 Write-OverlayReport -Payload $report -Path $reportPathFull
 Write-Host "AI rules release $($report.status): $reportPathFull"
-Write-Host "Upstream paths: $($upstreamChangedPaths.Count); downstream-only paths: $($downstreamOnlyPaths.Count)"
+Write-Host "Upstream paths: $($upstreamChangedPaths.Count); baseline downstream paths: $($baselineDownstreamPaths.Count); decisions: $($decisionsByPath.Count)"

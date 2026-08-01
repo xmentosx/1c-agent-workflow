@@ -33,6 +33,23 @@ Describe "Local quality gate contract" {
         $text | Should -Match 'ExplicitAiRulesSource'
         $text | Should -Match 'Full may qualify pending only with an explicit local -AiRulesSource'
         $text | Should -Match 'upstreamMergeBase'
+        $text | Should -Match 'promote-ai-rules-compatibility\.ps1'
+        $text | Should -Match 'AiRulesCompatibilityPromotion\.Tests\.ps1'
+    }
+
+    It "requires evidence-backed compatibility promotion before the final Full gate" {
+        $promoterPath = Join-Path $RepoRoot "scripts\promote-ai-rules-compatibility.ps1"
+        Test-Path -LiteralPath $promoterPath -PathType Leaf | Should -BeTrue
+        $promoter = Get-Content -LiteralPath $promoterPath -Raw -Encoding UTF8
+        $promoter | Should -Match 'itl-workflow-full-qualification'
+        $promoter | Should -Match 'repository\.worktreeClean'
+        $promoter | Should -Match 'compatibilityStatus'
+        $promoter | Should -Match 'compatibilityCheckedAt'
+        $promoter | Should -Match 'qualificationSha256'
+
+        $docs = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\local-quality-gate.md") -Raw -Encoding UTF8
+        $docs | Should -Match 'promote-ai-rules-compatibility\.ps1'
+        $docs | Should -Match '(?s)promote-ai-rules-compatibility\.ps1.*Full.*compatibilityStatus=passed'
     }
 
     It "reuses exact or ancestor same-tree Full qualifications and checkpoints static proof before runtime" {

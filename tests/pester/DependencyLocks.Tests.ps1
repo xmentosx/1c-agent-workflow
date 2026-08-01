@@ -145,18 +145,19 @@
         $lockTemplate.mode | Should -Be "fresh"
         $project = $projectTemplate | ConvertFrom-Json
         $project.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $project.aiRules.ref | Should -Be "itl-main-5f3d3f0-r20"
+        $project.aiRules.ref | Should -Be "itl-main-410951e7-r21"
         @($project.aiRules.tools).Count | Should -Be 0
         $lockTemplate.dependencies.aiRules1c.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-5f3d3f0-r20"
+        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-410951e7-r21"
         $lockTemplate.dependencies.workflowPackage.commit | Should -Be ""
         $lockTemplate.dependencies.workflowPackage.source | Should -Be "template default"
         $lockTemplate.dependencies.workflowPackage.updatedAt | Should -Be ""
-        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "151aa980b5e99b3d129e974925e734d9ef0afa3e"
+        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "37362c6fa0e29b8aee0f70e01d85bf77e41cc683"
         $lockTemplate.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
-        $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "5f3d3f03b778d7de38cf2cfb18a20cf3e7ed79d8"
-        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 20
-        $lockTemplate.dependencies.aiRules1c.compatibilityStatus | Should -BeIn @("pending", "passed")
+        $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "410951e74fd3e6b7a763cf49757935b9a34d3f31"
+        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 21
+        $lockTemplate.dependencies.aiRules1c.compatibilityStatus | Should -Be "pending"
+        $lockTemplate.dependencies.aiRules1c.compatibilityCheckedAt | Should -Be ""
         $lockTemplate.dependencies.agentBrowser.version | Should -Be "0.33.1"
         $lockTemplate.dependencies.agentBrowser.profile | Should -Be "core"
         $lockTemplate.dependencies.windowsMcp.version | Should -Be "0.8.2"

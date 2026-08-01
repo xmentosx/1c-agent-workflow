@@ -280,7 +280,8 @@ function Get-WorkflowGateScriptPaths {
         (Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"),
         (Join-Path $repoRoot "scripts\run-pester-shard.ps1"),
         (Join-Path $repoRoot "scripts\pester-timings.json"),
-        (Join-Path $repoRoot "scripts\release-qualification.ps1")
+        (Join-Path $repoRoot "scripts\release-qualification.ps1"),
+        (Join-Path $repoRoot "scripts\promote-ai-rules-compatibility.ps1")
     )
     $stageRoot = Join-Path $repoRoot "scripts\release-e2e"
     if (Test-Path -LiteralPath $stageRoot -PathType Container) {
@@ -448,7 +449,7 @@ try {
                 Import-Module Pester -MinimumVersion 5.0.0 -Force
                 $script:pesterVersion = [string](Get-Module Pester | Select-Object -First 1 -ExpandProperty Version)
                 $configuration = New-PesterConfiguration
-                $configuration.Run.Path = @(".\tests\pester\ParserDocsBudgets.Tests.ps1", ".\tests\pester\LifecycleOperationLock.Tests.ps1", ".\tests\pester\DesignerMemoryGuard.Tests.ps1", ".\tests\pester\DesignerCompletion.Tests.ps1", ".\tests\pester\HostTooling.Tests.ps1", ".\tests\pester\DependencyLocks.Tests.ps1", ".\tests\pester\AiRulesClients.Tests.ps1", ".\tests\pester\ClientAdaptersAndModes.Tests.ps1", ".\tests\pester\AiRulesMigration.Tests.ps1", ".\tests\pester\ReleaseGate.Tests.ps1", ".\tests\pester\ReleaseReadiness.Tests.ps1", ".\tests\pester\LocalQualityGate.Tests.ps1")
+                $configuration.Run.Path = @(".\tests\pester\ParserDocsBudgets.Tests.ps1", ".\tests\pester\LifecycleOperationLock.Tests.ps1", ".\tests\pester\DesignerMemoryGuard.Tests.ps1", ".\tests\pester\DesignerCompletion.Tests.ps1", ".\tests\pester\HostTooling.Tests.ps1", ".\tests\pester\DependencyLocks.Tests.ps1", ".\tests\pester\AiRulesClients.Tests.ps1", ".\tests\pester\ClientAdaptersAndModes.Tests.ps1", ".\tests\pester\AiRulesMigration.Tests.ps1", ".\tests\pester\AiRulesCompatibilityPromotion.Tests.ps1", ".\tests\pester\ReleaseGate.Tests.ps1", ".\tests\pester\ReleaseReadiness.Tests.ps1", ".\tests\pester\LocalQualityGate.Tests.ps1")
                 $configuration.Run.PassThru = $true
                 $configuration.Output.Verbosity = "Normal"
                 $configuration.TestResult.Enabled = $true
