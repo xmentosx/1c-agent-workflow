@@ -34,9 +34,12 @@ worker по умолчанию получают детерминированно
 `compatibilityStatus=pending`. Такой lock принимается только режимом `Full`,
 только с явно переданным локальным `-AiRulesSource` и только когда clean
 annotated tag, release branch, fork commit и upstream ancestry совпадают с
-lock. После успешного Full статус меняется на `passed` и фиксируется timestamp;
-обычный Full с неявным источником и режим `Release` по-прежнему требуют
-`compatibilityStatus=passed`.
+lock. После успешного Full единственный штатный переход выполняет
+`scripts/promote-ai-rules-compatibility.ps1`: он требует exact clean HEAD/tree,
+сверяет fork qualification и меняет только status/timestamp без переформатирования
+lock. После promotion выполните целевые lock/overlay-тесты, закоммитьте только
+lock и один раз запустите Full на финальном дереве. Обычный Full с неявным
+источником и режим `Release` по-прежнему требуют `compatibilityStatus=passed`.
 
 `Release` сохраняет статическую qualification после Pester, helper, fork,
 compatibility и проверки tracked state, поэтому runtime-сбой не повторяет эту
