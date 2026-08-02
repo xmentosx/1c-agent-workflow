@@ -96,30 +96,34 @@ function Invoke-SourceGate {
     $stdout = Join-Path $logRoot ("gate-$($Mode.ToLowerInvariant()).stdout.log")
     $stderr = Join-Path $logRoot ("gate-$($Mode.ToLowerInvariant()).stderr.log")
     $gateStartedAt = [DateTime]::UtcNow
-    $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($quoted -join " ") -WorkingDirectory $WorkingRoot -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
-    $null = $process.Handle
-    $hardSeconds = switch ($Mode) { "Targeted" { 900 } "Smoke" { 120 } "Full" { 1200 } "Develop" { 5400 } "Release" { 7200 } default { 1200 } }
-    $watch = [Diagnostics.Stopwatch]::StartNew()
-    $lastLength = -1L
-    $lastProgress = [DateTime]::UtcNow
-    while (-not $process.WaitForExit(5000)) {
-        $length = 0L
-        foreach ($path in @($stdout, $stderr)) { if (Test-Path $path) { $length += (Get-Item $path).Length } }
-        if ($length -ne $lastLength) { $lastLength = $length; $lastProgress = [DateTime]::UtcNow }
-        if ($watch.Elapsed.TotalSeconds -ge $hardSeconds -or ([DateTime]::UtcNow - $lastProgress).TotalMinutes -ge 15) {
-            try { $process.Kill(); $process.WaitForExit() } catch {}
-            throw "$Mode source gate exceeded its hard/no-progress budget. See $stdout and $stderr"
+    $gateStatus = "failed"; $gateError = ""; $process = $null
+    try {
+        $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($quoted -join " ") -WorkingDirectory $WorkingRoot -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+        $null = $process.Handle
+        $hardSeconds = switch ($Mode) { "Targeted" { 900 } "Smoke" { 120 } "Full" { 1200 } "Develop" { 5400 } "Release" { 7200 } default { 1200 } }
+        $watch = [Diagnostics.Stopwatch]::StartNew(); $lastLength = -1L; $lastProgress = [DateTime]::UtcNow
+        while (-not $process.WaitForExit(5000)) {
+            $length = 0L
+            foreach ($path in @($stdout, $stderr)) { if (Test-Path $path) { $length += (Get-Item $path).Length } }
+            if ($length -ne $lastLength) { $lastLength = $length; $lastProgress = [DateTime]::UtcNow }
+            if ($watch.Elapsed.TotalSeconds -ge $hardSeconds -or ([DateTime]::UtcNow - $lastProgress).TotalMinutes -ge 15) {
+                try { $process.Kill(); $process.WaitForExit() } catch {}
+                throw "$Mode source gate exceeded its hard/no-progress budget. See $stdout and $stderr"
+            }
         }
-    }
-    $process.WaitForExit(); $process.Refresh(); $watch.Stop()
-    if ([int]$process.ExitCode -ne 0) { throw "$Mode source gate failed with exit code $($process.ExitCode). See $stdout and $stderr" }
-    if ($gate -eq (Join-Path $WorkingRoot "scripts\check.ps1")) {
-        $summaryPath = Join-Path $WorkingRoot "build\test-results\local\check-summary.json"
-        if (-not (Test-Path -LiteralPath $summaryPath -PathType Leaf)) { throw "$Mode source gate returned without an authoritative check summary." }
-        $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ([string]$summary.mode -ne $Mode -or [string]$summary.status -ne "passed" -or [DateTime]::Parse([string]$summary.finishedAt).ToUniversalTime() -lt $gateStartedAt.AddSeconds(-2)) {
-            throw "$Mode source gate did not produce a fresh passed summary. See $summaryPath"
+        $process.WaitForExit(); $process.Refresh(); $watch.Stop()
+        if ([int]$process.ExitCode -ne 0) { throw "$Mode source gate failed with exit code $($process.ExitCode). See $stdout and $stderr" }
+        if ($gate -eq (Join-Path $WorkingRoot "scripts\check.ps1")) {
+            $summaryPath = Join-Path $WorkingRoot "build\test-results\local\check-summary.json"
+            if (-not (Test-Path -LiteralPath $summaryPath -PathType Leaf)) { throw "$Mode source gate returned without an authoritative check summary." }
+            $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string]$summary.mode -ne $Mode -or [string]$summary.status -ne "passed" -or [DateTime]::Parse([string]$summary.finishedAt).ToUniversalTime() -lt $gateStartedAt.AddSeconds(-2)) { throw "$Mode source gate did not produce a fresh passed summary. See $summaryPath" }
         }
+        $gateStatus = "passed"
+    } catch { $gateError = $_.Exception.Message; throw } finally {
+        $finishedAt = [DateTime]::UtcNow
+        try { [void](Write-DeliveryRunRecord -Mode $Mode -Status $gateStatus -ErrorMessage $gateError -WorkingRoot $WorkingRoot -StartedAt $gateStartedAt -FinishedAt $finishedAt -ExitCode $(if ($process -and $process.HasExited) { [int]$process.ExitCode } else { -1 })) }
+        catch { if ($gateStatus -eq "passed") { throw } else { Write-Warning "Unable to persist failed gate history: $($_.Exception.Message)" } }
     }
 }
 
@@ -177,9 +181,33 @@ function Invoke-WorktreeGit {
 }
 
 function Get-DeliveryCommonGitDirectory {
-    $value = Get-GitValue -Arguments @("rev-parse", "--git-common-dir")
+    $value = Get-GitValue -Arguments @("rev-parse", "--path-format=absolute", "--git-common-dir")
     if ([IO.Path]::IsPathRooted($value)) { return [IO.Path]::GetFullPath($value) }
     return [IO.Path]::GetFullPath((Join-Path $script:Root $value))
+}
+
+function Write-DeliveryRunRecord {
+    param([string]$Mode, [string]$Status, [string]$ErrorMessage, [string]$WorkingRoot, [datetime]$StartedAt, [datetime]$FinishedAt, [int]$ExitCode)
+    $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"; New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
+    $summaryPath = Join-Path $WorkingRoot "build\test-results\local\check-summary.json"; $summary = $null
+    if (Test-Path -LiteralPath $summaryPath -PathType Leaf) {
+        try {
+            $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if (-not $summary.PSObject.Properties["startedAt"] -or [DateTime]::Parse([string]$summary.startedAt).ToUniversalTime() -lt $StartedAt.AddSeconds(-2)) { $summary = $null }
+        } catch { $summary = $null }
+    }
+    $record = [ordered]@{ schemaVersion = 1; id = [guid]::NewGuid().ToString("N"); mode = $Mode; status = $Status; exitCode = $ExitCode; startedAt = $StartedAt.ToString("o"); finishedAt = $FinishedAt.ToString("o"); durationMs = [int64]($FinishedAt - $StartedAt).TotalMilliseconds; commit = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim(); tree = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim(); error = $ErrorMessage; tests = $(if ($summary) { $summary.tests } else { $null }); stages = $(if ($summary) { @($summary.stages | Sort-Object durationMs -Descending | Select-Object -First 10) } else { @() }) }
+    $name = "{0}-{1}-{2}.json" -f $StartedAt.ToString("yyyyMMdd-HHmmss-fff"), $Mode.ToLowerInvariant(), $record.id; $target = Join-Path $runRoot $name; $temp = "$target.tmp"
+    [IO.File]::WriteAllText($temp, (($record | ConvertTo-Json -Depth 12) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false)); Move-Item -LiteralPath $temp -Destination $target
+    return $target
+}
+
+function Get-DeliveryRunHistory {
+    param([int]$Limit = 20)
+    $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"; if (-not (Test-Path -LiteralPath $runRoot)) { return [pscustomobject]@{ root = $runRoot; count = 0; totalDurationMs = 0; byMode = @(); lastRuns = @() } }
+    $runs = @(Get-ChildItem -LiteralPath $runRoot -File -Filter "*.json" | Sort-Object Name -Descending | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json } catch {} })
+    $byMode = @($runs | Group-Object mode | Sort-Object Name | ForEach-Object { [pscustomobject]@{ mode = $_.Name; count = $_.Count; durationMs = [int64](($_.Group | Measure-Object durationMs -Sum).Sum) } })
+    return [pscustomobject]@{ root = $runRoot; count = $runs.Count; totalDurationMs = [int64](($runs | Measure-Object -Property durationMs -Sum).Sum); byMode = $byMode; lastRuns = @($runs | Select-Object -First $Limit) }
 }
 
 function Get-DeliveryQualificationCachePath {
@@ -364,7 +392,7 @@ function Release-DevelopToMaster {
 [void](Invoke-DeliveryGit -Arguments @("rev-parse", "--git-dir"))
 $result = switch ($Action) {
     "RegisterChange" { Register-SourceChange }
-    "Status" { [pscustomobject]@{ status = "ok"; queue = @(Get-QueueEntries) } }
+    "Status" { [pscustomobject]@{ status = "ok"; queue = @(Get-QueueEntries); runHistory = (Get-DeliveryRunHistory) } }
     "PublishDevelop" { Publish-AccumulatedDevelop }
     "ReleaseMaster" { Release-DevelopToMaster }
 }

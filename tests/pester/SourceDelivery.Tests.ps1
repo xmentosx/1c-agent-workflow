@@ -95,7 +95,7 @@ Describe "Source develop queue and delivery" {
             & git -C $parallelRoot add --all; & git -C $parallelRoot commit -m "feat: parallel fixture" *> $null
             Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $parallelRoot + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "parallel-two") | Out-Null
             $status = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "Status", "-RepositoryRoot", ('"' + $fixture.root + '"'))
-            @(($status.stdout | ConvertFrom-Json).queue.id | Sort-Object) | Should -Be @("codex/parallel-branch", "parallel-two")
+            $statusPayload = $status.stdout | ConvertFrom-Json; @($statusPayload.queue.id | Sort-Object) | Should -Be @("codex/parallel-branch", "parallel-two"); [int]$statusPayload.runHistory.count | Should -BeGreaterOrEqual 2; [int]($statusPayload.runHistory.byMode | Where-Object mode -eq Targeted | Select-Object -ExpandProperty count) | Should -BeGreaterOrEqual 2
             (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure).exitCode | Should -Not -Be 0
             @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -HaveCount 4
         } finally {

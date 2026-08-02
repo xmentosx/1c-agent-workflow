@@ -11,17 +11,18 @@
 `-CoverageContract` не нужен, если диапазон уже содержит изменённый Pester-тест.
 Регистрация сама выполняет `Targeted` и только после успеха атомарно записывает
 `base/head` под `refs/itl/develop-queue/*`. Эти refs общие для worktree, но не
-публикуются. Посмотреть очередь можно через `-Action Status`.
+публикуются. `-Action Status` показывает очередь и накопительную историю
+успешных/неуспешных gate из общего Git-каталога `.git/itl/runs` со временем по режимам.
 
 ## Уровни проверки
 
-| Режим | Когда | Hard limit |
-|---|---|---:|
-| `Targeted` | регистрация одной доработки | 15 мин |
-| `Smoke` | короткая проверка runner/catalog/delivery | 2 мин |
-| `Full` | все изолированные Pester и fork compatibility | 20 мин |
-| `Develop` | один Full и реальные стандартные journey | 90 мин |
-| `Release` | только доказательства стабильной поставки после Develop | 120 мин |
+| Режим | Когда | Цель | Hard limit |
+|---|---|---:|---:|
+| `Targeted` | регистрация одной доработки | 5 мин | 15 мин |
+| `Smoke` | короткая проверка runner/catalog/delivery | 1 мин | 2 мин |
+| `Full` | все изолированные Pester и fork compatibility | 10 мин | 20 мин |
+| `Develop` | один Full и реальные стандартные journey | 25 мин | 90 мин |
+| `Release` | только доказательства стабильной поставки после Develop | 60 мин | 120 мин |
 
 Без параметров `check.ps1` запускает `Smoke`. Старый `Fast` временно является
 deprecated alias для `Smoke`; в штатном процессе он не используется.
@@ -30,8 +31,14 @@ deprecated alias для `Smoke`; в штатном процессе он не и
 назначить владельца — полного fallback-прогона нет.
 
 Каждый дочерний этап имеет hard timeout, no-progress timeout, heartbeat и запись
-длительности в `build/test-results/local/check-summary.json`. Провал либо
-превышение бюджета блокирует публикацию.
+длительности в `build/test-results/local/check-summary.json`. Там же сохраняются
+целевой/hard бюджет и пять самых медленных стадий. Выход за цель виден как
+`over-target`, а провал или выход за hard limit блокирует публикацию.
+
+`Targeted` и `Full` хранят успешные Pester-шарды в `.git/itl/pester-shards/v1`. Reuse возможен
+только при совпадении тестов шарда, всех входов их контрактов, общих runner/locks,
+версий PowerShell/Pester и identity controlled fork/Vanessa build. Неизвестный
+владелец теста отключает кэш для шарда. Провальные результаты не кэшируются.
 
 ## Публикация develop
 
@@ -52,7 +59,9 @@ Develop journey используют публичные поверхности w
 - refresh активной ветки, реальный `/itl-check`/Vanessa и экспорт результата;
 - свежий bootstrap и `init-project` в коротком disposable-пути;
 - `new-dev-branch`, минимальная конфигурационная правка и application feature;
-- check, result, `refresh-dev-branch-lite`, повторный check и close.
+- check, stale-result boundary через изменение feature без повторной загрузки
+  конфигурации в Designer, recovery check, result, `refresh-dev-branch-lite`,
+  повторный check и close.
 
 Qualification `develop.json` связывает точный tree с SHA статического Full и
 live-отчёта. Повторное использование допускается только для exact/ancestor

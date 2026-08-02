@@ -12,7 +12,7 @@
     "targetedHardSeconds": 900,
     "fullTargetSeconds": 600,
     "fullHardSeconds": 1200,
-    "developTargetSeconds": 1800,
+    "developTargetSeconds": 1500,
     "developHardSeconds": 5400,
     "releaseTargetSeconds": 3600,
     "releaseHardSeconds": 7200
@@ -54,8 +54,8 @@
       "gate": "develop",
       "budgetSeconds": 5400,
       "primaryTest": "tests/pester/ReleaseGate.Tests.ps1",
-      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/test-release-readiness.ps1"],
-      "tests": ["tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1"]
+      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/develop-e2e-cleanup.ps1", "scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/test-release-readiness.ps1"],
+      "tests": ["tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1"]
     },
     {
       "id": "bootstrap-update",

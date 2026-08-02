@@ -574,14 +574,13 @@
             }
             Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value (($aiRulesManifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
 
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action help 2>&1
-            $LASTEXITCODE | Should -Be 0
-            $text = ($output | Out-String)
+            $helpResult = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "help")
+            $helpResult.exitCode | Should -Be 0
+            $text = $helpResult.combinedText
 
-            $text | Should -Match "Есть проверяемые изменения: False"
-            $text | Should -Match "Рекомендуемый шаг: независимо выберите execution path quick-fix или full-cycle"
-            $text | Should -Match "По умолчанию используйте direct"
-            $text | Should -Match "выбирайте /opsx-explore или /opsx-propose, только если полезно формальное исследование или согласование"
+            foreach ($expectedBase64 in @('0JXRgdGC0Ywg0L/RgNC+0LLQtdGA0Y/QtdC80YvQtSDQuNC30LzQtdC90LXQvdC40Y86IEZhbHNl','0KDQtdC60L7QvNC10L3QtNGD0LXQvNGL0Lkg0YjQsNCzOiDQvdC10LfQsNCy0LjRgdC40LzQviDQstGL0LHQtdGA0LjRgtC1IGV4ZWN1dGlvbiBwYXRoIHF1aWNrLWZpeCDQuNC70LggZnVsbC1jeWNsZQ==','0J/QviDRg9C80L7Qu9GH0LDQvdC40Y4g0LjRgdC/0L7Qu9GM0LfRg9C50YLQtSBkaXJlY3Q=','0LLRi9Cx0LjRgNCw0LnRgtC1IC9vcHN4LWV4cGxvcmUg0LjQu9C4IC9vcHN4LXByb3Bvc2UsINGC0L7Qu9GM0LrQviDQtdGB0LvQuCDQv9C+0LvQtdC30L3QviDRhNC+0YDQvNCw0LvRjNC90L7QtSDQuNGB0YHQu9C10LTQvtCy0LDQvdC40LUg0LjQu9C4INGB0L7Qs9C70LDRgdC+0LLQsNC90LjQtQ==')) {
+                $text | Should -Match ([regex]::Escape([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($expectedBase64))))
+            }
             foreach ($command in @("/opsx-propose", "/opsx-explore", "/opsx-apply", "/opsx-archive")) {
                 $text | Should -Match ([regex]::Escape($command))
             }

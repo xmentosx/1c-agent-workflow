@@ -19,7 +19,6 @@ param(
 
 $script:ExplicitAiRulesSource = $PSBoundParameters.ContainsKey("AiRulesSource") -and -not [string]::IsNullOrWhiteSpace($AiRulesSource)
 $effectiveMode = $(if ($Mode -eq "Fast") { "Smoke" } else { $Mode })
-$modeHardBudgetSeconds = switch ($effectiveMode) { "Targeted" { 900 } "Smoke" { 120 } "Full" { 1200 } "Develop" { 5400 } "Release" { 7200 } }
 if ($Mode -eq "Fast") { Write-Warning "Mode Fast is deprecated and now aliases Smoke. Use Targeted for a change or Smoke for a short source sanity check." }
 
 Set-StrictMode -Version Latest
@@ -66,6 +65,12 @@ function Get-CanonicalTextSha256 {
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "release-qualification.ps1")
+. (Join-Path $PSScriptRoot "quality-contracts.ps1")
+$qualityCatalog = Get-QualityContractCatalog -RepositoryRoot $repoRoot
+$budgetPrefix = $effectiveMode.Substring(0, 1).ToLowerInvariant() + $effectiveMode.Substring(1)
+$modeTargetBudgetSeconds = [int]$qualityCatalog.budgets.("${budgetPrefix}TargetSeconds")
+$modeHardBudgetSeconds = [int]$qualityCatalog.budgets.("${budgetPrefix}HardSeconds")
+if ($modeTargetBudgetSeconds -le 0 -or $modeHardBudgetSeconds -lt $modeTargetBudgetSeconds) { throw "Invalid $effectiveMode target/hard budget in the quality contract catalog." }
 $outputRoot = Resolve-RepositoryPath -Path $OutputDirectory -Root $repoRoot
 $qualificationFullPath = Resolve-RepositoryPath -Path $QualificationPath -Root $repoRoot
 $developQualificationFullPath = Resolve-RepositoryPath -Path $DevelopQualificationPath -Root $repoRoot
@@ -548,19 +553,24 @@ try {
                     [System.IO.File]::WriteAllText($selectionPath, (($selection | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
                 }
                 $selection = Get-Content -LiteralPath $selectionPath -Raw -Encoding UTF8 | ConvertFrom-Json
-                $planPath = Join-Path $outputRoot "pester-selection-plan.json"
-                $resultPath = Join-Path $outputRoot "pester-selection-result.json"
-                $plan = [ordered]@{ schemaVersion = 1; worker = 0; paths = @($selection.tests) }
-                [System.IO.File]::WriteAllText($planPath, (($plan | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
-                $worker = Join-Path $repoRoot "scripts\run-pester-shard.ps1"
-                $timeout = $(if ($effectiveMode -eq "Smoke") { 120 } else { 900 })
-                Invoke-PowerShellChild -ScriptPath $worker -Arguments @("-PlanPath", $planPath, "-JunitPath", $junitPath, "-ResultPath", $resultPath) -TimeoutSeconds $timeout -NoProgressSeconds $(if ($effectiveMode -eq "Smoke") { 90 } else { 300 }) -LogName "pester-selection"
-                $selectionResult = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($effectiveMode -eq "Targeted") {
+                    $shardRunner = Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"
+                    Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$PesterWorkers, "-SelectionPath", $selectionPath) -TimeoutSeconds 900 -NoProgressSeconds 300 -LogName "pester-selection-shards"
+                    $selectionResult = Get-Content -LiteralPath (Join-Path $outputRoot "pester-shards\summary.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                } else {
+                    $planPath = Join-Path $outputRoot "pester-selection-plan.json"; $resultPath = Join-Path $outputRoot "pester-selection-result.json"
+                    $plan = [ordered]@{ schemaVersion = 1; worker = 0; paths = @($selection.tests) }
+                    [System.IO.File]::WriteAllText($planPath, (($plan | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+                    Invoke-PowerShellChild -ScriptPath (Join-Path $repoRoot "scripts\run-pester-shard.ps1") -Arguments @("-PlanPath", $planPath, "-JunitPath", $junitPath, "-ResultPath", $resultPath) -TimeoutSeconds 120 -NoProgressSeconds 90 -LogName "pester-selection"
+                    $selectionResult = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                }
                 $script:pesterVersion = [string]$selectionResult.pesterVersion
                 $script:pesterResult = [pscustomobject]@{ Result = $(if ([string]$selectionResult.status -eq "passed") { "Passed" } else { "Failed" }); PassedCount = [int]$selectionResult.passed; FailedCount = [int]$selectionResult.failed; SkippedCount = [int]$selectionResult.skipped }
             } else {
                 $shardRunner = Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"
-                Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$PesterWorkers) -TimeoutSeconds 1200 -LogName "pester-shards"
+                $shardArguments = @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$PesterWorkers)
+                if ($resolvedAiRulesSource) { $shardArguments += @("-AiRulesSource", $resolvedAiRulesSource) }
+                Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments $shardArguments -TimeoutSeconds 1200 -LogName "pester-shards"
                 $shardSummaryPath = Join-Path $outputRoot "pester-shards\summary.json"
                 if (-not (Test-Path -LiteralPath $shardSummaryPath -PathType Leaf)) { throw "Pester shard summary was not created." }
                 $shardSummary = Get-Content -LiteralPath $shardSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -720,6 +730,7 @@ try {
     } elseif ($qualifiedResult) {
         [ordered]@{ passed = [int]$qualifiedResult.passed; failed = [int]$qualifiedResult.failed; skipped = [int]$qualifiedResult.skipped }
     } else { [ordered]@{ passed = 0; failed = 0; skipped = 0 } }
+    $budgetStatus = $(if ($failure) { "failed" } elseif ($overallStopwatch.Elapsed.TotalSeconds -le $modeTargetBudgetSeconds) { "within-target" } else { "over-target" })
     $summary = [ordered]@{
         schemaVersion = 2
         repository = "1c-agent-workflow"
@@ -728,6 +739,9 @@ try {
         startedAt = $startedAt.ToString("o")
         finishedAt = [DateTime]::UtcNow.ToString("o")
         durationMs = [int64]$overallStopwatch.ElapsedMilliseconds
+        targetBudgetSeconds = $modeTargetBudgetSeconds
+        hardBudgetSeconds = $modeHardBudgetSeconds
+        budgetStatus = $budgetStatus
         commit = $commit
         tree = $tree
         worktreeClean = (-not $dirty)
@@ -741,6 +755,7 @@ try {
         qualificationReuseKind = $qualificationReuseKind
         tests = $result
         stages = @($stages | ForEach-Object { $_ })
+        slowestStages = @($stages | Sort-Object { [int64]$_['durationMs'] } -Descending | Select-Object -First 5)
         error = $failure
     }
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -750,6 +765,7 @@ try {
 }
 
 if ($failure) { [Console]::Error.WriteLine($failure); exit 1 }
+if ($budgetStatus -eq "over-target") { Write-Warning "ITL $Mode passed but exceeded its target budget of $modeTargetBudgetSeconds seconds. Inspect slowestStages in $summaryPath." }
 Write-Host "ITL $Mode gate passed. Summary: $summaryPath"
 if ($effectiveMode -in @("Full", "Develop")) { Write-Host "Qualification: $qualificationFullPath" }
 if ($effectiveMode -eq "Develop") { Write-Host "Develop qualification: $developQualificationFullPath" }

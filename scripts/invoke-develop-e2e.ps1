@@ -27,6 +27,7 @@ $freshRoot = ""
 $freshBranchRoot = ""
 $candidateCommit = (& git -C $CandidateRoot rev-parse HEAD).Trim()
 $candidateTree = (& git -C $CandidateRoot rev-parse 'HEAD^{tree}').Trim()
+. (Join-Path $PSScriptRoot "develop-e2e-cleanup.ps1")
 
 function ConvertTo-DevelopProcessArgument {
     param([AllowNull()][string]$Value)
@@ -235,28 +236,6 @@ function Get-BranchWorktree {
     throw "Fresh journey branch worktree was not registered: itldev/$Name"
 }
 
-function Remove-FreshProject {
-    param([string]$Path, [string]$BranchPath = "")
-    if (-not $Path) { return }
-    $resolved = [IO.Path]::GetFullPath($Path)
-    $allowed = [IO.Path]::GetFullPath($FreshProjectsRoot).TrimEnd('\') + '\'
-    if (-not $resolved.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $resolved) -notlike "d-*") {
-        throw "Refusing to remove unexpected fresh journey path: $resolved"
-    }
-    if ($BranchPath) {
-        $branchResolved = [IO.Path]::GetFullPath($BranchPath)
-        $expectedBranchLeaf = (Split-Path -Leaf $resolved) + "-*"
-        if (-not $branchResolved.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $branchResolved) -notlike $expectedBranchLeaf) {
-            throw "Refusing to remove unexpected fresh journey branch path: $branchResolved"
-        }
-        if ((Test-Path -LiteralPath $resolved -PathType Container) -and (Test-Path -LiteralPath $branchResolved -PathType Container)) {
-            & git -C $resolved worktree remove --force $branchResolved
-            if ($LASTEXITCODE -ne 0) { throw "Unable to remove fresh journey branch worktree: $branchResolved" }
-        }
-    }
-    if (Test-Path -LiteralPath $resolved -PathType Container) { Remove-Item -LiteralPath $resolved -Recurse -Force }
-}
-
 $previousWorkflowSource = $env:ITL_WORKFLOW_SOURCE_PATH
 $previousRulesSource = $env:ITL_AI_RULES_SOURCE_PATH
 try {
@@ -297,8 +276,8 @@ try {
     & git -C $freshBranchRoot commit -m "test: add develop golden change" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Unable to commit the fresh develop journey change." }
     [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-check" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
-    Set-FreshConfigurationComment -Root $freshBranchRoot
-    & git -C $freshBranchRoot add -- src/cf/Configuration.xml
+    [IO.File]::AppendAllText((Join-Path $freshBranchRoot "tests\features\ITLDevelopJourney.feature"), "`n# stale verification boundary`n", [Text.UTF8Encoding]::new($false))
+    & git -C $freshBranchRoot add -- tests/features/ITLDevelopJourney.feature
     & git -C $freshBranchRoot commit -m "test: make verification stale" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Unable to commit the stale-verification boundary." }
     [void](Assert-FailedRecoveryRoute -ProcessResult (Invoke-InstalledAction -Name "fresh-stale-export" -Root $freshBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 300 -AllowFailure))
@@ -311,7 +290,7 @@ try {
     [void](Invoke-InstalledAction -Name "fresh-refresh-lite" -Root $freshBranchRoot -Action "refresh-dev-branch-lite" -TimeoutSeconds 5400)
     [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-recheck" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
     [void](Invoke-InstalledAction -Name "fresh-close" -Root $freshBranchRoot -Action "close-dev-branch" -TimeoutSeconds 3600)
-    Remove-FreshProject -Path $freshRoot -BranchPath $freshBranchRoot
+    Remove-DevelopE2EFreshProject -FreshProjectsRoot $FreshProjectsRoot -Path $freshRoot -BranchPath $freshBranchRoot
     $freshBranchRoot = ""
     $freshRoot = ""
 } catch {
