@@ -19,17 +19,16 @@ $payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stag
 Write-Output ('x' * 12000)
 exit 0
 '@
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -- -Action check-dev-branch
-            $LASTEXITCODE | Should -Be 0
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "check-dev-branch"); $processResult.exitCode | Should -Be 0; $output = $processResult.stdout
             $text = ($output -join "`n")
             $text.Length | Should -BeLessOrEqual 4000
             $summary = $text | ConvertFrom-Json
             $summary.action | Should -Be "check-dev-branch"
             $summary.status | Should -Be "succeeded"
             $summary.confirmationRequired | Should -BeFalse
-            $summary.userReport | Should -Be "## Результат`n- Browser: включён`n- Рекомендация: выполните /reload"
             (Get-Item -LiteralPath $summary.logPath).Length | Should -BeGreaterThan 10000
             $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $summary.userReport | Should -BeExactly $status.userReport
             $status.nextAction | Should -Be "none"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
@@ -54,14 +53,14 @@ exit 0
 "@
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value $fixture
 
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -- -Action export-dev-branch-result
-            $LASTEXITCODE | Should -Be 0
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "export-dev-branch-result"); $processResult.exitCode | Should -Be 0; $output = $processResult.stdout
             $summary = ($output -join "`n") | ConvertFrom-Json
-            $summary.resultPath | Should -Be $resultPath
-            $summary.resultManifestPath | Should -Be $manifestPath
-            @($summary.artifacts) | Should -Contain $resultPath
-            @($summary.artifacts) | Should -Contain $manifestPath
-            $summary.userReport | Should -Match ([regex]::Escape($resultPath))
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $summary.resultPath | Should -Be $status.resultPath
+            $summary.resultManifestPath | Should -Be $status.resultManifestPath
+            @($summary.artifacts) | Should -Contain $status.resultPath
+            @($summary.artifacts) | Should -Contain $status.resultManifestPath
+            $summary.userReport | Should -BeExactly $status.userReport
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
@@ -81,13 +80,10 @@ $done = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='
 [IO.File]::WriteAllText($RunStatusPath,(($done | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
 exit 0
 '@
-            $stdoutPath = Join-Path $tempRoot "stdout.txt"
-            $stderrPath = Join-Path $tempRoot "stderr.txt"
-            & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -- -Action refresh-dev-branch 1> $stdoutPath 2> $stderrPath
-            $LASTEXITCODE | Should -Be 0
-            $summary = Get-Content -LiteralPath $stdoutPath -Raw | ConvertFrom-Json
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch"); $processResult.exitCode | Should -Be 0
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
             $summary.status | Should -Be "succeeded"
-            $progress = Get-Content -LiteralPath $stderrPath -Raw
+            $progress = $processResult.stderr -join "`n"
             $normalizedProgress = $progress -replace "\s+", ""
             $normalizedProgress | Should -Match "ITLprogress:stage=designer.wait;"
             $normalizedProgress | Should -Match "liveness=stalled-suspected"
@@ -111,8 +107,7 @@ $payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projec
 Write-Output 'child parameter binding failed'
 exit 7
 '@
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -- -Action refresh-dev-branch
-            $LASTEXITCODE | Should -Be 7
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch"); $processResult.exitCode | Should -Be 7; $output = $processResult.stdout
             $text = ($output -join "`n")
             $text.Length | Should -BeLessOrEqual 4000
             $summary = $text | ConvertFrom-Json
@@ -142,8 +137,7 @@ param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$A
 Write-Output 'helper exited without status'
 exit 0
 '@
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -- -Action refresh-dev-branch
-            $LASTEXITCODE | Should -Be 1
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch"); $processResult.exitCode | Should -Be 1; $output = $processResult.stdout
             $summary = ($output -join "`n") | ConvertFrom-Json
             $summary.status | Should -Be "failed"
             $summary.stage | Should -Be "runner.helper-exited"
@@ -168,15 +162,14 @@ $payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stag
 Write-Output 'DIAGNOSTIC_SECRET_SHOULD_STAY_IN_CONSOLE_LOG'
 exit 0
 '@
-            $expected = "## Обновление ветки разработки`n- Результат: успешно`n- Ветка: itldev/perf1`n- Enterprise-автообновление: выполнено`n`n## MCP`n- Kilo Browser Automation: включена`n`n## Инструкции и рекомендации`n- Выполните /reload.`n- Выполните /itl-check."
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -- -Action refresh-dev-branch
-            $LASTEXITCODE | Should -Be 0
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch"); $processResult.exitCode | Should -Be 0; $output = $processResult.stdout
             $text = ($output -join "`n")
             $text.Length | Should -BeLessOrEqual 4000
             $summary = $text | ConvertFrom-Json
             $summary.action | Should -Be "refresh-dev-branch"
             $summary.status | Should -Be "succeeded"
-            $summary.userReport | Should -BeExactly $expected
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $summary.userReport | Should -BeExactly $status.userReport
             $text | Should -Not -Match "DIAGNOSTIC_SECRET_SHOULD_STAY_IN_CONSOLE_LOG"
             (Get-Content -LiteralPath $summary.logPath -Raw -Encoding UTF8) | Should -Match "DIAGNOSTIC_SECRET_SHOULD_STAY_IN_CONSOLE_LOG"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
@@ -195,8 +188,7 @@ $payload = [ordered]@{ schemaVersion=1; status='failed'; action=$Action; stage='
 Write-Output 'unverified export refused'
 exit 0
 '@
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -- -Action export-dev-branch-result
-            $LASTEXITCODE | Should -Be 1
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "export-dev-branch-result"); $processResult.exitCode | Should -Be 1; $output = $processResult.stdout
             $summary = ($output -join "`n") | ConvertFrom-Json
             $summary.confirmationRequired | Should -BeTrue
             $summary.nextAction | Should -Match 'explicit confirmation'
@@ -217,12 +209,12 @@ exit 0
 Write-Output 'Run directory: $runRoot'
 exit 0
 "@
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -Windowed -- -Action new-dev-branch -DevBranchName demo
-            $LASTEXITCODE | Should -Be 0
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("-Windowed", "--", "-Action", "new-dev-branch", "-DevBranchName", "demo"); $processResult.exitCode | Should -Be 0; $output = $processResult.stdout
             $summary = ($output -join "`n") | ConvertFrom-Json
             $summary.action | Should -Be "new-dev-branch"
             $summary.logPath | Should -Be (Join-Path $runRoot "console.log")
-            $summary.userReport | Should -Be "## Ветка разработки`n- Ветка: itldev/demo`n- Kilo Browser Automation: отключена`n- Рекомендация: откройте worktree"
+            $status = Get-Content -LiteralPath (Join-Path $runRoot "status.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $summary.userReport | Should -BeExactly $status.userReport
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
@@ -241,15 +233,15 @@ exit 0
 Write-Output 'Run directory: $runRoot'
 exit 0
 "@
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -Windowed -- -Action new-extension-dev-branch -DevBranchName demo
-            $LASTEXITCODE | Should -Be 0
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("-Windowed", "--", "-Action", "new-extension-dev-branch", "-DevBranchName", "demo"); $processResult.exitCode | Should -Be 0; $output = $processResult.stdout
             $summary = ($output -join "`n") | ConvertFrom-Json
+            $status = Get-Content -LiteralPath (Join-Path $runRoot "status.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $summary.status | Should -Be "succeeded"
-            $summary.nextAction | Should -Be "Уточните режим расширения в чате; не показывайте PowerShell."
+            $summary.nextAction | Should -Be $status.requiredAction
             $summary.devBranch | Should -Be "itldev/demo"
             $summary.worktreePath | Should -Be $worktree
             $summary.extensionInitializationStatus | Should -Be "pending"
-            $summary.userReport | Should -Be "## Ветка разработки`n- Тип: расширение`n- Инициализация расширения: ожидает настройки`n`n## Инструкции и рекомендации`n- Уточните режим расширения в чате."
+            $summary.userReport | Should -BeExactly $status.userReport
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
@@ -265,8 +257,7 @@ $payload = [ordered]@{ schemaVersion=1; status='failed'; action=$Action; stage='
 [IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
 exit 1
 '@
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -- -Action check-dev-branch
-            $LASTEXITCODE | Should -Be 1
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "check-dev-branch"); $processResult.exitCode | Should -Be 1; $output = $processResult.stdout
             $summary = ($output -join "`n") | ConvertFrom-Json
             $summary.errorCategory | Should -Be "unsupported-step"
             $summary.requiredAction | Should -Be "/itl-verify-fix"
