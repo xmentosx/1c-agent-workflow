@@ -1652,6 +1652,13 @@ exit 0
         $HelperText | Should -Not -Match 'answers\.webPublishByDefault\s*=\s*Read-InitYesNo'
         $HelperText | Should -Match 'webPublishByDefault\s*=\s*\$false'
         $HelperText | Should -Match 'Get-EnvValue\s+-Name\s+"VIBECODING1C_MCP_SETUP_DURING_INIT"\s+-Default\s+\$true\)\s+-Default\s+\$true'
+
+        $initBlock = [regex]::Match($HelperText, '(?ms)function Initialize-Project\s*\{.*?^function Sync-Master\s*\{').Value
+        $initBlock | Should -Not -BeNullOrEmpty
+        $initBlock | Should -Match 'Prepare-Vibecoding1cMcpSelectionForInit\s+-AllowPrompt:\(\$InitMode -eq "wizard"\)'
+        $initBlock | Should -Match 'Setup-Vibecoding1cMcp\s+-AllowPrompt:\$false'
+        $initBlock.IndexOf('Prepare-Vibecoding1cMcpSelectionForInit') | Should -BeLessThan $initBlock.IndexOf('Install-RoctupMcp')
+        $initBlock.IndexOf('0JLRgdC1INCy0L7Qv9GA0L7RgdGLINC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNC4') | Should -BeLessThan $initBlock.IndexOf('Complete-InitProjectSettingsPreparation')
     }
 
     It "passes an explicit head-agent model profile without asking or inferring it from the client" {
@@ -2439,6 +2446,7 @@ Start-Sleep -Seconds 20
                     function Write-Section { param([string]$Text) }
                     function Set-RunStage { param([string]$Stage, [string]$Detail = "") }
                     function Prepare-ConfiguredInitProjectSettings { $calls.Add("prepare") | Out-Null }
+                    function Complete-InitProjectSettingsPreparation { $calls.Add("complete-settings") | Out-Null }
                     function Apply-BootstrapWorkflowPackageProvenance { return $null }
                     function Check-Tools { param([switch]$StopOnMissing); $calls.Add("check-tools") | Out-Null }
                     function Install-RoctupMcp { $calls.Add("install-roctup") | Out-Null }

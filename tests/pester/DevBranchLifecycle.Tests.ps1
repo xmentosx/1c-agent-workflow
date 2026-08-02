@@ -2709,6 +2709,7 @@
                     }
                     Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
                     $script:InitVibecoding1cMcpSetupRequested = $false
+                    $script:PreparedInitProjectAnswers = New-ConfiguredInitAnswers
                 }
 
                 function Check-Tools {

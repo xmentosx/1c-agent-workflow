@@ -3847,9 +3847,7 @@ function Prepare-InitProjectSettings {
     $answers = Normalize-InitAnswers -Answers $rawAnswers
     Assert-InitAnswers -Answers $answers
     Save-InitAnswers -Answers $answers
-    Ensure-WebPublicationForInit -Answers $answers
-    Ensure-VanessaAutomationForInit -Answers $answers
-    Read-ProjectConfig
+    $script:PreparedInitProjectAnswers = $answers
 }
 
 function Prepare-ConfiguredInitProjectSettings {
@@ -3866,9 +3864,18 @@ function Prepare-ConfiguredInitProjectSettings {
     }
     Get-AgentTargets | Out-Null
 
-    $answers = New-ConfiguredInitAnswers
-    Ensure-WebPublicationForInit -Answers $answers
-    Ensure-VanessaAutomationForInit -Answers $answers
+    $script:PreparedInitProjectAnswers = New-ConfiguredInitAnswers
+}
+
+function Complete-InitProjectSettingsPreparation {
+    $preparedAnswersVariable = Get-Variable -Name "PreparedInitProjectAnswers" -Scope Script -ErrorAction SilentlyContinue
+    if ($null -eq $preparedAnswersVariable -or $null -eq $preparedAnswersVariable.Value) {
+        throw "Initialization settings were not prepared before runtime setup."
+    }
+    $preparedAnswers = $preparedAnswersVariable.Value
+
+    Ensure-WebPublicationForInit -Answers $preparedAnswers
+    Ensure-VanessaAutomationForInit -Answers $preparedAnswers
     Read-ProjectConfig
 }
 

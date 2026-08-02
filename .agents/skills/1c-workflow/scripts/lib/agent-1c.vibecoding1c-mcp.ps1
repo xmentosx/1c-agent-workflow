@@ -1490,6 +1490,8 @@ function Read-Vibecoding1cMcpProviderSelectionMode {
 }
 
 function Set-Vibecoding1cMcpSelection {
+    param([bool]$AllowPrompt = (Test-InteractiveInputAvailable))
+
     Write-Section "Select vibecoding1c MCP"
     Ensure-GitIgnore
     $selection = Read-Vibecoding1cMcpSelection
@@ -1510,7 +1512,7 @@ function Set-Vibecoding1cMcpSelection {
     }
 
     $providerMode = ""
-    if (-not $McpProvider -and -not $McpServerId -and (Test-InteractiveInputAvailable)) {
+    if (-not $McpProvider -and -not $McpServerId -and $AllowPrompt -and (Test-InteractiveInputAvailable)) {
         $providerMode = Read-Vibecoding1cMcpProviderSelectionMode
         if ($providerMode -ne "each") {
             $selectionHash["defaultProvider"] = $providerMode
@@ -1573,7 +1575,7 @@ function Set-Vibecoding1cMcpSelection {
         if ($id -eq "mantis") {
             $provider = "remote"
         }
-        if (-not $McpProvider -and $id -ne "mantis" -and ($McpServerId -or $providerMode -eq "each") -and (Test-InteractiveInputAvailable)) {
+        if (-not $McpProvider -and $id -ne "mantis" -and ($McpServerId -or $providerMode -eq "each") -and $AllowPrompt -and (Test-InteractiveInputAvailable)) {
             $answer = (Read-Host ((Get-Agent1cUtf8Text "0J/RgNC+0LLQsNC50LTQtdGAIE1DUC3RgdC10YDQstC10YDQsCAnezB9JyBbcmVtb3RlL2xvY2FsXSwg0L/QviDRg9C80L7Qu9GH0LDQvdC40Y4gezF9") -f $id, $provider)).Trim().ToLowerInvariant()
             if ($answer -eq "remote" -or $answer -eq "local") {
                 $provider = $answer
@@ -1592,7 +1594,7 @@ function Set-Vibecoding1cMcpSelection {
         if ($localScope -eq "branch" -and -not $context.isDevelopmentBranch) {
             $localScope = "project"
         }
-        if ($provider -eq "local" -and -not $McpLocalScope -and (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $server) -and (Test-InteractiveInputAvailable)) {
+        if ($provider -eq "local" -and -not $McpLocalScope -and (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $server) -and $AllowPrompt -and (Test-InteractiveInputAvailable)) {
             $scopeChoices = if ($context.isDevelopmentBranch) { "project/branch" } else { "project" }
             $scopeAnswer = (Read-Host ((Get-Agent1cUtf8Text "0JvQvtC60LDQu9GM0L3QsNGPINC+0LHQu9Cw0YHRgtGMIE1DUC3RgdC10YDQstC10YDQsCAnezB9JyBbezF9XSwg0L/QviDRg9C80L7Qu9GH0LDQvdC40Y4gezJ9") -f $id, $scopeChoices, $localScope)).Trim().ToLowerInvariant()
             if ($scopeAnswer -eq "project" -or ($context.isDevelopmentBranch -and $scopeAnswer -eq "branch")) {
@@ -1605,7 +1607,7 @@ function Set-Vibecoding1cMcpSelection {
             ""
         } elseif ($McpConfigId) {
             $McpConfigId
-        } elseif ($provider -eq "remote" -and $requiresRemoteConfig -and (Test-InteractiveInputAvailable)) {
+        } elseif ($provider -eq "remote" -and $requiresRemoteConfig -and $AllowPrompt -and (Test-InteractiveInputAvailable)) {
             $selectedConfigId = Read-Vibecoding1cMcpRemoteConfigChoice -Server $server -Selection $selection -AllowSkip
             if (-not $selectedConfigId) {
                 $configurationSkipped = $true
@@ -1649,7 +1651,7 @@ function Set-Vibecoding1cMcpSelection {
             $usableCandidates = @($candidates | Where-Object { Test-Vibecoding1cMcpEndpointUsableForClientConfig -Endpoint $_ })
             if (-not $McpHostId -and $usableCandidates.Count -eq 1) {
                 $hostId = [string](Get-Vibecoding1cMcpObjectValue -Object $usableCandidates[0] -Name "hostId" -Default "")
-            } elseif (-not $McpHostId -and $usableCandidates.Count -gt 1 -and (Test-InteractiveInputAvailable)) {
+            } elseif (-not $McpHostId -and $usableCandidates.Count -gt 1 -and $AllowPrompt -and (Test-InteractiveInputAvailable)) {
                 $hostId = Read-Vibecoding1cMcpRemoteHostChoice -Candidates $usableCandidates -ServerId $id -ConfigId $configId
             }
         }
@@ -3113,7 +3115,38 @@ function Invoke-DevBranchVibecoding1cMcpInheritance {
     }
 }
 
+function Prepare-Vibecoding1cMcpSelectionForInit {
+    param([bool]$AllowPrompt)
+
+    Write-Section (Get-Agent1cUtf8Text "0J/QvtC00LPQvtGC0L7QstC60LAg0LLRi9Cx0L7RgNCwIHZpYmVjb2RpbmcxYyBNQ1A=")
+    Ensure-GitIgnore
+    Invoke-Vibecoding1cMcpSetupSelectionInheritance
+
+    $selection = Read-Vibecoding1cMcpSelection
+    $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry
+    if (-not $selectionCompleteness.isComplete) {
+        Write-Host (Get-Agent1cUtf8Text "0JLRi9Cx0L7RgCB2aWJlY29kaW5nMWMgTUNQINC+0YLRgdGD0YLRgdGC0LLRg9C10YIg0LjQu9C4INC90LUg0LfQsNCy0LXRgNGI0ZHQvTsg0L7QvSDQstGL0L/QvtC70L3Rj9C10YLRgdGPINGB0LXQudGH0LDRgSwg0LTQviDQvdCw0YfQsNC70LAg0LTQu9C40YLQtdC70YzQvdC+0Lkg0LjQvdC40YbQuNCw0LvQuNC30LDRhtC40Lgu")
+        foreach ($reason in $selectionCompleteness.reasons) {
+            Write-Host "  - $reason"
+        }
+        Set-Vibecoding1cMcpSelection -AllowPrompt:$AllowPrompt
+        $selection = Read-Vibecoding1cMcpSelection
+        $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry
+    } else {
+        Write-Host (Get-Agent1cUtf8Text "0KHQvtGF0YDQsNC90ZHQvdC90YvQuSDQstGL0LHQvtGAIHZpYmVjb2RpbmcxYyBNQ1Ag0LfQsNCy0LXRgNGI0ZHQvSDQuCDQsdGD0LTQtdGCINC40YHQv9C+0LvRjNC30L7QstCw0L0g0L/QvtCy0YLQvtGA0L3Qvi4=")
+    }
+
+    if (-not $selectionCompleteness.isComplete) {
+        $reasonText = @($selectionCompleteness.reasons) -join "; "
+        throw "VIBECODING1C_INIT_SELECTION_INCOMPLETE: vibecoding1c MCP selection must be completed before unattended initialization starts. $reasonText"
+    }
+
+    Write-Host (Get-Agent1cUtf8Text "0JLRi9Cx0L7RgCB2aWJlY29kaW5nMWMgTUNQINC30LDQstC10YDRiNGR0L0uINCj0YHRgtCw0L3QvtCy0LrQsCDRgdGA0LXQtNGLINC4INC60L7QvdGE0LjQs9GD0YDQsNGG0LjRjyDQutC70LjQtdC90YLQsCDQv9GA0L7QtNC+0LvQttCw0YLRgdGPINCw0LLRgtC+0LzQsNGC0LjRh9C10YHQutC4INC/0L7Qt9C20LUu")
+}
+
 function Setup-Vibecoding1cMcp {
+    param([bool]$AllowPrompt = (Test-InteractiveInputAvailable))
+
     Write-Section "Setup vibecoding1c MCP"
 
     Ensure-GitIgnore
@@ -3121,6 +3154,10 @@ function Setup-Vibecoding1cMcp {
     $selection = Read-Vibecoding1cMcpSelection
     $selectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $selection -RefreshRegistry
     if ($Force -or -not $selectionCompleteness.isComplete) {
+        if (-not $AllowPrompt) {
+            $reasonText = @($selectionCompleteness.reasons) -join "; "
+            throw "VIBECODING1C_SELECTION_REQUIRED_DURING_UNATTENDED_SETUP: saved vibecoding1c MCP selection is incomplete. Run vibecoding1c-mcp-select before setup. $reasonText"
+        }
         if ($Force) {
             Write-Host "Force was specified; running vibecoding1c MCP selection before setup."
         } else {
@@ -3129,7 +3166,7 @@ function Setup-Vibecoding1cMcp {
                 Write-Host "  - $reason"
             }
         }
-        Set-Vibecoding1cMcpSelection
+        Set-Vibecoding1cMcpSelection -AllowPrompt:$AllowPrompt
         $selection = Read-Vibecoding1cMcpSelection
     }
 
@@ -3145,7 +3182,7 @@ function Setup-Vibecoding1cMcp {
     } else {
         Refresh-Vibecoding1cMcpRegistry
     }
-    Start-Vibecoding1cMcp -DistributionReady:$needsLocalDistribution
+    Start-Vibecoding1cMcp -DistributionReady:$needsLocalDistribution -AllowPrompt:$AllowPrompt
     Show-Vibecoding1cMcpStatus
 }
 

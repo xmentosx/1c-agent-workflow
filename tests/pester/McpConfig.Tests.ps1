@@ -81,6 +81,95 @@
         $result.prompts | Should -Be 2
     }
 
+    It "collects an incomplete init selection before unattended work starts" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:completenessCalls = 0
+            $script:setAllowPrompt = $null
+
+            function Write-Section { param([string]$Text) }
+            function Ensure-GitIgnore {}
+            function Invoke-Vibecoding1cMcpSetupSelectionInheritance {}
+            function Read-Vibecoding1cMcpSelection { return [pscustomobject]@{} }
+            function Get-Vibecoding1cMcpSelectionCompleteness {
+                param([object]$Selection, [switch]$RefreshRegistry)
+                $script:completenessCalls++
+                if ($script:completenessCalls -eq 1) {
+                    return [pscustomobject]@{ isComplete = $false; reasons = @("selection file is missing") }
+                }
+                return [pscustomobject]@{ isComplete = $true; reasons = @() }
+            }
+            function Set-Vibecoding1cMcpSelection {
+                param([bool]$AllowPrompt)
+                $script:setAllowPrompt = $AllowPrompt
+            }
+
+            Prepare-Vibecoding1cMcpSelectionForInit -AllowPrompt:$true 6>$null
+            [pscustomobject]@{
+                completenessCalls = $script:completenessCalls
+                setAllowPrompt = $script:setAllowPrompt
+            }
+        }
+
+        $result.completenessCalls | Should -Be 2
+        $result.setAllowPrompt | Should -BeTrue
+    }
+
+    It "refuses an incomplete saved selection instead of prompting during unattended setup" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:setCalled = $false
+
+            function Write-Section { param([string]$Text) }
+            function Ensure-GitIgnore {}
+            function Invoke-Vibecoding1cMcpSetupSelectionInheritance {}
+            function Read-Vibecoding1cMcpSelection { return [pscustomobject]@{} }
+            function Get-Vibecoding1cMcpSelectionCompleteness {
+                param([object]$Selection, [switch]$RefreshRegistry)
+                return [pscustomobject]@{ isComplete = $false; reasons = @("code/project has no configId") }
+            }
+            function Set-Vibecoding1cMcpSelection { $script:setCalled = $true }
+
+            try {
+                Setup-Vibecoding1cMcp -AllowPrompt:$false 6>$null
+                [pscustomobject]@{ error = "<none>"; setCalled = $script:setCalled }
+            } catch {
+                [pscustomobject]@{ error = $_.Exception.Message; setCalled = $script:setCalled }
+            }
+        }
+
+        $result.error | Should -Match "VIBECODING1C_SELECTION_REQUIRED_DURING_UNATTENDED_SETUP"
+        $result.setCalled | Should -BeFalse
+    }
+
+    It "passes prompt suppression through a complete unattended setup" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:startAllowPrompt = $null
+
+            function Write-Section { param([string]$Text) }
+            function Ensure-GitIgnore {}
+            function Invoke-Vibecoding1cMcpSetupSelectionInheritance {}
+            function Read-Vibecoding1cMcpSelection { return [pscustomobject]@{} }
+            function Get-Vibecoding1cMcpSelectionCompleteness {
+                param([object]$Selection, [switch]$RefreshRegistry)
+                return [pscustomobject]@{ isComplete = $true; reasons = @() }
+            }
+            function Test-Vibecoding1cMcpSelectionNeedsLocalDistribution { return $false }
+            function Refresh-Vibecoding1cMcpRegistry {}
+            function Start-Vibecoding1cMcp {
+                param([switch]$DistributionReady, [bool]$AllowPrompt)
+                $script:startAllowPrompt = $AllowPrompt
+            }
+            function Show-Vibecoding1cMcpStatus {}
+
+            Setup-Vibecoding1cMcp -AllowPrompt:$false 6>$null
+            return $script:startAllowPrompt
+        }
+
+        $result | Should -BeFalse
+    }
+
     It "wires the ROCTUP on-demand facade, compatibility catalog, and token guardrails" {
         $entrypoint = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1")
         foreach ($action in @("install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status")) {

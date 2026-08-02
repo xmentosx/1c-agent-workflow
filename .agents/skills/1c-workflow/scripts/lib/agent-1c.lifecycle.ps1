@@ -5314,6 +5314,10 @@ function Test-InitStageAtLeast {
         "init.check-tools",
         "init.unsafe-action-protection",
         "init.unsafe-action-protection-complete",
+        "init.mcp-selection",
+        "init.mcp-selection-complete",
+        "init.interactive-complete",
+        "init.prepare-runtime",
         "init.install-roctup-mcp",
         "init.cache-vanessa-ui-mcp",
         "init.git",
@@ -5405,6 +5409,24 @@ function Initialize-Project {
         } else {
             Write-Host "Resume confirmed that source infobase unsafe action protection setup completed in the interrupted run."
         }
+    }
+
+    $vibecodingRequested = $script:InitVibecoding1cMcpSetupRequested -or (ConvertTo-YesNoBool -Value (Get-EnvValue -Name "VIBECODING1C_MCP_SETUP_DURING_INIT" -Default $true) -Default $true)
+    $vibecodingAlreadyCompleted = $InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.final-git-clean")
+    if ($vibecodingRequested -and -not $vibecodingAlreadyCompleted) {
+        Set-RunStage -Stage "init.mcp-selection" -Detail "Collecting vibecoding1c MCP choices before unattended initialization"
+        Prepare-Vibecoding1cMcpSelectionForInit -AllowPrompt:($InitMode -eq "wizard")
+        Set-RunStage -Stage "init.mcp-selection-complete" -Detail "vibecoding1c MCP choices are complete"
+    }
+
+    Set-RunStage -Stage "init.interactive-complete" -Detail "All initialization questions are complete"
+    Write-Host ""
+    Write-Host (Get-Agent1cUtf8Text "0JLRgdC1INCy0L7Qv9GA0L7RgdGLINC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNC4INC30LDQstC10YDRiNC10L3Riy4g0J3QsNGH0LjQvdCw0LXRgtGB0Y8g0LTQu9C40YLQtdC70YzQvdCw0Y8g0LDQstGC0L7QvNCw0YLQuNGH0LXRgdC60LDRjyDQvdCw0YHRgtGA0L7QudC60LA7INC00LDQu9GM0L3QtdC50YjQuNC5INCy0LLQvtC0INC90LUg0L/QvtGC0YDQtdCx0YPQtdGC0YHRjy4=")
+    Write-Host ""
+    Set-RunStage -Stage "init.prepare-runtime" -Detail "Preparing initialization runtime dependencies"
+    Complete-InitProjectSettingsPreparation
+
+    if (-not $dumpWasCompleted) {
         Set-RunStage -Stage "init.install-roctup-mcp" -Detail "Installing or updating ROCTUP MCP Toolkit"
         Remove-ItlOnDemandStaleInstances | Out-Null
         Install-RoctupMcp
@@ -5471,11 +5493,9 @@ function Initialize-Project {
     Update-UserRules
     Sync-KiloItlCommandSurface
     Commit-IfChanged "chore: install 1C agent workflow"
-    $vibecodingRequested = $script:InitVibecoding1cMcpSetupRequested -or (ConvertTo-YesNoBool -Value (Get-EnvValue -Name "VIBECODING1C_MCP_SETUP_DURING_INIT" -Default $true) -Default $true)
-    $vibecodingAlreadyCompleted = $InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.final-git-clean")
     if ($vibecodingRequested -and -not $vibecodingAlreadyCompleted) {
         Set-RunStage -Stage "init.vibecoding1c-mcp" -Detail "Setting up vibecoding1c MCP"
-        Setup-Vibecoding1cMcp
+        Setup-Vibecoding1cMcp -AllowPrompt:$false
     } elseif ($vibecodingAlreadyCompleted) {
         Write-Host "Resume confirmed that vibecoding1c MCP setup completed in the interrupted run."
     } else {
