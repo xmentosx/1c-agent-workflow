@@ -501,7 +501,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Match "workflowPackage"
         $HelperText | Should -Match "Update-WorkflowPackageLockEntry"
         $HelperText | Should -Match "Apply-BootstrapWorkflowPackageProvenance"
-        $HelperText.IndexOf("Apply-BootstrapWorkflowPackageProvenance | Out-Null") | Should -BeLessThan $HelperText.IndexOf('Set-RunStage -Stage "init.check-tools"')
+        $HelperText.IndexOf("Apply-BootstrapWorkflowPackageProvenance | Out-Null") | Should -BeLessThan $HelperText.IndexOf('Set-RunStage -Stage "init.runtime-check-tools"')
         $HelperText | Should -Match "Invoke-AiRulesBaselineMigration"
         $HelperText | Should -Match "migration remains pending"
         $HelperText | Should -Match "install-agent-1c-workflow\.ps1"
@@ -1655,10 +1655,27 @@ exit 0
 
         $initBlock = [regex]::Match($HelperText, '(?ms)function Initialize-Project\s*\{.*?^function Sync-Master\s*\{').Value
         $initBlock | Should -Not -BeNullOrEmpty
-        $initBlock | Should -Match 'Prepare-Vibecoding1cMcpSelectionForInit\s+-AllowPrompt:\(\$InitMode -eq "wizard"\)'
+        $initBlock | Should -Match '\$allowInteractiveInitPrompts\s*=\s*\$InitMode -eq "wizard" -or \(\$InitMode -eq "resume" -and -not \$interactiveQuestionsWereCompleted\)'
+        $initBlock | Should -Match 'Prepare-Vibecoding1cMcpSelectionForInit\s+-AllowPrompt:\$allowInteractiveInitPrompts'
         $initBlock | Should -Match 'Setup-Vibecoding1cMcp\s+-AllowPrompt:\$false'
+        $initBlock.IndexOf('Initialize-SourceInfoBaseUnsafeActionProtection') | Should -BeLessThan $initBlock.IndexOf('Prepare-Vibecoding1cMcpSelectionForInit')
         $initBlock.IndexOf('Prepare-Vibecoding1cMcpSelectionForInit') | Should -BeLessThan $initBlock.IndexOf('Install-RoctupMcp')
         $initBlock.IndexOf('0JLRgdC1INCy0L7Qv9GA0L7RgdGLINC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNC4') | Should -BeLessThan $initBlock.IndexOf('Complete-InitProjectSettingsPreparation')
+        $initBlock.IndexOf('Complete-InitProjectSettingsPreparation') | Should -BeLessThan $initBlock.IndexOf('Check-Tools -StopOnMissing')
+        $initBlock | Should -Match 'Set-RunStage\s+-Stage\s+"init\.runtime-check-tools"'
+    }
+
+    It "keeps legacy pre-runtime tool failures eligible for resumed MCP prompts" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            [pscustomobject]@{
+                legacyCheckWasInteractive = Test-InitStageAtLeast -Stage "init.check-tools" -Expected "init.interactive-complete"
+                runtimeCheckWasInteractive = Test-InitStageAtLeast -Stage "init.runtime-check-tools" -Expected "init.interactive-complete"
+            }
+        }
+
+        $result.legacyCheckWasInteractive | Should -BeFalse
+        $result.runtimeCheckWasInteractive | Should -BeTrue
     }
 
     It "passes an explicit head-agent model profile without asking or inferring it from the client" {
@@ -2643,7 +2660,7 @@ Start-Sleep -Seconds 20
         }
     }
 
-    It "repeats pre-dump work but skips a dump proven complete by commit stage" {
+    It "resumes pre-interactive work in order and skips a dump proven complete by commit stage" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-resume-stage-" + [guid]::NewGuid().ToString("N"))
 
         try {
@@ -2651,7 +2668,7 @@ Start-Sleep -Seconds 20
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "<dump />"
 
             $results = @{}
-            foreach ($resumeStage in @("init.dump-config", "init.commit-dump")) {
+            foreach ($resumeStage in @("init.check-tools", "init.dump-config", "init.commit-dump")) {
                 $statusPath = Join-Path $tempRoot ("$($resumeStage.Replace('.', '-')).json")
                 $status = [ordered]@{
                     schemaVersion = 1
@@ -2676,6 +2693,11 @@ Start-Sleep -Seconds 20
                     function Prepare-ConfiguredInitProjectSettings { $calls.Add("prepare") | Out-Null }
                     function Complete-InitProjectSettingsPreparation { $calls.Add("complete-settings") | Out-Null }
                     function Apply-BootstrapWorkflowPackageProvenance { return $null }
+                    function Initialize-SourceInfoBaseUnsafeActionProtection { $calls.Add("unsafe-action-protection") | Out-Null }
+                    function Prepare-Vibecoding1cMcpSelectionForInit {
+                        param([bool]$AllowPrompt)
+                        $calls.Add("mcp-selection:$AllowPrompt") | Out-Null
+                    }
                     function Check-Tools { param([switch]$StopOnMissing); $calls.Add("check-tools") | Out-Null }
                     function Install-RoctupMcp { $calls.Add("install-roctup") | Out-Null }
                     function Install-VanessaMcpArtifacts { $calls.Add("cache-vanessa") | Out-Null; return $null }
@@ -2702,9 +2724,13 @@ Start-Sleep -Seconds 20
                     function Update-UserRules { }
                     function Sync-KiloItlCommandSurface { }
                     function Commit-IfChanged { param([string]$Message); return $false }
-                    function Get-EnvValue { param([string]$Name, [object]$Default); return $false }
-                    function ConvertTo-YesNoBool { param([object]$Value, [bool]$Default); return $false }
-                    function Setup-Vibecoding1cMcp { $calls.Add("setup-vibecoding") | Out-Null }
+                    function Get-EnvValue {
+                        param([string]$Name, [object]$Default)
+                        if ($Name -eq "VIBECODING1C_MCP_SETUP_DURING_INIT") { return $true }
+                        return $Default
+                    }
+                    function ConvertTo-YesNoBool { param([object]$Value, [bool]$Default); return [bool]$Value }
+                    function Setup-Vibecoding1cMcp { param([bool]$AllowPrompt); $calls.Add("setup-vibecoding:$AllowPrompt") | Out-Null }
                     function Assert-InitGitClean { $calls.Add("git-clean") | Out-Null }
                     function Get-ItlActiveClient { return "kilocode" }
                     function Assert-Agent1cInitialProjectRootPathBudget { return [pscustomobject]@{ valid = $true } }
@@ -2714,7 +2740,14 @@ Start-Sleep -Seconds 20
                 } $HelperPath $tempRoot $statusPath
             }
 
+            $legacyCalls = $results["init.check-tools"]
+            $legacyCalls | Should -Contain "unsafe-action-protection"
+            $legacyCalls | Should -Contain "mcp-selection:True"
+            $legacyCalls.IndexOf("unsafe-action-protection") | Should -BeLessThan $legacyCalls.IndexOf("mcp-selection:True")
+            $legacyCalls.IndexOf("mcp-selection:True") | Should -BeLessThan $legacyCalls.IndexOf("complete-settings")
+            $legacyCalls.IndexOf("complete-settings") | Should -BeLessThan $legacyCalls.IndexOf("check-tools")
             $results["init.dump-config"] | Should -Contain "check-tools"
+            $results["init.dump-config"] | Should -Contain "mcp-selection:False"
             $results["init.dump-config"] | Should -Contain "repository-update"
             $results["init.dump-config"] | Should -Contain "dump"
             $results["init.commit-dump"] | Should -Not -Contain "check-tools"

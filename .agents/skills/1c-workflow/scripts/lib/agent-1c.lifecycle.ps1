@@ -5318,6 +5318,7 @@ function Test-InitStageAtLeast {
         "init.mcp-selection-complete",
         "init.interactive-complete",
         "init.prepare-runtime",
+        "init.runtime-check-tools",
         "init.install-roctup-mcp",
         "init.cache-vanessa-ui-mcp",
         "init.git",
@@ -5399,9 +5400,9 @@ function Initialize-Project {
     Sync-WorkflowManagedDependencyLockEntries | Out-Null
     $dumpWasCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.commit-dump") -and (Test-InitDumpArtifactsReady))
     $unsafeActionProtectionWasCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.unsafe-action-protection-complete"))
+    $interactiveQuestionsWereCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.interactive-complete"))
+    $allowInteractiveInitPrompts = $InitMode -eq "wizard" -or ($InitMode -eq "resume" -and -not $interactiveQuestionsWereCompleted)
     if (-not $dumpWasCompleted) {
-        Set-RunStage -Stage "init.check-tools" -Detail "Checking required tools"
-        Check-Tools -StopOnMissing
         if (-not $unsafeActionProtectionWasCompleted) {
             Set-RunStage -Stage "init.unsafe-action-protection" -Detail "Confirming source infobase unsafe action protection"
             Initialize-SourceInfoBaseUnsafeActionProtection
@@ -5415,7 +5416,7 @@ function Initialize-Project {
     $vibecodingAlreadyCompleted = $InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.final-git-clean")
     if ($vibecodingRequested -and -not $vibecodingAlreadyCompleted) {
         Set-RunStage -Stage "init.mcp-selection" -Detail "Collecting vibecoding1c MCP choices before unattended initialization"
-        Prepare-Vibecoding1cMcpSelectionForInit -AllowPrompt:($InitMode -eq "wizard")
+        Prepare-Vibecoding1cMcpSelectionForInit -AllowPrompt:$allowInteractiveInitPrompts
         Set-RunStage -Stage "init.mcp-selection-complete" -Detail "vibecoding1c MCP choices are complete"
     }
 
@@ -5427,6 +5428,8 @@ function Initialize-Project {
     Complete-InitProjectSettingsPreparation
 
     if (-not $dumpWasCompleted) {
+        Set-RunStage -Stage "init.runtime-check-tools" -Detail "Checking required tools"
+        Check-Tools -StopOnMissing
         Set-RunStage -Stage "init.install-roctup-mcp" -Detail "Installing or updating ROCTUP MCP Toolkit"
         Remove-ItlOnDemandStaleInstances | Out-Null
         Install-RoctupMcp
