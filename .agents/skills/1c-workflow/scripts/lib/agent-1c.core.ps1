@@ -3633,6 +3633,7 @@ function Confirm-InitWizardProjectRoot {
         Set-RunStage -Stage "init.cancelled" -Detail "Initialization cancelled by developer at project-root confirmation."
         throw "Init canceled by developer."
     }
+    $script:InitWizardProjectRootConfirmed = $true
 }
 
 function Get-SourceInfoBaseConnectionSettingsPath {
@@ -3832,7 +3833,9 @@ function Read-InitAnswersFromWizard {
         throw "Interactive init wizard needs terminal input. Run this command from an interactive terminal or pass -InitMode json -InitAnswersPath <file>."
     }
 
-    Confirm-InitWizardProjectRoot
+    if (-not $script:InitWizardProjectRootConfirmed) {
+        Confirm-InitWizardProjectRoot
+    }
 
     while ($true) {
         $answers = Read-InitWizardAnswersOnce

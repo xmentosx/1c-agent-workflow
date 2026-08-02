@@ -517,6 +517,30 @@ function Initialize-GitIndexLockTracking {
     $script:GitIndexLockPreExisted = Test-Path -LiteralPath $script:GitIndexLockPath -PathType Leaf -ErrorAction SilentlyContinue
 }
 
+function Remove-CancelledRunArtifacts {
+    $resolvedRunDirectory = Resolve-Agent1cFullPath -Path $runDir
+    $resolvedRunsRoot = Resolve-Agent1cFullPath -Path $runsRoot
+    $expectedPrefix = $resolvedRunsRoot.TrimEnd('\') + "\"
+    if (-not $resolvedRunDirectory.StartsWith($expectedPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove cancelled run artifacts outside the current runs root: $resolvedRunDirectory"
+    }
+
+    if (Test-Path -LiteralPath $resolvedRunDirectory -PathType Container -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $resolvedRunDirectory -Recurse -Force -ErrorAction Stop
+    }
+    if (-not $script:RunsRootPreExisted -and
+        (Test-Path -LiteralPath $resolvedRunsRoot -PathType Container -ErrorAction SilentlyContinue) -and
+        @(Get-ChildItem -LiteralPath $resolvedRunsRoot -Force -ErrorAction Stop).Count -eq 0) {
+        Remove-Item -LiteralPath $resolvedRunsRoot -Force -ErrorAction Stop
+    }
+    $agentRoot = Split-Path -Parent $resolvedRunsRoot
+    if (-not $script:AgentRootPreExisted -and
+        (Test-Path -LiteralPath $agentRoot -PathType Container -ErrorAction SilentlyContinue) -and
+        @(Get-ChildItem -LiteralPath $agentRoot -Force -ErrorAction Stop).Count -eq 0) {
+        Remove-Item -LiteralPath $agentRoot -Force -ErrorAction Stop
+    }
+}
+
 function Test-GitProcessRunning {
     return [bool](Get-Process -Name "git" -ErrorAction SilentlyContinue | Select-Object -First 1)
 }
@@ -664,7 +688,10 @@ if (-not (Test-Path -LiteralPath $helperFull -PathType Leaf)) {
     throw "Helper script was not found: $helperFull"
 }
 
-$runsRoot = Join-Path $projectRootFull ".agent-1c\runs"
+$agentRoot = Join-Path $projectRootFull ".agent-1c"
+$runsRoot = Join-Path $agentRoot "runs"
+$script:AgentRootPreExisted = Test-Path -LiteralPath $agentRoot -PathType Container -ErrorAction SilentlyContinue
+$script:RunsRootPreExisted = Test-Path -LiteralPath $runsRoot -PathType Container -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $runsRoot | Out-Null
 Enable-InterruptedInitRecovery
 Set-AgentArgumentValue -Name "LauncherPid" -Value ([string]$PID)
@@ -754,6 +781,8 @@ while ($true) {
         if ([string]$status.status -eq "cancelled") {
             Write-Host "Initialization was cancelled by the developer. Do not restart it unless the developer explicitly requests initialization again."
             $exitCode = ConvertTo-IntOrDefault -Value $status.exitCode -Default 2
+            Remove-CancelledRunArtifacts
+            Write-Host "Removed artifacts from the cancelled monitored run."
             exit $exitCode
         }
         $userReport = [string](Get-RunStatusProperty -Status $status -Name "userReport" -Default "")

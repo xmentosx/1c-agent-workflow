@@ -904,7 +904,8 @@
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))
         $HelperText | Should -Match ([regex]::Escape($requiredPath))
-        $LauncherText | Should -Match ([regex]::Escape(".agent-1c\runs"))
+        $LauncherText | Should -Match ([regex]::Escape('Join-Path $projectRootFull ".agent-1c"'))
+        $LauncherText | Should -Match ([regex]::Escape('Join-Path $agentRoot "runs"'))
         $requiredPath = ".agent-1c/locks/"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))

@@ -8,7 +8,7 @@ Initialize a 1C agent project using this file: https://raw.githubusercontent.com
 
 The agent must read this file, run the one-step bootstrap script for the target project, and wait for it to finish. The bootstrap script installs the shared workflow files and starts the monitored PowerShell helper wizard. The wizard collects missing inputs, writes local settings, writes run status/log files, and runs the project initialization lifecycle.
 
-If the developer answers no to the wizard's project-root confirmation, the helper and launcher write terminal `cancelled` status and exit. This is a final user decision, not a recoverable initialization failure: do not restart bootstrap or the wizard unless the developer explicitly asks to initialize again.
+If the developer answers no to the wizard's project-root confirmation, the helper and launcher write terminal `cancelled` status and exit. The confirmation runs before helper-side project mutation; the launcher removes its cancelled run artifacts, and the bootstrap installer restores every managed target path to its exact pre-copy state while preserving unrelated project files. This is a final user decision, not a recoverable initialization failure: do not restart bootstrap or the wizard unless the developer explicitly asks to initialize again.
 
 Canonical bootstrap source selected by the developer's URL:
 

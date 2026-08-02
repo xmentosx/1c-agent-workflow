@@ -367,6 +367,114 @@ function Copy-ManagedFile {
     Write-Host "Installed workflow file: $RelativePath"
 }
 
+function New-BootstrapRollbackSnapshot {
+    param(
+        [string]$SourceRoot,
+        [string]$TargetRoot,
+        [string[]]$RelativePaths
+    )
+
+    $tempRoot = Get-FullPathNormalized ([System.IO.Path]::GetTempPath())
+    $snapshotRoot = Join-Path $tempRoot ("itl-bootstrap-rollback-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $snapshotRoot | Out-Null
+    $records = @()
+    $parentStates = @{}
+    $index = 0
+
+    foreach ($relativePath in $RelativePaths) {
+        $sourcePath = Join-Path $SourceRoot $relativePath
+        $targetPath = Join-Path $TargetRoot $relativePath
+        Assert-ManagedTargetPath -Root $TargetRoot -Path $targetPath
+        if ((Get-FullPathNormalized $sourcePath) -eq (Get-FullPathNormalized $targetPath)) {
+            continue
+        }
+
+        $parent = Split-Path -Parent $targetPath
+        while ($parent -and (Get-FullPathNormalized $parent) -ne (Get-FullPathNormalized $TargetRoot)) {
+            $parentFull = Get-FullPathNormalized $parent
+            if (-not $parentStates.ContainsKey($parentFull)) {
+                $parentStates[$parentFull] = Test-Path -LiteralPath $parentFull -PathType Container -ErrorAction SilentlyContinue
+            }
+            $parent = Split-Path -Parent $parentFull
+        }
+
+        $existed = Test-Path -LiteralPath $targetPath -ErrorAction SilentlyContinue
+        $backupPath = ""
+        $wasDirectory = $false
+        if ($existed) {
+            $wasDirectory = Test-Path -LiteralPath $targetPath -PathType Container -ErrorAction SilentlyContinue
+            $backupPath = Join-Path $snapshotRoot ("item-{0}" -f $index)
+            if ($wasDirectory) {
+                Copy-Item -LiteralPath $targetPath -Destination $backupPath -Recurse -Force
+            } else {
+                Copy-Item -LiteralPath $targetPath -Destination $backupPath -Force
+            }
+        }
+        $records += [pscustomobject]@{
+            relativePath = $relativePath
+            targetPath = $targetPath
+            existed = [bool]$existed
+            wasDirectory = [bool]$wasDirectory
+            backupPath = $backupPath
+        }
+        $index++
+    }
+
+    return [pscustomobject]@{
+        root = $snapshotRoot
+        tempRoot = $tempRoot
+        targetRoot = $TargetRoot
+        records = @($records)
+        parentStates = $parentStates
+    }
+}
+
+function Restore-BootstrapRollbackSnapshot {
+    param([Parameter(Mandatory = $true)][object]$Snapshot)
+
+    foreach ($record in @($Snapshot.records)) {
+        Assert-ManagedTargetPath -Root $Snapshot.targetRoot -Path $record.targetPath
+        if (Test-Path -LiteralPath $record.targetPath -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $record.targetPath -Recurse -Force -ErrorAction Stop
+        }
+        if ($record.existed) {
+            $parent = Split-Path -Parent $record.targetPath
+            if ($parent) {
+                New-Item -ItemType Directory -Force -Path $parent | Out-Null
+            }
+            if ($record.wasDirectory) {
+                Copy-Item -LiteralPath $record.backupPath -Destination $record.targetPath -Recurse -Force
+            } else {
+                Copy-Item -LiteralPath $record.backupPath -Destination $record.targetPath -Force
+            }
+        }
+    }
+
+    foreach ($entry in @($Snapshot.parentStates.GetEnumerator() | Sort-Object { ([string]$_.Key).Length } -Descending)) {
+        $parentPath = [string]$entry.Key
+        $existed = [bool]$entry.Value
+        Assert-ManagedTargetPath -Root $Snapshot.targetRoot -Path $parentPath
+        if (-not $existed -and
+            (Test-Path -LiteralPath $parentPath -PathType Container -ErrorAction SilentlyContinue) -and
+            @(Get-ChildItem -LiteralPath $parentPath -Force -ErrorAction Stop).Count -eq 0) {
+            Remove-Item -LiteralPath $parentPath -Force -ErrorAction Stop
+        }
+    }
+}
+
+function Remove-BootstrapRollbackSnapshot {
+    param([Parameter(Mandatory = $true)][object]$Snapshot)
+
+    $snapshotRoot = Get-FullPathNormalized ([string]$Snapshot.root)
+    $tempRoot = Get-FullPathNormalized ([string]$Snapshot.tempRoot)
+    if ((Split-Path -Parent $snapshotRoot) -ne $tempRoot -or (Split-Path -Leaf $snapshotRoot) -notlike "itl-bootstrap-rollback-*") {
+        throw "Refusing to remove an invalid bootstrap rollback snapshot path: $snapshotRoot"
+    }
+    if (Test-Path -LiteralPath $snapshotRoot -PathType Container -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $snapshotRoot -Recurse -Force -ErrorAction Stop
+    }
+}
+
 $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 if ([string]::IsNullOrWhiteSpace($SourceRoot)) {
     $SourceRoot = $scriptRoot
@@ -407,7 +515,7 @@ Write-Host "Installing ITL workflow package."
 Write-Host "Source: $sourceRootFull"
 Write-Host "Project: $projectRootFull"
 
-foreach ($relativePath in @(
+$managedDirectoryPaths = @(
     ".agents\skills\1c-workflow",
     ".agents\skills\1c-workflow-fast",
     ".agents\skills\product-docs",
@@ -415,75 +523,104 @@ foreach ($relativePath in @(
     ".agents\skills\itl-vanessa-ui-mcp",
     "docs\itl-workflow",
     "templates"
-)) {
-    Copy-ManagedDirectory -SourceRoot $sourceRootFull -TargetRoot $projectRootFull -RelativePath $relativePath
-}
-
-foreach ($relativePath in @(
+)
+$managedFilePaths = @(
     "install-agent-1c-workflow.ps1",
     "AGENT-INSTALL.md"
-)) {
-    Copy-ManagedFile -SourceRoot $sourceRootFull -TargetRoot $projectRootFull -RelativePath $relativePath
+)
+$rollbackSnapshot = $null
+$preserveRollbackSnapshot = $false
+if (-not $NoInit -and $InitMode -eq "wizard") {
+    $rollbackSnapshot = New-BootstrapRollbackSnapshot `
+        -SourceRoot $sourceRootFull `
+        -TargetRoot $projectRootFull `
+        -RelativePaths @($managedDirectoryPaths + $managedFilePaths)
 }
 
-if ($NoInit) {
-    Write-Host "Initialization skipped because -NoInit was specified."
-    exit 0
-}
-
-$launcherPath = Join-Path $projectRootFull ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"
-if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf -ErrorAction SilentlyContinue)) {
-    throw "Installed monitored launcher was not found: $launcherPath"
-}
-
-$initArgs = @("-Action", "init-project", "-InitMode", $InitMode)
-if ($AgentTarget) {
-    $initArgs += @("-AgentTarget", $AgentTarget)
-}
-if ($AgentModel) {
-    $initArgs += @("-AgentModel", $AgentModel)
-}
-foreach ($provenanceArgument in @(
-    @{ name = "-BootstrapWorkflowRepo"; value = [string]$workflowProvenance.repo },
-    @{ name = "-BootstrapWorkflowRef"; value = [string]$workflowProvenance.ref },
-    @{ name = "-BootstrapWorkflowCommit"; value = [string]$workflowProvenance.commit },
-    @{ name = "-BootstrapWorkflowSource"; value = [string]$workflowProvenance.source }
-)) {
-    if (-not [string]::IsNullOrWhiteSpace($provenanceArgument.value)) {
-        $initArgs += @($provenanceArgument.name, $provenanceArgument.value)
-    }
-}
-if ($InitAnswersPath) {
-    $answersFull = if ([System.IO.Path]::IsPathRooted($InitAnswersPath)) {
-        Resolve-Agent1cFullPath -Path $InitAnswersPath
-    } else {
-        Resolve-Agent1cFullPath -Path (Join-Path $callerRoot $InitAnswersPath)
-    }
-    $initArgs += @("-InitAnswersPath", $answersFull)
-}
-if ($ResumeRunStatusPath) {
-    $resumeStatusFull = if ([System.IO.Path]::IsPathRooted($ResumeRunStatusPath)) {
-        Resolve-Agent1cFullPath -Path $ResumeRunStatusPath
-    } else {
-        Resolve-Agent1cFullPath -Path (Join-Path $projectRootFull $ResumeRunStatusPath)
-    }
-    $initArgs += @("-ResumeRunStatusPath", $resumeStatusFull)
-}
-
-$launcherArgs = @()
-if ($KeepWindowOnFailure) {
-    $launcherArgs += "-KeepWindowOnFailure"
-}
-$launcherArgs += @("-MaxWaitSeconds", [string]$InitMaxWaitSeconds)
-$launcherArgs += @("--") + $initArgs
-
-Write-Host "Starting monitored ITL initialization."
-Push-Location (Resolve-Agent1cFullPath -Path $projectRootFull)
 try {
-    & powershell -ExecutionPolicy Bypass -File $launcherPath @launcherArgs
-    if ($LASTEXITCODE -is [int] -and $LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+    foreach ($relativePath in $managedDirectoryPaths) {
+        Copy-ManagedDirectory -SourceRoot $sourceRootFull -TargetRoot $projectRootFull -RelativePath $relativePath
+    }
+
+    foreach ($relativePath in $managedFilePaths) {
+        Copy-ManagedFile -SourceRoot $sourceRootFull -TargetRoot $projectRootFull -RelativePath $relativePath
+    }
+
+    if ($NoInit) {
+        Write-Host "Initialization skipped because -NoInit was specified."
+        exit 0
+    }
+
+    $launcherPath = Join-Path $projectRootFull ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"
+    if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "Installed monitored launcher was not found: $launcherPath"
+    }
+
+    $initArgs = @("-Action", "init-project", "-InitMode", $InitMode)
+    if ($AgentTarget) {
+        $initArgs += @("-AgentTarget", $AgentTarget)
+    }
+    if ($AgentModel) {
+        $initArgs += @("-AgentModel", $AgentModel)
+    }
+    foreach ($provenanceArgument in @(
+        @{ name = "-BootstrapWorkflowRepo"; value = [string]$workflowProvenance.repo },
+        @{ name = "-BootstrapWorkflowRef"; value = [string]$workflowProvenance.ref },
+        @{ name = "-BootstrapWorkflowCommit"; value = [string]$workflowProvenance.commit },
+        @{ name = "-BootstrapWorkflowSource"; value = [string]$workflowProvenance.source }
+    )) {
+        if (-not [string]::IsNullOrWhiteSpace($provenanceArgument.value)) {
+            $initArgs += @($provenanceArgument.name, $provenanceArgument.value)
+        }
+    }
+    if ($InitAnswersPath) {
+        $answersFull = if ([System.IO.Path]::IsPathRooted($InitAnswersPath)) {
+            Resolve-Agent1cFullPath -Path $InitAnswersPath
+        } else {
+            Resolve-Agent1cFullPath -Path (Join-Path $callerRoot $InitAnswersPath)
+        }
+        $initArgs += @("-InitAnswersPath", $answersFull)
+    }
+    if ($ResumeRunStatusPath) {
+        $resumeStatusFull = if ([System.IO.Path]::IsPathRooted($ResumeRunStatusPath)) {
+            Resolve-Agent1cFullPath -Path $ResumeRunStatusPath
+        } else {
+            Resolve-Agent1cFullPath -Path (Join-Path $projectRootFull $ResumeRunStatusPath)
+        }
+        $initArgs += @("-ResumeRunStatusPath", $resumeStatusFull)
+    }
+
+    $launcherArgs = @()
+    if ($KeepWindowOnFailure) {
+        $launcherArgs += "-KeepWindowOnFailure"
+    }
+    $launcherArgs += @("-MaxWaitSeconds", [string]$InitMaxWaitSeconds)
+    $launcherArgs += @("--") + $initArgs
+
+    Write-Host "Starting monitored ITL initialization."
+    Push-Location (Resolve-Agent1cFullPath -Path $projectRootFull)
+    try {
+        & powershell -ExecutionPolicy Bypass -File $launcherPath @launcherArgs
+        $initExitCode = if ($LASTEXITCODE -is [int]) { [int]$LASTEXITCODE } elseif ($?) { 0 } else { 1 }
+    } finally {
+        Pop-Location
+    }
+
+    if ($InitMode -eq "wizard" -and $initExitCode -eq 2 -and $null -ne $rollbackSnapshot) {
+        try {
+            Restore-BootstrapRollbackSnapshot -Snapshot $rollbackSnapshot
+            Write-Host "Cancelled initialization rollback restored the target project's pre-bootstrap managed paths."
+        } catch {
+            $preserveRollbackSnapshot = $true
+            throw "Cancelled initialization rollback failed. Backup retained at '$($rollbackSnapshot.root)'. $($_.Exception.Message)"
+        }
+        exit 2
+    }
+    if ($initExitCode -ne 0) {
+        exit $initExitCode
     }
 } finally {
-    Pop-Location
+    if ($null -ne $rollbackSnapshot -and -not $preserveRollbackSnapshot) {
+        Remove-BootstrapRollbackSnapshot -Snapshot $rollbackSnapshot
+    }
 }

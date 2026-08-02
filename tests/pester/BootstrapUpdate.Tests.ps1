@@ -1796,6 +1796,12 @@ exit 0
             $LauncherText | Should -Match '@\("succeeded", "failed", "cancelled"\)'
             $LauncherText | Should -Match "Do not restart it unless the developer explicitly requests initialization again"
             $HelperText | Should -Match 'Write-RunStatus -Status "cancelled" -ExitCode 2'
+            $entrypointText = Get-Content -LiteralPath $HelperPath -Raw -Encoding UTF8
+            $earlyConfirmation = $entrypointText.IndexOf('Confirm-InitWizardProjectRoot')
+            $lifecycleMutation = $entrypointText.IndexOf('Enter-Agent1cLifecycleOperation')
+            $earlyConfirmation | Should -BeGreaterOrEqual 0
+            $earlyConfirmation | Should -BeLessThan $lifecycleMutation
+            $HelperText | Should -Match 'if \(-not \$script:InitWizardProjectRootConfirmed\)'
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -1923,16 +1929,57 @@ exit 2
             ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
 
             $process.ExitCode | Should -Be 2
-            $runDirs = @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\runs") -Directory)
-            $runDirs.Count | Should -Be 1
-            $status = Get-Content -LiteralPath (Join-Path $runDirs[0].FullName "status.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-            $status.status | Should -Be "cancelled"
-            $status.stage | Should -Be "init.cancelled"
-            (Get-Content -LiteralPath $stdoutPath -Raw -Encoding UTF8) | Should -Match "Do not restart it unless the developer explicitly requests initialization again"
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agent-1c") -ErrorAction SilentlyContinue) | Should -Be $false
+            $launcherOutput = Get-Content -LiteralPath $stdoutPath -Raw -Encoding UTF8
+            $launcherOutput | Should -Match "Do not restart it unless the developer explicitly requests initialization again"
+            $launcherOutput | Should -Match "Removed artifacts from the cancelled monitored run"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "restores pre-bootstrap managed paths when wizard initialization is cancelled" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-bootstrap-cancel-rollback-" + [guid]::NewGuid().ToString("N"))
+        $sourceRoot = Join-Path $tempRoot "source"
+        $targetParent = Join-Path ([Environment]::GetFolderPath("UserProfile")) "W"
+        $targetRoot = Join-Path $targetParent ("c" + [guid]::NewGuid().ToString("N").Substring(0, 6))
+
+        try {
+            New-Item -ItemType Directory -Force -Path $sourceRoot, (Join-Path $targetRoot ".agents\skills\1c-workflow") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents") -Destination $sourceRoot -Recurse -Force
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates") -Destination $sourceRoot -Recurse -Force
+            New-Item -ItemType Directory -Force -Path (Join-Path $sourceRoot "docs") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "docs\itl-workflow") -Destination (Join-Path $sourceRoot "docs\itl-workflow") -Recurse -Force
+            foreach ($name in @("install-agent-1c-workflow.ps1", "AGENT-INSTALL.md")) {
+                Copy-Item -LiteralPath (Join-Path $RepoRoot $name) -Destination (Join-Path $sourceRoot $name) -Force
+            }
+            Set-Content -LiteralPath (Join-Path $sourceRoot ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1") -Encoding UTF8 -Value "exit 2"
+
+            Set-Content -LiteralPath (Join-Path $targetRoot "README.md") -Encoding UTF8 -Value "project-owned"
+            Set-Content -LiteralPath (Join-Path $targetRoot "AGENT-INSTALL.md") -Encoding UTF8 -Value "original managed file"
+            Set-Content -LiteralPath (Join-Path $targetRoot ".agents\skills\1c-workflow\user-sentinel.txt") -Encoding UTF8 -Value "original managed directory"
+
+            & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $sourceRoot "install-agent-1c-workflow.ps1") `
+                -ProjectRoot $targetRoot `
+                -SourceRoot $sourceRoot `
+                -InitMode wizard `
+                -InitMaxWaitSeconds 10 `
+                -SkipWorkflowSourceFreshnessCheck *> $null
+
+            $LASTEXITCODE | Should -Be 2
+            (Get-Content -LiteralPath (Join-Path $targetRoot "README.md") -Raw -Encoding UTF8).Trim() | Should -Be "project-owned"
+            (Get-Content -LiteralPath (Join-Path $targetRoot "AGENT-INSTALL.md") -Raw -Encoding UTF8).Trim() | Should -Be "original managed file"
+            (Get-Content -LiteralPath (Join-Path $targetRoot ".agents\skills\1c-workflow\user-sentinel.txt") -Raw -Encoding UTF8).Trim() | Should -Be "original managed directory"
+            (Test-Path -LiteralPath (Join-Path $targetRoot ".agents\skills\1c-workflow\SKILL.md") -ErrorAction SilentlyContinue) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $targetRoot ".agents\skills\product-docs") -ErrorAction SilentlyContinue) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $targetRoot "templates") -ErrorAction SilentlyContinue) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $targetRoot "docs") -ErrorAction SilentlyContinue) | Should -Be $false
+            (Test-Path -LiteralPath (Join-Path $targetRoot "install-agent-1c-workflow.ps1") -ErrorAction SilentlyContinue) | Should -Be $false
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $targetRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 

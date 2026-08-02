@@ -299,6 +299,8 @@ $script:Config = $null
 $script:ToolsManifest = $null
 $script:ToolsManifestLoaded = $false
 $script:InitVibecoding1cMcpSetupRequested = $false
+$script:InitCancelledByDeveloper = $false
+$script:InitWizardProjectRootConfirmed = $false
 $script:ItlSkipEventLogForVerification = $false
 $script:DependencyLockPath = Join-Path $script:ProjectRoot ".agent-1c\dependency-lock.json"
 $script:Agent1cScriptPath = Resolve-Agent1cFullPath -Path $PSCommandPath
@@ -341,6 +343,9 @@ foreach ($moduleFile in $script:Agent1cModuleFiles) {
 Initialize-GitIndexLockTracking
 
 try {
+    if ($Action -eq "init-project" -and $InitMode -eq "wizard") {
+        Confirm-InitWizardProjectRoot
+    }
     if ($Action -eq "adopt-dev-worktree" -and $MainWorktreePath) {
         $sourceDotEnv = Join-Path ([System.IO.Path]::GetFullPath($MainWorktreePath)) ".dev.env"
         $targetDotEnv = Join-Path $script:ProjectRoot ".dev.env"
