@@ -208,8 +208,10 @@
         $firstSection = [regex]::Match($readmeText, '(?m)^## (?<title>[^\r\n]+)\r?$')
         $firstSection.Success | Should -BeTrue
         $firstSection.Groups['title'].Value | Should -Be 'Быстрый старт'
+        $readmeText | Should -Match 'обычной инициализации.*стабильного канала.*`master`'
+        $readmeText | Should -Match ([regex]::Escape('https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTALL.md'))
+        $readmeText | Should -Match 'канала разработки.*`develop`.*отдельную команду'
         $readmeText | Should -Match ([regex]::Escape('https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/develop/AGENT-INSTALL.md'))
-        $readmeText | Should -Match 'стабильного канала.*`master`'
         foreach ($client in @('Codex', 'Kilo Code', 'Claude Code', 'Cursor', 'OpenCode', 'Kimi Code', 'Qwen Code', 'Command Code', 'Cline', 'Pi')) {
             $readmeText | Should -Match ([regex]::Escape($client))
         }
