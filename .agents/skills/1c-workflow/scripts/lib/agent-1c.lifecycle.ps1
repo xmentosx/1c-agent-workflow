@@ -1904,6 +1904,28 @@ function Test-AiRules1cForkRepository {
     return (Get-AiRules1cRepositoryIdentity -Repo $Repo) -eq "https://github.com/xmentosx/itl_ai_rules_1c"
 }
 
+function Invoke-AiRules1cFetchWithRetry {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [int]$MaxAttempts = 3
+    )
+
+    $failure = $null
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            Invoke-GitAt -Root $Root -Arguments @("fetch", "--all", "--tags", "--prune")
+            return
+        } catch {
+            $failure = $_
+            if ($attempt -ge $MaxAttempts) { break }
+            $delaySeconds = [int][Math]::Pow(2, $attempt)
+            Write-Warning "ai_rules_1c fetch attempt $attempt/$MaxAttempts failed; retrying the same idempotent fetch in $delaySeconds seconds."
+            Start-Sleep -Seconds $delaySeconds
+        }
+    }
+    throw $failure
+}
+
 function Sync-AiRules1cCheckout {
     param(
         [string]$RepoOverride = "",
@@ -1954,7 +1976,7 @@ function Sync-AiRules1cCheckout {
             if ((Get-AiRules1cRepositoryIdentity -Repo $currentOrigin) -ne (Get-AiRules1cRepositoryIdentity -Repo $repo)) {
                 Invoke-GitAt -Root $rulesDir -Arguments @("remote", "set-url", "origin", $repo)
             }
-            Invoke-GitAt -Root $rulesDir -Arguments @("fetch", "--all", "--tags", "--prune")
+            Invoke-AiRules1cFetchWithRetry -Root $rulesDir
         } catch {
             throw "Failed to update ai_rules_1c in $rulesDir"
         }

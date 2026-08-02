@@ -50,6 +50,11 @@ function Test-QualityContractCatalog {
         }
     }
 
+    $inventory = @(Get-ChildItem -LiteralPath (Join-Path $RepositoryRoot "tests\pester") -File -Filter "*.Tests.ps1" | ForEach-Object { "tests/pester/$($_.Name)" } | Sort-Object -Unique)
+    $ownedTests = @($Catalog.contracts | ForEach-Object { @($_.tests) } | ForEach-Object { ([string]$_).Replace('\', '/') } | Sort-Object -Unique)
+    $unownedTests = @($inventory | Where-Object { $_ -notin $ownedTests })
+    if ($unownedTests.Count -gt 0) { throw "Every Pester file must have a quality contract owner. Unowned: $($unownedTests -join ', ')." }
+
     $actualActions = @(Get-PublicLifecycleActions -RepositoryRoot $RepositoryRoot)
     $coveredActions = @(
         @($Catalog.lifecycleActions.journey) + @($Catalog.lifecycleActions.boundary) |

@@ -38,6 +38,35 @@ function ConvertTo-DevelopProcessArgument {
     return '"' + $escaped + '"'
 }
 
+function Test-DevelopTransientNetworkFailure {
+    param([string[]]$Output)
+    $text = @($Output | ForEach-Object { [string]$_ }) -join "`n"
+    return $text -match '(?i)(could not resolve host|failed to connect|could not connect|connection (was )?timed out|network is unreachable|temporary failure in name resolution|remote end hung up|http (500|502|503|504))'
+}
+
+function Assert-DevelopAiRulesRemoteReachable {
+    param([string]$StandRoot, [int]$MaxAttempts = 3)
+    $configPath = Join-Path $StandRoot ".agent-1c\project.json"
+    $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $repo = [string]$config.aiRules.repo; $ref = [string]$config.aiRules.ref
+    if (-not $repo -or -not $ref) { throw "Develop E2E stand must configure an immutable ai_rules_1c repository and ref before live journeys." }
+    $remoteRef = "refs/tags/$ref"
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $previousPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            $output = @(& git ls-remote --exit-code $repo $remoteRef 2>&1)
+            $exitCode = $LASTEXITCODE
+        } finally { $ErrorActionPreference = $previousPreference }
+        if ($exitCode -eq 0 -and @($output | Where-Object { [string]$_ -match '^[a-f0-9]{40}\s+refs/tags/' }).Count -gt 0) { return }
+        $transient = Test-DevelopTransientNetworkFailure -Output @($output)
+        if (-not $transient -or $attempt -ge $MaxAttempts) { throw "Develop E2E cannot read immutable ai_rules_1c ref '$remoteRef' from '$repo': $(@($output | ForEach-Object { [string]$_ }) -join '; ')" }
+        $delaySeconds = [int][Math]::Pow(2, $attempt)
+        Write-Warning "Develop E2E ai_rules_1c remote preflight attempt $attempt/$MaxAttempts hit a transient network failure; retrying in $delaySeconds seconds."
+        Start-Sleep -Seconds $delaySeconds
+    }
+}
+
 function Stop-DevelopProcessTree {
     param([object]$Process)
     if (-not $Process -or $Process.HasExited) { return }
@@ -241,6 +270,7 @@ $previousRulesSource = $env:ITL_AI_RULES_SOURCE_PATH
 try {
     $env:ITL_WORKFLOW_SOURCE_PATH = $CandidateRoot
     $env:ITL_AI_RULES_SOURCE_PATH = $AiRulesSource
+    Assert-DevelopAiRulesRemoteReachable -StandRoot $ProjectRoot
     Assert-TrackedClean -Root $ProjectRoot -Label "Develop E2E master"
     $standConfig = Get-Content -LiteralPath (Join-Path $ProjectRoot ".agent-1c\release-e2e.json") -Raw -Encoding UTF8 | ConvertFrom-Json
     $standBranchRoot = [IO.Path]::GetFullPath([string]$standConfig.worktreePath)

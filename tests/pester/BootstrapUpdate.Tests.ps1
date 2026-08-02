@@ -2003,6 +2003,10 @@ exit 0
         }
     }
 
+    It "retries only the idempotent ai_rules fetch boundary" {
+        (& { . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null; $script:fetchAttempts=0; function Invoke-GitAt { $script:fetchAttempts++; if($script:fetchAttempts -lt 3){throw 'transient'} }; function Start-Sleep {}; Invoke-AiRules1cFetchWithRetry -Root $RepoRoot; $script:fetchAttempts }) | Should -Be 3
+    }
+
     It "builds a safe initialization user report without reading secret settings" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

@@ -182,7 +182,8 @@ function Wait-PowerShellChildProcess {
     param(
         [Parameter(Mandatory = $true)][object]$Child,
         [int]$TimeoutSeconds = 300,
-        [int]$NoProgressSeconds = 600
+        [int]$NoProgressSeconds = 600,
+        [string[]]$ProgressPaths = @()
     )
     $process = $Child.process
     $started = [DateTime]::UtcNow
@@ -194,8 +195,11 @@ function Wait-PowerShellChildProcess {
     while (-not $process.WaitForExit(5000)) {
         $now = [DateTime]::UtcNow
         $length = 0L
-        foreach ($path in @($Child.stdoutPath, $Child.stderrPath)) {
+        foreach ($path in @($Child.stdoutPath, $Child.stderrPath) + @($ProgressPaths)) {
             if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) { $length += (Get-Item -LiteralPath $path).Length }
+            elseif (Test-Path -LiteralPath $path -PathType Container -ErrorAction SilentlyContinue) {
+                $length += [int64](Get-ChildItem -LiteralPath $path -File -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+            }
         }
         if ($length -ne $lastLength) { $lastLength = $length; $lastProgress = $now }
         $elapsedSeconds = [int]($now - $started).TotalSeconds
@@ -220,10 +224,11 @@ function Invoke-PowerShellChild {
         [string[]]$Arguments = @(),
         [int]$TimeoutSeconds = 300,
         [int]$NoProgressSeconds = 600,
+        [string[]]$ProgressPaths = @(),
         [string]$LogName = "child"
     )
     $child = Start-PowerShellChildProcess -ScriptPath $ScriptPath -Arguments $Arguments -LogName $LogName
-    Wait-PowerShellChildProcess -Child $child -TimeoutSeconds $TimeoutSeconds -NoProgressSeconds $NoProgressSeconds
+    Wait-PowerShellChildProcess -Child $child -TimeoutSeconds $TimeoutSeconds -NoProgressSeconds $NoProgressSeconds -ProgressPaths $ProgressPaths
 }
 
 function Complete-ParallelGateStage {
@@ -555,7 +560,7 @@ try {
                 $selection = Get-Content -LiteralPath $selectionPath -Raw -Encoding UTF8 | ConvertFrom-Json
                 if ($effectiveMode -eq "Targeted") {
                     $shardRunner = Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"
-                    Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$PesterWorkers, "-SelectionPath", $selectionPath) -TimeoutSeconds 900 -NoProgressSeconds 300 -LogName "pester-selection-shards"
+                    Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$PesterWorkers, "-SelectionPath", $selectionPath) -TimeoutSeconds 900 -NoProgressSeconds 300 -ProgressPaths (Join-Path $outputRoot "pester-shards") -LogName "pester-selection-shards"
                     $selectionResult = Get-Content -LiteralPath (Join-Path $outputRoot "pester-shards\summary.json") -Raw -Encoding UTF8 | ConvertFrom-Json
                 } else {
                     $planPath = Join-Path $outputRoot "pester-selection-plan.json"; $resultPath = Join-Path $outputRoot "pester-selection-result.json"

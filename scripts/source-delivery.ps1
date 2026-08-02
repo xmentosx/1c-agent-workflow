@@ -100,6 +100,7 @@ function Invoke-SourceGate {
     try {
         $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($quoted -join " ") -WorkingDirectory $WorkingRoot -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
         $null = $process.Handle
+        Update-DeliveryOperation -Values @{ mode = $Mode; workingRoot = $WorkingRoot; gatePid = [int]$process.Id; gateProcessStartedAt = $process.StartTime.ToUniversalTime().ToString("o"); gateStatus = "running" }
         $hardSeconds = switch ($Mode) { "Targeted" { 900 } "Smoke" { 120 } "Full" { 1200 } "Develop" { 5400 } "Release" { 7200 } default { 1200 } }
         $watch = [Diagnostics.Stopwatch]::StartNew(); $lastLength = -1L; $lastProgress = [DateTime]::UtcNow
         while (-not $process.WaitForExit(5000)) {
@@ -122,7 +123,10 @@ function Invoke-SourceGate {
         $gateStatus = "passed"
     } catch { $gateError = $_.Exception.Message; throw } finally {
         $finishedAt = [DateTime]::UtcNow
-        try { [void](Write-DeliveryRunRecord -Mode $Mode -Status $gateStatus -ErrorMessage $gateError -WorkingRoot $WorkingRoot -StartedAt $gateStartedAt -FinishedAt $finishedAt -ExitCode $(if ($process -and $process.HasExited) { [int]$process.ExitCode } else { -1 })) }
+        try {
+            $runRecordPath = Write-DeliveryRunRecord -Mode $Mode -Status $gateStatus -ErrorMessage $gateError -WorkingRoot $WorkingRoot -StartedAt $gateStartedAt -FinishedAt $finishedAt -ExitCode $(if ($process -and $process.HasExited) { [int]$process.ExitCode } else { -1 })
+            Update-DeliveryOperation -Values @{ gatePid = 0; gateProcessStartedAt = ""; gateStatus = $gateStatus; gateFinishedAt = $finishedAt.ToString("o"); runRecordPath = $runRecordPath }
+        }
         catch { if ($gateStatus -eq "passed") { throw } else { Write-Warning "Unable to persist failed gate history: $($_.Exception.Message)" } }
     }
 }
@@ -184,6 +188,48 @@ function Get-DeliveryCommonGitDirectory {
     $value = Get-GitValue -Arguments @("rev-parse", "--path-format=absolute", "--git-common-dir")
     if ([IO.Path]::IsPathRooted($value)) { return [IO.Path]::GetFullPath($value) }
     return [IO.Path]::GetFullPath((Join-Path $script:Root $value))
+}
+
+function Get-DeliveryOperationLockPath {
+    return Join-Path (Get-DeliveryCommonGitDirectory) "itl\delivery-operation"
+}
+
+function Test-DeliveryProcessIdentity {
+    param([int]$ProcessId, [string]$StartedAt)
+    if ($ProcessId -le 0 -or -not $StartedAt) { return $false }
+    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $process) { return $false }
+    try {
+        $expected = [DateTime]::Parse($StartedAt).ToUniversalTime()
+        return [Math]::Abs(($process.StartTime.ToUniversalTime() - $expected).TotalSeconds) -lt 2
+    } catch { return $false }
+}
+
+function Read-DeliveryOperation {
+    $path = Join-Path (Get-DeliveryOperationLockPath) "operation.json"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    try { return Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
+}
+
+function Write-DeliveryOperation {
+    param([Parameter(Mandatory = $true)][object]$Operation)
+    $root = Get-DeliveryOperationLockPath
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw "Delivery operation lock disappeared while it was active: $root" }
+    $target = Join-Path $root "operation.json"; $temp = Join-Path $root ("operation." + [guid]::NewGuid().ToString("N") + ".tmp")
+    [IO.File]::WriteAllText($temp, (($Operation | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    Move-Item -LiteralPath $temp -Destination $target -Force
+}
+
+function Get-DeliveryOperationStatus {
+    $operation = Read-DeliveryOperation
+    if (-not $operation) { return $null }
+    $ownerAlive = Test-DeliveryProcessIdentity -ProcessId ([int]$operation.ownerPid) -StartedAt ([string]$operation.ownerProcessStartedAt)
+    $gateAlive = Test-DeliveryProcessIdentity -ProcessId ([int]$operation.gatePid) -StartedAt ([string]$operation.gateProcessStartedAt)
+    return [pscustomobject]@{
+        id = [string]$operation.id; action = [string]$operation.action; startedAt = [string]$operation.startedAt
+        ownerPid = [int]$operation.ownerPid; ownerAlive = $ownerAlive; gatePid = [int]$operation.gatePid; gateAlive = $gateAlive
+        mode = [string]$operation.mode; candidatePath = [string]$operation.workingRoot; status = $(if ($ownerAlive -or $gateAlive) { "running" } else { "stale" })
+    }
 }
 
 function Write-DeliveryRunRecord {
@@ -249,6 +295,74 @@ function Restore-DeliveryQualification {
     return $true
 }
 
+function Archive-StaleDeliveryOperation {
+    param([Parameter(Mandatory = $true)][object]$Operation)
+    $workingRoot = [string]$Operation.workingRoot
+    $summary = $null
+    if ($workingRoot) {
+        $summaryPath = Join-Path $workingRoot "build\test-results\local\check-summary.json"
+        if (Test-Path -LiteralPath $summaryPath -PathType Leaf) {
+            try { $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $summary = $null }
+        }
+    }
+    if ($summary -and -not [string]$Operation.runRecordPath -and (Test-Path -LiteralPath $workingRoot -PathType Container)) {
+        $startedAt = [DateTime]::Parse([string]$summary.startedAt).ToUniversalTime(); $finishedAt = [DateTime]::Parse([string]$summary.finishedAt).ToUniversalTime()
+        $status = if ([string]$summary.status -eq "passed") { "passed" } else { "failed" }
+        $error = if ($status -eq "passed") { "" } else { "Recovered after the delivery wrapper ended before recording the completed gate: $([string]$summary.error)" }
+        $Operation.runRecordPath = Write-DeliveryRunRecord -Mode ([string]$summary.mode) -Status $status -ErrorMessage $error -WorkingRoot $workingRoot -StartedAt $startedAt -FinishedAt $finishedAt -ExitCode $(if ($status -eq "passed") { 0 } else { 1 })
+        if ($status -eq "passed" -and [string]$summary.mode -eq "Develop") {
+            $tree = (Invoke-WorktreeGit -Root $workingRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
+            [void](Save-DeliveryQualification -CandidateRoot $workingRoot -Tree $tree)
+        }
+    }
+    $Operation | Add-Member -NotePropertyName recoveredAt -NotePropertyValue ([DateTime]::UtcNow.ToString("o")) -Force
+    $archiveRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\operations"; New-Item -ItemType Directory -Force -Path $archiveRoot | Out-Null
+    [IO.File]::WriteAllText((Join-Path $archiveRoot ("$([string]$Operation.id).json")), (($Operation | ConvertTo-Json -Depth 10) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    Remove-Item -LiteralPath (Get-DeliveryOperationLockPath) -Recurse -Force
+}
+
+function Enter-DeliveryOperation {
+    param([Parameter(Mandatory = $true)][string]$Action)
+    $lockPath = Get-DeliveryOperationLockPath
+    if (Test-Path -LiteralPath $lockPath -PathType Container) {
+        $status = Get-DeliveryOperationStatus
+        if ($status -and ($status.ownerAlive -or $status.gateAlive)) {
+            throw "Delivery operation '$($status.action)' is already active (owner PID $($status.ownerPid), gate PID $($status.gatePid), candidate '$($status.candidatePath)'). Wait for it and inspect Status before retrying."
+        }
+        $stale = Read-DeliveryOperation
+        if ($stale) { Archive-StaleDeliveryOperation -Operation $stale }
+        else {
+            $lockAge = ([DateTime]::UtcNow - (Get-Item -LiteralPath $lockPath).LastWriteTimeUtc).TotalMinutes
+            if ($lockAge -lt 2) { throw "Another delivery operation is acquiring the shared lock. Inspect source-delivery Status before retrying." }
+            Remove-Item -LiteralPath $lockPath -Recurse -Force
+        }
+    }
+    try { New-Item -ItemType Directory -Path $lockPath -ErrorAction Stop | Out-Null } catch { throw "Another delivery operation acquired the shared lock. Inspect source-delivery Status before retrying." }
+    $owner = Get-Process -Id $PID
+    $operation = [pscustomobject]@{
+        schemaVersion = 1; id = [guid]::NewGuid().ToString("N"); action = $Action; startedAt = [DateTime]::UtcNow.ToString("o")
+        ownerPid = $PID; ownerProcessStartedAt = $owner.StartTime.ToUniversalTime().ToString("o")
+        mode = ""; workingRoot = ""; gatePid = 0; gateProcessStartedAt = ""; gateStatus = "pending"; runRecordPath = ""
+    }
+    Write-DeliveryOperation -Operation $operation
+    $script:ActiveOperation = $operation
+    return $operation
+}
+
+function Update-DeliveryOperation {
+    param([hashtable]$Values)
+    if (-not $script:ActiveOperation) { return }
+    foreach ($key in $Values.Keys) { $script:ActiveOperation | Add-Member -NotePropertyName $key -NotePropertyValue $Values[$key] -Force }
+    Write-DeliveryOperation -Operation $script:ActiveOperation
+}
+
+function Exit-DeliveryOperation {
+    if (-not $script:ActiveOperation) { return }
+    $current = Read-DeliveryOperation
+    if ($current -and [string]$current.id -eq [string]$script:ActiveOperation.id) { Remove-Item -LiteralPath (Get-DeliveryOperationLockPath) -Recurse -Force }
+    $script:ActiveOperation = $null
+}
+
 function Add-QueuedRangesToCandidate {
     param([string]$CandidateRoot, [object[]]$Entries)
     foreach ($entry in @($Entries)) {
@@ -296,10 +410,11 @@ function Publish-AccumulatedDevelop {
     try {
         $worktree = New-DeliveryWorktree -StartPoint "$script:Remote/develop" -Purpose "publish-develop"
         Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries
+        $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
+        [void](Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
         Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path
 
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
-        $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
         [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
         $push = Invoke-WorktreeGit -Root $worktree.path -Arguments @("push", $script:Remote, "HEAD:refs/heads/develop") -AllowFailure
         if ($push.exitCode -ne 0) { throw "origin/develop changed or rejected the fast-forward push. The queue is preserved; rebuild the candidate from the new remote head." }
@@ -390,10 +505,16 @@ function Release-DevelopToMaster {
 }
 
 [void](Invoke-DeliveryGit -Arguments @("rev-parse", "--git-dir"))
-$result = switch ($Action) {
-    "RegisterChange" { Register-SourceChange }
-    "Status" { [pscustomobject]@{ status = "ok"; queue = @(Get-QueueEntries); runHistory = (Get-DeliveryRunHistory) } }
-    "PublishDevelop" { Publish-AccumulatedDevelop }
-    "ReleaseMaster" { Release-DevelopToMaster }
+$script:ActiveOperation = $null
+try {
+    if ($Action -in @("PublishDevelop", "ReleaseMaster")) { [void](Enter-DeliveryOperation -Action $Action) }
+    $result = switch ($Action) {
+        "RegisterChange" { Register-SourceChange }
+        "Status" { [pscustomobject]@{ status = "ok"; queue = @(Get-QueueEntries); activeOperation = (Get-DeliveryOperationStatus); runHistory = (Get-DeliveryRunHistory) } }
+        "PublishDevelop" { Publish-AccumulatedDevelop }
+        "ReleaseMaster" { Release-DevelopToMaster }
+    }
+    $result | ConvertTo-Json -Depth 8
+} finally {
+    Exit-DeliveryOperation
 }
-$result | ConvertTo-Json -Depth 8

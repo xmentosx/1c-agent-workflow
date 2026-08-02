@@ -141,6 +141,7 @@
         $agentsText | Should -Match "source repository"
         $agentsText | Should -Match "not installed-project guidance"
         $agentsText | Should -Match ([regex]::Escape('Never add this root `AGENTS.md` to bootstrap or `update-workflow` managed-copy lists'))
+        $qualityText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\local-quality-gate.md") -Raw -Encoding UTF8; foreach ($marker in @('timeout_ms >= 6000000', 'timeout_ms >= 7800000', 'Invoke-TestPowerShellFile', 'повторный Publish/Release блокируется')) { $qualityText | Should -Match ([regex]::Escape($marker)) }
         $agentsText | Should -Match "ITL owns project bootstrap and lifecycle"
         $agentsText | Should -Match ([regex]::Escape('controlled `ai_rules_1c` fork owns'))
         $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action RegisterChange"))

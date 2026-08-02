@@ -56,9 +56,7 @@ exit 0
     function Remove-DeliveryFixture {
         param([object]$Fixture)
         if ($Fixture) {
-            & git -C $Fixture.root worktree prune *> $null
-            Remove-Item -LiteralPath $Fixture.root -Recurse -Force -ErrorAction SilentlyContinue
-            Remove-Item -LiteralPath $Fixture.remote -Recurse -Force -ErrorAction SilentlyContinue
+            & git -C $Fixture.root worktree prune *> $null; Remove-Item -LiteralPath $Fixture.root -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $Fixture.remote -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }
@@ -72,9 +70,7 @@ Describe "Source develop queue and delivery" {
         @($action.Attributes | Where-Object TypeName -match ValidateSet | Select-Object -ExpandProperty PositionalArguments | ForEach-Object SafeGetValue) | Should -Be @("RegisterChange", "Status", "PublishDevelop", "ReleaseMaster")
     }
     It "registers base and head atomically for a path with Cyrillic and spaces" {
-        $fixture = $null
-        $parallelRoot = ""
-        try {
+        $fixture = $null; $parallelRoot = ""; try {
             $fixture = New-DeliveryFixture
             $tests = Join-Path $fixture.root "tests\pester"
             New-Item -ItemType Directory -Force -Path $tests | Out-Null
@@ -104,8 +100,7 @@ Describe "Source develop queue and delivery" {
         }
     }
     It "refuses executable changes without tests or an explicit reused contract" {
-        $fixture = $null
-        try {
+        $fixture = $null; try {
             $fixture = New-DeliveryFixture
             Set-Content -LiteralPath (Join-Path $fixture.root "behavior.ps1") -Encoding UTF8 -Value "'changed'"
             & git -C $fixture.root add behavior.ps1
@@ -117,8 +112,7 @@ Describe "Source develop queue and delivery" {
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
     It "publishes the qualified candidate and clears only reachable queue entries" {
-        $fixture = $null
-        try {
+        $fixture = $null; try {
             $fixture = New-DeliveryFixture
             $tests = Join-Path $fixture.root "tests\pester"
             New-Item -ItemType Directory -Force -Path $tests | Out-Null
@@ -137,8 +131,7 @@ Describe "Source develop queue and delivery" {
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
     It "preserves the queue when origin develop moves during qualification" {
-        $fixture = $null
-        try {
+        $fixture = $null; try {
             $fixture = New-DeliveryFixture
             New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
             Set-Content (Join-Path $fixture.root "tests\pester\Drift.Tests.ps1") "Describe 'drift' { It 'works' { `$true | Should -BeTrue } }"
@@ -157,11 +150,19 @@ Describe "Source develop queue and delivery" {
             @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -Not -BeNullOrEmpty
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
+    It "blocks a duplicate while an orphan gate is alive and journals stale recovery" {
+        $fixture = $null; try {
+            $fixture = New-DeliveryFixture; New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null; Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\DeliveryRecovery.Tests.ps1") -Encoding UTF8 -Value "Describe 'delivery recovery' { It 'works' { `$true | Should -BeTrue } }"; & git -C $fixture.root add --all; & git -C $fixture.root commit -m "feat: recovery fixture" *> $null; Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) | Out-Null
+            $lockRoot = Join-Path $fixture.root ".git\itl\delivery-operation"; New-Item -ItemType Directory -Force -Path $lockRoot | Out-Null; $acquiring = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure; $acquiring.exitCode | Should -Not -Be 0; $acquiring.stderr | Should -Match "acquiring the shared lock"; $pesterProcess = Get-Process -Id $PID
+            $operation = [ordered]@{ schemaVersion=1; id=[guid]::NewGuid().ToString("N"); action="PublishDevelop"; startedAt=[DateTime]::UtcNow.AddMinutes(-1).ToString("o"); ownerPid=999999; ownerProcessStartedAt=[DateTime]::UtcNow.AddDays(-1).ToString("o"); mode="Develop"; workingRoot=""; gatePid=$PID; gateProcessStartedAt=$pesterProcess.StartTime.ToUniversalTime().ToString("o"); gateStatus="running"; runRecordPath="" }; [IO.File]::WriteAllText((Join-Path $lockRoot "operation.json"), (($operation | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $status = (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "Status", "-RepositoryRoot", ('"' + $fixture.root + '"'))).stdout | ConvertFrom-Json; $status.activeOperation.status | Should -Be "running"; $status.activeOperation.gateAlive | Should -BeTrue; $duplicate = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure; $duplicate.exitCode | Should -Not -Be 0; $duplicate.stderr | Should -Match "already active"
+            $summaryRoot = Join-Path $fixture.root "build\test-results\local"; New-Item -ItemType Directory -Force -Path $summaryRoot | Out-Null; $summaryStarted = [DateTime]::UtcNow.AddSeconds(-2); $summaryFinished = [DateTime]::UtcNow.AddSeconds(-1); $summary = [ordered]@{ mode="Targeted"; status="failed"; startedAt=$summaryStarted.ToString("o"); finishedAt=$summaryFinished.ToString("o"); error="fixture interrupted"; tests=[ordered]@{passed=0;failed=1;skipped=0}; stages=@() }; [IO.File]::WriteAllText((Join-Path $summaryRoot "check-summary.json"), (($summary | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $operation.gatePid = 999998; $operation.gateProcessStartedAt = [DateTime]::UtcNow.AddDays(-1).ToString("o"); $operation.workingRoot = $fixture.root; $operation.mode = "Targeted"; [IO.File]::WriteAllText((Join-Path $lockRoot "operation.json"), (($operation | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')); ($published.stdout | ConvertFrom-Json).status | Should -Be "published"; Test-Path -LiteralPath (Join-Path $fixture.root ".git\itl\operations\$($operation.id).json") | Should -BeTrue; $history = ((Invoke-DeliveryTestPowerShell -Arguments @("-Action", "Status", "-RepositoryRoot", ('"' + $fixture.root + '"'))).stdout | ConvertFrom-Json).runHistory; @($history.lastRuns | Where-Object { [string]$_.error -match "Recovered after the delivery wrapper" }).Count | Should -Be 1
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
     It "never uses force push for develop or master" {
-        $text = Get-Content -LiteralPath $DeliveryScript -Raw -Encoding UTF8
-        $text | Should -Not -Match 'push[^\r\n]*(--force|-f\b|--force-with-lease)'
-        $text | Should -Match 'HEAD:refs/heads/develop'
-        $text | Should -Match 'push", "--atomic"'
-        $text | Should -Match 'HEAD:refs/heads/master'
+        $text = Get-Content -LiteralPath $DeliveryScript -Raw -Encoding UTF8; $text | Should -Not -Match 'push[^\r\n]*(--force|-f\b|--force-with-lease)'
+        foreach ($marker in @('HEAD:refs/heads/develop', 'push", "--atomic"', 'HEAD:refs/heads/master')) { $text | Should -Match ([regex]::Escape($marker)) }
     }
 }

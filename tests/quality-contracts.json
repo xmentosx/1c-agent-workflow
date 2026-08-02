@@ -37,7 +37,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/LocalQualityGate.Tests.ps1",
       "paths": ["scripts/check.ps1", "scripts/quality-contracts.ps1", "scripts/resolve-targeted-tests.ps1", "scripts/invoke-pester-*.ps1", "scripts/run-pester-*.ps1", "scripts/pester-timings.json", "scripts/release-qualification.ps1", "scripts/test-release-readiness.ps1", "tests/quality-contracts.json"],
-      "tests": ["tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1"]
+      "tests": ["tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1"]
     },
     {
       "id": "source-delivery",
@@ -55,7 +55,7 @@
       "budgetSeconds": 5400,
       "primaryTest": "tests/pester/ReleaseGate.Tests.ps1",
       "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/develop-e2e-cleanup.ps1", "scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/test-release-readiness.ps1"],
-      "tests": ["tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1"]
+      "tests": ["tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseUnsafeActionProtection.Tests.ps1"]
     },
     {
       "id": "bootstrap-update",
@@ -64,7 +64,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/BootstrapUpdate.Tests.ps1",
       "paths": ["AGENT-INSTALL.md", "install-agent-1c-workflow.ps1", "templates/*", ".agents/skills/1c-workflow/kilo-command-templates/*"],
-      "tests": ["tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/DependencyLocks.Tests.ps1"]
+      "tests": ["tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/DependencyLocks.Tests.ps1", "tests/pester/GitHubDependencyFallback.Tests.ps1"]
     },
     {
       "id": "lifecycle",
@@ -73,7 +73,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/DevBranchLifecycle.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/run-*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.bootstrap.ps1"],
-      "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1"]
+      "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1", "tests/pester/CompactItlRunner.Tests.ps1", "tests/pester/DesignerCompletion.Tests.ps1", "tests/pester/DesignerMemoryGuard.Tests.ps1", "tests/pester/FormElementContext.Tests.ps1", "tests/pester/UiTools.Tests.ps1"]
     },
     {
       "id": "branch-refresh-result",
@@ -91,7 +91,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/VanessaAuthoring.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/references/vanessa-tests.md", ".agents/skills/itl-vanessa-ui-mcp/*", "scripts/build-vanessa-automation-patched.ps1"],
-      "tests": ["tests/pester/VanessaAuthoring.Tests.ps1", "tests/pester/VanessaRuntimeCleanup.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1"]
+      "tests": ["tests/pester/VanessaAuthoring.Tests.ps1", "tests/pester/VanessaRuntimeCleanup.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1", "tests/pester/VanessaAuthoringLint.Tests.ps1", "tests/pester/VanessaInteractiveProfile.Tests.ps1", "tests/pester/VanessaPatchedArtifact.Tests.ps1"]
     },
     {
       "id": "mcp-hosts",
@@ -109,7 +109,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/AiRulesClients.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.client*.ps1", ".agents/skills/1c-workflow-fast/*", ".agents/skills/product-docs/*", ".agents/skills/itl-roctup-1c-data/*", "templates/ai-rules-*", "scripts/build-ai-rules-release.ps1", "scripts/test-ai-rules-compatibility.ps1", "scripts/promote-ai-rules-compatibility.ps1"],
-      "tests": ["tests/pester/AiRulesClients.Tests.ps1", "tests/pester/ClientAdaptersAndModes.Tests.ps1", "tests/pester/AiRulesMigration.Tests.ps1"]
+      "tests": ["tests/pester/AiRulesClients.Tests.ps1", "tests/pester/ClientAdaptersAndModes.Tests.ps1", "tests/pester/AiRulesMigration.Tests.ps1", "tests/pester/AiRulesOverlay.Tests.ps1", "tests/pester/KiloContextDiagnostics.Tests.ps1", "tests/pester/KiloVerificationRecovery.Tests.ps1", "tests/pester/OpenCodeWorkspace.Tests.ps1"]
     },
     {
       "id": "documentation",
