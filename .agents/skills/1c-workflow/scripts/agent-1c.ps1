@@ -442,6 +442,20 @@ try {
     Write-RunStatus -Status "succeeded" -ExitCode 0
 } catch {
     $errorMessage = $_.Exception.Message
+    if ($Action -eq "init-project" -and $script:InitCancelledByDeveloper) {
+        try {
+            Complete-Agent1cLifecycleOperation -Status "cancelled" -ExitCode 2 -ErrorMessage $errorMessage
+        } catch {
+            [Console]::Error.WriteLine("Failed to write cancelled lifecycle operation status: $($_.Exception.Message)")
+        }
+        try {
+            Write-RunStatus -Status "cancelled" -ExitCode 2 -ErrorMessage $errorMessage
+        } catch {
+            [Console]::Error.WriteLine("Failed to write cancelled run status: $($_.Exception.Message)")
+        }
+        Write-Host "ITL initialization cancelled by developer. It will not be resumed automatically."
+        exit 2
+    }
     Set-RunFailureContextFromMessage -Message $errorMessage
     try {
         $cleanupMessage = Invoke-GitIndexLockCleanupOnFailure

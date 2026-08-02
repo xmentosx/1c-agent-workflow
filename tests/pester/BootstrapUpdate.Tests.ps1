@@ -1755,6 +1755,187 @@ exit 0
         $result.sourceInfoBasePath | Should -Be "C:\bases\source-2"
     }
 
+    It "treats an explicit init root refusal as terminal cancellation" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-init-cancel-" + [guid]::NewGuid().ToString("N"))
+        $statusPath = Join-Path $tempRoot "status.json"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $Action = "init-project"
+                $RunStatusPath = $statusPath
+                $script:CancelledStage = ""
+                $script:CancelledDetail = ""
+
+                function Read-InitYesNo { return $false }
+                function Set-RunStage {
+                    param([string]$Stage, [string]$Detail)
+                    $script:CancelledStage = $Stage
+                    $script:CancelledDetail = $Detail
+                }
+
+                $message = ""
+                try { Confirm-InitWizardProjectRoot 6>$null } catch { $message = $_.Exception.Message }
+                $script:RunStage = $script:CancelledStage
+                $script:RunStageDetail = $script:CancelledDetail
+                Write-RunStatus -Status "cancelled" -ExitCode 2 -ErrorMessage $message
+                [pscustomobject]@{
+                    marked = [bool]$script:InitCancelledByDeveloper
+                    stage = $script:CancelledStage
+                    message = $message
+                }
+            }
+
+            $status = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $result.marked | Should -Be $true
+            $result.stage | Should -Be "init.cancelled"
+            $result.message | Should -Be "Init canceled by developer."
+            $status.status | Should -Be "cancelled"
+            [int]$status.exitCode | Should -Be 2
+            $LauncherText | Should -Match '@\("succeeded", "failed", "cancelled"\)'
+            $LauncherText | Should -Match "Do not restart it unless the developer explicitly requests initialization again"
+            $HelperText | Should -Match 'Write-RunStatus -Status "cancelled" -ExitCode 2'
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "stores exactly five reusable file-infobase connection values and skips covered prompts" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-source-credentials-" + [guid]::NewGuid().ToString("N"))
+        $sourceRoot = Join-Path $tempRoot "source-base"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $sourceRoot "1Cv8.1CD") -Encoding ASCII -Value "fixture"
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $savedPath = Save-SourceInfoBaseConnectionSettings -InfoBasePath $sourceRoot -Answers ([pscustomobject]@{
+                    sourceUsesRepository = $true
+                    ibUser = "ib-user"
+                    ibPassword = "ib-password"
+                    repositoryPath = "tcp://repository"
+                    repositoryUser = "repo-user"
+                    repositoryPassword = "repo-password"
+                })
+                $json = Get-Content -LiteralPath $savedPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $script:ReuseRequiredPrompts = 0
+                $script:ReuseOptionalPrompts = 0
+                $script:ReuseYesNoPrompts = 0
+
+                function Read-InitRequired {
+                    $script:ReuseRequiredPrompts++
+                    return $sourceRoot
+                }
+                function Read-InitOptional {
+                    $script:ReuseOptionalPrompts++
+                    throw "A covered optional prompt was shown."
+                }
+                function Read-InitYesNo {
+                    $script:ReuseYesNoPrompts++
+                    return $true
+                }
+
+                $reused = Read-InitWizardFileInfoBaseAnswers 6>$null
+                [pscustomobject]@{
+                    path = $savedPath
+                    names = (@($json.PSObject.Properties.Name) -join "|")
+                    requiredPrompts = $script:ReuseRequiredPrompts
+                    optionalPrompts = $script:ReuseOptionalPrompts
+                    yesNoPrompts = $script:ReuseYesNoPrompts
+                    sourceUsesRepository = [bool]$reused.sourceUsesRepository
+                    ibUser = $reused.ibUser
+                    ibPassword = $reused.ibPassword
+                    repositoryPath = $reused.repositoryPath
+                    repositoryUser = $reused.repositoryUser
+                    repositoryPassword = $reused.repositoryPassword
+                    saveAgain = [bool]$reused.saveSourceConnectionSettings
+                }
+            }
+
+            (Split-Path -Leaf $result.path) | Should -Be ".itl-source-credentials.json"
+            $result.names | Should -Be "ibUser|ibPassword|repositoryPath|repositoryUser|repositoryPassword"
+            $result.requiredPrompts | Should -Be 1
+            $result.optionalPrompts | Should -Be 0
+            $result.yesNoPrompts | Should -Be 1
+            $result.sourceUsesRepository | Should -Be $true
+            $result.ibUser | Should -Be "ib-user"
+            $result.ibPassword | Should -Be "ib-password"
+            $result.repositoryPath | Should -Be "tcp://repository"
+            $result.repositoryUser | Should -Be "repo-user"
+            $result.repositoryPassword | Should -Be "repo-password"
+            $result.saveAgain | Should -Be $false
+            $fileWizardBlock = [regex]::Match($HelperText, '(?ms)function Read-InitWizardFileInfoBaseAnswers\s*\{.*?^function Read-InitWizardAnswersOnce\s*\{').Value
+            $fileWizardBlock | Should -Not -BeNullOrEmpty
+            $fileWizardBlock | Should -Match 'saveSourceConnectionSettings\s*=\s*Read-InitYesNo[\s\S]*-Default\s+\$true'
+            $fileWizardBlock | Should -Match '\$null -ne \$saved -and \(Read-InitYesNo[\s\S]*-Default\s+\$true'
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "passes terminal cancelled status through the monitored launcher without recovery" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-launcher-cancel-" + [guid]::NewGuid().ToString("N"))
+        $fakeHelperPath = Join-Path $tempRoot "fake-cancel-helper.ps1"
+        $stdoutPath = Join-Path $tempRoot "stdout.log"
+        $stderrPath = Join-Path $tempRoot "stderr.log"
+
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $fakeHelperPath -Encoding UTF8 -Value @'
+param(
+    [string]$ProjectRoot,
+    [string]$RunStatusPath,
+    [string]$RunLogPath,
+    [string]$Action,
+    [string]$InitMode,
+    [int]$LauncherPid
+)
+$now = (Get-Date).ToString("o")
+$status = [ordered]@{
+    schemaVersion = 1
+    status = "cancelled"
+    action = $Action
+    projectRoot = $ProjectRoot
+    pid = $PID
+    launcherPid = $LauncherPid
+    startedAt = $now
+    updatedAt = $now
+    finishedAt = $now
+    exitCode = 2
+    errorMessage = "Init canceled by developer."
+    stage = "init.cancelled"
+}
+[IO.File]::WriteAllText($RunStatusPath, (($status | ConvertTo-Json) + [Environment]::NewLine), (New-Object Text.UTF8Encoding $false))
+exit 2
+'@
+
+            $process = Start-Process -FilePath "powershell" -ArgumentList @(
+                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $LauncherPath,
+                "-ProjectRoot", $tempRoot, "-HelperPath", $fakeHelperPath,
+                "-PollIntervalMilliseconds", "50", "-MaxWaitSeconds", "10", "--",
+                "-Action", "init-project", "-InitMode", "wizard"
+            ) -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -NoNewWindow -Wait -PassThru
+
+            $process.ExitCode | Should -Be 2
+            $runDirs = @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\runs") -Directory)
+            $runDirs.Count | Should -Be 1
+            $status = Get-Content -LiteralPath (Join-Path $runDirs[0].FullName "status.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $status.status | Should -Be "cancelled"
+            $status.stage | Should -Be "init.cancelled"
+            (Get-Content -LiteralPath $stdoutPath -Raw -Encoding UTF8) | Should -Match "Do not restart it unless the developer explicitly requests initialization again"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "uses fixed init defaults while preserving explicit locked configuration" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

@@ -384,7 +384,7 @@ function Invoke-Agent1cFreshProcess {
         $terminal = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
         if ($null -eq $terminal -or
             [string]$terminal["operationId"] -cne $script:LifecycleOperationId -or
-            [string]$terminal["status"] -notin @("succeeded", "failed")) {
+            [string]$terminal["status"] -notin @("succeeded", "failed", "cancelled")) {
             $message = "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='fresh process did not write terminal operation state' childExitCode='$exitCode' scriptPath='$ScriptPath' operationId='$($script:LifecycleOperationId)' statePath='$($script:LifecycleOperationStatePath)'"
             Complete-Agent1cLifecycleOperation -Status "failed" -ExitCode 1 -ErrorMessage $message
             Set-RunFailureContext -Category "runner"

@@ -8,6 +8,8 @@ Initialize a 1C agent project using this file: https://raw.githubusercontent.com
 
 The agent must read this file, run the one-step bootstrap script for the target project, and wait for it to finish. The bootstrap script installs the shared workflow files and starts the monitored PowerShell helper wizard. The wizard collects missing inputs, writes local settings, writes run status/log files, and runs the project initialization lifecycle.
 
+If the developer answers no to the wizard's project-root confirmation, the helper and launcher write terminal `cancelled` status and exit. This is a final user decision, not a recoverable initialization failure: do not restart bootstrap or the wizard unless the developer explicitly asks to initialize again.
+
 Canonical bootstrap source selected by the developer's URL:
 
 - Repository: `https://github.com/xmentosx/1c-agent-workflow.git`
@@ -123,15 +125,16 @@ Required for initial project setup:
 - Vanessa UI MCP. Init/update caches the compatible `client_mcp.cfe` and `VAExtension*.cfe` and registers `itl-vanessa-ui` with compact `resolve_tool`/`call_tool`. Its first inner call installs missing branch CFE tooling and starts a client-owned backend automatically. This remains distinct from `/itl-check`.
 - External MCP. Treat future or user-provided MCP servers as a separate family. Preserve user-owned keys in every active-client config and remove only entries recorded in ITL managed state.
 - Source infobase kind: `file` or `server`; ask this before the grouped questionnaire.
-- Ask whether the source infobase is connected to a 1C configuration repository. Store `SOURCE_USES_REPOSITORY=true|false`.
-- For `file` with storage, ask the source infobase and repository questionnaire as 6 separate questions:
+- For a file infobase, ask its directory first. If `.itl-source-credentials.json` exists there and has the exact supported five-field shape, ask whether to reuse it (`yes` by default). Reuse skips the repository-enabled, infobase-user/password, and repository path/user/password questions. If values are entered manually, ask whether to save them to that file (`yes` by default). The JSON contains exactly `ibUser`, `ibPassword`, `repositoryPath`, `repositoryUser`, and `repositoryPassword`; an empty repository path means storage is disabled. It is intentionally unencrypted and readable by anyone with access to the infobase directory, and this convenience applies only to file infobases.
+- If no saved file-infobase parameters are reused, ask whether the source infobase is connected to a 1C configuration repository. Store `SOURCE_USES_REPOSITORY=true|false`.
+- For `file` with storage and no reused parameter file, ask the source infobase and repository questionnaire as 6 separate questions:
   1. Source infobase directory.
   2. Infobase user.
   3. Infobase password, or `нет`/`-` if empty.
   4. Configuration repository path/address.
   5. Configuration repository user.
   6. Configuration repository password, or `нет`/`-` if empty.
-- For `file` without storage, ask 3 separate questions: source infobase directory, infobase user, infobase password or `нет`/`-`.
+- For `file` without storage and no reused parameter file, ask 3 separate questions: source infobase directory, infobase user, infobase password or `нет`/`-`.
 - For `server` with storage, ask the source infobase and repository questionnaire as 7 separate questions:
   1. 1C server name.
   2. Source infobase name.
@@ -339,9 +342,9 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ru
 
 The wizard opens in an external PowerShell window, writes `.agent-1c/runs/<run>/status.json` plus `console.log`, collects setup values, writes `.dev.env` and `.agent-1c/project.json`, and then performs:
 
-The agent must wait for the monitored launcher process to finish. A background launch that returns immediately makes the agent miss completion, and a persistent PowerShell session leaves a stale prompt open after the helper has already written its status. The launcher writes terminal `failed` status itself when the helper exits or times out without writing `succeeded`/`failed`.
+The agent must wait for the monitored launcher process to finish. A background launch that returns immediately makes the agent miss completion, and a persistent PowerShell session leaves a stale prompt open after the helper has already written its status. The launcher accepts terminal `succeeded`, `failed`, or user-declined `cancelled` status; it writes `failed` itself when the helper exits or times out without writing a terminal status.
 
-On a repeated bootstrap, only `succeeded` with `exitCode=0`, `stage=init.complete`, ordered timestamps, and the current project root is terminal success. Otherwise the launcher resumes saved settings automatically: stages before a proven dump rerun 1C work, while `init.commit-dump` or later validates and commits the existing dump without repeating `/DumpConfigToFiles`.
+On a repeated bootstrap, `cancelled` is left untouched and never resumed automatically. Only `succeeded` with `exitCode=0`, `stage=init.complete`, ordered timestamps, and the current project root is terminal success; other incomplete/failed init stages are eligible for recovery. Stages before a proven dump rerun 1C work, while `init.commit-dump` or later validates and commits the existing dump without repeating `/DumpConfigToFiles`.
 
 1. Required software check with install suggestions.
 2. Git initialization when `.git` is absent.

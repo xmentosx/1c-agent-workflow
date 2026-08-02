@@ -737,7 +737,7 @@ $startedAt = Get-Date
 $reportedMissingStatus = $false
 while ($true) {
     $status = Read-RunStatus -Path $statusPath
-    if ($null -ne $status -and @("succeeded", "failed") -contains ([string]$status.status)) {
+    if ($null -ne $status -and @("succeeded", "failed", "cancelled") -contains ([string]$status.status)) {
         Write-Host "ITL helper finished: $($status.status)"
         Write-Host "Status file: $statusPath"
         Write-Host "Console log: $logPath"
@@ -749,6 +749,11 @@ while ($true) {
             if ($null -ne $status.exitCode) {
                 $exitCode = [int]$status.exitCode
             }
+            exit $exitCode
+        }
+        if ([string]$status.status -eq "cancelled") {
+            Write-Host "Initialization was cancelled by the developer. Do not restart it unless the developer explicitly requests initialization again."
+            $exitCode = ConvertTo-IntOrDefault -Value $status.exitCode -Default 2
             exit $exitCode
         }
         $userReport = [string](Get-RunStatusProperty -Status $status -Name "userReport" -Default "")
@@ -778,7 +783,7 @@ while ($true) {
     if ($process.HasExited) {
         Start-Sleep -Milliseconds 200
         $status = Read-RunStatus -Path $statusPath
-        if ($null -ne $status -and @("succeeded", "failed") -contains ([string]$status.status)) {
+        if ($null -ne $status -and @("succeeded", "failed", "cancelled") -contains ([string]$status.status)) {
             continue
         }
         $exitCode = ConvertTo-IntOrDefault -Value $process.ExitCode -Default 1

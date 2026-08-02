@@ -263,7 +263,7 @@ function Resolve-RunFilePath {
 
 function Write-RunStatus {
     param(
-        [ValidateSet("running", "succeeded", "failed")]
+        [ValidateSet("running", "succeeded", "failed", "cancelled")]
         [string]$Status,
         [object]$ExitCode = $null,
         [string]$ErrorMessage = ""
@@ -853,7 +853,7 @@ function Publish-Agent1cLifecycleOperationProcessEvidence {
 
 function Complete-Agent1cLifecycleOperation {
     param(
-        [ValidateSet("succeeded", "failed")]
+        [ValidateSet("succeeded", "failed", "cancelled")]
         [string]$Status,
         [int]$ExitCode,
         [string]$ErrorMessage = ""
@@ -872,8 +872,8 @@ function Complete-Agent1cLifecycleOperation {
     $record["status"] = $Status
     $record["updatedAt"] = $now
     $record["finishedAt"] = $now
-    $record["phase"] = $(if ($Status -eq "succeeded") { "complete" } else { "failed" })
-    $record["detail"] = $(if ($Status -eq "succeeded") { "Lifecycle operation completed." } else { $ErrorMessage })
+    $record["phase"] = $(if ($Status -eq "succeeded") { "complete" } elseif ($Status -eq "cancelled") { "cancelled" } else { "failed" })
+    $record["detail"] = $(if ($Status -eq "succeeded") { "Lifecycle operation completed." } elseif ($Status -eq "cancelled") { "Lifecycle operation cancelled by developer." } else { $ErrorMessage })
     $record["lastProcessId"] = $script:LastProcessId
     $record["lastLogPath"] = $(if ($script:LastLogPath) { [string]$script:LastLogPath } else { "" })
     $record["lastProcessMemoryLimitExceeded"] = [bool]$script:LastProcessMemoryLimitExceeded
@@ -3629,8 +3629,120 @@ function Confirm-InitWizardProjectRoot {
     Write-Section (Get-Agent1cUtf8Text "0JzQsNGB0YLQtdGAINC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNC4")
     Write-Host ((Get-Agent1cUtf8Text "0JrQvtGA0LXQvdGMINC/0YDQvtC10LrRgtCwOiA=") + $script:ProjectRoot)
     if (-not (Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0JjQvdC40YbQuNCw0LvQuNC30LjRgNC+0LLQsNGC0YwgMUMg0L/RgNC+0LXQutGCINCyINGN0YLQvtC5INC/0LDQv9C60LU/") -Default $true)) {
+        $script:InitCancelledByDeveloper = $true
+        Set-RunStage -Stage "init.cancelled" -Detail "Initialization cancelled by developer at project-root confirmation."
         throw "Init canceled by developer."
     }
+}
+
+function Get-SourceInfoBaseConnectionSettingsPath {
+    param([Parameter(Mandatory = $true)][string]$InfoBasePath)
+
+    $resolvedInfoBasePath = Resolve-InfoBasePath -Path $InfoBasePath
+    if ([string]::IsNullOrWhiteSpace($resolvedInfoBasePath)) {
+        return ""
+    }
+    return (Join-Path $resolvedInfoBasePath ".itl-source-credentials.json")
+}
+
+function Read-SourceInfoBaseConnectionSettings {
+    param([Parameter(Mandatory = $true)][string]$InfoBasePath)
+
+    $path = Get-SourceInfoBaseConnectionSettingsPath -InfoBasePath $InfoBasePath
+    if (-not $path -or -not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+
+    try {
+        $saved = Read-Utf8Text -Path $path | ConvertFrom-Json -ErrorAction Stop
+        $expectedNames = @("ibUser", "ibPassword", "repositoryPath", "repositoryUser", "repositoryPassword")
+        $actualNames = @($saved.PSObject.Properties.Name)
+        if ($actualNames.Count -ne $expectedNames.Count -or @($expectedNames | Where-Object { $actualNames -notcontains $_ }).Count -gt 0) {
+            throw "The saved connection file must contain exactly: $($expectedNames -join ', ')."
+        }
+        foreach ($name in $expectedNames) {
+            $value = $saved.PSObject.Properties[$name].Value
+            if ($null -ne $value -and $value -isnot [string]) {
+                throw "Saved connection value '$name' must be a JSON string or null."
+            }
+        }
+
+        $result = [pscustomobject][ordered]@{
+            ibUser = [string]$saved.ibUser
+            ibPassword = [string]$saved.ibPassword
+            repositoryPath = [string]$saved.repositoryPath
+            repositoryUser = [string]$saved.repositoryUser
+            repositoryPassword = [string]$saved.repositoryPassword
+        }
+        if ([string]::IsNullOrWhiteSpace($result.repositoryPath) -and
+            (-not [string]::IsNullOrWhiteSpace($result.repositoryUser) -or -not [string]::IsNullOrWhiteSpace($result.repositoryPassword))) {
+            throw "Saved repository credentials require a repositoryPath value."
+        }
+        if (-not [string]::IsNullOrWhiteSpace($result.repositoryPath) -and [string]::IsNullOrWhiteSpace($result.repositoryUser)) {
+            throw "Saved repositoryPath requires a repositoryUser value."
+        }
+        return $result
+    } catch {
+        Write-Warning ((Get-Agent1cUtf8Text "0J3QtSDRg9C00LDQu9C+0YHRjCDQv9GA0L7Rh9C40YLQsNGC0Ywg0YHQvtGF0YDQsNC90LXQvdC90YvQtSDQv9Cw0YDQsNC80LXRgtGA0Ysg0L/QvtC00LrQu9GO0YfQtdC90LjRjzsg0LzQsNGB0YLQtdGAINC30LDQv9GA0L7RgdC40YIg0LjRhSDQt9Cw0L3QvtCy0L4u") + " $($_.Exception.Message) File: $path")
+        return $null
+    }
+}
+
+function Save-SourceInfoBaseConnectionSettings {
+    param(
+        [Parameter(Mandatory = $true)][string]$InfoBasePath,
+        [Parameter(Mandatory = $true)][object]$Answers
+    )
+
+    Assert-InfoBaseAvailable -Kind "file" -Path $InfoBasePath -SettingName "source infobase"
+    $path = Get-SourceInfoBaseConnectionSettingsPath -InfoBasePath $InfoBasePath
+    $payload = [ordered]@{
+        ibUser = [string]$Answers.ibUser
+        ibPassword = [string]$Answers.ibPassword
+        repositoryPath = $(if ($Answers.sourceUsesRepository) { [string]$Answers.repositoryPath } else { "" })
+        repositoryUser = $(if ($Answers.sourceUsesRepository) { [string]$Answers.repositoryUser } else { "" })
+        repositoryPassword = $(if ($Answers.sourceUsesRepository) { [string]$Answers.repositoryPassword } else { "" })
+    }
+    Write-Utf8Text -Path $path -Value (($payload | ConvertTo-Json) + [Environment]::NewLine)
+    return $path
+}
+
+function Read-InitWizardFileInfoBaseAnswers {
+    $sourceInfoBasePath = Read-InitRequired (Get-Agent1cUtf8Text "0JrQsNGC0LDQu9C+0LMg0LjRgdGF0L7QtNC90L7QuSDRhNCw0LnQu9C+0LLQvtC5INC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30Ys=")
+    $settingsPath = Get-SourceInfoBaseConnectionSettingsPath -InfoBasePath $sourceInfoBasePath
+    $saved = Read-SourceInfoBaseConnectionSettings -InfoBasePath $sourceInfoBasePath
+    if ($null -ne $saved -and (Read-InitYesNo -Prompt ((Get-Agent1cUtf8Text "0JjRgdC/0L7Qu9GM0LfQvtCy0LDRgtGMINGB0L7RhdGA0LDQvdC10L3QvdGL0LUg0L/QsNGA0LDQvNC10YLRgNGLINC/0L7QtNC60LvRjtGH0LXQvdC40Y8g0Log0YTQsNC50LvQvtCy0L7QuSDQsdCw0LfQtT8g0KTQsNC50Ls6IA==") + $settingsPath) -Default $true)) {
+        Write-Host (Get-Agent1cUtf8Text "0KHQvtGF0YDQsNC90LXQvdC90YvQtSDQv9Cw0YDQsNC80LXRgtGA0Ysg0L/QvtC00LrQu9GO0YfQtdC90LjRjyDQt9Cw0LPRgNGD0LbQtdC90Ys7INCy0L7Qv9GA0L7RgdGLINC+INC/0L7Qu9GM0LfQvtCy0LDRgtC10LvRj9GFLCDQv9Cw0YDQvtC70Y/RhSDQuCDRhdGA0LDQvdC40LvQuNGJ0LUg0L/RgNC+0L/Rg9GJ0LXQvdGLLg==")
+        return [pscustomobject]@{
+            sourceInfoBasePath = $sourceInfoBasePath
+            sourceUsesRepository = -not [string]::IsNullOrWhiteSpace($saved.repositoryPath)
+            ibUser = $saved.ibUser
+            ibPassword = $saved.ibPassword
+            repositoryPath = $saved.repositoryPath
+            repositoryUser = $saved.repositoryUser
+            repositoryPassword = $saved.repositoryPassword
+            saveSourceConnectionSettings = $false
+        }
+    }
+
+    $sourceUsesRepository = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0JjRgdGF0L7QtNC90LDRjyDQuNC90YTQvtGA0LzQsNGG0LjQvtC90L3QsNGPINCx0LDQt9CwINC/0L7QtNC60LvRjtGH0LXQvdCwINC6INGF0YDQsNC90LjQu9C40YnRgyDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggMUM/") -Default $true
+    $result = [ordered]@{
+        sourceInfoBasePath = $sourceInfoBasePath
+        sourceUsesRepository = $sourceUsesRepository
+        ibUser = Read-InitOptional (Get-Agent1cUtf8Text "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30YsgKNC/0YPRgdGC0L4sINC10YHQu9C4INC90LUg0LjRgdC/0L7Qu9GM0LfRg9C10YLRgdGPKQ==")
+        ibPassword = ConvertFrom-OptionalPasswordAnswer (Read-InitOptional (Get-Agent1cUtf8Text "0J/QsNGA0L7Qu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30YsgKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk="))
+        repositoryPath = ""
+        repositoryUser = ""
+        repositoryPassword = ""
+        saveSourceConnectionSettings = $false
+    }
+    if ($sourceUsesRepository) {
+        $result.repositoryPath = Read-InitRequired (Get-Agent1cUtf8Text "0J/Rg9GC0Ywg0Log0YXRgNCw0L3QuNC70LjRidGDINC60L7QvdGE0LjQs9GD0YDQsNGG0LjQuA==")
+        $result.repositoryUser = Read-InitRequired (Get-Agent1cUtf8Text "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40Lg=")
+        $result.repositoryPassword = ConvertFrom-OptionalPasswordAnswer (Read-InitOptional (Get-Agent1cUtf8Text "0J/QsNGA0L7Qu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk="))
+    }
+    $result.saveSourceConnectionSettings = Read-InitYesNo -Prompt ((Get-Agent1cUtf8Text "0KHQvtGF0YDQsNC90LjRgtGMINC/0LDRgNCw0LzQtdGC0YDRiyDQv9C+0LTQutC70Y7Rh9C10L3QuNGPINGA0Y/QtNC+0Lwg0YEg0YTQsNC50LvQvtCy0L7QuSDQsdCw0LfQvtC5INCyINC+0YLQutGA0YvRgtC+0LwgSlNPTi3RhNCw0LnQu9C1PyDQpNCw0LnQuzog") + $settingsPath) -Default $true
+    return [pscustomobject]$result
 }
 
 function Read-InitWizardAnswersOnce {
@@ -3638,7 +3750,6 @@ function Read-InitWizardAnswersOnce {
     $platformPath = Read-InitPlatformPath
     $baseConfigurationVersion = Read-InitBaseConfigurationVersion
     $infoBaseKind = Read-InitInfoBaseKind
-    $sourceUsesRepository = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0JjRgdGF0L7QtNC90LDRjyDQuNC90YTQvtGA0LzQsNGG0LjQvtC90L3QsNGPINCx0LDQt9CwINC/0L7QtNC60LvRjtGH0LXQvdCwINC6INGF0YDQsNC90LjQu9C40YnRgyDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggMUM/") -Default $true
 
     $answers = [ordered]@{
         agentTarget = $agentTarget
@@ -3646,31 +3757,37 @@ function Read-InitWizardAnswersOnce {
         platformPath = $platformPath
         baseConfigurationVersion = $baseConfigurationVersion
         infoBaseKind = $infoBaseKind
-        sourceUsesRepository = $sourceUsesRepository
+        sourceUsesRepository = $false
+        sourceInfoBasePath = ""
+        sourceServerName = ""
+        sourceInfoBaseName = ""
         ibUser = ""
         ibPassword = ""
         repositoryPath = ""
         repositoryUser = ""
         repositoryPassword = ""
+        saveSourceConnectionSettings = $false
         webPublishByDefault = $false
         webPublishAuto = $false
         sourceInfoBaseUnsafeActionProtectionMode = "manual-confirm"
     }
 
     if ($infoBaseKind -eq "server") {
+        $answers.sourceUsesRepository = Read-InitYesNo -Prompt (Get-Agent1cUtf8Text "0JjRgdGF0L7QtNC90LDRjyDQuNC90YTQvtGA0LzQsNGG0LjQvtC90L3QsNGPINCx0LDQt9CwINC/0L7QtNC60LvRjtGH0LXQvdCwINC6INGF0YDQsNC90LjQu9C40YnRgyDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggMUM/") -Default $true
         $answers.sourceServerName = Read-InitRequired (Get-Agent1cUtf8Text "0JjQvNGPINGB0LXRgNCy0LXRgNCwIDFD")
         $answers.sourceInfoBaseName = Read-InitRequired (Get-Agent1cUtf8Text "0JjQvNGPINC40YHRhdC+0LTQvdC+0Lkg0LjQvdGE0L7RgNC80LDRhtC40L7QvdC90L7QuSDQsdCw0LfRiw==")
+        $answers.ibUser = Read-InitOptional (Get-Agent1cUtf8Text "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30YsgKNC/0YPRgdGC0L4sINC10YHQu9C4INC90LUg0LjRgdC/0L7Qu9GM0LfRg9C10YLRgdGPKQ==")
+        $answers.ibPassword = ConvertFrom-OptionalPasswordAnswer (Read-InitOptional (Get-Agent1cUtf8Text "0J/QsNGA0L7Qu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30YsgKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk="))
+        if ($answers.sourceUsesRepository) {
+            $answers.repositoryPath = Read-InitRequired (Get-Agent1cUtf8Text "0J/Rg9GC0Ywg0Log0YXRgNCw0L3QuNC70LjRidGDINC60L7QvdGE0LjQs9GD0YDQsNGG0LjQuA==")
+            $answers.repositoryUser = Read-InitRequired (Get-Agent1cUtf8Text "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40Lg=")
+            $answers.repositoryPassword = ConvertFrom-OptionalPasswordAnswer (Read-InitOptional (Get-Agent1cUtf8Text "0J/QsNGA0L7Qu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk="))
+        }
     } else {
-        $answers.sourceInfoBasePath = Read-InitRequired (Get-Agent1cUtf8Text "0JrQsNGC0LDQu9C+0LMg0LjRgdGF0L7QtNC90L7QuSDRhNCw0LnQu9C+0LLQvtC5INC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30Ys=")
-    }
-
-    $answers.ibUser = Read-InitOptional (Get-Agent1cUtf8Text "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30YsgKNC/0YPRgdGC0L4sINC10YHQu9C4INC90LUg0LjRgdC/0L7Qu9GM0LfRg9C10YLRgdGPKQ==")
-    $answers.ibPassword = ConvertFrom-OptionalPasswordAnswer (Read-InitOptional (Get-Agent1cUtf8Text "0J/QsNGA0L7Qu9GMINC40L3RhNC+0YDQvNCw0YbQuNC+0L3QvdC+0Lkg0LHQsNC30YsgKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk="))
-
-    if ($sourceUsesRepository) {
-        $answers.repositoryPath = Read-InitRequired (Get-Agent1cUtf8Text "0J/Rg9GC0Ywg0Log0YXRgNCw0L3QuNC70LjRidGDINC60L7QvdGE0LjQs9GD0YDQsNGG0LjQuA==")
-        $answers.repositoryUser = Read-InitRequired (Get-Agent1cUtf8Text "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40Lg=")
-        $answers.repositoryPassword = ConvertFrom-OptionalPasswordAnswer (Read-InitOptional (Get-Agent1cUtf8Text "0J/QsNGA0L7Qu9GMINGF0YDQsNC90LjQu9C40YnQsCDQutC+0L3RhNC40LPRg9GA0LDRhtC40LggKNC/0YPRgdGC0L4g0LjQu9C4ICctJyDQtdGB0LvQuCDQvdC1INC40YHQv9C+0LvRjNC30YPQtdGC0YHRjyk="))
+        $fileAnswers = Read-InitWizardFileInfoBaseAnswers
+        foreach ($property in $fileAnswers.PSObject.Properties) {
+            $answers[$property.Name] = $property.Value
+        }
     }
 
     $answers.dependencyMode = "fresh"
@@ -3721,6 +3838,15 @@ function Read-InitAnswersFromWizard {
         $answers = Read-InitWizardAnswersOnce
         Write-InitWizardAnswersSummary -Answers $answers
         if (Confirm-InitWizardAnswers) {
+            $saveSourceConnectionSettings = ConvertTo-YesNoBool -Value (Get-AnswerValue -Answers $answers -Names @("saveSourceConnectionSettings") -Default $false) -Default $false
+            if ($answers.infoBaseKind -eq "file" -and $saveSourceConnectionSettings) {
+                try {
+                    $savedPath = Save-SourceInfoBaseConnectionSettings -InfoBasePath $answers.sourceInfoBasePath -Answers $answers
+                    Write-Host ((Get-Agent1cUtf8Text "0J/QsNGA0LDQvNC10YLRgNGLINC/0L7QtNC60LvRjtGH0LXQvdC40Y8g0YHQvtGF0YDQsNC90LXQvdGLINCyINC+0YLQutGA0YvRgtC+0Lwg0LLQuNC00LU6IA==") + $savedPath)
+                } catch {
+                    Write-Warning ((Get-Agent1cUtf8Text "0J3QtSDRg9C00LDQu9C+0YHRjCDRgdC+0YXRgNCw0L3QuNGC0Ywg0L/QsNGA0LDQvNC10YLRgNGLINC/0L7QtNC60LvRjtGH0LXQvdC40Y87INC40L3QuNGG0LjQsNC70LjQt9Cw0YbQuNGPINC/0YDQvtC00L7Qu9C20LjRgtGB0Y8g0LHQtdC3INC+0LHRidC10LPQviDRhNCw0LnQu9CwLg==") + " $($_.Exception.Message)")
+                }
+            }
             return [pscustomobject]$answers
         }
 
