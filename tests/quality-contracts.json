@@ -3,7 +3,7 @@
   "baseline": {
     "testFiles": 36,
     "testCases": 581,
-    "testLines": 23500
+    "testLines": 24000
   },
   "budgets": {
     "smokeTargetSeconds": 60,
