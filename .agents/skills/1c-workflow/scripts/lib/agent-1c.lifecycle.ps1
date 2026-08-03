@@ -2745,6 +2745,17 @@ function Get-WorkflowUpdateClientSurfacePaths {
     return @($paths | Select-Object -Unique)
 }
 
+function Get-WorkflowUpdateTrackedInstalledClientConfigPaths {
+    $paths = [System.Collections.Generic.List[string]]::new()
+    foreach ($path in @(".kilo/kilo.json")) {
+        foreach ($trackedPath in @(Get-GitPathList -Arguments @("ls-files", "-z", "--", $path))) {
+            $normalized = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$trackedPath)
+            if (-not $paths.Contains($normalized)) { $paths.Add($normalized) }
+        }
+    }
+    return @($paths)
+}
+
 function Get-WorkflowUpdateManagedPathSpecs {
     param(
         [string[]]$AiRulesPathsBefore = @(),
@@ -2771,7 +2782,7 @@ function Get-WorkflowUpdateManagedPathSpecs {
         "USER-RULES.md",
         "LLM-RULES.md",
         "memory.md"
-    ) + @($AiRulesPathsBefore) + @($ClientSurfacePathsBefore) + @(Get-WorkflowUpdateClientSurfacePaths)) {
+    ) + @($AiRulesPathsBefore) + @($ClientSurfacePathsBefore) + @(Get-WorkflowUpdateClientSurfacePaths) + @(Get-WorkflowUpdateTrackedInstalledClientConfigPaths)) {
         if ([string]::IsNullOrWhiteSpace([string]$path)) { continue }
         $normalized = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$path)
         if (-not $paths.Contains($normalized)) { $paths.Add($normalized) }

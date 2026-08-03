@@ -895,18 +895,20 @@ local after
         }
     }
 
-    It "commits only allowlisted workflow update changes and preserves unrelated untracked files" {
+    It "commits an updated tracked Kilo config with allowlisted workflow changes and preserves unrelated untracked files" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-update-commit-" + [guid]::NewGuid().ToString("N"))
         try {
-            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".kilo") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot "AGENT-INSTALL.md") -Encoding UTF8 -Value "old"
             Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Encoding UTF8 -Value "project docs"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Encoding UTF8 -Value '{"custom":"before"}'
             & git -C $tempRoot init -b master *> $null
             & git -C $tempRoot config user.email "test@example.com"
             & git -C $tempRoot config user.name "Test User"
-            & git -C $tempRoot add AGENT-INSTALL.md README.md
+            & git -C $tempRoot add AGENT-INSTALL.md README.md .kilo/kilo.json
             & git -C $tempRoot commit -m init *> $null
             Set-Content -LiteralPath (Join-Path $tempRoot "AGENT-INSTALL.md") -Encoding UTF8 -Value "updated"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Encoding UTF8 -Value '{"custom":"updated"}'
             Set-Content -LiteralPath (Join-Path $tempRoot "scratch.local") -Encoding UTF8 -Value "keep"
 
             $result = & {
@@ -916,6 +918,7 @@ local after
 
             $result.created | Should -BeTrue
             ((& git -C $tempRoot log -1 --pretty=%s).Trim()) | Should -Be "chore: update ITL workflow to master@1234567"
+            ((& git -C $tempRoot show "HEAD:.kilo/kilo.json") -join [Environment]::NewLine) | Should -Match '"custom":"updated"'
             (Get-Content -LiteralPath (Join-Path $tempRoot "scratch.local") -Raw -Encoding UTF8) | Should -Match "keep"
             @(& git -C $tempRoot status --short) | Should -Be @("?? scratch.local")
         } finally {
@@ -934,6 +937,8 @@ local after
             & git -C $tempRoot add AGENT-INSTALL.md
             & git -C $tempRoot commit -m init *> $null
             $before = ((& git -C $tempRoot rev-list --count HEAD).Trim())
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".kilo") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Encoding UTF8 -Value '{"custom":"untracked"}'
 
             $execution = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
@@ -948,7 +953,7 @@ local after
             $execution.userReport | Should -Match "Push из проекта не выполнялся"
             $execution.userReport | Should -Match "/itl-refresh"
             ((& git -C $tempRoot rev-list --count HEAD).Trim()) | Should -Be $before
-            @(& git -C $tempRoot status --short).Count | Should -Be 0
+            @(& git -C $tempRoot status --short) | Should -Be @("?? .kilo/")
         } finally {
             if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
         }
