@@ -313,6 +313,64 @@ try {
         }
     }
 
+    It "preserves the exact child failure status across fresh-process stderr" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lifecycle-child-failure-" + [guid]::NewGuid().ToString("N"))
+        $childPath = Join-Path $tempRoot "failing-child.ps1"
+        $wrapperPath = Join-Path $tempRoot "invoke-parent.ps1"
+        $statusPath = Join-Path $tempRoot "status.json"
+        $logPath = Join-Path $tempRoot "console.log"
+        try {
+            Initialize-LifecycleLockTestRepository -Path $tempRoot
+            Set-Content -LiteralPath $childPath -Encoding UTF8 -Value @'
+param([string]$Action, [string]$ProjectRoot, [string]$RunStatusPath, [string]$RunLogPath, [string]$LifecyclePhase, [string]$OperationId, [int]$OperationOwnerPid, [switch]$OperationContinuation)
+$message = "REFRESH_TRACKED_STATE_UNEXPECTED: refresh changed tracked files other than the branch synchronization cursor: .kilo/kilo.json"
+$lifecyclePath = Join-Path $ProjectRoot ".agent-1c\locks\lifecycle-operation.json"
+$record = Get-Content -LiteralPath $lifecyclePath -Raw -Encoding UTF8 | ConvertFrom-Json
+$now = (Get-Date).ToString("o")
+$record | Add-Member -NotePropertyName status -NotePropertyValue "failed" -Force; $record | Add-Member -NotePropertyName phase -NotePropertyValue "refresh.load" -Force
+$record | Add-Member -NotePropertyName detail -NotePropertyValue $message -Force; $record | Add-Member -NotePropertyName errorMessage -NotePropertyValue $message -Force
+$record | Add-Member -NotePropertyName exitCode -NotePropertyValue 1 -Force; $record | Add-Member -NotePropertyName updatedAt -NotePropertyValue $now -Force
+$record | Add-Member -NotePropertyName finishedAt -NotePropertyValue $now -Force; $record | Add-Member -NotePropertyName continuationPid -NotePropertyValue $PID -Force
+$record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $lifecyclePath -Encoding UTF8
+[ordered]@{ schemaVersion=1; status="failed"; action=$Action; stage="refresh.load"; stageDetail="tracked state validation"; errorMessage=$message; errorCategory="runner"; requiredAction=""; exitCode=1; finishedAt=$now } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $RunStatusPath -Encoding UTF8
+[Console]::Error.WriteLine("ITL failure: status=failed; errorCategory=runner; requiredAction=none; completion=failed.")
+[Console]::Error.WriteLine($message)
+exit 1
+'@
+            Set-Content -LiteralPath $wrapperPath -Encoding UTF8 -Value @'
+param([string]$HelperPath, [string]$ProjectRoot, [string]$ChildPath, [string]$StatusPath, [string]$LogPath)
+. $HelperPath -ProjectRoot $ProjectRoot -Action help *> $null
+$Action = "refresh-dev-branch"
+$RunStatusPath = $StatusPath; $RunLogPath = $LogPath
+$script:ResolvedRunStatusPath = $StatusPath; $script:ResolvedRunLogPath = $LogPath
+$script:RunStartedAt = Get-Date
+$script:Agent1cReexecArguments = @("-Action", $Action, "-ProjectRoot", $ProjectRoot, "-RunStatusPath", $RunStatusPath, "-RunLogPath", $RunLogPath)
+Enter-Agent1cLifecycleOperation -RequestedAction $Action
+try {
+    Invoke-Agent1cFreshProcess -ScriptPath $ChildPath -AdditionalArguments @("-LifecyclePhase", "post-merge")
+} catch {
+    $errorMessage = $_.Exception.Message
+    Set-RunFailureContextFromMessage -Message $errorMessage -RequestedAction $Action
+    Complete-Agent1cLifecycleOperation -Status "failed" -ExitCode 1 -ErrorMessage $errorMessage
+    Write-RunStatus -Status "failed" -ExitCode 1 -ErrorMessage $errorMessage
+    exit 1
+} finally {
+    Exit-Agent1cLifecycleOperation
+}
+'@
+            $result = Invoke-TestPowerShellFile -FilePath $wrapperPath -Arguments @("-HelperPath", $HelperPath, "-ProjectRoot", $tempRoot, "-ChildPath", $childPath, "-StatusPath", $statusPath, "-LogPath", $logPath)
+            $result.exitCode | Should -Be 1
+            $status = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $status.status | Should -Be "failed"; $status.stage | Should -Be "refresh.load"
+            $status.errorCategory | Should -Be "runner"; $status.requiredAction | Should -BeNullOrEmpty
+            $status.errorMessage | Should -Be "REFRESH_TRACKED_STATE_UNEXPECTED: refresh changed tracked files other than the branch synchronization cursor: .kilo/kilo.json"
+            $lifecycle = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\locks\lifecycle-operation.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $lifecycle.status | Should -Be "failed"; $lifecycle.phase | Should -Be "refresh.load"; $lifecycle.errorMessage | Should -Be $status.errorMessage
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "rejects forged continuation arguments and treats unlocked running JSON as orphaned" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lifecycle-lock-orphan-" + [guid]::NewGuid().ToString("N"))
         try {

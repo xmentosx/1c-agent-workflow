@@ -16,7 +16,7 @@ Describe "ITL on-demand MCP facade" {
         Remove-Item -LiteralPath $ModuleFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    It "pins hash-verified full catalogs to compatible backend versions" {
+    It "pins compatible catalogs and uses main-worktree endpoint assets" {
         $manifest = Get-Content -LiteralPath (Join-Path $AssetRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         $manifest.facadeVersion | Should -Be "0.4.3"
         $manifest.minimumFacadeVersion | Should -Be "0.4.3"
@@ -52,6 +52,43 @@ Describe "ITL on-demand MCP facade" {
                 [string]$tool.name | Should -Not -BeNullOrEmpty
                 $null -eq $tool.inputSchema | Should -BeFalse
             }
+        }
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ondemand-main-helper-" + [guid]::NewGuid().ToString("N"))
+        $mainRoot = Join-Path $tempRoot "main"; $branchRoot = Join-Path $tempRoot "branch"
+        $oldExecutable = [Environment]::GetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", "Process")
+        try {
+            $workflowRoot = Join-Path $mainRoot ".agents\skills\1c-workflow"
+            New-Item -ItemType Directory -Force -Path (Join-Path $workflowRoot "scripts"), (Join-Path $workflowRoot "assets"), $mainRoot | Out-Null
+            Copy-Item -LiteralPath $AssetRoot -Destination (Join-Path $workflowRoot "assets\ondemand-mcp") -Recurse
+            Set-Content -LiteralPath (Join-Path $workflowRoot "scripts\agent-1c.ps1") -Encoding UTF8 -Value "param()"
+            Set-Content -LiteralPath (Join-Path $mainRoot "README.md") -Encoding UTF8 -Value "fixture"
+            & git -C $mainRoot init *> $null; & git -C $mainRoot config user.email "test@example.com"; & git -C $mainRoot config user.name "Test User"; & git -C $mainRoot add .
+            & git -C $mainRoot commit -m "base" *> $null
+            & git -C $mainRoot branch -M master
+            & git -C $mainRoot worktree add --quiet -b itldev/test $branchRoot master *> $null
+
+            $executable = Join-Path $tempRoot "itl-ondemand-mcp.exe"
+            Set-Content -LiteralPath $executable -Encoding ASCII -Value "fixture"
+            [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $executable, "Process")
+            $endpoints = & {
+                . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
+                Get-ItlOnDemandMcpEndpointDescriptors
+            }
+
+            @($endpoints).Count | Should -Be 2
+            $expectedHelper = [System.IO.Path]::GetFullPath((Join-Path $workflowRoot "scripts\agent-1c.ps1")); $expectedCatalogRoot = [System.IO.Path]::GetFullPath((Join-Path $workflowRoot "assets\ondemand-mcp\catalogs"))
+            foreach ($endpoint in @($endpoints)) {
+                $helperIndex = [Array]::IndexOf([object[]]$endpoint.args, "--helper"); $catalogIndex = [Array]::IndexOf([object[]]$endpoint.args, "--catalog")
+                $endpoint.args[$helperIndex + 1] | Should -Be $expectedHelper
+                [string]$endpoint.args[$catalogIndex + 1] | Should -Match ("^" + [regex]::Escape($expectedCatalogRoot))
+                $endpoint.args[$helperIndex + 1] | Should -Not -Match ([regex]::Escape($branchRoot))
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $oldExecutable, "Process")
+            if (Test-Path -LiteralPath $branchRoot -PathType Container -ErrorAction SilentlyContinue) {
+                & git -C $mainRoot worktree remove --force $branchRoot *> $null
+            }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 

@@ -362,11 +362,25 @@ function Set-RunFailureContext {
 }
 
 function Set-RunFailureContextFromMessage {
-    param([string]$Message)
+    param(
+        [string]$Message,
+        [AllowNull()][string]$RequestedAction = $null
+    )
 
     if ($script:RunErrorCategory -or [string]::IsNullOrWhiteSpace($Message)) { return }
     $category = "runner"
     $requiredAction = ""
+    if ($Message -match '^(?i:REFRESH_TRACKED_STATE_UNEXPECTED)\b') {
+        Set-RunFailureContext -Category $category
+        return
+    }
+
+    $verificationActions = @("check-dev-branch", "verify-dev-branch", "run-dev-branch-tests", "deploy-and-test")
+    if ($PSBoundParameters.ContainsKey("RequestedAction") -and $RequestedAction -notin $verificationActions) {
+        Set-RunFailureContext -Category $category
+        return
+    }
+
     if ($Message -match '(?i)(No Vanessa .*feature|features path was not found|missing-suite)') {
         $category = "missing-suite"
         $requiredAction = "/itl-verify-fix"
@@ -382,7 +396,7 @@ function Set-RunFailureContextFromMessage {
     } elseif ($Message -match '(?i)(event.?log)') {
         $category = "event-log"
         $requiredAction = "/itl-verify-fix"
-    } elseif ($Message -match '(?i)(assert|expected|verification failed)') {
+    } elseif ($Message -match '(?i)(\bassert(?:ion)?\b|\bexpected\b|verification failed)') {
         $category = "product-assertion"
         $requiredAction = "/itl-verify-fix"
     }
