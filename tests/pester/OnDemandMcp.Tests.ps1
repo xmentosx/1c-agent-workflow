@@ -85,8 +85,14 @@ Describe "ITL on-demand MCP facade" {
             }
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $oldExecutable, "Process")
-            if (Test-Path -LiteralPath $branchRoot -PathType Container -ErrorAction SilentlyContinue) {
-                & git -C $mainRoot worktree remove --force $branchRoot *> $null
+            $previousPreference = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                if (Test-Path -LiteralPath $branchRoot -PathType Container -ErrorAction SilentlyContinue) {
+                    & git -C $mainRoot worktree remove --force --force $branchRoot *> $null
+                }
+            } finally {
+                $ErrorActionPreference = $previousPreference
             }
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

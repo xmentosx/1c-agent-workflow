@@ -115,7 +115,7 @@
             @{ path = "AGENTS.md"; maxWords = 950; reviewApproxTokens = 1500; maxApproxTokens = 1700; rationale = "source-maintainer router plus source delivery, cross-process lock, and component release contracts" },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1600; rationale = "routine helper router" },
-            @{ path = "templates\USER-RULES.append.md"; maxWords = 750; reviewApproxTokens = 1200; maxApproxTokens = 1400; rationale = "always-on ITL safety overlay" },
+            @{ path = "templates\USER-RULES.append.md"; maxWords = 750; reviewApproxTokens = 1200; maxApproxTokens = 1600; rationale = "always-on ITL safety overlay" },
             @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 1000; reviewApproxTokens = 1600; maxApproxTokens = 1800; rationale = "on-demand command menu" },
             @{ path = ".agents\skills\1c-workflow\references\vanessa-tests.md"; maxWords = 1400; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "on-demand Vanessa authoring contract" }
         )
@@ -200,6 +200,17 @@
         $skillReferences = [regex]::Matches($userRulesText, '\.agents/skills/([^/]+)/SKILL\.md') | ForEach-Object { $_.Groups[1].Value }
         foreach ($skillId in $skillReferences) {
             $installedSkillIds | Should -Contain $skillId
+        }
+        foreach ($marker in @(
+            'shared across projects, not project memory',
+            'verified, non-confidential facts safe and useful across unrelated projects',
+            'project-specific facts and corrections in that project''s `memory.md`',
+            'correction capture never requires shared `remember`',
+            'Do not run shared `recall` by default',
+            'verify results against the current project',
+            '`templatesearch` is unaffected'
+        )) {
+            $userRulesText | Should -Match ([regex]::Escape($marker))
         }
     }
 

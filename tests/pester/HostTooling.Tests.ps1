@@ -67,6 +67,17 @@
         $output = & node $testPath 2>&1
         $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
         ($output -join [Environment]::NewLine) | Should -Match "unit contract passed"
+        $contract = Get-Content -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\tools-contract.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        $maximumLength = [int]$contract.descriptionPolicy.maximumApprovedDescriptionCharacters
+        $remember = [string]$contract.servers.templates.toolDescriptions.remember.compact
+        $recall = [string]$contract.servers.templates.toolDescriptions.recall.compact
+
+        $remember | Should -Match 'shared cross-project memory'
+        $remember | Should -Match 'Never use it for project-specific facts'
+        $recall | Should -Match 'shared cross-project memory'
+        $recall | Should -Match 'verify results against the current project'
+        $remember.Length | Should -BeLessOrEqual $maximumLength
+        $recall.Length | Should -BeLessOrEqual $maximumLength
     }
 
     It "bounds BookStack MCP responses and keeps explicit continuation" {

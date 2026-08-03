@@ -108,7 +108,7 @@
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/McpConfig.Tests.ps1",
-      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1", ".agents/skills/1c-workflow/assets/ondemand-mcp/*", "mcp-host/*", "tools/*"],
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1", ".agents/skills/1c-workflow/assets/ondemand-mcp/*", "mcp-host/*", "vibecoding1c-mcp-host/*", "tools/*"],
       "tests": ["tests/pester/McpConfig.Tests.ps1", "tests/pester/OnDemandMcp.Tests.ps1", "tests/pester/HostTooling.Tests.ps1"]
     },
     {
