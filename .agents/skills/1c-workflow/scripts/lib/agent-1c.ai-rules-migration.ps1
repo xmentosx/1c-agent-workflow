@@ -77,6 +77,77 @@ function Get-AiRulesUtf8Sha256 {
     }
 }
 
+function Test-AiRulesUserRulesMatchesControlledSourcePrefix {
+    param([string]$Text)
+
+    $manifestPath = Join-Path $script:ProjectRoot ".ai-rules.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        return $false
+    }
+    try {
+        $manifest = Read-Utf8Text -Path $manifestPath | ConvertFrom-Json
+    } catch {
+        return $false
+    }
+    $sourceRoot = [string](Get-ConfigValueFromObject -Object $manifest -Path "source" -Default "")
+    $currentRef = [string](Get-ConfigValue -Path "aiRules.ref" -Default "")
+    $currentRepo = [string](Get-ConfigValue -Path "aiRules.repo" -Default "")
+    $currentEntry = Get-DependencyLockEntry -Name "aiRules1c"
+    $currentCommit = [string](Get-ConfigValueFromObject -Object $currentEntry -Path "commit" -Default "")
+    if (-not $sourceRoot -or -not $currentRef -or -not $currentCommit -or
+        [string](Get-ConfigValueFromObject -Object $manifest -Path "version" -Default "") -ne $currentRef -or
+        -not (Test-AiRules1cForkRepository -Repo $currentRepo) -or
+        -not (Test-Path -LiteralPath (Join-Path $sourceRoot ".git"))) {
+        return $false
+    }
+
+    $sourceHead = @(& git -C $sourceRoot rev-parse HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $sourceHead.Count -ne 1 -or [string]$sourceHead[0] -ne $currentCommit) {
+        return $false
+    }
+    $sourceStatus = @(& git -C $sourceRoot status --porcelain --untracked-files=no 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $sourceStatus.Count -ne 0) {
+        return $false
+    }
+    $sourceOrigin = @(& git -C $sourceRoot remote get-url origin 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $sourceOrigin.Count -ne 1 -or
+        (Get-AiRules1cRepositoryIdentity -Repo ([string]$sourceOrigin[0])) -ne (Get-AiRules1cRepositoryIdentity -Repo $currentRepo)) {
+        return $false
+    }
+
+    $sourcePath = Join-Path $sourceRoot "USER-RULES.md"
+    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+        return $false
+    }
+    $sourceText = Read-Utf8Text -Path $sourcePath
+    $legacyHeadingMatches = [regex]::Matches($sourceText, '(?m)^## ITL hard gates\s*$')
+    if ($legacyHeadingMatches.Count -ne 1) {
+        return $false
+    }
+    $legacyHeading = $legacyHeadingMatches[0]
+    if ([string]::IsNullOrWhiteSpace($sourceText.Substring($legacyHeading.Index + $legacyHeading.Length))) {
+        return $false
+    }
+
+    $startMarker = "<!-- ITL-WORKFLOW-USER-RULES:START -->"
+    $endMarker = "<!-- ITL-WORKFLOW-USER-RULES:END -->"
+    if ([regex]::Matches($Text, [regex]::Escape($startMarker)).Count -ne 1 -or
+        [regex]::Matches($Text, [regex]::Escape($endMarker)).Count -ne 1) {
+        return $false
+    }
+    $managedMatch = [regex]::Match($Text, "(?s)" + [regex]::Escape($startMarker) + ".*?" + [regex]::Escape($endMarker))
+    if (-not $managedMatch.Success) {
+        return $false
+    }
+    $outsideOverlay = $Text.Substring(0, $managedMatch.Index) + $Text.Substring($managedMatch.Index + $managedMatch.Length)
+    $sourcePrefix = $sourceText.Substring(0, $legacyHeading.Index)
+    $normalize = {
+        param([string]$Value)
+        return ([regex]::Replace($Value, "\r\n?|\n", "`n")).Trim()
+    }
+    return (& $normalize $outsideOverlay) -ceq (& $normalize $sourcePrefix)
+}
+
 function Test-AiRulesUserRulesContainsOnlyWorkflowOverlayChange {
     param([object]$ManifestEntry)
 
@@ -122,7 +193,7 @@ function Test-AiRulesUserRulesContainsOnlyWorkflowOverlayChange {
             return $true
         }
     }
-    return $false
+    return (Test-AiRulesUserRulesMatchesControlledSourcePrefix -Text $text)
 }
 
 function Clear-StaleAiRulesUserRulesModifiedIfWorkflowOwned {

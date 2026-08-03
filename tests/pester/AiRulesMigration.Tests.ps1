@@ -197,6 +197,49 @@ Describe "ai_rules_1c migration planning" {
         }
     }
 
+    It "clears a USER-RULES marker when the ITL overlay replaced an exact legacy controlled-fork section" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-user-rules-controlled-" + [guid]::NewGuid().ToString("N"))
+        $sourceRoot = "$tempRoot-source"
+        try {
+            New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
+            $prefix = "# User Rules`r`n`r`n## Migrated content from a previous setup`r`n`r`n<!-- start of migrated content -->`r`n<!-- end of migrated content -->`r`n`r`n"
+            $legacySource = $prefix + "## ITL hard gates`r`n`r`n- Legacy managed rule.`r`n"
+            [IO.File]::WriteAllText((Join-Path $sourceRoot "USER-RULES.md"), $legacySource, (New-Object Text.UTF8Encoding $false))
+            & git -C $sourceRoot init *> $null
+            & git -C $sourceRoot config user.email "test@example.com"
+            & git -C $sourceRoot config user.name "Test User"
+            & git -C $sourceRoot add USER-RULES.md
+            & git -C $sourceRoot commit -m fixture *> $null
+            & git -C $sourceRoot remote add origin "https://github.com/xmentosx/itl_ai_rules_1c.git"
+            $currentCommit = (& git -C $sourceRoot rev-parse HEAD).Trim()
+            $currentRef = "itl-main-fixture-r18"
+
+            New-AiRulesMigrationFixture -Root $tempRoot `
+                -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" -CurrentRef $currentRef `
+                -CurrentCommit $currentCommit -CurrentUpstreamCommit "5ae333ed49dc66989e305b286acc93691bb96926" -CurrentDownstreamRevision 18
+            $overlay = "<!-- ITL-WORKFLOW-USER-RULES:START -->`r`n## 1C Project Lifecycle`r`nManaged by ITL.`r`n<!-- ITL-WORKFLOW-USER-RULES:END -->"
+            [IO.File]::WriteAllText((Join-Path $tempRoot "USER-RULES.md"), ($prefix + $overlay + "`r`n"), (New-Object Text.UTF8Encoding $false))
+            $manifestPath = Join-Path $tempRoot ".ai-rules.json"
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $manifest | Add-Member -NotePropertyName source -NotePropertyValue $sourceRoot -Force
+            $manifest | Add-Member -NotePropertyName version -NotePropertyValue $currentRef -Force
+            $manifest.files | Add-Member -NotePropertyName "USER-RULES.md" -NotePropertyValue ([pscustomobject]@{
+                source = "USER-RULES.md"
+                template = $true
+                installedHash = ("0" * 64)
+                userModified = $true
+            })
+            Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
+
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $plan.status | Should -Be "eligible"
+            $updatedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $updatedManifest.files.'USER-RULES.md'.userModified | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot, $sourceRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "clears a USER-RULES marker when the file contains only the ITL overlay" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-user-rules-only-overlay-" + [guid]::NewGuid().ToString("N"))
         try {
