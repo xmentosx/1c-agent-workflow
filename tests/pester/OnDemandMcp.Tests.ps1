@@ -306,12 +306,23 @@ Describe "ITL on-demand MCP facade" {
     }
 
     It "does not reacquire the runtime lock from nested facade broker operations" {
-        foreach ($action in @(
-            "internal-ondemand-ensure",
-            "internal-ondemand-ensure-test-client",
-            "internal-ondemand-recover",
-            "internal-ondemand-stop"
-        )) {
+        $tokens = $null
+        $parseErrors = $null
+        $entrypointAst = [Management.Automation.Language.Parser]::ParseFile($HelperPath, [ref]$tokens, [ref]$parseErrors)
+        @($parseErrors) | Should -BeNullOrEmpty
+        $operationParameter = @($entrypointAst.ParamBlock.Parameters | Where-Object {
+            $_.Name.VariablePath.UserPath -eq "InternalOnDemandOperation"
+        })
+        $operationParameter.Count | Should -Be 1
+        $validateSet = @($operationParameter[0].Attributes | Where-Object {
+            $_.TypeName.Name -eq "ValidateSet"
+        })
+        $validateSet.Count | Should -Be 1
+        $brokerOperations = @($validateSet[0].PositionalArguments | ForEach-Object { [string]$_.Value } | Where-Object { $_ })
+        $brokerOperations | Should -Contain "mark-running"
+
+        foreach ($operation in @($brokerOperations | Where-Object { $_ -ne "stop-all" })) {
+            $action = "internal-ondemand-$operation"
             Test-Agent1cActionRequiresLifecycleLock -RequestedAction $action | Should -BeFalse -Because "$action runs inside the facade-owned runtime lease"
         }
         Test-Agent1cActionRequiresLifecycleLock -RequestedAction "internal-ondemand-stop-all" | Should -BeTrue
