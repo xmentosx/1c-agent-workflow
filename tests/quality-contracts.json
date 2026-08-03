@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "baseline": {
-    "testFiles": 38,
-    "testCases": 607,
-    "testLines": 24900
+    "testFiles": 39,
+    "testCases": 624,
+    "testLines": 25700
   },
   "budgets": {
     "smokeTargetSeconds": 60,
@@ -74,6 +74,15 @@
       "primaryTest": "tests/pester/DevBranchLifecycle.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/run-*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.bootstrap.ps1"],
       "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/PortRegistryLifecycle.Tests.ps1", "tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1", "tests/pester/CompactItlRunner.Tests.ps1", "tests/pester/DesignerCompletion.Tests.ps1", "tests/pester/DesignerMemoryGuard.Tests.ps1", "tests/pester/FormElementContext.Tests.ps1", "tests/pester/UiTools.Tests.ps1"]
+    },
+    {
+      "id": "roctup-port-lifecycle",
+      "owner": "ROCTUP managed port lifecycle",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/RoctupPortLifecycle.Tests.ps1",
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.roctup-mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1"],
+      "tests": ["tests/pester/RoctupPortLifecycle.Tests.ps1"]
     },
     {
       "id": "branch-refresh-result",
