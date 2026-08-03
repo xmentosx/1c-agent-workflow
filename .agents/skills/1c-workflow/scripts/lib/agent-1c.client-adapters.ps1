@@ -249,6 +249,35 @@ function Get-ItlActiveClient {
     return [string]$configured[0]
 }
 
+function Get-KiloFastSkillProvenance {
+    $relativePath = ".agents\skills\1c-workflow-fast\SKILL.md"
+    $path = Join-Path $script:ProjectRoot $relativePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "ITL_KILO_SKILL_MISSING: expected installed skill was not found: $relativePath"
+    }
+    $text = Read-Utf8Text -Path $path
+    $match = [regex]::Match($text, '(?m)^<!-- ITL_KILO_SKILL_CONTRACT:\s*(?<contract>[A-Za-z0-9._-]+)\s*-->\r?$')
+    if (-not $match.Success) {
+        throw "ITL_KILO_SKILL_CONTRACT_MISSING: $relativePath has no ITL_KILO_SKILL_CONTRACT marker."
+    }
+    return [pscustomobject][ordered]@{
+        path = $relativePath.Replace("\", "/")
+        contract = [string]$match.Groups["contract"].Value
+        sha256 = (Get-ItlFileSha256 -Path $path).ToLowerInvariant()
+    }
+}
+
+function Write-KiloClientSkillProvenanceStatusLines {
+    try {
+        if ((Get-ItlActiveClient) -ne "kilocode") { return }
+        $provenance = Get-KiloFastSkillProvenance
+        Write-Host "Kilo expected skill: $($provenance.path); contract=$($provenance.contract); sha256=$($provenance.sha256)"
+        Write-Host "Kilo loaded skill: not observable through an ITL API. If Kilo behavior disagrees with this provenance, run /reload before treating it as a workflow source defect."
+    } catch {
+        Write-Host "Kilo skill provenance: diagnostic unavailable: $($_.Exception.Message)"
+    }
+}
+
 function ConvertTo-ItlActiveClientCommandText {
     param([string]$Text)
 
@@ -1381,6 +1410,18 @@ function Show-ItlDoctor {
     $itlSkills = @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")
     $missingSkills = @($itlSkills | Where-Object { -not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".agents\skills\$_\SKILL.md") -PathType Leaf) })
     $checks.Add([pscustomobject]@{ status = $(if ($missingSkills.Count -eq 0) { "OK" } else { "FAIL" }); name = "itl-skills"; detail = $(if ($missingSkills.Count -eq 0) { "all five installed" } else { "missing: $($missingSkills -join ', ')" }) })
+    if ($client -eq "kilocode") {
+        try {
+            $provenance = Get-KiloFastSkillProvenance
+            $checks.Add([pscustomobject]@{
+                status = "OK"
+                name = "kilo-skill-provenance"
+                detail = "expected=$($provenance.path); contract=$($provenance.contract); sha256=$($provenance.sha256); loaded-cache-hash=not-observable; reload-only-on-observed-mismatch"
+            })
+        } catch {
+            $checks.Add([pscustomobject]@{ status = "FAIL"; name = "kilo-skill-provenance"; detail = $_.Exception.Message })
+        }
+    }
     $openSpec = Get-AiRules1cOpenSpecStatus
     $openSpecDetail = if ($openSpec.isAvailable) {
         "mode=$($openSpec.mode); cli=$(if ($openSpec.cliAvailable) { $openSpec.cliPath } else { '<not-detected>' })$(if ($openSpec.reason) { "; $($openSpec.reason)" } else { '' })"

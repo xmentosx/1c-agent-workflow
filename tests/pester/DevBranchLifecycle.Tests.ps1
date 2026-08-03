@@ -2440,6 +2440,7 @@
                     devBranchName = "Current Branch"
                     safeDevBranchName = "current-branch"
                     devBranch = "itldev/current-branch"
+                    vanessaTestPortLeaseToken = "current-branch-token"
                 }
                 Resolve-VanessaTestPort -State $state
             } | Should -Be ($basePort + 1)
@@ -2454,6 +2455,7 @@
                     devBranchName = "Current Branch"
                     safeDevBranchName = "current-branch"
                     devBranch = "itldev/current-branch"
+                    vanessaTestPortLeaseToken = "current-branch-token"
                 }
                 Resolve-VanessaTestPort -State $state
             } | Should -Be ($basePort + 1)
@@ -2479,6 +2481,7 @@
                     devBranch = "itldev/current-branch"
                     devBranchInfoBasePath = Join-Path $tempRoot "ib"
                     worktreePath = $tempRoot
+                    vanessaTestPortLeaseToken = "current-branch-token"
                 }
                 Resolve-VanessaTestPort -State $state
             } | Should -Be ($basePort + 1)
@@ -2490,6 +2493,7 @@
                     safeDevBranchName = "saved-branch"
                     devBranch = "itldev/saved-branch"
                     vanessaTestPort = $basePort
+                    vanessaTestPortLeaseToken = "saved-branch-token"
                 }
                 Resolve-VanessaTestPort -State $state
             } | Should -Be $basePort
@@ -3517,7 +3521,10 @@ if (`$?) { exit 0 } else { exit 1 }
                 }
                 function Start-Sleep {}
 
-                Stop-OwnVanessaTestProcessesAndAssert -State $state 6>$null
+                $cleanup = Stop-OwnVanessaTestProcesses -State $state -BranchWide 6>$null
+                if ($cleanup.errors.Count -gt 0 -or $cleanup.remaining.Count -gt 0) {
+                    throw "branch-wide cleanup fixture failed"
+                }
                 @($script:StoppedIds)
             }
 

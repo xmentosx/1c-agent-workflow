@@ -351,7 +351,7 @@ function Set-RunResultArtifacts {
 
 function Set-RunFailureContext {
     param(
-        [ValidateSet("", "missing-suite", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "ai-rules-migration-blocked")]
+        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "ai-rules-migration-blocked")]
         [string]$Category = "",
         [string]$RequiredAction = ""
     )
@@ -368,6 +368,9 @@ function Set-RunFailureContextFromMessage {
     $requiredAction = ""
     if ($Message -match '(?i)(No Vanessa .*feature|features path was not found|missing-suite)') {
         $category = "missing-suite"
+        $requiredAction = "/itl-verify-fix"
+    } elseif ($Message -match '^ITL_VANESSA_TEST_FIXTURE_') {
+        $category = "test-fixture"
         $requiredAction = "/itl-verify-fix"
     } elseif ($Message -match '(?i)(undefined step|step.+not found|unsupported-step)') {
         $category = "unsupported-step"

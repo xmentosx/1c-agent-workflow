@@ -593,7 +593,7 @@ function Stop-RoctupMcpForState {
             $owned = $processInfo.Count -eq 1 -and
                 (Test-OneCProcessBelongsToState -ProcessInfo $processInfo[0] -State $State) -and
                 ([string]$processInfo[0].commandLine -match '(?i)startup\s*;\s*mode=embedded') -and
-                (Test-CommandLineContainsPort -CommandLine ([string]$processInfo[0].commandLine) -Port ([int]$runtime.port))
+                (Test-CommandLineContainsMcpPort -CommandLine ([string]$processInfo[0].commandLine) -Port ([int]$runtime.port))
             if (-not $owned) {
                 throw "ITL_LEGACY_MCP_OWNERSHIP_MISMATCH: refusing to stop unverified ROCTUP PID $($runtime.pid)."
             }

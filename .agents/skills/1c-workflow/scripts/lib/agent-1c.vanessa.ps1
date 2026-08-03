@@ -1,4 +1,4 @@
-function Get-VanessaInstallRoot {
+﻿function Get-VanessaInstallRoot {
     $legacyRelative = ".agent-1c/tools/vanessa-automation"
     $currentRelative = ".agent-1c/tools/va"
     $value = Get-Setting -EnvName "VANESSA_AUTOMATION_ROOT" -ConfigName "vanessaAutomation.installRoot" -Default $currentRelative
@@ -419,6 +419,441 @@ function Get-VanessaFeatureFiles {
     }
 
     return @(Get-ChildItem -LiteralPath $resolvedPath -Recurse -File -Filter "*.feature" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+}
+
+function ConvertTo-VanessaTagFilterList {
+    param([AllowNull()][string]$Value)
+
+    $result = New-Object System.Collections.Generic.List[string]
+    $seen = @{}
+    foreach ($part in @([regex]::Split([string]$Value, '[,;]'))) {
+        $tag = ([string]$part).Trim()
+        while ($tag.StartsWith("@", [System.StringComparison]::Ordinal)) {
+            $tag = $tag.Substring(1).TrimStart()
+        }
+        if (-not $tag) { continue }
+        $key = $tag.ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $result.Add($tag)
+    }
+    return @($result.ToArray())
+}
+
+function ConvertFrom-VanessaFeatureTableRow {
+    param([string]$Line)
+
+    $trimmed = ([string]$Line).Trim()
+    if (-not ($trimmed.StartsWith("|") -and $trimmed.EndsWith("|"))) {
+        return @()
+    }
+    $inner = $trimmed.Substring(1, $trimmed.Length - 2)
+    return @($inner.Split("|") | ForEach-Object { ([string]$_).Trim().Trim("'", '"') })
+}
+
+function Get-VanessaFeatureScenarioDefinitions {
+    param([string[]]$FeatureFiles)
+
+    $scenarios = New-Object System.Collections.Generic.List[object]
+    foreach ($featureFile in @($FeatureFiles)) {
+        $featureTags = @()
+        $pendingTags = New-Object System.Collections.Generic.List[string]
+        $current = $null
+        $inExamples = $false
+        $exampleHeaders = @()
+
+        foreach ($line in @(Get-Content -LiteralPath $featureFile -Encoding UTF8)) {
+            if ($line -match '^\s*@') {
+                foreach ($token in @([regex]::Matches($line, '@(?<tag>[^\s@]+)'))) {
+                    $pendingTags.Add([string]$token.Groups['tag'].Value)
+                }
+                continue
+            }
+
+            if ($line -match '^\s*(?:Функционал|Feature)\s*:') {
+                $featureTags = @($pendingTags.ToArray())
+                $pendingTags.Clear()
+                continue
+            }
+
+            $scenarioMatch = [regex]::Match(
+                $line,
+                '^\s*(?<kind>Структура\s+сценария|Сценарий-шаблон|Scenario\s+Outline|Scenario\s+Template|Сценарий|Scenario)\s*:\s*(?<name>.*)$',
+                [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+            )
+            if ($scenarioMatch.Success) {
+                if ($null -ne $current) { $scenarios.Add($current) }
+                $kind = [string]$scenarioMatch.Groups['kind'].Value
+                $current = [pscustomobject][ordered]@{
+                    source = $featureFile
+                    name = ([string]$scenarioMatch.Groups['name'].Value).Trim()
+                    isOutline = ($kind -match '(?i)Структура|шаблон|Outline|Template')
+                    tags = @($featureTags + @($pendingTags.ToArray()))
+                    steps = (New-Object System.Collections.Generic.List[string])
+                    exampleRows = (New-Object System.Collections.Generic.List[object])
+                }
+                $pendingTags.Clear()
+                $inExamples = $false
+                $exampleHeaders = @()
+                continue
+            }
+
+            if ($null -eq $current) { continue }
+            if ($line -match '^\s*(?:Примеры|Examples|Scenarios)\s*:') {
+                $inExamples = $true
+                $exampleHeaders = @()
+                continue
+            }
+            if ($inExamples -and $line -match '^\s*\|') {
+                $cells = @(ConvertFrom-VanessaFeatureTableRow -Line $line)
+                if ($exampleHeaders.Count -eq 0) {
+                    $exampleHeaders = @($cells)
+                } elseif ($cells.Count -eq $exampleHeaders.Count) {
+                    $values = @{}
+                    for ($index = 0; $index -lt $exampleHeaders.Count; $index++) {
+                        $values[[string]$exampleHeaders[$index]] = [string]$cells[$index]
+                    }
+                    $current.exampleRows.Add([pscustomobject]$values)
+                }
+                continue
+            }
+            if ($inExamples -and -not [string]::IsNullOrWhiteSpace($line)) {
+                $inExamples = $false
+                $exampleHeaders = @()
+            }
+            if (-not [string]::IsNullOrWhiteSpace($line)) {
+                $current.steps.Add([string]$line)
+            }
+        }
+        if ($null -ne $current) { $scenarios.Add($current) }
+    }
+    return @($scenarios.ToArray())
+}
+
+function Get-VanessaScenarioInstances {
+    param([object]$Scenario)
+
+    if (-not $Scenario.isOutline) {
+        return @([pscustomobject]@{ values = @{} })
+    }
+    return @($Scenario.exampleRows.ToArray() | ForEach-Object { [pscustomobject]@{ values = $_ } })
+}
+
+function Resolve-VanessaScenarioValue {
+    param(
+        [string]$Value,
+        [object]$ExampleValues
+    )
+
+    $match = [regex]::Match(([string]$Value).Trim(), '^<(?<name>[^>]+)>$')
+    if (-not $match.Success) {
+        return [pscustomobject]@{ resolved = $true; value = ([string]$Value).Trim(); placeholder = "" }
+    }
+    $placeholder = [string]$match.Groups['name'].Value
+    if ($null -ne $ExampleValues) {
+        $property = $ExampleValues.PSObject.Properties[$placeholder]
+        if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+            return [pscustomobject]@{ resolved = $true; value = ([string]$property.Value).Trim(); placeholder = $placeholder }
+        }
+    }
+    return [pscustomobject]@{ resolved = $false; value = ""; placeholder = $placeholder }
+}
+
+function Get-VanessaFeatureTestClientRequirements {
+    param(
+        [string[]]$FeatureFiles,
+        [string]$FilterTags = ""
+    )
+
+    $requiredProfiles = @{}
+    $unresolved = New-Object System.Collections.Generic.List[object]
+    $maximumConcurrency = 0
+    $normalizedFilterTags = @(ConvertTo-VanessaTagFilterList -Value $FilterTags)
+    $wantedTags = @{}
+    foreach ($filterTag in $normalizedFilterTags) { $wantedTags[$filterTag.ToLowerInvariant()] = $true }
+    foreach ($scenario in @(Get-VanessaFeatureScenarioDefinitions -FeatureFiles $FeatureFiles)) {
+        if ($wantedTags.Count -gt 0) {
+            $selectedByTag = $false
+            foreach ($scenarioTag in @($scenario.tags)) {
+                if ($wantedTags.ContainsKey(([string]$scenarioTag).ToLowerInvariant())) {
+                    $selectedByTag = $true
+                    break
+                }
+            }
+            if (-not $selectedByTag) { continue }
+        }
+        $instances = @(Get-VanessaScenarioInstances -Scenario $scenario)
+        if ($scenario.isOutline -and $instances.Count -eq 0) {
+            $unresolved.Add([pscustomobject][ordered]@{
+                source = $scenario.source
+                scenario = $scenario.name
+                placeholder = "<examples>"
+                reason = "scenario-outline-has-no-example-rows"
+            })
+            continue
+        }
+        foreach ($instance in $instances) {
+            $active = @{}
+            foreach ($step in @($scenario.steps.ToArray())) {
+                $connect = [regex]::Match($step, '(?i)подключаю\s+профиль\s+TestClient\s+["''](?<name>[^"'']+)["'']')
+                if ($connect.Success) {
+                    $resolved = Resolve-VanessaScenarioValue -Value $connect.Groups['name'].Value -ExampleValues $instance.values
+                    if (-not $resolved.resolved) {
+                        $unresolved.Add([pscustomobject][ordered]@{
+                            source = $scenario.source
+                            scenario = $scenario.name
+                            placeholder = "<$($resolved.placeholder)>"
+                            reason = "profile-placeholder-is-not-resolved-by-examples"
+                        })
+                        continue
+                    }
+                    $requiredProfiles[$resolved.value.ToLowerInvariant()] = $resolved.value
+                    $active[$resolved.value.ToLowerInvariant()] = $resolved.value
+                    $maximumConcurrency = [Math]::Max($maximumConcurrency, $active.Count)
+                    continue
+                }
+
+                $close = [regex]::Match($step, '(?i)закрываю\s+TestClient\s+["''](?<name>[^"'']+)["'']')
+                if ($close.Success) {
+                    $resolved = Resolve-VanessaScenarioValue -Value $close.Groups['name'].Value -ExampleValues $instance.values
+                    if (-not $resolved.resolved) {
+                        $unresolved.Add([pscustomobject][ordered]@{
+                            source = $scenario.source
+                            scenario = $scenario.name
+                            placeholder = "<$($resolved.placeholder)>"
+                            reason = "profile-placeholder-is-not-resolved-by-examples"
+                        })
+                    } else {
+                        [void]$active.Remove($resolved.value.ToLowerInvariant())
+                    }
+                    continue
+                }
+                if ($step -match '(?i)закрываю\s+все\s+(?:сеансы\s+)?TestClient') {
+                    $active.Clear()
+                }
+            }
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        requiredProfiles = @($requiredProfiles.Values | Sort-Object)
+        unresolvedProfileReferences = @($unresolved.ToArray())
+        maximumConcurrency = $maximumConcurrency
+    }
+}
+
+function Get-VanessaFilteredScenarioCount {
+    param(
+        [string[]]$FeatureFiles,
+        [string]$FilterTags
+    )
+
+    $filters = @(ConvertTo-VanessaTagFilterList -Value $FilterTags)
+    if ($filters.Count -eq 0) { return 0 }
+    $wanted = @{}
+    foreach ($filter in $filters) { $wanted[$filter.ToLowerInvariant()] = $true }
+
+    $count = 0
+    foreach ($scenario in @(Get-VanessaFeatureScenarioDefinitions -FeatureFiles $FeatureFiles)) {
+        $selected = $false
+        foreach ($tag in @($scenario.tags)) {
+            if ($wanted.ContainsKey(([string]$tag).ToLowerInvariant())) {
+                $selected = $true
+                break
+            }
+        }
+        if (-not $selected) { continue }
+        if ($scenario.isOutline) {
+            $count += $scenario.exampleRows.Count
+        } else {
+            $count++
+        }
+    }
+    return $count
+}
+
+function Get-VanessaTestClientManifestPath {
+    $value = [string](Get-Setting `
+        -EnvName "VANESSA_TESTCLIENT_MANIFEST" `
+        -ConfigName "vanessaAutomation.testClientManifestPath" `
+        -Default "")
+    if ([string]::IsNullOrWhiteSpace($value)) { return "" }
+    return (Resolve-ProjectPath $value)
+}
+
+function Get-VanessaTestClientSecretValue {
+    param(
+        [string]$EnvironmentName,
+        [string]$ProfileName
+    )
+
+    if ($EnvironmentName -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+        throw "ITL_VANESSA_TESTCLIENT_SECRET_SOURCE_INVALID: profile='$ProfileName' environment='$EnvironmentName'."
+    }
+    $value = [Environment]::GetEnvironmentVariable($EnvironmentName, "Process")
+    if ([string]::IsNullOrEmpty($value)) {
+        $value = [Environment]::GetEnvironmentVariable("AGENT_1C_$EnvironmentName", "Process")
+    }
+    if ([string]::IsNullOrEmpty($value)) {
+        throw "ITL_VANESSA_TESTCLIENT_SECRET_MISSING: profile='$ProfileName' environment='$EnvironmentName'. Define it in ignored .dev.env or the process environment."
+    }
+    return $value
+}
+
+function Read-VanessaTestClientManifest {
+    $path = Get-VanessaTestClientManifestPath
+    if (-not $path) { return $null }
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "ITL_VANESSA_TESTCLIENT_MANIFEST_NOT_FOUND: $path"
+    }
+
+    try {
+        $manifest = Read-Utf8Text -Path $path | ConvertFrom-Json
+    } catch {
+        throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: '$path' is not valid JSON. $($_.Exception.Message)"
+    }
+    if ([int](Get-StateValue -State $manifest -Name "schemaVersion" -Default 0) -ne 1) {
+        throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: '$path' must use schemaVersion=1."
+    }
+
+    $allowedRoot = @("schemaVersion", "maxConcurrency", "profiles")
+    foreach ($property in @($manifest.PSObject.Properties)) {
+        if ($allowedRoot -notcontains [string]$property.Name) {
+            throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: unsupported root property '$($property.Name)' in '$path'."
+        }
+    }
+
+    $profiles = New-Object System.Collections.Generic.List[object]
+    $seenNames = @{}
+    $profilesProperty = $manifest.PSObject.Properties["profiles"]
+    $manifestProfiles = $(if ($null -eq $profilesProperty -or $null -eq $profilesProperty.Value) { @() } else { @($profilesProperty.Value) })
+    foreach ($profile in $manifestProfiles) {
+        $allowedProfile = @("name", "user", "userEnv", "passwordEnv", "synonym", "clientType")
+        foreach ($property in @($profile.PSObject.Properties)) {
+            $propertyName = [string]$property.Name
+            if ($propertyName -match '(?i)^password(?:Value)?$|secret') {
+                throw "ITL_VANESSA_TESTCLIENT_MANIFEST_SECRET_FORBIDDEN: profile property '$propertyName' must be replaced with passwordEnv in '$path'."
+            }
+            if ($allowedProfile -notcontains $propertyName) {
+                throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: unsupported profile property '$propertyName' in '$path'."
+            }
+        }
+
+        $name = ([string](Get-StateValue -State $profile -Name "name" -Default "")).Trim()
+        if (-not $name -or $name -match '^<[^>]+>$') {
+            throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: every profile in '$path' needs a literal non-placeholder name."
+        }
+        $nameKey = $name.ToLowerInvariant()
+        if ($seenNames.ContainsKey($nameKey)) {
+            throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: duplicate profile name '$name' in '$path'."
+        }
+        $seenNames[$nameKey] = $true
+
+        $user = [string](Get-StateValue -State $profile -Name "user" -Default "")
+        $userEnv = [string](Get-StateValue -State $profile -Name "userEnv" -Default "")
+        if ($user -and $userEnv) {
+            throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: profile '$name' cannot define both user and userEnv."
+        }
+        if ($userEnv) {
+            $user = Get-VanessaTestClientSecretValue -EnvironmentName $userEnv -ProfileName $name
+        }
+
+        $password = ""
+        $passwordEnv = [string](Get-StateValue -State $profile -Name "passwordEnv" -Default "")
+        if ($passwordEnv) {
+            $password = Get-VanessaTestClientSecretValue -EnvironmentName $passwordEnv -ProfileName $name
+        }
+        $clientType = ([string](Get-StateValue -State $profile -Name "clientType" -Default "Thin")).Trim()
+        if ($clientType -notin @("Thin", "Thick")) {
+            throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: profile '$name' clientType must be Thin or Thick."
+        }
+
+        $profiles.Add([pscustomobject][ordered]@{
+            name = $name
+            user = $user
+            password = $password
+            synonym = [string](Get-StateValue -State $profile -Name "synonym" -Default "")
+            clientType = $clientType
+        })
+    }
+
+    $maxConcurrencyValue = Get-StateValue -State $manifest -Name "maxConcurrency" -Default $null
+    if ($null -eq $maxConcurrencyValue -or [string]$maxConcurrencyValue -notmatch '^\d+$') {
+        throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: '$path' must declare non-negative integer maxConcurrency."
+    }
+    $maxConcurrency = [int]$maxConcurrencyValue
+    if (($profiles.Count -eq 0 -and $maxConcurrency -ne 0) -or
+        ($profiles.Count -gt 0 -and ($maxConcurrency -lt 1 -or $maxConcurrency -gt $profiles.Count))) {
+        throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: maxConcurrency=$maxConcurrency is incompatible with profiles=$($profiles.Count) in '$path'."
+    }
+
+    return [pscustomobject][ordered]@{
+        configured = $true
+        path = $path
+        maxConcurrency = $maxConcurrency
+        profiles = @($profiles.ToArray())
+    }
+}
+
+function Get-VanessaTestClientTopology {
+    param(
+        [string[]]$FeatureFiles,
+        [string]$FilterTags = ""
+    )
+
+    $requirements = Get-VanessaFeatureTestClientRequirements -FeatureFiles $FeatureFiles -FilterTags $FilterTags
+    if (@($requirements.unresolvedProfileReferences).Count -gt 0) {
+        $details = @($requirements.unresolvedProfileReferences | ForEach-Object {
+            [ordered]@{
+                source = ConvertTo-ProjectRelativePath $_.source
+                scenario = $_.scenario
+                placeholder = $_.placeholder
+                reason = $_.reason
+            }
+        }) | ConvertTo-Json -Compress -Depth 5
+        throw "ITL_VANESSA_TEST_FIXTURE_UNRESOLVED_PROFILE: references=$details"
+    }
+
+    $manifest = Read-VanessaTestClientManifest
+    if ($null -eq $manifest) {
+        $legacyUser = [string](Get-EnvValue -Name "IB_USER")
+        $manifest = [pscustomobject][ordered]@{
+            configured = $false
+            path = "<legacy-default>"
+            maxConcurrency = 1
+            profiles = @([pscustomobject][ordered]@{
+                name = $(if ($legacyUser) { $legacyUser } else { "default" })
+                user = $legacyUser
+                password = [string](Get-EnvValue -Name "IB_PASSWORD")
+                synonym = ""
+                clientType = "Thin"
+            })
+        }
+    }
+
+    $configuredNames = @{}
+    foreach ($profile in @($manifest.profiles)) {
+        $configuredNames[([string]$profile.name).ToLowerInvariant()] = $true
+    }
+    $missing = @($requirements.requiredProfiles | Where-Object {
+        -not $configuredNames.ContainsKey(([string]$_).ToLowerInvariant())
+    } | Sort-Object)
+    if ($missing.Count -gt 0) {
+        $missingJson = ConvertTo-Json -InputObject @($missing) -Compress
+        throw "ITL_VANESSA_TESTCLIENT_PROFILES_MISSING: profiles=$missingJson manifest='$($manifest.path)'"
+    }
+    if ([int]$requirements.maximumConcurrency -gt [int]$manifest.maxConcurrency) {
+        throw "ITL_VANESSA_TESTCLIENT_CONCURRENCY_INSUFFICIENT: required=$($requirements.maximumConcurrency) declared=$($manifest.maxConcurrency) manifest='$($manifest.path)'"
+    }
+
+    return [pscustomobject][ordered]@{
+        configured = $manifest.configured
+        path = $manifest.path
+        maxConcurrency = [int]$manifest.maxConcurrency
+        profiles = @($manifest.profiles)
+        requiredProfiles = @($requirements.requiredProfiles)
+        observedMaximumConcurrency = [int]$requirements.maximumConcurrency
+    }
 }
 
 function Get-VanessaApplicationFeatureFiles {
@@ -2024,14 +2459,15 @@ function New-VanessaParamsFile {
         [string]$StatusPath,
         [object]$State,
         [int]$TestPort,
-        [string]$VanessaVersion = ""
+        [string]$VanessaVersion = "",
+        [object]$TestClientTopology = $null,
+        [int[]]$TestPorts = @(),
+        [string]$FilterTags = $VanessaFilterTags
     )
 
     $resolvedFeaturePath = Resolve-ProjectPath $FeaturePath
     $infoBaseKind = Get-StateValue -State $State -Name "infoBaseKind" -Default (Get-InfoBaseKind)
     $infoBasePath = Require-Value "devBranchInfoBasePath" (Get-StateValue -State $State -Name "devBranchInfoBasePath")
-    $user = Get-EnvValue -Name "IB_USER"
-    $clientName = if ($user) { $user } else { "default" }
     $windowSearchTimeout = ConvertTo-IntOrDefault -Value (Get-EnvValue -Name "VANESSA_TEST_WINDOW_SEARCH_TIMEOUT_SECONDS" -Default 60) -Default 60
     $actionAttempts = ConvertTo-IntOrDefault -Value (Get-EnvValue -Name "VANESSA_TEST_ACTION_ATTEMPTS" -Default 3) -Default 3
     $clientStartupTimeout = ConvertTo-IntOrDefault -Value (Get-EnvValue -Name "VANESSA_TEST_CLIENT_STARTUP_TIMEOUT_SECONDS" -Default 300) -Default 300
@@ -2046,24 +2482,51 @@ function New-VanessaParamsFile {
     $scenarioSettings[(ConvertFrom-Utf8Base64 "0JrQvtC70LjRh9C10YHRgtCy0L7Qn9C+0L/Ri9GC0L7QutCS0YvQv9C+0LvQvdC10L3QuNGP0JTQtdC50YHRgtCy0LjRjw==")] = $actionAttempts
     $scenarioSettings[(ConvertFrom-Utf8Base64 "0J/QsNGD0LfQsNCf0YDQuNCe0YLQutGA0YvRgtC40LjQntC60L3QsA==")] = 0
 
-    $testClientRecord = [ordered]@{}
-    $testClientRecord[(ConvertFrom-Utf8Base64 "0JjQvNGP")] = $clientName
-    $testClientRecord[(ConvertFrom-Utf8Base64 "0KHQuNC90L7QvdC40Lw=")] = ""
-    $testClientRecord[(ConvertFrom-Utf8Base64 "0J/Rg9GC0YzQmtCY0L3RhNC+0LHQsNC30LU=")] = New-VanessaTestClientInfoBaseArg -InfoBaseKind $infoBaseKind -InfoBasePath $infoBasePath
-    $testClientRecord[(ConvertFrom-Utf8Base64 "0J/QvtGA0YLQl9Cw0L/Rg9GB0LrQsNCi0LXRgdGC0JrQu9C40LXQvdGC0LA=")] = $TestPort
-    $testClientRecord[(ConvertFrom-Utf8Base64 "0JTQvtC/0J/QsNGA0LDQvNC10YLRgNGL")] = New-VanessaTestClientAdditionalParams -User $user -Password (Get-EnvValue -Name "IB_PASSWORD")
-    $testClientRecord[(ConvertFrom-Utf8Base64 "0KLQuNC/0JrQu9C40LXQvdGC0LA=")] = ConvertFrom-Utf8Base64 "0KLQvtC90LrQuNC5"
-    $testClientRecord[(ConvertFrom-Utf8Base64 "0JjQvNGP0JrQvtC80L/RjNGO0YLQtdGA0LA=")] = "localhost"
-    $testClientRecord[(ConvertFrom-Utf8Base64 "UElE0JrQu9C40LXQvdGC0LDQotC10YHRgtC40YDQvtCy0LDQvdC40Y8=")] = 0
+    if ($null -eq $TestClientTopology) {
+        $user = [string](Get-EnvValue -Name "IB_USER")
+        $TestClientTopology = [pscustomobject][ordered]@{
+            configured = $false
+            path = "<legacy-default>"
+            maxConcurrency = 1
+            profiles = @([pscustomobject][ordered]@{
+                name = $(if ($user) { $user } else { "default" })
+                user = $user
+                password = [string](Get-EnvValue -Name "IB_PASSWORD")
+                synonym = ""
+                clientType = "Thin"
+            })
+        }
+    }
+    $profiles = @($TestClientTopology.profiles)
+    $assignedPorts = @($TestPorts | Where-Object { $_ -gt 0 })
+    if ($assignedPorts.Count -eq 0 -and $TestPort -gt 0) { $assignedPorts = @($TestPort) }
+    if ($profiles.Count -gt $assignedPorts.Count) {
+        throw "ITL_VANESSA_TESTCLIENT_PORTS_INSUFFICIENT: profiles=$($profiles.Count) ports=$($assignedPorts.Count)."
+    }
+
+    $testClientRecords = New-Object System.Collections.Generic.List[object]
+    for ($profileIndex = 0; $profileIndex -lt $profiles.Count; $profileIndex++) {
+        $profile = $profiles[$profileIndex]
+        $testClientRecord = [ordered]@{}
+        $testClientRecord[(ConvertFrom-Utf8Base64 "0JjQvNGP")] = [string]$profile.name
+        $testClientRecord[(ConvertFrom-Utf8Base64 "0KHQuNC90L7QvdC40Lw=")] = [string]$profile.synonym
+        $testClientRecord[(ConvertFrom-Utf8Base64 "0J/Rg9GC0YzQmtCY0L3RhNC+0LHQsNC30LU=")] = New-VanessaTestClientInfoBaseArg -InfoBaseKind $infoBaseKind -InfoBasePath $infoBasePath
+        $testClientRecord[(ConvertFrom-Utf8Base64 "0J/QvtGA0YLQl9Cw0L/Rg9GB0LrQsNCi0LXRgdGC0JrQu9C40LXQvdGC0LA=")] = [int]$assignedPorts[$profileIndex]
+        $testClientRecord[(ConvertFrom-Utf8Base64 "0JTQvtC/0J/QsNGA0LDQvNC10YLRgNGL")] = New-VanessaTestClientAdditionalParams -User ([string]$profile.user) -Password ([string]$profile.password)
+        $testClientRecord[(ConvertFrom-Utf8Base64 "0KLQuNC/0JrQu9C40LXQvdGC0LA=")] = $(if ([string]$profile.clientType -eq "Thick") { ConvertFrom-Utf8Base64 "0KLQvtC70YHRgtGL0Lk=" } else { ConvertFrom-Utf8Base64 "0KLQvtC90LrQuNC5" })
+        $testClientRecord[(ConvertFrom-Utf8Base64 "0JjQvNGP0JrQvtC80L/RjNGO0YLQtdGA0LA=")] = "localhost"
+        $testClientRecord[(ConvertFrom-Utf8Base64 "UElE0JrQu9C40LXQvdGC0LDQotC10YHRgtC40YDQvtCy0LDQvdC40Y8=")] = 0
+        $testClientRecords.Add($testClientRecord)
+    }
 
     $testClientSettings = [ordered]@{}
-    $testClientSettings[(ConvertFrom-Utf8Base64 "0JfQsNC/0YPRgdC60LDRgtGM0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP0KHQnNCw0LrRgdC40LzQuNC30LjRgNC+0LLQsNC90L3Ri9C80J7QutC90L7QvA==")] = $true
+    $testClientSettings[(ConvertFrom-Utf8Base64 "0JfQsNC/0YPRgdC60LDRgtGM0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP0KHQnNCw0LrRgdC40LzQuNC30LjRgNC+0LLQsNC90L3Ri9C80J7QutC90L7QvA==")] = ([int]$TestClientTopology.maxConcurrency -le 1)
     $testClientSettings[(ConvertFrom-Utf8Base64 "0KLQsNC50LzQsNGD0YLQl9Cw0L/Rg9GB0LrQsDHQoQ==")] = $clientStartupTimeout
     $testClientSettings[(ConvertFrom-Utf8Base64 "0JfQsNC60YDRi9Cy0LDRgtGM0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP0J/RgNC40L3Rg9C00LjRgtC10LvRjNC90L4=")] = $true
     $testClientSettings[(ConvertFrom-Utf8Base64 "0JrQsNGC0LDQu9C+0LPQpNCw0LnQu9C+0LLQktGL0LLQvtC00LDQodC70YPQttC10LHQvdGL0YXQodC+0L7QsdGJ0LXQvdC40Lk=")] = $RunDirectory
     $testClientSettings[(ConvertFrom-Utf8Base64 "0JzQvtC00LDQu9GM0L3QvtC10J7QutC90L7Qn9GA0LjQl9Cw0L/Rg9GB0LrQtdCa0LvQuNC10L3RgtCw0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP0K3RgtC+0J7RiNC40LHQutCw")] = $true
     $testClientSettings[(ConvertFrom-Utf8Base64 "0KDQsNC30YDQtdGI0LXQvdC+0JfQsNC/0YPRgdC60LDRgtGM0KLQvtC70YzQutC+0J7QtNC40L3QmtC70LjQtdC90YLQotC10YHRgtC40YDQvtCy0LDQvdC40Y8=")] = $true
-    $testClientSettings[(ConvertFrom-Utf8Base64 "0JTQsNC90L3Ri9C10JrQu9C40LXQvdGC0L7QstCi0LXRgdGC0LjRgNC+0LLQsNC90LjRjw==")] = @($testClientRecord)
+    $testClientSettings[(ConvertFrom-Utf8Base64 "0JTQsNC90L3Ri9C10JrQu9C40LXQvdGC0L7QstCi0LXRgdGC0LjRgNC+0LLQsNC90LjRjw==")] = @($testClientRecords.ToArray())
 
     $params = [ordered]@{}
     $params["Version"] = $VanessaVersion
@@ -2089,7 +2552,11 @@ function New-VanessaParamsFile {
     $params["stoponerror"] = $false
     $params["NumberOfAttemptsToExecuteTheScript"] = 1
     $params["updatetreewhenscenariostarts"] = $false
-    $params[(ConvertFrom-Utf8Base64 "0JTQuNCw0L/QsNC30L7QvdCf0L7RgNGC0L7QslRlc3RjbGllbnQ=")] = "$TestPort-$TestPort"
+    $portRangeValues = @($assignedPorts)
+    if ($portRangeValues.Count -eq 0 -and $TestPort -gt 0) { $portRangeValues = @($TestPort) }
+    $portRangeStart = [int]($portRangeValues | Measure-Object -Minimum).Minimum
+    $portRangeEnd = [int]($portRangeValues | Measure-Object -Maximum).Maximum
+    $params[(ConvertFrom-Utf8Base64 "0JTQuNCw0L/QsNC30L7QvdCf0L7RgNGC0L7QslRlc3RjbGllbnQ=")] = "$portRangeStart-$portRangeEnd"
     $params[(ConvertFrom-Utf8Base64 "0JLRi9C/0L7Qu9C90LXQvdC40LXQodGG0LXQvdCw0YDQuNC10LI=")] = $scenarioSettings
     $params[(ConvertFrom-Utf8Base64 "0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP")] = $testClientSettings
     $params[(ConvertFrom-Utf8Base64 "0JLRi9Cz0YDRg9C20LDRgtGM0KHRgtCw0YLRg9GB0JLRi9C/0L7Qu9C90LXQvdC40Y/QodGG0LXQvdCw0YDQuNC10LLQktCk0LDQudC7")] = $true
@@ -2097,9 +2564,11 @@ function New-VanessaParamsFile {
     $params[(ConvertFrom-Utf8Base64 "0JfQsNCy0LXRgNGI0LjRgtGM0KDQsNCx0L7RgtGD0KHQuNGB0YLQtdC80Ys=")] = $true
     $params[(ConvertFrom-Utf8Base64 "0JLRi9C/0L7Qu9C90LjRgtGM0KHRhtC10L3QsNGA0LjQuA==")] = $true
 
-    if ($VanessaFilterTags) {
-        $params["filtertags"] = $VanessaFilterTags
-        $params["tags"] = $VanessaFilterTags
+    $normalizedFilterTags = @(ConvertTo-VanessaTagFilterList -Value $FilterTags)
+    if ($normalizedFilterTags.Count -gt 0) {
+        # VA 1.2.043.28 JsonParams declares filtertags as the launch-setting array.
+        # Gherkin stores tag names without the feature-file @ prefix; tags is metadata, not a launch alias.
+        $params["filtertags"] = @($normalizedFilterTags)
     }
 
     $path = Join-Path $RunDirectory "VAParams.json"
@@ -2171,6 +2640,30 @@ function Get-VanessaJunitSummary {
     }
 
     return [pscustomobject]$summary
+}
+
+function Assert-VanessaTagFilterJunitEvidence {
+    param(
+        [string]$RunDirectory,
+        [int]$ExpectedScenarioCount,
+        [string]$FilterTags
+    )
+
+    $normalizedTags = @(ConvertTo-VanessaTagFilterList -Value $FilterTags)
+    if ($normalizedTags.Count -eq 0) { return $null }
+    $junit = Get-VanessaJunitSummary -RunDirectory $RunDirectory
+    if (-not $junit.found) {
+        throw "ITL_VANESSA_TAG_FILTER_EVIDENCE_MISSING: filter=$($normalizedTags -join ',') expected=$ExpectedScenarioCount JUnit was not found."
+    }
+    if ([int]$junit.tests -ne $ExpectedScenarioCount) {
+        throw "ITL_VANESSA_TAG_FILTER_COUNT_MISMATCH: filter=$($normalizedTags -join ',') expected=$ExpectedScenarioCount actual=$($junit.tests)."
+    }
+    return [pscustomobject][ordered]@{
+        filterTags = @($normalizedTags)
+        expectedScenarioCount = $ExpectedScenarioCount
+        junitScenarioCount = [int]$junit.tests
+        files = @($junit.files)
+    }
 }
 
 function Get-VanessaVerificationStatus {
@@ -2494,16 +2987,50 @@ function Run-DevBranchTests {
     if ($featureFiles.Count -eq 0) {
         throw "No Vanessa .feature files found under '$featuresPath'. Create tests in tests/features before running dev branch tests."
     }
+    $applicationFeatureFiles = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath)
 
-    $testPort = Resolve-VanessaTestPort -State $state
+    try {
+        $testClientTopology = Get-VanessaTestClientTopology -FeatureFiles $applicationFeatureFiles -FilterTags $VanessaFilterTags
+        $expectedFilteredScenarioCount = 0
+        if (@(ConvertTo-VanessaTagFilterList -Value $VanessaFilterTags).Count -gt 0) {
+            $expectedFilteredScenarioCount = Get-VanessaFilteredScenarioCount -FeatureFiles $applicationFeatureFiles -FilterTags $VanessaFilterTags
+            if ($expectedFilteredScenarioCount -le 0) {
+                throw "ITL_VANESSA_TAG_FILTER_NO_SCENARIOS: filter='$VanessaFilterTags' selected no scenarios."
+            }
+        }
+    } catch {
+        if ($_.Exception.Message -match '^ITL_VANESSA_TEST_FIXTURE_') {
+            Set-RunFailureContext -Category "test-fixture" -RequiredAction "/itl-verify-fix"
+        } else {
+            Set-RunFailureContext -Category "runner"
+        }
+        throw
+    }
+
+    $testPortLeaseToken = [string](Get-StateValue -State $state -Name "vanessaTestPortLeaseToken" -Default "")
+    if ([string]::IsNullOrWhiteSpace($testPortLeaseToken)) {
+        $testPortLeaseToken = New-ItlManagedPortLeaseToken
+        Update-DevBranchState -State $state -Updates @{ vanessaTestPortLeaseToken = $testPortLeaseToken }
+        $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
+    }
+    try {
+        $testPortCount = [Math]::Max(1, @($testClientTopology.profiles).Count)
+        $testPorts = @(Resolve-VanessaTestPorts -State $state -Count $testPortCount -LeaseToken $testPortLeaseToken)
+        $testPort = [int]$testPorts[0]
+        Assert-VanessaTestClientCapacity -State $state -RequiredSlots ([int]$testClientTopology.maxConcurrency) | Out-Null
+    } catch {
+        Set-RunFailureContext -Category "runner"
+        throw
+    }
     Update-DevBranchState -State $state -Updates @{
         vanessaTestPort = $testPort
+        vanessaTestPorts = @($testPorts)
+        vanessaTestPortLeaseToken = $testPortLeaseToken
         vanessaTestPortUpdatedAt = (Get-Date).ToString("o")
     }
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
     Save-VanessaTestSettingsToDotEnv -Port $testPort
     Invoke-ForeignVanessaTestProcessPolicy -State $state -TestPort $testPort
-    Assert-VanessaTestClientCapacity -State $state | Out-Null
     $state = Ensure-DevBranchEventLogBaseline -State $state
 
     $runDirectory = New-VanessaRunDirectory
@@ -2516,13 +3043,16 @@ function Run-DevBranchTests {
         -StatusPath $statusPath `
         -State $state `
         -TestPort $testPort `
-        -VanessaVersion $vanessa.version
+        -VanessaVersion $vanessa.version `
+        -TestClientTopology $testClientTopology `
+        -TestPorts $testPorts `
+        -FilterTags $VanessaFilterTags
 
     Write-Host "Vanessa Automation EPF: $($vanessa.epfPath)"
     Write-Host "Vanessa features: $(Resolve-ProjectPath $featuresPath)"
     Write-Host "Vanessa report directory: $runDirectory"
     Write-Host "Vanessa params: $paramsPath"
-    Write-Host "Vanessa TestClient port: $testPort"
+    Write-Host "Vanessa TestClient profiles: $(@($testClientTopology.profiles).Count); declared max concurrency: $($testClientTopology.maxConcurrency); ports: $($testPorts -join ',')"
     if ($VanessaFilterTags) {
         Write-Host "Vanessa tag filter: $VanessaFilterTags"
     }
@@ -2557,7 +3087,7 @@ function Run-DevBranchTests {
             -CompletionGraceSeconds 10 `
             -OnTimeout {
                 Write-Host "[WARN] Vanessa verify exceeded timeout; stopping own TESTMANAGER/TESTCLIENT processes."
-                Stop-OwnHungVanessaTestClients -State $state -TestPort $testPort
+                Stop-OwnHungVanessaTestClients -State $state -TestPorts $testPorts -RunParamsPath $paramsPath
             }
         $runnerStopwatch.Stop()
     } catch {
@@ -2566,9 +3096,9 @@ function Run-DevBranchTests {
         $postProcessStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $runFinishedAt = Get-Date
         $logPath = $script:LastLogPath
-        Write-OneCVanessaProcessDiagnostics -State $state -TestPort $testPort -Context "Vanessa verify failed; active 1C process diagnostics"
+        Write-OneCVanessaProcessDiagnostics -State $state -TestPorts $testPorts -RunParamsPath $paramsPath -Context "Vanessa verify failed; active 1C process diagnostics"
         $cleanupStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-        Stop-OwnHungVanessaTestClients -State $state -TestPort $testPort
+        Stop-OwnHungVanessaTestClients -State $state -TestPorts $testPorts -RunParamsPath $paramsPath
         $cleanupStopwatch.Stop(); $cleanupDurationMs = $cleanupStopwatch.ElapsedMilliseconds
         $eventLogReason = ""
         try {
@@ -2631,9 +3161,23 @@ function Run-DevBranchTests {
     $runFinishedAt = Get-Date
     $postProcessStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $verification = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
+    $tagFilterEvidence = $null
+    if (@(ConvertTo-VanessaTagFilterList -Value $VanessaFilterTags).Count -gt 0) {
+        try {
+            $tagFilterEvidence = Assert-VanessaTagFilterJunitEvidence `
+                -RunDirectory $runDirectory `
+                -ExpectedScenarioCount $expectedFilteredScenarioCount `
+                -FilterTags $VanessaFilterTags
+        } catch {
+            $verification = [pscustomobject]@{
+                status = "failed"
+                reason = $_.Exception.Message
+            }
+        }
+    }
     try {
         $cleanupStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-        Stop-OwnVanessaTestProcessesAndAssert -State $state
+        Stop-OwnVanessaTestProcessesAndAssert -State $state -TestPorts $testPorts -RunParamsPath $paramsPath
         $cleanupStopwatch.Stop(); $cleanupDurationMs = $cleanupStopwatch.ElapsedMilliseconds
     } catch {
         if ($cleanupStopwatch.IsRunning) { $cleanupStopwatch.Stop() }
@@ -2689,6 +3233,12 @@ function Run-DevBranchTests {
         lastVanessaStatusPath = $statusPath
         lastVanessaLogPath = $logPath
         lastVanessaTestPort = $testPort
+        lastVanessaTestPorts = @($testPorts)
+        lastVanessaTestClientManifestPath = $testClientTopology.path
+        lastVanessaTestClientProfileCount = @($testClientTopology.profiles).Count
+        lastVanessaTestClientMaxConcurrency = $testClientTopology.maxConcurrency
+        lastVanessaTagFilterExpectedScenarioCount = $expectedFilteredScenarioCount
+        lastVanessaTagFilterActualScenarioCount = $(if ($null -ne $tagFilterEvidence) { $tagFilterEvidence.junitScenarioCount } else { 0 })
         lastVanessaTestPid = $script:LastProcessId
         lastVanessaTimedOut = $script:LastProcessTimedOut
         lastVanessaTimeoutSeconds = $timeoutSeconds
@@ -2727,14 +3277,16 @@ function Run-DevBranchTests {
         Set-RunStage -Stage "vanessa.failed" -Detail $verification.reason
         if ($verification.status -eq "unknown") {
             Set-RunFailureContext -Category "runner"
-            Write-OneCVanessaProcessDiagnostics -State $state -TestPort $testPort -Context "Vanessa verify produced no reliable JUnit/status; active 1C process diagnostics"
-            Stop-OwnHungVanessaTestClients -State $state -TestPort $testPort
+            Write-OneCVanessaProcessDiagnostics -State $state -TestPorts $testPorts -RunParamsPath $paramsPath -Context "Vanessa verify produced no reliable JUnit/status; active 1C process diagnostics"
+            Stop-OwnHungVanessaTestClients -State $state -TestPorts $testPorts -RunParamsPath $paramsPath
         } elseif ($eventLogVerification.status -eq "failed") {
             Set-RunFailureContext -Category "event-log" -RequiredAction "/itl-verify-fix"
         } elseif ([string]$verification.reason -match '(?i)(undefined step|step.+not found|unsupported-step)') {
             Set-RunFailureContext -Category "unsupported-step" -RequiredAction "/itl-verify-fix"
         } elseif ([string]$verification.reason -match '(?i)(scenario context|scenario-context)') {
             Set-RunFailureContext -Category "scenario-context" -RequiredAction "/itl-verify-fix"
+        } elseif ([string]$verification.reason -match '^ITL_VANESSA_TAG_FILTER_') {
+            Set-RunFailureContext -Category "runner"
         } else {
             Set-RunFailureContext -Category "product-assertion" -RequiredAction "/itl-verify-fix"
         }
@@ -2785,16 +3337,22 @@ function Get-OneCProcessInfo {
     param([switch]$RequireSuccess)
     try {
         return @(Get-CimInstance Win32_Process -Filter "Name = '1cv8.exe' OR Name = '1cv8c.exe'" -ErrorAction Stop | ForEach-Object {
+            $processStartTime = ""
+            if ($null -ne $_.CreationDate) {
+                try { $processStartTime = ([datetime]$_.CreationDate).ToUniversalTime().ToString("o") } catch {}
+            }
             [pscustomobject]@{
                 processId = [int]$_.ProcessId
                 name = [string]$_.Name
                 commandLine = [string]$_.CommandLine
+                executablePath = [string]$_.ExecutablePath
+                processStartTime = $processStartTime
                 workingSetMb = [math]::Round(([double]$_.WorkingSetSize / 1MB), 1)
             }
         })
     } catch {
         if ($RequireSuccess) {
-            throw "ITL_VANESSA_LICENSE_PREFLIGHT_UNAVAILABLE: active 1C processes could not be inspected safely. $($_.Exception.Message)"
+            throw "ITL_ONEC_PROCESS_INSPECTION_UNAVAILABLE: active 1C processes could not be inspected safely. $($_.Exception.Message)"
         }
         Write-Host "[WARN] Could not inspect active 1C processes: $($_.Exception.Message)"
         return @()
@@ -2826,9 +3384,7 @@ function Get-VanessaTestClientCapacitySnapshot {
     foreach ($processInfo in @(Get-OneCProcessInfo -RequireSuccess)) {
         $commandLine = [string](Get-StateValue -State $processInfo -Name "commandLine" -Default "")
         if ($commandLine -notmatch '(?i)(?:^|\s)/TESTCLIENT(?:\s|$)') { continue }
-        $port = 0
-        $portMatch = [regex]::Match($commandLine, '(?i)-TPort\s+(\d+)')
-        if ($portMatch.Success) { $port = [int]$portMatch.Groups[1].Value }
+        $port = Get-OneCCommandLineTestPort -CommandLine $commandLine
         $processes += [pscustomobject][ordered]@{
             pid = ConvertTo-IntOrDefault -Value (Get-StateValue -State $processInfo -Name "processId" -Default 0) -Default 0
             scope = $(if (Test-OneCProcessBelongsToState -ProcessInfo $processInfo -State $State -TestPort $port) { "owned" } else { "foreign" })
@@ -2875,7 +3431,7 @@ function Test-OneCCommandLineInfoBasePath {
 
     $matches = [regex]::Matches(
         [string]$CommandLine,
-        '(?i)(?:^|\s)/F(?=\s|")\s*(?:"(?<quoted>[^"]+)"|(?<unquoted>\S+))'
+        '(?i)(?:^|\s)/(?:F|S)(?=\s|")\s*(?:"(?<quoted>[^"]+)"|(?<unquoted>\S+))'
     )
     foreach ($match in $matches) {
         $candidate = $(if ($match.Groups["quoted"].Success) { $match.Groups["quoted"].Value } else { $match.Groups["unquoted"].Value })
@@ -2891,6 +3447,25 @@ function Test-OneCCommandLineInfoBasePath {
     return $false
 }
 
+function Get-OneCCommandLineTestPort {
+    param([AllowNull()][string]$CommandLine)
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+        return 0
+    }
+
+    $matches = [regex]::Matches(
+        [string]$CommandLine,
+        '(?i)(?:^|\s)-TPort(?=\s)\s+(?:"(?<quoted>\d+)"|(?<plain>\d+))(?=\s|$)'
+    )
+    if ($matches.Count -ne 1) {
+        return 0
+    }
+    $match = $matches[0]
+    $value = $(if ($match.Groups["quoted"].Success) { $match.Groups["quoted"].Value } else { $match.Groups["plain"].Value })
+    return (ConvertTo-IntOrDefault -Value $value -Default 0)
+}
+
 function Test-CommandLineContainsPort {
     param(
         [AllowNull()][string]$CommandLine,
@@ -2901,7 +3476,71 @@ function Test-CommandLineContainsPort {
         return $false
     }
 
-    return ([string]$CommandLine) -match "(?<!\d)$Port(?!\d)"
+    return (Get-OneCCommandLineTestPort -CommandLine $CommandLine) -eq $Port
+}
+
+function Get-OneCCommandLineMcpPort {
+    param([AllowNull()][string]$CommandLine)
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+        return 0
+    }
+
+    $matches = [regex]::Matches(
+        [string]$CommandLine,
+        '(?i)(?:^|[;\s])mcpPort\s*=\s*(?<port>\d+)(?=;|\s|"|$)'
+    )
+    if ($matches.Count -ne 1) {
+        return 0
+    }
+    $match = $matches[0]
+    return (ConvertTo-IntOrDefault -Value $match.Groups["port"].Value -Default 0)
+}
+
+function Test-CommandLineContainsMcpPort {
+    param(
+        [AllowNull()][string]$CommandLine,
+        [int]$Port
+    )
+
+    if ($Port -le 0) {
+        return $false
+    }
+    return (Get-OneCCommandLineMcpPort -CommandLine $CommandLine) -eq $Port
+}
+
+function Test-CommandLineContainsVaParamsPath {
+    param(
+        [AllowNull()][string]$CommandLine,
+        [AllowNull()][string]$ParamsPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine) -or [string]::IsNullOrWhiteSpace($ParamsPath)) {
+        return $false
+    }
+
+    try {
+        $expected = (Resolve-Agent1cFullPath -Path $ParamsPath).Replace('/', '\').ToLowerInvariant()
+    } catch {
+        return $false
+    }
+    $normalized = ([string]$CommandLine).Replace('/', '\').ToLowerInvariant()
+    $marker = 'vaparams='
+    $offset = 0
+    while ($offset -lt $normalized.Length) {
+        $index = $normalized.IndexOf($marker, $offset, [System.StringComparison]::Ordinal)
+        if ($index -lt 0) { break }
+        $valueStart = $index + $marker.Length
+        if (($normalized.Length - $valueStart) -ge $expected.Length -and
+            $normalized.Substring($valueStart, $expected.Length) -ceq $expected) {
+            $valueEnd = $valueStart + $expected.Length
+            if ($valueEnd -eq $normalized.Length -or @(';', '"', ' ', "`t") -contains [string]$normalized[$valueEnd]) {
+                return $true
+            }
+        }
+        $offset = $valueStart
+    }
+    return $false
 }
 
 function Test-OneCVanessaTestProcess {
@@ -2934,18 +3573,49 @@ function Test-OneCProcessBelongsToState {
         return $false
     }
 
-    if ($RequireTestPort -and $TestPort -gt 0 -and -not (Test-CommandLineContainsPort -CommandLine $commandLine -Port $TestPort)) {
-        return $false
+    if ($RequireTestPort) {
+        if ($TestPort -le 0 -or -not (Test-CommandLineContainsPort -CommandLine $commandLine -Port $TestPort)) {
+            return $false
+        }
     }
 
     return $true
+}
+
+function Test-OneCVanessaTestProcessBelongsToRun {
+    param(
+        [object]$ProcessInfo,
+        [object]$State,
+        [Alias("TestPort")][int[]]$TestPorts = @(),
+        [string]$RunParamsPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RunParamsPath) -or -not (Test-OneCVanessaTestProcess -ProcessInfo $ProcessInfo)) {
+        return $false
+    }
+    $commandLine = [string](Get-StateValue -State $ProcessInfo -Name "commandLine" -Default "")
+    if (-not (Test-OneCProcessBelongsToState -ProcessInfo $ProcessInfo -State $State)) {
+        return $false
+    }
+    if ($commandLine -match '(?i)(?:^|\s)/TESTCLIENT(?=\s|$)') {
+        $effectivePorts = @($TestPorts | Where-Object { $_ -gt 0 } | Select-Object -Unique)
+        if ($effectivePorts.Count -eq 0) {
+            return $false
+        }
+        $processPort = Get-OneCCommandLineTestPort -CommandLine $commandLine
+        return ($processPort -gt 0 -and $effectivePorts -contains $processPort)
+    }
+    if ($commandLine -match '(?i)(?:^|\s)/TESTMANAGER(?=\s|$)') {
+        return (Test-CommandLineContainsVaParamsPath -CommandLine $commandLine -ParamsPath $RunParamsPath)
+    }
+    return $false
 }
 
 function Test-OneCVanessaTestProcessBelongsToState {
     param(
         [object]$ProcessInfo,
         [object]$State,
-        [int]$TestPort = 0
+        [Alias("TestPort")][int[]]$TestPorts = @()
     )
 
     if (-not (Test-OneCVanessaTestProcess -ProcessInfo $ProcessInfo)) {
@@ -2954,13 +3624,20 @@ function Test-OneCVanessaTestProcessBelongsToState {
 
     $commandLine = [string](Get-StateValue -State $ProcessInfo -Name "commandLine" -Default "")
     if ($commandLine -match '(?i)(?:^|\s)/TESTCLIENT(?=\s|$)') {
-        if ($TestPort -le 0) {
-            $TestPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaTestPort" -Default 0) -Default 0
+        $effectivePorts = @($TestPorts | Where-Object { $_ -gt 0 } | Select-Object -Unique)
+        if ($effectivePorts.Count -eq 0) {
+            $effectivePorts = @(
+                @(
+                    @(Get-StateValue -State $State -Name "vanessaTestPorts" -Default @())
+                    (Get-StateValue -State $State -Name "vanessaTestPort" -Default 0)
+                ) | ForEach-Object { ConvertTo-IntOrDefault -Value $_ -Default 0 } | Where-Object { $_ -gt 0 } | Select-Object -Unique
+            )
         }
-        if ($TestPort -le 0) {
+        if ($effectivePorts.Count -eq 0 -or -not (Test-OneCProcessBelongsToState -ProcessInfo $ProcessInfo -State $State)) {
             return $false
         }
-        return (Test-OneCProcessBelongsToState -ProcessInfo $ProcessInfo -State $State -TestPort $TestPort -RequireTestPort)
+        $processPort = Get-OneCCommandLineTestPort -CommandLine $commandLine
+        return ($processPort -gt 0 -and $effectivePorts -contains $processPort)
     }
 
     return (Test-OneCProcessBelongsToState -ProcessInfo $ProcessInfo -State $State)
@@ -2972,36 +3649,25 @@ function Test-VanessaStateIdentityMatch {
         [object]$Second
     )
 
-    $firstInfoBase = [string](Get-StateValue -State $First -Name "devBranchInfoBasePath" -Default "")
-    $secondInfoBase = [string](Get-StateValue -State $Second -Name "devBranchInfoBasePath" -Default "")
-    if ($firstInfoBase -and $secondInfoBase) {
+    foreach ($propertyName in @("stateProjectRoot", "worktreePath", "devBranchInfoBasePath")) {
+        $firstPath = [string](Get-StateValue -State $First -Name $propertyName -Default "")
+        $secondPath = [string](Get-StateValue -State $Second -Name $propertyName -Default "")
+        if ([string]::IsNullOrWhiteSpace($firstPath) -or [string]::IsNullOrWhiteSpace($secondPath)) {
+            return $false
+        }
         try {
-            return [string]::Equals(
-                (Resolve-Agent1cFullPath -Path $firstInfoBase),
-                (Resolve-Agent1cFullPath -Path $secondInfoBase),
+            if (-not [string]::Equals(
+                (Resolve-Agent1cFullPath -Path $firstPath),
+                (Resolve-Agent1cFullPath -Path $secondPath),
                 [System.StringComparison]::OrdinalIgnoreCase
-            )
+            )) {
+                return $false
+            }
         } catch {
             return $false
         }
     }
-
-    $firstRoot = [string](Get-StateValue -State $First -Name "stateProjectRoot" -Default "")
-    $secondRoot = [string](Get-StateValue -State $Second -Name "stateProjectRoot" -Default "")
-    $firstWorktree = [string](Get-StateValue -State $First -Name "worktreePath" -Default "")
-    $secondWorktree = [string](Get-StateValue -State $Second -Name "worktreePath" -Default "")
-    if (-not $firstRoot -or -not $secondRoot -or -not $firstWorktree -or -not $secondWorktree) {
-        return $false
-    }
-
-    try {
-        return (
-            [string]::Equals((Resolve-Agent1cFullPath -Path $firstRoot), (Resolve-Agent1cFullPath -Path $secondRoot), [System.StringComparison]::OrdinalIgnoreCase) -and
-            [string]::Equals((Resolve-Agent1cFullPath -Path $firstWorktree), (Resolve-Agent1cFullPath -Path $secondWorktree), [System.StringComparison]::OrdinalIgnoreCase)
-        )
-    } catch {
-        return $false
-    }
+    return $true
 }
 
 function Format-OneCProcessInfo {
@@ -3022,10 +3688,11 @@ function Format-OneCProcessInfo {
 function Get-ForeignVanessaTestProcesses {
     param(
         [object]$State,
-        [int]$TestPort = 0
+        [int]$TestPort = 0,
+        [switch]$RequireInspection
     )
 
-    return @(Get-OneCProcessInfo | Where-Object {
+    return @(Get-OneCProcessInfo -RequireSuccess:$RequireInspection | Where-Object {
         (Test-OneCVanessaTestProcess -ProcessInfo $_) -and
         -not (Test-OneCVanessaTestProcessBelongsToState -ProcessInfo $_ -State $State -TestPort $TestPort)
     })
@@ -3042,13 +3709,12 @@ function Test-VanessaTestPortOwnedByState {
         return $false
     }
 
-    foreach ($processInfo in Get-OneCProcessInfo) {
+    foreach ($processInfo in Get-OneCProcessInfo -RequireSuccess) {
         if ($ExcludeProcessId -gt 0 -and
             (ConvertTo-IntOrDefault -Value (Get-StateValue -State $processInfo -Name "processId" -Default 0) -Default 0) -eq $ExcludeProcessId) {
             continue
         }
-        if ((Test-CommandLineContainsPort -CommandLine $processInfo.commandLine -Port $Port) -and
-            (Test-OneCProcessBelongsToState -ProcessInfo $processInfo -State $State -TestPort $Port)) {
+        if ((Test-OneCProcessBelongsToState -ProcessInfo $processInfo -State $State -TestPort $Port -RequireTestPort)) {
             return $true
         }
     }
@@ -3067,7 +3733,7 @@ function Test-VanessaTestPortUsedByForeignProcess {
         return $false
     }
 
-    foreach ($processInfo in Get-OneCProcessInfo) {
+    foreach ($processInfo in Get-OneCProcessInfo -RequireSuccess) {
         if ($ExcludeProcessId -gt 0 -and
             (ConvertTo-IntOrDefault -Value (Get-StateValue -State $processInfo -Name "processId" -Default 0) -Default 0) -eq $ExcludeProcessId) {
             continue
@@ -3092,10 +3758,16 @@ function Get-VanessaTestReservedPorts {
             if (Test-VanessaStateIdentityMatch -First $state -Second $CurrentState) {
                 continue
             }
+            if (Get-StateValue -State $state -Name "closedAt" -Default "") {
+                continue
+            }
 
-            $port = ConvertTo-IntOrDefault -Value (Get-StateValue -State $state -Name "vanessaTestPort" -Default 0)
-            if ($port -gt 0) {
-                $ports[$port] = $true
+            $statePorts = @(
+                @(Get-StateValue -State $state -Name "vanessaTestPorts" -Default @())
+                (Get-StateValue -State $state -Name "vanessaTestPort" -Default 0)
+            ) | ForEach-Object { ConvertTo-IntOrDefault -Value $_ -Default 0 } | Where-Object { $_ -gt 0 } | Select-Object -Unique
+            foreach ($port in $statePorts) {
+                $ports[[int]$port] = $true
             }
         } catch {
         }
@@ -3104,38 +3776,77 @@ function Get-VanessaTestReservedPorts {
     return $ports
 }
 
-function Resolve-VanessaTestPort {
-    param([object]$State)
+function Resolve-VanessaTestPorts {
+    param(
+        [object]$State,
+        [int]$Count = 1,
+        [string]$LeaseToken = ""
+    )
 
+    if ($Count -lt 1) { throw "Vanessa TestClient port count must be positive." }
+    if ([string]::IsNullOrWhiteSpace($LeaseToken)) {
+        $LeaseToken = [string](Get-StateValue -State $State -Name "vanessaTestPortLeaseToken" -Default "")
+    }
+    if ([string]::IsNullOrWhiteSpace($LeaseToken)) {
+        $LeaseToken = New-ItlManagedPortLeaseToken
+    }
     $reserved = Get-VanessaTestReservedPorts -CurrentState $State
     $savedPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaTestPort" -Default 0)
     $range = Get-VanessaTestPortRange
-    $key = Get-ItlBranchManagedPortKey -Family "vanessa-testclient" -State $State
+    if (($range.end - $range.start + 1) -lt $Count) {
+        throw "ITL_VANESSA_TESTCLIENT_PORT_RANGE_INSUFFICIENT: range=$($range.start)..$($range.end) required=$Count."
+    }
+    $ports = New-Object System.Collections.Generic.List[int]
 
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
-        $port = Resolve-ItlManagedPort `
-            -Family "vanessa-testclient" `
-            -Key $key `
-            -Start $range.start `
-            -End $range.end `
-            -PreferredPort $savedPort `
-            -ExplicitPort $VanessaTestPort `
-            -ReservedPorts $reserved `
-            -State $State `
-            -Subject "Vanessa TestClient port"
+    for ($index = 0; $index -lt $Count; $index++) {
+        $suffix = $(if ($index -eq 0) { "" } else { "profile-$index" })
+        $key = Get-ItlBranchManagedPortKey -Family "vanessa-testclient" -State $State -Suffix $suffix
+        $preferred = if ($index -eq 0) { $savedPort } else { [int]$ports[0] + $index }
+        if ($preferred -gt $range.end) { $preferred = 0 }
+        $explicit = $(if ($index -eq 0) { $VanessaTestPort } else { 0 })
+        $allocated = 0
 
-        if (-not (Test-VanessaTestPortUsedByForeignProcess -State $State -Port $port)) {
-            return $port
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $lease = Resolve-ItlManagedPortLease `
+                -Family "vanessa-testclient" `
+                -Key $key `
+                -Start $range.start `
+                -End $range.end `
+                -PreferredPort $preferred `
+                -ExplicitPort $explicit `
+                -ReservedPorts $reserved `
+                -State $State `
+                -Subject "Vanessa TestClient port" `
+                -LeaseToken $LeaseToken
+            $allocated = [int]$lease.port
+
+            if (-not (Test-VanessaTestPortUsedByForeignProcess -State $State -Port $allocated)) {
+                break
+            }
+
+            Release-ItlManagedPortAllocation -Family "vanessa-testclient" -Key $key -LeaseToken $LeaseToken
+            if ($explicit -gt 0) {
+                throw "Requested Vanessa TestClient port $explicit is already used by another branch 1C test process."
+            }
+            $reserved[$allocated] = $true
+            $allocated = 0
         }
-
-        Release-ItlManagedPortAllocation -Family "vanessa-testclient" -Key $key
-        if ($VanessaTestPort -gt 0) {
-            throw "Requested Vanessa TestClient port $VanessaTestPort is already used by another branch 1C test process."
+        if ($allocated -le 0) {
+            throw "No free Vanessa TestClient port found in range $($range.start)..$($range.end). Stop another branch Vanessa run or override VANESSA_TEST_PORT_RANGE."
         }
-        $reserved[$port] = $true
+        $ports.Add($allocated)
+        $reserved[$allocated] = $true
     }
 
-    throw "No free Vanessa TestClient port found in range $($range.start)..$($range.end). Stop another branch Vanessa run or override VANESSA_TEST_PORT_RANGE."
+    return @($ports.ToArray())
+}
+
+function Resolve-VanessaTestPort {
+    param([object]$State)
+
+    $leaseToken = [string](Get-StateValue -State $State -Name "vanessaTestPortLeaseToken" -Default "")
+    $ports = @(Resolve-VanessaTestPorts -State $State -Count 1 -LeaseToken $leaseToken)
+    return [int]$ports[0]
 }
 
 function Save-VanessaTestSettingsToDotEnv {
@@ -3210,7 +3921,7 @@ function Wait-ForeignVanessaTestQuiet {
     $quietSince = $null
     $sawForeign = $false
     while ((Get-Date) -lt $deadline) {
-        $foreign = @(Get-ForeignVanessaTestProcesses -State $State -TestPort $TestPort)
+        $foreign = @(Get-ForeignVanessaTestProcesses -State $State -TestPort $TestPort -RequireInspection)
         if ($foreign.Count -gt 0) {
             $sawForeign = $true
             $quietSince = $null
@@ -3236,7 +3947,7 @@ function Wait-ForeignVanessaTestQuiet {
         Start-Sleep -Seconds ([Math]::Min(15, [Math]::Max(1, $quietSeconds)))
     }
 
-    $remaining = @(Get-ForeignVanessaTestProcesses -State $State -TestPort $TestPort)
+    $remaining = @(Get-ForeignVanessaTestProcesses -State $State -TestPort $TestPort -RequireInspection)
     $details = ($remaining | ForEach-Object { Format-OneCProcessInfo -ProcessInfo $_ }) -join [Environment]::NewLine
     throw "Foreign Vanessa 1C processes did not stay quiet within $timeoutSeconds seconds. Active processes:$([Environment]::NewLine)$details"
 }
@@ -3244,12 +3955,12 @@ function Wait-ForeignVanessaTestQuiet {
 function Stop-OwnHungVanessaTestClients {
     param(
         [object]$State,
-        [int]$TestPort
+        [Alias("TestPort")][int[]]$TestPorts = @(),
+        [Parameter(Mandatory = $true)][string]$RunParamsPath
     )
 
-    $ownClients = @(Get-OneCProcessInfo | Where-Object {
-        ([string]$_.commandLine) -match "(?i)(/TESTCLIENT|/TESTMANAGER|StartFeaturePlayer|VAParams=)" -and
-        (Test-OneCVanessaTestProcessBelongsToState -ProcessInfo $_ -State $State -TestPort $TestPort)
+    $ownClients = @(Get-OneCProcessInfo -RequireSuccess | Where-Object {
+        Test-OneCVanessaTestProcessBelongsToRun -ProcessInfo $_ -State $State -TestPorts $TestPorts -RunParamsPath $RunParamsPath
     })
 
     foreach ($processInfo in $ownClients) {
@@ -3261,7 +3972,8 @@ function Stop-OwnHungVanessaTestClients {
 function Write-OneCVanessaProcessDiagnostics {
     param(
         [object]$State,
-        [int]$TestPort,
+        [Alias("TestPort")][int[]]$TestPorts = @(),
+        [string]$RunParamsPath = "",
         [string]$Context = "Vanessa process diagnostics"
     )
 
@@ -3273,7 +3985,13 @@ function Write-OneCVanessaProcessDiagnostics {
     }
 
     foreach ($processInfo in $processes) {
-        $scope = if (Test-OneCVanessaTestProcessBelongsToState -ProcessInfo $processInfo -State $State -TestPort $TestPort) { "own" } else { "foreign" }
+        $scope = if ($RunParamsPath -and (Test-OneCVanessaTestProcessBelongsToRun -ProcessInfo $processInfo -State $State -TestPorts $TestPorts -RunParamsPath $RunParamsPath)) {
+            "current-run"
+        } elseif (Test-OneCVanessaTestProcessBelongsToState -ProcessInfo $processInfo -State $State) {
+            "own-branch"
+        } else {
+            "foreign"
+        }
         Write-Host "  [$scope] $(Format-OneCProcessInfo -ProcessInfo $processInfo)"
     }
 }
@@ -3449,6 +4167,63 @@ function Get-VanessaMcpRuntimeInfo {
     }
 }
 
+function Test-VanessaMcpProcessBelongsToState {
+    param(
+        [object]$ProcessInfo,
+        [object]$State
+    )
+
+    $expectedPid = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaMcpPid" -Default 0) -Default 0
+    $expectedPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaMcpPort" -Default 0) -Default 0
+    $expectedStartText = [string](Get-StateValue -State $State -Name "vanessaMcpProcessStartTime" -Default "")
+    $expectedExecutable = [string](Get-StateValue -State $State -Name "vanessaMcpExecutablePath" -Default "")
+    $expectedCommand = [string](Get-StateValue -State $State -Name "vanessaMcpCommandLineIdentity" -Default "")
+    $expectedInfoBase = [string](Get-StateValue -State $State -Name "vanessaMcpInfoBasePath" -Default "")
+    $stateInfoBase = [string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
+    if ($expectedPid -le 0 -or $expectedPort -le 0 -or
+        [string]::IsNullOrWhiteSpace($expectedStartText) -or
+        [string]::IsNullOrWhiteSpace($expectedExecutable) -or
+        [string]::IsNullOrWhiteSpace($expectedCommand) -or
+        [string]::IsNullOrWhiteSpace($expectedInfoBase) -or
+        [string]::IsNullOrWhiteSpace($stateInfoBase)) {
+        return $false
+    }
+
+    $actualPid = ConvertTo-IntOrDefault -Value (Get-StateValue -State $ProcessInfo -Name "processId" -Default 0) -Default 0
+    $actualStartText = [string](Get-StateValue -State $ProcessInfo -Name "processStartTime" -Default "")
+    $actualExecutable = [string](Get-StateValue -State $ProcessInfo -Name "executablePath" -Default "")
+    $commandLine = [string](Get-StateValue -State $ProcessInfo -Name "commandLine" -Default "")
+    if ($actualPid -ne $expectedPid -or [string]::IsNullOrWhiteSpace($actualStartText) -or
+        -not [string]::Equals($actualExecutable, $expectedExecutable, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $false
+    }
+
+    try {
+        $expectedStart = [DateTimeOffset]::Parse($expectedStartText).UtcDateTime
+        $actualStart = [DateTimeOffset]::Parse($actualStartText).UtcDateTime
+        if ([Math]::Abs(($actualStart - $expectedStart).TotalSeconds) -ge 2) {
+            return $false
+        }
+        if (-not [string]::Equals(
+            (Resolve-Agent1cFullPath -Path $expectedInfoBase),
+            (Resolve-Agent1cFullPath -Path $stateInfoBase),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            return $false
+        }
+    } catch {
+        return $false
+    }
+
+    $canonicalCommand = "runMcp;mcpPort=$expectedPort"
+    return (
+        [string]::Equals($expectedCommand, $canonicalCommand, [System.StringComparison]::Ordinal) -and
+        (Test-OneCCommandLineInfoBasePath -CommandLine $commandLine -InfoBasePath $expectedInfoBase) -and
+        $commandLine -match '(?i)(?:^|/C|;)runMcp(?=;|\s|"|$)' -and
+        (Test-CommandLineContainsMcpPort -CommandLine $commandLine -Port $expectedPort)
+    )
+}
+
 function Get-VanessaMcpReservedPorts {
     param([object]$CurrentState)
 
@@ -3457,6 +4232,9 @@ function Get-VanessaMcpReservedPorts {
         try {
             $state = Read-DevBranchStateFile -Path $file.FullName
             if (Test-VanessaStateIdentityMatch -First $state -Second $CurrentState) {
+                continue
+            }
+            if (Get-StateValue -State $state -Name "closedAt" -Default "") {
                 continue
             }
 
@@ -3471,13 +4249,16 @@ function Get-VanessaMcpReservedPorts {
     return $ports
 }
 
-function Resolve-VanessaMcpPort {
-    param([object]$State)
+function Resolve-VanessaMcpPortLease {
+    param(
+        [object]$State,
+        [string]$LeaseToken = ""
+    )
 
     $reserved = Get-VanessaMcpReservedPorts -CurrentState $State
     $savedPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaMcpPort" -Default 0)
     $range = Get-VanessaMcpPortRange
-    return (Resolve-ItlManagedPort `
+    return (Resolve-ItlManagedPortLease `
         -Family "vanessa-mcp" `
         -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $State) `
         -Start $range.start `
@@ -3486,13 +4267,33 @@ function Resolve-VanessaMcpPort {
         -ExplicitPort $VanessaMcpPort `
         -ReservedPorts $reserved `
         -State $State `
-        -Subject "Vanessa UI MCP port")
+        -Subject "Vanessa UI MCP port" `
+        -LeaseToken $LeaseToken)
+}
+
+function Resolve-VanessaMcpPort {
+    param([object]$State)
+
+    $leaseToken = [string](Get-StateValue -State $State -Name "vanessaMcpPortLeaseToken" -Default "")
+    $lease = Resolve-VanessaMcpPortLease -State $State -LeaseToken $leaseToken
+    return [int]$lease.port
 }
 
 function Get-OwnVanessaTestProcesses {
-    param([object]$State)
+    param(
+        [object]$State,
+        [Alias("TestPort")][int[]]$TestPorts = @(),
+        [string]$RunParamsPath = "",
+        [switch]$RequireInspection
+    )
 
-    return @(Get-OneCProcessInfo | Where-Object {
+    $processes = @(Get-OneCProcessInfo -RequireSuccess:$RequireInspection)
+    if (-not [string]::IsNullOrWhiteSpace($RunParamsPath)) {
+        return @($processes | Where-Object {
+            Test-OneCVanessaTestProcessBelongsToRun -ProcessInfo $_ -State $State -TestPorts $TestPorts -RunParamsPath $RunParamsPath
+        })
+    }
+    return @($processes | Where-Object {
         (Test-OneCVanessaTestProcess -ProcessInfo $_) -and
         (Test-OneCVanessaTestProcessBelongsToState -ProcessInfo $_ -State $State)
     })
@@ -3506,10 +4307,23 @@ function Get-VanessaTestProcessCategory {
 }
 
 function Stop-OwnVanessaTestProcesses {
-    param([object]$State)
+    param(
+        [object]$State,
+        [Alias("TestPort")][int[]]$TestPorts = @(),
+        [string]$RunParamsPath = "",
+        [switch]$BranchWide
+    )
 
     $infoBasePath = [string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
-    $testPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaTestPort" -Default 0) -Default 0
+    $effectivePorts = @($TestPorts | Where-Object { $_ -gt 0 } | Select-Object -Unique)
+    if ($effectivePorts.Count -eq 0) {
+        $effectivePorts = @(
+            @(
+                @(Get-StateValue -State $State -Name "vanessaTestPorts" -Default @())
+                (Get-StateValue -State $State -Name "vanessaTestPort" -Default 0)
+            ) | ForEach-Object { ConvertTo-IntOrDefault -Value $_ -Default 0 } | Where-Object { $_ -gt 0 } | Select-Object -Unique
+        )
+    }
     if ([string]::IsNullOrWhiteSpace($infoBasePath)) {
         return [pscustomobject]@{
             stoppedTestManager = 0
@@ -3519,20 +4333,28 @@ function Stop-OwnVanessaTestProcesses {
         }
     }
 
-    $candidates = @(Get-OneCProcessInfo | Where-Object {
-        (Test-OneCVanessaTestProcess -ProcessInfo $_) -and
-        (Test-OneCProcessBelongsToState -ProcessInfo $_ -State $State)
-    })
-    if ($testPort -le 0 -and $candidates.Count -gt 0) {
+    if (-not $BranchWide -and [string]::IsNullOrWhiteSpace($RunParamsPath)) {
         return [pscustomobject]@{
             stoppedTestManager = 0
             stoppedTestClient = 0
             remaining = @()
-            errors = @("ownership-unverified: Vanessa TestClient port is missing")
+            errors = @("ownership-unverified: ordinary cleanup requires the current run VAParams path")
+        }
+    }
+    if (-not $BranchWide -and $effectivePorts.Count -eq 0) {
+        return [pscustomobject]@{
+            stoppedTestManager = 0
+            stoppedTestClient = 0
+            remaining = @()
+            errors = @("ownership-unverified: ordinary cleanup requires a positive Vanessa TestClient port")
         }
     }
 
-    $before = @(Get-OwnVanessaTestProcesses -State $State)
+    $before = @(if ($BranchWide) {
+        Get-OwnVanessaTestProcesses -State $State -RequireInspection
+    } else {
+        Get-OwnVanessaTestProcesses -State $State -TestPorts $effectivePorts -RunParamsPath $RunParamsPath -RequireInspection
+    })
     $errors = @()
     foreach ($processInfo in $before) {
         $category = Get-VanessaTestProcessCategory -ProcessInfo $processInfo
@@ -3547,7 +4369,11 @@ function Stop-OwnVanessaTestProcesses {
     if ($before.Count -gt 0) {
         Start-Sleep -Milliseconds 300
     }
-    $remaining = @(Get-OwnVanessaTestProcesses -State $State)
+    $remaining = @(if ($BranchWide) {
+        Get-OwnVanessaTestProcesses -State $State -RequireInspection
+    } else {
+        Get-OwnVanessaTestProcesses -State $State -TestPorts $effectivePorts -RunParamsPath $RunParamsPath -RequireInspection
+    })
     $remainingIds = @($remaining | ForEach-Object { [int]$_.processId })
     $stopped = @($before | Where-Object { $remainingIds -notcontains [int]$_.processId })
     return [pscustomobject]@{
@@ -3559,9 +4385,13 @@ function Stop-OwnVanessaTestProcesses {
 }
 
 function Stop-OwnVanessaTestProcessesAndAssert {
-    param([object]$State)
+    param(
+        [object]$State,
+        [Parameter(Mandatory = $true)][Alias("TestPort")][int[]]$TestPorts,
+        [Parameter(Mandatory = $true)][string]$RunParamsPath
+    )
 
-    $result = Stop-OwnVanessaTestProcesses -State $State
+    $result = Stop-OwnVanessaTestProcesses -State $State -TestPorts $TestPorts -RunParamsPath $RunParamsPath
     if ($result.remaining.Count -gt 0 -or $result.errors.Count -gt 0) {
         $details = @($result.remaining | ForEach-Object { Format-OneCProcessInfo -ProcessInfo $_ })
         $details += @($result.errors)
@@ -3861,7 +4691,7 @@ function Start-DevBranchVanessaInteractiveProfile {
         ConvertTo-IntOrDefault -Value $_.pid -Default 0
         ConvertTo-IntOrDefault -Value $_.testClientPid -Default 0
     } | Where-Object { $_ -gt 0 })
-    $unregistered = @(Get-OwnVanessaTestProcesses -State $state | Where-Object {
+    $unregistered = @(Get-OwnVanessaTestProcesses -State $state -RequireInspection | Where-Object {
         $registeredPids -notcontains (ConvertTo-IntOrDefault -Value $_.processId -Default 0)
     })
     if ($unregistered.Count -gt 0) {
@@ -3977,7 +4807,7 @@ function Invoke-DevBranchVanessaRuntimeRelease {
     }
 
     $errors = @()
-    $testResult = Stop-OwnVanessaTestProcesses -State $State
+    $testResult = Stop-OwnVanessaTestProcesses -State $State -BranchWide
     $errors += @($testResult.errors)
 
     $onDemandBefore = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
@@ -3999,7 +4829,7 @@ function Invoke-DevBranchVanessaRuntimeRelease {
     $legacyBefore = Get-VanessaMcpRuntimeInfo -State $State
     if ($legacyBefore.processAlive) {
         try {
-            if (Stop-VanessaMcpForState -State $State -Quiet -RequireOwnership -SkipClientConfig) {
+            if (Stop-VanessaMcpForState -State $State -Quiet -SkipClientConfig) {
                 $legacyStopped = 1
             }
         } catch {
@@ -4007,7 +4837,7 @@ function Invoke-DevBranchVanessaRuntimeRelease {
         }
     }
 
-    $remainingTests = @(Get-OwnVanessaTestProcesses -State $State)
+    $remainingTests = @(Get-OwnVanessaTestProcesses -State $State -RequireInspection)
     $remainingOnDemand = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
         [string]$_.family -eq "vanessa-ui" -and
         (Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $infoBasePath)
@@ -4700,38 +5530,45 @@ function Stop-VanessaMcpForState {
     param(
         [object]$State,
         [switch]$Quiet,
-        [switch]$RequireOwnership,
         [switch]$SkipClientConfig
     )
 
     $runtime = Get-VanessaMcpRuntimeInfo -State $State
+    $oneCProcesses = @(Get-OneCProcessInfo -RequireSuccess)
     $updates = @{
         vanessaMcpPid = ""
+        vanessaMcpProcessStartTime = ""
+        vanessaMcpExecutablePath = ""
+        vanessaMcpCommandLineIdentity = ""
+        vanessaMcpInfoBasePath = ""
         vanessaMcpStatus = "stopped"
         vanessaMcpStoppedAt = (Get-Date).ToString("o")
         vanessaMcpUpdatedAt = (Get-Date).ToString("o")
     }
 
     if ($runtime.processAlive) {
-        if ($RequireOwnership) {
-            $processInfo = @(Get-OneCProcessInfo | Where-Object { [int]$_.processId -eq [int]$runtime.pid } | Select-Object -First 1)
-            $owned = $processInfo.Count -eq 1 -and
-                (Test-OneCProcessBelongsToState -ProcessInfo $processInfo[0] -State $State) -and
-                ([string]$processInfo[0].commandLine -match '(?i)runMcp\s*;\s*mcpPort=') -and
-                (Test-CommandLineContainsPort -CommandLine ([string]$processInfo[0].commandLine) -Port ([int]$runtime.port))
-            if (-not $owned) {
-                throw "ITL_LEGACY_MCP_OWNERSHIP_MISMATCH: refusing to stop unverified Vanessa UI PID $($runtime.pid)."
-            }
+        $processInfo = @($oneCProcesses | Where-Object { [int]$_.processId -eq [int]$runtime.pid } | Select-Object -First 1)
+        if ($processInfo.Count -ne 1 -or -not (Test-VanessaMcpProcessBelongsToState -ProcessInfo $processInfo[0] -State $State)) {
+            throw "ITL_LEGACY_MCP_OWNERSHIP_MISMATCH: refusing to stop unverified Vanessa UI PID $($runtime.pid); PID, start time, executable, command line, infobase, and port must all match durable state."
         }
         if (-not $Quiet) {
             Write-Host "Stopping Vanessa UI MCP process: PID $($runtime.pid)"
         }
         Stop-Process -Id $runtime.pid -Force -ErrorAction Stop
-        Start-Sleep -Milliseconds 500
-        if ($null -ne (Get-Process -Id $runtime.pid -ErrorAction SilentlyContinue)) {
-            throw "ITL_LEGACY_MCP_STOP_FAILED: Vanessa UI PID $($runtime.pid) is still running."
+        $deadline = (Get-Date).AddSeconds(5)
+        do {
+            Start-Sleep -Milliseconds 200
+            $processStillAlive = $null -ne (Get-Process -Id $runtime.pid -ErrorAction SilentlyContinue)
+            $portStillOpen = Test-TcpPortOpen -Port ([int]$runtime.port)
+        } while (($processStillAlive -or $portStillOpen) -and (Get-Date) -lt $deadline)
+        $postStopProcesses = @(Get-OneCProcessInfo -RequireSuccess)
+        if (@($postStopProcesses | Where-Object { [int]$_.processId -eq [int]$runtime.pid }).Count -gt 0) {
+            $processStillAlive = $true
         }
-        Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $State) -Status "stopped"
+        if ($processStillAlive -or $portStillOpen) {
+            throw "ITL_LEGACY_MCP_STOP_FAILED: Vanessa UI PID $($runtime.pid) or port $($runtime.port) is still active; state and port lease were preserved."
+        }
+        Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $State) -Status "stopped" -LeaseToken ([string](Get-StateValue -State $State -Name "vanessaMcpPortLeaseToken" -Default ""))
         Update-DevBranchState -State $State -Updates $updates
         $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
         if (-not $SkipClientConfig) {
@@ -4740,7 +5577,11 @@ function Stop-VanessaMcpForState {
         return $true
     }
 
-    Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $State) -Status "stopped"
+    if ($runtime.portOpen) {
+        throw "ITL_LEGACY_MCP_OWNERSHIP_MISMATCH: Vanessa UI state PID $($runtime.pid) is not alive, but port $($runtime.port) is open; state and port lease were preserved."
+    }
+
+    Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $State) -Status "stopped" -LeaseToken ([string](Get-StateValue -State $State -Name "vanessaMcpPortLeaseToken" -Default ""))
     Update-DevBranchState -State $State -Updates $updates
     $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
     if (-not $SkipClientConfig) {
@@ -4789,11 +5630,19 @@ function Start-VanessaMcp {
         throw "Vanessa Automation verification runtime is not installed. Run install-vanessa-automation first."
     }
 
-    $port = Resolve-VanessaMcpPort -State $state
+    $mcpPortLeaseToken = [string](Get-StateValue -State $state -Name "vanessaMcpPortLeaseToken" -Default "")
+    if ([string]::IsNullOrWhiteSpace($mcpPortLeaseToken)) {
+        $mcpPortLeaseToken = New-ItlManagedPortLeaseToken
+        Update-DevBranchState -State $state -Updates @{ vanessaMcpPortLeaseToken = $mcpPortLeaseToken }
+        $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
+    }
+    $mcpPortLease = Resolve-VanessaMcpPortLease -State $state -LeaseToken $mcpPortLeaseToken
+    $port = [int]$mcpPortLease.port
     $url = Get-VanessaMcpUrl -Port $port
     Save-VanessaMcpSettingsToDotEnv -Port $port -Url $url
     Update-DevBranchState -State $state -Updates @{
         vanessaMcpPort = $port
+        vanessaMcpPortLeaseToken = $mcpPortLeaseToken
         vanessaMcpUrl = $url
         vanessaMcpStatus = "starting"
         vanessaMcpError = ""
@@ -4808,22 +5657,30 @@ function Start-VanessaMcp {
         -UseTestManager `
         -EnterpriseArgs @("/Execute", $vanessa.epfPath, "/C$command")
 
+    $processStartTime = $result.process.StartTime.ToUniversalTime().ToString("o")
+    $resolvedInfoBasePath = Resolve-Agent1cFullPath -Path $state.devBranchInfoBasePath
+
     Update-DevBranchState -State $state -Updates @{
         vanessaMcpPort = $port
+        vanessaMcpPortLeaseToken = $mcpPortLeaseToken
         vanessaMcpUrl = $url
         vanessaMcpPid = $result.process.Id
+        vanessaMcpProcessStartTime = $processStartTime
+        vanessaMcpExecutablePath = [string]$result.executablePath
+        vanessaMcpCommandLineIdentity = $command
+        vanessaMcpInfoBasePath = $resolvedInfoBasePath
         vanessaMcpStartedAt = (Get-Date).ToString("o")
         vanessaMcpLogPath = $result.logPath
         vanessaMcpStatus = "starting"
         vanessaMcpError = ""
         vanessaMcpUpdatedAt = (Get-Date).ToString("o")
     }
-    Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $state) -Status "running" -ProcessId $result.process.Id
+    Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $state) -Status "running" -ProcessId $result.process.Id -LeaseToken $mcpPortLeaseToken
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
     if (-not (Wait-VanessaMcpPort -Port $port -TimeoutSeconds 30)) {
         $message = "Vanessa UI MCP process was started, but port $port did not become reachable within 30 seconds. PID: $($result.process.Id). Log: $($result.logPath)"
-        Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $state) -Status "failed" -ProcessId $result.process.Id
+        Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $state) -Status "failed" -ProcessId $result.process.Id -LeaseToken $mcpPortLeaseToken
         Update-DevBranchState -State $state -Updates @{
             vanessaMcpStatus = "failed"
             vanessaMcpError = $message

@@ -123,6 +123,7 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | `VANESSA_AUTOMATION_VERSION` | Установленная версия | определяется helper | helper |
 | `VANESSA_FEATURES_PATH` | Каталог feature-файлов | default `tests/features` | user |
 | `VANESSA_REPORTS_PATH` | Каталог отчетов | default `build/test-results/vanessa` | user |
+| `VANESSA_TESTCLIENT_MANIFEST` | Project-defined manifest профилей/топологии TestClient; override для `vanessaAutomation.testClientManifestPath` | JSON schema 1; tracked-файл не содержит паролей, только `passwordEnv` | user |
 | `VANESSA_TEST_PORT_RANGE` | Диапазон TestClient | default `48051..48150` | user |
 | `VANESSA_TEST_PORT` | Порт текущей ветки | назначается helper | helper |
 | `VANESSA_TEST_FOREIGN_WAIT_MODE` | Реакция на чужие процессы | `warn`/`wait`, default `warn` | user |

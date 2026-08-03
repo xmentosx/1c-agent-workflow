@@ -1236,7 +1236,7 @@ function Stop-DevBranchRuntimeBeforeInfobaseMutation {
             Stop-RoctupMcpForState -State $State -Quiet -RequireOwnership -SkipClientConfig | Out-Null
         }
 
-        $remainingTests = @(Get-OwnVanessaTestProcesses -State $State)
+        $remainingTests = @(Get-OwnVanessaTestProcesses -State $State -RequireInspection)
         $remainingOnDemand = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
             Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $infoBasePath
         })
@@ -4124,7 +4124,7 @@ function Write-DevBranchRunUserReport {
     if ($isRefresh) {
         $client = [string](Get-RunUserReportObservedValue -Read { Get-ItlActiveClient } -Default "")
         if ($client -eq "kilocode") {
-            $advice.Add("- Выполните /reload в текущем окне Kilo Code, чтобы клиент перечитал обновлённые правила, навыки и команды ветки.")
+            $advice.Add("- Если Kilo продолжает показывать старые команды или маршрутизацию, выполните /reload; при нормальном поведении дополнительный шаг не требуется.")
         } else {
             $reloadInstruction = [string](Get-RunUserReportObservedValue -Read {
                 Get-StateValue -State (Get-ItlClientAdapter -Client $client) -Name "reloadUserReport" -Default "Перезапустите активный клиент."
@@ -7749,6 +7749,7 @@ function Show-WorkflowStatus {
     Write-Host "Git commit: $currentCommit"
     Write-Host "Git worktree: $(if ($dirty) { 'dirty' } else { 'clean' })"
     Write-WorkflowPackageStatusLines
+    Write-KiloClientSkillProvenanceStatusLines
     Write-AiRules1cStatusLines
     Write-ItlOnDemandMcpStatusLines
     Write-ItlClientMcpEnablementStatusLines
@@ -8033,7 +8034,6 @@ function Close-DevBranch {
     Assert-SingleManagedExtensionArtifact -State $state
     Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "close-dev-branch"
     $state = Read-DevBranchState -Name $DevBranchName
-    Release-ItlManagedPortAllocationsForState -State $state
     Sync-DevBranchContextToDotEnv -State $state
 
     if ($LifecyclePhase -ne "post-merge") {
@@ -8089,6 +8089,12 @@ function Close-DevBranch {
         -UnverifiedOverride ([bool]$unverifiedOverride)
 
     $updates["closedAt"] = (Get-Date).ToString("o")
+    $updates["vanessaTestPort"] = 0
+    $updates["vanessaTestPorts"] = @()
+    $updates["vanessaTestPortLeaseToken"] = ""
+    $updates["vanessaTestPortUpdatedAt"] = ""
+    $updates["vanessaMcpPort"] = 0
+    $updates["vanessaMcpPortLeaseToken"] = ""
     $updates["finalResultPath"] = $resultPath
     $updates["finalResultKind"] = $resultKind
     $updates["finalResultManifestPath"] = $manifestPath
@@ -8098,7 +8104,9 @@ function Close-DevBranch {
         $updates["lastUnverifiedOverrideOperation"] = "close-dev-branch"
         $updates["lastUnverifiedResultPath"] = $resultPath
     }
+    $stateWithPortLeases = $state
     Update-DevBranchState -State $state -Updates $updates
+    Release-ItlManagedPortAllocationsForState -State $stateWithPortLeases
 
     Write-Host "Branch: $($state.devBranch)"
     Write-Host "Master commit: $masterCommit"

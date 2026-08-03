@@ -813,7 +813,8 @@
             foreach ($skill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")) {
                 $path = Join-Path $tempRoot ".agents\skills\$skill\SKILL.md"
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
-                Set-Content -LiteralPath $path -Encoding UTF8 -Value "# $skill"
+                $skillText = if ($skill -eq "1c-workflow-fast") { "# $skill`n<!-- ITL_KILO_SKILL_CONTRACT: fixture -->" } else { "# $skill" }
+                Set-Content -LiteralPath $path -Encoding UTF8 -Value $skillText
             }
             foreach ($stage in @("propose", "explore", "apply", "archive")) {
                 $target = ".kilo/commands/opsx-$stage.md"

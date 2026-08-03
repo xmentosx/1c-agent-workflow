@@ -5,6 +5,8 @@ description: Run routine helper commands in installed ITL 1C projects for status
 
 # 1C Workflow Fast
 
+<!-- ITL_KILO_SKILL_CONTRACT: kilo-fast-routing-v2 -->
+
 ## Purpose
 
 Map routine requests in an installed ITL project to one helper action. Use the monitored compact runner for mutations and long checks, then parse its terminal JSON. Open full workflow references only for failure recovery, missing setup, or explanation.
@@ -57,9 +59,11 @@ For export/close, obey the helper's `verificationPolicy`.
 
 Read `status`, exit code, `errorCategory`, `requiredAction`, and `nextAction`.
 
+- If Kilo behavior disagrees with the Intent Map, run `status`, compare the reported expected skill contract/SHA, and ask for `/reload` before treating it as a source defect. ITL cannot inspect or clear Kilo's internal cache/worktrees.
 - `status=failed` means failed. Never relabel it as skipped; never call it ready, verified, or done.
 - Report the action, concise error, and artifact paths. Read 80 console-log tail lines only for unclassified `runner` failure.
 - Follow `requiredAction` or `nextAction` exactly. Ask only for a value that the helper explicitly identifies as missing.
+- Before recovery edits, apply the installed `USER-RULES.md` runner/fixture/product ownership, unchanged-rerun, and unrelated-dirty-change guards.
 - For an agent-made change with `requiredAction=/itl-verify-fix`, activate full `1c-workflow` and continue its bounded verification recovery. Do not return completion to the user. Standalone diagnostics only report failure.
 - Development completion still requires fresh passed evidence after the last edit; partial/skipped is insufficient.
 - Use full `1c-workflow` for recovery, unusual topology, or initialization.

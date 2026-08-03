@@ -8,7 +8,7 @@ Use targeted/static checks while implementing. Use `/itl-check` or helper action
 
 `/itl-check` remains a single mechanical helper run: it does not author tests or start an agent repair loop. Its cheap preflight checks the suite and reports bounded source-only feature warnings without executing a second authoring run. Missing suites and failed verification route to `/itl-verify-fix`. Recovery reuses sufficient coverage, otherwise creates the smallest focused scenario and uses one helper-owned three-run repair session.
 
-The compact result exposes `errorCategory` and `requiredAction`. Categories are `missing-suite`, `unsupported-step`, `scenario-context`, `product-assertion`, `runner`, and `event-log`. They are routing hints, not automatic proof that the test or product is wrong. Follow the structured action; read the last 80 log lines only for an unclassified runner failure.
+The compact result exposes `errorCategory` and `requiredAction`. Categories are `missing-suite`, `test-fixture`, `unsupported-step`, `scenario-context`, `product-assertion`, `runner`, and `event-log`. They are routing hints, not automatic proof that the test or product is wrong. Follow the structured action; read the last 80 log lines only for an unclassified runner failure.
 
 Long Designer work publishes a 30-second stderr heartbeat plus structured status evidence: current stage, elapsed time, liveness, seconds without CPU/log/process progress, timeout remaining, exact owned PIDs, CPU/log deltas, and working set. `stalled-suspected` begins after `DESIGNER_STALL_WARNING_SECONDS` (default 300). At `DESIGNER_STALL_TIMEOUT_SECONDS` (default 600) the helper fails and stops only exact owned Designer PIDs. The independent memory guard and overall hard operation timeout remain fail-closed. Never kill 1C manually from a stale-looking heartbeat.
 
@@ -25,6 +25,10 @@ When Vanessa is off, do not automatically author tests or add them to a new plan
 ## Vanessa Automation
 
 Use scenarios from `tests/features` for quick-fix, direct full-cycle, and OpenSpec verification. Before creating or editing feature files, read `references/vanessa-tests.md`; do not load it for routine lifecycle commands.
+
+Named or multi-client suites declare a project-owned TestClient manifest through `vanessaAutomation.testClientManifestPath` or ignored `VANESSA_TESTCLIENT_MANIFEST`. Schema 1 contains `maxConcurrency` and `profiles`; each profile has a literal unique `name`, optional `user` or `userEnv`, optional `passwordEnv`, `synonym`, and `clientType=Thin|Thick`. Never put a password, secret, or raw `/P` argument in the manifest. `passwordEnv` is resolved only from ignored `.dev.env` or the process environment. A project without a manifest keeps the one-profile legacy behavior for unnamed serial suites.
+
+Before TestManager starts, the helper expands profile placeholders from scenario-outline `Examples`, reports a genuinely unresolved `<Профиль>` as `test-fixture`, reports the complete set of concrete missing profile names as `runner`, verifies declared concurrency against selected scenario steps and `VANESSA_TESTCLIENT_LICENSE_CAPACITY`, and allocates one bounded unique port per profile. `-VanessaFilterTags` is normalized from feature syntax such as `@V28` to VA values such as `V28`; VA `1.2.043.28` receives only the official `filtertags` array. A filtered run is accepted only when JUnit `tests` equals the selected scenario count calculated from the feature set. The final completion run remains unfiltered.
 
 For a quick-fix, reuse sufficient existing coverage; otherwise create or update one focused regression scenario and add a second only for a separate meaningful boundary or negative case. For direct full-cycle, choose coverage from the actual behavior and risk rather than OpenSpec artifact count. For OpenSpec, plan 2-3 scenarios by default and require an explicit short justification for a fourth. Choose the cheapest reliable check type:
 

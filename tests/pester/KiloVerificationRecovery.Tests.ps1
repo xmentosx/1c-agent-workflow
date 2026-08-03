@@ -89,6 +89,11 @@ Describe "Kilo verification recovery command" {
 
         $fastSkill | Should -Match 'run-itl-command\.ps1 -- -Action <action>'
         $fastSkill | Should -Not -Match 'scripts\\agent-1c\.ps1 -Action <action>'
+        $fastSkill | Should -Match 'post-change check: `check-dev-branch`'
+        $fastSkill | Should -Match 'compatibility verification: `verify-dev-branch`'
+        $fastSkill | Should -Match 'requiredAction=/itl-verify-fix'
+        $fastSkill | Should -Match 'expected skill contract/SHA'
+        $fastSkill | Should -Match 'run `status`'
         $fastSkill | Should -Match 'executable milestone or completion check'
         $fastSkill | Should -Match 'Do not add `VanessaFeaturePath` or `VanessaFilterTags` to a final run'
         foreach ($marker in @(
@@ -105,5 +110,60 @@ Describe "Kilo verification recovery command" {
         foreach ($action in @('init-dev-branch-extension', 'update-dev-branch-base', 'check-dev-branch', 'verify-dev-branch')) {
             $compactRunner | Should -Match ([regex]::Escape('"' + $action + '"'))
         }
+        $compactRunner | Should -Not -Match 'confirm-client-reload'
+    }
+
+    It "reports installed Kilo skill provenance without claiming cache visibility" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-kilo-provenance-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path `
+                (Join-Path $tempRoot ".agent-1c"), `
+                (Join-Path $tempRoot ".agents\skills\1c-workflow-fast") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md") -Destination (Join-Path $tempRoot ".agents\skills\1c-workflow-fast\SKILL.md")
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"masterBranch":"master","aiRules":{"tools":["kilocode"]}}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value '{"tools":["kilocode"],"files":{}}'
+            & git -C $tempRoot init *> $null
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                [pscustomobject]@{
+                    provenance = Get-KiloFastSkillProvenance
+                    output = ((Write-KiloClientSkillProvenanceStatusLines 6>&1) -join "`n")
+                }
+            }
+
+            $result.provenance.contract | Should -Be "kilo-fast-routing-v2"
+            $result.provenance.sha256 | Should -Be (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow-fast\SKILL.md")).Hash.ToLowerInvariant()
+            $result.output | Should -Match "Kilo expected skill:"
+            $result.output | Should -Match "not observable through an ITL API"
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agent-1c\kilo-client-reload.json")) | Should -BeFalse
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    It "keeps permanent failure guardrails owned and bounded" {
+        $rulesText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\USER-RULES.append.md") -Raw -Encoding UTF8
+        $fastSkill = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md") -Raw -Encoding UTF8
+
+        foreach ($marker in @(
+            'classify ownership before editing: `runner`',
+            '`fixture` (scenario/data setup)',
+            '`product` (proven behavior/assertion)',
+            'ITL helper exclusively owns `TESTMANAGER -> TESTCLIENT`',
+            'runner/profile/port evidence never authorizes product/feature workarounds without proof',
+            'same unchanged run without new evidence or a code/config change',
+            'loaded-skill/installed-file conflict',
+            '`/reload` or version/cache mismatch',
+            'Preserve unrelated dirty changes',
+            'revert only owned diagnostic edits'
+        )) {
+            $rulesText | Should -Match ([regex]::Escape($marker))
+        }
+
+        $fastSkill | Should -Match ([regex]::Escape('installed `USER-RULES.md` runner/fixture/product ownership'))
+        $fastSkill | Should -Match 'unchanged-rerun.*unrelated-dirty-change guards'
+        $rulesText | Should -Not -Match '(?i)before every edit|after one experiment|obtain user confirmation.*topolog'
     }
 }

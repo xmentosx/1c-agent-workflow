@@ -90,7 +90,7 @@ function Read-ItlPortRegistry {
     $path = Get-ItlPortRegistryPath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
         return [pscustomobject]@{
-            schemaVersion = 1
+            schemaVersion = 2
             allocations = @()
             updatedAt = ""
         }
@@ -107,9 +107,9 @@ function Write-ItlPortRegistry {
     param([object]$Registry)
 
     $hash = ConvertTo-Agent1cHashtable -Object $Registry
-    $hash["schemaVersion"] = 1
+    $hash["schemaVersion"] = 2
     $hash["updatedAt"] = (Get-Date).ToString("o")
-    Write-Utf8Text -Path (Get-ItlPortRegistryPath) -Value (($hash | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
+    Write-Utf8TextAtomic -Path (Get-ItlPortRegistryPath) -Value (($hash | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
 }
 
 function Invoke-ItlPortRegistryLock {
@@ -166,6 +166,142 @@ function ConvertTo-ItlPortAllocationArray {
         return @($Allocations)
     }
     return @($Allocations)
+}
+
+function Get-ItlPortStaleGraceSeconds {
+    return 300
+}
+
+function Get-ItlProcessStartedAt {
+    param([int]$ProcessId)
+
+    if ($ProcessId -le 0) {
+        return ""
+    }
+    try {
+        return (Get-Process -Id $ProcessId -ErrorAction Stop).StartTime.ToUniversalTime().ToString("o")
+    } catch {
+        return ""
+    }
+}
+
+function Test-ItlPortAllocationOwnerIdentityPresent {
+    param([object]$Allocation)
+
+    $machine = [string](Get-ItlPortObjectValue -Object $Allocation -Name "machine" -Default "")
+    if ($machine -and $machine -ne [Environment]::MachineName) {
+        return $true
+    }
+
+    $processId = ConvertTo-ItlPortInt -Value (Get-ItlPortObjectValue -Object $Allocation -Name "pid" -Default 0)
+    if ($processId -le 0) {
+        return $false
+    }
+
+    $process = $null
+    try {
+        $process = Get-Process -Id $processId -ErrorAction Stop
+    } catch {
+        return $false
+    }
+
+    $expectedStartedAt = [string](Get-ItlPortObjectValue -Object $Allocation -Name "ownerProcessStartedAt" -Default "")
+    if ([string]::IsNullOrWhiteSpace($expectedStartedAt)) {
+        return $true
+    }
+
+    $expected = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse($expectedStartedAt, [ref]$expected)) {
+        return $true
+    }
+    try {
+        return ($process.StartTime.ToUniversalTime() -eq $expected.UtcDateTime)
+    } catch {
+        return $true
+    }
+}
+
+function Test-ItlBranchPortAllocationStateAbsentOrClosed {
+    param([object]$Allocation)
+
+    $family = [string](Get-ItlPortObjectValue -Object $Allocation -Name "family" -Default "")
+    if (@("vanessa-testclient", "vanessa-mcp") -notcontains $family) {
+        return $false
+    }
+
+    $projectRoot = [string](Get-ItlPortObjectValue -Object $Allocation -Name "projectRoot" -Default "")
+    $safeName = [string](Get-ItlPortObjectValue -Object $Allocation -Name "safeDevBranchName" -Default "")
+    if ([string]::IsNullOrWhiteSpace($projectRoot) -or [string]::IsNullOrWhiteSpace($safeName)) {
+        return $false
+    }
+
+    $statePath = Join-Path (Join-Path $projectRoot ".agent-1c\dev-branches") ($safeName + ".json")
+    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $true
+    }
+
+    try {
+        $state = Read-Utf8Text -Path $statePath | ConvertFrom-Json
+        return -not [string]::IsNullOrWhiteSpace([string](Get-ItlPortObjectValue -Object $state -Name "closedAt" -Default ""))
+    } catch {
+        return $false
+    }
+}
+
+function Test-ItlPortAllocationGraceExpired {
+    param([object]$Allocation)
+
+    $updatedAtText = [string](Get-ItlPortObjectValue -Object $Allocation -Name "updatedAt" -Default "")
+    $updatedAt = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse($updatedAtText, [ref]$updatedAt)) {
+        return $false
+    }
+    return ([DateTimeOffset]::UtcNow -ge $updatedAt.ToUniversalTime().AddSeconds((Get-ItlPortStaleGraceSeconds)))
+}
+
+function Test-ItlPortAllocationSafelyStale {
+    param([object]$Allocation)
+
+    if (-not (Test-ItlBranchPortAllocationStateAbsentOrClosed -Allocation $Allocation)) {
+        return $false
+    }
+    if (Test-ItlPortAllocationOwnerIdentityPresent -Allocation $Allocation) {
+        return $false
+    }
+    $port = ConvertTo-ItlPortInt -Value (Get-ItlPortObjectValue -Object $Allocation -Name "port" -Default 0)
+    if ($port -le 0 -or -not (Test-ItlTcpPortAvailable -Port $port)) {
+        return $false
+    }
+    return (Test-ItlPortAllocationGraceExpired -Allocation $Allocation)
+}
+
+function New-ItlManagedPortLeaseToken {
+    return [guid]::NewGuid().ToString("N")
+}
+
+function Test-ItlPortAllocationMatchesStateIdentity {
+    param(
+        [object]$Allocation,
+        [object]$State
+    )
+
+    if ($null -eq $State) {
+        return $false
+    }
+    $stateProjectRoot = [string](Get-ItlPortObjectValue -Object $State -Name "stateProjectRoot" -Default $script:ProjectRoot)
+    $worktreePath = [string](Get-ItlPortObjectValue -Object $State -Name "worktreePath" -Default $stateProjectRoot)
+    $safeName = [string](Get-ItlPortObjectValue -Object $State -Name "safeDevBranchName" -Default "")
+    $allocationRoot = [string](Get-ItlPortObjectValue -Object $Allocation -Name "projectRoot" -Default "")
+    $allocationWorktree = [string](Get-ItlPortObjectValue -Object $Allocation -Name "worktreePath" -Default "")
+    $allocationSafeName = [string](Get-ItlPortObjectValue -Object $Allocation -Name "safeDevBranchName" -Default "")
+    if (-not $stateProjectRoot -or -not $worktreePath -or -not $safeName -or -not $allocationRoot -or -not $allocationWorktree) {
+        return $false
+    }
+    return (
+        (Get-FullPathNormalized $allocationRoot) -eq (Get-FullPathNormalized $stateProjectRoot) -and
+        (Get-FullPathNormalized $allocationWorktree) -eq (Get-FullPathNormalized $worktreePath) -and
+        $allocationSafeName -eq $safeName
+    )
 }
 
 function Test-ItlTcpPortAvailable {
@@ -253,7 +389,8 @@ function New-ItlPortAllocationRecord {
         [string]$Scope = "",
         [string]$ServerId = "",
         [string]$ContainerName = "",
-        [string]$Status = "allocated"
+        [string]$Status = "allocated",
+        [string]$LeaseToken = ""
     )
 
     $stateProjectRoot = [string](Get-ItlPortObjectValue -Object $State -Name "stateProjectRoot" -Default $script:ProjectRoot)
@@ -282,6 +419,8 @@ function New-ItlPortAllocationRecord {
         user = $user
         machine = [Environment]::MachineName
         pid = $PID
+        ownerProcessStartedAt = (Get-ItlProcessStartedAt -ProcessId $PID)
+        leaseToken = $LeaseToken
         updatedAt = (Get-Date).ToString("o")
     }
 }
@@ -298,7 +437,7 @@ function Test-ItlPortReserved {
     return ($ReservedPorts.ContainsKey($Port) -or $ReservedPorts.ContainsKey([string]$Port))
 }
 
-function Resolve-ItlManagedPort {
+function Resolve-ItlManagedPortLease {
     param(
         [string]$Family,
         [string]$Key,
@@ -311,7 +450,8 @@ function Resolve-ItlManagedPort {
         [string]$Scope = "",
         [string]$ServerId = "",
         [string]$ContainerName = "",
-        [string]$Subject = "managed port"
+        [string]$Subject = "managed port",
+        [string]$LeaseToken = ""
     )
 
     if ([string]::IsNullOrWhiteSpace($Family) -or [string]::IsNullOrWhiteSpace($Key)) {
@@ -333,14 +473,17 @@ function Resolve-ItlManagedPort {
 
         foreach ($allocation in $allocations) {
             $status = [string](Get-ItlPortObjectValue -Object $allocation -Name "status" -Default "")
-            if ($status -eq "released") {
+            if ($status -eq "released" -or (Test-ItlPortAllocationSafelyStale -Allocation $allocation)) {
                 continue
             }
 
             $port = ConvertTo-ItlPortInt -Value (Get-ItlPortObjectValue -Object $allocation -Name "port" -Default 0)
             $allocationFamily = [string](Get-ItlPortObjectValue -Object $allocation -Name "family" -Default "")
             $allocationKey = [string](Get-ItlPortObjectValue -Object $allocation -Name "key" -Default "")
-            $isSame = ($allocationFamily -eq $Family -and $allocationKey -eq $Key)
+            $allocationLeaseToken = [string](Get-ItlPortObjectValue -Object $allocation -Name "leaseToken" -Default "")
+            $adoptLegacyLease = $LeaseToken -and -not $allocationLeaseToken -and (Test-ItlPortAllocationMatchesStateIdentity -Allocation $allocation -State $State)
+            $sameToken = $(if ($LeaseToken) { $allocationLeaseToken -eq $LeaseToken -or $adoptLegacyLease } else { -not $allocationLeaseToken })
+            $isSame = ($allocationFamily -eq $Family -and $allocationKey -eq $Key -and $sameToken)
             if ($isSame -and $null -eq $same) {
                 $same = $allocation
                 $kept += $allocation
@@ -371,14 +514,18 @@ function Resolve-ItlManagedPort {
                 -Scope $Scope `
                 -ServerId $ServerId `
                 -ContainerName $ContainerName `
-                -Status "allocated"
+                -Status "allocated" `
+                -LeaseToken $LeaseToken
 
             $updated = @()
             $replaced = $false
             foreach ($allocation in $kept) {
                 $allocationFamily = [string](Get-ItlPortObjectValue -Object $allocation -Name "family" -Default "")
                 $allocationKey = [string](Get-ItlPortObjectValue -Object $allocation -Name "key" -Default "")
-                if ($allocationFamily -eq $Family -and $allocationKey -eq $Key) {
+                $allocationLeaseToken = [string](Get-ItlPortObjectValue -Object $allocation -Name "leaseToken" -Default "")
+                $adoptLegacyLease = $LeaseToken -and -not $allocationLeaseToken -and (Test-ItlPortAllocationMatchesStateIdentity -Allocation $allocation -State $State)
+                $sameToken = $(if ($LeaseToken) { $allocationLeaseToken -eq $LeaseToken -or $adoptLegacyLease } else { -not $allocationLeaseToken })
+                if ($allocationFamily -eq $Family -and $allocationKey -eq $Key -and $sameToken) {
                     if (-not $replaced) {
                         $updated += $record
                         $replaced = $true
@@ -394,7 +541,7 @@ function Resolve-ItlManagedPort {
             $hash = ConvertTo-Agent1cHashtable -Object $registry
             $hash["allocations"] = $updated
             Write-ItlPortRegistry -Registry $hash
-            return [pscustomobject]@{ port = $Port }
+            return [pscustomobject]@{ port = $Port; leaseToken = $LeaseToken }
         }
 
         function Test-CandidatePort {
@@ -453,7 +600,27 @@ function Resolve-ItlManagedPort {
         throw "No free $Subject found in range $Start..$End. Stop another ITL-managed process or override the corresponding port range."
     }
 
-    return [int]$result.port
+    return $result
+}
+
+function Resolve-ItlManagedPort {
+    param(
+        [string]$Family,
+        [string]$Key,
+        [int]$Start,
+        [int]$End,
+        [int]$PreferredPort = 0,
+        [int]$ExplicitPort = 0,
+        [hashtable]$ReservedPorts = @{},
+        [object]$State = $null,
+        [string]$Scope = "",
+        [string]$ServerId = "",
+        [string]$ContainerName = "",
+        [string]$Subject = "managed port"
+    )
+
+    $lease = Resolve-ItlManagedPortLease @PSBoundParameters
+    return [int]$lease.port
 }
 
 function Set-ItlManagedPortAllocationStatus {
@@ -461,7 +628,8 @@ function Set-ItlManagedPortAllocationStatus {
         [string]$Family,
         [string]$Key,
         [string]$Status,
-        [int]$ProcessId = 0
+        [int]$ProcessId = 0,
+        [string]$LeaseToken = ""
     )
 
     if ([string]::IsNullOrWhiteSpace($Family) -or [string]::IsNullOrWhiteSpace($Key)) {
@@ -475,12 +643,15 @@ function Set-ItlManagedPortAllocationStatus {
         foreach ($allocation in $allocations) {
             $allocationFamily = [string](Get-ItlPortObjectValue -Object $allocation -Name "family" -Default "")
             $allocationKey = [string](Get-ItlPortObjectValue -Object $allocation -Name "key" -Default "")
-            if ($allocationFamily -eq $Family -and $allocationKey -eq $Key) {
+            $allocationLeaseToken = [string](Get-ItlPortObjectValue -Object $allocation -Name "leaseToken" -Default "")
+            $tokenMatches = $(if ($allocationLeaseToken) { $LeaseToken -and $allocationLeaseToken -eq $LeaseToken } else { -not $LeaseToken })
+            if ($allocationFamily -eq $Family -and $allocationKey -eq $Key -and $tokenMatches) {
                 $hash = ConvertTo-Agent1cHashtable -Object $allocation
                 $hash["status"] = $Status
                 $hash["updatedAt"] = (Get-Date).ToString("o")
                 if ($ProcessId -gt 0) {
                     $hash["pid"] = $ProcessId
+                    $hash["ownerProcessStartedAt"] = Get-ItlProcessStartedAt -ProcessId $ProcessId
                 }
                 $updated += $hash
             } else {
@@ -497,7 +668,8 @@ function Set-ItlManagedPortAllocationStatus {
 function Release-ItlManagedPortAllocation {
     param(
         [string]$Family,
-        [string]$Key
+        [string]$Key,
+        [string]$LeaseToken = ""
     )
 
     if ([string]::IsNullOrWhiteSpace($Family) -or [string]::IsNullOrWhiteSpace($Key)) {
@@ -511,7 +683,9 @@ function Release-ItlManagedPortAllocation {
         foreach ($allocation in $allocations) {
             $allocationFamily = [string](Get-ItlPortObjectValue -Object $allocation -Name "family" -Default "")
             $allocationKey = [string](Get-ItlPortObjectValue -Object $allocation -Name "key" -Default "")
-            if ($allocationFamily -eq $Family -and $allocationKey -eq $Key) {
+            $allocationLeaseToken = [string](Get-ItlPortObjectValue -Object $allocation -Name "leaseToken" -Default "")
+            $tokenMatches = $(if ($allocationLeaseToken) { $LeaseToken -and $allocationLeaseToken -eq $LeaseToken } else { -not $LeaseToken })
+            if ($allocationFamily -eq $Family -and $allocationKey -eq $Key -and $tokenMatches) {
                 continue
             }
             $updated += $allocation
@@ -542,7 +716,20 @@ function Release-ItlManagedPortAllocationsForState {
             $sameWorktree = $allocationWorktree -and ((Get-FullPathNormalized $allocationWorktree) -eq (Get-FullPathNormalized $worktreePath))
             $sameBranch = $safeName -and $allocationSafeName -eq $safeName
             if ($sameRoot -and $sameWorktree -and $sameBranch) {
-                continue
+                $allocationLeaseToken = [string](Get-ItlPortObjectValue -Object $allocation -Name "leaseToken" -Default "")
+                if (-not $allocationLeaseToken) {
+                    continue
+                }
+                $family = [string](Get-ItlPortObjectValue -Object $allocation -Name "family" -Default "")
+                $stateTokenName = switch ($family) {
+                    "vanessa-testclient" { "vanessaTestPortLeaseToken" }
+                    "vanessa-mcp" { "vanessaMcpPortLeaseToken" }
+                    default { "" }
+                }
+                $stateLeaseToken = $(if ($stateTokenName) { [string](Get-ItlPortObjectValue -Object $State -Name $stateTokenName -Default "") } else { "" })
+                if ($stateLeaseToken -and $stateLeaseToken -eq $allocationLeaseToken) {
+                    continue
+                }
             }
             $updated += $allocation
         }

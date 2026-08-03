@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 Describe "Branch-safe Vanessa runtime cleanup" {
     BeforeAll {
@@ -131,7 +131,13 @@ Describe "Branch-safe Vanessa runtime cleanup" {
                 }
                 $sameNameStateIdentity = Test-VanessaStateIdentityMatch -First $state -Second $foreignState
                 $sameBaseStateIdentity = Test-VanessaStateIdentityMatch -First $state -Second ([pscustomobject]@{ devBranchInfoBasePath = $currentBaseVariant })
-                $cleanup = Stop-OwnVanessaTestProcesses -State $state
+                $sameTupleStateIdentity = Test-VanessaStateIdentityMatch -First $state -Second ([pscustomobject]@{
+                    stateProjectRoot = $state.stateProjectRoot.ToUpperInvariant().Replace('\', '/')
+                    worktreePath = $state.worktreePath.ToUpperInvariant().Replace('\', '/')
+                    safeDevBranchName = "different-display-name"
+                    devBranchInfoBasePath = $currentBaseVariant
+                })
+                $cleanup = Stop-OwnVanessaTestProcesses -State $state -BranchWide
                 [pscustomobject]@{
                     ownedBefore = $ownedBefore
                     branchNameOwn = $branchNameOwn
@@ -140,6 +146,7 @@ Describe "Branch-safe Vanessa runtime cleanup" {
                     stoppedAfterIncomplete = $stoppedAfterIncomplete
                     sameNameStateIdentity = $sameNameStateIdentity
                     sameBaseStateIdentity = $sameBaseStateIdentity
+                    sameTupleStateIdentity = $sameTupleStateIdentity
                     stoppedIds = @($script:StoppedIds)
                     cleanup = $cleanup
                 }
@@ -151,7 +158,8 @@ Describe "Branch-safe Vanessa runtime cleanup" {
             $result.incompleteCleanup.errors -join "`n" | Should -Match "ownership-unverified"
             $result.stoppedAfterIncomplete | Should -BeNullOrEmpty
             $result.sameNameStateIdentity | Should -BeFalse
-            $result.sameBaseStateIdentity | Should -BeTrue
+            $result.sameBaseStateIdentity | Should -BeFalse
+            $result.sameTupleStateIdentity | Should -BeTrue
             $result.stoppedIds | Should -Contain 1001
             $result.stoppedIds | Should -Contain 1002
             $result.stoppedIds | Should -Not -Contain 1003
@@ -263,5 +271,372 @@ Describe "Branch-safe Vanessa runtime cleanup" {
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It "parses only exact TPort and mcpPort arguments and never disables RequireTestPort" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-port-identity-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $base = Join-Path $tempRoot "База с пробелом 48051"
+                $state = [pscustomobject]@{ devBranchInfoBasePath = $base }
+                $line = "1cv8c.exe /TESTCLIENT -TPort 48052 /F `"$base`" /Out `"$tempRoot\logs\48051.log`" /CStartFeaturePlayer;VAParams=$tempRoot\runs\48051\VAParams.json"
+                $mcpLine = "1cv8c.exe /TESTMANAGER /F `"$base`" /CrunMcp;mcpPort=48123;VAParams=$tempRoot\runs\48052\VAParams.json"
+                [pscustomobject]@{
+                    exactTestPort = Test-CommandLineContainsPort -CommandLine $line -Port 48052
+                    falseNumericTestPort = Test-CommandLineContainsPort -CommandLine $line -Port 48051
+                    exactMcpPort = Test-CommandLineContainsMcpPort -CommandLine $mcpLine -Port 48123
+                    falseNumericMcpPort = Test-CommandLineContainsMcpPort -CommandLine $mcpLine -Port 48052
+                    testParserRejectsMcp = Test-CommandLineContainsPort -CommandLine $mcpLine -Port 48123
+                    mcpParserRejectsTest = Test-CommandLineContainsMcpPort -CommandLine $line -Port 48052
+                    duplicateTestPort = Test-CommandLineContainsPort -CommandLine "$line -TPort 48052" -Port 48052
+                    duplicateMcpPort = Test-CommandLineContainsMcpPort -CommandLine "$mcpLine;mcpPort=48123" -Port 48123
+                    missingRequiredPort = Test-OneCProcessBelongsToState -ProcessInfo ([pscustomobject]@{ commandLine = $line }) -State $state -TestPort 0 -RequireTestPort
+                }
+            }
+
+            $result.exactTestPort | Should -BeTrue
+            $result.falseNumericTestPort | Should -BeFalse
+            $result.exactMcpPort | Should -BeTrue
+            $result.falseNumericMcpPort | Should -BeFalse
+            $result.testParserRejectsMcp | Should -BeFalse
+            $result.mcpParserRejectsTest | Should -BeFalse
+            $result.duplicateTestPort | Should -BeFalse
+            $result.duplicateMcpPort | Should -BeFalse
+            $result.missingRequiredPort | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "uses every current-run TestClient port for diagnostics and cleanup while branch release remains explicit" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-run-scope-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $base = Join-Path $tempRoot "Кириллица worktree\База с пробелами"
+                $currentParams = Join-Path $tempRoot "runs\current run\VAParams.json"
+                $otherParams = Join-Path $tempRoot "runs\other run\VAParams.json"
+                $state = [pscustomobject]@{ devBranchInfoBasePath = $base; vanessaTestPort = 48054; vanessaTestPorts = @(48054, 48055) }
+                $script:StoppedIds = @()
+                $script:Processes = @(
+                    [pscustomobject]@{ processId = 1101; commandLine = "1cv8c.exe /TESTMANAGER /F `"$base`" `"/CStartFeaturePlayer;VAParams=$currentParams`"" },
+                    [pscustomobject]@{ processId = 1102; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48054 /F `"$base`"" },
+                    [pscustomobject]@{ processId = 1103; commandLine = "1cv8c.exe /TESTMANAGER /F `"$base`" `"/CStartFeaturePlayer;VAParams=$otherParams`"" },
+                    [pscustomobject]@{ processId = 1104; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48056 /F `"$base`"" },
+                    [pscustomobject]@{ processId = 1105; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48055 /F `"$base`"" }
+                )
+                function Get-OneCProcessInfo { param([switch]$RequireSuccess); @($script:Processes | Where-Object { $script:StoppedIds -notcontains $_.processId }) }
+                function Stop-Process { param([int]$Id); $script:StoppedIds += $Id }
+                function Start-Sleep {}
+
+                $diagnostics = Write-OneCVanessaProcessDiagnostics -State $state -TestPorts @(48054, 48055) -RunParamsPath $currentParams 6>&1
+                Stop-OwnHungVanessaTestClients -State $state -TestPorts @(48054, 48055) -RunParamsPath $currentParams
+                $afterHung = @($script:StoppedIds)
+                $script:StoppedIds = @()
+                $ordinary = Stop-OwnVanessaTestProcesses -State $state -TestPorts @(48054, 48055) -RunParamsPath $currentParams
+                $afterOrdinary = @($script:StoppedIds)
+                $branch = Stop-OwnVanessaTestProcesses -State $state -BranchWide
+                [pscustomobject]@{
+                    ordinary = $ordinary
+                    diagnostics = ($diagnostics | Out-String)
+                    afterHung = $afterHung
+                    afterOrdinary = $afterOrdinary
+                    afterBranch = @($script:StoppedIds)
+                    branch = $branch
+                }
+            }
+
+            $result.ordinary.errors | Should -BeNullOrEmpty
+            $result.diagnostics | Should -Match '(?s)\[current-run\].*PID=1101'
+            $result.diagnostics | Should -Match '(?s)\[current-run\].*PID=1102'
+            $result.diagnostics | Should -Match '(?s)\[current-run\].*PID=1105'
+            $result.diagnostics | Should -Not -Match '\[current-run\].*PID=1103'
+            $result.diagnostics | Should -Not -Match '\[current-run\].*PID=1104'
+            $result.afterHung | Should -Contain 1101
+            $result.afterHung | Should -Contain 1102
+            $result.afterHung | Should -Contain 1105
+            $result.afterHung | Should -Not -Contain 1103
+            $result.afterHung | Should -Not -Contain 1104
+            $result.afterOrdinary | Should -Contain 1101
+            $result.afterOrdinary | Should -Contain 1102
+            $result.afterOrdinary | Should -Contain 1105
+            $result.afterOrdinary | Should -Not -Contain 1103
+            $result.afterOrdinary | Should -Not -Contain 1104
+            $result.afterBranch | Should -Contain 1103
+            $result.afterBranch | Should -Not -Contain 1104
+            $result.branch.errors | Should -BeNullOrEmpty
+
+            $helperText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
+            $runStart = $helperText.IndexOf("function Run-DevBranchTests")
+            $runEnd = $helperText.IndexOf("function ConvertTo-IntOrDefault", $runStart)
+            $runText = $helperText.Substring($runStart, ($runEnd - $runStart))
+            @([regex]::Matches($runText, '(?:Stop-OwnHungVanessaTestClients|Write-OneCVanessaProcessDiagnostics|Stop-OwnVanessaTestProcessesAndAssert).*?-TestPorts \$testPorts')).Count | Should -Be 6
+            $runText | Should -Not -Match '(?:Stop-OwnHungVanessaTestClients|Write-OneCVanessaProcessDiagnostics|Stop-OwnVanessaTestProcessesAndAssert).*?-TestPort \$testPort(?:\s|$)'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "fails closed when destructive process inspection is unavailable" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-inspection-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-CimInstance { throw "fixture CIM unavailable" }
+                function Stop-Process { $script:UnexpectedStop = $true }
+                $script:UnexpectedStop = $false
+                $message = ""
+                try {
+                    Stop-OwnVanessaTestProcesses -State ([pscustomobject]@{ devBranchInfoBasePath = (Join-Path $tempRoot "base"); vanessaTestPort = 48054 }) -BranchWide | Out-Null
+                } catch {
+                    $message = $_.Exception.Message
+                }
+                [pscustomobject]@{ message = $message; unexpectedStop = $script:UnexpectedStop }
+            }
+
+            $result.message | Should -Match '^ITL_ONEC_PROCESS_INSPECTION_UNAVAILABLE:'
+            $result.unexpectedStop | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "rejects legacy MCP PID reuse before destructive stop or lease release" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-legacy-pid-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $base = Join-Path $tempRoot "Кириллица base with spaces"
+                $started = [datetime]"2026-08-03T08:00:00Z"
+                $state = [pscustomobject]@{
+                    devBranchInfoBasePath = $base
+                    vanessaMcpPid = 44001
+                    vanessaMcpPort = 48123
+                    vanessaMcpProcessStartTime = $started.ToString("o")
+                    vanessaMcpExecutablePath = "C:\Program Files\1cv8\1cv8c.exe"
+                    vanessaMcpCommandLineIdentity = "runMcp;mcpPort=48123"
+                    vanessaMcpInfoBasePath = $base
+                }
+                $reused = [pscustomobject]@{
+                    processId = 44001
+                    processStartTime = $started.AddMinutes(10).ToString("o")
+                    executablePath = "C:\Program Files\1cv8\1cv8c.exe"
+                    commandLine = "1cv8c.exe /TESTMANAGER /F `"$base`" /CrunMcp;mcpPort=48123"
+                }
+                function Get-VanessaMcpRuntimeInfo { [pscustomobject]@{ processAlive = $true; pid = 44001; port = 48123; portOpen = $true } }
+                function Get-OneCProcessInfo { param([switch]$RequireSuccess); @($reused) }
+                function Stop-Process { $script:UnexpectedStop = $true }
+                function Set-ItlManagedPortAllocationStatus { $script:UnexpectedLeaseRelease = $true }
+                function Update-DevBranchState { $script:UnexpectedStateUpdate = $true }
+                $script:UnexpectedStop = $false
+                $script:UnexpectedLeaseRelease = $false
+                $script:UnexpectedStateUpdate = $false
+                $message = ""
+                try { Stop-VanessaMcpForState -State $state -Quiet | Out-Null } catch { $message = $_.Exception.Message }
+                [pscustomobject]@{
+                    message = $message
+                    unexpectedStop = $script:UnexpectedStop
+                    unexpectedLeaseRelease = $script:UnexpectedLeaseRelease
+                    unexpectedStateUpdate = $script:UnexpectedStateUpdate
+                }
+            }
+
+            $result.message | Should -Match '^ITL_LEGACY_MCP_OWNERSHIP_MISMATCH:'
+            $result.unexpectedStop | Should -BeFalse
+            $result.unexpectedLeaseRelease | Should -BeFalse
+            $result.unexpectedStateUpdate | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "requires every legacy MCP ownership component and exact mcpPort" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-legacy-identity-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $base = Join-Path $tempRoot "База с пробелами"
+                $started = [datetime]"2026-08-03T08:00:00Z"
+                $state = [pscustomobject]@{
+                    devBranchInfoBasePath = $base
+                    vanessaMcpPid = 44001
+                    vanessaMcpPort = 48123
+                    vanessaMcpProcessStartTime = $started.ToString("o")
+                    vanessaMcpExecutablePath = "C:\Program Files\1cv8\1cv8c.exe"
+                    vanessaMcpCommandLineIdentity = "runMcp;mcpPort=48123"
+                    vanessaMcpInfoBasePath = $base
+                }
+                $owned = [pscustomobject]@{
+                    processId = 44001
+                    processStartTime = $started.AddMilliseconds(500).ToString("o")
+                    executablePath = "C:\Program Files\1cv8\1cv8c.exe"
+                    commandLine = "1cv8c.exe /TESTMANAGER /F `"$base`" /CrunMcp;mcpPort=48123 /Out `"$tempRoot\48124.log`""
+                }
+                $wrongPort = $owned.PSObject.Copy()
+                $wrongPort.commandLine = "1cv8c.exe /TESTMANAGER /F `"$base`" /CrunMcp;mcpPort=48124 /Out `"$tempRoot\48123.log`""
+                $wrongExecutable = $owned.PSObject.Copy()
+                $wrongExecutable.executablePath = "C:\Other\1cv8c.exe"
+                [pscustomobject]@{
+                    owned = Test-VanessaMcpProcessBelongsToState -ProcessInfo $owned -State $state
+                    wrongPort = Test-VanessaMcpProcessBelongsToState -ProcessInfo $wrongPort -State $state
+                    wrongExecutable = Test-VanessaMcpProcessBelongsToState -ProcessInfo $wrongExecutable -State $state
+                }
+            }
+
+            $result.owned | Should -BeTrue
+            $result.wrongPort | Should -BeFalse
+            $result.wrongExecutable | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "releases legacy MCP state only after an owned stop and successful postcondition inspection" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-legacy-stop-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $base = Join-Path $tempRoot "База with spaces"
+                $started = [datetime]"2026-08-03T08:00:00Z"
+                $state = [pscustomobject]@{
+                    devBranchName = "branch"
+                    devBranchInfoBasePath = $base
+                    vanessaMcpPid = 44001
+                    vanessaMcpPort = 48123
+                    vanessaMcpProcessStartTime = $started.ToString("o")
+                    vanessaMcpExecutablePath = "C:\Program Files\1cv8\1cv8c.exe"
+                    vanessaMcpCommandLineIdentity = "runMcp;mcpPort=48123"
+                    vanessaMcpInfoBasePath = $base
+                }
+                $owned = [pscustomobject]@{
+                    processId = 44001
+                    processStartTime = $started.ToString("o")
+                    executablePath = "C:\Program Files\1cv8\1cv8c.exe"
+                    commandLine = "1cv8c.exe /TESTMANAGER /F `"$base`" /CrunMcp;mcpPort=48123"
+                }
+                $script:InspectionCount = 0
+                function Get-VanessaMcpRuntimeInfo { [pscustomobject]@{ processAlive = $true; pid = 44001; port = 48123; portOpen = $true } }
+                function Get-OneCProcessInfo {
+                    param([switch]$RequireSuccess)
+                    $script:InspectionCount++
+                    if ($script:InspectionCount -eq 1) { @($owned) } else { @() }
+                }
+                function Stop-Process { param([int]$Id, [switch]$Force, [object]$ErrorAction); $script:StoppedId = $Id }
+                function Start-Sleep { param([int]$Milliseconds) }
+                function Get-Process { param([int]$Id, [object]$ErrorAction); return $null }
+                function Test-TcpPortOpen { param([int]$Port); return $false }
+                function Get-ItlBranchManagedPortKey { param([string]$Family, [object]$State); return "fixture-key" }
+                function Set-ItlManagedPortAllocationStatus { param([string]$Family, [string]$Key, [string]$Status); $script:LeaseStatus = $Status }
+                function Update-DevBranchState { param([object]$State, [hashtable]$Updates); $script:StateUpdates = $Updates }
+                function Read-DevBranchState { param([string]$Name); return $state }
+                $script:StoppedId = 0
+                $script:LeaseStatus = ""
+                $script:StateUpdates = $null
+
+                $stopped = Stop-VanessaMcpForState -State $state -Quiet -SkipClientConfig
+                [pscustomobject]@{
+                    stopped = $stopped
+                    stoppedId = $script:StoppedId
+                    inspectionCount = $script:InspectionCount
+                    leaseStatus = $script:LeaseStatus
+                    stateUpdates = $script:StateUpdates
+                }
+            }
+
+            $result.stopped | Should -BeTrue
+            $result.stoppedId | Should -Be 44001
+            $result.inspectionCount | Should -Be 2
+            $result.leaseStatus | Should -Be "stopped"
+            $result.stateUpdates.vanessaMcpPid | Should -Be ""
+            $result.stateUpdates.vanessaMcpProcessStartTime | Should -Be ""
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "preserves the legacy MCP lease when post-stop inspection becomes unavailable" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-legacy-postcondition-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $base = Join-Path $tempRoot "base"
+                $started = [datetime]"2026-08-03T08:00:00Z"
+                $state = [pscustomobject]@{
+                    devBranchInfoBasePath = $base; vanessaMcpPid = 44001; vanessaMcpPort = 48123
+                    vanessaMcpProcessStartTime = $started.ToString("o"); vanessaMcpExecutablePath = "C:\1cv8c.exe"
+                    vanessaMcpCommandLineIdentity = "runMcp;mcpPort=48123"; vanessaMcpInfoBasePath = $base
+                }
+                $owned = [pscustomobject]@{
+                    processId = 44001; processStartTime = $started.ToString("o"); executablePath = "C:\1cv8c.exe"
+                    commandLine = "1cv8c.exe /TESTMANAGER /F `"$base`" /CrunMcp;mcpPort=48123"
+                }
+                $script:InspectionCount = 0
+                function Get-VanessaMcpRuntimeInfo { [pscustomobject]@{ processAlive = $true; pid = 44001; port = 48123; portOpen = $true } }
+                function Get-OneCProcessInfo {
+                    param([switch]$RequireSuccess)
+                    $script:InspectionCount++
+                    if ($script:InspectionCount -eq 1) { return @($owned) }
+                    throw "ITL_ONEC_PROCESS_INSPECTION_UNAVAILABLE: fixture postcondition"
+                }
+                function Stop-Process { param([int]$Id, [switch]$Force, [object]$ErrorAction); $script:Stopped = $true }
+                function Start-Sleep { param([int]$Milliseconds) }
+                function Get-Process { param([int]$Id, [object]$ErrorAction); return $null }
+                function Test-TcpPortOpen { param([int]$Port); return $false }
+                function Set-ItlManagedPortAllocationStatus { $script:UnexpectedLeaseRelease = $true }
+                function Update-DevBranchState { $script:UnexpectedStateUpdate = $true }
+                $script:Stopped = $false
+                $script:UnexpectedLeaseRelease = $false
+                $script:UnexpectedStateUpdate = $false
+                $message = ""
+                try { Stop-VanessaMcpForState -State $state -Quiet -SkipClientConfig | Out-Null } catch { $message = $_.Exception.Message }
+                [pscustomobject]@{
+                    message = $message; stopped = $script:Stopped
+                    unexpectedLeaseRelease = $script:UnexpectedLeaseRelease; unexpectedStateUpdate = $script:UnexpectedStateUpdate
+                }
+            }
+
+            $result.message | Should -Match '^ITL_ONEC_PROCESS_INSPECTION_UNAVAILABLE:'
+            $result.stopped | Should -BeTrue
+            $result.unexpectedLeaseRelease | Should -BeFalse
+            $result.unexpectedStateUpdate | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps ordinary lifecycle runs serialized and legacy stop ownership mandatory" {
+        $corePath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.core.ps1"
+        $roctupPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.roctup-mcp.ps1"
+        $coreText = Get-Content -LiteralPath $corePath -Raw -Encoding UTF8
+        $vanessaText = Get-Content -LiteralPath $VanessaPath -Raw -Encoding UTF8
+        $roctupText = Get-Content -LiteralPath $roctupPath -Raw -Encoding UTF8
+        $lockFunction = [regex]::Match($coreText, 'function Test-Agent1cActionRequiresLifecycleLock[\s\S]*?^}', [Text.RegularExpressions.RegexOptions]::Multiline).Value
+        $stopFunction = [regex]::Match($vanessaText, 'function Stop-VanessaMcpForState[\s\S]*?^}', [Text.RegularExpressions.RegexOptions]::Multiline).Value
+        $startFunction = [regex]::Match($vanessaText, 'function Start-VanessaMcp[\s\S]*?^}', [Text.RegularExpressions.RegexOptions]::Multiline).Value
+
+        $lockFunction | Should -Not -Match '"run-dev-branch-tests"'
+        $lockFunction | Should -Not -Match '"check-dev-branch"'
+        $lockFunction | Should -Not -Match '"verify-dev-branch"'
+        $stopFunction | Should -Not -Match 'RequireOwnership'
+        $stopFunction | Should -Match 'Test-VanessaMcpProcessBelongsToState'
+        foreach ($field in @('vanessaMcpProcessStartTime', 'vanessaMcpExecutablePath', 'vanessaMcpCommandLineIdentity', 'vanessaMcpInfoBasePath')) {
+            $startFunction | Should -Match $field
+        }
+        $roctupText | Should -Match 'Test-CommandLineContainsMcpPort'
     }
 }
