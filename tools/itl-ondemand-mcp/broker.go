@@ -37,6 +37,7 @@ type backendBroker interface {
 	Ensure(context.Context) (*backendInfo, error)
 	EnsureTestClient(context.Context) (*backendInfo, error)
 	Recover(context.Context, *backendInfo, string) (*backendInfo, error)
+	MarkRunning(context.Context, *backendInfo) (*backendInfo, error)
 	Stop(context.Context) error
 }
 
@@ -52,7 +53,7 @@ type powershellBroker struct {
 
 func (b *powershellBroker) Ensure(ctx context.Context) (*backendInfo, error) {
 	info, err := b.invoke(ctx, "ensure", nil)
-	if err == nil && (info.Status != "running" || info.PID <= 0 || info.URL == "" || info.InstanceID != b.InstanceID || info.Family != b.Family) {
+	if err == nil && ((info.Status != "readiness" && info.Status != "running") || info.PID <= 0 || info.Port <= 0 || info.URL == "" || info.InstanceID != b.InstanceID || info.Family != b.Family) {
 		err = fmt.Errorf("backend broker returned an invalid running instance")
 	}
 	if err != nil {
@@ -86,13 +87,30 @@ func (b *powershellBroker) Recover(ctx context.Context, previous *backendInfo, r
 		"-InternalOnDemandExpectedPid", fmt.Sprint(previous.PID),
 		"-InternalOnDemandExpectedPort", fmt.Sprint(previous.Port),
 	})
-	if err == nil && (info.Status != "running" || info.PID <= 0 || info.Port <= 0 || info.URL == "" || info.InstanceID != replacementInstanceID || info.Family != b.Family) {
+	if err == nil && ((info.Status != "readiness" && info.Status != "running") || info.PID <= 0 || info.Port <= 0 || info.URL == "" || info.InstanceID != replacementInstanceID || info.Family != b.Family) {
 		err = fmt.Errorf("backend broker returned an invalid recovered instance")
 	}
 	if err != nil {
 		return nil, err
 	}
 	b.InstanceID = replacementInstanceID
+	return info, nil
+}
+
+func (b *powershellBroker) MarkRunning(ctx context.Context, previous *backendInfo) (*backendInfo, error) {
+	if previous == nil || previous.InstanceID != b.InstanceID || previous.PID <= 0 || previous.Port <= 0 {
+		return nil, fmt.Errorf("backend readiness confirmation requires the registered instance PID and port")
+	}
+	info, err := b.invoke(ctx, "mark-running", []string{
+		"-InternalOnDemandExpectedPid", fmt.Sprint(previous.PID),
+		"-InternalOnDemandExpectedPort", fmt.Sprint(previous.Port),
+	})
+	if err == nil && (info.Status != "running" || info.PID != previous.PID || info.Port != previous.Port || info.InstanceID != b.InstanceID || info.Family != b.Family) {
+		err = fmt.Errorf("backend broker returned an invalid protocol-ready instance")
+	}
+	if err != nil {
+		return nil, err
+	}
 	return info, nil
 }
 

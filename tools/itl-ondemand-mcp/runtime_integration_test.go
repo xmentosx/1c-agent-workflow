@@ -28,6 +28,7 @@ type fakeBroker struct {
 	ensures           int
 	recoveries        int
 	testClientEnsures int
+	marks             int
 	stops             int
 	stopFailures      int
 	testClientErr     error
@@ -92,6 +93,16 @@ func (b *fakeBroker) Stop(context.Context) error {
 	return nil
 }
 
+func (b *fakeBroker) MarkRunning(_ context.Context, previous *backendInfo) (*backendInfo, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.marks++
+	copy := *previous
+	copy.Status = "running"
+	b.info = &copy
+	return &copy, nil
+}
+
 func (b *fakeBroker) counts() (int, int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -108,6 +119,12 @@ func (b *fakeBroker) testClientEnsureCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.testClientEnsures
+}
+
+func (b *fakeBroker) markCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.marks
 }
 
 func boolPointer(value bool) *bool { return &value }
@@ -357,6 +374,9 @@ func TestRuntimeLazyHTTPPaginationCallAndProgress(t *testing.T) {
 	}
 	if ensures, _ := broker.counts(); ensures != 1 {
 		t.Fatalf("ensure count=%d", ensures)
+	}
+	if marks := broker.markCount(); marks != 1 {
+		t.Fatalf("protocol-ready state was not marked exactly once after handshake: %d", marks)
 	}
 	select {
 	case got := <-progress:
@@ -731,6 +751,9 @@ func TestRuntimeRejectsCatalogMismatchAndStopsBackend(t *testing.T) {
 	}
 	if _, stops := broker.counts(); stops == 0 {
 		t.Fatal("mismatched backend was not stopped")
+	}
+	if marks := broker.markCount(); marks != 0 {
+		t.Fatalf("catalog-mismatched backend was marked running: %d", marks)
 	}
 }
 
