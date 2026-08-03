@@ -456,6 +456,37 @@
         }
     }
 
+    It "marks a missing Unicode root file in the exact partial-load inventory" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-missing-config-root-" + [guid]::NewGuid().ToString("N"))
+
+        try {
+            $catalogsPath = Join-Path $tempRoot "src\cf\Catalogs"
+            New-Item -ItemType Directory -Force -Path $catalogsPath | Out-Null
+            $missingRelativePath = "Catalogs\Каталог с пробелом.xml"
+            $missingAbsolutePath = Join-Path (Join-Path $tempRoot "src\cf") $missingRelativePath
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Value "<Configuration />" -Encoding UTF8
+            Set-Content -LiteralPath $missingAbsolutePath -Value "<Catalog />" -Encoding UTF8
+
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add -- src/cf
+            & git -C $tempRoot commit -m "base config" *> $null
+            $baseCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+            Remove-Item -LiteralPath $missingAbsolutePath -Force
+
+            $changeSet = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Get-ConfigLoadChangeSet -State ([pscustomobject]@{ createdFromCommit = $baseCommit }) -ExportPath "src/cf"
+            }
+
+            $changeSet.files | Should -Contain $missingRelativePath
+            $changeSet.missingFiles | Should -Be @($missingRelativePath)
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "treats empty Git path list output as an empty array" {
         $tempParent = Join-Path ([System.IO.Path]::GetTempPath()) ("itl git paths parent " + [guid]::NewGuid().ToString("N"))
         $tempRoot = Join-Path $tempParent "РїСЂРѕРµРєС‚ СЃ РїСЂРѕР±РµР»РѕРј"
@@ -589,6 +620,81 @@
         $result | Should -Contain "-partial"
         $result | Should -Contain "-updateConfigDumpInfo"
         $result | Should -Contain "/UpdateDBCfg"
+    }
+
+    It "skips partial Designer startup and uses a full load for missing inventory files" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            $script:DesignerCalls = @()
+            $script:DrainCalls = 0
+            $missingPath = "Catalogs\Каталог с пробелом.xml"
+            function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-missing"; fileCount = 2; absoluteExportPath = "C:\project with spaces\src\cf" } }
+            function Get-ConfigLoadChangeSet {
+                [pscustomobject]@{
+                    files = @("Configuration.xml", $missingPath)
+                    missingFiles = @($missingPath)
+                    baseCommit = "base"
+                    currentCommit = "head"
+                    absoluteExportPath = "C:\project with spaces\src\cf"
+                }
+            }
+            function New-ConfigLoadListFile { throw "partial list must not be created" }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation { $script:DrainCalls++ }
+            function Invoke-Designer {
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                $script:DesignerCalls += , @($DesignerArgs)
+                $script:LastLogPath = "C:\logs\full.log"
+            }
+
+            $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -ExportPath "src/cf" 3>$null 6>$null
+            [pscustomobject]@{ calls = @($script:DesignerCalls); drains = $script:DrainCalls; load = $load }
+        }
+
+        $result.calls.Count | Should -Be 1
+        $result.calls[0] | Should -Not -Contain "-listFile"
+        $result.calls[0] | Should -Not -Contain "-partial"
+        $result.calls[0] | Should -Contain "-updateConfigDumpInfo"
+        $result.drains | Should -Be 1
+        $result.load.listFile | Should -Be ""
+        $result.load.loadModeUsed | Should -Be "full"
+        $result.load.loadReason | Should -Be "partial-inventory-missing-files-full-load"
+    }
+
+    It "fails before list preparation, runtime drain, and Designer in explicit Partial mode" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+
+            $script:DesignerCalls = 0
+            $script:DrainCalls = 0
+            $missingPath = "Catalogs\Каталог с пробелом.xml"
+            function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-missing-partial"; fileCount = 2; absoluteExportPath = "C:\project with spaces\src\cf" } }
+            function Get-ConfigLoadChangeSet {
+                [pscustomobject]@{
+                    files = @("Configuration.xml", $missingPath)
+                    missingFiles = @($missingPath)
+                    baseCommit = "base"
+                    currentCommit = "head"
+                    absoluteExportPath = "C:\project with spaces\src\cf"
+                }
+            }
+            function New-ConfigLoadListFile { throw "partial list must not be created" }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation { $script:DrainCalls++ }
+            function Invoke-Designer { $script:DesignerCalls++ }
+
+            $message = ""
+            try {
+                Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -ExportPath "src/cf" -Mode Partial 6>$null | Out-Null
+            } catch {
+                $message = $_.Exception.Message
+            }
+            [pscustomobject]@{ designerCalls = $script:DesignerCalls; drainCalls = $script:DrainCalls; message = $message }
+        }
+
+        $result.designerCalls | Should -Be 0
+        $result.drainCalls | Should -Be 0
+        $result.message | Should -Match "^PARTIAL_CONFIG_LOAD_MISSING_FILES:"
+        $result.message | Should -Match ([regex]::Escape("Catalogs\Каталог с пробелом.xml"))
     }
 
     It "drains workflow-owned runtime for the target infobase before starting Designer" {

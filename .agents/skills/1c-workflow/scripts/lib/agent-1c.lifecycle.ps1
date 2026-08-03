@@ -483,8 +483,15 @@ function Get-ConfigLoadChangeSet {
     }
 
     $files = @($files | Sort-Object -Unique)
+    $missingFiles = @(
+        $files |
+            Where-Object {
+                -not (Test-Path -LiteralPath (Join-Path $absoluteExportPath $_) -PathType Leaf)
+            }
+    )
     return [pscustomobject]@{
         files = $files
+        missingFiles = $missingFiles
         baseCommit = $baseCommit
         currentCommit = Get-CurrentCommit
         absoluteExportPath = $absoluteExportPath
@@ -1378,6 +1385,25 @@ function Load-ConfigFromFiles {
         }
     }
 
+    $missingPartialFiles = @()
+    if ($Mode -ne "Full") {
+        $missingFilesProperty = $changeSet.PSObject.Properties["missingFiles"]
+        if ($missingFilesProperty) {
+            $missingPartialFiles = @($missingFilesProperty.Value | Where-Object { $_ })
+        }
+    }
+    $missingPartialFilesFullLoad = ($missingPartialFiles.Count -gt 0)
+    if ($missingPartialFilesFullLoad) {
+        $missingFilesText = $missingPartialFiles -join ", "
+        $message = "PARTIAL_CONFIG_LOAD_MISSING_FILES: the exact partial-load inventory references source files that are absent under '$($changeSet.absoluteExportPath)': $missingFilesText"
+        if ($Mode -eq "Partial") {
+            throw $message
+        }
+        Write-Warning "$message. Skipping partial Designer startup and running a full load."
+        Set-RunStage -Stage "config-load.partial-preflight-fallback" -Detail "The partial $ContentKind inventory contains $($missingPartialFiles.Count) absent source file(s); Designer partial load was skipped."
+        $Mode = "Full"
+    }
+
     $listFilePath = ""
     if ($Mode -ne "Full") {
         $listFilePath = New-ConfigLoadListFile -State $State -Files $changeSet.files
@@ -1421,7 +1447,11 @@ function Load-ConfigFromFiles {
         fullFallbackError = $orchestration.fullFallbackError
         normalizationRequired = $true
         sourceFingerprint = $source.fingerprint
-        loadReason = $(if ($Mode -eq "Full" -and $changeSet.files[0] -eq "<fingerprint-changed>") { "fingerprint-changed-full-load" } else { "source-fingerprint-changed" })
+        loadReason = $(
+            if ($missingPartialFilesFullLoad) { "partial-inventory-missing-files-full-load" }
+            elseif ($Mode -eq "Full" -and $changeSet.files[0] -eq "<fingerprint-changed>") { "fingerprint-changed-full-load" }
+            else { "source-fingerprint-changed" }
+        )
         designerInvoked = $true
         enterpriseInvoked = $false
     }

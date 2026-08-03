@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "baseline": {
     "testFiles": 39,
-    "testCases": 624,
-    "testLines": 25700
+    "testCases": 627,
+    "testLines": 25900
   },
   "budgets": {
     "smokeTargetSeconds": 60,
