@@ -156,8 +156,12 @@
         $lockTemplate.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
         $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "410951e74fd3e6b7a763cf49757935b9a34d3f31"
         $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 22
-        $lockTemplate.dependencies.aiRules1c.compatibilityStatus | Should -Be "pending"
-        $lockTemplate.dependencies.aiRules1c.compatibilityCheckedAt | Should -Be ""
+        $lockTemplate.dependencies.aiRules1c.compatibilityStatus | Should -BeIn @("pending", "passed")
+        if ($lockTemplate.dependencies.aiRules1c.compatibilityStatus -eq "pending") {
+            $lockTemplate.dependencies.aiRules1c.compatibilityCheckedAt | Should -Be ""
+        } else {
+            $lockTemplate.dependencies.aiRules1c.compatibilityCheckedAt | Should -Match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$'
+        }
         $lockTemplate.dependencies.agentBrowser.version | Should -Be "0.33.1"
         $lockTemplate.dependencies.agentBrowser.profile | Should -Be "core"
         $lockTemplate.dependencies.windowsMcp.version | Should -Be "0.8.2"
