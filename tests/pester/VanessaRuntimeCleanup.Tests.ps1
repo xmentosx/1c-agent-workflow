@@ -21,6 +21,7 @@ Describe "Branch-safe Vanessa runtime cleanup" {
                     devBranchInfoBasePath = $currentBase
                     worktreePath = $tempRoot
                     safeDevBranchName = "current"
+                    vanessaTestPort = 48151
                 }
                 $script:StoppedIds = @()
                 $script:Processes = @(
@@ -75,6 +76,90 @@ Describe "Branch-safe Vanessa runtime cleanup" {
             $result.stoppedIds | Should -Contain 1002
             $result.stoppedIds | Should -Not -Contain 2001
             $result.remainingRuntimeIds | Should -Be @(("b" * 32))
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "never stops a foreign worktree with the same safe branch name" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-cross-project-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $currentBase = Join-Path $tempRoot "True-worktrees\branch1\.agent-1c\infobases\dev-branches\branch1"
+                $foreignBase = Join-Path $tempRoot "Perf-worktrees\branch1\.agent-1c\infobases\dev-branches\branch1"
+                $currentBaseVariant = $currentBase.ToUpperInvariant().Replace('\', '/')
+                $branch10Base = "${foreignBase}0"
+                $state = [pscustomobject]@{
+                    stateProjectRoot = Join-Path $tempRoot "True"
+                    worktreePath = Join-Path $tempRoot "True-worktrees\branch1"
+                    safeDevBranchName = "branch1"
+                    devBranchInfoBasePath = $currentBase
+                    vanessaTestPort = 48054
+                }
+                $script:StoppedIds = @()
+                $script:Processes = @(
+                    [pscustomobject]@{ processId = 1001; name = "1cv8c.exe"; commandLine = "1cv8c.exe /TESTMANAGER /F `"$currentBaseVariant`""; workingSetMb = 10 },
+                    [pscustomobject]@{ processId = 1002; name = "1cv8c.exe"; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48054 /F`"$currentBase`""; workingSetMb = 10 },
+                    [pscustomobject]@{ processId = 1003; name = "1cv8c.exe"; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48067 /F `"$currentBase`""; workingSetMb = 10 },
+                    [pscustomobject]@{ processId = 2001; name = "1cv8c.exe"; commandLine = "1cv8c.exe /TESTMANAGER /F `"$foreignBase`" /CStartFeaturePlayer;VAParams=$foreignBase\params.json"; workingSetMb = 10 },
+                    [pscustomobject]@{ processId = 2002; name = "1cv8c.exe"; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48067 /F `"$foreignBase`""; workingSetMb = 10 },
+                    [pscustomobject]@{ processId = 2010; name = "1cv8c.exe"; commandLine = "1cv8c.exe /TESTMANAGER /F `"$branch10Base`" /Cbranch1"; workingSetMb = 10 }
+                )
+                function Get-OneCProcessInfo {
+                    @($script:Processes | Where-Object { $script:StoppedIds -notcontains [int]$_.processId })
+                }
+                function Stop-Process {
+                    param([int]$Id, [switch]$Force, [object]$ErrorAction)
+                    $script:StoppedIds += $Id
+                }
+                function Start-Sleep {}
+
+                $ownedBefore = @(Get-OwnVanessaTestProcesses -State $state | ForEach-Object { [int]$_.processId })
+                $branchNameOnly = [pscustomobject]@{ processId = 3001; commandLine = "1cv8c.exe /TESTMANAGER /Cbranch1" }
+                $branchNameOwn = Test-OneCProcessBelongsToState -ProcessInfo $branchNameOnly -State $state
+                $incompleteOwn = @(Get-OwnVanessaTestProcesses -State ([pscustomobject]@{ safeDevBranchName = "branch1" }))
+                $incompleteCleanup = Stop-OwnVanessaTestProcesses -State ([pscustomobject]@{ safeDevBranchName = "branch1" })
+                $stoppedAfterIncomplete = @($script:StoppedIds)
+                $foreignState = [pscustomobject]@{
+                    stateProjectRoot = Join-Path $tempRoot "Perf"
+                    worktreePath = Join-Path $tempRoot "Perf-worktrees\branch1"
+                    safeDevBranchName = "branch1"
+                    devBranchInfoBasePath = $foreignBase
+                }
+                $sameNameStateIdentity = Test-VanessaStateIdentityMatch -First $state -Second $foreignState
+                $sameBaseStateIdentity = Test-VanessaStateIdentityMatch -First $state -Second ([pscustomobject]@{ devBranchInfoBasePath = $currentBaseVariant })
+                $cleanup = Stop-OwnVanessaTestProcesses -State $state
+                [pscustomobject]@{
+                    ownedBefore = $ownedBefore
+                    branchNameOwn = $branchNameOwn
+                    incompleteCount = $incompleteOwn.Count
+                    incompleteCleanup = $incompleteCleanup
+                    stoppedAfterIncomplete = $stoppedAfterIncomplete
+                    sameNameStateIdentity = $sameNameStateIdentity
+                    sameBaseStateIdentity = $sameBaseStateIdentity
+                    stoppedIds = @($script:StoppedIds)
+                    cleanup = $cleanup
+                }
+            }
+
+            $result.ownedBefore | Should -Be @(1001, 1002)
+            $result.branchNameOwn | Should -BeFalse
+            $result.incompleteCount | Should -Be 0
+            $result.incompleteCleanup.errors -join "`n" | Should -Match "ownership-unverified"
+            $result.stoppedAfterIncomplete | Should -BeNullOrEmpty
+            $result.sameNameStateIdentity | Should -BeFalse
+            $result.sameBaseStateIdentity | Should -BeTrue
+            $result.stoppedIds | Should -Contain 1001
+            $result.stoppedIds | Should -Contain 1002
+            $result.stoppedIds | Should -Not -Contain 1003
+            $result.stoppedIds | Should -Not -Contain 2001
+            $result.stoppedIds | Should -Not -Contain 2002
+            $result.stoppedIds | Should -Not -Contain 2010
+            $result.cleanup.stoppedTestManager | Should -Be 1
+            $result.cleanup.stoppedTestClient | Should -Be 1
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

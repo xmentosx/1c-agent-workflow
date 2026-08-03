@@ -2604,7 +2604,7 @@
         }
     }
 
-    It "matches every TestManager and TestClient for the branch infobase across ports" {
+    It "matches the branch TestManager and only the TestClient on the branch port" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-process-match-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
@@ -2649,7 +2649,7 @@
                 (Test-OneCProcessBelongsToState -ProcessInfo $own -State $state -TestPort 48051 -RequireTestPort) | Should -Be $true
                 (Test-OneCProcessBelongsToState -ProcessInfo $foreign -State $state -TestPort 48051 -RequireTestPort) | Should -Be $false
                 $owned = @(Get-OwnVanessaTestProcesses -State $state)
-                @($owned.processId) | Should -Be @(1001, 1003, 1004)
+                @($owned.processId) | Should -Be @(1001, 1003)
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
@@ -3501,6 +3501,7 @@ if (`$?) { exit 0 } else { exit 1 }
                     safeDevBranchName = "current-branch"
                     devBranchInfoBasePath = $ibPath
                     worktreePath = $tempRoot
+                    vanessaTestPort = 48051
                 }
                 $script:StoppedIds = @()
                 $script:ProcessFixture = @(

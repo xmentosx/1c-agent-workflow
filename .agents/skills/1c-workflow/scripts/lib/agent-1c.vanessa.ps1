@@ -2857,23 +2857,38 @@ function Assert-VanessaTestClientCapacity {
     throw "ITL_VANESSA_LICENSE_LIMIT: capacity=$($snapshot.capacity) active=$($snapshot.active) required=$RequiredSlots processes=$details recovery=stop-an-owned-TestClient-or-increase-VANESSA_TESTCLIENT_LICENSE_CAPACITY-after-license-review"
 }
 
-function Test-CommandLineContainsValue {
+function Test-OneCCommandLineInfoBasePath {
     param(
         [AllowNull()][string]$CommandLine,
-        [AllowNull()][string]$Value
+        [AllowNull()][string]$InfoBasePath
     )
 
-    if ([string]::IsNullOrWhiteSpace($CommandLine) -or [string]::IsNullOrWhiteSpace($Value)) {
+    if ([string]::IsNullOrWhiteSpace($CommandLine) -or [string]::IsNullOrWhiteSpace($InfoBasePath)) {
         return $false
     }
 
-    $haystack = ([string]$CommandLine).ToLowerInvariant() -replace "/", "\"
-    $needle = ([string]$Value).Trim().ToLowerInvariant() -replace "/", "\"
-    if (-not $needle) {
+    try {
+        $expectedPath = Resolve-Agent1cFullPath -Path $InfoBasePath
+    } catch {
         return $false
     }
 
-    return $haystack.Contains($needle)
+    $matches = [regex]::Matches(
+        [string]$CommandLine,
+        '(?i)(?:^|\s)/F(?=\s|")\s*(?:"(?<quoted>[^"]+)"|(?<unquoted>\S+))'
+    )
+    foreach ($match in $matches) {
+        $candidate = $(if ($match.Groups["quoted"].Success) { $match.Groups["quoted"].Value } else { $match.Groups["unquoted"].Value })
+        try {
+            $candidatePath = Resolve-Agent1cFullPath -Path $candidate
+            if ([string]::Equals($candidatePath, $expectedPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $true
+            }
+        } catch {
+        }
+    }
+
+    return $false
 }
 
 function Test-CommandLineContainsPort {
@@ -2914,22 +2929,8 @@ function Test-OneCProcessBelongsToState {
         return $false
     }
 
-    $stateValues = @(
-        (Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default ""),
-        (Get-StateValue -State $State -Name "worktreePath" -Default ""),
-        (Get-StateValue -State $State -Name "stateProjectRoot" -Default ""),
-        (Get-StateValue -State $State -Name "safeDevBranchName" -Default "")
-    )
-
-    $matchesState = $false
-    foreach ($value in $stateValues) {
-        if ($value -and (Test-CommandLineContainsValue -CommandLine $commandLine -Value $value)) {
-            $matchesState = $true
-            break
-        }
-    }
-
-    if (-not $matchesState) {
+    $infoBasePath = [string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
+    if (-not (Test-OneCCommandLineInfoBasePath -CommandLine $commandLine -InfoBasePath $infoBasePath)) {
         return $false
     }
 
@@ -2938,6 +2939,69 @@ function Test-OneCProcessBelongsToState {
     }
 
     return $true
+}
+
+function Test-OneCVanessaTestProcessBelongsToState {
+    param(
+        [object]$ProcessInfo,
+        [object]$State,
+        [int]$TestPort = 0
+    )
+
+    if (-not (Test-OneCVanessaTestProcess -ProcessInfo $ProcessInfo)) {
+        return $false
+    }
+
+    $commandLine = [string](Get-StateValue -State $ProcessInfo -Name "commandLine" -Default "")
+    if ($commandLine -match '(?i)(?:^|\s)/TESTCLIENT(?=\s|$)') {
+        if ($TestPort -le 0) {
+            $TestPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaTestPort" -Default 0) -Default 0
+        }
+        if ($TestPort -le 0) {
+            return $false
+        }
+        return (Test-OneCProcessBelongsToState -ProcessInfo $ProcessInfo -State $State -TestPort $TestPort -RequireTestPort)
+    }
+
+    return (Test-OneCProcessBelongsToState -ProcessInfo $ProcessInfo -State $State)
+}
+
+function Test-VanessaStateIdentityMatch {
+    param(
+        [object]$First,
+        [object]$Second
+    )
+
+    $firstInfoBase = [string](Get-StateValue -State $First -Name "devBranchInfoBasePath" -Default "")
+    $secondInfoBase = [string](Get-StateValue -State $Second -Name "devBranchInfoBasePath" -Default "")
+    if ($firstInfoBase -and $secondInfoBase) {
+        try {
+            return [string]::Equals(
+                (Resolve-Agent1cFullPath -Path $firstInfoBase),
+                (Resolve-Agent1cFullPath -Path $secondInfoBase),
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        } catch {
+            return $false
+        }
+    }
+
+    $firstRoot = [string](Get-StateValue -State $First -Name "stateProjectRoot" -Default "")
+    $secondRoot = [string](Get-StateValue -State $Second -Name "stateProjectRoot" -Default "")
+    $firstWorktree = [string](Get-StateValue -State $First -Name "worktreePath" -Default "")
+    $secondWorktree = [string](Get-StateValue -State $Second -Name "worktreePath" -Default "")
+    if (-not $firstRoot -or -not $secondRoot -or -not $firstWorktree -or -not $secondWorktree) {
+        return $false
+    }
+
+    try {
+        return (
+            [string]::Equals((Resolve-Agent1cFullPath -Path $firstRoot), (Resolve-Agent1cFullPath -Path $secondRoot), [System.StringComparison]::OrdinalIgnoreCase) -and
+            [string]::Equals((Resolve-Agent1cFullPath -Path $firstWorktree), (Resolve-Agent1cFullPath -Path $secondWorktree), [System.StringComparison]::OrdinalIgnoreCase)
+        )
+    } catch {
+        return $false
+    }
 }
 
 function Format-OneCProcessInfo {
@@ -2963,7 +3027,7 @@ function Get-ForeignVanessaTestProcesses {
 
     return @(Get-OneCProcessInfo | Where-Object {
         (Test-OneCVanessaTestProcess -ProcessInfo $_) -and
-        -not (Test-OneCProcessBelongsToState -ProcessInfo $_ -State $State -TestPort $TestPort)
+        -not (Test-OneCVanessaTestProcessBelongsToState -ProcessInfo $_ -State $State -TestPort $TestPort)
     })
 }
 
@@ -3021,13 +3085,11 @@ function Test-VanessaTestPortUsedByForeignProcess {
 function Get-VanessaTestReservedPorts {
     param([object]$CurrentState)
 
-    $currentSafeName = Get-StateValue -State $CurrentState -Name "safeDevBranchName" -Default ""
     $ports = @{}
     foreach ($file in Get-DevBranchStateFiles) {
         try {
             $state = Read-DevBranchStateFile -Path $file.FullName
-            $safeName = Get-StateValue -State $state -Name "safeDevBranchName" -Default ""
-            if ($currentSafeName -and $safeName -eq $currentSafeName) {
+            if (Test-VanessaStateIdentityMatch -First $state -Second $CurrentState) {
                 continue
             }
 
@@ -3187,7 +3249,7 @@ function Stop-OwnHungVanessaTestClients {
 
     $ownClients = @(Get-OneCProcessInfo | Where-Object {
         ([string]$_.commandLine) -match "(?i)(/TESTCLIENT|/TESTMANAGER|StartFeaturePlayer|VAParams=)" -and
-        (Test-OneCProcessBelongsToState -ProcessInfo $_ -State $State -TestPort $TestPort)
+        (Test-OneCVanessaTestProcessBelongsToState -ProcessInfo $_ -State $State -TestPort $TestPort)
     })
 
     foreach ($processInfo in $ownClients) {
@@ -3211,7 +3273,7 @@ function Write-OneCVanessaProcessDiagnostics {
     }
 
     foreach ($processInfo in $processes) {
-        $scope = if (Test-OneCProcessBelongsToState -ProcessInfo $processInfo -State $State -TestPort $TestPort) { "own" } else { "foreign" }
+        $scope = if (Test-OneCVanessaTestProcessBelongsToState -ProcessInfo $processInfo -State $State -TestPort $TestPort) { "own" } else { "foreign" }
         Write-Host "  [$scope] $(Format-OneCProcessInfo -ProcessInfo $processInfo)"
     }
 }
@@ -3390,13 +3452,11 @@ function Get-VanessaMcpRuntimeInfo {
 function Get-VanessaMcpReservedPorts {
     param([object]$CurrentState)
 
-    $currentSafeName = Get-StateValue -State $CurrentState -Name "safeDevBranchName" -Default ""
     $ports = @{}
     foreach ($file in Get-DevBranchStateFiles) {
         try {
             $state = Read-DevBranchStateFile -Path $file.FullName
-            $safeName = Get-StateValue -State $state -Name "safeDevBranchName" -Default ""
-            if ($currentSafeName -and $safeName -eq $currentSafeName) {
+            if (Test-VanessaStateIdentityMatch -First $state -Second $CurrentState) {
                 continue
             }
 
@@ -3434,7 +3494,7 @@ function Get-OwnVanessaTestProcesses {
 
     return @(Get-OneCProcessInfo | Where-Object {
         (Test-OneCVanessaTestProcess -ProcessInfo $_) -and
-        (Test-OneCProcessBelongsToState -ProcessInfo $_ -State $State)
+        (Test-OneCVanessaTestProcessBelongsToState -ProcessInfo $_ -State $State)
     })
 }
 
@@ -3447,6 +3507,30 @@ function Get-VanessaTestProcessCategory {
 
 function Stop-OwnVanessaTestProcesses {
     param([object]$State)
+
+    $infoBasePath = [string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
+    $testPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaTestPort" -Default 0) -Default 0
+    if ([string]::IsNullOrWhiteSpace($infoBasePath)) {
+        return [pscustomobject]@{
+            stoppedTestManager = 0
+            stoppedTestClient = 0
+            remaining = @()
+            errors = @("ownership-unverified: development branch infobase path is missing")
+        }
+    }
+
+    $candidates = @(Get-OneCProcessInfo | Where-Object {
+        (Test-OneCVanessaTestProcess -ProcessInfo $_) -and
+        (Test-OneCProcessBelongsToState -ProcessInfo $_ -State $State)
+    })
+    if ($testPort -le 0 -and $candidates.Count -gt 0) {
+        return [pscustomobject]@{
+            stoppedTestManager = 0
+            stoppedTestClient = 0
+            remaining = @()
+            errors = @("ownership-unverified: Vanessa TestClient port is missing")
+        }
+    }
 
     $before = @(Get-OwnVanessaTestProcesses -State $State)
     $errors = @()
