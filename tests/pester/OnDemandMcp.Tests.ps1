@@ -231,6 +231,49 @@ Describe "ITL on-demand MCP facade" {
         }
     }
 
+    It "does not replace a verified cached facade with a stale source-repository build" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-stale-source-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $skillRoot = Join-Path $tempRoot ".agents\skills\1c-workflow"
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            & git -C $tempRoot init *> $null
+            if ($LASTEXITCODE -ne 0) { throw "Failed to initialize the stale source-build fixture repository." }
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow") -Destination $skillRoot -Recurse -Force
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
+
+            $sourceBuild = Join-Path $tempRoot "tools\itl-ondemand-mcp\build\itl-ondemand-mcp-windows-amd64.exe"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $sourceBuild) | Out-Null
+            Set-Content -LiteralPath $sourceBuild -Encoding Byte -Value ([byte[]](1, 2, 3))
+            $cachedBytes = [byte[]](4, 5, 6, 7)
+            $cachedSha256 = ([BitConverter]::ToString(([Security.Cryptography.SHA256]::Create().ComputeHash($cachedBytes)))).Replace("-", "").ToLowerInvariant()
+            $installedHelper = Join-Path $skillRoot "scripts\agent-1c.ps1"
+
+            $result = & {
+                . $installedHelper -ProjectRoot $tempRoot -Action help *> $null
+                $installRoot = Join-Path $tempRoot "localapp\ondemand"
+                function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
+                function Get-DependencyLockEntry {
+                    param([string]$Name)
+                    return [pscustomobject]@{
+                        version = "fixture"
+                        assetName = "itl-ondemand-mcp-windows-amd64.exe"
+                        url = "https://example.invalid/itl-ondemand-mcp.exe"
+                        sha256 = $cachedSha256
+                    }
+                }
+                $targetPath = Join-Path $installRoot "fixture\itl-ondemand-mcp-windows-amd64.exe"
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
+                [IO.File]::WriteAllBytes($targetPath, $cachedBytes)
+                Install-ItlOnDemandMcp
+            }
+
+            $result.sha256 | Should -Be $cachedSha256
+            [IO.File]::ReadAllBytes([string]$result.path) | Should -Be $cachedBytes
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "does not overwrite an identical source-build facade that another project is using" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-shared-binary-" + [guid]::NewGuid().ToString("N"))
         $handle = $null
