@@ -3124,6 +3124,10 @@ function Run-DevBranchTests {
         -TestClientTopology $testClientTopology `
         -TestPorts $testPorts `
         -FilterTags $VanessaFilterTags
+    Set-ActiveDevBranchVanessaRun `
+        -State $state `
+        -TestPorts $testPorts `
+        -RunParamsPath $paramsPath
 
     Write-Host "Vanessa Automation EPF: $($vanessa.epfPath)"
     Write-Host "Vanessa features: $(Resolve-ProjectPath $featuresPath)"
@@ -3255,6 +3259,7 @@ function Run-DevBranchTests {
     try {
         $cleanupStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         Stop-OwnVanessaTestProcessesAndAssert -State $state -TestPorts $testPorts -RunParamsPath $paramsPath
+        Clear-ActiveDevBranchVanessaRun -RunParamsPath $paramsPath
         $cleanupStopwatch.Stop(); $cleanupDurationMs = $cleanupStopwatch.ElapsedMilliseconds
     } catch {
         if ($cleanupStopwatch.IsRunning) { $cleanupStopwatch.Stop() }
@@ -3370,6 +3375,62 @@ function Run-DevBranchTests {
         throw "Vanessa verification did not pass: $($verification.status). $($verification.reason)"
     }
     Set-RunStage -Stage "vanessa.complete" -Detail "Vanessa Automation verification passed."
+}
+
+function Set-ActiveDevBranchVanessaRun {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][Alias("TestPort")][int[]]$TestPorts,
+        [Parameter(Mandatory = $true)][string]$RunParamsPath
+    )
+
+    $infoBasePath = [string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
+    $effectivePorts = @($TestPorts | Where-Object { $_ -gt 0 } | Select-Object -Unique)
+    if ([string]::IsNullOrWhiteSpace($infoBasePath) -or
+        [string]::IsNullOrWhiteSpace($RunParamsPath) -or
+        $effectivePorts.Count -eq 0) {
+        throw "ITL_VANESSA_RUN_OWNERSHIP_INVALID: active run requires the exact infobase, VAParams path, and positive TestClient ports."
+    }
+    $script:ActiveDevBranchVanessaRun = [pscustomobject][ordered]@{
+        state = $State
+        infoBasePath = $infoBasePath
+        testPorts = @($effectivePorts)
+        runParamsPath = $RunParamsPath
+    }
+}
+
+function Clear-ActiveDevBranchVanessaRun {
+    param([string]$RunParamsPath = "")
+
+    if ($null -eq $script:ActiveDevBranchVanessaRun) { return }
+    if ($RunParamsPath -and
+        -not [string]::Equals(
+            (Resolve-Agent1cFullPath -Path $RunParamsPath),
+            (Resolve-Agent1cFullPath -Path ([string]$script:ActiveDevBranchVanessaRun.runParamsPath)),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+        return
+    }
+    $script:ActiveDevBranchVanessaRun = $null
+}
+
+function Invoke-ActiveDevBranchVanessaRunCleanup {
+    param([string]$Reason = "helper shutdown")
+
+    if ($null -eq $script:ActiveDevBranchVanessaRun) { return $null }
+    $activeRun = $script:ActiveDevBranchVanessaRun
+    Write-Host "Cleaning up active Vanessa run after $Reason."
+    Stop-OwnVanessaTestProcessesAndAssert `
+        -State $activeRun.state `
+        -TestPorts @($activeRun.testPorts) `
+        -RunParamsPath ([string]$activeRun.runParamsPath)
+    Clear-ActiveDevBranchVanessaRun -RunParamsPath ([string]$activeRun.runParamsPath)
+    return [pscustomobject]@{
+        status = "released"
+        infoBasePath = [string]$activeRun.infoBasePath
+        testPorts = @($activeRun.testPorts)
+        runParamsPath = [string]$activeRun.runParamsPath
+    }
 }
 
 function ConvertTo-IntOrDefault {

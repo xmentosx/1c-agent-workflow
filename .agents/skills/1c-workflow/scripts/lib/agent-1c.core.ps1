@@ -917,6 +917,60 @@ function Complete-Agent1cLifecycleOperation {
     }
 }
 
+function Complete-Agent1cInterruptedOperation {
+    param([string]$ErrorMessage = "ITL helper execution ended before terminal status was written.")
+
+    $lifecycleRunning = $false
+    if ($null -ne $script:LifecycleOperationRecord -and
+        -not [string]::IsNullOrWhiteSpace($script:LifecycleOperationStatePath)) {
+        $lifecycleRecord = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
+        $lifecycleRunning = $null -ne $lifecycleRecord -and
+            [string]$lifecycleRecord["operationId"] -ceq $script:LifecycleOperationId -and
+            [string]$lifecycleRecord["status"] -ceq "running"
+    }
+
+    $runStatusRunning = $false
+    if (-not [string]::IsNullOrWhiteSpace($RunStatusPath)) {
+        $resolvedStatusPath = Resolve-RunFilePath -Path $RunStatusPath
+        if (Test-Path -LiteralPath $resolvedStatusPath -PathType Leaf) {
+            try {
+                $runRecord = Read-Utf8Text -Path $resolvedStatusPath | ConvertFrom-Json
+                $runStatusRunning = [string]$runRecord.status -ceq "running"
+            } catch {
+                $runStatusRunning = $true
+                $ErrorMessage = "$ErrorMessage Existing run status could not be read: $($_.Exception.Message)"
+            }
+        }
+    }
+
+    if (-not $lifecycleRunning -and -not $runStatusRunning) {
+        return $false
+    }
+
+    $script:RunStage = "runner.interrupted"
+    $script:RunStageDetail = $ErrorMessage
+    $script:RunErrorCategory = "runner"
+    $errors = [System.Collections.Generic.List[string]]::new()
+    if ($lifecycleRunning) {
+        try {
+            Complete-Agent1cLifecycleOperation -Status "failed" -ExitCode 1 -ErrorMessage $ErrorMessage
+        } catch {
+            $errors.Add("lifecycle: $($_.Exception.Message)") | Out-Null
+        }
+    }
+    if ($runStatusRunning) {
+        try {
+            Write-RunStatus -Status "failed" -ExitCode 1 -ErrorMessage $ErrorMessage
+        } catch {
+            $errors.Add("run-status: $($_.Exception.Message)") | Out-Null
+        }
+    }
+    if ($errors.Count -gt 0) {
+        throw "ITL_INTERRUPTED_STATUS_WRITE_FAILED $($errors -join ' | ')"
+    }
+    return $true
+}
+
 function Exit-Agent1cLifecycleOperation {
     for ($index = $script:LifecycleOperationHandles.Count - 1; $index -ge 0; $index--) {
         try { $script:LifecycleOperationHandles[$index].stream.Dispose() } catch {}

@@ -312,6 +312,7 @@ $script:LifecycleOperationId = ""
 $script:LifecycleOperationIsContinuation = [bool]$OperationContinuation
 $script:LifecycleOperationOwnerPid = $OperationOwnerPid
 $script:LifecycleOperationTerminalWrittenByContinuation = $false
+$script:ActiveDevBranchVanessaRun = $null
 
 $script:Agent1cScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $script:Agent1cLibRoot = Join-Path $script:Agent1cScriptRoot "lib"
@@ -498,5 +499,26 @@ try {
     }
     exit 1
 } finally {
+    $activeVanessaRunWasRegistered = $null -ne $script:ActiveDevBranchVanessaRun
+    $interruptedCleanupError = ""
+    try {
+        Invoke-ActiveDevBranchVanessaRunCleanup -Reason "agent-finally"
+    } catch {
+        $interruptedCleanupError = $_.Exception.Message
+        [Console]::Error.WriteLine("Failed to clean up the active Vanessa run during helper shutdown: $interruptedCleanupError")
+    }
+    try {
+        $interruptedMessage = "ITL helper execution ended before terminal status was written."
+        if ($interruptedCleanupError) {
+            $interruptedMessage = "$interruptedMessage Active Vanessa run cleanup failed: $interruptedCleanupError"
+        } elseif ($activeVanessaRunWasRegistered) {
+            $interruptedMessage = "$interruptedMessage Active Vanessa run cleanup completed."
+        } else {
+            $interruptedMessage = "$interruptedMessage No active Vanessa run was registered."
+        }
+        Complete-Agent1cInterruptedOperation -ErrorMessage $interruptedMessage | Out-Null
+    } catch {
+        [Console]::Error.WriteLine("Failed to write interrupted helper status: $($_.Exception.Message)")
+    }
     Exit-Agent1cLifecycleOperation
 }

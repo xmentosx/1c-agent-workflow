@@ -382,6 +382,123 @@ Describe "Branch-safe Vanessa runtime cleanup" {
         }
     }
 
+    It "keeps an exact active-run cleanup guard for helper interruption" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-interrupt-cleanup-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $base = Join-Path $tempRoot "owned-worktree\base"
+                $foreignBase = Join-Path $tempRoot "foreign-worktree\base"
+                $currentParams = Join-Path $tempRoot "runs\current\VAParams.json"
+                $otherParams = Join-Path $tempRoot "runs\other\VAParams.json"
+                $state = [pscustomobject]@{ devBranchInfoBasePath = $base }
+                $script:StoppedIds = @()
+                $script:Processes = @(
+                    [pscustomobject]@{ processId = 2101; commandLine = "1cv8c.exe /TESTMANAGER /F `"$base`" /CStartFeaturePlayer;VAParams=$currentParams" },
+                    [pscustomobject]@{ processId = 2102; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48054 /F `"$base`"" },
+                    [pscustomobject]@{ processId = 2103; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48055 /F `"$base`"" },
+                    [pscustomobject]@{ processId = 2201; commandLine = "1cv8c.exe /TESTMANAGER /F `"$base`" /CStartFeaturePlayer;VAParams=$otherParams" },
+                    [pscustomobject]@{ processId = 2202; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48056 /F `"$base`"" },
+                    [pscustomobject]@{ processId = 2301; commandLine = "1cv8c.exe /TESTMANAGER /F `"$foreignBase`" /CStartFeaturePlayer;VAParams=$currentParams" },
+                    [pscustomobject]@{ processId = 2302; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48054 /F `"$foreignBase`"" }
+                )
+                function Get-OneCProcessInfo { param([switch]$RequireSuccess); @($script:Processes | Where-Object { $script:StoppedIds -notcontains $_.processId }) }
+                function Stop-Process { param([int]$Id); $script:StoppedIds += $Id }
+                function Start-Sleep {}
+
+                Set-ActiveDevBranchVanessaRun -State $state -TestPorts @(48054, 48055) -RunParamsPath $currentParams
+                $cleanup = Invoke-ActiveDevBranchVanessaRunCleanup -Reason "pipeline-cancelled" 6>$null
+                [pscustomobject]@{
+                    cleanup = $cleanup
+                    stoppedIds = @($script:StoppedIds)
+                    activeRunCleared = $null -eq $script:ActiveDevBranchVanessaRun
+                }
+            }
+
+            $result.cleanup.status | Should -Be "released"
+            $result.cleanup.testPorts | Should -Be @(48054, 48055)
+            $result.stoppedIds | Should -Contain 2101
+            $result.stoppedIds | Should -Contain 2102
+            $result.stoppedIds | Should -Contain 2103
+            $result.stoppedIds | Should -Not -Contain 2201
+            $result.stoppedIds | Should -Not -Contain 2202
+            $result.stoppedIds | Should -Not -Contain 2301
+            $result.stoppedIds | Should -Not -Contain 2302
+            $result.activeRunCleared | Should -BeTrue
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "terminalizes interrupted lifecycle and run status and wires cleanup before lock release" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-interrupt-status-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $Action = "check-dev-branch"
+                $RunStatusPath = Join-Path $tempRoot "run-status.json"
+                $script:RunStartedAt = Get-Date
+                $operationId = [guid]::NewGuid().ToString("N")
+                $operationPath = Join-Path $tempRoot ".agent-1c\locks\lifecycle-operation.json"
+                $record = [ordered]@{
+                    schemaVersion = 1
+                    status = "running"
+                    operationId = $operationId
+                    action = $Action
+                    projectRoot = $tempRoot
+                    worktreePath = $tempRoot
+                    lockScopes = @($tempRoot)
+                    pid = $PID
+                    phase = "vanessa.run"
+                }
+                $script:LifecycleOperationRecord = $record
+                $script:LifecycleOperationStatePath = $operationPath
+                $script:LifecycleOperationId = $operationId
+                $script:LifecycleOperationOwnerPid = $PID
+                $script:LifecycleOperationIsContinuation = $false
+                Write-Agent1cLifecycleOperationRecord -Path $operationPath -Record $record
+                $script:RunStage = "vanessa.run"
+                Write-RunStatus -Status "running"
+
+                $completed = Complete-Agent1cInterruptedOperation -ErrorMessage "fixture pipeline cancellation"
+                [pscustomobject]@{
+                    completed = $completed
+                    lifecycle = Read-Agent1cLifecycleOperationRecord -Path $operationPath
+                    run = Get-Content -LiteralPath $RunStatusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                }
+            }
+
+            $result.completed | Should -BeTrue
+            $result.lifecycle.status | Should -Be "failed"
+            $result.lifecycle.phase | Should -Be "failed"
+            $result.lifecycle.finishedAt | Should -Not -BeNullOrEmpty
+            $result.lifecycle.errorMessage | Should -Be "fixture pipeline cancellation"
+            $result.run.status | Should -Be "failed"
+            $result.run.stage | Should -Be "runner.interrupted"
+            $result.run.finishedAt | Should -Not -BeNullOrEmpty
+            $result.run.errorCategory | Should -Be "runner"
+
+            $agentText = Get-Content -LiteralPath $HelperPath -Raw -Encoding UTF8
+            $finallyStart = $agentText.LastIndexOf("} finally {")
+            $finallyText = $agentText.Substring($finallyStart)
+            $finallyText.IndexOf("Invoke-ActiveDevBranchVanessaRunCleanup") | Should -BeLessThan $finallyText.IndexOf("Complete-Agent1cInterruptedOperation")
+            $finallyText.IndexOf("Complete-Agent1cInterruptedOperation") | Should -BeLessThan $finallyText.IndexOf("Exit-Agent1cLifecycleOperation")
+
+            $vanessaText = Get-Content -LiteralPath $VanessaPath -Raw -Encoding UTF8
+            $runStart = $vanessaText.IndexOf("function Run-DevBranchTests")
+            $runEnd = $vanessaText.IndexOf("function Set-ActiveDevBranchVanessaRun", $runStart)
+            $runText = $vanessaText.Substring($runStart, $runEnd - $runStart)
+            $runText | Should -Match 'Set-ActiveDevBranchVanessaRun[\s\S]*-RunParamsPath \$paramsPath'
+            $runText | Should -Match 'Stop-OwnVanessaTestProcessesAndAssert[\s\S]*Clear-ActiveDevBranchVanessaRun -RunParamsPath \$paramsPath'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "fails closed when destructive process inspection is unavailable" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-inspection-" + [guid]::NewGuid().ToString("N"))
         try {
