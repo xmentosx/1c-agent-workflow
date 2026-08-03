@@ -74,6 +74,8 @@ Before invoking Designer, the helper snapshots only the branch-owned `ConfigDump
 
 After any real partial/full configuration or extension load, normalization is marked pending and ITL launches Enterprise through the bundled auto-update EPF to apply update handlers and answer the legal-copy prompt non-interactively. Lifecycle cleanup stops on-demand backend instances first; later tool calls create fresh ones without client reload. The default timeout is 900 seconds; use `DEV_BRANCH_AUTO_UPDATE_TIMEOUT_SECONDS` only for a different positive limit.
 
+For a failed, timed-out, or suspiciously long Enterprise normalization, diagnose the named operation from its start time, helper state, exact owned process progress, and fresh branch `1Cv8Log` entries. Treat `/Out` as secondary evidence because Enterprise often leaves it empty. A fresh error correlated with the operation plus no meaningful progress far beyond its expected duration is evidence of failure or a stall; do not wait only for the hard timeout when the cause is already established. Follow helper-owned recovery and never kill arbitrary 1C PIDs.
+
 After every successful or failed Vanessa verification, stop branch-owned `TESTMANAGER`/`TESTCLIENT` processes and fail the verification if cleanup cannot be proved. Use the advanced `stop-dev-branch-test-clients` recovery action for leftovers from older runs; it matches the current branch infobase/worktree and must not stop foreign worktrees.
 
 Development branch changes must never be loaded directly into the source infobase connected to 1C configuration repository storage.

@@ -203,6 +203,24 @@
         }
     }
 
+    It "requires Enterprise failure and stall diagnosis to use fresh event-log evidence before Out" {
+        $rulesText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\USER-RULES.append.md")
+        $lifecycleText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\branch-lifecycle.md")
+        $authoringText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\vanessa-authoring.md")
+
+        foreach ($text in @($rulesText, $lifecycleText)) {
+            $text | Should -Match '(Enterprise failure|failed, timed-out, or .*Enterprise)'
+            $text | Should -Match 'fresh branch `1Cv8Log` entries'
+            $text | Should -Match 'process.*progress.*expected duration'
+            $text | Should -Match '`/Out`.*secondary'
+            $text | Should -Match '(stop waiting|do not wait only) for the hard timeout'
+            $text | Should -Match 'never kill arbitrary 1C PIDs'
+        }
+
+        $authoringText | Should -Match 'status\.json.*JUnit.*error directory.*event-log.*vanessa\.log.*TestClient `/Out`'
+        $authoringText | Should -Match '`/Out` as supplementary.*Enterprise may leave it empty'
+    }
+
     It "keeps README as a compact source-repository entrypoint" {
         $readmeText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "README.md")
         ([regex]::Matches($readmeText, '\S+')).Count | Should -BeLessOrEqual 350

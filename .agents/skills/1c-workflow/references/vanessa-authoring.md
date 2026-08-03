@@ -31,7 +31,7 @@ For arbitrary BSL, classify the execution context before authoring. Metadata man
 
 ## Diagnose One Run
 
-`/itl-check` is the only executable verification gate. Inspect its current run in this order: `status.json`, JUnit, the error directory, `vanessa.log`, then TestClient `/Out`.
+`/itl-check` is the only executable verification gate. Inspect its current run in this order: `status.json`, JUnit, the error directory, fresh event-log report/entries, `vanessa.log`, then TestClient `/Out`. Treat `/Out` as supplementary because Enterprise may leave it empty.
 
 Treat its category as a routing hint, not a proven root cause:
 

@@ -1539,7 +1539,7 @@ VANESSA_MCP_VA_EXTENSION_CFE_PATH=$invalidExtensionPath
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md")) | Should -Match "resolve_tool"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md")) | Should -Match "call_tool"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md")) | Should -Match "one facade instance"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md")) | Should -Match 'status\.json.*JUnit.*error files.*vanessa\.log.*TestClient `/Out`'
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md")) | Should -Match 'status\.json.*JUnit.*error files.*event-log.*vanessa\.log.*TestClient `/Out`.*`/Out` is supplementary'
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md")) | Should -Match "Never ask the user to click through"
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-vanessa-mcp.md") -PathType Leaf) | Should -Be $false
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")) | Should -Not -Match "start-vanessa-mcp"
