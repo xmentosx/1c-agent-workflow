@@ -247,6 +247,67 @@
         }
     }
 
+    It "counts PM5-style inline TestClient aliases without requiring manifest profiles" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-inline-client-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $fixture = New-VanessaRunnerFixture `
+                -Root $tempRoot `
+                -FeatureText "# language: ru`nФункционал: Inline clients`nКонтекст:`n  Дано Я запускаю сценарий открытия TestClient или подключаю уже существующий`nСценарий: Direct aliases`n  И я подключаю TestClient `"U3`" логин `"U3`" пароль `"inline-secret`"`n  И я закрываю TestClient `"U3`"`n  И я подключаю TestClient `"U4`" логин `"U4`" пароль `"`"`n  И я закрываю сеанс текущего клиента тестирования`n  И я подключаю TestClient `"U5`" логин `"U5`" пароль `"`"" `
+                -ManifestText '{"schemaVersion":1,"maxConcurrency":2,"profiles":[]}'
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
+
+                @($topology.requiredProfiles).Count | Should -Be 0
+                $topology.observedMaximumConcurrency | Should -Be 2
+                @($topology.profiles).Count | Should -Be 0
+                ($topology | ConvertTo-Json -Depth 5) | Should -Not -Match "inline-secret"
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "counts PM5-style table TestClients without reading credentials as profiles" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-table-client-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $fixture = New-VanessaRunnerFixture `
+                -Root $tempRoot `
+                -FeatureText "# language: ru`nФункционал: Table clients`nКонтекст:`n  Дано Я запускаю сценарий открытия TestClient или подключаю уже существующий`nСценарий: Direct table`n  Когда Я подключаю клиент тестирования с параметрами:`n    | 'Имя подключения' | 'Логин' | 'Пароль' |`n    | 'НРС U5' | 'U5' | 'table-secret' |`n  И я закрываю TestClient `"НРС U5`"" `
+                -ManifestText '{"schemaVersion":1,"maxConcurrency":2,"profiles":[]}'
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
+
+                @($topology.requiredProfiles).Count | Should -Be 0
+                $topology.observedMaximumConcurrency | Should -Be 2
+                @($topology.profiles).Count | Should -Be 0
+                ($topology | ConvertTo-Json -Depth 5) | Should -Not -Match "table-secret"
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps profile requirements separate from a current-client concurrency baseline" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-current-profile-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $fixture = New-VanessaRunnerFixture `
+                -Root $tempRoot `
+                -FeatureText "# language: ru`nФункционал: Current and profile`nКонтекст:`n  Дано Я запускаю сценарий открытия TestClient или подключаю уже существующий`nСценарий: Additional profile`n  И я подключаю профиль TestClient `"U1`"`n  И я закрываю TestClient `"U1`"" `
+                -ManifestText '{"schemaVersion":1,"maxConcurrency":2,"profiles":[{"name":"U1"}]}'
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
+
+                $topology.requiredProfiles | Should -Be @("U1")
+                $topology.observedMaximumConcurrency | Should -Be 2
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "limits profile preflight to scenarios selected by the tag filter" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-filtered-profiles-" + [guid]::NewGuid().ToString("N"))
         try {

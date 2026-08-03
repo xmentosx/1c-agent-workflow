@@ -458,7 +458,9 @@ function Get-VanessaFeatureScenarioDefinitions {
     foreach ($featureFile in @($FeatureFiles)) {
         $featureTags = @()
         $pendingTags = New-Object System.Collections.Generic.List[string]
+        $backgroundSteps = New-Object System.Collections.Generic.List[string]
         $current = $null
+        $inBackground = $false
         $inExamples = $false
         $exampleHeaders = @()
 
@@ -473,6 +475,11 @@ function Get-VanessaFeatureScenarioDefinitions {
             if ($line -match '^\s*(?:Функционал|Feature)\s*:') {
                 $featureTags = @($pendingTags.ToArray())
                 $pendingTags.Clear()
+                continue
+            }
+
+            if ($line -match '^\s*(?:Контекст|Background)\s*:') {
+                $inBackground = $true
                 continue
             }
 
@@ -492,13 +499,22 @@ function Get-VanessaFeatureScenarioDefinitions {
                     steps = (New-Object System.Collections.Generic.List[string])
                     exampleRows = (New-Object System.Collections.Generic.List[object])
                 }
+                foreach ($backgroundStep in @($backgroundSteps.ToArray())) {
+                    $current.steps.Add($backgroundStep)
+                }
                 $pendingTags.Clear()
+                $inBackground = $false
                 $inExamples = $false
                 $exampleHeaders = @()
                 continue
             }
 
-            if ($null -eq $current) { continue }
+            if ($null -eq $current) {
+                if ($inBackground -and -not [string]::IsNullOrWhiteSpace($line)) {
+                    $backgroundSteps.Add([string]$line)
+                }
+                continue
+            }
             if ($line -match '^\s*(?:Примеры|Examples|Scenarios)\s*:') {
                 $inExamples = $true
                 $exampleHeaders = @()
@@ -594,7 +610,42 @@ function Get-VanessaFeatureTestClientRequirements {
         }
         foreach ($instance in $instances) {
             $active = @{}
+            $currentClientKey = ""
+            $awaitDirectClientTableHeader = $false
+            $awaitDirectClientTableRow = $false
             foreach ($step in @($scenario.steps.ToArray())) {
+                if ($awaitDirectClientTableHeader) {
+                    if ($step -match '(?i)^\s*\|\s*["'']?Имя подключения["'']?\s*\|\s*["'']?Логин["'']?\s*\|\s*["'']?Пароль["'']?\s*\|\s*$') {
+                        $awaitDirectClientTableHeader = $false
+                        $awaitDirectClientTableRow = $true
+                        continue
+                    }
+                    $awaitDirectClientTableHeader = $false
+                }
+                if ($awaitDirectClientTableRow) {
+                    $directTableRow = [regex]::Match($step, '^\s*\|\s*(?<name>[^|]+?)\s*\|')
+                    $awaitDirectClientTableRow = $false
+                    if ($directTableRow.Success) {
+                        $directName = ([string]$directTableRow.Groups['name'].Value).Trim().Trim("'", '"')
+                        if ($directName) {
+                            $resolved = Resolve-VanessaScenarioValue -Value $directName -ExampleValues $instance.values
+                            if ($resolved.resolved) {
+                                $currentClientKey = $resolved.value.ToLowerInvariant()
+                                $active[$currentClientKey] = $resolved.value
+                                $maximumConcurrency = [Math]::Max($maximumConcurrency, $active.Count)
+                            }
+                        }
+                        continue
+                    }
+                }
+
+                if ($step -match '(?i)я\s+запускаю\s+сценарий\s+открытия\s+TestClient\s+или\s+подключаю\s+уже\s+существующий') {
+                    $currentClientKey = '__itl_current_testclient__'
+                    $active[$currentClientKey] = 'current'
+                    $maximumConcurrency = [Math]::Max($maximumConcurrency, $active.Count)
+                    continue
+                }
+
                 $connect = [regex]::Match($step, '(?i)подключаю\s+профиль\s+TestClient\s+["''](?<name>[^"'']+)["'']')
                 if ($connect.Success) {
                     $resolved = Resolve-VanessaScenarioValue -Value $connect.Groups['name'].Value -ExampleValues $instance.values
@@ -608,8 +659,25 @@ function Get-VanessaFeatureTestClientRequirements {
                         continue
                     }
                     $requiredProfiles[$resolved.value.ToLowerInvariant()] = $resolved.value
-                    $active[$resolved.value.ToLowerInvariant()] = $resolved.value
+                    $currentClientKey = $resolved.value.ToLowerInvariant()
+                    $active[$currentClientKey] = $resolved.value
                     $maximumConcurrency = [Math]::Max($maximumConcurrency, $active.Count)
+                    continue
+                }
+
+                $directConnect = [regex]::Match($step, '(?i)я\s+подключаю\s+TestClient\s+["''](?<name>[^"'']+)["'']\s+логин\s+["''][^"'']*["'']\s+пароль\s+["'']')
+                if ($directConnect.Success) {
+                    $resolved = Resolve-VanessaScenarioValue -Value $directConnect.Groups['name'].Value -ExampleValues $instance.values
+                    if ($resolved.resolved) {
+                        $currentClientKey = $resolved.value.ToLowerInvariant()
+                        $active[$currentClientKey] = $resolved.value
+                        $maximumConcurrency = [Math]::Max($maximumConcurrency, $active.Count)
+                    }
+                    continue
+                }
+
+                if ($step -match '(?i)я\s+подключаю\s+клиент\s+тестирования\s+с\s+параметрами\s*:\s*$') {
+                    $awaitDirectClientTableHeader = $true
                     continue
                 }
 
@@ -624,12 +692,22 @@ function Get-VanessaFeatureTestClientRequirements {
                             reason = "profile-placeholder-is-not-resolved-by-examples"
                         })
                     } else {
-                        [void]$active.Remove($resolved.value.ToLowerInvariant())
+                        $closedKey = $resolved.value.ToLowerInvariant()
+                        [void]$active.Remove($closedKey)
+                        if ($currentClientKey -eq $closedKey) { $currentClientKey = "" }
+                    }
+                    continue
+                }
+                if ($step -match '(?i)закрываю\s+сеанс\s+текущего\s+клиента\s+тестирования') {
+                    if ($currentClientKey) {
+                        [void]$active.Remove($currentClientKey)
+                        $currentClientKey = ""
                     }
                     continue
                 }
                 if ($step -match '(?i)закрываю\s+все\s+(?:сеансы\s+)?TestClient') {
                     $active.Clear()
+                    $currentClientKey = ""
                 }
             }
         }
@@ -782,8 +860,7 @@ function Read-VanessaTestClientManifest {
         throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: '$path' must declare non-negative integer maxConcurrency."
     }
     $maxConcurrency = [int]$maxConcurrencyValue
-    if (($profiles.Count -eq 0 -and $maxConcurrency -ne 0) -or
-        ($profiles.Count -gt 0 -and ($maxConcurrency -lt 1 -or $maxConcurrency -gt $profiles.Count))) {
+    if ($profiles.Count -gt 0 -and $maxConcurrency -lt 1) {
         throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: maxConcurrency=$maxConcurrency is incompatible with profiles=$($profiles.Count) in '$path'."
     }
 
