@@ -121,6 +121,18 @@
                 $topology.profiles[0].name | Should -Be "ProfileOne"
                 $topology.profiles[0].password | Should -Be "runtime-secret"
 
+                $paramsPath = New-VanessaParamsFile `
+                    -FeaturePath $fixture.featurePath `
+                    -RunDirectory $fixture.runDirectory `
+                    -StatusPath (Join-Path $fixture.runDirectory "status.json") `
+                    -State $fixture.state `
+                    -TestPort 48051 `
+                    -TestPorts @(48051) `
+                    -TestClientTopology $topology
+                $params = Get-Content -Raw -Encoding UTF8 $paramsPath | ConvertFrom-Json
+                $onlyOneKey = Get-EncodedVanessaKey "0KDQsNC30YDQtdGI0LXQvdC+0JfQsNC/0YPRgdC60LDRgtGM0KLQvtC70YzQutC+0J7QtNC40L3QmtC70LjQtdC90YLQotC10YHRgtC40YDQvtCy0LDQvdC40Y8="
+                $params.PSObject.Properties[$onlyOneKey].Value | Should -BeTrue
+
                 Set-Content -LiteralPath $fixture.manifestPath -Encoding UTF8 -Value '{"schemaVersion":1,"maxConcurrency":1,"profiles":[{"name":"ProfileOne","password":"tracked-secret"}]}'
                 { Read-VanessaTestClientManifest } | Should -Throw "*ITL_VANESSA_TESTCLIENT_MANIFEST_SECRET_FORBIDDEN*"
             }
@@ -152,7 +164,8 @@
                 $clientKey = Get-EncodedVanessaKey "0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP"
                 $clientsKey = Get-EncodedVanessaKey "0JTQsNC90L3Ri9C10JrQu9C40LXQvdGC0L7QstCi0LXRgdGC0LjRgNC+0LLQsNC90LjRjw=="
                 $portKey = Get-EncodedVanessaKey "0J/QvtGA0YLQl9Cw0L/Rg9GB0LrQsNCi0LXRgdGC0JrQu9C40LXQvdGC0LA="
-                $singleKey = Get-EncodedVanessaKey "0JfQsNC/0YPRgdC60LDRgtGM0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP0KHQnNCw0LrRgdC40LzQuNC30LjRgNC+0LLQsNC90L3Ri9C80J7QutC90L7QvA=="
+                $onlyOneKey = Get-EncodedVanessaKey "0KDQsNC30YDQtdGI0LXQvdC+0JfQsNC/0YPRgdC60LDRgtGM0KLQvtC70YzQutC+0J7QtNC40L3QmtC70LjQtdC90YLQotC10YHRgtC40YDQvtCy0LDQvdC40Y8="
+                $maximizedKey = Get-EncodedVanessaKey "0JfQsNC/0YPRgdC60LDRgtGM0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP0KHQnNCw0LrRgdC40LzQuNC30LjRgNC+0LLQsNC90L3Ri9C80J7QutC90L7QvA=="
                 $portRangeKey = Get-EncodedVanessaKey "0JTQuNCw0L/QsNC30L7QvdCf0L7RgNGC0L7QslRlc3RjbGllbnQ="
                 $clientSettings = $params.PSObject.Properties[$clientKey].Value
                 $records = @($clientSettings.PSObject.Properties[$clientsKey].Value)
@@ -161,7 +174,9 @@
                 $topology.observedMaximumConcurrency | Should -Be 2
                 $records.Count | Should -Be 3
                 @($ports | Sort-Object -Unique).Count | Should -Be 3
-                $clientSettings.PSObject.Properties[$singleKey].Value | Should -BeFalse
+                $params.PSObject.Properties[$onlyOneKey].Value | Should -BeFalse
+                $clientSettings.PSObject.Properties.Name | Should -Not -Contain $onlyOneKey
+                $clientSettings.PSObject.Properties[$maximizedKey].Value | Should -BeTrue
                 $params.PSObject.Properties[$portRangeKey].Value | Should -Be "48051-48053"
 
                 Set-Content -LiteralPath $fixture.manifestPath -Encoding UTF8 -Value '{"schemaVersion":1,"maxConcurrency":1,"profiles":[{"name":"Alpha"},{"name":"Beta"},{"name":"Gamma"}]}'
