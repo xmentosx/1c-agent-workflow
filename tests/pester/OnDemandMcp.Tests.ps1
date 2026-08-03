@@ -18,11 +18,11 @@ Describe "ITL on-demand MCP facade" {
 
     It "pins hash-verified full catalogs to compatible backend versions" {
         $manifest = Get-Content -LiteralPath (Join-Path $AssetRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.facadeVersion | Should -Be "0.4.2"
-        $manifest.minimumFacadeVersion | Should -Be "0.4.2"
+        $manifest.facadeVersion | Should -Be "0.4.3"
+        $manifest.minimumFacadeVersion | Should -Be "0.4.3"
         $mainSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\main.go") -Raw -Encoding UTF8
         $gatewaySource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\gateway.go") -Raw -Encoding UTF8
-        $mainSource | Should -Match 'const version = "0\.4\.2"'
+        $mainSource | Should -Match 'const version = "0\.4\.3"'
         $mainSource | Should -Match '"gateway"'
         $gatewaySource | Should -Match 'gatewayResolveTool\s*=\s*"resolve_tool"'
         $gatewaySource | Should -Match 'gatewayCallTool\s*=\s*"call_tool"'
@@ -37,9 +37,9 @@ Describe "ITL on-demand MCP facade" {
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.version | Should -Be "1.3.9.131"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.sha256 | Should -Match '^[0-9a-f]{64}$'
         $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.2"
-        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.2/itl-ondemand-mcp-windows-amd64.exe"
-        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "ed04912f2d78eaa0b68f46654796b0bd29afaa9abc1e2abd0c68494ac0012eed"
+        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.3"
+        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.3/itl-ondemand-mcp-windows-amd64.exe"
+        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "45debfd236dcb1b1b00dcfbf5343e236be05884cba0f00e42eb94ae72d1cfb13"
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Not -Be "667f0651a9d87f17a7db584ccaf754a2150ab371e88c88af59428eaedf2b2ced"
         foreach ($family in @("roctup", "vanessa-ui")) {
             $definition = $manifest.families.$family
@@ -161,7 +161,7 @@ Describe "ITL on-demand MCP facade" {
                 $installRoot = Join-Path $tempRoot "localapp\ondemand"
                 function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
 
-                $version = "0.4.2"
+                $version = "0.4.3"
                 $assetName = "itl-ondemand-mcp-windows-amd64.exe"
                 $targetDirectory = Join-Path $installRoot $version
                 $targetPath = Join-Path $targetDirectory $assetName
@@ -181,7 +181,7 @@ Describe "ITL on-demand MCP facade" {
                 Install-ItlOnDemandMcp
             }
 
-            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.2\itl-ondemand-mcp-windows-amd64.exe")
+            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.3\itl-ondemand-mcp-windows-amd64.exe")
             $result.sha256 | Should -Match '^[a-f0-9]{64}$'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -393,7 +393,7 @@ Describe "ITL on-demand MCP facade" {
             $broker | Should -Match 'function Ensure-ItlOnDemandVanessaTestClient'
             $broker | Should -Match 'Assert-VanessaTestClientCapacity[\s\S]*Start-EnterpriseBackground[\s\S]*-UseTestClient[\s\S]*-TestClientPort'
             $broker | Should -Match 'testClientProcessStartTime'
-            $broker | Should -Match 'schemaVersion\s*=\s*3'
+            $broker | Should -Match 'schemaVersion\s*=\s*4'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
@@ -440,6 +440,7 @@ Describe "ITL on-demand MCP facade" {
 
     It "records the actual executable returned for an on-demand backend manager" {
         $runtime = & {
+            $script:runtimeStatuses = @()
             function Read-ItlOnDemandRuntimeState { return $null }
             function Read-CurrentDevBranchStateForRoctupMcp {
                 return [pscustomobject]@{ devBranchInfoBasePath = "D:\owned\base"; infoBaseKind = "file" }
@@ -449,7 +450,8 @@ Describe "ITL on-demand MCP facade" {
             function Get-ItlOnDemandPortKey { return "roctup-key" }
             function Install-RoctupMcpArtifact { return [pscustomobject]@{ path = "D:\tools\roctup.epf"; version = "1.0" } }
             function Get-RoctupMcpPortRange { return [pscustomobject]@{ start = 48000; end = 48010 } }
-            function Resolve-ItlManagedPort { return 48001 }
+            function New-ItlManagedPortLeaseToken { return "backend-token" }
+            function Resolve-ItlManagedPortLease { return [pscustomobject]@{ port = 48001; leaseToken = "backend-token" } }
             function Get-RoctupMcpUrl { return "http://127.0.0.1:48001/mcp" }
             function Start-EnterpriseBackground {
                 return [pscustomobject]@{
@@ -459,15 +461,84 @@ Describe "ITL on-demand MCP facade" {
                 }
             }
             function Wait-RoctupMcpPort { return $true }
-            function Set-ItlManagedPortAllocationStatus {}
+            function Test-ItlOnDemandPortOwnedByProcess { return $true }
+            function Set-ItlOnDemandManagedPortLeaseStatus {}
             function Get-Process { return [pscustomobject]@{ Id = 76001; StartTime = [datetime]"2026-07-31T08:00:00Z" } }
-            function Write-ItlOnDemandRuntimeState { return "runtime.json" }
+            function Resolve-Agent1cFullPath { param([string]$Path) return $Path }
+            function Write-ItlOnDemandRuntimeState {
+                param([object]$RuntimeState)
+                $script:runtimeStatuses += [string]$RuntimeState.status
+                return "runtime.json"
+            }
 
-            Start-ItlOnDemandBackendInstance -Family "roctup" -InstanceId ("a" * 32) -CatalogSha256 ("b" * 64)
+            $started = Start-ItlOnDemandBackendInstance -Family "roctup" -InstanceId ("a" * 32) -CatalogSha256 ("b" * 64)
+            [pscustomobject]@{ state = $started; statuses = @($script:runtimeStatuses) }
         }
 
-        $runtime.executablePath | Should -Be "D:\platform\bin\1cv8c.exe"
-        $runtime.pid | Should -Be 76001
+        $runtime.state.executablePath | Should -Be "D:\platform\bin\1cv8c.exe"
+        $runtime.state.pid | Should -Be 76001
+        $runtime.state.status | Should -Be "readiness"
+        $runtime.statuses | Should -Be @("starting", "process-started", "readiness")
+    }
+
+    It "retains startup state and leases when failed readiness cannot prove process exit and closed ports" {
+        $result = & {
+            $script:statuses = @()
+            $script:releaseCalls = 0
+            function Read-ItlOnDemandRuntimeState { return $null }
+            function Read-CurrentDevBranchStateForRoctupMcp { return [pscustomobject]@{ devBranchInfoBasePath = "D:\owned\base"; infoBaseKind = "file" } }
+            function Ensure-DevBranchEnterpriseNormalized { param([object]$State) return $State }
+            function Get-ItlOnDemandPortFamily { return "roctup-mcp" }
+            function Get-ItlOnDemandPortKey { return "roctup-key" }
+            function Install-RoctupMcpArtifact { return [pscustomobject]@{ path = "D:\tools\roctup.epf"; version = "1.0" } }
+            function Get-RoctupMcpPortRange { return [pscustomobject]@{ start = 48000; end = 48010 } }
+            function New-ItlManagedPortLeaseToken { return "failure-token" }
+            function Resolve-ItlManagedPortLease { return [pscustomobject]@{ port = 48002; leaseToken = "failure-token" } }
+            function Get-RoctupMcpUrl { return "http://127.0.0.1:48002/mcp" }
+            function Start-EnterpriseBackground { return [pscustomobject]@{ process = [pscustomobject]@{ Id = 76002 }; executablePath = "D:\platform\bin\1cv8c.exe"; logPath = "D:\logs\roctup.log" } }
+            function Get-Process { return [pscustomobject]@{ Id = 76002; StartTime = [datetime]"2026-07-31T08:00:00Z" } }
+            function Resolve-Agent1cFullPath { param([string]$Path) return $Path }
+            function Set-ItlOnDemandManagedPortLeaseStatus {}
+            function Wait-RoctupMcpPort { return $false }
+            function Stop-Process {}
+            function Test-TcpPortOpen { return $true }
+            function Release-ItlOnDemandManagedPortLease { $script:releaseCalls++ }
+            function Write-ItlOnDemandRuntimeState {
+                param([object]$RuntimeState)
+                $script:statuses += [string]$RuntimeState.status
+                return "runtime.json"
+            }
+            $message = ""
+            try { Start-ItlOnDemandBackendInstance -Family "roctup" -InstanceId ("2" * 32) -CatalogSha256 ("b" * 64) | Out-Null } catch { $message = $_.Exception.Message }
+            [pscustomobject]@{ message = $message; statuses = @($script:statuses); releaseCalls = $script:releaseCalls }
+        }
+        $result.message | Should -Match "runtime state and leases were retained"
+        $result.statuses | Should -Be @("starting", "process-started")
+        $result.releaseCalls | Should -Be 0
+    }
+
+    It "marks a backend running only after strict process and port identity confirmation" {
+        $result = & {
+            $script:written = $null
+            $script:allocationStatus = ""
+            $script:confirmationEvents = @()
+            $runtime = [pscustomobject]@{
+                schemaVersion = 4; status = "readiness"; family = "roctup"; instanceId = ("5" * 32)
+                pid = 76003; port = 48003; catalogSha256 = ("b" * 64); portFamily = "roctup-mcp"; portKey = "roctup-key"; portLeaseToken = "backend-token"
+            }
+            function Read-ItlOnDemandRuntimeState { return $runtime }
+            function Test-ItlOnDemandOwnedProcess { return $true }
+            function Test-ItlOnDemandPortOwnedByProcess { return $true }
+            function Write-ItlOnDemandRuntimeState { param([object]$RuntimeState); $script:confirmationEvents += "runtime"; $script:written = $RuntimeState; return "runtime.json" }
+            function Set-ItlOnDemandManagedPortLeaseStatus { param($Family, $Key, $LeaseToken, $Status, $ProcessId); $script:confirmationEvents += "lease"; $script:allocationStatus = "$LeaseToken/$Status" }
+            $confirmed = Confirm-ItlOnDemandBackendRunning -Family "roctup" -InstanceId ("5" * 32) -ExpectedPid 76003 -ExpectedPort 48003 -CatalogSha256 ("b" * 64)
+            [pscustomobject]@{ confirmed = $confirmed; written = $script:written; allocationStatus = $script:allocationStatus; events = @($script:confirmationEvents) }
+        }
+        $result.confirmed.status | Should -Be "running"
+        $result.written.readiness | Should -Be "mcp-handshake-catalog-verified"
+        $result.written.portOwnerPidVerified | Should -BeTrue
+        $result.allocationStatus | Should -Be "backend-token/running"
+        $result.events | Should -Be @("lease", "runtime")
     }
 
     It "excludes only the proven on-demand manager from TestClient port conflict checks" {
@@ -585,7 +656,7 @@ Describe "ITL on-demand MCP facade" {
                 schemaVersion = 3; status = "running"; family = "vanessa-ui"; instanceId = ("d" * 32)
                 pid = 75001; port = 9877; url = "http://127.0.0.1:9877/mcp"
                 testClientPid = 0; testClientPort = 48151; testClientState = "not-started"
-                testClientPortFamily = "vanessa-test"; testClientPortKey = "fixture"
+                testClientPortFamily = "vanessa-test"; testClientPortKey = "fixture"; testClientPortLeaseToken = "client-token"
             }
             $script:WrittenRuntime = $null
             function Read-ItlOnDemandRuntimeState { return $runtime }
@@ -613,7 +684,7 @@ Describe "ITL on-demand MCP facade" {
                 return "state.json"
             }
             function Wait-ItlOnDemandTestClientPortReady { return $true }
-            function Set-ItlManagedPortAllocationStatus {}
+            function Set-ItlOnDemandManagedPortLeaseStatus {}
 
             $ensured = Ensure-ItlOnDemandVanessaTestClient -InstanceId ("d" * 32)
             [pscustomobject]@{
@@ -687,6 +758,61 @@ Describe "ITL on-demand MCP facade" {
         }
         $health.stale | Should -BeFalse
         $health.status | Should -Be "ownership-unverified"
+    }
+
+    It "does not classify a missing PID with an open startup port as stale" {
+        $health = & {
+            function ConvertTo-IntOrDefault { param($Value, $Default) return [int]$Value }
+            function Test-TcpPortOpen { return $true }
+            Get-ItlOnDemandBackendRuntimeHealth -RuntimeState ([pscustomobject]@{ status = "starting"; pid = 0; port = 48109 })
+        }
+        $health.stale | Should -BeFalse
+        $health.status | Should -Be "startup-port-open-ownership-unverified"
+        $health.portOpen | Should -BeTrue
+    }
+
+    It "retains a recent starting registration with no PID while launch may still be in progress" {
+        $health = & {
+            function ConvertTo-IntOrDefault { param($Value, $Default) return [int]$Value }
+            function Test-TcpPortOpen { return $false }
+            Get-ItlOnDemandBackendRuntimeHealth -RuntimeState ([pscustomobject]@{
+                status = "starting"
+                startingAt = (Get-Date).ToUniversalTime().ToString("o")
+                pid = 0
+                port = 48112
+            })
+        }
+        $health.stale | Should -BeFalse
+        $health.status | Should -Be "startup-registration-unexpired"
+        $health.portOpen | Should -BeFalse
+    }
+
+    It "classifies an expired starting registration stale only after PID absence and closed port are proven" {
+        $health = & {
+            function ConvertTo-IntOrDefault { param($Value, $Default) return [int]$Value }
+            function Test-TcpPortOpen { return $false }
+            Get-ItlOnDemandBackendRuntimeHealth -RuntimeState ([pscustomobject]@{
+                status = "starting"
+                startingAt = (Get-Date).ToUniversalTime().AddMinutes(-10).ToString("o")
+                pid = 0
+                port = 48113
+            })
+        }
+        $health.stale | Should -BeTrue
+        $health.status | Should -Be "startup-no-process-port-closed"
+        $health.portOpen | Should -BeFalse
+    }
+
+    It "does not let stale cleanup remove an open-port startup lease" {
+        $result = & {
+            $script:stops = 0
+            function Get-ItlOnDemandRuntimeInstances { return @([pscustomobject]@{ status = "starting"; family = "roctup"; instanceId = ("3" * 32); pid = 0; port = 48110 }) }
+            function Get-ItlOnDemandBackendRuntimeHealth { return [pscustomobject]@{ stale = $false; status = "startup-port-open-ownership-unverified" } }
+            function Stop-ItlOnDemandBackendInstance { $script:stops++ }
+            [pscustomobject]@{ removed = Remove-ItlOnDemandStaleInstances; stops = $script:stops }
+        }
+        $result.removed | Should -Be 0
+        $result.stops | Should -Be 0
     }
 
     It "replaces a proven stale runtime exactly once with a new instance identity" {
@@ -830,9 +956,9 @@ Describe "ITL on-demand MCP facade" {
                 $runtimeRoot = Join-Path $tempRoot "runtime"
                 function Get-ItlOnDemandRuntimeRoot { return $runtimeRoot }
                 $script:Released = @()
-                function Release-ItlManagedPortAllocation {
-                    param([string]$Family, [string]$Key)
-                    $script:Released += "$Family/$Key"
+                function Release-ItlOnDemandManagedPortLease {
+                    param([string]$Family, [string]$Key, [string]$LeaseToken)
+                    $script:Released += "$Family/$Key/$LeaseToken"
                 }
                 $instanceId = "e" * 32
                 $paramsPath = Join-Path $tempRoot "vanessa-params.json"
@@ -848,12 +974,14 @@ Describe "ITL on-demand MCP facade" {
                     ownershipMarkers = @()
                     portFamily = "vanessa-mcp"
                     portKey = "backend-key"
+                    portLeaseToken = "backend-token"
                     port = 48120
                     infoBasePath = (Join-Path $tempRoot "base")
                     testClientPid = 0
                     testClientPort = 48170
                     testClientPortFamily = "vanessa-mcp-testclient"
                     testClientPortKey = "client-key"
+                    testClientPortLeaseToken = "client-token"
                     vanessaParamsPath = $paramsPath
                 })
 
@@ -868,9 +996,85 @@ Describe "ITL on-demand MCP facade" {
             $result.runtimeRemoved | Should -BeTrue
             $result.paramsRemoved | Should -BeTrue
             $result.claims | Should -Be 0
-            $result.released | Should -Contain "vanessa-mcp/backend-key"
-            $result.released | Should -Contain "vanessa-mcp-testclient/client-key"
+            $result.released | Should -Contain "vanessa-mcp/backend-key/backend-token"
+            $result.released | Should -Contain "vanessa-mcp-testclient/client-key/client-token"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "isolates on-demand lease tokens from branch leases and rejects ABA replacement cleanup" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-lease-token-" + [guid]::NewGuid().ToString("N"))
+        $oldRegistryHome = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", "Process")
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", (Join-Path $tempRoot "registry"), "Process")
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranchName = "Lease isolation"
+                    safeDevBranchName = "lease-isolation"
+                    devBranch = "itldev/lease-isolation"
+                    stateProjectRoot = $tempRoot
+                    worktreePath = $tempRoot
+                }
+                $branchToken = New-ItlManagedPortLeaseToken
+                $backendToken = New-ItlManagedPortLeaseToken
+                $clientToken = New-ItlManagedPortLeaseToken
+                $branch = Resolve-ItlManagedPortLease -Family "vanessa-mcp" -Key "branch-lease" -Start 45000 -End 55000 -State $state -LeaseToken $branchToken
+                $backend = Resolve-ItlManagedPortLease -Family "vanessa-mcp" -Key "ondemand-backend" -Start 45000 -End 55000 -State $state -LeaseToken $backendToken
+                $client = Resolve-ItlManagedPortLease -Family "vanessa-mcp-testclient" -Key "ondemand-client" -Start 45000 -End 55000 -State $state -LeaseToken $clientToken
+                $allocatedPorts = @(
+                    [int](Get-ItlPortObjectValue -Object $branch -Name "port" -Default 0)
+                    [int](Get-ItlPortObjectValue -Object $backend -Name "port" -Default 0)
+                    [int](Get-ItlPortObjectValue -Object $client -Name "port" -Default 0)
+                )
+
+                Set-ItlOnDemandManagedPortLeaseStatus -Family "vanessa-mcp" -Key "ondemand-backend" -LeaseToken $backendToken -Status "running" -ProcessId $PID
+                Release-ItlOnDemandManagedPortLease -Family "vanessa-mcp" -Key "ondemand-backend" -LeaseToken $backendToken
+                Release-ItlOnDemandManagedPortLease -Family "vanessa-mcp-testclient" -Key "ondemand-client" -LeaseToken $clientToken
+                $afterOwnRelease = Read-ItlPortRegistry
+
+                $oldToken = New-ItlManagedPortLeaseToken
+                $replacementToken = New-ItlManagedPortLeaseToken
+                $oldLease = Resolve-ItlManagedPortLease -Family "roctup-mcp" -Key "replacement-key" -Start 45000 -End 55000 -State $state -LeaseToken $oldToken
+                Release-ItlManagedPortAllocation -Family "roctup-mcp" -Key "replacement-key" -LeaseToken $oldToken
+                $replacement = Resolve-ItlManagedPortLease -Family "roctup-mcp" -Key "replacement-key" -Start 45000 -End 55000 -State $state -LeaseToken $replacementToken
+                $replacementPort = [int](Get-ItlPortObjectValue -Object $replacement -Name "port" -Default 0)
+                $mismatch = ""
+                try {
+                    Release-ItlOnDemandManagedPortLease -Family "roctup-mcp" -Key "replacement-key" -LeaseToken $oldToken
+                } catch {
+                    $mismatch = $_.Exception.Message
+                }
+                $afterStaleRelease = Read-ItlPortRegistry
+
+                [pscustomobject]@{
+                    distinctTokens = @(@($branchToken, $backendToken, $clientToken) | Sort-Object -Unique).Count
+                    distinctPorts = @($allocatedPorts | Sort-Object -Unique).Count
+                    branchCount = @($afterOwnRelease.allocations | Where-Object { $_.family -eq "vanessa-mcp" -and $_.key -eq "branch-lease" -and $_.leaseToken -eq $branchToken }).Count
+                    backendCount = @($afterOwnRelease.allocations | Where-Object { $_.key -eq "ondemand-backend" }).Count
+                    clientCount = @($afterOwnRelease.allocations | Where-Object { $_.key -eq "ondemand-client" }).Count
+                    mismatch = $mismatch
+                    replacementPort = $replacementPort
+                    replacementCount = @($afterStaleRelease.allocations | Where-Object { $_.family -eq "roctup-mcp" -and $_.key -eq "replacement-key" -and $_.leaseToken -eq $replacementToken }).Count
+                    oldTokenCount = @($afterStaleRelease.allocations | Where-Object { $_.leaseToken -eq $oldToken }).Count
+                }
+            }
+
+            $result.distinctTokens | Should -Be 3
+            $result.distinctPorts | Should -Be 3
+            $result.branchCount | Should -Be 1
+            $result.backendCount | Should -Be 0
+            $result.clientCount | Should -Be 0
+            $result.mismatch | Should -Match "ITL_ONDEMAND_PORT_LEASE_MISMATCH"
+            $result.replacementPort | Should -BeGreaterThan 0
+            $result.replacementCount | Should -Be 1
+            $result.oldTokenCount | Should -Be 0
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", $oldRegistryHome, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "stops the strictly owned backend process and closes its listening port" {
@@ -903,6 +1107,7 @@ Describe "ITL on-demand MCP facade" {
                 if (-not (Test-TcpPortOpen -Port $port)) {
                     throw "Owned backend fixture did not open port $port."
                 }
+                $portOwnedBeforeStop = Test-ItlOnDemandPortOwnedByProcess -Port $port -ProcessId $script:OwnedChild.Id
                 $process = Get-Process -Id $script:OwnedChild.Id -ErrorAction Stop
                 $native = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$($script:OwnedChild.Id)"
                 $instanceId = "f" * 32
@@ -931,12 +1136,14 @@ Describe "ITL on-demand MCP facade" {
                     child = $script:OwnedChild
                     processAlive = $null -ne (Get-Process -Id $script:OwnedChild.Id -ErrorAction SilentlyContinue)
                     portOpen = Test-TcpPortOpen -Port $port
+                    portOwnedBeforeStop = $portOwnedBeforeStop
                     runtimeRemoved = -not (Test-Path -LiteralPath $path)
                 }
             }
             $child = $result.child
             $result.processAlive | Should -BeFalse
             $result.portOpen | Should -BeFalse
+            $result.portOwnedBeforeStop | Should -BeTrue
             $result.runtimeRemoved | Should -BeTrue
         } finally {
             if ($null -ne $child -and $null -ne (Get-Process -Id $child.Id -ErrorAction SilentlyContinue)) {
@@ -1000,6 +1207,37 @@ Describe "ITL on-demand MCP facade" {
             if ($null -ne $listener) { $listener.Stop() }
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It "uses strict ownership by default and retains an unverified live PID without an explicit switch" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-default-strict-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $runtimeRoot = Join-Path $tempRoot "runtime"
+                function Get-ItlOnDemandRuntimeRoot { return $runtimeRoot }
+                $script:releaseCalls = 0
+                function Release-ItlManagedPortAllocation { $script:releaseCalls++ }
+                function Get-Process { return [pscustomobject]@{ Id = 79001 } }
+                function Test-ItlOnDemandOwnedProcess { return $false }
+                function Test-TcpPortOpen { return $true }
+                $instanceId = "4" * 32
+                $path = Write-ItlOnDemandRuntimeState -RuntimeState ([pscustomobject][ordered]@{
+                    schemaVersion = 4; status = "readiness"; family = "roctup"; instanceId = $instanceId
+                    pid = 79001; processStartTime = "2026-08-03T00:00:00Z"; executablePath = "D:\platform\1cv8c.exe"
+                    ownershipMarkers = @("owned-marker"); portFamily = "roctup-mcp"; portKey = "strict-key"; port = 48111
+                    testClientPid = 0; testClientPort = 0; testClientPortFamily = ""; testClientPortKey = ""; vanessaParamsPath = ""
+                })
+                $message = ""
+                try { Stop-ItlOnDemandBackendInstance -Family "roctup" -InstanceId $instanceId | Out-Null } catch { $message = $_.Exception.Message }
+                [pscustomobject]@{ message = $message; restored = Test-Path -LiteralPath $path; releaseCalls = $script:releaseCalls }
+            }
+            $result.message | Should -Match "^ITL_ONDEMAND_OWNERSHIP_MISMATCH"
+            $result.restored | Should -BeTrue
+            $result.releaseCalls | Should -Be 0
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
     It "fails closed when strict runtime drain encounters unreadable ownership state" {

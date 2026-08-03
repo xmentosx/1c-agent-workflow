@@ -559,6 +559,16 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 		r.backend = nil
 		return err
 	}
+	confirmed, err := r.broker.MarkRunning(ctx, info)
+	if err != nil {
+		r.session = nil
+		_ = session.Close()
+		_ = r.broker.Stop(context.Background())
+		r.backend = nil
+		return fmt.Errorf("confirm backend protocol readiness: %w", err)
+	}
+	info = confirmed
+	r.backend = confirmed
 	r.logger.Info("ensure backend", "family", r.family, "instanceId", r.instanceID, "stage", "ready")
 	return nil
 }
