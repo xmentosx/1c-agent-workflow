@@ -22,6 +22,10 @@ When Vanessa is `off`, do not automatically author scenarios or add them to a ne
 
 Keep `USER-RULES.md` above `LLM-RULES.md` in precedence. `LLM-RULES.md` changes only through an explicit `/evolve`, one separately confirmed change at a time; `/evolve` cannot weaken branch safety, preflight, test-plan, verification-mode, result, or fresh-check gates. Rules updates preserve `LLM-RULES.md`.
 
+## Shared Cross-Project Memory
+
+Global `1c-templates-mcp` `remember`/`recall` is shared across projects, not project memory. `remember` only verified, non-confidential facts safe and useful across unrelated projects, preferably on an explicit cross-project retention request. Never store project objects/decisions, customer data, paths/endpoints, source/runtime evidence, secrets, or PII. Put project-specific facts and corrections in that project's `memory.md`; upstream correction capture never requires shared `remember`. Do not run shared `recall` by default: use it only when cross-project platform/tooling/workflow/team knowledge is relevant, and verify results against the current project. `templatesearch` is unaffected.
+
 Use pinned `update-ai-rules`, `update-workflow`, and `/itl-refresh`; never hidden `/installmcp`, `/updatemcp`, `/checkmcp`, or `/updaterules`. Use ITL MCP helper requests; ROCTUP and Vanessa UI MCP are on demand, not completion gates. After RTK setup, test `rtk rewrite` on the lifecycle helper command; add exclusions only for an observed rewrite, then restart the client. Event-log verification uses `.agent-1c/event-log-baselines/*.json`, and Vanessa must preserve the `TESTMANAGER -> TESTCLIENT` split. Search hygiene: keep secrets/runtime ignored, preserve user config, and inspect `.agent-1c/runs/` or `build/test-results/` only for a specific run.
 
 For `1cv8.exe`, give `Start-Process -ArgumentList` one joined, correctly quoted command line.

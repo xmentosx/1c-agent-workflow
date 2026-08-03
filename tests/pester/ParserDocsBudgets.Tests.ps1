@@ -201,6 +201,17 @@
         foreach ($skillId in $skillReferences) {
             $installedSkillIds | Should -Contain $skillId
         }
+        foreach ($marker in @(
+            'shared across projects, not project memory',
+            'verified, non-confidential facts safe and useful across unrelated projects',
+            'project-specific facts and corrections in that project''s `memory.md`',
+            'correction capture never requires shared `remember`',
+            'Do not run shared `recall` by default',
+            'verify results against the current project',
+            '`templatesearch` is unaffected'
+        )) {
+            $userRulesText | Should -Match ([regex]::Escape($marker))
+        }
     }
 
     It "requires Enterprise failure and stall diagnosis to use fresh event-log evidence before Out" {

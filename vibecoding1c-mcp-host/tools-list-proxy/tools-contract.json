@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "approvedAt": "2026-07-20",
+  "approvedAt": "2026-08-03",
   "descriptionPolicy": {
     "mode": "approved-top-level-only",
     "maximumApprovedDescriptionCharacters": 240,
@@ -44,11 +44,11 @@
         },
         "remember": {
           "sourceSha256": "ac95004965841d58b186a4e355a758ccfaa88d5e31c5fbc0810a7406a9e5f2a0",
-          "compact": "Save a text note to project memory for later retrieval. This changes project memory."
+          "compact": "Save a verified, non-confidential note useful across unrelated projects to shared cross-project memory. Never use it for project-specific facts."
         },
         "recall": {
           "sourceSha256": "868e336dabd85fd35904cf5c57312269ed29b5b2434387590e8998e35e833652",
-          "compact": "Semantically search previously saved project-memory notes."
+          "compact": "Search shared cross-project memory for reusable platform, tooling, workflow, or team knowledge; verify results against the current project."
         }
       }
     },
