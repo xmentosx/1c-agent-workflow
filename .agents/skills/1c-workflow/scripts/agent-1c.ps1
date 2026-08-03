@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "run-dev-branch-tests", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "refresh-dev-branch-lite", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "run-dev-branch-tests", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "refresh-dev-branch-lite", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -99,7 +99,10 @@ param(
     [string]$InternalOnDemandCatalogSha256 = "",
     [string]$InternalOnDemandReplacementInstanceId = "",
     [int]$InternalOnDemandExpectedPid = 0,
-    [int]$InternalOnDemandExpectedPort = 0
+    [int]$InternalOnDemandExpectedPort = 0,
+    [string]$InterruptedVanessaInfoBasePath = "",
+    [string]$InterruptedVanessaRunParamsPath = "",
+    [string]$InterruptedVanessaTestPorts = ""
 )
 
 Set-StrictMode -Version Latest
@@ -312,7 +315,7 @@ $script:LifecycleOperationId = ""
 $script:LifecycleOperationIsContinuation = [bool]$OperationContinuation
 $script:LifecycleOperationOwnerPid = $OperationOwnerPid
 $script:LifecycleOperationTerminalWrittenByContinuation = $false
-$script:ActiveDevBranchVanessaRun = $null
+$script:ActiveVanessaRunEvidence = $null
 
 $script:Agent1cScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $script:Agent1cLibRoot = Join-Path $script:Agent1cScriptRoot "lib"
@@ -406,6 +409,7 @@ try {
         "deploy-and-test" { Invoke-ItlDeployAndTestBridge }
         "status" { Show-WorkflowStatus }
         "run-dev-branch-tests" { Run-DevBranchTests }
+        "cleanup-interrupted-vanessa-run" { Invoke-InterruptedDevBranchVanessaRunCleanup }
         "stop-dev-branch-test-clients" { Stop-DevBranchTestClients }
         "start-vanessa-profile" { Start-DevBranchVanessaInteractiveProfile | Out-Null }
         "status-vanessa-profile" { Show-DevBranchVanessaInteractiveProfile | Out-Null }
@@ -499,26 +503,5 @@ try {
     }
     exit 1
 } finally {
-    $activeVanessaRunWasRegistered = $null -ne $script:ActiveDevBranchVanessaRun
-    $interruptedCleanupError = ""
-    try {
-        Invoke-ActiveDevBranchVanessaRunCleanup -Reason "agent-finally"
-    } catch {
-        $interruptedCleanupError = $_.Exception.Message
-        [Console]::Error.WriteLine("Failed to clean up the active Vanessa run during helper shutdown: $interruptedCleanupError")
-    }
-    try {
-        $interruptedMessage = "ITL helper execution ended before terminal status was written."
-        if ($interruptedCleanupError) {
-            $interruptedMessage = "$interruptedMessage Active Vanessa run cleanup failed: $interruptedCleanupError"
-        } elseif ($activeVanessaRunWasRegistered) {
-            $interruptedMessage = "$interruptedMessage Active Vanessa run cleanup completed."
-        } else {
-            $interruptedMessage = "$interruptedMessage No active Vanessa run was registered."
-        }
-        Complete-Agent1cInterruptedOperation -ErrorMessage $interruptedMessage | Out-Null
-    } catch {
-        [Console]::Error.WriteLine("Failed to write interrupted helper status: $($_.Exception.Message)")
-    }
     Exit-Agent1cLifecycleOperation
 }

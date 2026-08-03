@@ -3124,7 +3124,7 @@ function Run-DevBranchTests {
         -TestClientTopology $testClientTopology `
         -TestPorts $testPorts `
         -FilterTags $VanessaFilterTags
-    Set-ActiveDevBranchVanessaRun `
+    Publish-Agent1cVanessaRunEvidence `
         -State $state `
         -TestPorts $testPorts `
         -RunParamsPath $paramsPath
@@ -3259,7 +3259,7 @@ function Run-DevBranchTests {
     try {
         $cleanupStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         Stop-OwnVanessaTestProcessesAndAssert -State $state -TestPorts $testPorts -RunParamsPath $paramsPath
-        Clear-ActiveDevBranchVanessaRun -RunParamsPath $paramsPath
+        Clear-Agent1cVanessaRunEvidence
         $cleanupStopwatch.Stop(); $cleanupDurationMs = $cleanupStopwatch.ElapsedMilliseconds
     } catch {
         if ($cleanupStopwatch.IsRunning) { $cleanupStopwatch.Stop() }
@@ -3377,62 +3377,6 @@ function Run-DevBranchTests {
     Set-RunStage -Stage "vanessa.complete" -Detail "Vanessa Automation verification passed."
 }
 
-function Set-ActiveDevBranchVanessaRun {
-    param(
-        [Parameter(Mandatory = $true)][object]$State,
-        [Parameter(Mandatory = $true)][Alias("TestPort")][int[]]$TestPorts,
-        [Parameter(Mandatory = $true)][string]$RunParamsPath
-    )
-
-    $infoBasePath = [string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
-    $effectivePorts = @($TestPorts | Where-Object { $_ -gt 0 } | Select-Object -Unique)
-    if ([string]::IsNullOrWhiteSpace($infoBasePath) -or
-        [string]::IsNullOrWhiteSpace($RunParamsPath) -or
-        $effectivePorts.Count -eq 0) {
-        throw "ITL_VANESSA_RUN_OWNERSHIP_INVALID: active run requires the exact infobase, VAParams path, and positive TestClient ports."
-    }
-    $script:ActiveDevBranchVanessaRun = [pscustomobject][ordered]@{
-        state = $State
-        infoBasePath = $infoBasePath
-        testPorts = @($effectivePorts)
-        runParamsPath = $RunParamsPath
-    }
-}
-
-function Clear-ActiveDevBranchVanessaRun {
-    param([string]$RunParamsPath = "")
-
-    if ($null -eq $script:ActiveDevBranchVanessaRun) { return }
-    if ($RunParamsPath -and
-        -not [string]::Equals(
-            (Resolve-Agent1cFullPath -Path $RunParamsPath),
-            (Resolve-Agent1cFullPath -Path ([string]$script:ActiveDevBranchVanessaRun.runParamsPath)),
-            [System.StringComparison]::OrdinalIgnoreCase
-        )) {
-        return
-    }
-    $script:ActiveDevBranchVanessaRun = $null
-}
-
-function Invoke-ActiveDevBranchVanessaRunCleanup {
-    param([string]$Reason = "helper shutdown")
-
-    if ($null -eq $script:ActiveDevBranchVanessaRun) { return $null }
-    $activeRun = $script:ActiveDevBranchVanessaRun
-    Write-Host "Cleaning up active Vanessa run after $Reason."
-    Stop-OwnVanessaTestProcessesAndAssert `
-        -State $activeRun.state `
-        -TestPorts @($activeRun.testPorts) `
-        -RunParamsPath ([string]$activeRun.runParamsPath)
-    Clear-ActiveDevBranchVanessaRun -RunParamsPath ([string]$activeRun.runParamsPath)
-    return [pscustomobject]@{
-        status = "released"
-        infoBasePath = [string]$activeRun.infoBasePath
-        testPorts = @($activeRun.testPorts)
-        runParamsPath = [string]$activeRun.runParamsPath
-    }
-}
-
 function ConvertTo-IntOrDefault {
     param(
         [AllowNull()][object]$Value,
@@ -3505,14 +3449,27 @@ function Get-VanessaTestClientLicenseCapacity {
     return $capacity
 }
 
+function Get-OneCCommandLineSwitchPath {
+    param(
+        [AllowNull()][string]$CommandLine,
+        [Parameter(Mandatory = $true)][string[]]$SwitchNames
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine) -or $SwitchNames.Count -eq 0) { return "" }
+    $switchPattern = @($SwitchNames | ForEach-Object { [regex]::Escape($_) }) -join '|'
+    $matches = [regex]::Matches(
+        $CommandLine,
+        '(?i)(?:^|\s)/(?:' + $switchPattern + ')(?=\s|")\s*(?:"(?<quoted>[^"]+)"|(?<unquoted>.*?))(?=\s+"?[/-][A-Za-z]|$)'
+    )
+    if ($matches.Count -ne 1) { return "" }
+    $match = $matches[0]
+    return ([string]$(if ($match.Groups["quoted"].Success) { $match.Groups["quoted"].Value } else { $match.Groups["unquoted"].Value })).Trim()
+}
+
 function Get-SafeOneCProcessInfoBase {
     param([AllowNull()][string]$CommandLine)
 
-    if ([string]::IsNullOrWhiteSpace($CommandLine)) { return "" }
-    $match = [regex]::Match($CommandLine, '(?i)(?:^|\s)/(?:F|S)\s+(?:"([^"]+)"|(\S+))')
-    if (-not $match.Success) { return "" }
-    $value = $(if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value })
-    return ([string]$value).Trim()
+    return (Get-OneCCommandLineSwitchPath -CommandLine $CommandLine -SwitchNames @("F", "S"))
 }
 
 function Get-VanessaTestClientCapacitySnapshot {
@@ -3567,22 +3524,29 @@ function Test-OneCCommandLineInfoBasePath {
         return $false
     }
 
-    $matches = [regex]::Matches(
-        [string]$CommandLine,
-        '(?i)(?:^|\s)/(?:F|S)(?=\s|")\s*(?:"(?<quoted>[^"]+)"|(?<unquoted>\S+))'
-    )
-    foreach ($match in $matches) {
-        $candidate = $(if ($match.Groups["quoted"].Success) { $match.Groups["quoted"].Value } else { $match.Groups["unquoted"].Value })
-        try {
-            $candidatePath = Resolve-Agent1cFullPath -Path $candidate
-            if ([string]::Equals($candidatePath, $expectedPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-                return $true
-            }
-        } catch {
-        }
-    }
+    $candidate = Get-OneCCommandLineSwitchPath -CommandLine $CommandLine -SwitchNames @("F", "S")
+    if ([string]::IsNullOrWhiteSpace($candidate)) { return $false }
+    try { $candidatePath = Resolve-Agent1cFullPath -Path $candidate } catch { return $false }
+    return [string]::Equals($candidatePath, $expectedPath, [System.StringComparison]::OrdinalIgnoreCase)
+}
 
-    return $false
+function Test-OneCCommandLineOutputBelongsToRun {
+    param(
+        [AllowNull()][string]$CommandLine,
+        [AllowNull()][string]$RunParamsPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine) -or [string]::IsNullOrWhiteSpace($RunParamsPath)) { return $false }
+    $outputPath = Get-OneCCommandLineSwitchPath -CommandLine $CommandLine -SwitchNames @("Out")
+    if ([string]::IsNullOrWhiteSpace($outputPath)) { return $false }
+    try {
+        $runDirectory = (Split-Path -Parent (Resolve-Agent1cFullPath -Path $RunParamsPath)).TrimEnd('\', '/')
+        $resolvedOutputPath = Resolve-Agent1cFullPath -Path $outputPath
+    } catch {
+        return $false
+    }
+    $runPrefix = $runDirectory + [System.IO.Path]::DirectorySeparatorChar
+    return $resolvedOutputPath.StartsWith($runPrefix, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function Get-OneCCommandLineTestPort {
@@ -3741,7 +3705,8 @@ function Test-OneCVanessaTestProcessBelongsToRun {
             return $false
         }
         $processPort = Get-OneCCommandLineTestPort -CommandLine $commandLine
-        return ($processPort -gt 0 -and $effectivePorts -contains $processPort)
+        return ($processPort -gt 0 -and $effectivePorts -contains $processPort -and
+            (Test-OneCCommandLineOutputBelongsToRun -CommandLine $commandLine -RunParamsPath $RunParamsPath))
     }
     if ($commandLine -match '(?i)(?:^|\s)/TESTMANAGER(?=\s|$)') {
         return (Test-CommandLineContainsVaParamsPath -CommandLine $commandLine -ParamsPath $RunParamsPath)
@@ -4537,6 +4502,34 @@ function Stop-OwnVanessaTestProcessesAndAssert {
     }
 
     Write-Host "Branch-local Vanessa test process cleanup passed. Stopped TestManager: $($result.stoppedTestManager); TestClient: $($result.stoppedTestClient)"
+}
+
+function Invoke-InterruptedDevBranchVanessaRunCleanup {
+    if (-not $InterruptedVanessaInfoBasePath -or -not $InterruptedVanessaRunParamsPath -or
+        -not $InterruptedVanessaTestPorts) {
+        throw "ITL_INTERRUPTED_VANESSA_EVIDENCE_INVALID: exact infobase, VAParams path, and TestClient ports are required."
+    }
+    $ports = @($InterruptedVanessaTestPorts -split ',' | ForEach-Object {
+        $port = ConvertTo-IntOrDefault -Value $_ -Default 0
+        if ($port -le 0 -or $port -gt 65535) {
+            throw "ITL_INTERRUPTED_VANESSA_EVIDENCE_INVALID: invalid TestClient port '$($_)'."
+        }
+        $port
+    } | Select-Object -Unique)
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "cleanup-interrupted-vanessa-run"
+    $expectedInfoBase = Resolve-Agent1cFullPath -Path ([string](Get-StateValue -State $state -Name "devBranchInfoBasePath" -Default ""))
+    $evidenceInfoBase = Resolve-Agent1cFullPath -Path $InterruptedVanessaInfoBasePath
+    if (-not [string]::Equals($expectedInfoBase, $evidenceInfoBase, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "ITL_INTERRUPTED_VANESSA_EVIDENCE_INVALID: lifecycle infobase does not match current branch state."
+    }
+    $paramsPath = Resolve-Agent1cFullPath -Path $InterruptedVanessaRunParamsPath
+    $projectPrefix = $script:ProjectRoot.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $paramsPath.StartsWith($projectPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+        -not (Test-Path -LiteralPath $paramsPath -PathType Leaf)) {
+        throw "ITL_INTERRUPTED_VANESSA_EVIDENCE_INVALID: VAParams path is missing or outside the current project."
+    }
+    Stop-OwnVanessaTestProcessesAndAssert -State $state -TestPorts $ports -RunParamsPath $paramsPath
 }
 
 function Get-VanessaInteractiveProfileStatePath {

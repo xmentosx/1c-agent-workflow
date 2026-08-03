@@ -311,7 +311,7 @@ Describe "Branch-safe Vanessa runtime cleanup" {
         }
     }
 
-    It "uses every current-run TestClient port for diagnostics and cleanup while branch release remains explicit" {
+    It "owns real unquoted multi-profile TestClient command lines by infobase port and current-run Out path" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-run-scope-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
@@ -319,19 +319,25 @@ Describe "Branch-safe Vanessa runtime cleanup" {
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $base = Join-Path $tempRoot "Кириллица worktree\База с пробелами"
+                $foreignBase = Join-Path $tempRoot "Другой worktree\База с пробелами"
                 $currentParams = Join-Path $tempRoot "runs\current run\VAParams.json"
                 $otherParams = Join-Path $tempRoot "runs\other run\VAParams.json"
+                $currentRun = Split-Path -Parent $currentParams
+                $otherRun = Split-Path -Parent $otherParams
                 $state = [pscustomobject]@{ devBranchInfoBasePath = $base; vanessaTestPort = 48054; vanessaTestPorts = @(48054, 48055) }
                 $script:StoppedIds = @()
+                $script:StickyIds = @()
                 $script:Processes = @(
                     [pscustomobject]@{ processId = 1101; commandLine = "1cv8c.exe /TESTMANAGER /F `"$base`" `"/CStartFeaturePlayer;VAParams=$currentParams`"" },
-                    [pscustomobject]@{ processId = 1102; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48054 /F `"$base`"" },
+                    [pscustomobject]@{ processId = 1102; commandLine = "1cv8c.exe /TESTCLIENT /F $base -TPort 48054 /N U3 /Out $currentRun\U3_20260803183906.txt" },
                     [pscustomobject]@{ processId = 1103; commandLine = "1cv8c.exe /TESTMANAGER /F `"$base`" `"/CStartFeaturePlayer;VAParams=$otherParams`"" },
-                    [pscustomobject]@{ processId = 1104; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48056 /F `"$base`"" },
-                    [pscustomobject]@{ processId = 1105; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48055 /F `"$base`"" }
+                    [pscustomobject]@{ processId = 1104; commandLine = "1cv8c.exe /TESTCLIENT /F $base -TPort 48054 /N reused /Out $otherRun\foreign-current-port.txt" },
+                    [pscustomobject]@{ processId = 1105; commandLine = "1cv8c.exe /TESTCLIENT /F $base -TPort 48055 /N M5 /Out $currentRun\НРС-M5_20260803185957.txt" },
+                    [pscustomobject]@{ processId = 1106; commandLine = "1cv8c.exe /TESTCLIENT /F $foreignBase -TPort 48054 /N foreign /Out $currentRun\foreign-worktree.txt" },
+                    [pscustomobject]@{ processId = 1107; commandLine = "1cv8c.exe /TESTCLIENT /F $base -TPort 48054 /N U3-again /Out $currentRun\U3_20260803183907.txt" }
                 )
                 function Get-OneCProcessInfo { param([switch]$RequireSuccess); @($script:Processes | Where-Object { $script:StoppedIds -notcontains $_.processId }) }
-                function Stop-Process { param([int]$Id); $script:StoppedIds += $Id }
+                function Stop-Process { param([int]$Id); if ($script:StickyIds -notcontains $Id) { $script:StoppedIds += $Id } }
                 function Start-Sleep {}
 
                 $diagnostics = Write-OneCVanessaProcessDiagnostics -State $state -TestPorts @(48054, 48055) -RunParamsPath $currentParams 6>&1
@@ -340,12 +346,20 @@ Describe "Branch-safe Vanessa runtime cleanup" {
                 $script:StoppedIds = @()
                 $ordinary = Stop-OwnVanessaTestProcesses -State $state -TestPorts @(48054, 48055) -RunParamsPath $currentParams
                 $afterOrdinary = @($script:StoppedIds)
+                $script:StoppedIds = @()
+                $script:StickyIds = @(1105)
+                $incomplete = Stop-OwnVanessaTestProcesses -State $state -TestPorts @(48054, 48055) -RunParamsPath $currentParams
+                $afterIncomplete = @($script:StoppedIds)
+                $script:StoppedIds = @()
+                $script:StickyIds = @()
                 $branch = Stop-OwnVanessaTestProcesses -State $state -BranchWide
                 [pscustomobject]@{
                     ordinary = $ordinary
+                    incomplete = $incomplete
                     diagnostics = ($diagnostics | Out-String)
                     afterHung = $afterHung
                     afterOrdinary = $afterOrdinary
+                    afterIncomplete = $afterIncomplete
                     afterBranch = @($script:StoppedIds)
                     branch = $branch
                 }
@@ -355,20 +369,34 @@ Describe "Branch-safe Vanessa runtime cleanup" {
             $result.diagnostics | Should -Match '(?s)\[current-run\].*PID=1101'
             $result.diagnostics | Should -Match '(?s)\[current-run\].*PID=1102'
             $result.diagnostics | Should -Match '(?s)\[current-run\].*PID=1105'
+            $result.diagnostics | Should -Match '(?s)\[current-run\].*PID=1107'
             $result.diagnostics | Should -Not -Match '\[current-run\].*PID=1103'
             $result.diagnostics | Should -Not -Match '\[current-run\].*PID=1104'
+            $result.diagnostics | Should -Not -Match '\[current-run\].*PID=1106'
             $result.afterHung | Should -Contain 1101
             $result.afterHung | Should -Contain 1102
             $result.afterHung | Should -Contain 1105
+            $result.afterHung | Should -Contain 1107
             $result.afterHung | Should -Not -Contain 1103
             $result.afterHung | Should -Not -Contain 1104
+            $result.afterHung | Should -Not -Contain 1106
             $result.afterOrdinary | Should -Contain 1101
             $result.afterOrdinary | Should -Contain 1102
             $result.afterOrdinary | Should -Contain 1105
+            $result.afterOrdinary | Should -Contain 1107
             $result.afterOrdinary | Should -Not -Contain 1103
             $result.afterOrdinary | Should -Not -Contain 1104
+            $result.afterOrdinary | Should -Not -Contain 1106
+            @($result.incomplete.remaining | ForEach-Object { [int]$_.processId }) | Should -Contain 1105
+            $result.afterIncomplete | Should -Contain 1101
+            $result.afterIncomplete | Should -Contain 1102
+            $result.afterIncomplete | Should -Contain 1107
+            $result.afterIncomplete | Should -Not -Contain 1104
+            $result.afterIncomplete | Should -Not -Contain 1105
+            $result.afterIncomplete | Should -Not -Contain 1106
             $result.afterBranch | Should -Contain 1103
-            $result.afterBranch | Should -Not -Contain 1104
+            $result.afterBranch | Should -Contain 1104
+            $result.afterBranch | Should -Not -Contain 1106
             $result.branch.errors | Should -BeNullOrEmpty
 
             $helperText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
@@ -382,58 +410,8 @@ Describe "Branch-safe Vanessa runtime cleanup" {
         }
     }
 
-    It "keeps an exact active-run cleanup guard for helper interruption" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-interrupt-cleanup-" + [guid]::NewGuid().ToString("N"))
-        try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
-            $result = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $base = Join-Path $tempRoot "owned-worktree\base"
-                $foreignBase = Join-Path $tempRoot "foreign-worktree\base"
-                $currentParams = Join-Path $tempRoot "runs\current\VAParams.json"
-                $otherParams = Join-Path $tempRoot "runs\other\VAParams.json"
-                $state = [pscustomobject]@{ devBranchInfoBasePath = $base }
-                $script:StoppedIds = @()
-                $script:Processes = @(
-                    [pscustomobject]@{ processId = 2101; commandLine = "1cv8c.exe /TESTMANAGER /F `"$base`" /CStartFeaturePlayer;VAParams=$currentParams" },
-                    [pscustomobject]@{ processId = 2102; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48054 /F `"$base`"" },
-                    [pscustomobject]@{ processId = 2103; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48055 /F `"$base`"" },
-                    [pscustomobject]@{ processId = 2201; commandLine = "1cv8c.exe /TESTMANAGER /F `"$base`" /CStartFeaturePlayer;VAParams=$otherParams" },
-                    [pscustomobject]@{ processId = 2202; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48056 /F `"$base`"" },
-                    [pscustomobject]@{ processId = 2301; commandLine = "1cv8c.exe /TESTMANAGER /F `"$foreignBase`" /CStartFeaturePlayer;VAParams=$currentParams" },
-                    [pscustomobject]@{ processId = 2302; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48054 /F `"$foreignBase`"" }
-                )
-                function Get-OneCProcessInfo { param([switch]$RequireSuccess); @($script:Processes | Where-Object { $script:StoppedIds -notcontains $_.processId }) }
-                function Stop-Process { param([int]$Id); $script:StoppedIds += $Id }
-                function Start-Sleep {}
-
-                Set-ActiveDevBranchVanessaRun -State $state -TestPorts @(48054, 48055) -RunParamsPath $currentParams
-                $cleanup = Invoke-ActiveDevBranchVanessaRunCleanup -Reason "pipeline-cancelled" 6>$null
-                [pscustomobject]@{
-                    cleanup = $cleanup
-                    stoppedIds = @($script:StoppedIds)
-                    activeRunCleared = $null -eq $script:ActiveDevBranchVanessaRun
-                }
-            }
-
-            $result.cleanup.status | Should -Be "released"
-            $result.cleanup.testPorts | Should -Be @(48054, 48055)
-            $result.stoppedIds | Should -Contain 2101
-            $result.stoppedIds | Should -Contain 2102
-            $result.stoppedIds | Should -Contain 2103
-            $result.stoppedIds | Should -Not -Contain 2201
-            $result.stoppedIds | Should -Not -Contain 2202
-            $result.stoppedIds | Should -Not -Contain 2301
-            $result.stoppedIds | Should -Not -Contain 2302
-            $result.activeRunCleared | Should -BeTrue
-        } finally {
-            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-
-    It "terminalizes interrupted lifecycle and run status and wires cleanup before lock release" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-interrupt-status-" + [guid]::NewGuid().ToString("N"))
+    It "publishes and clears exact Vanessa run evidence in lifecycle and helper status" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-run-evidence-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
@@ -444,6 +422,9 @@ Describe "Branch-safe Vanessa runtime cleanup" {
                 $script:RunStartedAt = Get-Date
                 $operationId = [guid]::NewGuid().ToString("N")
                 $operationPath = Join-Path $tempRoot ".agent-1c\locks\lifecycle-operation.json"
+                $paramsPath = Join-Path $tempRoot "build\test-results\vanessa\current\VAParams.json"
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $paramsPath) | Out-Null
+                Set-Content -LiteralPath $paramsPath -Encoding UTF8 -Value '{}'
                 $record = [ordered]@{
                     schemaVersion = 1
                     status = "running"
@@ -453,7 +434,9 @@ Describe "Branch-safe Vanessa runtime cleanup" {
                     worktreePath = $tempRoot
                     lockScopes = @($tempRoot)
                     pid = $PID
-                    phase = "vanessa.run"
+                    continuationPid = 0
+                    phase = "vanessa.prepare"
+                    activeVanessaRun = $null
                 }
                 $script:LifecycleOperationRecord = $record
                 $script:LifecycleOperationStatePath = $operationPath
@@ -461,39 +444,29 @@ Describe "Branch-safe Vanessa runtime cleanup" {
                 $script:LifecycleOperationOwnerPid = $PID
                 $script:LifecycleOperationIsContinuation = $false
                 Write-Agent1cLifecycleOperationRecord -Path $operationPath -Record $record
-                $script:RunStage = "vanessa.run"
-                Write-RunStatus -Status "running"
-
-                $completed = Complete-Agent1cInterruptedOperation -ErrorMessage "fixture pipeline cancellation"
+                Publish-Agent1cVanessaRunEvidence `
+                    -State ([pscustomobject]@{ devBranchInfoBasePath = (Join-Path $tempRoot ".agent-1c\infobases\branch1") }) `
+                    -TestPorts @(48054, 48055) `
+                    -RunParamsPath $paramsPath
+                $publishedLifecycle = Read-Agent1cLifecycleOperationRecord -Path $operationPath
+                $publishedStatus = Get-Content -LiteralPath $RunStatusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                Clear-Agent1cVanessaRunEvidence
                 [pscustomobject]@{
-                    completed = $completed
-                    lifecycle = Read-Agent1cLifecycleOperationRecord -Path $operationPath
-                    run = Get-Content -LiteralPath $RunStatusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                    publishedLifecycle = $publishedLifecycle
+                    publishedStatus = $publishedStatus
+                    clearedLifecycle = Read-Agent1cLifecycleOperationRecord -Path $operationPath
+                    clearedStatus = Get-Content -LiteralPath $RunStatusPath -Raw -Encoding UTF8 | ConvertFrom-Json
                 }
             }
 
-            $result.completed | Should -BeTrue
-            $result.lifecycle.status | Should -Be "failed"
-            $result.lifecycle.phase | Should -Be "failed"
-            $result.lifecycle.finishedAt | Should -Not -BeNullOrEmpty
-            $result.lifecycle.errorMessage | Should -Be "fixture pipeline cancellation"
-            $result.run.status | Should -Be "failed"
-            $result.run.stage | Should -Be "runner.interrupted"
-            $result.run.finishedAt | Should -Not -BeNullOrEmpty
-            $result.run.errorCategory | Should -Be "runner"
-
-            $agentText = Get-Content -LiteralPath $HelperPath -Raw -Encoding UTF8
-            $finallyStart = $agentText.LastIndexOf("} finally {")
-            $finallyText = $agentText.Substring($finallyStart)
-            $finallyText.IndexOf("Invoke-ActiveDevBranchVanessaRunCleanup") | Should -BeLessThan $finallyText.IndexOf("Complete-Agent1cInterruptedOperation")
-            $finallyText.IndexOf("Complete-Agent1cInterruptedOperation") | Should -BeLessThan $finallyText.IndexOf("Exit-Agent1cLifecycleOperation")
-
-            $vanessaText = Get-Content -LiteralPath $VanessaPath -Raw -Encoding UTF8
-            $runStart = $vanessaText.IndexOf("function Run-DevBranchTests")
-            $runEnd = $vanessaText.IndexOf("function Set-ActiveDevBranchVanessaRun", $runStart)
-            $runText = $vanessaText.Substring($runStart, $runEnd - $runStart)
-            $runText | Should -Match 'Set-ActiveDevBranchVanessaRun[\s\S]*-RunParamsPath \$paramsPath'
-            $runText | Should -Match 'Stop-OwnVanessaTestProcessesAndAssert[\s\S]*Clear-ActiveDevBranchVanessaRun -RunParamsPath \$paramsPath'
+            $result.publishedLifecycle.activeVanessaRun.operationId | Should -Be $result.publishedLifecycle.operationId
+            [int]$result.publishedLifecycle.activeVanessaRun.ownerPid | Should -BeGreaterThan 0
+            [int]$result.publishedLifecycle.activeVanessaRun.processId | Should -BeGreaterThan 0
+            $result.publishedLifecycle.activeVanessaRun.testPorts | Should -Be @(48054, 48055)
+            $result.publishedStatus.activeVanessaRun.operationId | Should -Be $result.publishedLifecycle.operationId
+            $result.publishedStatus.activeVanessaRun.runParamsPath | Should -Be (Join-Path $tempRoot "build\test-results\vanessa\current\VAParams.json")
+            $result.clearedLifecycle.activeVanessaRun | Should -BeNullOrEmpty
+            $result.clearedStatus.activeVanessaRun | Should -BeNullOrEmpty
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

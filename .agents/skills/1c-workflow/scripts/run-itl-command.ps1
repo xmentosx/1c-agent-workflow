@@ -46,6 +46,41 @@ function Read-JsonFile {
     try { return (Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return $null }
 }
 
+function Write-JsonFileAtomic {
+    param([string]$Path, [object]$Value)
+    $temporary = "$Path.tmp-$PID-$([guid]::NewGuid().ToString('N'))"
+    [System.IO.File]::WriteAllText($temporary, (($Value | ConvertTo-Json -Depth 10) + [Environment]::NewLine), $utf8)
+    Move-Item -LiteralPath $temporary -Destination $Path -Force
+}
+
+function Resolve-NormalizedPath {
+    param([AllowNull()][string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return "" }
+    return [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+}
+
+function Test-SamePath {
+    param([string]$First, [string]$Second)
+    if (-not $First -or -not $Second) { return $false }
+    return [string]::Equals(
+        (Resolve-NormalizedPath -Path $First),
+        (Resolve-NormalizedPath -Path $Second),
+        [System.StringComparison]::OrdinalIgnoreCase
+    )
+}
+
+function ConvertTo-PowerShellLiteral {
+    param([AllowNull()][string]$Value)
+    if ($null -eq $Value) { return '$null' }
+    return "'" + $Value.Replace("'", "''") + "'"
+}
+
+function ConvertTo-PowerShellArgumentToken {
+    param([AllowNull()][string]$Value)
+    if ($Value -and $Value -match '^-[A-Za-z][A-Za-z0-9-]*$') { return $Value }
+    return (ConvertTo-PowerShellLiteral -Value $Value)
+}
+
 function Get-ObjectValue {
     param([object]$Object, [string]$Name, [object]$Default = $null)
     if ($null -eq $Object) { return $Default }
@@ -63,18 +98,99 @@ function Set-ObjectValue {
     $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
 }
 
-function ConvertTo-NativeCommandLineArgument {
-    param([AllowNull()][string]$Argument)
-    if ($null -eq $Argument -or $Argument.Length -eq 0) { return '""' }
-    if ($Argument -notmatch '[\s"]') { return $Argument }
-    $escaped = $Argument -replace '(\\*)"', '$1$1\"'
-    $escaped = $escaped -replace '(\\+)$', '$1$1'
-    return '"' + $escaped + '"'
+function Get-RunnerOwnedLifecycleRecord {
+    param(
+        [string]$Path,
+        [int]$HelperProcessId,
+        [string]$Action,
+        [string]$ProjectRoot
+    )
+    $record = Read-JsonFile -Path $Path
+    if ($null -eq $record -or [string](Get-ObjectValue -Object $record -Name "status" -Default "") -ne "running" -or
+        [int](Get-ObjectValue -Object $record -Name "pid" -Default 0) -ne $HelperProcessId -or
+        [string](Get-ObjectValue -Object $record -Name "action" -Default "") -ne $Action -or
+        -not (Test-SamePath -First ([string](Get-ObjectValue -Object $record -Name "projectRoot" -Default "")) -Second $ProjectRoot)) {
+        return $null
+    }
+    return $record
 }
 
-function Join-NativeCommandLineArguments {
-    param([string[]]$Arguments)
-    return (@($Arguments | ForEach-Object { ConvertTo-NativeCommandLineArgument -Argument ([string]$_) }) -join " ")
+function Get-InterruptedVanessaRunEvidence {
+    param(
+        [object]$LifecycleRecord,
+        [object]$RunStatus,
+        [int]$HelperProcessId,
+        [string]$ProjectRoot
+    )
+    $evidence = Get-ObjectValue -Object $LifecycleRecord -Name "activeVanessaRun" -Default $null
+    if ($null -eq $evidence) { return [pscustomobject]@{ present = $false; valid = $false; reason = ""; evidence = $null } }
+    $operationId = [string](Get-ObjectValue -Object $LifecycleRecord -Name "operationId" -Default "")
+    $continuationPid = [int](Get-ObjectValue -Object $LifecycleRecord -Name "continuationPid" -Default 0)
+    $expectedProcessId = if ($continuationPid -gt 0) { $continuationPid } else { $HelperProcessId }
+    $ports = @((Get-ObjectValue -Object $evidence -Name "testPorts" -Default @()) | ForEach-Object { [int]$_ } | Select-Object -Unique)
+    $paramsPath = [string](Get-ObjectValue -Object $evidence -Name "runParamsPath" -Default "")
+    $projectPrefix = (Resolve-NormalizedPath -Path $ProjectRoot) + [System.IO.Path]::DirectorySeparatorChar
+    $resolvedParamsPath = Resolve-NormalizedPath -Path $paramsPath
+    $reason = ""
+    if ([int](Get-ObjectValue -Object $evidence -Name "schemaVersion" -Default 0) -ne 1 -or
+        [string](Get-ObjectValue -Object $evidence -Name "operationId" -Default "") -cne $operationId -or
+        [int](Get-ObjectValue -Object $evidence -Name "ownerPid" -Default 0) -ne $HelperProcessId -or
+        [int](Get-ObjectValue -Object $evidence -Name "processId" -Default 0) -ne $expectedProcessId -or
+        -not (Test-SamePath -First ([string](Get-ObjectValue -Object $evidence -Name "projectRoot" -Default "")) -Second $ProjectRoot) -or
+        -not $resolvedParamsPath.StartsWith($projectPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+        -not (Test-Path -LiteralPath $resolvedParamsPath -PathType Leaf) -or
+        -not [string](Get-ObjectValue -Object $evidence -Name "infoBasePath" -Default "") -or
+        $ports.Count -eq 0 -or @($ports | Where-Object { $_ -le 0 -or $_ -gt 65535 }).Count -gt 0) {
+        $reason = "exact lifecycle Vanessa evidence is incomplete or inconsistent"
+    }
+    $statusEvidence = Get-ObjectValue -Object $RunStatus -Name "activeVanessaRun" -Default $null
+    if (-not $reason -and $null -ne $statusEvidence -and
+        [string](Get-ObjectValue -Object $statusEvidence -Name "operationId" -Default "") -cne $operationId) {
+        $reason = "run status and lifecycle operation identify different Vanessa runs"
+    }
+    return [pscustomobject]@{ present = $true; valid = -not [bool]$reason; reason = $reason; evidence = $evidence; ports = @($ports) }
+}
+
+function Invoke-InterruptedVanessaRunRecovery {
+    param(
+        [string]$HelperPath,
+        [string]$ProjectRoot,
+        [object]$EvidenceResult,
+        [string]$LogPath
+    )
+    $evidence = $EvidenceResult.evidence
+    $recoveryArguments = @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $HelperPath,
+        "-ProjectRoot", $ProjectRoot,
+        "-Action", "cleanup-interrupted-vanessa-run",
+        "-InterruptedVanessaInfoBasePath", ([string]$evidence.infoBasePath),
+        "-InterruptedVanessaRunParamsPath", ([string]$evidence.runParamsPath),
+        "-InterruptedVanessaTestPorts", (@($EvidenceResult.ports) -join ',')
+    )
+    $output = @(& powershell @recoveryArguments 2>&1)
+    $recoveryExitCode = if ($LASTEXITCODE -is [int]) { [int]$LASTEXITCODE } else { 1 }
+    if ($output.Count -gt 0) {
+        [System.IO.File]::AppendAllText(
+            $LogPath,
+            ([Environment]::NewLine + "[runner interrupted Vanessa cleanup]" + [Environment]::NewLine + ($output -join [Environment]::NewLine) + [Environment]::NewLine),
+            $utf8
+        )
+    }
+    return [pscustomobject]@{ succeeded = $recoveryExitCode -eq 0; exitCode = $recoveryExitCode }
+}
+
+function Complete-RunnerOwnedLifecycleRecord {
+    param([string]$Path, [object]$Record, [int]$ExitCode, [string]$Message)
+    $now = (Get-Date).ToString("o")
+    Set-ObjectValue -Object $Record -Name "status" -Value "failed"
+    Set-ObjectValue -Object $Record -Name "updatedAt" -Value $now
+    Set-ObjectValue -Object $Record -Name "finishedAt" -Value $now
+    Set-ObjectValue -Object $Record -Name "phase" -Value "runner.helper-exited"
+    Set-ObjectValue -Object $Record -Name "detail" -Value $Message
+    Set-ObjectValue -Object $Record -Name "exitCode" -Value $ExitCode
+    Set-ObjectValue -Object $Record -Name "errorCode" -Value "LIFECYCLE_OPERATION_HELPER_EXITED"
+    Set-ObjectValue -Object $Record -Name "errorMessage" -Value $Message
+    Write-JsonFileAtomic -Path $Path -Value $Record
 }
 
 function Find-LauncherRunDirectory {
@@ -145,23 +261,39 @@ if ($windowed) {
     [System.IO.File]::WriteAllText($logPath, "", $utf8)
     $helperPath = Join-Path $PSScriptRoot "agent-1c.ps1"
     $monitoredArgs = @("-ProjectRoot", $projectRoot, "-RunStatusPath", $statusPath, "-RunLogPath", $logPath) + @($helperArgs)
-    $nativeArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $helperPath) + $monitoredArgs
-    $processStartInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $processStartInfo.FileName = "powershell"
-    $processStartInfo.Arguments = Join-NativeCommandLineArguments -Arguments $nativeArguments
-    $processStartInfo.WorkingDirectory = $projectRoot
-    $processStartInfo.UseShellExecute = $false
-    $processStartInfo.CreateNoWindow = $true
-    $processStartInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-    $processStartInfo.RedirectStandardOutput = $true
-    $processStartInfo.RedirectStandardError = $true
-    $helperProcess = New-Object System.Diagnostics.Process
-    $helperProcess.StartInfo = $processStartInfo
-    if (-not $helperProcess.Start()) {
+    $helperInvocation = "& " + (ConvertTo-PowerShellLiteral -Value $helperPath) + " " + ((@($monitoredArgs) | ForEach-Object { ConvertTo-PowerShellArgumentToken -Value ([string]$_) }) -join " ")
+    $commandText = @"
+`$utf8 = New-Object System.Text.UTF8Encoding `$false
+[Console]::InputEncoding = `$utf8
+[Console]::OutputEncoding = `$utf8
+`$OutputEncoding = `$utf8
+`$ProgressPreference = 'SilentlyContinue'
+`$ErrorActionPreference = 'Stop'
+`$helperExitCode = 1
+try {
+    $helperInvocation *>&1 | ForEach-Object {
+        [IO.File]::AppendAllText($(ConvertTo-PowerShellLiteral -Value $logPath), ([string]`$_ + [Environment]::NewLine), `$utf8)
+    }
+    `$pipelineSucceeded = `$?
+    if (`$LASTEXITCODE -is [int]) { `$helperExitCode = [int]`$LASTEXITCODE }
+    elseif (`$pipelineSucceeded) { `$helperExitCode = 0 }
+} catch {
+    [Console]::Error.WriteLine(`$_.Exception.Message)
+    [IO.File]::AppendAllText($(ConvertTo-PowerShellLiteral -Value $logPath), (`$_.Exception.Message + [Environment]::NewLine), `$utf8)
+    `$helperExitCode = 1
+}
+[Environment]::Exit(`$helperExitCode)
+"@
+    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
+    $helperProcess = Start-Process `
+        -FilePath "powershell" `
+        -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
+        -WorkingDirectory $projectRoot `
+        -WindowStyle Hidden `
+        -PassThru
+    if ($null -eq $helperProcess) {
         throw "Failed to start compact ITL helper: $helperPath"
     }
-    $helperOutputTask = $helperProcess.StandardOutput.ReadToEndAsync()
-    $helperErrorTask = $helperProcess.StandardError.ReadToEndAsync()
     $lastProgressStage = ""
     $lastProgressAt = [DateTime]::MinValue
     while (-not $helperProcess.HasExited) {
@@ -183,14 +315,6 @@ if ($windowed) {
     }
     $helperProcess.WaitForExit()
     $exitCode = [int]$helperProcess.ExitCode
-    $helperOutput = $helperOutputTask.GetAwaiter().GetResult()
-    $helperErrors = $helperErrorTask.GetAwaiter().GetResult()
-    if ($helperOutput) {
-        [System.IO.File]::AppendAllText($logPath, $helperOutput, $utf8)
-    }
-    if ($helperErrors) {
-        [System.IO.File]::AppendAllText($logPath, $helperErrors, $utf8)
-    }
 }
 
 $status = Read-JsonFile -Path $statusPath
@@ -200,6 +324,24 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
     $effectiveExitCode = if ($exitCode -ne 0) { $exitCode } else { 1 }
     $previousStage = [string](Get-ObjectValue -Object $status -Name "stage" -Default "")
     $message = "ITL helper exited with code $exitCode before writing a terminal status. Log: $logPath"
+    if (-not $windowed) {
+        $lifecyclePath = Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json"
+        $lifecycleRecord = Get-RunnerOwnedLifecycleRecord -Path $lifecyclePath -HelperProcessId $helperProcess.Id -Action $action -ProjectRoot $projectRoot
+        if ($null -ne $lifecycleRecord) {
+            $evidenceResult = Get-InterruptedVanessaRunEvidence -LifecycleRecord $lifecycleRecord -RunStatus $status -HelperProcessId $helperProcess.Id -ProjectRoot $projectRoot
+            if ($evidenceResult.present -and $evidenceResult.valid) {
+                $recovery = Invoke-InterruptedVanessaRunRecovery -HelperPath $helperPath -ProjectRoot $projectRoot -EvidenceResult $evidenceResult -LogPath $logPath
+                $message += if ($recovery.succeeded) {
+                    " Exact interrupted Vanessa run cleanup succeeded."
+                } else {
+                    " Exact interrupted Vanessa run cleanup failed with code $($recovery.exitCode); broad cleanup was not attempted."
+                }
+            } elseif ($evidenceResult.present) {
+                $message += " Interrupted Vanessa cleanup was not attempted because $($evidenceResult.reason); broad cleanup was not attempted."
+            }
+            Complete-RunnerOwnedLifecycleRecord -Path $lifecyclePath -Record $lifecycleRecord -ExitCode $effectiveExitCode -Message $message
+        }
+    }
     $detail = if ($previousStage) { "$message Last recorded stage: $previousStage." } else { $message }
     if ($null -eq $status) {
         $status = [pscustomobject][ordered]@{

@@ -328,6 +328,7 @@ function Write-RunStatus {
         userReport = $(if ($script:RunUserReport) { [string]$script:RunUserReport } else { "" })
         resultPath = $(if ($script:RunResultPath) { [string]$script:RunResultPath } else { "" })
         resultManifestPath = $(if ($script:RunResultManifestPath) { [string]$script:RunResultManifestPath } else { "" })
+        activeVanessaRun = $script:ActiveVanessaRunEvidence
     }
 
     Write-Utf8TextAtomic -Path $script:ResolvedRunStatusPath -Value (($payload | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
@@ -767,6 +768,7 @@ function Enter-Agent1cLifecycleOperation {
         exitCode = $null
         errorCode = ""
         errorMessage = ""
+        activeVanessaRun = $null
         recoveredOperationId = $(if ($null -ne $recoveredOperation) { [string]$recoveredOperation.operationId } else { "" })
         recoveredOperationArchivePath = $(if ($null -ne $recoveredOperation) { [string]$recoveredOperation.archivePath } else { "" })
     }
@@ -917,58 +919,60 @@ function Complete-Agent1cLifecycleOperation {
     }
 }
 
-function Complete-Agent1cInterruptedOperation {
-    param([string]$ErrorMessage = "ITL helper execution ended before terminal status was written.")
+function Publish-Agent1cVanessaRunEvidence {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][Alias("TestPort")][int[]]$TestPorts,
+        [Parameter(Mandatory = $true)][string]$RunParamsPath
+    )
 
-    $lifecycleRunning = $false
-    if ($null -ne $script:LifecycleOperationRecord -and
-        -not [string]::IsNullOrWhiteSpace($script:LifecycleOperationStatePath)) {
-        $lifecycleRecord = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
-        $lifecycleRunning = $null -ne $lifecycleRecord -and
-            [string]$lifecycleRecord["operationId"] -ceq $script:LifecycleOperationId -and
-            [string]$lifecycleRecord["status"] -ceq "running"
+    $infoBasePath = Resolve-Agent1cFullPath -Path ([string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default ""))
+    $paramsPath = Resolve-Agent1cFullPath -Path $RunParamsPath
+    $ports = @($TestPorts | Where-Object { $_ -gt 0 } | Select-Object -Unique)
+    if (-not $infoBasePath -or -not $paramsPath -or $ports.Count -eq 0 -or
+        $null -eq $script:LifecycleOperationRecord -or [string]::IsNullOrWhiteSpace($script:LifecycleOperationId)) {
+        throw "ITL_VANESSA_RUN_EVIDENCE_INVALID: exact lifecycle operation, infobase, VAParams path, and positive TestClient ports are required."
     }
-
-    $runStatusRunning = $false
+    $evidence = [pscustomobject][ordered]@{
+        schemaVersion = 1
+        operationId = $script:LifecycleOperationId
+        ownerPid = $script:LifecycleOperationOwnerPid
+        processId = $PID
+        projectRoot = $script:ProjectRoot
+        infoBasePath = $infoBasePath
+        runParamsPath = $paramsPath
+        testPorts = @($ports)
+        publishedAt = (Get-Date).ToString("o")
+    }
+    $record = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
+    if ($null -eq $record -or [string]$record["operationId"] -cne $script:LifecycleOperationId -or
+        [string]$record["status"] -cne "running") {
+        throw "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='cannot publish Vanessa run evidence' operationId='$($script:LifecycleOperationId)'"
+    }
+    $record["activeVanessaRun"] = $evidence
+    $record["updatedAt"] = (Get-Date).ToString("o")
+    $script:LifecycleOperationRecord = $record
+    $script:ActiveVanessaRunEvidence = $evidence
+    Write-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -Record $record
     if (-not [string]::IsNullOrWhiteSpace($RunStatusPath)) {
-        $resolvedStatusPath = Resolve-RunFilePath -Path $RunStatusPath
-        if (Test-Path -LiteralPath $resolvedStatusPath -PathType Leaf) {
-            try {
-                $runRecord = Read-Utf8Text -Path $resolvedStatusPath | ConvertFrom-Json
-                $runStatusRunning = [string]$runRecord.status -ceq "running"
-            } catch {
-                $runStatusRunning = $true
-                $ErrorMessage = "$ErrorMessage Existing run status could not be read: $($_.Exception.Message)"
-            }
-        }
+        Write-RunStatus -Status "running"
     }
+}
 
-    if (-not $lifecycleRunning -and -not $runStatusRunning) {
-        return $false
+function Clear-Agent1cVanessaRunEvidence {
+    if ($null -eq $script:ActiveVanessaRunEvidence) { return }
+    $record = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
+    if ($null -ne $record -and [string]$record["operationId"] -ceq $script:LifecycleOperationId -and
+        [string]$record["status"] -ceq "running") {
+        $record["activeVanessaRun"] = $null
+        $record["updatedAt"] = (Get-Date).ToString("o")
+        $script:LifecycleOperationRecord = $record
+        Write-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -Record $record
     }
-
-    $script:RunStage = "runner.interrupted"
-    $script:RunStageDetail = $ErrorMessage
-    $script:RunErrorCategory = "runner"
-    $errors = [System.Collections.Generic.List[string]]::new()
-    if ($lifecycleRunning) {
-        try {
-            Complete-Agent1cLifecycleOperation -Status "failed" -ExitCode 1 -ErrorMessage $ErrorMessage
-        } catch {
-            $errors.Add("lifecycle: $($_.Exception.Message)") | Out-Null
-        }
+    $script:ActiveVanessaRunEvidence = $null
+    if (-not [string]::IsNullOrWhiteSpace($RunStatusPath)) {
+        Write-RunStatus -Status "running"
     }
-    if ($runStatusRunning) {
-        try {
-            Write-RunStatus -Status "failed" -ExitCode 1 -ErrorMessage $ErrorMessage
-        } catch {
-            $errors.Add("run-status: $($_.Exception.Message)") | Out-Null
-        }
-    }
-    if ($errors.Count -gt 0) {
-        throw "ITL_INTERRUPTED_STATUS_WRITE_FAILED $($errors -join ' | ')"
-    }
-    return $true
 }
 
 function Exit-Agent1cLifecycleOperation {
