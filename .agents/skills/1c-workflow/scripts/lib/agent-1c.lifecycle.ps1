@@ -8095,6 +8095,10 @@ function Close-DevBranch {
     $updates["vanessaTestPortUpdatedAt"] = ""
     $updates["vanessaMcpPort"] = 0
     $updates["vanessaMcpPortLeaseToken"] = ""
+    $updates["roctupMcpPort"] = 0
+    $updates["roctupMcpPortLeaseToken"] = ""
+    $updates["roctupMcpUrl"] = ""
+    $updates["roctupMcpHealthUrl"] = ""
     $updates["finalResultPath"] = $resultPath
     $updates["finalResultKind"] = $resultKind
     $updates["finalResultManifestPath"] = $manifestPath

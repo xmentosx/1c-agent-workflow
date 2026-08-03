@@ -351,6 +351,9 @@ function Get-RoctupMcpReservedPorts {
             if ($currentSafeName -and $safeName -eq $currentSafeName) {
                 continue
             }
+            if (Get-StateValue -State $state -Name "closedAt" -Default "") {
+                continue
+            }
 
             $port = ConvertTo-IntOrDefault -Value (Get-StateValue -State $state -Name "roctupMcpPort" -Default 0)
             if ($port -gt 0) {
@@ -363,13 +366,16 @@ function Get-RoctupMcpReservedPorts {
     return $ports
 }
 
-function Resolve-RoctupMcpPort {
-    param([object]$State)
+function Resolve-RoctupMcpPortLease {
+    param(
+        [object]$State,
+        [string]$LeaseToken = ""
+    )
 
     $reserved = Get-RoctupMcpReservedPorts -CurrentState $State
     $savedPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "roctupMcpPort" -Default 0)
     $range = Get-RoctupMcpPortRange
-    return (Resolve-ItlManagedPort `
+    return (Resolve-ItlManagedPortLease `
         -Family "roctup-mcp" `
         -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $State) `
         -Start $range.start `
@@ -378,7 +384,16 @@ function Resolve-RoctupMcpPort {
         -ExplicitPort $RoctupMcpPort `
         -ReservedPorts $reserved `
         -State $State `
-        -Subject "ROCTUP MCP port")
+        -Subject "ROCTUP MCP port" `
+        -LeaseToken $LeaseToken)
+}
+
+function Resolve-RoctupMcpPort {
+    param([object]$State)
+
+    $leaseToken = [string](Get-StateValue -State $State -Name "roctupMcpPortLeaseToken" -Default "")
+    $lease = Resolve-RoctupMcpPortLease -State $State -LeaseToken $leaseToken
+    return [int]$lease.port
 }
 
 function Get-RoctupMcpRuntimeInfo {
@@ -500,12 +515,20 @@ function Start-RoctupMcpForState {
     }
 
     $artifact = Install-RoctupMcpArtifact
-    $port = Resolve-RoctupMcpPort -State $State
+    $portLeaseToken = [string](Get-StateValue -State $State -Name "roctupMcpPortLeaseToken" -Default "")
+    if ([string]::IsNullOrWhiteSpace($portLeaseToken)) {
+        $portLeaseToken = New-ItlManagedPortLeaseToken
+        Update-DevBranchState -State $State -Updates @{ roctupMcpPortLeaseToken = $portLeaseToken }
+        $State = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
+    }
+    $portLease = Resolve-RoctupMcpPortLease -State $State -LeaseToken $portLeaseToken
+    $port = [int]$portLease.port
     $url = Get-RoctupMcpUrl -Port $port
     $healthUrl = Get-RoctupMcpHealthUrl -Port $port
     Save-RoctupMcpRuntimeSettingsToDotEnv -Port $port -Url $url -HealthUrl $healthUrl
     Update-DevBranchState -State $State -Updates @{
         roctupMcpPort = $port
+        roctupMcpPortLeaseToken = $portLeaseToken
         roctupMcpUrl = $url
         roctupMcpHealthUrl = $healthUrl
         roctupMcpEpfPath = $artifact.path
@@ -525,6 +548,7 @@ function Start-RoctupMcpForState {
 
     Update-DevBranchState -State $state -Updates @{
         roctupMcpPort = $port
+        roctupMcpPortLeaseToken = $portLeaseToken
         roctupMcpUrl = $url
         roctupMcpHealthUrl = $healthUrl
         roctupMcpPid = $result.process.Id
@@ -534,12 +558,12 @@ function Start-RoctupMcpForState {
         roctupMcpError = ""
         roctupMcpUpdatedAt = (Get-Date).ToString("o")
     }
-    Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $state) -Status "running" -ProcessId $result.process.Id
+    Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $state) -Status "running" -ProcessId $result.process.Id -LeaseToken $portLeaseToken
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
     if (-not (Wait-RoctupMcpPort -Port $port -TimeoutSeconds 30)) {
         $message = "ROCTUP MCP process was started, but port $port did not become reachable within 30 seconds. PID: $($result.process.Id). Log: $($result.logPath)"
-        Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $state) -Status "failed" -ProcessId $result.process.Id
+        Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $state) -Status "failed" -ProcessId $result.process.Id -LeaseToken $portLeaseToken
         Update-DevBranchState -State $state -Updates @{
             roctupMcpStatus = "failed"
             roctupMcpError = $message
@@ -606,7 +630,7 @@ function Stop-RoctupMcpForState {
         if ($null -ne (Get-Process -Id $runtime.pid -ErrorAction SilentlyContinue)) {
             throw "ITL_LEGACY_MCP_STOP_FAILED: ROCTUP PID $($runtime.pid) is still running."
         }
-        Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $State) -Status "stopped"
+        Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $State) -Status "stopped" -LeaseToken ([string](Get-StateValue -State $State -Name "roctupMcpPortLeaseToken" -Default ""))
         Update-DevBranchState -State $State -Updates $updates
         $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
         if (-not $SkipClientConfig) {
@@ -615,7 +639,7 @@ function Stop-RoctupMcpForState {
         return $true
     }
 
-    Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $State) -Status "stopped"
+    Set-ItlManagedPortAllocationStatus -Family "roctup-mcp" -Key (Get-ItlBranchManagedPortKey -Family "roctup-mcp" -State $State) -Status "stopped" -LeaseToken ([string](Get-StateValue -State $State -Name "roctupMcpPortLeaseToken" -Default ""))
     Update-DevBranchState -State $State -Updates $updates
     $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
     if (-not $SkipClientConfig) {

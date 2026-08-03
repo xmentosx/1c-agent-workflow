@@ -225,7 +225,7 @@ function Test-ItlBranchPortAllocationStateAbsentOrClosed {
     param([object]$Allocation)
 
     $family = [string](Get-ItlPortObjectValue -Object $Allocation -Name "family" -Default "")
-    if (@("vanessa-testclient", "vanessa-mcp") -notcontains $family) {
+    if (@("vanessa-testclient", "vanessa-mcp", "roctup-mcp") -notcontains $family) {
         return $false
     }
 
@@ -724,6 +724,7 @@ function Release-ItlManagedPortAllocationsForState {
                 $stateTokenName = switch ($family) {
                     "vanessa-testclient" { "vanessaTestPortLeaseToken" }
                     "vanessa-mcp" { "vanessaMcpPortLeaseToken" }
+                    "roctup-mcp" { "roctupMcpPortLeaseToken" }
                     default { "" }
                 }
                 $stateLeaseToken = $(if ($stateTokenName) { [string](Get-ItlPortObjectValue -Object $State -Name $stateTokenName -Default "") } else { "" })
