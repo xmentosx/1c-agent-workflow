@@ -466,7 +466,7 @@ try {
         Write-Host "ITL initialization cancelled by developer. It will not be resumed automatically."
         exit 2
     }
-    Set-RunFailureContextFromMessage -Message $errorMessage
+    Set-RunFailureContextFromMessage -Message $errorMessage -RequestedAction $Action
     try {
         $cleanupMessage = Invoke-GitIndexLockCleanupOnFailure
         if ($cleanupMessage) {

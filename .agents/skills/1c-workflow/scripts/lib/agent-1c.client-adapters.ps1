@@ -716,7 +716,13 @@ function Write-ItlClientMcpEndpoints {
         $container[$endpoint.name] = $entry
         $written += $endpoint.name
     }
-    $config[$containerName] = $container
+    [string[]]$containerKeys = @($container.Keys | ForEach-Object { [string]$_ })
+    [System.Array]::Sort($containerKeys, [System.StringComparer]::Ordinal)
+    $orderedContainer = [ordered]@{}
+    foreach ($key in $containerKeys) {
+        $orderedContainer[$key] = $container[$key]
+    }
+    $config[$containerName] = $orderedContainer
     Write-Vibecoding1cMcpJsonFile -Path $path -Value $config
     $owners[$stateKey] = @($written + @($PreserveOwnedKeys) | Select-Object -Unique)
     $state["owners"] = $owners

@@ -3920,6 +3920,95 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
+    It "keeps refresh failures correctly routed and persists only managed refresh state" {
+        $refresh = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:RunErrorCategory = ""
+            $script:RunRequiredAction = ""
+            Set-RunFailureContextFromMessage -Message "REFRESH_TRACKED_STATE_UNEXPECTED: .kilo/kilo.json" -RequestedAction "refresh-dev-branch"
+            [pscustomobject]@{ category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+        }
+        $refresh.category | Should -Be "runner"
+        $refresh.requiredAction | Should -BeNullOrEmpty
+
+        $lifecycleText = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:RunErrorCategory = ""
+            $script:RunRequiredAction = ""
+            Set-RunFailureContextFromMessage -Message "Expected helper state was not found" -RequestedAction "refresh-dev-branch"
+            [pscustomobject]@{ category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+        }
+        $lifecycleText.category | Should -Be "runner"
+        $lifecycleText.requiredAction | Should -BeNullOrEmpty
+
+        $verification = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:RunErrorCategory = ""
+            $script:RunRequiredAction = ""
+            Set-RunFailureContextFromMessage -Message "Expected X, got Y" -RequestedAction "check-dev-branch"
+            [pscustomobject]@{ category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+        }
+        $verification.category | Should -Be "product-assertion"
+        $verification.requiredAction | Should -Be "/itl-verify-fix"
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-refresh-kilo-managed-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf"), (Join-Path $tempRoot ".kilo") | Out-Null
+            & git -C $tempRoot init *> $null; & git -C $tempRoot config user.email "test@example.com"; & git -C $tempRoot config user.name "Test User"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Encoding UTF8 -Value '{"mcp":{"itl-roctup-data":{"command":["branch-helper"]},"custom":{"url":"http://custom"}},"instructions":["USER-RULES.md"],"permission":{"bash":"ask"}}'
+            & git -C $tempRoot add .; & git -C $tempRoot commit -m "base" *> $null
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $snapshot = New-RefreshTrackedKiloConfigSnapshot
+                Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Encoding UTF8 -Value '{"mcp":{"custom":{"url":"http://custom"},"itl-roctup-data":{"command":["main-helper"]}},"instructions":["USER-RULES.md"],"permission":{"bash":"ask"}}'
+                $loadResult = [pscustomobject]@{ currentCommit = "stale" }
+                Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath "src/cf" -TrackedKiloSnapshot $snapshot
+                [pscustomobject]@{
+                    currentCommit = $loadResult.currentCommit
+                    subject = ((& git -C $tempRoot log -1 --format=%s) -join "").Trim()
+                    status = @(& git -C $tempRoot status --porcelain)
+                    config = Get-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                }
+            }
+
+            $result.subject | Should -Be "chore: persist branch refresh state"; $result.currentCommit | Should -Be (((& git -C $tempRoot rev-parse HEAD) -join "").Trim()); @($result.status).Count | Should -Be 0
+            $result.config.mcp.'itl-roctup-data'.command[0] | Should -Be "main-helper"
+            $result.config.mcp.custom.url | Should -Be "http://custom"; @($result.config.instructions) | Should -Be @("USER-RULES.md"); $result.config.permission.bash | Should -Be "ask"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-refresh-kilo-unmanaged-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf"), (Join-Path $tempRoot ".kilo") | Out-Null
+            & git -C $tempRoot init *> $null; & git -C $tempRoot config user.email "test@example.com"; & git -C $tempRoot config user.name "Test User"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Encoding UTF8 -Value '{"mcp":{"custom":{"url":"http://before"}},"permission":{"bash":"ask"}}'
+            & git -C $tempRoot add .; & git -C $tempRoot commit -m "base" *> $null
+
+            $message = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $snapshot = New-RefreshTrackedKiloConfigSnapshot
+                Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Encoding UTF8 -Value '{"mcp":{"custom":{"url":"http://after"}},"permission":{"bash":"ask"}}'
+                try {
+                    Complete-RefreshConfigDumpInfoPostcondition -LoadResult ([pscustomobject]@{ currentCommit = "stale" }) -ExportPath "src/cf" -TrackedKiloSnapshot $snapshot
+                } catch {
+                    $_.Exception.Message
+                }
+            }
+
+            $message | Should -Match "^REFRESH_TRACKED_STATE_UNEXPECTED:"; $message | Should -Match ([regex]::Escape(".kilo/kilo.json")); $message | Should -Match "non-ITL content"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        $match = [regex]::Match($HelperText, "(?s)function\s+Invoke-RefreshDevBranchCore\s*\{(?<body>.*?)(?=`r?`nfunction\s+Refresh-DevBranch\s*\{)")
+        $match.Success | Should -BeTrue
+        $body = $match.Groups["body"].Value
+        $postconditionIndex = $body.LastIndexOf("Complete-RefreshConfigDumpInfoPostcondition")
+        $postconditionIndex | Should -BeGreaterThan $body.LastIndexOf("Invoke-DevBranchDefaultMcpSetup"); $postconditionIndex | Should -BeGreaterThan $body.LastIndexOf("Invoke-DevBranchMcpRestartAfterInfobaseLoad")
+        $postconditionIndex | Should -BeGreaterThan $body.LastIndexOf("Sync-KiloItlCommandSurface"); $postconditionIndex | Should -BeGreaterThan $body.LastIndexOf("Invoke-AiRules1cManagedMcpConfigReconcile")
+    }
+
     It "does not run the refresh cursor postcondition after a failed configuration load" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

@@ -67,7 +67,32 @@
         }
     }
 
-    It "registers all ten capability-driven client layouts" {
+    It "writes deterministic MCP entries and registers every client layout" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-client-mcp-order-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\mcp"), (Join-Path $tempRoot ".kilo") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'; Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value '{"schemaVersion":1,"tools":["kilocode"],"files":{}}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Encoding UTF8 -Value '{"mcp":{"custom":{"type":"remote","url":"http://custom"}},"permission":{"bash":"ask"}}'
+            $hashes = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-ItlActiveClient { return "kilocode" }
+                $alpha = [pscustomobject]@{ name = "alpha"; transport = "stdio"; command = "tool.exe"; args = @("alpha"); toolTimeoutSeconds = 120 }
+                $zulu = [pscustomobject]@{ name = "zulu"; transport = "stdio"; command = "tool.exe"; args = @("zulu"); toolTimeoutSeconds = 120 }
+                Write-ItlClientMcpEndpoints -Endpoints @($zulu, $alpha) -Owner "ondemand-facade" -Client "kilocode" | Out-Null
+                $first = (Get-FileHash -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Algorithm SHA256).Hash
+                Write-ItlClientMcpEndpoints -Endpoints @($alpha, $zulu) -Owner "ondemand-facade" -Client "kilocode" | Out-Null
+                [pscustomobject]@{
+                    first = $first
+                    second = (Get-FileHash -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Algorithm SHA256).Hash
+                    config = Get-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                }
+            }
+
+            $hashes.second | Should -Be $hashes.first; @($hashes.config.mcp.PSObject.Properties.Name) | Should -Be @("alpha", "custom", "zulu")
+            $hashes.config.mcp.custom.url | Should -Be "http://custom"; $hashes.config.permission.bash | Should -Be "ask"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-adapter-registry-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null

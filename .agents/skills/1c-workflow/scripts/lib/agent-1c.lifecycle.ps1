@@ -378,8 +378,21 @@ function Invoke-Agent1cFreshProcess {
         "-File", $ScriptPath
     ) + @($reexecArguments.ToArray()) + @($AdditionalArguments)
 
-    & powershell @arguments
-    $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 }
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & powershell @arguments 2>&1 | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                [Console]::Error.WriteLine([string]$_)
+            } else {
+                Write-Output $_
+            }
+        }
+        $pipelineSucceeded = $?
+        $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } elseif ($pipelineSucceeded) { 0 } else { 1 }
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if ($continuesLifecycleOperation) {
         $terminal = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
         if ($null -eq $terminal -or
@@ -7093,34 +7106,167 @@ function Update-DevBranchBase {
     }
 }
 
+function Get-RefreshManagedKiloMcpNames {
+    param([object]$Config)
+
+    $names = [System.Collections.Generic.List[string]]::new()
+    foreach ($family in @("roctup", "vanessa-ui")) {
+        $definition = Get-ItlOnDemandMcpFamilyDefinition -Family $family
+        if ($definition.serverName -and -not $names.Contains([string]$definition.serverName)) {
+            $names.Add([string]$definition.serverName) | Out-Null
+        }
+    }
+
+    $managedState = Read-ItlManagedMcpState
+    $owners = ConvertTo-Vibecoding1cMcpHashtable -Object (Get-Vibecoding1cMcpObjectValue -Object $managedState -Name "owners" -Default ([ordered]@{}))
+    foreach ($ownerKey in @($owners.Keys | Where-Object { [string]$_ -like "kilocode/*" })) {
+        foreach ($name in @($owners[$ownerKey])) {
+            if ($name -and -not $names.Contains([string]$name)) {
+                $names.Add([string]$name) | Out-Null
+            }
+        }
+    }
+
+    $configHash = ConvertTo-Vibecoding1cMcpHashtable -Object $Config
+    if ($configHash.Contains("mcp")) {
+        $mcp = ConvertTo-Vibecoding1cMcpHashtable -Object $configHash["mcp"]
+        foreach ($name in @($mcp.Keys)) {
+            $managedBy = [string](Get-Vibecoding1cMcpObjectValue -Object $mcp[$name] -Name "managedBy" -Default "")
+            if ($managedBy -in @("ondemand-facade", "vibecoding1c-mcp", "itl-branch-mcp", "vanessa-mcp", "vanessa-ui-mcp") -and
+                -not $names.Contains([string]$name)) {
+                $names.Add([string]$name) | Out-Null
+            }
+        }
+    }
+    return @($names)
+}
+
+function ConvertTo-RefreshUnmanagedKiloConfigJson {
+    param(
+        [object]$Config,
+        [string[]]$ManagedNames
+    )
+
+    $configHash = ConvertTo-Vibecoding1cMcpHashtable -Object $Config
+    if ($configHash.Contains("mcp")) {
+        $mcp = ConvertTo-Vibecoding1cMcpHashtable -Object $configHash["mcp"]
+        foreach ($name in @($ManagedNames | Select-Object -Unique)) {
+            if ($mcp.Contains([string]$name)) {
+                $mcp.Remove([string]$name)
+            }
+        }
+        $configHash["mcp"] = $mcp
+    }
+    return ($configHash | ConvertTo-Json -Depth 30 -Compress)
+}
+
+function New-RefreshTrackedKiloConfigSnapshot {
+    $repoPath = ".kilo/kilo.json"
+    $tracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--", $repoPath)).Count -gt 0
+    if (-not $tracked) {
+        return [pscustomobject]@{ tracked = $false; repoPath = $repoPath; completed = $false }
+    }
+
+    $path = Join-Path $script:ProjectRoot ".kilo\kilo.json"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "REFRESH_TRACKED_STATE_UNEXPECTED: tracked Kilo config is missing before refresh: $repoPath"
+    }
+    $text = Read-Utf8Text -Path $path
+    try {
+        $config = $text | ConvertFrom-Json
+    } catch {
+        throw "REFRESH_TRACKED_STATE_UNEXPECTED: tracked Kilo config is not valid JSON before refresh: $repoPath. $($_.Exception.Message)"
+    }
+    return [pscustomobject]@{
+        tracked = $true
+        repoPath = $repoPath
+        path = $path
+        bytes = [System.IO.File]::ReadAllBytes($path)
+        text = $text
+        config = $config
+        completed = $false
+    }
+}
+
+function Assert-RefreshTrackedKiloConfigChange {
+    param([object]$Snapshot)
+
+    if ($null -eq $Snapshot -or -not $Snapshot.tracked) { return $false }
+    if (-not (Test-Path -LiteralPath $Snapshot.path -PathType Leaf)) {
+        throw "REFRESH_TRACKED_STATE_UNEXPECTED: refresh removed tracked Kilo config: $($Snapshot.repoPath)"
+    }
+    $currentText = Read-Utf8Text -Path $Snapshot.path
+    if ($currentText -ceq $Snapshot.text) { return $false }
+    try {
+        $currentConfig = $currentText | ConvertFrom-Json
+    } catch {
+        throw "REFRESH_TRACKED_STATE_UNEXPECTED: refresh produced invalid tracked Kilo config: $($Snapshot.repoPath). $($_.Exception.Message)"
+    }
+
+    $managedNames = @(
+        @(Get-RefreshManagedKiloMcpNames -Config $Snapshot.config)
+        @(Get-RefreshManagedKiloMcpNames -Config $currentConfig)
+    ) | Select-Object -Unique
+    $beforeUnmanaged = ConvertTo-RefreshUnmanagedKiloConfigJson -Config $Snapshot.config -ManagedNames $managedNames
+    $afterUnmanaged = ConvertTo-RefreshUnmanagedKiloConfigJson -Config $currentConfig -ManagedNames $managedNames
+    if ($beforeUnmanaged -cne $afterUnmanaged) {
+        throw "REFRESH_TRACKED_STATE_UNEXPECTED: refresh changed non-ITL content in tracked Kilo config: $($Snapshot.repoPath)"
+    }
+    return $true
+}
+
+function Restore-RefreshTrackedKiloConfigSnapshot {
+    param([object]$Snapshot)
+
+    if ($null -eq $Snapshot -or -not $Snapshot.tracked -or $Snapshot.completed) { return }
+    $temporaryPath = "$($Snapshot.path).refresh-rollback-$PID"
+    try {
+        [System.IO.File]::WriteAllBytes($temporaryPath, [byte[]]$Snapshot.bytes)
+        Move-Item -LiteralPath $temporaryPath -Destination $Snapshot.path -Force
+    } finally {
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Complete-RefreshConfigDumpInfoPostcondition {
     param(
         [Parameter(Mandatory = $true)][object]$LoadResult,
-        [string]$ExportPath = (Get-ExportPath)
+        [string]$ExportPath = (Get-ExportPath),
+        [object]$TrackedKiloSnapshot = $null
     )
 
     $normalizedExportPath = (($ExportPath -replace "\\", "/").Trim("/"))
     $dumpInfoRepoPath = "$normalizedExportPath/ConfigDumpInfo.xml"
+    $trackedKiloChanged = Assert-RefreshTrackedKiloConfigChange -Snapshot $TrackedKiloSnapshot
+    $allowedPaths = @($dumpInfoRepoPath)
+    if ($trackedKiloChanged) {
+        $allowedPaths += [string]$TrackedKiloSnapshot.repoPath
+    }
     $trackedPaths = @(
         @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--"))
         @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--"))
     ) | Sort-Object -Unique
     $unexpectedPaths = @($trackedPaths | Where-Object {
-        ([string]$_ -replace "\\", "/") -cne $dumpInfoRepoPath
+        $allowedPaths -cnotcontains ([string]$_ -replace "\\", "/")
     })
     if ($unexpectedPaths.Count -gt 0) {
         throw "REFRESH_TRACKED_STATE_UNEXPECTED: refresh changed tracked files other than the branch synchronization cursor: $($unexpectedPaths -join ', ')"
     }
 
-    if (@($trackedPaths | Where-Object { ([string]$_ -replace "\\", "/") -ceq $dumpInfoRepoPath }).Count -gt 0) {
+    $pathsToCommit = @($trackedPaths | Where-Object { $allowedPaths -ccontains ([string]$_ -replace "\\", "/") })
+    if ($pathsToCommit.Count -gt 0) {
+        $commitMessage = if ($trackedKiloChanged) { "chore: persist branch refresh state" } else { "chore: persist branch configuration synchronization cursor" }
         Commit-IfChanged `
-            -Message "chore: persist branch configuration synchronization cursor" `
-            -PathSpec @($dumpInfoRepoPath) `
+            -Message $commitMessage `
+            -PathSpec $pathsToCommit `
             -RequireChanges | Out-Null
     }
 
     $LoadResult.currentCommit = Get-CurrentCommit
     Assert-CleanGit
+    if ($null -ne $TrackedKiloSnapshot) {
+        $TrackedKiloSnapshot.completed = $true
+    }
 }
 
 function Invoke-RefreshDevBranchCore {
@@ -7164,28 +7310,39 @@ function Invoke-RefreshDevBranchCore {
     }
     Set-RunStage -Stage "refresh.load" -Detail "Updating the branch infobase after the merge."
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
-    $state = Invoke-DevBranchDefaultMcpSetup -State $state
-    $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration" -Mode $ConfigLoadMode
-    Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath (Get-ExportPath)
-    $updates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
-    Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
-    $updates["lastRefreshAt"] = (Get-Date).ToString("o")
-    $updates["lastRefreshMasterCommit"] = $targetMasterCommit
-    $updates["lastRefreshMode"] = $(if ($SynchronizeMaster) { "full" } else { "lite" })
-    $updates["pendingRefreshMasterCommit"] = ""
-    $updates["pendingRefreshOperation"] = ""
-    Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch was refreshed from master." -CurrentCommit $loadResult.currentCommit
-    Update-DevBranchState -State $state -Updates $updates
-    $updatedState = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "refresh-dev-branch"
-    Write-Host "Development branch refreshed from exact master commit: $targetMasterCommit"
-    Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch configuration"
-    if ((Get-DevBranchKind -State $state) -eq "extension") {
-        Write-Host "Extension files were not loaded during refresh. Run update-dev-branch-base when you need to update the extension in the branch infobase."
+    $trackedKiloSnapshot = New-RefreshTrackedKiloConfigSnapshot
+    try {
+        $state = Invoke-DevBranchDefaultMcpSetup -State $state
+        $loadResult = Load-ConfigFromFiles -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -State $state -ExportPath (Get-ExportPath) -ContentKind "configuration" -Mode $ConfigLoadMode
+        $updates = @{}
+        Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $loadResult -Updates $updates
+        $updatedState = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "refresh-dev-branch"
+        Sync-KiloItlCommandSurface
+        Invoke-AiRules1cManagedMcpConfigReconcile -Operation "$OperationName MCP reconcile" | Out-Null
+        Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath (Get-ExportPath) -TrackedKiloSnapshot $trackedKiloSnapshot
+
+        $loadStateUpdates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
+        foreach ($entry in $loadStateUpdates.GetEnumerator()) {
+            $updates[$entry.Key] = $entry.Value
+        }
+        $updates["lastRefreshAt"] = (Get-Date).ToString("o")
+        $updates["lastRefreshMasterCommit"] = $targetMasterCommit
+        $updates["lastRefreshMode"] = $(if ($SynchronizeMaster) { "full" } else { "lite" })
+        $updates["pendingRefreshMasterCommit"] = ""
+        $updates["pendingRefreshOperation"] = ""
+        Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch was refreshed from master." -CurrentCommit $loadResult.currentCommit
+        Update-DevBranchState -State $state -Updates $updates
+        $updatedState = Read-DevBranchState -Name $DevBranchName
+        Write-Host "Development branch refreshed from exact master commit: $targetMasterCommit"
+        Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch configuration"
+        if ((Get-DevBranchKind -State $state) -eq "extension") {
+            Write-Host "Extension files were not loaded during refresh. Run update-dev-branch-base when you need to update the extension in the branch infobase."
+        }
+        Write-DevBranchRunUserReport -State $updatedState -AdvisoryRoot $script:ProjectRoot -Operation refreshed -LoadResult $loadResult
+    } catch {
+        Restore-RefreshTrackedKiloConfigSnapshot -Snapshot $trackedKiloSnapshot
+        throw
     }
-    Sync-KiloItlCommandSurface
-    Invoke-AiRules1cManagedMcpConfigReconcile -Operation "$OperationName MCP reconcile" | Out-Null
-    $updatedState = Read-DevBranchState -Name $DevBranchName
-    Write-DevBranchRunUserReport -State $updatedState -AdvisoryRoot $script:ProjectRoot -Operation refreshed -LoadResult $loadResult
 }
 
 function Refresh-DevBranch {

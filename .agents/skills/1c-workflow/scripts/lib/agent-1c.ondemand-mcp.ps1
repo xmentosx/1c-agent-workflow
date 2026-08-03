@@ -1,5 +1,24 @@
+function Get-ItlOnDemandMcpWorkflowRoot {
+    $mainHelperPath = ""
+    if (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git") -ErrorAction SilentlyContinue) {
+        $mainWorktreePath = Get-MainWorktreePath
+        $mainWorkflowRoot = Join-Path $mainWorktreePath ".agents\skills\1c-workflow"
+        $mainHelperPath = Join-Path $mainWorkflowRoot "scripts\agent-1c.ps1"
+        if (Test-Path -LiteralPath $mainHelperPath -PathType Leaf) {
+            return (Resolve-Agent1cFullPath -Path $mainWorkflowRoot)
+        }
+    }
+
+    $currentWorkflowRoot = Split-Path -Parent $script:Agent1cScriptRoot
+    $currentHelperPath = Join-Path $currentWorkflowRoot "scripts\agent-1c.ps1"
+    if (-not (Test-Path -LiteralPath $currentHelperPath -PathType Leaf)) {
+        throw "ITL on-demand MCP workflow helper was not found in the main or current worktree. Main: $(if ($mainHelperPath) { $mainHelperPath } else { '<not available before Git initialization>' }). Current: $currentHelperPath"
+    }
+    return (Resolve-Agent1cFullPath -Path $currentWorkflowRoot)
+}
+
 function Get-ItlOnDemandMcpAssetRoot {
-    return (Join-Path (Split-Path -Parent $script:Agent1cScriptRoot) "assets\ondemand-mcp")
+    return (Join-Path (Get-ItlOnDemandMcpWorkflowRoot) "assets\ondemand-mcp")
 }
 
 function Get-ItlOnDemandMcpCompatibility {
@@ -162,7 +181,8 @@ function Install-ItlOnDemandMcp {
 
 function Get-ItlOnDemandMcpEndpointDescriptors {
     $executable = Get-ItlOnDemandMcpExecutablePath
-    $helper = Resolve-Agent1cFullPath -Path $script:Agent1cScriptPath
+    $workflowRoot = Get-ItlOnDemandMcpWorkflowRoot
+    $helper = Resolve-Agent1cFullPath -Path (Join-Path $workflowRoot "scripts\agent-1c.ps1")
     $root = Resolve-Agent1cFullPath -Path $script:ProjectRoot
     $endpoints = @()
     foreach ($family in @("roctup", "vanessa-ui")) {
