@@ -99,6 +99,9 @@
                 $clientsKey = Get-EncodedVanessaKey "0JTQsNC90L3Ri9C10JrQu9C40LXQvdGC0L7QstCi0LXRgdGC0LjRgNC+0LLQsNC90LjRjw=="
 
                 @($topology.profiles).Count | Should -Be 0
+                $topology.declaredLicenseSlots | Should -Be 0
+                $topology.staticPerScenarioMaximum | Should -Be 0
+                $params.stoponerror | Should -BeFalse
                 @($params.PSObject.Properties[$clientKey].Value.PSObject.Properties[$clientsKey].Value).Count | Should -Be 0
             }
         } finally {
@@ -131,7 +134,17 @@
                     -TestClientTopology $topology
                 $params = Get-Content -Raw -Encoding UTF8 $paramsPath | ConvertFrom-Json
                 $onlyOneKey = Get-EncodedVanessaKey "0KDQsNC30YDQtdGI0LXQvdC+0JfQsNC/0YPRgdC60LDRgtGM0KLQvtC70YzQutC+0J7QtNC40L3QmtC70LjQtdC90YLQotC10YHRgtC40YDQvtCy0LDQvdC40Y8="
+                $scenarioKey = Get-EncodedVanessaKey "0JLRi9C/0L7Qu9C90LXQvdC40LXQodGG0LXQvdCw0YDQuNC10LI="
+                $stopOnErrorKey = Get-EncodedVanessaKey "0J7RgdGC0LDQvdC+0LLQutCw0J/RgNC40JLQvtC30L3QuNC60L3QvtCy0LXQvdC40LjQntGI0LjQsdC60Lg="
+                $clientKey = Get-EncodedVanessaKey "0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP"
+                $closeAfterRunKey = Get-EncodedVanessaKey "0JfQsNC60YDRi9GC0YxUZXN0Q2xpZW500J/QvtGB0LvQtdCX0LDQv9GD0YHQutCw0KHRhtC10L3QsNGA0LjQtdCy"
+
+                $topology.declaredLicenseSlots | Should -Be 1
+                $topology.staticPerScenarioMaximum | Should -Be 1
                 $params.PSObject.Properties[$onlyOneKey].Value | Should -BeTrue
+                $params.stoponerror | Should -BeTrue
+                $params.PSObject.Properties[$scenarioKey].Value.PSObject.Properties[$stopOnErrorKey].Value | Should -BeTrue
+                $params.PSObject.Properties[$clientKey].Value.PSObject.Properties[$closeAfterRunKey].Value | Should -BeTrue
 
                 Set-Content -LiteralPath $fixture.manifestPath -Encoding UTF8 -Value '{"schemaVersion":1,"maxConcurrency":1,"profiles":[{"name":"ProfileOne","password":"tracked-secret"}]}'
                 { Read-VanessaTestClientManifest } | Should -Throw "*ITL_VANESSA_TESTCLIENT_MANIFEST_SECRET_FORBIDDEN*"
@@ -171,7 +184,10 @@
                 $records = @($clientSettings.PSObject.Properties[$clientsKey].Value)
                 $ports = @($records | ForEach-Object { [int]$_.PSObject.Properties[$portKey].Value })
 
-                $topology.observedMaximumConcurrency | Should -Be 2
+                $topology.declaredLicenseSlots | Should -Be 2
+                $topology.staticPerScenarioMaximum | Should -Be 2
+                $topology.PSObject.Properties.Name | Should -Not -Contain "observedMaximumConcurrency"
+                $topology.PSObject.Properties.Name | Should -Not -Contain "maxConcurrency"
                 $records.Count | Should -Be 3
                 @($ports | Sort-Object -Unique).Count | Should -Be 3
                 $params.PSObject.Properties[$onlyOneKey].Value | Should -BeFalse
@@ -255,7 +271,7 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
                 $topology.requiredProfiles | Should -Be @("Alpha", "Beta")
-                $topology.observedMaximumConcurrency | Should -Be 1
+                $topology.staticPerScenarioMaximum | Should -Be 1
             }
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -274,7 +290,7 @@
                 $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
 
                 @($topology.requiredProfiles).Count | Should -Be 0
-                $topology.observedMaximumConcurrency | Should -Be 2
+                $topology.staticPerScenarioMaximum | Should -Be 2
                 @($topology.profiles).Count | Should -Be 0
                 ($topology | ConvertTo-Json -Depth 5) | Should -Not -Match "inline-secret"
             }
@@ -295,7 +311,7 @@
                 $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
 
                 @($topology.requiredProfiles).Count | Should -Be 0
-                $topology.observedMaximumConcurrency | Should -Be 2
+                $topology.staticPerScenarioMaximum | Should -Be 2
                 @($topology.profiles).Count | Should -Be 0
                 ($topology | ConvertTo-Json -Depth 5) | Should -Not -Match "table-secret"
             }
@@ -316,7 +332,7 @@
                 $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
 
                 $topology.requiredProfiles | Should -Be @("U1")
-                $topology.observedMaximumConcurrency | Should -Be 2
+                $topology.staticPerScenarioMaximum | Should -Be 2
             }
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

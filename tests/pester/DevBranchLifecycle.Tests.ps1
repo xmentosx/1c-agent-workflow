@@ -2307,7 +2307,7 @@
                 $clientSettings = $params.PSObject.Properties[$clientKey].Value
                 $clientSettings.PSObject.Properties[$serviceMessageDirectoryKey].Value | Should -Be $runDirectory
                 $clientSettings.PSObject.Properties[$modalWindowErrorKey].Value | Should -BeTrue
-                $clientSettings.PSObject.Properties[$singleTestClientKey].Value | Should -BeTrue
+                $params.PSObject.Properties[$singleTestClientKey].Value | Should -BeTrue
                 $clientRecord = @($clientSettings.PSObject.Properties[$clientsKey].Value)[0]
                 [int]$clientRecord.PSObject.Properties[$portKey].Value | Should -Be 48051
                 $clientRecord.PSObject.Properties[$pathKey].Value | Should -Match ([regex]::Escape($ibPath))
