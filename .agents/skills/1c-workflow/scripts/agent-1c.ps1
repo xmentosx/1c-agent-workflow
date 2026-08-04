@@ -322,6 +322,7 @@ $script:Agent1cLibRoot = Join-Path $script:Agent1cScriptRoot "lib"
 $script:Agent1cModuleFiles = @(
     "agent-1c.core.ps1",
     "agent-1c.ports.ps1",
+    "agent-1c.sessions.ps1",
     "agent-1c.vanessa.ps1",
     "agent-1c.seed.ps1",
     "agent-1c.vibecoding1c-mcp.ps1",

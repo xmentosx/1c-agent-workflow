@@ -23,6 +23,7 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 - Prefer script-owned prompts, sequencing, recovery, and state transitions. Do not duplicate helper-owned flows in agent prose.
 - Treat Git path lists as NUL-delimited data: use `git -c core.quotepath=false ... -z` through the shared path-list helper, never parse newline-delimited or C-quoted Git path output. Cover Cyrillic and space-containing paths in focused regressions.
 - Treat cross-process operation names as one contract across entrypoint validation, dispatch, broker calls, lock classification, and tests. A nested broker operation inherits the facade runtime lease and must have a set-completeness regression proving that it cannot reacquire `runtime-mcp.lock`.
+- Route workflow-owned 1C launches through the per-infobase guard; direct `Start-Process` bypasses `ONEC_MAX_CONCURRENT_SESSIONS`.
 - Run monitored bootstrap in the foreground with `timeout_ms >= 3900000`. On interruption repeat the same bootstrap command; never delete `index.lock`, finish lifecycle manually, or edit `status.json`.
 - Keep secrets/runtime out of Git: `.dev.env`, infobases, tools, state, logs, and client MCP config stay ignored.
 - Keep entrypoints compact and route detail to one relevant reference; do not load or duplicate the full lifecycle.
@@ -38,11 +39,11 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 
 - Read-only source maintenance does not run `Targeted`, `Smoke`, `Full`, `Develop`, or `Release`; use focused non-mutating evidence only.
 - During edits run only the directly owned tests. Do not run a broad gate merely because a chat is ending. `Fast` is a deprecated alias for `Smoke` and is never the normal source-development step.
-- For accumulated `develop` publication, run `scripts/source-delivery.ps1 -Action PublishDevelop` with the exact fork/E2E stand. It integrates registered ranges, runs `Develop`, and fast-forward pushes. Add `-RequireRelease` when `develop` may move only after that candidate passes `Release`.
+- Publish accumulated `develop` with `scripts/source-delivery.ps1 -Action PublishDevelop` and the exact fork/E2E stand. It integrates registered ranges, runs `Develop`, and fast-forward pushes; add `-RequireRelease` when that candidate must pass `Release` first.
 - Passed `Develop` already contains exact-tree Full/static proof. Never run separate `Full` for that tree.
 - Reuse a passed Targeted/Full Pester shard only when owner inputs, inventory, locks, checker/runtime versions, controlled-fork identity, and Vanessa build identity match; unknown ownership disables reuse.
 - Follow delivery timeout/recovery and UTF-8 rules in `docs/local-quality-gate.md`; never bypass locks.
-- For the explicit request to release `develop` to `master`, run `scripts/source-delivery.ps1 -Action ReleaseMaster`. The queue must be empty and local `develop` must equal `origin/develop`; the action reconciles current `master`, reuses exact Develop proof, runs release-only evidence, advances both remote channels, and creates a tag/GitHub Release only when `-Version` is supplied.
+- Release `develop` to `master` only via `scripts/source-delivery.ps1 -Action ReleaseMaster`. The queue must be empty and local `develop` must equal `origin/develop`; it reconciles `master`, reuses exact Develop proof, runs release-only evidence, advances both branches, and creates a tag/Release with `-Version`.
 - Do not tag or publish an `itl-ondemand-mcp` component build from Targeted proof. Its exact source commit and executable SHA must pass the real `ondemand-mcp` Release E2E stage for both backend families; fixture evidence and unrelated prior runs are not release qualification.
 - Do not ask which gate to run unless the user explicitly overrides this model. A failure, conflict, remote movement, timeout, or no-progress stop leaves the queue intact and forbids publication.
 - Do not weaken the Vanessa completion gate, fresh passed `/itl-check`, snapshot rollback, or artifact SHA checks.

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "baseline": {
-    "testFiles": 39,
-    "testCases": 650,
-    "testLines": 26750
+    "testFiles": 40,
+    "testCases": 661,
+    "testLines": 27051
   },
   "budgets": {
     "smokeTargetSeconds": 60,
@@ -72,8 +72,8 @@
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/DevBranchLifecycle.Tests.ps1",
-      "paths": [".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/run-*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.bootstrap.ps1"],
-      "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/PortRegistryLifecycle.Tests.ps1", "tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1", "tests/pester/CompactItlRunner.Tests.ps1", "tests/pester/DesignerCompletion.Tests.ps1", "tests/pester/DesignerMemoryGuard.Tests.ps1", "tests/pester/FormElementContext.Tests.ps1", "tests/pester/UiTools.Tests.ps1"]
+      "paths": [".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/run-*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.bootstrap.ps1"],
+      "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/PortRegistryLifecycle.Tests.ps1", "tests/pester/OneCSessionLimit.Tests.ps1", "tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1", "tests/pester/CompactItlRunner.Tests.ps1", "tests/pester/DesignerCompletion.Tests.ps1", "tests/pester/DesignerMemoryGuard.Tests.ps1", "tests/pester/FormElementContext.Tests.ps1", "tests/pester/UiTools.Tests.ps1"]
     },
     {
       "id": "roctup-port-lifecycle",

@@ -3376,6 +3376,7 @@ function Update-WorkflowPackage {
 
     Set-RunStage -Stage "workflow-update.post-copy" -Detail "Applying installed-project overlays and dependency updates."
     Assert-MasterWorktreeContext -Operation "update-workflow post-copy"
+    Ensure-OneCSessionLimitDotEnv | Out-Null
     $aiRulesPathsBefore = @(Get-AiRules1cManifestFileEntries | ForEach-Object { [string]$_.target })
     $clientSurfacePathsBefore = @(Get-WorkflowUpdateClientSurfacePaths)
     Ensure-GitIgnore
@@ -4236,6 +4237,7 @@ function Sync-DevBranchContextToDotEnv {
         [switch]$AllowIncompleteExtension
     )
 
+    Ensure-OneCSessionLimitDotEnv | Out-Null
     $kind = Get-DevBranchKind -State $State
     $values = @{
         INFOBASE_KIND = (Get-StateValue -State $State -Name "infoBaseKind" -Default (Get-InfoBaseKind))
