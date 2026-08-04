@@ -81,6 +81,21 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	connected := make([]*probeSession, 0, *instances)
+	connectedTestClients := 0
+	maxConcurrentSessions := 0
+	ownedProcessExitWait := time.Duration(0)
+	observeConcurrency := func() {
+		current := len(connected) + connectedTestClients
+		if current > maxConcurrentSessions {
+			maxConcurrentSessions = current
+		}
+	}
+	observeExitWait := func(started time.Time) {
+		elapsed := time.Since(started)
+		if elapsed > ownedProcessExitWait {
+			ownedProcessExitWait = elapsed
+		}
+	}
 	vanessaFileAuthoringOutcome := ""
 	var vanessaFileAuthoringCodes []string
 	defer func() {
@@ -94,6 +109,7 @@ func run() error {
 			return err
 		}
 		connected = append(connected, item)
+		observeConcurrency()
 		if item.count != 2 {
 			return fmt.Errorf("facade gateway tools/list count=%d, expected=2; internal catalog count=%d", item.count, expectedCount)
 		}
@@ -133,7 +149,10 @@ func run() error {
 			if *family != "vanessa-ui" {
 				return fmt.Errorf("--vanessa-ui-smoke requires --family vanessa-ui")
 			}
-			outcome, codes, err := runVanessaSmoke(ctx, item.session, item.state.TestClientPort, *vanessaFeature)
+			outcome, codes, err := runVanessaSmoke(ctx, item.session, item.state.TestClientPort, *vanessaFeature, func(delta int) {
+				connectedTestClients += delta
+				observeConcurrency()
+			})
 			if err != nil {
 				stopHeartbeat()
 				return err
@@ -162,6 +181,7 @@ func run() error {
 
 	secondSurvived := false
 	if *instances == 2 {
+		closeStarted := time.Now()
 		if err := connected[0].session.Close(); err != nil {
 			return fmt.Errorf("close first facade: %w", err)
 		}
@@ -169,6 +189,7 @@ func run() error {
 		if _, err := waitForStateCount(runtimeRoot, 1, 30*time.Second); err != nil {
 			return fmt.Errorf("first facade cleanup: %w", err)
 		}
+		observeExitWait(closeStarted)
 		result, err := callInnerTool(ctx, connected[0].session, *tool, arguments)
 		if err != nil || result.IsError {
 			return fmt.Errorf("second facade stopped with the first: err=%v result=%#v", err, result)
@@ -189,6 +210,7 @@ func run() error {
 			return fmt.Errorf("post-idle restart: %w", err)
 		}
 	}
+	closeStarted := time.Now()
 	for _, item := range connected {
 		if err := item.session.Close(); err != nil {
 			return fmt.Errorf("close facade: %w", err)
@@ -198,11 +220,13 @@ func run() error {
 	if _, err := waitForStateCount(runtimeRoot, 0, 30*time.Second); err != nil {
 		return fmt.Errorf("EOF cleanup: %w", err)
 	}
+	observeExitWait(closeStarted)
 
 	evidence := map[string]any{
-		"schemaVersion": 1, "family": *family, "publicToolCount": 2, "catalogToolCount": expectedCount,
+		"schemaVersion": 2, "family": *family, "publicToolCount": 2, "catalogToolCount": expectedCount,
 		"tool": *tool, "instances": initial, "secondSurvivedFirstClose": secondSurvived,
 		"cleanupPassed": true, "idleCleanupPassed": idleCleanupPassed, "vanessaUiSmokePassed": *vanessaSmoke,
+		"maxConcurrentSessions": maxConcurrentSessions, "ownedProcessExitWaitMs": ownedProcessExitWait.Milliseconds(),
 		"capturedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	if *vanessaSmoke {
@@ -373,7 +397,7 @@ func distinctInstances(family string, states []runtimeState) error {
 	return nil
 }
 
-func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClientPort int, featurePath string) (string, []string, error) {
+func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClientPort int, featurePath string, observeTestClient func(int)) (string, []string, error) {
 	if featurePath == "" {
 		return "", nil, fmt.Errorf("Vanessa authoring smoke requires --vanessa-feature")
 	}
@@ -461,6 +485,9 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 		if call.name == "get_window_list_os" {
 			osWindows = result
 		}
+		if call.name == "connect_test_client" && observeTestClient != nil {
+			observeTestClient(1)
+		}
 	}
 	title := firstOSWindowTitle(osWindows)
 	if title == "" {
@@ -483,6 +510,9 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 	}
 	if result == nil || result.IsError {
 		return "", nil, fmt.Errorf("Vanessa smoke close_test_client returned a tool error: %#v", result)
+	}
+	if observeTestClient != nil {
+		observeTestClient(-1)
 	}
 	return "passed", errorCodes, nil
 }

@@ -105,9 +105,19 @@ func TestRunVanessaSmokeCoversFileDirectoryWindowsPathsAndStructuredErrorsBefore
 	})
 
 	featurePath := `D:\Git\PM5 КОРП - work 1-perf1\tests\features\Проверка пути.feature`
-	outcome, codes, err := runVanessaSmoke(context.Background(), session, 48151, featurePath)
+	clientCount := 0
+	maxClientCount := 0
+	outcome, codes, err := runVanessaSmoke(context.Background(), session, 48151, featurePath, func(delta int) {
+		clientCount += delta
+		if clientCount > maxClientCount {
+			maxClientCount = clientCount
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if clientCount != 0 || maxClientCount != 1 {
+		t.Fatalf("unexpected TestClient concurrency observation: current=%d max=%d", clientCount, maxClientCount)
 	}
 	if outcome != "passed" || strings.Join(codes, ",") != "PATH_INVALID,PATH_NOT_FOUND,PATH_ACCESS_DENIED" {
 		t.Fatalf("outcome=%q codes=%#v", outcome, codes)
@@ -164,7 +174,7 @@ func TestRunVanessaSmokeRequiresManagedTestClientClose(t *testing.T) {
 		return successfulProbeResult(name)
 	})
 
-	outcome, codes, err := runVanessaSmoke(context.Background(), session, 48151, `D:\Git\PM5 КОРП - work 1-perf1\tests\features\Проверка пути.feature`)
+	outcome, codes, err := runVanessaSmoke(context.Background(), session, 48151, `D:\Git\PM5 КОРП - work 1-perf1\tests\features\Проверка пути.feature`, nil)
 	if err == nil || !strings.Contains(err.Error(), "close_test_client returned a tool error") {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -184,7 +194,7 @@ func TestRunVanessaSmokeRejectsFileAuthoringBackendFailure(t *testing.T) {
 		return successfulProbeResult(name)
 	})
 
-	outcome, codes, err := runVanessaSmoke(context.Background(), session, 48151, `D:\Git\PM5 КОРП\tests\features\Проверка пути.feature`)
+	outcome, codes, err := runVanessaSmoke(context.Background(), session, 48151, `D:\Git\PM5 КОРП\tests\features\Проверка пути.feature`, nil)
 	if err == nil || !strings.Contains(err.Error(), "open_feature_file returned a tool error") {
 		t.Fatalf("unexpected error: %v", err)
 	}

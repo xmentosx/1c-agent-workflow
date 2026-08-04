@@ -34,6 +34,22 @@ First publish and qualify the exact accumulated development candidate:
 This is the only broad check for a batch of ordinary source tasks. It runs one
 `Develop` gate on the final temporary candidate, publishes only after success,
 and leaves the queue intact on failure. No topic chat runs Full/Develop first.
+A passed `Develop` already owns the exact-tree Full/static evidence; a separate
+`Full` for that tree is redundant and must not be run.
+
+When `develop` itself must remain unchanged until release evidence passes, use
+the transactional variant:
+
+```powershell
+.\scripts\source-delivery.ps1 -Action PublishDevelop -RequireRelease `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r23-rebuild `
+  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
+```
+
+It runs `Develop`, then `Release`, on the same temporary candidate and pushes
+only after both pass. Any failure preserves the queue and the old remote ref.
+On an exact-tree retry, passed `Develop` qualification is reused, so a failed
+`Release` does not trigger another Develop journey.
 
 When that remote development commit is ready for the stable channel, run:
 
@@ -172,14 +188,20 @@ preserves backend-isolation proof while staying within the three-session ceiling
 of a developer license (`2 x TESTMANAGER + 1 x TESTCLIENT`).
 Strict owned-process cleanup allows a bounded Windows exit-confirmation window
 after force-stop; a PID still alive at the deadline retains runtime state and
-leases and fails the release.
-Checkpoint v2 records fingerprints, proof/current-run durations and attempts.
-`Auto` resumes the same release and keeps cross-release capability evidence only
-when every input fingerprint matches. A cross-release reuse still executes a
-fresh passing `/itl-check`, export/manifest SHA validation and cleanup.
+leases and fails the release. Release evidence records the actually observed
+`maxConcurrentSessions` (which must not exceed `3`) and
+`ownedProcessExitWaitMs` (which must not exceed `15000`).
+Checkpoint v3 separates mutable rollback state from immutable capability cache.
+Before a temporary source candidate can be removed, passed evidence is sealed
+under `.agent-1c/runs/release-e2e-capabilities/<branch>/<runId>/`.
+`Auto` resumes the same candidate in place. For a new workflow candidate it
+SHA-checks and archives prior capability evidence, restores the prior baseline,
+creates a new baseline/initial HEAD, replays owned fixture commits, and imports
+only stages whose input fingerprints still match. It always executes a fresh
+passing `/itl-check`, export/manifest SHA validation and cleanup.
 
 If scope, expected E2E HEAD, evidence or snapshot integrity changed, `Auto` stops
-fail-closed. A schema v1 checkpoint requires one explicit `Restart` migration.
+fail-closed. A schema v1/v2 checkpoint requires one explicit `Restart` migration.
 `-ReleaseResumeMode Restart` validates the checkpoint scope and recorded
 baseline hashes, restores the baseline database and state, and resets only the
 dedicated E2E worktree to the recorded initial commit before beginning a new

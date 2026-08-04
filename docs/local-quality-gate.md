@@ -70,6 +70,15 @@ PowerShell, обязан использовать `Invoke-TestPowerShellFile` и
 `Develop`, выполняет обычный fast-forward push без force и сверяет удалённый
 SHA/tree. Конфликт, сдвиг remote или ошибка gate сохраняют очередь.
 
+Если `develop` должен получить только release-qualified кандидат, к той же
+команде добавляется `-RequireRelease`. Оркестратор последовательно выполняет
+`Develop` и `Release` на одном временном commit и делает единственный push лишь
+после двух успехов. Ошибка любой стадии не двигает remote и не очищает очередь.
+При повторе того же exact-tree кандидата прошедший `Develop` берётся из
+qualification cache, поэтому после ошибки `Release` он не запускается заново.
+Успешный `Develop` уже включает exact-tree Full/static proof: отдельный `Full`
+для того же дерева не запускается.
+
 Develop journey используют публичные поверхности workflow:
 
 - обновление установленного N-1 стенда через `update-workflow`;
@@ -116,10 +125,13 @@ release-only E2E, затем без squash/force продвигает тот ж�
 стабильный канал.
 
 Release сохраняет provenance/immutable dependencies, live MCP и Vanessa
-isolation, snapshot rollback, config/extension roundtrip, fresh passed check,
-CF/CFE SHA и cleanup. Он требует существующий Develop proof и не повторяет
-standard journeys. `-ReleaseResumeMode Restart` остаётся единственным штатным
-началом нового checkpoint; state/status вручную не редактируются.
+isolation, `maxConcurrentSessions <= 3`, измеренный `ownedProcessExitWaitMs`,
+snapshot rollback, config/extension roundtrip, fresh passed check, CF/CFE SHA и
+cleanup. Он требует существующий Develop proof и не повторяет standard journeys.
+При новом workflow-кандидате `Auto` переносит совпавшие capability proofs в
+неизменяемый cache, создаёт новый rollback baseline/HEAD и всегда повторяет
+свежую проверку, export и cleanup. `-ReleaseResumeMode Restart` остаётся
+штатным полным rollback; state/status вручную не редактируются.
 
 Git hooks автоматически не устанавливаются. GitHub Actions не являются
 каноническим источником локальной квалификации; доказательства создают команды

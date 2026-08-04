@@ -11,7 +11,8 @@ param(
     [string]$AiRulesSource = "",
     [string]$E2EProjectRoot = "",
     [string]$GateScript = "",
-    [string]$Version = ""
+    [string]$Version = "",
+    [switch]$RequireRelease
 )
 
 Set-StrictMode -Version Latest
@@ -411,11 +412,16 @@ function Publish-AccumulatedDevelop {
         $worktree = New-DeliveryWorktree -StartPoint "$script:Remote/develop" -Purpose "publish-develop"
         Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries
         $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
-        [void](Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
-        Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path
+        $developQualificationRestored = Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree
+        if (-not ($RequireRelease -and $developQualificationRestored)) {
+            Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path
+            [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
+        }
+        if ($RequireRelease) {
+            Invoke-SourceGate -Mode "Release" -WorkingRoot $worktree.path
+        }
 
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
-        [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
         $push = Invoke-WorktreeGit -Root $worktree.path -Arguments @("push", $script:Remote, "HEAD:refs/heads/develop") -AllowFailure
         if ($push.exitCode -ne 0) { throw "origin/develop changed or rejected the fast-forward push. The queue is preserved; rebuild the candidate from the new remote head." }
         $remoteAfter = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("ls-remote", $script:Remote, "refs/heads/develop")).stdout.Split([char]9)[0].Trim()
@@ -423,7 +429,7 @@ function Publish-AccumulatedDevelop {
         Clear-PublishedQueueEntries -PublishedCommit $candidate
         Sync-LocalDevelopAfterPublish
         $deliverySucceeded = $true
-        return [pscustomobject]@{ status = "published"; branch = "develop"; commit = $candidate; tree = $candidateTree }
+        return [pscustomobject]@{ status = "published"; branch = "develop"; commit = $candidate; tree = $candidateTree; releaseQualified = [bool]$RequireRelease }
     } finally {
         $customGate = $script:GateScript -ne (Join-Path $script:Root "scripts\check.ps1")
         if ($deliverySucceeded -or $customGate) { Remove-DeliveryWorktree -Worktree $worktree }
@@ -505,6 +511,9 @@ function Release-DevelopToMaster {
 }
 
 [void](Invoke-DeliveryGit -Arguments @("rev-parse", "--git-dir"))
+if ($RequireRelease -and $Action -ne "PublishDevelop") {
+    throw "-RequireRelease is valid only with -Action PublishDevelop."
+}
 $script:ActiveOperation = $null
 try {
     if ($Action -in @("PublishDevelop", "ReleaseMaster")) { [void](Enter-DeliveryOperation -Action $Action) }

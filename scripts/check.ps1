@@ -726,6 +726,8 @@ try {
             if ([int]$e2eSummary.onDemandRoctupToolCount -ne 13 -or [int]$e2eSummary.onDemandVanessaToolCount -ne 38) { throw "Release E2E did not prove both complete on-demand MCP catalogs." }
             if ([int]$e2eSummary.onDemandRoctupPublicToolCount -ne 2 -or [int]$e2eSummary.onDemandVanessaPublicToolCount -ne 2) { throw "Release E2E did not prove both compact on-demand MCP gateway surfaces." }
             if ([int]$e2eSummary.onDemandVanessaInstances -ne 2 -or -not [bool]$e2eSummary.onDemandVanessaSecondSurvived) { throw "Release E2E did not prove isolated concurrent Vanessa facade instances." }
+            if ([int]$e2eSummary.maxConcurrentSessions -lt 1 -or [int]$e2eSummary.maxConcurrentSessions -gt 3) { throw "Release E2E did not prove maxConcurrentSessions=3; observed $([int]$e2eSummary.maxConcurrentSessions)." }
+            if ([int64]$e2eSummary.ownedProcessExitWaitMs -lt 0 -or [int64]$e2eSummary.ownedProcessExitWaitMs -gt 15000) { throw "Release E2E owned process exit wait exceeded 15000 ms: $([int64]$e2eSummary.ownedProcessExitWaitMs) ms." }
         } | Out-Null
     }
 

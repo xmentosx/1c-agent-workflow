@@ -64,6 +64,8 @@ Describe "Release gate scripts" {
         $text | Should -Match '"-HelperPath", \$releaseHelperPath'
         $text | Should -Match '"-AiRulesSource", \$releaseRulesSource'
         $text | Should -Match 'Release E2E summary reports'
+        $text | Should -Match 'maxConcurrentSessions'
+        $text | Should -Match 'ownedProcessExitWaitMs'
         $text | Should -Match '\[Console\]::Error\.WriteLine\(\$failure\)'
         $runnerText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") -Raw -Encoding UTF8
         $runnerText | Should -Match 'SOURCE_INFOBASE_PATH must be a disposable snapshot inside the stand'
@@ -275,6 +277,7 @@ Describe "Release E2E orchestration" {
         $worktreeRoot = Join-Path $tempRoot "worktree"
         $helperPath = Join-Path $tempRoot "fake-helper.ps1"
         $aiRulesRoot = Join-Path $tempRoot "ai-rules"
+        $workflowFixtureRoot = Join-Path $tempRoot "workflow-source"
         $summaryPath = Join-Path $tempRoot "release-summary.json"
         $oldOnDemandFixture = $env:ITL_TEST_RELEASE_ONDEMAND_PROBE
         $oldSeedParallelFixture = $env:ITL_TEST_RELEASE_SEED_PARALLEL
@@ -291,7 +294,7 @@ Describe "Release E2E orchestration" {
             & git -C $mainRoot init *> $null
             & git -C $mainRoot config user.email "test@example.invalid"
             & git -C $mainRoot config user.name "ITL Test"
-            Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".agent-1c/dev-branches/`n.agent-1c/runs/`n.agent-1c/release-e2e-actions.log`n.agent-1c/release-e2e-partial-list.txt`nbuild/`n"
+            Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".agent-1c/dev-branches/`n.agent-1c/runs/`n.agent-1c/release-e2e-actions.log`n.agent-1c/release-e2e-partial-list.txt`n.agents/`nbuild/`n"
             Set-Content -LiteralPath (Join-Path $mainRoot "README.md") -Encoding ASCII -Value "fixture"
             New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot "src\cf\Ext"), (Join-Path $mainRoot ".agent-1c") | Out-Null
             $dependencyLock = [ordered]@{
@@ -535,6 +538,8 @@ switch ($Action) {
             $summary.onDemandVanessaPublicToolCount | Should -Be 2
             $summary.onDemandVanessaInstances | Should -Be 2
             $summary.onDemandVanessaSecondSurvived | Should -BeTrue
+            $summary.maxConcurrentSessions | Should -Be 3
+            $summary.ownedProcessExitWaitMs | Should -BeLessOrEqual 15000
             $summary.onDemandMcpTestFixture | Should -BeTrue
             $summary.seedParallelTestFixture | Should -BeTrue
             $summary.seedParallelBranchRuntimeConcurrent | Should -BeTrue
@@ -583,6 +588,62 @@ switch ($Action) {
             $promotedActions = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\release-e2e-actions.log") -Encoding UTF8
             @($promotedActions | Where-Object { $_ -eq "check-dev-branch" }).Count | Should -Be 4
             @($promotedActions | Where-Object { $_ -eq "release-e2e-config-roundtrip" }).Count | Should -Be 1
+            $sealedCheckpoint = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            [string]$sealedCheckpoint.stages.'config-roundtrip'.evidencePath | Should -Match ([regex]::Escape(".agent-1c\runs\release-e2e-capabilities\"))
+            Test-Path -LiteralPath ([string]$sealedCheckpoint.capabilityCache.manifestPath) -PathType Leaf | Should -BeTrue
+
+            # Advance a real workflow candidate by changing only the managed
+            # on-demand helper. Develop has already updated the installed copy;
+            # Release must promote to a new rollback baseline while reusing all
+            # unaffected immutable capability proofs.
+            & git clone --quiet --no-local $RepoRoot $workflowFixtureRoot
+            $LASTEXITCODE | Should -Be 0
+            & git -C $workflowFixtureRoot config user.email "test@example.invalid"
+            & git -C $workflowFixtureRoot config user.name "ITL Test"
+            foreach ($relative in @(
+                ".agents\skills\1c-workflow\scripts",
+                ".agents\skills\1c-workflow\assets\ondemand-mcp",
+                "scripts\release-e2e",
+                "tools\itl-ondemand-mcp"
+            )) {
+                Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination (Split-Path -Parent (Join-Path $workflowFixtureRoot $relative)) -Recurse -Force
+            }
+            foreach ($relative in @("scripts\invoke-release-e2e.ps1", "scripts\Build-ItlOnDemandMcp.ps1", "templates\dependency-lock.json")) {
+                Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination (Join-Path $workflowFixtureRoot $relative) -Force
+            }
+            & git -C $workflowFixtureRoot add --all
+            & git -C $workflowFixtureRoot commit --allow-empty -m "test: use current capability-cache runner" *> $null
+            $LASTEXITCODE | Should -Be 0
+            (Get-FileHash -LiteralPath (Join-Path $workflowFixtureRoot "scripts\invoke-release-e2e.ps1") -Algorithm SHA256).Hash | Should -Be (Get-FileHash -LiteralPath (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") -Algorithm SHA256).Hash
+            $candidateOnDemandPath = Join-Path $workflowFixtureRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.ondemand-mcp.ps1"
+            Add-Content -LiteralPath $candidateOnDemandPath -Encoding UTF8 -Value "# release candidate managed-package advance"
+            & git -C $workflowFixtureRoot add -- ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1"
+            & git -C $workflowFixtureRoot commit -m "test: advance only managed on-demand helper" *> $null
+            $LASTEXITCODE | Should -Be 0
+            @(& git -C $workflowFixtureRoot diff-tree --no-commit-id --name-only -r HEAD) | Should -Be @(".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1")
+            $installedOnDemandPath = Join-Path $worktreeRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.ondemand-mcp.ps1"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $installedOnDemandPath) | Out-Null
+            Copy-Item -LiteralPath $candidateOnDemandPath -Destination $installedOnDemandPath -Force
+            (Get-FileHash -LiteralPath $installedOnDemandPath -Algorithm SHA256).Hash | Should -Be (Get-FileHash -LiteralPath $candidateOnDemandPath -Algorithm SHA256).Hash
+            $checkpointBeforeManagedAdvance = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $managedAdvanceSummaryPath = Join-Path $tempRoot "managed-advance-summary.json"
+            & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $workflowFixtureRoot "scripts\invoke-release-e2e.ps1") `
+                -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $managedAdvanceSummaryPath -ResumeMode Auto
+            $LASTEXITCODE | Should -Be 0
+            $managedAdvanceSummary = Get-Content -LiteralPath $managedAdvanceSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $managedAdvanceSummary.crossReleaseReuse | Should -BeTrue
+            foreach ($stageName in @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke")) {
+                @($managedAdvanceSummary.resumedStages) | Should -Contain $stageName
+                $managedAdvanceSummary.stages.$stageName.execution | Should -Be "reused"
+            }
+            @($managedAdvanceSummary.executedStages) | Should -Contain "ondemand-mcp"
+            @($managedAdvanceSummary.executedStages) | Should -Contain "verification-refresh"
+            @($managedAdvanceSummary.executedStages) | Should -Contain "result-cleanup"
+            $checkpointAfterManagedAdvance = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $checkpointAfterManagedAdvance.schemaVersion | Should -Be 3
+            $checkpointAfterManagedAdvance.runId | Should -Not -Be $checkpointBeforeManagedAdvance.runId
+            $checkpointAfterManagedAdvance.identity.workflowCommit | Should -Be (& git -C $workflowFixtureRoot rev-parse HEAD).Trim()
+            Test-Path -LiteralPath ([string]$checkpointAfterManagedAdvance.capabilityCache.manifestPath) -PathType Leaf | Should -BeTrue
 
             # A declared reusable stage with corrupt evidence must fail closed
             # before any capability action is invoked.

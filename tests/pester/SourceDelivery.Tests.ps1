@@ -39,6 +39,7 @@
         $fakeGate = Join-Path $root "fake-gate.ps1"
         Set-Content -LiteralPath $fakeGate -Encoding UTF8 -Value @'
 param([string]$Mode, [string]$BaseRef, [string[]]$CoverageContract, [string]$AiRulesSource, [string]$E2EProjectRoot); $CoverageContract = @($CoverageContract -split ','); if ($CoverageContract -and @($CoverageContract).Count -ne 2) { exit 12 }
+Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-modes.log') -Encoding UTF8 -Value $Mode
 if ($Mode -eq 'Develop') {
     $qualification = Join-Path (Get-Location) 'build\test-results\qualification'
     New-Item -ItemType Directory -Force -Path $qualification | Out-Null
@@ -46,12 +47,13 @@ if ($Mode -eq 'Develop') {
     Set-Content -LiteralPath (Join-Path $qualification 'develop.json') -Encoding UTF8 -Value '{}'
     Set-Content -LiteralPath (Join-Path $qualification 'develop-e2e-summary.json') -Encoding UTF8 -Value '{}'
 }
+if ($Mode -eq 'Release' -and $env:ITL_TEST_FAIL_DELIVERY_RELEASE -eq 'true') { exit 14 }
 exit 0
 '@
         & git -C $root add fake-gate.ps1
         & git -C $root commit -m "test: add gate" *> $null
         & git -C $root push origin develop *> $null
-        return [pscustomobject]@{ root = $root; remote = $remote; gate = $fakeGate; base = (& git -C $root rev-parse HEAD).Trim() }
+        return [pscustomobject]@{ root = $root; remote = $remote; gate = $fakeGate; modeLog = (Join-Path $root 'build\gate-modes.log'); base = (& git -C $root rev-parse HEAD).Trim() }
     }
     function Remove-DeliveryFixture {
         param([object]$Fixture)
@@ -129,6 +131,36 @@ Describe "Source develop queue and delivery" {
             Test-Path -LiteralPath (Join-Path $fixture.root ".git\itl\qualifications\$tree\develop.json") | Should -BeTrue
             @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -BeNullOrEmpty
         } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
+    It "publishes develop only after the exact candidate passes Develop and required Release" {
+        $fixture = $null; $oldFailure = $env:ITL_TEST_FAIL_DELIVERY_RELEASE
+        try {
+            $fixture = New-DeliveryFixture
+            New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
+            Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\ReleaseQualified.Tests.ps1") -Encoding UTF8 -Value "Describe 'release-qualified publish' { It 'works' { `$true | Should -BeTrue } }"
+            & git -C $fixture.root add --all; & git -C $fixture.root commit -m "feat: release-qualified publish" *> $null
+            $candidate = (& git -C $fixture.root rev-parse HEAD).Trim()
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) | Out-Null
+            Remove-Item -LiteralPath $fixture.modeLog -Force -ErrorAction SilentlyContinue
+
+            $env:ITL_TEST_FAIL_DELIVERY_RELEASE = "true"
+            $failed = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure
+            $failed.exitCode | Should -Not -Be 0
+            (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Not -Be $candidate
+            @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -Not -BeNullOrEmpty
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Develop", "Release")
+
+            Remove-Item -LiteralPath $fixture.modeLog -Force
+            $env:ITL_TEST_FAIL_DELIVERY_RELEASE = "false"
+            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'))
+            $payload = $published.stdout | ConvertFrom-Json
+            $payload.releaseQualified | Should -BeTrue
+            (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $candidate
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Release")
+        } finally {
+            $env:ITL_TEST_FAIL_DELIVERY_RELEASE = $oldFailure
+            Remove-DeliveryFixture -Fixture $fixture
+        }
     }
     It "preserves the queue when origin develop moves during qualification" {
         $fixture = $null; try {

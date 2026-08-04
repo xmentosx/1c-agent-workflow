@@ -138,6 +138,8 @@ $extensionSmokeEvidencePath = ""
 $extensionSmokeEvidence = $null
 $onDemandMcpEvidencePath = Join-Path $outputRoot "ondemand-mcp.json"
 $onDemandMcpEvidence = $null
+$onDemandMaxConcurrentSessions = 0
+$onDemandOwnedProcessExitWaitMs = 0
 $onDemandMcpTestFixture = [Environment]::GetEnvironmentVariable("ITL_TEST_RELEASE_ONDEMAND_PROBE") -eq "true"
 $configCadenceEvidencePath = Join-Path $outputRoot "config-cadence.json"
 $seedParallelEvidencePath = Join-Path $outputRoot "seed-parallel.json"
@@ -551,6 +553,7 @@ function Get-E2EFileSha256 {
 $safeRunName = ($devBranchName -replace '[^A-Za-z0-9_.-]', '_')
 $preferredReleaseRunRoot = Join-Path $worktreePath ".agent-1c\runs\release-e2e\$safeRunName"
 $legacyReleaseRunRoot = Join-Path $worktreePath ".agent-1c\release-e2e-runs\$safeRunName"
+$capabilityCacheRoot = Join-Path $worktreePath ".agent-1c\runs\release-e2e-capabilities\$safeRunName"
 $usingLegacyRunRoot = $false
 
 function Set-E2ERunPaths {
@@ -577,6 +580,7 @@ $executedStages = @()
 $invalidatedStages = @()
 $crossReleaseReuse = $false
 $previousWorkflowCommit = ""
+$promotedCapabilityPath = ""
 $stageTimers = @{}
 
 function Write-E2ECheckpoint {
@@ -1167,20 +1171,160 @@ function Get-E2EStageFingerprint {
     }
     $dependencies = @()
     foreach ($dependency in @($definition.dependsOn)) { $dependencies += [ordered]@{ name = $dependency; fingerprint = Get-E2EStageFingerprint -Name $dependency } }
-    $baselineSha = if ($checkpoint -and $checkpoint["snapshots"].Contains("baseline")) { [string]$checkpoint["snapshots"]["baseline"].sha256 } else { "" }
-    $baselineState = if ($checkpoint -and $checkpoint["stateFiles"].Contains("baseline")) { $checkpoint["stateFiles"]["baseline"] } else { $null }
-    $identityHead = if ($checkpoint) { [string]$checkpoint["identity"]["initialHead"] } else { "" }
     $payload = [ordered]@{
         name = $Name; version = [int]$definition.version; runnerSha256 = $runnerSha256; helperSha256 = $helperSha256
         aiRulesCommit = $aiRulesCommit; aiRulesTree = $aiRulesTree; projectConfigSha256 = $projectConfigSha256
-        initialHead = $identityHead; baselineSnapshotSha256 = $baselineSha
-        baselineStateSha256 = $(if ($baselineState) { [string]$baselineState.stateSha256 } else { "" })
-        baselineEnvSha256 = $(if ($baselineState) { [string]$baselineState.envSha256 } else { "" })
         inputs = $inputs; dependencies = $dependencies
     }
     $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($payload | ConvertTo-Json -Depth 12 -Compress))
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }
+}
+
+function Copy-E2ECapabilityFile {
+    param([string]$Source, [string]$Destination, [string]$Label)
+    if (-not $Source) { return "" }
+    Assert-E2ECheckpointFile -Path $Source -Sha256 (Get-E2EFileSha256 -Path $Source) -Label $Label
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Destination) | Out-Null
+    Copy-Item -LiteralPath $Source -Destination $Destination -Force
+    return $Destination
+}
+
+function Save-E2ECapabilityCache {
+    $cacheId = [string]$checkpoint["runId"]
+    if (-not $cacheId) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: checkpoint has no run id for capability promotion." }
+    $target = Join-Path $capabilityCacheRoot $cacheId
+    $manifestPath = Join-Path $target "manifest.json"
+    if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+        try {
+            $existing = ConvertTo-E2EHashtable (Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json)
+            if ([int]$existing["schemaVersion"] -ne 1 -or [string]$existing["sourceRunId"] -ne $cacheId) { throw "identity mismatch" }
+            foreach ($stageName in @($existing["stages"].Keys)) {
+                $record = $existing["stages"][$stageName]
+                if ([string]$record["evidencePath"]) {
+                    Assert-E2ECheckpointFile -Path ([string]$record["evidencePath"]) -Sha256 ([string]$record["evidenceSha256"]) -Label "$stageName immutable evidence"
+                }
+            }
+            foreach ($snapshotName in @($existing["snapshots"].Keys)) {
+                $record = $existing["snapshots"][$snapshotName]
+                Assert-E2ECheckpointFile -Path ([string]$record["path"]) -Sha256 ([string]$record["sha256"]) -Label "$snapshotName immutable snapshot"
+            }
+            foreach ($stateName in @($existing["stateFiles"].Keys)) {
+                $record = $existing["stateFiles"][$stateName]
+                Assert-E2ECheckpointFile -Path ([string]$record["stateCopyPath"]) -Sha256 ([string]$record["stateSha256"]) -Label "$stateName immutable state"
+                if ([string]$record["envCopyPath"]) {
+                    Assert-E2ECheckpointFile -Path ([string]$record["envCopyPath"]) -Sha256 ([string]$record["envSha256"]) -Label "$stateName immutable env"
+                }
+            }
+        } catch { throw "RELEASE_E2E_CACHE_CORRUPT: immutable capability manifest is unreadable or belongs to another run: $manifestPath. $($_.Exception.Message)" }
+        return $manifestPath
+    }
+    $staging = Join-Path $capabilityCacheRoot (".$cacheId." + [guid]::NewGuid().ToString("N") + ".tmp")
+    New-Item -ItemType Directory -Force -Path $staging | Out-Null
+    try {
+        $cached = ConvertTo-E2EHashtable $checkpoint
+        foreach ($snapshotName in @("baseline", "postConfig")) {
+            if (-not $cached["snapshots"].Contains($snapshotName)) { continue }
+            $source = [string]$cached["snapshots"][$snapshotName]["path"]
+            $destination = Join-Path $target ("snapshots\$snapshotName.dt")
+            [void](Copy-E2ECapabilityFile -Source $source -Destination (Join-Path $staging ("snapshots\$snapshotName.dt")) -Label "$snapshotName snapshot")
+            $cached["snapshots"][$snapshotName]["path"] = $destination
+        }
+        foreach ($stateName in @("baseline", "postConfig")) {
+            if (-not $cached["stateFiles"].Contains($stateName)) { continue }
+            $record = $cached["stateFiles"][$stateName]
+            foreach ($spec in @(
+                [pscustomobject]@{ key = "stateCopyPath"; suffix = "json" },
+                [pscustomobject]@{ key = "envCopyPath"; suffix = "env" }
+            )) {
+                $source = [string]$record[$spec.key]
+                if (-not $source) { continue }
+                $relative = "state\$stateName.$($spec.suffix)"
+                [void](Copy-E2ECapabilityFile -Source $source -Destination (Join-Path $staging $relative) -Label "$stateName $($spec.key)")
+                $record[$spec.key] = Join-Path $target $relative
+            }
+        }
+        foreach ($stageName in @($cached["stages"].Keys)) {
+            $record = $cached["stages"][$stageName]
+            $source = [string]$record["evidencePath"]
+            if (-not $source) { continue }
+            try { Assert-E2ECheckpointFile -Path $source -Sha256 ([string]$record["evidenceSha256"]) -Label "$stageName evidence" }
+            catch { throw "RELEASE_E2E_CACHE_CORRUPT: $($_.Exception.Message)" }
+            $extension = [IO.Path]::GetExtension($source)
+            if (-not $extension) { $extension = ".json" }
+            $relative = "evidence\$stageName$extension"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent (Join-Path $staging $relative)) | Out-Null
+            Copy-Item -LiteralPath $source -Destination (Join-Path $staging $relative) -Force
+            $record["evidencePath"] = Join-Path $target $relative
+        }
+        $manifest = [ordered]@{
+            schemaVersion = 1
+            sourceRunId = $cacheId
+            identity = $cached["identity"]
+            stages = $cached["stages"]
+            snapshots = $cached["snapshots"]
+            stateFiles = $cached["stateFiles"]
+            generatedCommits = @($cached["generatedCommits"])
+            configEvidence = $(if ($cached.Contains("configEvidence")) { $cached["configEvidence"] } else { $null })
+            createdAt = [DateTime]::UtcNow.ToString("o")
+        }
+        [IO.File]::WriteAllText((Join-Path $staging "manifest.json"), (($manifest | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+        New-Item -ItemType Directory -Force -Path $capabilityCacheRoot | Out-Null
+        Move-Item -LiteralPath $staging -Destination $target
+        return $manifestPath
+    } finally {
+        if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+    }
+}
+
+function Set-E2ECheckpointCapabilityEvidence {
+    param([string]$ManifestPath)
+    try { $cache = ConvertTo-E2EHashtable (Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json) }
+    catch { throw "RELEASE_E2E_CACHE_CORRUPT: capability manifest is unreadable: $ManifestPath. $($_.Exception.Message)" }
+    foreach ($stageName in @($checkpoint["stages"].Keys)) {
+        if (-not $cache["stages"].Contains($stageName)) { continue }
+        $cachedRecord = $cache["stages"][$stageName]
+        if ([string]$cachedRecord["evidencePath"]) {
+            Assert-E2ECheckpointFile -Path ([string]$cachedRecord["evidencePath"]) -Sha256 ([string]$cachedRecord["evidenceSha256"]) -Label "$stageName sealed evidence"
+            $checkpoint["stages"][$stageName]["evidencePath"] = [string]$cachedRecord["evidencePath"]
+            $checkpoint["stages"][$stageName]["evidenceSha256"] = [string]$cachedRecord["evidenceSha256"]
+        }
+    }
+    $checkpoint["capabilityCache"] = [ordered]@{ manifestPath = $ManifestPath; sealedAt = [DateTime]::UtcNow.ToString("o") }
+    Write-E2ECheckpoint
+}
+
+function Import-E2ECapabilityCache {
+    param([string]$ManifestPath)
+    $cache = ConvertTo-E2EHashtable (Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json)
+    if ([int]$cache["schemaVersion"] -ne 1) { throw "RELEASE_E2E_CACHE_CORRUPT: unsupported capability cache schema." }
+    $oldInitialHead = [string]$cache["identity"]["initialHead"]
+    $commitMap = @{}
+    foreach ($record in @($cache["generatedCommits"])) {
+        $oldCommit = [string]$record["commit"]
+        & git -C $worktreePath cherry-pick $oldCommit *> $null
+        if ($LASTEXITCODE -ne 0) {
+            & git -C $worktreePath cherry-pick --abort *> $null
+            throw "RELEASE_E2E_CAPABILITY_REPLAY_FAILED: could not replay generated commit '$oldCommit' on the new candidate baseline."
+        }
+        $newCommit = (& git -C $worktreePath rev-parse HEAD).Trim()
+        $commitMap[$oldCommit] = $newCommit
+        $record["commit"] = $newCommit
+    }
+    $checkpoint["generatedCommits"] = @($cache["generatedCommits"])
+    $checkpoint["expectedHead"] = (& git -C $worktreePath rev-parse HEAD).Trim()
+    foreach ($stageName in @($cache["stages"].Keys)) { $checkpoint["stages"][$stageName] = $cache["stages"][$stageName] }
+    if ($cache["snapshots"].Contains("postConfig")) { $checkpoint["snapshots"]["postConfig"] = $cache["snapshots"]["postConfig"] }
+    if ($cache["stateFiles"].Contains("postConfig")) { $checkpoint["stateFiles"]["postConfig"] = $cache["stateFiles"]["postConfig"] }
+    if ($cache["configEvidence"]) {
+        $checkpoint["configEvidence"] = $cache["configEvidence"]
+        foreach ($key in @($checkpoint["configEvidence"].Keys)) {
+            $value = [string]$checkpoint["configEvidence"][$key]
+            if ($commitMap.ContainsKey($value)) { $checkpoint["configEvidence"][$key] = $commitMap[$value] }
+        }
+    }
+    $checkpoint["capabilityCache"] = [ordered]@{ manifestPath = $ManifestPath; sourceInitialHead = $oldInitialHead; importedAt = [DateTime]::UtcNow.ToString("o") }
+    Write-E2ECheckpoint
 }
 
 if (Test-Path -LiteralPath $checkpointPath -PathType Leaf) {
@@ -1191,13 +1335,15 @@ if (Test-Path -LiteralPath $checkpointPath -PathType Leaf) {
 if ($checkpoint) {
     $identity = $checkpoint["identity"]
     $checkpointSchema = [int]$checkpoint["schemaVersion"]
-    $scopeMatches = $checkpointSchema -in @(1, 2) -and
+    $scopeMatches = $checkpointSchema -in @(1, 2, 3) -and
         [string]$identity.projectRoot -eq $ProjectRoot -and
         [string]$identity.worktreePath -eq $worktreePath -and
         [string]$identity.branch -eq $branch
-    if (-not $scopeMatches) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: checkpoint belongs to another project/worktree/branch." }
-    if ($checkpointSchema -eq 1 -and $ResumeMode -eq "Auto") {
-        throw "RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED: checkpoint schema v1 requires one scripted -ResumeMode Restart migration."
+    if (-not $scopeMatches) {
+        throw "RELEASE_E2E_RESUME_STATE_MISMATCH: checkpoint belongs to another project/worktree/branch. schema=$checkpointSchema project='$([string]$identity.projectRoot)' expectedProject='$ProjectRoot' worktree='$([string]$identity.worktreePath)' expectedWorktree='$worktreePath' branch='$([string]$identity.branch)' expectedBranch='$branch'."
+    }
+    if ($checkpointSchema -lt 3 -and $ResumeMode -eq "Auto") {
+        throw "RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED: checkpoint schema v$checkpointSchema requires one scripted -ResumeMode Restart migration."
     }
     $releaseIdentityMatches =
         [string]$identity.workflowCommit -eq $workflowCommit -and
@@ -1251,19 +1397,16 @@ if ($checkpoint) {
             throw "RELEASE_E2E_RESUME_STATE_MISMATCH: scripted Restart did not restore a clean E2E worktree."
         }
         $checkpoint = $null
-    } else {
+    } elseif (-not $crossReleaseReuse) {
         $checkpointWasResumed = $true
-        if ($crossReleaseReuse) {
-            $identity["workflowCommit"] = $workflowCommit
-            $identity["workflowTree"] = $workflowTree
-            $identity["runnerSha256"] = $runnerSha256
-            $identity["aiRulesCommit"] = $aiRulesCommit
-            $identity["aiRulesTree"] = $aiRulesTree
-            $identity["helperSha256"] = $helperSha256
-            $identity["projectConfigSha256"] = $projectConfigSha256
-            $checkpoint["releaseStartedAt"] = $startedAt.ToString("o")
-            Write-E2ECheckpoint
-        }
+    } else {
+        $promotedCapabilityPath = Save-E2ECapabilityCache
+        Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["baseline"] -StateFiles $checkpoint["stateFiles"]["baseline"]
+        & git -C $worktreePath reset --hard ([string]$identity.initialHead) *> $null
+        if ($LASTEXITCODE -ne 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: could not restore the prior rollback baseline before candidate promotion." }
+        Remove-Item -LiteralPath $releaseRunRoot -Recurse -Force
+        $checkpoint = $null
+        $checkpointWasResumed = $true
     }
 }
 
@@ -1274,7 +1417,7 @@ if (-not $checkpoint) {
     $baselineStateFiles = Save-E2EStateFiles -StateCopyPath $baselineStateCopyPath -EnvCopyPath $baselineEnvCopyPath
     $initialHead = (& git -C $worktreePath rev-parse HEAD).Trim()
     $checkpoint = [ordered]@{
-        schemaVersion = 2
+        schemaVersion = 3
         runId = [guid]::NewGuid().ToString("N")
         status = "running"
         identity = [ordered]@{
@@ -1303,6 +1446,9 @@ if (-not $checkpoint) {
     Write-E2ECheckpoint
     $checkpoint["snapshots"]["baseline"] = Invoke-E2EInfobaseSnapshot -Path $baselineSnapshotPath
     Write-E2ECheckpoint
+    if ($promotedCapabilityPath) {
+        Import-E2ECapabilityCache -ManifestPath $promotedCapabilityPath
+    }
 }
 
 try {
@@ -1374,6 +1520,11 @@ try {
             Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["baseline"] -StateFiles $checkpoint["stateFiles"]["baseline"]
             & git -C $worktreePath reset --hard ([string]$checkpoint["identity"]["initialHead"]) *> $null
             if ($LASTEXITCODE -ne 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: could not restore config-cadence baseline." }
+            $checkpoint["generatedCommits"] = @()
+            $checkpoint.Remove("configEvidence")
+            $checkpoint["snapshots"].Remove("postConfig")
+            $checkpoint["stateFiles"].Remove("postConfig")
+            Write-E2ECheckpoint
         }
         Set-E2EStageStatus -Name "config-cadence" -Status "running"
         $executedStages += "config-cadence"
@@ -1569,12 +1720,12 @@ try {
             $canonicalVanessaLock = (Get-Content -LiteralPath (Join-Path $workflowRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaAutomation
             if ($onDemandMcpTestFixture) {
                 $onDemandMcpEvidence = [ordered]@{
-                    schemaVersion = 1
+                    schemaVersion = 2
                     facadeSha256 = ("0" * 64)
                     testFixture = $true
                     families = [ordered]@{
-                        roctup = [ordered]@{ publicToolCount = 2; catalogToolCount = 13; instances = @([ordered]@{ pid = 101; port = 6003 }); cleanupPassed = $true; idleCleanupPassed = $true; secondSurvivedFirstClose = $false }
-                        "vanessa-ui" = [ordered]@{ publicToolCount = 2; catalogToolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256 }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256 }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; vanessaFileAuthoringOutcome = "passed"; vanessaFileAuthoringCodes = @("PATH_INVALID", "PATH_NOT_FOUND", "PATH_ACCESS_DENIED"); vanessaFeature = $vanessaSmokeFeature; secondSurvivedFirstClose = $true }
+                        roctup = [ordered]@{ publicToolCount = 2; catalogToolCount = 13; instances = @([ordered]@{ pid = 101; port = 6003 }); cleanupPassed = $true; idleCleanupPassed = $true; secondSurvivedFirstClose = $false; maxConcurrentSessions = 1; ownedProcessExitWaitMs = 80 }
+                        "vanessa-ui" = [ordered]@{ publicToolCount = 2; catalogToolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256 }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256 }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; vanessaFileAuthoringOutcome = "passed"; vanessaFileAuthoringCodes = @("PATH_INVALID", "PATH_NOT_FOUND", "PATH_ACCESS_DENIED"); vanessaFeature = $vanessaSmokeFeature; secondSurvivedFirstClose = $true; maxConcurrentSessions = 3; ownedProcessExitWaitMs = 120 }
                     }
                     capturedAt = [DateTime]::UtcNow.ToString("o")
                 }
@@ -1615,6 +1766,12 @@ try {
                     $familyEvidence = Get-Content -LiteralPath $familyEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
                     if (-not [bool]$familyEvidence.cleanupPassed) { throw "On-demand MCP cleanup was not proven for $($spec.family)." }
                     if (-not [bool]$familyEvidence.idleCleanupPassed) { throw "On-demand MCP idle cleanup was not proven for $($spec.family)." }
+                    if ([int]$familyEvidence.maxConcurrentSessions -lt 1 -or [int]$familyEvidence.maxConcurrentSessions -gt 3) {
+                        throw "On-demand MCP exceeded maxConcurrentSessions=3 for $($spec.family): $([int]$familyEvidence.maxConcurrentSessions)."
+                    }
+                    if ([int64]$familyEvidence.ownedProcessExitWaitMs -lt 0 -or [int64]$familyEvidence.ownedProcessExitWaitMs -gt 15000) {
+                        throw "On-demand MCP owned process exit exceeded 15000 ms for $($spec.family): $([int64]$familyEvidence.ownedProcessExitWaitMs) ms."
+                    }
                     if ([int]$spec.instances -eq 2 -and -not [bool]$familyEvidence.secondSurvivedFirstClose) {
                         throw "The second Vanessa facade did not survive closing the first facade."
                     }
@@ -1648,7 +1805,7 @@ try {
                     $families[[string]$spec.family] = $familyEvidence
                 }
                 $onDemandMcpEvidence = [ordered]@{
-                    schemaVersion = 1
+                    schemaVersion = 2
                     facadeSha256 = [string]$facadeBuild.sha256
                     testFixture = $false
                     families = $families
@@ -1668,6 +1825,14 @@ try {
         Set-E2EStageReused -Name "ondemand-mcp" -Reason $(if ($crossReleaseReuse) { "exact stage fingerprint across workflow release" } else { "same release checkpoint" })
         $onDemandMcpEvidence = Get-Content -LiteralPath $onDemandMcpEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
+    $onDemandMaxConcurrentSessions = [int]((@(
+        [int]$onDemandMcpEvidence.families.roctup.maxConcurrentSessions,
+        [int]$onDemandMcpEvidence.families.'vanessa-ui'.maxConcurrentSessions
+    ) | Measure-Object -Maximum).Maximum)
+    $onDemandOwnedProcessExitWaitMs = [int64]((@(
+        [int64]$onDemandMcpEvidence.families.roctup.ownedProcessExitWaitMs,
+        [int64]$onDemandMcpEvidence.families.'vanessa-ui'.ownedProcessExitWaitMs
+    ) | Measure-Object -Maximum).Maximum)
 
     if ($crossReleaseReuse -and $executedStages -notcontains "config-cadence") {
         Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
@@ -1770,6 +1935,8 @@ try {
         Assert-E2ECheckpointFile -Path $artifactPath -Sha256 $artifactSha256 -Label "result artifact"
         Assert-E2ECheckpointFile -Path $resultManifestPath -Sha256 ([string]$resultEvidence.manifestSha256) -Label "result manifest"
     }
+    $sealedCapabilityPath = Save-E2ECapabilityCache
+    Set-E2ECheckpointCapabilityEvidence -ManifestPath $sealedCapabilityPath
     $checkpoint["status"] = "passed"
     Write-E2ECheckpoint
 } catch {
@@ -1897,6 +2064,8 @@ try {
         onDemandVanessaPublicToolCount = $(if ($onDemandMcpEvidence) { [int]$onDemandMcpEvidence.families.'vanessa-ui'.publicToolCount } else { 0 })
         onDemandVanessaInstances = $(if ($onDemandMcpEvidence) { @($onDemandMcpEvidence.families.'vanessa-ui'.instances).Count } else { 0 })
         onDemandVanessaSecondSurvived = $(if ($onDemandMcpEvidence) { [bool]$onDemandMcpEvidence.families.'vanessa-ui'.secondSurvivedFirstClose } else { $false })
+        maxConcurrentSessions = $onDemandMaxConcurrentSessions
+        ownedProcessExitWaitMs = $onDemandOwnedProcessExitWaitMs
         onDemandMcpTestFixture = $(if ($onDemandMcpEvidence) { [bool]$onDemandMcpEvidence.testFixture } else { $false })
         artifactPath = $artifactPath
         artifactSha256 = $artifactSha256
