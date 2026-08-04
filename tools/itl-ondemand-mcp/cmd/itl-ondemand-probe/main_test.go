@@ -3,11 +3,30 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+func TestWaitForStateCountRetriesTransientStateReadFailure(t *testing.T) {
+	calls := 0
+	states, err := waitForStateCountWithReader("runtime", 0, time.Second, func(string) ([]runtimeState, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("sharing violation")
+		}
+		return []runtimeState{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || len(states) != 0 {
+		t.Fatalf("calls=%d states=%#v", calls, states)
+	}
+}
 
 func TestFirstOSWindowTitleUsesVanessaListResult(t *testing.T) {
 	result := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Для снятия скриншотов найдено 1 окон:\n  -dev_test / 1С:Предприятие"}}}

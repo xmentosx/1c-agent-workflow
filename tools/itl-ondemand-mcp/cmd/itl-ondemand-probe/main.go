@@ -330,16 +330,22 @@ func readStates(root string) ([]runtimeState, error) {
 }
 
 func waitForStateCount(root string, count int, timeout time.Duration) ([]runtimeState, error) {
+	return waitForStateCountWithReader(root, count, timeout, readStates)
+}
+
+func waitForStateCountWithReader(root string, count int, timeout time.Duration, reader func(string) ([]runtimeState, error)) ([]runtimeState, error) {
 	deadline := time.Now().Add(timeout)
+	var lastReadErr error
 	for {
-		states, err := readStates(root)
-		if err != nil {
-			return nil, err
-		}
-		if len(states) == count {
+		states, err := reader(root)
+		if err == nil && len(states) == count {
 			return states, nil
 		}
+		lastReadErr = err
 		if !time.Now().Before(deadline) {
+			if lastReadErr != nil {
+				return nil, fmt.Errorf("runtime state read failed before expected count %d: %w", count, lastReadErr)
+			}
 			return nil, fmt.Errorf("runtime instance count=%d, expected=%d", len(states), count)
 		}
 		time.Sleep(100 * time.Millisecond)
