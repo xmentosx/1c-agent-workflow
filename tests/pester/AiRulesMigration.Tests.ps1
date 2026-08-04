@@ -3,9 +3,9 @@
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
     $HelperPath = $context.HelperPath
-    $script:TargetAiRulesRef = "itl-main-410951e7-r23"
-    $script:TargetAiRulesCommit = "609976be8fefdf1c0168c36ee92f4d985cfd2b09"
-    $script:TargetAiRulesRevision = 23
+    $script:TargetAiRulesRef = "itl-main-410951e7-r24"
+    $script:TargetAiRulesCommit = "83e179469363c16497d9cc389a9a814537cc076b"
+    $script:TargetAiRulesRevision = 24
 
     function New-AiRulesMigrationFixture {
         param(
@@ -492,7 +492,7 @@ Describe "ai_rules_1c migration planning" {
         }
     }
 
-    It "plans monotonic r11 through r22 to r23 migration for all ten clients" {
+    It "plans monotonic r11 through r23 to r24 migration for all ten clients" {
         $releases = @(
             [pscustomobject]@{ revision = 11; ref = "itl-main-b4d9875b-r11"; commit = "af82570afca06c40a9588c8a678bf3665bba4870"; upstream = "b4d9875b15c6d93f493035aee51f077126e72a21" },
             [pscustomobject]@{ revision = 12; ref = "itl-main-72665287-r12"; commit = "16e9e44318a79d9e82c12b19e6759cdf6492d9a4"; upstream = "72665287e77361aea3aaf866fef163d98f0fabcd" },
@@ -505,7 +505,8 @@ Describe "ai_rules_1c migration planning" {
             [pscustomobject]@{ revision = 19; ref = "itl-main-5ae333ed-r19"; commit = "7952e7d9bb050d67e145c0136e87b6855c353f58"; upstream = "5ae333ed49dc66989e305b286acc93691bb96926" },
             [pscustomobject]@{ revision = 20; ref = "itl-main-5f3d3f0-r20"; commit = "151aa980b5e99b3d129e974925e734d9ef0afa3e"; upstream = "5f3d3f03b778d7de38cf2cfb18a20cf3e7ed79d8" },
             [pscustomobject]@{ revision = 21; ref = "itl-main-410951e7-r21"; commit = "37362c6fa0e29b8aee0f70e01d85bf77e41cc683"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" },
-            [pscustomobject]@{ revision = 22; ref = "itl-main-410951e7-r22"; commit = "bcd94d1723f26a0b0568869845484c8572c402a6"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" }
+            [pscustomobject]@{ revision = 22; ref = "itl-main-410951e7-r22"; commit = "bcd94d1723f26a0b0568869845484c8572c402a6"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" },
+            [pscustomobject]@{ revision = 23; ref = "itl-main-410951e7-r23"; commit = "609976be8fefdf1c0168c36ee92f4d985cfd2b09"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" }
         )
         $clients = @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
         foreach ($release in $releases) {
@@ -521,6 +522,47 @@ Describe "ai_rules_1c migration planning" {
                     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
                 }
             }
+        }
+    }
+
+    It "clears only strict UTF-8 LF-CRLF drift and keeps invalid UTF-8 byte-strict" {
+        $matchingRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-migration-eol-match-" + [guid]::NewGuid().ToString("N"))
+        $invalidRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-migration-eol-invalid-" + [guid]::NewGuid().ToString("N"))
+        try {
+            foreach ($root in @($matchingRoot, $invalidRoot)) {
+                New-AiRulesMigrationFixture -Root $root -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" -CurrentRef "itl-main-410951e7-r23" -CurrentCommit "609976be8fefdf1c0168c36ee92f4d985cfd2b09" -CurrentUpstreamCommit "410951e74fd3e6b7a763cf49757935b9a34d3f31" -CurrentDownstreamRevision 23
+                New-Item -ItemType Directory -Force -Path (Join-Path $root ".codex\rules") | Out-Null
+            }
+
+            $textRelative = ".codex/rules/eol-only.md"
+            $textPath = Join-Path $matchingRoot ".codex\rules\eol-only.md"
+            [IO.File]::WriteAllText($textPath, "managed`ntext`n", (New-Object Text.UTF8Encoding $false))
+            $textHash = (Get-FileHash -LiteralPath $textPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            [IO.File]::WriteAllText($textPath, "managed`r`ntext`r`n", (New-Object Text.UTF8Encoding $false))
+            $matchingManifestPath = Join-Path $matchingRoot ".ai-rules.json"
+            $matchingManifest = Get-Content -LiteralPath $matchingManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $matchingManifest.files | Add-Member -NotePropertyName $textRelative -NotePropertyValue ([pscustomobject]@{ source = "content/rules/eol-only.md"; installedHash = $textHash; userModified = $true })
+            Set-Content -LiteralPath $matchingManifestPath -Encoding UTF8 -Value ($matchingManifest | ConvertTo-Json -Depth 10)
+
+            $invalidRelative = ".codex/rules/invalid.bin"
+            $invalidPath = Join-Path $invalidRoot ".codex\rules\invalid.bin"
+            [IO.File]::WriteAllBytes($invalidPath, [byte[]]@(0xFF, 0x0A, 0x41))
+            $invalidHash = (Get-FileHash -LiteralPath $invalidPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            [IO.File]::WriteAllBytes($invalidPath, [byte[]]@(0xFF, 0x0D, 0x0A, 0x41))
+            $invalidManifestPath = Join-Path $invalidRoot ".ai-rules.json"
+            $invalidManifest = Get-Content -LiteralPath $invalidManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $invalidManifest.files | Add-Member -NotePropertyName $invalidRelative -NotePropertyValue ([pscustomobject]@{ source = "content/rules/invalid.bin"; installedHash = $invalidHash; userModified = $true })
+            Set-Content -LiteralPath $invalidManifestPath -Encoding UTF8 -Value ($invalidManifest | ConvertTo-Json -Depth 10)
+
+            $matchingPlan = & { . $HelperPath -ProjectRoot $matchingRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $matchingPlan.status | Should -Be "eligible"
+            (Get-Content -LiteralPath $matchingManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json).files.$textRelative.userModified | Should -BeFalse
+
+            $invalidPlan = & { . $HelperPath -ProjectRoot $invalidRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $invalidPlan.status | Should -Be "user-modified"
+            (Get-Content -LiteralPath $invalidManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json).files.$invalidRelative.userModified | Should -BeTrue
+        } finally {
+            Remove-Item -LiteralPath $matchingRoot, $invalidRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 

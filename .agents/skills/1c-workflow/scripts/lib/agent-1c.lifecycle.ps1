@@ -1641,6 +1641,93 @@ function Get-AiRules1cManifestFileEntries {
     })
 }
 
+function Sync-AiRules1cManagedIgnoredFilesFromMain {
+    param([object]$State)
+
+    $mainRoot = [string](Get-StateValue -State $State -Name "mainWorktreePath" -Default "")
+    if (-not $mainRoot) {
+        return 0
+    }
+    $mainRoot = (Resolve-Agent1cFullPath -Path $mainRoot).TrimEnd('\', '/')
+    $branchRoot = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd('\', '/')
+    if ([string]::Equals($mainRoot, $branchRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        return 0
+    }
+
+    $branchManifest = Get-AiRules1cProjectManifest
+    $mainManifestPath = Join-Path $mainRoot ".ai-rules.json"
+    if ($null -eq $branchManifest -or -not (Test-Path -LiteralPath $mainManifestPath -PathType Leaf)) {
+        return 0
+    }
+    try {
+        $mainManifest = Read-Utf8Text -Path $mainManifestPath | ConvertFrom-Json
+    } catch {
+        throw "AI_RULES_MANAGED_IGNORED_MAIN_MANIFEST_INVALID: $mainManifestPath. $($_.Exception.Message)"
+    }
+    if ($null -eq $mainManifest.files -or $null -eq $branchManifest.files) {
+        return 0
+    }
+    $mainVersion = [string](Get-ConfigValueFromObject -Object $mainManifest -Path "version" -Default "")
+    $branchVersion = [string](Get-ConfigValueFromObject -Object $branchManifest -Path "version" -Default "")
+    if ($mainVersion -ne $branchVersion) {
+        throw "AI_RULES_MANAGED_IGNORED_VERSION_MISMATCH: main=$mainVersion branch=$branchVersion"
+    }
+
+    $mainEntries = @{}
+    foreach ($property in @($mainManifest.files.PSObject.Properties)) {
+        $mainEntries[([string]$property.Name).Replace('\', '/')] = $property.Value
+    }
+    $mainPrefix = $mainRoot + [IO.Path]::DirectorySeparatorChar
+    $branchPrefix = $branchRoot + [IO.Path]::DirectorySeparatorChar
+    $copied = 0
+    foreach ($property in @($branchManifest.files.PSObject.Properties)) {
+        $target = ([string]$property.Name).Replace('\', '/')
+        if ([IO.Path]::IsPathRooted($target) -or [bool](Get-ConfigValueFromObject -Object $property.Value -Path "userModified" -Default $false)) {
+            continue
+        }
+        $branchPath = [IO.Path]::GetFullPath((Join-Path $branchRoot ($target.Replace('/', [IO.Path]::DirectorySeparatorChar))))
+        if (-not $branchPath.StartsWith($branchPrefix, [StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath $branchPath -PathType Leaf)) {
+            continue
+        }
+
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & git -C $branchRoot check-ignore -q -- $target
+            $isIgnored = $LASTEXITCODE -eq 0
+        } finally {
+            $ErrorActionPreference = $previousPreference
+        }
+        if (-not $isIgnored) {
+            continue
+        }
+        if (-not $mainEntries.ContainsKey($target)) {
+            throw "AI_RULES_MANAGED_IGNORED_SOURCE_ENTRY_MISSING: $target"
+        }
+        $expected = [string](Get-ConfigValueFromObject -Object $property.Value -Path "installedHash" -Default "")
+        $mainExpected = [string](Get-ConfigValueFromObject -Object $mainEntries[$target] -Path "installedHash" -Default "")
+        if ($expected -notmatch '^[0-9a-fA-F]{64}$' -or $mainExpected -ne $expected) {
+            throw "AI_RULES_MANAGED_IGNORED_HASH_CONTRACT_MISMATCH: $target"
+        }
+        $mainPath = [IO.Path]::GetFullPath((Join-Path $mainRoot ($target.Replace('/', [IO.Path]::DirectorySeparatorChar))))
+        if (-not $mainPath.StartsWith($mainPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-AiRulesFileMatchesInstalledHash -Path $mainPath -InstalledHash $expected)) {
+            throw "AI_RULES_MANAGED_IGNORED_SOURCE_DRIFT: $target"
+        }
+        $parent = Split-Path -Parent $branchPath
+        if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+            New-Item -ItemType Directory -Force -Path $parent | Out-Null
+        }
+        Copy-Item -LiteralPath $mainPath -Destination $branchPath -Force
+        if (-not (Test-AiRulesFileMatchesInstalledHash -Path $branchPath -InstalledHash $expected)) {
+            throw "AI_RULES_MANAGED_IGNORED_COPY_VERIFY_FAILED: $target"
+        }
+        $copied++
+        Write-Host "Restored ignored ai_rules_1c managed file from main worktree: $target"
+    }
+    return $copied
+}
+
 function Test-AiRules1cToolInstalled {
     param([string]$Tool)
 
@@ -7325,6 +7412,7 @@ function Invoke-RefreshDevBranchCore {
         }
         Set-RunStage -Stage "refresh.merge" -Detail "Merging master into the development branch."
         Merge-MasterPreservingBranchConfigDumpInfo -MasterBranch $targetMasterCommit
+        Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
         Restart-Agent1cAfterDevBranchMerge -Operation $OperationName
     }
 
@@ -7333,6 +7421,7 @@ function Invoke-RefreshDevBranchCore {
     if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
         throw "REFRESH_MASTER_COMMIT_MISSING: the exact master SHA was not preserved across the merge."
     }
+    Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
     Set-RunStage -Stage "refresh.load" -Detail "Updating the branch infobase after the merge."
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     $trackedKiloSnapshot = New-RefreshTrackedKiloConfigSnapshot

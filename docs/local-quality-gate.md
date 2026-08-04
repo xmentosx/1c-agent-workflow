@@ -44,7 +44,7 @@ deprecated alias для `Smoke`; в штатном процессе он не и
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r23-rebuild `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r24-qualification `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
@@ -99,7 +99,7 @@ same-tree доказательства с тем же inventory.
 квалифицировать только `Full`/`Develop` с явным clean annotated-tag checkout:
 
 ```powershell
-.\scripts\check.ps1 -Mode Full -AiRulesSource D:\Git\itl_ai_rules_1c-r23-rebuild
+.\scripts\check.ps1 -Mode Full -AiRulesSource D:\Git\itl_ai_rules_1c-r24-qualification
 ```
 
 После успешного Full `scripts/promote-ai-rules-compatibility.ps1` сверяет exact
@@ -110,7 +110,7 @@ Release требуют `compatibilityStatus=passed`.
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action ReleaseMaster `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r23-rebuild `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r24-qualification `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 

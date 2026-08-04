@@ -77,6 +77,106 @@ function Get-AiRulesUtf8Sha256 {
     }
 }
 
+function Get-AiRulesBytesSha256 {
+    param([byte[]]$Bytes)
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha.ComputeHash($Bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Test-AiRulesFileMatchesInstalledHash {
+    param(
+        [string]$Path,
+        [string]$InstalledHash
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or $InstalledHash -notmatch '^[0-9a-fA-F]{64}$') {
+        return $false
+    }
+    $expected = $InstalledHash.ToLowerInvariant()
+    if ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -eq $expected) {
+        return $true
+    }
+
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $hasBom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+    $offset = if ($hasBom) { 3 } else { 0 }
+    $strictUtf8 = New-Object Text.UTF8Encoding($false, $true)
+    try {
+        $text = $strictUtf8.GetString($bytes, $offset, $bytes.Length - $offset)
+    } catch {
+        return $false
+    }
+    foreach ($character in $text.ToCharArray()) {
+        $code = [int]$character
+        if ($code -eq 0 -or ($code -lt 32 -and $code -notin @(9, 10, 13))) {
+            return $false
+        }
+    }
+
+    $lf = [regex]::Replace($text, "`r`n|`r|`n", "`n")
+    foreach ($variant in @($lf, $lf.Replace("`n", "`r`n"))) {
+        $body = $strictUtf8.GetBytes($variant)
+        if ($hasBom) {
+            $candidate = New-Object byte[] ($body.Length + 3)
+            $candidate[0] = 0xEF
+            $candidate[1] = 0xBB
+            $candidate[2] = 0xBF
+            [Array]::Copy($body, 0, $candidate, 3, $body.Length)
+        } else {
+            $candidate = $body
+        }
+        if ((Get-AiRulesBytesSha256 -Bytes $candidate) -eq $expected) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Clear-StaleAiRulesEolModifiedMarkers {
+    $manifestPath = Join-Path $script:ProjectRoot ".ai-rules.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        return 0
+    }
+    $manifest = Read-Utf8Text -Path $manifestPath | ConvertFrom-Json
+    if ($null -eq $manifest.files) {
+        return 0
+    }
+
+    $projectRootFull = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    $cleared = 0
+    foreach ($property in @($manifest.files.PSObject.Properties)) {
+        if (-not [bool](Get-ConfigValueFromObject -Object $property.Value -Path "userModified" -Default $false)) {
+            continue
+        }
+        $relative = ([string]$property.Name).Replace('/', [IO.Path]::DirectorySeparatorChar)
+        if (Test-AiRulesManifestPathOwnedByWorkflow -Path $relative) {
+            continue
+        }
+        if ([IO.Path]::IsPathRooted($relative)) {
+            continue
+        }
+        $path = [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $relative))
+        if (-not $path.StartsWith($projectRootFull, [StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+        $installedHash = [string](Get-ConfigValueFromObject -Object $property.Value -Path "installedHash" -Default "")
+        if (Test-AiRulesFileMatchesInstalledHash -Path $path -InstalledHash $installedHash) {
+            $property.Value | Add-Member -NotePropertyName userModified -NotePropertyValue $false -Force
+            $cleared++
+        }
+    }
+    if ($cleared -gt 0) {
+        Write-Utf8Text -Path $manifestPath -Value (($manifest | ConvertTo-Json -Depth 30) + [Environment]::NewLine)
+        Write-Host "Cleared $cleared stale ai_rules_1c userModified marker(s) for byte- or LF/CRLF-equivalent managed UTF-8 files."
+    }
+    return $cleared
+}
+
 function Test-AiRulesUserRulesMatchesControlledSourcePrefix {
     param([string]$Text)
 
@@ -433,6 +533,7 @@ function Get-AiRulesMigrationPlan {
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
         return [pscustomobject]@{ status = "manifest-missing"; eligible = $false; suppressRegularUpdate = $true; reason = "legacy ai_rules_1c manifest is missing"; target = $target }
     }
+    Clear-StaleAiRulesEolModifiedMarkers | Out-Null
     Clear-StaleAiRulesMcpUserModifiedIfWorkflowOwned | Out-Null
     Clear-StaleAiRulesUserRulesModifiedIfWorkflowOwned | Out-Null
     if (Test-AiRulesManifestHasUserChanges) {

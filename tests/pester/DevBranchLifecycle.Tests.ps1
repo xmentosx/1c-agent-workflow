@@ -4770,6 +4770,53 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
+    It "restores only clean ignored ai_rules managed files from the main worktree" {
+        $mainRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-ignored-main-" + [guid]::NewGuid().ToString("N"))
+        $branchRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-ignored-branch-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot ".kilo\skills\runtime") | Out-Null
+            & git -C $mainRoot init | Out-Null
+            & git -C $mainRoot config user.email "test@example.com"
+            & git -C $mainRoot config user.name "Test User"
+            Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding UTF8 -Value ".kilo/skills/runtime/package.json"
+            $runtimePath = Join-Path $mainRoot ".kilo\skills\runtime\package.json"
+            [IO.File]::WriteAllText($runtimePath, "{}`n", (New-Object Text.UTF8Encoding $false))
+            $runtimeHash = (Get-FileHash -LiteralPath $runtimePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $manifest = [ordered]@{ version = "itl-main-410951e7-r24"; tools = @("kilocode"); files = [ordered]@{
+                ".kilo/skills/runtime/package.json" = [ordered]@{ source = "runtime"; installedHash = $runtimeHash }
+            } }
+            Set-Content -LiteralPath (Join-Path $mainRoot ".ai-rules.json") -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 8)
+            Set-Content -LiteralPath (Join-Path $mainRoot "README.md") -Encoding UTF8 -Value "fixture"
+            & git -C $mainRoot add .gitignore .ai-rules.json README.md
+            & git -C $mainRoot commit -m init | Out-Null
+            & git -C $mainRoot branch -M master
+            & git -C $mainRoot worktree add -b itldev/test $branchRoot master | Out-Null
+
+            $result = & {
+                . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
+                Sync-AiRules1cManagedIgnoredFilesFromMain -State ([pscustomobject]@{ mainWorktreePath = $mainRoot })
+            }
+            $result | Should -Be 1
+            $branchRuntimePath = Join-Path $branchRoot ".kilo\skills\runtime\package.json"
+            [IO.File]::ReadAllBytes($branchRuntimePath) | Should -Be ([IO.File]::ReadAllBytes($runtimePath))
+
+            Remove-Item -LiteralPath $branchRuntimePath -Force
+            [IO.File]::WriteAllText($runtimePath, "{`"changed`":true}`n", (New-Object Text.UTF8Encoding $false))
+            {
+                & {
+                    . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
+                    Sync-AiRules1cManagedIgnoredFilesFromMain -State ([pscustomobject]@{ mainWorktreePath = $mainRoot })
+                }
+            } | Should -Throw "*AI_RULES_MANAGED_IGNORED_SOURCE_DRIFT*"
+            Test-Path -LiteralPath $branchRuntimePath | Should -BeFalse
+        } finally {
+            $previousPreference = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try { & git -C $mainRoot worktree remove --force $branchRoot *> $null } finally { $ErrorActionPreference = $previousPreference }
+            Remove-Item -LiteralPath $branchRoot, $mainRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "rejects every master-only action from itldev before changing tracked state" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-master-action-guard-" + [guid]::NewGuid().ToString("N"))
         try {
