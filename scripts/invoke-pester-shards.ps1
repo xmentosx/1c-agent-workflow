@@ -43,6 +43,89 @@ $sharedInputs = @(
     "scripts/pester-timings.json", "templates/dependency-lock.json"
 )
 
+function Initialize-VanessaSourceBuildArchiveForPester {
+    $lockPath = Join-Path $RepositoryRoot "templates\dependency-lock.json"
+    if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
+        throw "Pester Vanessa source-build resolution requires the canonical dependency lock: $lockPath"
+    }
+    $lock = (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaAutomation
+    $expected = ([string]$lock.sha256).ToLowerInvariant()
+    $assetName = [string]$lock.assetName
+    $folderName = ([string]$lock.compatibilityVersion) + "-" + ([string]$lock.downstreamRevision)
+    if ($expected -notmatch '^[a-f0-9]{64}$' -or -not $assetName -or -not $folderName) {
+        throw "Pester Vanessa source-build resolution found an incomplete dependency lock entry."
+    }
+
+    $configured = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
+    if ($configured) {
+        try { $configured = [IO.Path]::GetFullPath($configured) } catch { throw "Configured Vanessa source-build path is invalid: $configured" }
+        if (-not (Test-Path -LiteralPath $configured -PathType Leaf)) {
+            throw "Configured Vanessa source-build archive is missing: $configured"
+        }
+        $actual = (Get-FileHash -LiteralPath $configured -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $expected) {
+            throw "Configured Vanessa source-build SHA256 differs from the dependency lock: expected=$expected actual=$actual path=$configured"
+        }
+        $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $configured
+        return
+    }
+
+    $candidateRoots = New-Object System.Collections.Generic.List[string]
+    $candidateRoots.Add($RepositoryRoot)
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $worktreeLines = @(& git -C $RepositoryRoot worktree list --porcelain 2>$null)
+        $worktreeExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($worktreeExitCode -eq 0) {
+        foreach ($line in $worktreeLines) {
+            if ([string]$line -match '^worktree\s+(.+)$') {
+                try { $candidateRoots.Add([IO.Path]::GetFullPath($Matches[1])) } catch {}
+            }
+        }
+    }
+    foreach ($root in @($candidateRoots | Select-Object -Unique)) {
+        $candidate = Join-Path $root ("build\third-party\vanessa-automation\$folderName\$assetName")
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+        if ((Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant() -eq $expected) {
+            $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = [IO.Path]::GetFullPath($candidate)
+            return
+        }
+    }
+
+    $sharedDirectory = Join-Path $commonGitDir "itl\dependencies\vanessa-automation\$folderName"
+    $sharedArchive = Join-Path $sharedDirectory ("$expected-$assetName")
+    if (Test-Path -LiteralPath $sharedArchive -PathType Leaf) {
+        $sharedHash = (Get-FileHash -LiteralPath $sharedArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($sharedHash -ne $expected) {
+            throw "Shared Vanessa source-build cache entry has an impossible SHA-address mismatch: expected=$expected actual=$sharedHash path=$sharedArchive"
+        }
+        $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $sharedArchive
+        return
+    }
+
+    $url = [string]$lock.url
+    if (-not $url) { throw "Locked Vanessa source-build URL is missing and no exact shared candidate was found." }
+    New-Item -ItemType Directory -Force -Path $sharedDirectory | Out-Null
+    $partial = Join-Path $sharedDirectory (".$expected." + [guid]::NewGuid().ToString("N") + ".partial")
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $partial
+        $downloadedHash = (Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($downloadedHash -ne $expected) {
+            throw "Downloaded Vanessa source-build SHA256 differs from the dependency lock: expected=$expected actual=$downloadedHash"
+        }
+        if (-not (Test-Path -LiteralPath $sharedArchive -PathType Leaf)) {
+            Move-Item -LiteralPath $partial -Destination $sharedArchive
+        }
+        $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $sharedArchive
+    } finally {
+        if (Test-Path -LiteralPath $partial -PathType Leaf) { Remove-Item -LiteralPath $partial -Force }
+    }
+}
+
 function Get-ExternalInputIdentity {
     param([string]$Name)
     $value = [Environment]::GetEnvironmentVariable($Name, "Process")
@@ -121,6 +204,9 @@ if ($SelectionPath) {
     } | Sort-Object Name -Unique)
 } else { $testFiles = @(Get-ChildItem -LiteralPath $testRoot -File -Filter "*.Tests.ps1" | Sort-Object Name) }
 if ($testFiles.Count -eq 0) { throw "No Pester test files were discovered." }
+if (@($testFiles | Where-Object Name -eq "BootstrapUpdate.Tests.ps1").Count -gt 0) {
+    Initialize-VanessaSourceBuildArchiveForPester
+}
 $serialTestNames = @("DependencyLocks.Tests.ps1", "ReleaseGate.Tests.ps1")
 $serialTestFiles = @($testFiles | Where-Object { $serialTestNames -contains $_.Name })
 $parallelTestFiles = @($testFiles | Where-Object { $serialTestNames -notcontains $_.Name })

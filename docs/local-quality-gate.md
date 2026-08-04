@@ -98,6 +98,12 @@ same-tree доказательства с тем же inventory.
 Новый fork lock сначала имеет `compatibilityStatus=pending`. Его может
 квалифицировать только `Full`/`Develop` с явным clean annotated-tag checkout:
 
+Targeted Pester shards that include bootstrap update coverage resolve the
+locked Vanessa source-build archive automatically: first from any worktree in
+the common Git directory, then from a shared SHA-addressed cache, and finally
+from the immutable locked URL. Every source is accepted only after the lock
+SHA-256 matches; an invalid explicit environment path fails closed.
+
 ```powershell
 .\scripts\check.ps1 -Mode Full -AiRulesSource D:\Git\itl_ai_rules_1c-r24-qualification
 ```

@@ -89,6 +89,8 @@ Describe "Local quality gate contract" {
         $runner | Should -Match 'Keep them away from the parallel lifecycle workers'; $runner | Should -Match 'CreateElement\("testsuites"\)'
         $runner | Should -Match 'Get-ShardInputDigest'; $runner | Should -Match 'itl\\pester-shards\\v1'
         $runner | Should -Match 'reusedWorkerCount'; $runner | Should -Match 'Save-ShardCache'; $runner | Should -Match 'SelectionPath'
+        $runner | Should -Match 'Initialize-VanessaSourceBuildArchiveForPester'; $runner | Should -Match 'worktree list --porcelain'
+        $runner | Should -Match 'itl\\dependencies\\vanessa-automation'; $runner | Should -Match 'Downloaded Vanessa source-build SHA256 differs from the dependency lock'
         $worker | Should -Match 'Invoke-Pester -Configuration'
     }
     It "reuses only a passed shard with the same owner inputs" {
