@@ -190,6 +190,40 @@ Describe "ITL on-demand MCP facade" {
         }
     }
 
+    It "rejects a facade lock mismatch and never falls back to an older installed version" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-contract-" + [guid]::NewGuid().ToString("N"))
+        $oldInstallRoot = [Environment]::GetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", "Process")
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
+            $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $lock.dependencies.itlOndemandMcp.version = "0.4.2"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value ($lock | ConvertTo-Json -Depth 20)
+            $installRoot = Join-Path $tempRoot "ondemand"
+            New-Item -ItemType Directory -Force -Path (Join-Path $installRoot "0.4.2") | Out-Null
+            Set-Content -LiteralPath (Join-Path $installRoot "0.4.2\itl-ondemand-mcp-windows-amd64.exe") -Encoding ASCII -Value "old facade"
+            [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $installRoot, "Process")
+
+            $mismatch = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                try { Get-ItlOnDemandMcpExecutablePath -AllowMissing } catch { $_.Exception.Message }
+            }
+            $mismatch | Should -Match "ITL_ONDEMAND_FACADE_LOCK_MISMATCH"
+
+            $lock.dependencies.itlOndemandMcp.version = "0.4.3"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value ($lock | ConvertTo-Json -Depth 20)
+            $resolved = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Get-ItlOnDemandMcpExecutablePath -AllowMissing
+            }
+            $resolved | Should -Be (Join-Path $installRoot "0.4.3\itl-ondemand-mcp-windows-amd64.exe")
+            $resolved | Should -Not -Match ([regex]::Escape("\0.4.2\"))
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $oldInstallRoot, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "installs from the cached release asset when the workflow is an installed copy without Git metadata" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-installed-copy-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -255,13 +289,13 @@ Describe "ITL on-demand MCP facade" {
                 function Get-DependencyLockEntry {
                     param([string]$Name)
                     return [pscustomobject]@{
-                        version = "fixture"
+                        version = "0.4.3"
                         assetName = "itl-ondemand-mcp-windows-amd64.exe"
                         url = "https://example.invalid/itl-ondemand-mcp.exe"
                         sha256 = $cachedSha256
                     }
                 }
-                $targetPath = Join-Path $installRoot "fixture\itl-ondemand-mcp-windows-amd64.exe"
+                $targetPath = Join-Path $installRoot "0.4.3\itl-ondemand-mcp-windows-amd64.exe"
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
                 [IO.File]::WriteAllBytes($targetPath, $cachedBytes)
                 Install-ItlOnDemandMcp

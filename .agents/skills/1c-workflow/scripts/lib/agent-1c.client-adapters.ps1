@@ -580,6 +580,71 @@ function Get-ItlManagedMcpOwnerKeys {
     return @($owners[$stateKey] | ForEach-Object { [string]$_ } | Where-Object { $_ } | Select-Object -Unique)
 }
 
+function ConvertTo-ItlMcpSemanticCanonicalValue {
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [System.Collections.IDictionary] -or $Value -is [pscustomobject]) {
+        $table = ConvertTo-Vibecoding1cMcpHashtable -Object $Value
+        [string[]]$keys = @($table.Keys | ForEach-Object { [string]$_ })
+        [System.Array]::Sort($keys, [System.StringComparer]::Ordinal)
+        $canonical = [ordered]@{}
+        foreach ($key in $keys) {
+            $canonical[$key] = ConvertTo-ItlMcpSemanticCanonicalValue -Value $table[$key]
+        }
+        return $canonical
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        return [object[]]@($Value | ForEach-Object { ConvertTo-ItlMcpSemanticCanonicalValue -Value $_ })
+    }
+    return $Value
+}
+
+function Get-ItlMcpOwnedSemanticSignature {
+    param(
+        [System.Collections.IDictionary]$Container,
+        [string[]]$Names
+    )
+
+    [string[]]$ownedNames = @($Names | ForEach-Object { [string]$_ } | Where-Object { $_ } | Select-Object -Unique)
+    [System.Array]::Sort($ownedNames, [System.StringComparer]::Ordinal)
+    $owned = [ordered]@{}
+    foreach ($name in $ownedNames) {
+        $owned[$name] = if ($Container.Contains($name)) {
+            ConvertTo-ItlMcpSemanticCanonicalValue -Value $Container[$name]
+        } else {
+            $null
+        }
+    }
+    return ($owned | ConvertTo-Json -Depth 30 -Compress)
+}
+
+function Register-ItlClientMcpSemanticChange {
+    param(
+        [string]$Client,
+        [string]$Owner,
+        [string]$Path
+    )
+
+    if (-not (Get-Variable -Name ItlClientMcpSemanticChanges -Scope Script -ErrorAction SilentlyContinue)) {
+        $script:ItlClientMcpSemanticChanges = [ordered]@{}
+    }
+    $script:ItlClientMcpSemanticChanges["$Client/$Owner"] = [pscustomobject]@{
+        client = $Client
+        owner = $Owner
+        path = $Path
+    }
+}
+
+function Get-ItlClientMcpSemanticChanges {
+    param([string]$Owner = "")
+
+    if (-not (Get-Variable -Name ItlClientMcpSemanticChanges -Scope Script -ErrorAction SilentlyContinue)) {
+        return @()
+    }
+    return @($script:ItlClientMcpSemanticChanges.Values | Where-Object { -not $Owner -or $_.owner -eq $Owner })
+}
+
 function Write-ItlClientMcpEndpoints {
     param(
         [object[]]$Endpoints,
@@ -670,6 +735,12 @@ function Write-ItlClientMcpEndpoints {
     if (-not $state.Contains("owners")) { $state["owners"] = [ordered]@{} }
     $owners = ConvertTo-Vibecoding1cMcpHashtable -Object $state["owners"]
     $stateKey = "$Client/$Owner"
+    $semanticNames = @(
+        @($owners[$stateKey])
+        @($normalized | ForEach-Object { [string]$_.name })
+        @($PreserveOwnedKeys)
+    ) | ForEach-Object { [string]$_ } | Where-Object { $_ } | Select-Object -Unique
+    $beforeSemanticSignature = Get-ItlMcpOwnedSemanticSignature -Container $container -Names $semanticNames
     foreach ($oldKey in @($owners[$stateKey])) {
         if ($PreserveOwnedKeys -contains [string]$oldKey) { continue }
         if ($container.Contains([string]$oldKey)) { $container.Remove([string]$oldKey) }
@@ -724,6 +795,10 @@ function Write-ItlClientMcpEndpoints {
     }
     $config[$containerName] = $orderedContainer
     Write-Vibecoding1cMcpJsonFile -Path $path -Value $config
+    $afterSemanticSignature = Get-ItlMcpOwnedSemanticSignature -Container $orderedContainer -Names $semanticNames
+    if ($beforeSemanticSignature -cne $afterSemanticSignature) {
+        Register-ItlClientMcpSemanticChange -Client $Client -Owner $Owner -Path $path
+    }
     $owners[$stateKey] = @($written + @($PreserveOwnedKeys) | Select-Object -Unique)
     $state["owners"] = $owners
     Write-ItlManagedMcpState -State $state
@@ -1466,15 +1541,19 @@ function Show-ItlDoctor {
     try {
         $facadeLock = Get-DependencyLockEntry -Name "itlOndemandMcp"
         $facadeVersion = [string](Get-ConfigValueFromObject -Object $facadeLock -Path "version" -Default "")
-        $facadePath = Get-ItlOnDemandMcpExecutablePath -AllowMissing
-        $instances = @(Get-ItlOnDemandRuntimeInstances)
-        $stale = @($instances | Where-Object { -not (Test-ItlOnDemandOwnedProcess -RuntimeState $_) }).Count
-        $facadeReady = Test-Path -LiteralPath $facadePath -PathType Leaf
-        $checks.Add([pscustomobject]@{
-            status = $(if (-not $facadeVersion) { "SKIP" } elseif ($facadeReady -and $stale -eq 0) { "OK" } elseif ($facadeReady) { "WARN" } else { "FAIL" })
-            name = "ondemand-mcp"
-            detail = "version=$(if ($facadeVersion) { $facadeVersion } else { '<legacy project>' }); facade=$facadePath; instances=$($instances.Count); stale=$stale"
-        })
+        if (-not $facadeVersion) {
+            $checks.Add([pscustomobject]@{ status = "SKIP"; name = "ondemand-mcp"; detail = "version=<legacy project>; facade=<not managed>" })
+        } else {
+            $facadePath = Get-ItlOnDemandMcpExecutablePath -AllowMissing
+            $instances = @(Get-ItlOnDemandRuntimeInstances)
+            $stale = @($instances | Where-Object { -not (Test-ItlOnDemandOwnedProcess -RuntimeState $_) }).Count
+            $facadeReady = Test-Path -LiteralPath $facadePath -PathType Leaf
+            $checks.Add([pscustomobject]@{
+                status = $(if ($facadeReady -and $stale -eq 0) { "OK" } elseif ($facadeReady) { "WARN" } else { "FAIL" })
+                name = "ondemand-mcp"
+                detail = "version=$facadeVersion; facade=$facadePath; instances=$($instances.Count); stale=$stale"
+            })
+        }
     } catch {
         $checks.Add([pscustomobject]@{ status = "FAIL"; name = "ondemand-mcp"; detail = $_.Exception.Message })
     }

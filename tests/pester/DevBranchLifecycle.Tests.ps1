@@ -3234,6 +3234,31 @@ if (`$?) { exit 0 } else { exit 1 }
         $handoff.requiredAction | Should -Match 'до следующего действия в master'
     }
 
+    It "requires Kilo reload only after a semantic on-demand MCP command change" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-ItlActiveClient { return "kilocode" }
+            $script:RunRequiredAction = ""
+            $script:ItlClientMcpSemanticChanges = [ordered]@{}
+            $unchanged = Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation "refresh-dev-branch"
+            $unchangedAction = $script:RunRequiredAction
+            Register-ItlClientMcpSemanticChange -Client kilocode -Owner "ondemand-facade" -Path "C:\fixture\.kilo\kilo.json"
+            $changed = Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation "refresh-dev-branch"
+            [pscustomobject]@{
+                unchanged = $unchanged
+                unchangedAction = $unchangedAction
+                changed = $changed
+                changedAction = $script:RunRequiredAction
+            }
+        }
+        $script:ItlClientMcpSemanticChanges = [ordered]@{}
+        $result.unchanged | Should -BeFalse
+        $result.unchangedAction | Should -BeNullOrEmpty
+        $result.changed | Should -BeTrue
+        $result.changedAction | Should -Match ([regex]::Escape('/reload'))
+        $result.changedAction | Should -Match 'до следующего вызова ROCTUP или Vanessa UI'
+    }
+
     It "builds a complete safe branch user report with MCP Browser and advice" {
         $report = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

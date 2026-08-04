@@ -103,6 +103,46 @@ function Get-ItlOnDemandMcpInstallRoot {
     return (Join-Path $base "ITL\MCP\ondemand")
 }
 
+function Get-ItlOnDemandMcpFacadeContract {
+    $manifest = Get-ItlOnDemandMcpCompatibility
+    $facadeVersionText = [string](Get-ConfigValueFromObject -Object $manifest -Path "facadeVersion" -Default "")
+    $minimumVersionText = [string](Get-ConfigValueFromObject -Object $manifest -Path "minimumFacadeVersion" -Default "")
+    try {
+        $facadeVersion = [version]$facadeVersionText
+        $minimumVersion = [version]$minimumVersionText
+    } catch {
+        throw "ITL_ONDEMAND_FACADE_VERSION_INVALID: facade='$facadeVersionText' minimum='$minimumVersionText'."
+    }
+    if ($facadeVersion -lt $minimumVersion) {
+        throw "ITL_ONDEMAND_FACADE_BELOW_MINIMUM: facade='$facadeVersionText' minimum='$minimumVersionText'."
+    }
+
+    $entry = Get-DependencyLockEntry -Name "itlOndemandMcp"
+    if ($null -eq $entry) {
+        throw "ITL_ONDEMAND_DEPENDENCY_LOCK_MISSING: .agent-1c/dependency-lock.json has no itlOndemandMcp entry."
+    }
+    $lockedVersion = [string](Get-ConfigValueFromObject -Object $entry -Path "version" -Default "")
+    $assetName = [string](Get-ConfigValueFromObject -Object $entry -Path "assetName" -Default "")
+    $sha256 = [string](Get-ConfigValueFromObject -Object $entry -Path "sha256" -Default "")
+    if ($lockedVersion -cne $facadeVersionText) {
+        throw "ITL_ONDEMAND_FACADE_LOCK_MISMATCH: compatibility='$facadeVersionText' dependencyLock='$lockedVersion'."
+    }
+    if ($assetName -cne "itl-ondemand-mcp-windows-amd64.exe") {
+        throw "ITL_ONDEMAND_FACADE_ASSET_INVALID: expected='itl-ondemand-mcp-windows-amd64.exe' actual='$assetName'."
+    }
+    if ($sha256 -notmatch '^[a-fA-F0-9]{64}$') {
+        throw "ITL_ONDEMAND_FACADE_SHA256_INVALID: dependency lock must contain a 64-character SHA256."
+    }
+
+    return [pscustomobject]@{
+        manifest = $manifest
+        entry = $entry
+        version = $facadeVersionText
+        assetName = $assetName
+        sha256 = $sha256.ToLowerInvariant()
+    }
+}
+
 function Get-ItlOnDemandMcpExecutablePath {
     param([switch]$AllowMissing)
 
@@ -111,9 +151,16 @@ function Get-ItlOnDemandMcpExecutablePath {
         $resolved = Resolve-Agent1cFullPath -Path $override
         if ($AllowMissing -or (Test-Path -LiteralPath $resolved -PathType Leaf)) { return $resolved }
     }
-    $manifest = Get-ItlOnDemandMcpCompatibility
-    $path = Join-Path (Join-Path (Get-ItlOnDemandMcpInstallRoot) ([string]$manifest.facadeVersion)) "itl-ondemand-mcp-windows-amd64.exe"
-    if ($AllowMissing -or (Test-Path -LiteralPath $path -PathType Leaf)) { return $path }
+    $contract = Get-ItlOnDemandMcpFacadeContract
+    $path = Join-Path (Join-Path (Get-ItlOnDemandMcpInstallRoot) $contract.version) $contract.assetName
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+        $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -cne $contract.sha256) {
+            throw "ITL_ONDEMAND_FACADE_INSTALLED_SHA256_MISMATCH: expected='$($contract.sha256)' actual='$actual' path='$path'. Run update-workflow to repair the installed facade."
+        }
+        return $path
+    }
+    if ($AllowMissing) { return $path }
     throw "ITL on-demand MCP executable is not installed: $path. Run update-workflow after the matching workflow release asset is published."
 }
 
@@ -123,13 +170,12 @@ function Install-ItlOnDemandMcp {
     if (-not [Environment]::Is64BitOperatingSystem -or -not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
         throw "ITL_ONDEMAND_UNSUPPORTED_PLATFORM: v1 supports Windows x64 only."
     }
-    $entry = Get-DependencyLockEntry -Name "itlOndemandMcp"
-    $version = [string](Get-ConfigValueFromObject -Object $entry -Path "version" -Default "")
+    $contract = Get-ItlOnDemandMcpFacadeContract
+    $entry = $contract.entry
+    $version = $contract.version
     $url = [string](Get-ConfigValueFromObject -Object $entry -Path "url" -Default "")
-    $sha256 = [string](Get-ConfigValueFromObject -Object $entry -Path "sha256" -Default "")
-    $assetName = [string](Get-ConfigValueFromObject -Object $entry -Path "assetName" -Default "itl-ondemand-mcp-windows-amd64.exe")
-    $manifest = Get-ItlOnDemandMcpCompatibility
-    if (-not $version) { $version = [string]$manifest.facadeVersion }
+    $sha256 = $contract.sha256
+    $assetName = $contract.assetName
     $targetDirectory = Join-Path (Get-ItlOnDemandMcpInstallRoot) $version
     $targetPath = Join-Path $targetDirectory $assetName
 

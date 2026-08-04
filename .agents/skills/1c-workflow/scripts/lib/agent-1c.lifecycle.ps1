@@ -3274,7 +3274,11 @@ function Write-WorkflowUpdateFollowUp {
     Add-RunUserReportLine -Lines $reportLines -Label "Tracked-состояние master" -Value "clean"
     $reportLines.Add("")
     $reportLines.Add("## Следующие действия")
-    $reportLines.Add("- Перезапустите или перезагрузите активный AI-клиент, чтобы он перечитал правила, навыки и команды.")
+    if ($script:RunRequiredAction) {
+        $reportLines.Add("- $($script:RunRequiredAction)")
+    } else {
+        $reportLines.Add("- Перезапустите или перезагрузите активный AI-клиент, чтобы он перечитал правила, навыки и команды.")
+    }
     $reportLines.Add("- Push из проекта не выполнялся: созданный коммит остаётся в локальном `master`.")
     $reportLines.Add("- Активные `itldev/*` обновляются отдельно через `/itl-refresh`.")
     if ($states.Count -gt 0) {
@@ -3288,6 +3292,22 @@ function Write-WorkflowUpdateFollowUp {
         $reportLines.Add("- Активных веток разработки нет.")
     }
     Write-AndSetRunUserReport -Lines $reportLines
+}
+
+function Set-ItlOnDemandMcpSemanticReloadRequiredAction {
+    param([string]$Operation)
+
+    $changes = @(Get-ItlClientMcpSemanticChanges -Owner "ondemand-facade")
+    if ($changes.Count -eq 0) { return $false }
+
+    $client = [string](Get-ItlActiveClient)
+    if ($client -eq "kilocode") {
+        $script:RunRequiredAction = "До следующего вызова ROCTUP или Vanessa UI обязательно выполните /reload, чтобы Kilo перечитал обновлённую команду MCP."
+    } else {
+        $instruction = [string](Get-StateValue -State (Get-ItlClientAdapter -Client $client) -Name "reloadUserReport" -Default "Перезапустите активный AI-клиент.")
+        $script:RunRequiredAction = "$instruction Причина: операция '$Operation' семантически изменила команду запуска ITL on-demand MCP."
+    }
+    return $true
 }
 
 function Write-WorkflowPackageStatusLines {
@@ -3421,6 +3441,7 @@ function Update-WorkflowPackage {
     }
     Set-RunStage -Stage "workflow-update.commit" -Detail "Committing the managed workflow update in master."
     $commitResult = Commit-WorkflowUpdate -Source $workflowSource -AiRulesPathsBefore $aiRulesPathsBefore -ClientSurfacePathsBefore $clientSurfacePathsBefore
+    Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation "update-workflow" | Out-Null
     Write-WorkflowUpdateFollowUp -Source $workflowSource -CommitResult $commitResult
 }
 
@@ -4178,13 +4199,15 @@ function Write-DevBranchRunUserReport {
     $extensionStatus = Get-DevBranchExtensionInitializationStatus -State $State
     if ($isRefresh) {
         $client = [string](Get-RunUserReportObservedValue -Read { Get-ItlActiveClient } -Default "")
-        if ($client -eq "kilocode") {
-            $advice.Add("- Если Kilo продолжает показывать старые команды или маршрутизацию, выполните /reload; при нормальном поведении дополнительный шаг не требуется.")
-        } else {
-            $reloadInstruction = [string](Get-RunUserReportObservedValue -Read {
-                Get-StateValue -State (Get-ItlClientAdapter -Client $client) -Name "reloadUserReport" -Default "Перезапустите активный клиент."
-            } -Default "Перезапустите активный клиент.")
-            $advice.Add("- Заставьте текущий клиент перечитать обновлённый проект: $reloadInstruction")
+        if (@(Get-ItlClientMcpSemanticChanges -Owner "ondemand-facade").Count -eq 0) {
+            if ($client -eq "kilocode") {
+                $advice.Add("- Если Kilo продолжает показывать старые команды или маршрутизацию, выполните /reload; при нормальном поведении дополнительный шаг не требуется.")
+            } else {
+                $reloadInstruction = [string](Get-RunUserReportObservedValue -Read {
+                    Get-StateValue -State (Get-ItlClientAdapter -Client $client) -Name "reloadUserReport" -Default "Перезапустите активный клиент."
+                } -Default "Перезапустите активный клиент.")
+                $advice.Add("- Заставьте текущий клиент перечитать обновлённый проект: $reloadInstruction")
+            }
         }
         $advice.Add("- Перед продолжением разработки выполните /itl-check.")
         if ((Get-DevBranchKind -State $State) -eq "extension") {
@@ -7322,6 +7345,7 @@ function Invoke-RefreshDevBranchCore {
         Sync-KiloItlCommandSurface
         Invoke-AiRules1cManagedMcpConfigReconcile -Operation "$OperationName MCP reconcile" | Out-Null
         Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath (Get-ExportPath) -TrackedKiloSnapshot $trackedKiloSnapshot
+        Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation $OperationName | Out-Null
 
         $loadStateUpdates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
         foreach ($entry in $loadStateUpdates.GetEnumerator()) {

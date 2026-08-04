@@ -489,17 +489,27 @@
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $endpoints = @([pscustomobject]@{ name = "remote-test"; url = "https://itl.invalid/mcp"; transport = "remote" })
+                $script:ItlClientMcpSemanticChanges = [ordered]@{}
                 Write-ItlClientMcpEndpoints -Client kilocode -Owner test -Endpoints $endpoints | Out-Null
+                $firstChangeCount = @(Get-ItlClientMcpSemanticChanges -Owner test).Count
                 $path = Join-Path $tempRoot ".kilo\kilo.json"
                 $sentinel = [DateTime]::UtcNow.AddHours(-2)
                 [System.IO.File]::SetLastWriteTimeUtc($path, $sentinel)
+                $script:ItlClientMcpSemanticChanges = [ordered]@{}
                 Write-ItlClientMcpEndpoints -Client kilocode -Owner test -Endpoints $endpoints | Out-Null
                 [pscustomobject]@{
                     expected = $sentinel
                     actual = [System.IO.File]::GetLastWriteTimeUtc($path)
+                    firstChangeCount = $firstChangeCount
+                    secondChangeCount = @(Get-ItlClientMcpSemanticChanges -Owner test).Count
+                    orderedSignature = Get-ItlMcpOwnedSemanticSignature -Container ([ordered]@{ entry = [ordered]@{ type = "remote"; url = "https://itl.invalid/mcp" } }) -Names entry
+                    reorderedSignature = Get-ItlMcpOwnedSemanticSignature -Container ([ordered]@{ entry = [ordered]@{ url = "https://itl.invalid/mcp"; type = "remote" } }) -Names entry
                 }
             }
             $result.actual | Should -Be $result.expected
+            $result.firstChangeCount | Should -Be 1
+            $result.secondChangeCount | Should -Be 0
+            $result.orderedSignature | Should -Be $result.reorderedSignature
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
