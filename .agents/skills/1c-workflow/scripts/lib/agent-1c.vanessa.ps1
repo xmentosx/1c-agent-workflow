@@ -3162,6 +3162,7 @@ function Run-DevBranchTests {
             -InfoBaseKind $state.infoBaseKind `
             -EnterpriseArgs $enterpriseArgs `
             -TestClientPort $testPort `
+            -ExpectedSessionCount (1 + [int]$testClientTopology.declaredLicenseSlots) `
             -TimeoutSeconds $timeoutSeconds `
             -CompletionProbe {
                 $probeStatus = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
@@ -3418,61 +3419,12 @@ function Get-VanessaTestPortRange {
     }
 }
 
-function Get-OneCProcessInfo {
-    param([switch]$RequireSuccess)
-    try {
-        return @(Get-CimInstance Win32_Process -Filter "Name = '1cv8.exe' OR Name = '1cv8c.exe'" -ErrorAction Stop | ForEach-Object {
-            $processStartTime = ""
-            if ($null -ne $_.CreationDate) {
-                try { $processStartTime = ([datetime]$_.CreationDate).ToUniversalTime().ToString("o") } catch {}
-            }
-            [pscustomobject]@{
-                processId = [int]$_.ProcessId
-                name = [string]$_.Name
-                commandLine = [string]$_.CommandLine
-                executablePath = [string]$_.ExecutablePath
-                processStartTime = $processStartTime
-                workingSetMb = [math]::Round(([double]$_.WorkingSetSize / 1MB), 1)
-            }
-        })
-    } catch {
-        if ($RequireSuccess) {
-            throw "ITL_ONEC_PROCESS_INSPECTION_UNAVAILABLE: active 1C processes could not be inspected safely. $($_.Exception.Message)"
-        }
-        Write-Host "[WARN] Could not inspect active 1C processes: $($_.Exception.Message)"
-        return @()
-    }
-}
-
 function Get-VanessaTestClientLicenseCapacity {
     $capacity = ConvertTo-IntOrDefault -Value (Get-EnvValue -Name "VANESSA_TESTCLIENT_LICENSE_CAPACITY" -Default 2) -Default 2
     if ($capacity -le 0) {
         throw "Invalid VANESSA_TESTCLIENT_LICENSE_CAPACITY '$capacity'. Use a positive number."
     }
     return $capacity
-}
-
-function Get-OneCCommandLineSwitchPath {
-    param(
-        [AllowNull()][string]$CommandLine,
-        [Parameter(Mandatory = $true)][string[]]$SwitchNames
-    )
-
-    if ([string]::IsNullOrWhiteSpace($CommandLine) -or $SwitchNames.Count -eq 0) { return "" }
-    $switchPattern = @($SwitchNames | ForEach-Object { [regex]::Escape($_) }) -join '|'
-    $matches = [regex]::Matches(
-        $CommandLine,
-        '(?i)(?:^|\s)/(?:' + $switchPattern + ')(?=\s|")\s*(?:"(?<quoted>[^"]+)"|(?<unquoted>.*?))(?=\s+"?[/-][A-Za-z]|$)'
-    )
-    if ($matches.Count -ne 1) { return "" }
-    $match = $matches[0]
-    return ([string]$(if ($match.Groups["quoted"].Success) { $match.Groups["quoted"].Value } else { $match.Groups["unquoted"].Value })).Trim()
-}
-
-function Get-SafeOneCProcessInfoBase {
-    param([AllowNull()][string]$CommandLine)
-
-    return (Get-OneCCommandLineSwitchPath -CommandLine $CommandLine -SwitchNames @("F", "S"))
 }
 
 function Get-VanessaTestClientCapacitySnapshot {
@@ -3508,29 +3460,7 @@ function Assert-VanessaTestClientCapacity {
     $snapshot = Get-VanessaTestClientCapacitySnapshot -State $State
     if (($snapshot.active + $RequiredSlots) -le $snapshot.capacity) { return $snapshot }
     $details = @($snapshot.processes | Select-Object pid, scope, infobase, port) | ConvertTo-Json -Compress -Depth 5
-    throw "ITL_VANESSA_LICENSE_LIMIT: capacity=$($snapshot.capacity) active=$($snapshot.active) required=$RequiredSlots processes=$details recovery=stop-an-owned-TestClient-or-increase-VANESSA_TESTCLIENT_LICENSE_CAPACITY-after-license-review"
-}
-
-function Test-OneCCommandLineInfoBasePath {
-    param(
-        [AllowNull()][string]$CommandLine,
-        [AllowNull()][string]$InfoBasePath
-    )
-
-    if ([string]::IsNullOrWhiteSpace($CommandLine) -or [string]::IsNullOrWhiteSpace($InfoBasePath)) {
-        return $false
-    }
-
-    try {
-        $expectedPath = Resolve-Agent1cFullPath -Path $InfoBasePath
-    } catch {
-        return $false
-    }
-
-    $candidate = Get-OneCCommandLineSwitchPath -CommandLine $CommandLine -SwitchNames @("F", "S")
-    if ([string]::IsNullOrWhiteSpace($candidate)) { return $false }
-    try { $candidatePath = Resolve-Agent1cFullPath -Path $candidate } catch { return $false }
-    return [string]::Equals($candidatePath, $expectedPath, [System.StringComparison]::OrdinalIgnoreCase)
+    throw "ITL_VANESSA_LICENSE_LIMIT: capacity=$($snapshot.capacity) active=$($snapshot.active) required=$RequiredSlots processes=$details errorCategory=session-capacity requiredAction=finish-or-close-owned-sessions-before-retry retryAction=repeat-original-command-after-session-count-changes limitChange=developer-only"
 }
 
 function Test-OneCCommandLineOutputBelongsToRun {

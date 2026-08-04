@@ -168,8 +168,8 @@ The runner checkpoints `seed-parallel`, `config-cadence`, `config-roundtrip`, `e
 snapshots, state, `.dev.env`, evidence and expected HEAD are SHA-checked.
 The two-instance Vanessa UI probe keeps both facade/TestManager backends live but
 closes each managed TestClient after its smoke before starting the next one. This
-preserves backend-isolation proof while staying within the three-session ceiling
-of a developer license (`2 x TESTMANAGER + 1 x TESTCLIENT`).
+preserves backend-isolation proof while staying within the configured
+`ONEC_MAX_CONCURRENT_SESSIONS=3` ceiling (`2 x TESTMANAGER + 1 x TESTCLIENT`).
 Strict owned-process cleanup allows a bounded Windows exit-confirmation window
 after force-stop; a PID still alive at the deadline retains runtime state and
 leases and fails the release.

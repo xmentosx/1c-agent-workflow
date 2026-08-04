@@ -1,6 +1,6 @@
 ## 1C Project Lifecycle
 
-ITL owns lifecycle, bases, MCP, verification, and export. Use `1c-workflow-fast`; use `1c-workflow` plus one recovery reference. Helpers only. 1C Designer/Enterprise LoadConfigFromFiles/UpdateDBCfg actions need `timeout_ms >= 3900000`; status/help do not. Do not use `120000 ms`.
+ITL owns lifecycle, bases, MCP, verification, export. Use `1c-workflow-fast`; use `1c-workflow` plus one recovery reference. 1C Designer/Enterprise LoadConfigFromFiles/UpdateDBCfg actions need `timeout_ms >= 3900000`; status/help do not. Do not use `120000 ms`.
 
 On Enterprise failure/timeout/suspected hang, inspect fresh branch `1Cv8Log` entries for its operation window; `/Out` is secondary. Correlate errors with process/state progress and expected duration. Proven failure/stall means stop waiting for the hard timeout; use helper recovery; never kill arbitrary 1C PIDs.
 
@@ -30,4 +30,4 @@ Global `1c-templates-mcp` `remember`/`recall` is shared across projects, not pro
 
 Use pinned `update-ai-rules`, `update-workflow`, and `/itl-refresh`; never hidden `/installmcp`, `/updatemcp`, `/checkmcp`, or `/updaterules`. Use ITL MCP helper requests; ROCTUP and Vanessa UI MCP are on demand, not completion gates. After RTK setup, test `rtk rewrite` on the lifecycle helper command; add exclusions only for an observed rewrite, then restart the client. Event-log verification uses `.agent-1c/event-log-baselines/*.json`, and Vanessa must preserve the `TESTMANAGER -> TESTCLIENT` split. Search hygiene: keep secrets/runtime ignored, preserve user config, and inspect `.agent-1c/runs/` or `build/test-results/` only for a specific run.
 
-For `1cv8.exe`, give `Start-Process -ArgumentList` one joined, correctly quoted command line.
+1C launches use admission. On `session-capacity`, finish/close owned work before retry; never change limits or kill foreign PIDs.

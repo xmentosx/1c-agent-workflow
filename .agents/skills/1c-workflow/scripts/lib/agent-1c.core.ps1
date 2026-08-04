@@ -352,7 +352,7 @@ function Set-RunResultArtifacts {
 
 function Set-RunFailureContext {
     param(
-        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "ai-rules-migration-blocked")]
+        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "ai-rules-migration-blocked")]
         [string]$Category = "",
         [string]$RequiredAction = ""
     )
@@ -372,6 +372,10 @@ function Set-RunFailureContextFromMessage {
     $requiredAction = ""
     if ($Message -match '^(?i:REFRESH_TRACKED_STATE_UNEXPECTED)\b') {
         Set-RunFailureContext -Category $category
+        return
+    }
+    if ($Message -match '^(?i:ITL_(?:ONEC_SESSION_LIMIT|VANESSA_LICENSE_LIMIT))\b') {
+        Set-RunFailureContext -Category "session-capacity" -RequiredAction "finish-or-close-owned-sessions-before-retry"
         return
     }
 
@@ -5278,12 +5282,14 @@ function Invoke-NativeProcessAndWaitResult {
 
     $script:LastNativeProcessStarted = $false
     $argumentLine = Join-NativeCommandLineArguments -Arguments $Arguments
-    $process = Start-Process `
-        -FilePath $FilePath `
-        -ArgumentList $argumentLine `
-        -WorkingDirectory $script:ProjectRoot `
-        -WindowStyle Hidden `
-        -PassThru
+    $process = Invoke-OneCSessionProcessStart -StartProcess {
+        Start-Process `
+            -FilePath $FilePath `
+            -ArgumentList $argumentLine `
+            -WorkingDirectory $script:ProjectRoot `
+            -WindowStyle Hidden `
+            -PassThru
+    }
 
     if ($null -eq $process) {
         throw "Failed to start process: $FilePath"
@@ -5523,11 +5529,13 @@ function Invoke-VisibleNativeProcessAndWait {
     )
 
     $argumentLine = Join-NativeCommandLineArguments -Arguments $Arguments
-    $process = Start-Process `
-        -FilePath $FilePath `
-        -ArgumentList $argumentLine `
-        -WorkingDirectory $script:ProjectRoot `
-        -PassThru
+    $process = Invoke-OneCSessionProcessStart -StartProcess {
+        Start-Process `
+            -FilePath $FilePath `
+            -ArgumentList $argumentLine `
+            -WorkingDirectory $script:ProjectRoot `
+            -PassThru
+    }
 
     if ($null -eq $process) {
         throw "Failed to start process: $FilePath"
@@ -5552,16 +5560,23 @@ function Invoke-VisibleNativeProcessAndWait {
 function Start-NativeProcessBackground {
     param(
         [string]$FilePath,
-        [string[]]$Arguments
+        [string[]]$Arguments,
+        [switch]$Visible
     )
 
     $argumentLine = Join-NativeCommandLineArguments -Arguments $Arguments
-    $process = Start-Process `
-        -FilePath $FilePath `
-        -ArgumentList $argumentLine `
-        -WorkingDirectory $script:ProjectRoot `
-        -WindowStyle Hidden `
-        -PassThru
+    $startParameters = @{
+        FilePath = $FilePath
+        ArgumentList = $argumentLine
+        WorkingDirectory = $script:ProjectRoot
+        PassThru = $true
+    }
+    if (-not $Visible) {
+        $startParameters["WindowStyle"] = "Hidden"
+    }
+    $process = Invoke-OneCSessionProcessStart -StartProcess {
+        Start-Process @startParameters
+    }
 
     if ($null -eq $process) {
         throw "Failed to start process: $FilePath"
@@ -5792,15 +5807,23 @@ function Invoke-Designer {
         $timeoutCleanupState.processIds = @($cleanup.processIds)
         $timeoutCleanupState.error = [string]$cleanup.error
     }
-    $result = Invoke-NativeProcessAndWaitResult `
-        -FilePath $platformPath `
-        -Arguments $args `
-        -TimeoutSeconds $completionTimeoutSeconds `
-        -OnTimeout $timeoutCleanup `
-        -CompletionProbe $completionProbe `
-        -CompletionGraceSeconds $completionGraceSeconds `
-        -PostExitProbeSeconds $postExitProbeSeconds `
-        -MaxWorkingSetMb $maxWorkingSetMb
+    $nativeArguments = @($args)
+    $result = Invoke-WithOneCSessionAdmissionContext `
+        -InfoBaseKind $InfoBaseKind `
+        -InfoBasePath $InfoBasePath `
+        -RequiredSessions 1 `
+        -Purpose "designer-$operationKind" `
+        -ScriptBlock {
+            Invoke-NativeProcessAndWaitResult `
+                -FilePath $platformPath `
+                -Arguments $nativeArguments `
+                -TimeoutSeconds $completionTimeoutSeconds `
+                -OnTimeout $timeoutCleanup `
+                -CompletionProbe $completionProbe `
+                -CompletionGraceSeconds $completionGraceSeconds `
+                -PostExitProbeSeconds $postExitProbeSeconds `
+                -MaxWorkingSetMb $maxWorkingSetMb
+        }
     if ($result.memoryMonitorFailed) {
         $detail = (([string]$result.memoryMonitorError + " " + [string]$result.terminationError).Trim() -replace '[\r\n]+', ' ')
         throw "DESIGNER_MEMORY_MONITOR_FAILED pid=$($result.processId) limitMb=$maxWorkingSetMb peakWorkingSetMb=$($result.peakWorkingSetMb) terminationConfirmed=$($result.terminationConfirmed) log=$logPath detail='$detail'"
@@ -5886,7 +5909,15 @@ function Invoke-DesignerInteractive {
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
 
-    $exitCode = Invoke-VisibleNativeProcessAndWait -FilePath $platformPath -Arguments $args
+    $nativeArguments = @($args)
+    $exitCode = Invoke-WithOneCSessionAdmissionContext `
+        -InfoBaseKind $InfoBaseKind `
+        -InfoBasePath $InfoBasePath `
+        -RequiredSessions 1 `
+        -Purpose "designer-interactive" `
+        -ScriptBlock {
+            Invoke-VisibleNativeProcessAndWait -FilePath $platformPath -Arguments $nativeArguments
+        }
     if ($exitCode -ne 0) {
         throw "1C Designer failed with exit code $exitCode. Log: $logPath"
     }
@@ -5940,7 +5971,13 @@ function Start-EnterpriseBackground {
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
 
-    $process = Start-NativeProcessBackground -FilePath $platformPath -Arguments $args
+    $process = Start-OneCProcessBackground `
+        -FilePath $platformPath `
+        -Arguments $args `
+        -InfoBaseKind $InfoBaseKind `
+        -InfoBasePath $InfoBasePath `
+        -RequiredSessions 1 `
+        -Purpose $(if ($UseTestManager) { "test-manager" } elseif ($UseTestClient) { "test-client" } else { "enterprise-background" })
     return [pscustomobject]@{
         process = $process
         logPath = $logPath
@@ -5961,6 +5998,7 @@ function Invoke-Enterprise {
         [scriptblock]$OnTimeout = $null,
         [scriptblock]$CompletionProbe = $null,
         [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10,
+        [ValidateRange(0, 64)][int]$ExpectedSessionCount = 0,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
     )
@@ -5991,14 +6029,30 @@ function Invoke-Enterprise {
     Write-Host "1C log: $logPath"
 
     $postExitProbeSeconds = if ($null -ne $CompletionProbe) { Get-CompletionPostExitTimeoutSeconds } else { 0 }
-    $result = Invoke-NativeProcessAndWaitResult `
-        -FilePath $platformPath `
-        -Arguments $args `
-        -TimeoutSeconds $TimeoutSeconds `
-        -OnTimeout $OnTimeout `
-        -CompletionProbe $CompletionProbe `
-        -CompletionGraceSeconds $CompletionGraceSeconds `
-        -PostExitProbeSeconds $postExitProbeSeconds
+    $requiredSessions = if ($ExpectedSessionCount -gt 0) {
+        $ExpectedSessionCount
+    } elseif ($effectiveTestClientPort -gt 0) {
+        2
+    } else {
+        1
+    }
+    $nativeArguments = @($args)
+    $result = Invoke-WithOneCSessionAdmissionContext `
+        -InfoBaseKind $InfoBaseKind `
+        -InfoBasePath $InfoBasePath `
+        -RequiredSessions $requiredSessions `
+        -ExpectedChildRole $(if ($effectiveTestClientPort -gt 0) { "test-client" } else { "" }) `
+        -Purpose $(if ($effectiveTestClientPort -gt 0) { "test-manager-run" } else { "enterprise-run" }) `
+        -ScriptBlock {
+            Invoke-NativeProcessAndWaitResult `
+                -FilePath $platformPath `
+                -Arguments $nativeArguments `
+                -TimeoutSeconds $TimeoutSeconds `
+                -OnTimeout $OnTimeout `
+                -CompletionProbe $CompletionProbe `
+                -CompletionGraceSeconds $CompletionGraceSeconds `
+                -PostExitProbeSeconds $postExitProbeSeconds
+        }
     if ($result.timedOut) {
         throw "1C Enterprise timed out after $TimeoutSeconds seconds. PID: $($result.processId). Log: $logPath"
     }
