@@ -166,6 +166,10 @@ The runner checkpoints `seed-parallel`, `config-cadence`, `config-roundtrip`, `e
 `ondemand-mcp`, verification refresh and `result-cleanup` under the ignored branch-local
 `.agent-1c/runs/release-e2e/<branch>/` directory. Baseline and post-config `.dt`
 snapshots, state, `.dev.env`, evidence and expected HEAD are SHA-checked.
+The two-instance Vanessa UI probe keeps both facade/TestManager backends live but
+closes each managed TestClient after its smoke before starting the next one. This
+preserves backend-isolation proof while staying within the three-session ceiling
+of a developer license (`2 x TESTMANAGER + 1 x TESTCLIENT`).
 Checkpoint v2 records fingerprints, proof/current-run durations and attempts.
 `Auto` resumes the same release and keeps cross-release capability evidence only
 when every input fingerprint matches. A cross-release reuse still executes a

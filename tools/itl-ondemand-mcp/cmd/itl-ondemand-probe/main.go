@@ -471,6 +471,13 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 	if result == nil || result.IsError || len(result.Content) == 0 {
 		return "", nil, fmt.Errorf("Vanessa smoke screenshot returned no content: %#v", result)
 	}
+	result, err = callInnerTool(ctx, session, "close_test_client", map[string]any{})
+	if err != nil {
+		return "", nil, fmt.Errorf("Vanessa smoke close_test_client: %w", err)
+	}
+	if result == nil || result.IsError {
+		return "", nil, fmt.Errorf("Vanessa smoke close_test_client returned a tool error: %#v", result)
+	}
 	return "passed", errorCodes, nil
 }
 
