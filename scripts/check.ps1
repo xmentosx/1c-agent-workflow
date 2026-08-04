@@ -95,6 +95,7 @@ $existingQualification = $null
 $parallelCompatibility = $null
 $releaseContextPath = ""
 $releaseContext = $null
+$releaseDevelopProof = $null
 
 function Add-StageResult {
     param(
@@ -490,6 +491,10 @@ try {
     if ($sourceIsLocal) {
         try { $aiRulesRelease = Get-LocalForkRelease -SourceRoot ([System.IO.Path]::GetFullPath($resolvedAiRulesSource)) } catch { if ($effectiveMode -eq "Release") { throw } }
     }
+    if ($effectiveMode -eq "Release") {
+        $releaseDevelopProof = Test-DevelopQualification -Commit $commit -Tree $tree
+        if (-not $releaseDevelopProof) { throw "Release requires a reusable Develop qualification for the exact candidate tree. Run Develop once before Release." }
+    }
 
     $trackedBefore = @(& git status --porcelain --untracked-files=no)
     Invoke-GateStage -Name "git-diff-check" -Reason "always-run preflight" -Body {
@@ -666,8 +671,6 @@ try {
     }
 
     if ($effectiveMode -eq "Release") {
-        $developProof = Test-DevelopQualification -Commit $commit -Tree $tree
-        if (-not $developProof) { throw "Release requires a reusable Develop qualification for the exact candidate tree. Run Develop once before Release." }
         Add-ReusedStage -Name "develop-e2e" -Reason "exact or ancestor same-tree Develop qualification" -Detail $developQualificationFullPath
         Invoke-GateStage -Name "ondemand-mcp-catalogs" -Reason "real backend catalogs are mandatory for release" -Detail "assets/ondemand-mcp/compatibility.json" -Body {
             $compatibilityPath = Join-Path $repoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json"

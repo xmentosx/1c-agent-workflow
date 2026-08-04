@@ -58,6 +58,9 @@ Describe "Local quality gate contract" {
         $check | Should -Match 'itl-workflow-develop-qualification'
         $check | Should -Match 'Test-DevelopQualification'
         $check | Should -Match 'Write-DevelopQualification'
+        $developProofIndex = $check.IndexOf('$releaseDevelopProof = Test-DevelopQualification', [StringComparison]::Ordinal)
+        $fullRewriteIndex = $check.IndexOf('$existingQualification = Write-WorkflowQualification', [StringComparison]::Ordinal)
+        $developProofIndex | Should -BeGreaterThan -1; $fullRewriteIndex | Should -BeGreaterThan $developProofIndex
         $check | Should -Match 'Add-ReusedStage -Name "develop-e2e"'
         $check | Should -Match 'Test-HasExactInventory'
         $check | Should -Match 'static-tracked-state'; $check | Should -Match ([regex]::Escape("-split ','"))
