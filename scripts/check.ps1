@@ -193,16 +193,29 @@ function Wait-PowerShellChildProcess {
     $remainingOverallSeconds = [Math]::Max(1, $modeHardBudgetSeconds - [int][Math]::Ceiling($overallStopwatch.Elapsed.TotalSeconds))
     $effectiveTimeoutSeconds = [Math]::Min($TimeoutSeconds, $remainingOverallSeconds)
     $lastLength = -1L
+    $lastWriteTicks = -1L
     while (-not $process.WaitForExit(5000)) {
         $now = [DateTime]::UtcNow
         $length = 0L
+        $latestWriteTicks = 0L
         foreach ($path in @($Child.stdoutPath, $Child.stderrPath) + @($ProgressPaths)) {
-            if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) { $length += (Get-Item -LiteralPath $path).Length }
+            if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) {
+                $item = Get-Item -LiteralPath $path
+                $length += $item.Length
+                $latestWriteTicks = [Math]::Max($latestWriteTicks, $item.LastWriteTimeUtc.Ticks)
+            }
             elseif (Test-Path -LiteralPath $path -PathType Container -ErrorAction SilentlyContinue) {
-                $length += [int64](Get-ChildItem -LiteralPath $path -File -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+                foreach ($item in @(Get-ChildItem -LiteralPath $path -File -Recurse -ErrorAction SilentlyContinue)) {
+                    $length += $item.Length
+                    $latestWriteTicks = [Math]::Max($latestWriteTicks, $item.LastWriteTimeUtc.Ticks)
+                }
             }
         }
-        if ($length -ne $lastLength) { $lastLength = $length; $lastProgress = $now }
+        if ($length -ne $lastLength -or $latestWriteTicks -ne $lastWriteTicks) {
+            $lastLength = $length
+            $lastWriteTicks = $latestWriteTicks
+            $lastProgress = $now
+        }
         $elapsedSeconds = [int]($now - $started).TotalSeconds
         $idleSeconds = [int]($now - $lastProgress).TotalSeconds
         if ($elapsedSeconds -ge $effectiveTimeoutSeconds -or ($NoProgressSeconds -gt 0 -and $idleSeconds -ge $NoProgressSeconds)) {
@@ -696,7 +709,8 @@ try {
         $releaseHelperPath = Join-Path $repoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
         Invoke-GateStage -Name "release-e2e" -Reason "always-run release runtime proof" -Detail $e2eReportPath -Body {
             $releaseRulesSource = $(if ($forkSourceRoot) { $forkSourceRoot } elseif ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
-            Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments @("-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode) -TimeoutSeconds 7200 -NoProgressSeconds 900 -LogName "release-e2e"
+            $releaseProgressPaths = @($outputRoot, (Join-Path ([IO.Path]::GetFullPath($E2EProjectRoot)) ".agent-1c\locks"))
+            Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments @("-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode) -TimeoutSeconds 7200 -NoProgressSeconds 900 -ProgressPaths $releaseProgressPaths -LogName "release-e2e"
             if (-not (Test-Path -LiteralPath $e2eReportPath -PathType Leaf)) { throw "Release E2E summary was not created: $e2eReportPath" }
             $e2eSummary = Get-Content -LiteralPath $e2eReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ([int]$e2eSummary.schemaVersion -ne 3) { throw "Release E2E summary schema must be 3; actual: $($e2eSummary.schemaVersion)." }
