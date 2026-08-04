@@ -170,6 +170,9 @@ The two-instance Vanessa UI probe keeps both facade/TestManager backends live bu
 closes each managed TestClient after its smoke before starting the next one. This
 preserves backend-isolation proof while staying within the three-session ceiling
 of a developer license (`2 x TESTMANAGER + 1 x TESTCLIENT`).
+Strict owned-process cleanup allows a bounded Windows exit-confirmation window
+after force-stop; a PID still alive at the deadline retains runtime state and
+leases and fails the release.
 Checkpoint v2 records fingerprints, proof/current-run durations and attempts.
 `Auto` resumes the same release and keeps cross-release capability evidence only
 when every input fingerprint matches. A cross-release reuse still executes a

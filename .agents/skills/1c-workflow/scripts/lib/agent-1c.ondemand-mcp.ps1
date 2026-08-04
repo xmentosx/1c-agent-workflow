@@ -362,6 +362,21 @@ function Wait-ItlOnDemandTestClientPortReady {
     return $false
 }
 
+function Wait-ItlOnDemandProcessExit {
+    param(
+        [int]$ProcessId,
+        [int]$TimeoutSeconds = 15,
+        [int]$PollMilliseconds = 100
+    )
+    if ($ProcessId -le 0) { return $true }
+    $deadline = (Get-Date).AddSeconds([Math]::Max(0, $TimeoutSeconds))
+    do {
+        if ($null -eq (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) { return $true }
+        if ((Get-Date) -ge $deadline) { return $false }
+        Start-Sleep -Milliseconds ([Math]::Max(1, $PollMilliseconds))
+    } while ($true)
+}
+
 function Read-ItlOnDemandRuntimeState {
     param([string]$Family, [string]$InstanceId)
     $path = Get-ItlOnDemandRuntimePath -Family $Family -InstanceId $InstanceId
@@ -524,13 +539,12 @@ function Stop-ItlOnDemandBackendInstance {
         if ($ownedManager) {
             Stop-Process -Id ([int]$runtimeState.pid) -Force -ErrorAction SilentlyContinue
         }
-        if ($ownedManager -or $ownedChildren.Count -gt 0) { Start-Sleep -Milliseconds 500 }
         foreach ($child in $ownedChildren) {
-            if ($null -ne (Get-Process -Id $child.process.Id -ErrorAction SilentlyContinue)) {
+            if (-not (Wait-ItlOnDemandProcessExit -ProcessId $child.process.Id -TimeoutSeconds 15)) {
                 throw "ITL_ONDEMAND_STOP_FAILED: owned TestClient PID $($child.process.Id) is still running; leases were retained."
             }
         }
-        if ($ownedManager -and $null -ne (Get-Process -Id ([int]$runtimeState.pid) -ErrorAction SilentlyContinue)) {
+        if ($ownedManager -and -not (Wait-ItlOnDemandProcessExit -ProcessId ([int]$runtimeState.pid) -TimeoutSeconds 15)) {
             throw "ITL_ONDEMAND_STOP_FAILED: owned backend PID $($runtimeState.pid) is still running; leases were retained."
         }
         $backendPort = ConvertTo-IntOrDefault -Value (Get-ConfigValueFromObject -Object $runtimeState -Path "port" -Default 0) -Default 0

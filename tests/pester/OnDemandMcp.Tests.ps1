@@ -1098,6 +1098,35 @@ Describe "ITL on-demand MCP facade" {
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "waits for a strictly owned process to finish exiting after force stop" {
+        $result = & {
+            . $HelperPath -ProjectRoot $TestDrive -Action help *> $null
+            $script:ProcessChecks = 0
+            function Get-Process {
+                param([int]$Id, [object]$ErrorAction)
+                $script:ProcessChecks++
+                if ($script:ProcessChecks -lt 3) { return [pscustomobject]@{ Id = $Id } }
+                return $null
+            }
+            function Start-Sleep { param([int]$Milliseconds) }
+            [pscustomobject]@{
+                exited = Wait-ItlOnDemandProcessExit -ProcessId 42001 -TimeoutSeconds 1 -PollMilliseconds 1
+                checks = $script:ProcessChecks
+            }
+        }
+        $result.exited | Should -BeTrue
+        $result.checks | Should -Be 3
+    }
+
+    It "fails closed when a strictly owned process remains alive through the exit deadline" {
+        $result = & {
+            . $HelperPath -ProjectRoot $TestDrive -Action help *> $null
+            function Get-Process { param([int]$Id, [object]$ErrorAction); return [pscustomobject]@{ Id = $Id } }
+            Wait-ItlOnDemandProcessExit -ProcessId 42002 -TimeoutSeconds 0 -PollMilliseconds 1
+        }
+        $result | Should -BeFalse
+    }
+
     It "isolates on-demand lease tokens from branch leases and rejects ABA replacement cleanup" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-lease-token-" + [guid]::NewGuid().ToString("N"))
         $oldRegistryHome = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", "Process")
