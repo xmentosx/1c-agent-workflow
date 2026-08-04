@@ -185,10 +185,23 @@ function Install-ItlOnDemandMcp {
     # canonical source-build location as usable only when its bytes match the
     # dependency lock, so candidates can qualify a not-yet-published release
     # without trusting an arbitrary local executable.
-    $sourceBuild = Join-Path $sourceRepositoryRoot "tools\itl-ondemand-mcp\build\itl-ondemand-mcp-windows-amd64.exe"
+    $sourceBuildOverride = [Environment]::GetEnvironmentVariable("ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE", "Process")
+    if (-not [string]::IsNullOrWhiteSpace($sourceBuildOverride)) {
+        try { $sourceBuild = [System.IO.Path]::GetFullPath($sourceBuildOverride) } catch {
+            throw "ITL_ONDEMAND_SOURCE_BUILD_PATH_INVALID: '$sourceBuildOverride'."
+        }
+        if (-not (Test-Path -LiteralPath $sourceBuild -PathType Leaf)) {
+            throw "ITL_ONDEMAND_SOURCE_BUILD_MISSING: $sourceBuild"
+        }
+    } else {
+        $sourceBuild = Join-Path $sourceRepositoryRoot "tools\itl-ondemand-mcp\build\itl-ondemand-mcp-windows-amd64.exe"
+    }
     if ($sourceBuild -and (Test-Path -LiteralPath $sourceBuild -PathType Leaf) -and $sha256) {
         $sourceHash = (Get-FileHash -LiteralPath $sourceBuild -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($sourceHash -cne $sha256.ToLowerInvariant()) {
+            if (-not [string]::IsNullOrWhiteSpace($sourceBuildOverride)) {
+                throw "ITL_ONDEMAND_SOURCE_BUILD_SHA256_MISMATCH: expected='$($sha256.ToLowerInvariant())' actual='$sourceHash' path='$sourceBuild'."
+            }
             $sourceBuild = ""
         }
     }

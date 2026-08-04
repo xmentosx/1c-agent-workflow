@@ -27,6 +27,15 @@ $freshRoot = ""
 $freshBranchRoot = ""
 $candidateCommit = (& git -C $CandidateRoot rev-parse HEAD).Trim()
 $candidateTree = (& git -C $CandidateRoot rev-parse 'HEAD^{tree}').Trim()
+$onDemandSourceBuild = & (Join-Path $CandidateRoot "scripts\Build-ItlOnDemandMcp.ps1") -SkipTests
+$onDemandLock = (
+    Get-Content -LiteralPath (Join-Path $CandidateRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 |
+        ConvertFrom-Json
+).dependencies.itlOndemandMcp
+if ([string]$onDemandSourceBuild.sha256 -cne ([string]$onDemandLock.sha256).ToLowerInvariant()) {
+    throw "DEVELOP_E2E_ONDEMAND_SOURCE_BUILD_MISMATCH: expected='$(([string]$onDemandLock.sha256).ToLowerInvariant())' actual='$([string]$onDemandSourceBuild.sha256)'."
+}
+$env:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE = [string]$onDemandSourceBuild.path
 . (Join-Path $PSScriptRoot "develop-e2e-cleanup.ps1")
 
 function ConvertTo-DevelopProcessArgument {

@@ -722,6 +722,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $previousRepo = $env:ITL_WORKFLOW_REPO
         $previousRef = $env:ITL_WORKFLOW_REF
         $previousVanessaSourceBuild = $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE
+        $previousOnDemandSourceBuild = $env:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE
         $qualifiedVanessaSourceBuild = if ([string]::IsNullOrWhiteSpace($previousVanessaSourceBuild)) {
             Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.28-itl-r4\vanessa-automation-single.1.2.043.28-itl-r4.zip"
         } else {
@@ -731,10 +732,16 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 |
                 ConvertFrom-Json
         ).dependencies.vanessaAutomation.sha256
+        $qualifiedOnDemandSourceBuild = & (Join-Path $RepoRoot "scripts\Build-ItlOnDemandMcp.ps1") -SkipTests
+        $qualifiedOnDemandSourceBuildSha = (
+            Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 |
+                ConvertFrom-Json
+        ).dependencies.itlOndemandMcp.sha256
 
         try {
             (Test-Path -LiteralPath $qualifiedVanessaSourceBuild -PathType Leaf) | Should -BeTrue
             (Get-FileHash -LiteralPath $qualifiedVanessaSourceBuild -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $qualifiedVanessaSourceBuildSha
+            $qualifiedOnDemandSourceBuild.sha256 | Should -Be $qualifiedOnDemandSourceBuildSha
             New-Item -ItemType Directory -Force -Path $projectRoot | Out-Null
             New-Item -ItemType Directory -Force -Path `
                 (Join-Path $projectRoot ".agents\skills\1c-workflow"),
@@ -807,6 +814,7 @@ local after
             $env:ITL_WORKFLOW_REPO = ""
             $env:ITL_WORKFLOW_REF = ""
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $qualifiedVanessaSourceBuild
+            $env:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE = [string]$qualifiedOnDemandSourceBuild.path
             & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $projectRoot -Action update-workflow -SkipAiRules > $stdoutPath 2> $stderrPath
             $diagnostic = ((Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue) + [Environment]::NewLine + (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue))
             $LASTEXITCODE | Should -Be 0 -Because $diagnostic
@@ -894,6 +902,7 @@ local after
             $env:ITL_WORKFLOW_REPO = $previousRepo
             $env:ITL_WORKFLOW_REF = $previousRef
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $previousVanessaSourceBuild
+            $env:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE = $previousOnDemandSourceBuild
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force
             }
