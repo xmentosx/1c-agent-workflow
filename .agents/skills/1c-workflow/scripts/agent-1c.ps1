@@ -400,7 +400,7 @@ try {
         "vibecoding1c-mcp-rotate-keys" { Rotate-Vibecoding1cMcpKeys }
         "vibecoding1c-mcp-ensure-model" { Ensure-Vibecoding1cMcpModel | Out-Null }
         "vibecoding1c-mcp-write-client-config" { Write-Vibecoding1cMcpClientConfig }
-        "update-workflow" { Update-WorkflowPackage; Install-ItlUiTools -BestEffort; Sync-ItlClientSurface; Sync-ItlClientUserEnvironment -Client (Get-ItlActiveClient) }
+        "update-workflow" { Update-WorkflowPackage }
         "update-ai-rules" { Update-AiRules1c }
         "itl-litemode" { Set-ItlLiteMode -Mode $Mode }
         "itl-switch-client" { Switch-ItlClient -Client $Client; Sync-ItlClientSurface; Sync-ItlClientUserEnvironment -Client (Get-ItlActiveClient) }

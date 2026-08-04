@@ -495,6 +495,8 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
     }
 
     It "wires ITL workflow package update through the helper and advanced docs" {
+        $agentEntrypointText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1") -Raw -Encoding UTF8
+        $lifecycleText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
         $HelperText | Should -Match ([regex]::Escape('"update-workflow"'))
         $HelperText | Should -Match "function Update-WorkflowPackage"
         $HelperText | Should -Match "ITL_WORKFLOW_SOURCE_PATH"
@@ -509,6 +511,9 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Match "Update-UserRules"
         $HelperText | Should -Match "Assert-WorkflowPackageUpdateContext"
         $HelperText | Should -Match "Assert-WorkflowTrackedGitClean"
+        $agentEntrypointText | Should -Match '"update-workflow"\s*\{\s*Update-WorkflowPackage\s*\}'
+        $lifecycleText.IndexOf("Install-ItlUiTools -BestEffort") | Should -BeLessThan $lifecycleText.IndexOf('$commitResult = Commit-WorkflowUpdate')
+        $lifecycleText.IndexOf("Sync-ItlClientSurface") | Should -BeLessThan $lifecycleText.IndexOf('$commitResult = Commit-WorkflowUpdate')
         $HelperText | Should -Match "function Write-PostInitClientReloadHandoff"
         $HelperText | Should -Match ([regex]::Escape("В окне Kilo Code"))
         $HelperText | Should -Match ([regex]::Escape("выполните /reload"))
@@ -1483,6 +1488,10 @@ exit 0
                 function Sync-ItlOnDemandMcpDependencyLock { $script:postCalls++; $script:syncOrder = $script:postCalls }
                 function Install-ItlOnDemandMcp { $script:postCalls++; $script:installOrder = $script:postCalls }
                 function Invoke-AiRulesBaselineMigration { [pscustomobject]@{ migrated = $true; suppressRegularUpdate = $true } }
+                function Install-ItlUiTools { $script:postCalls++ }
+                function Sync-ItlClientSurface { $script:postCalls++ }
+                function Get-ItlActiveClient { "kilocode" }
+                function Sync-ItlClientUserEnvironment { param([string]$Client); $script:postCalls++ }
                 function Get-AiRules1cManifestFileEntries { @() }
                 function Commit-WorkflowUpdate { [pscustomobject]@{ created = $false; commit = "project-commit"; message = "" } }
                 function Write-WorkflowUpdateFollowUp { param([object]$Source,[object]$CommitResult); $script:postCalls++ }

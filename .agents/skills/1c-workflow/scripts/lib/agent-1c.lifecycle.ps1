@@ -3513,6 +3513,13 @@ function Update-WorkflowPackage {
         }
     }
 
+    # These actions can materialize tracked client/tool files. Keep them inside
+    # the update transaction so the allowlist, commit, and final clean check own
+    # every write performed by update-workflow.
+    Install-ItlUiTools -BestEffort
+    Sync-ItlClientSurface
+    Sync-ItlClientUserEnvironment -Client (Get-ItlActiveClient)
+
     $workflowLock = ConvertTo-Agent1cHashtable -Object (Read-DependencyLockManifest)
     $workflowDependencies = ConvertTo-Agent1cHashtable -Object $workflowLock["dependencies"]
     $workflowEntry = ConvertTo-Agent1cHashtable -Object $workflowDependencies["workflowPackage"]
