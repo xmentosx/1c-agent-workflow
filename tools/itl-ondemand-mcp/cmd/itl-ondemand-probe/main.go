@@ -283,9 +283,19 @@ func keepSessionsAlive(ctx context.Context, sessions []*probeSession, idleTimeou
 }
 
 func callInnerTool(ctx context.Context, session *mcp.ClientSession, name string, arguments any) (*mcp.CallToolResult, error) {
+	encoded, err := json.Marshal(arguments)
+	if err != nil {
+		return nil, fmt.Errorf("encode inner tool arguments: %w", err)
+	}
+	gatewayArguments := map[string]any{"name": name}
+	if string(encoded) == "{}" || string(encoded) == "null" {
+		gatewayArguments["arguments"] = map[string]any{}
+	} else {
+		gatewayArguments["argumentsJson"] = string(encoded)
+	}
 	return session.CallTool(ctx, &mcp.CallToolParams{
 		Name:      gatewayCallTool,
-		Arguments: map[string]any{"name": name, "arguments": arguments},
+		Arguments: gatewayArguments,
 	})
 }
 

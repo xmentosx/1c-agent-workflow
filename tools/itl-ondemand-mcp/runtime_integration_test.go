@@ -637,6 +637,105 @@ func TestGatewayDefinitionsStayCompactAndDoNotEmbedInnerCatalog(t *testing.T) {
 	}
 }
 
+func TestGatewayCallSchemaPublishesOpenObjectAndStringFallback(t *testing.T) {
+	definition := gatewayCallDefinition("roctup")
+	root, ok := definition.InputSchema.(map[string]any)
+	if !ok || root["additionalProperties"] != false {
+		t.Fatalf("unexpected gateway root schema: %#v", definition.InputSchema)
+	}
+	properties, ok := root["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("gateway properties missing: %#v", root)
+	}
+	arguments, ok := properties["arguments"].(map[string]any)
+	if !ok || arguments["type"] != "object" || arguments["additionalProperties"] != true {
+		t.Fatalf("generic arguments schema is not explicitly open: %#v", arguments)
+	}
+	argumentsJSON, ok := properties["argumentsJson"].(map[string]any)
+	if !ok || argumentsJSON["type"] != "string" || argumentsJSON["maxLength"] != gatewayArgumentsJSONMaxBytes {
+		t.Fatalf("argumentsJson schema is incomplete: %#v", argumentsJSON)
+	}
+}
+
+func TestGatewayArgumentsJSONPreservesNestedValuesThroughBackend(t *testing.T) {
+	complexSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"query":          map[string]any{"type": "string"},
+			"limit":          map[string]any{"type": "integer"},
+			"params":         map[string]any{"type": "object"},
+			"sections":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"include_schema": map[string]any{"type": "boolean"},
+		},
+		"required": []any{"query"},
+	}
+	tools := []*mcp.Tool{{Name: "execute_query", Description: "execute", InputSchema: complexSchema}}
+	var captured map[string]any
+	server := mcp.NewServer(&mcp.Implementation{Name: "fake-roctup", Version: "1"}, nil)
+	server.AddTool(tools[0], func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if err := json.Unmarshal(req.Params.Arguments, &captured); err != nil {
+			t.Fatalf("decode backend arguments: %v", err)
+		}
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "execute_query"}}}, nil
+	})
+	backend := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
+	t.Cleanup(backend.Close)
+	broker := &fakeBroker{info: &backendInfo{URL: backend.URL, BackendVersion: "test"}}
+	_, session := newGatewayFacadeSession(t, "roctup", tools, broker, nil)
+
+	argumentsJSON := `{"query":"ВЫБРАТЬ ПЕРВЫЕ 10 Пользователи.Наименование ИЗ Справочник.Пользователи КАК Пользователи","limit":10,"params":{"Пользователь":{"_objectRef":true,"УникальныйИдентификатор":"00000000-0000-0000-0000-000000000001","ТипОбъекта":"СправочникСсылка.Пользователи"}},"sections":["properties"],"include_schema":true}`
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayCallTool, Arguments: map[string]any{
+		"name": "execute_query", "argumentsJson": argumentsJSON,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError || resultText(result) != "execute_query" {
+		t.Fatalf("argumentsJson call failed: %#v", result)
+	}
+	encoded, _ := json.Marshal(captured)
+	for _, fragment := range []string{
+		`"query":"ВЫБРАТЬ ПЕРВЫЕ 10 Пользователи.Наименование ИЗ Справочник.Пользователи КАК Пользователи"`,
+		`"limit":10`, `"_objectRef":true`, `"sections":["properties"]`, `"include_schema":true`,
+	} {
+		if !strings.Contains(string(encoded), fragment) {
+			t.Fatalf("backend arguments lost %s: %s", fragment, encoded)
+		}
+	}
+	if ensures, _ := broker.counts(); ensures != 1 {
+		t.Fatalf("argumentsJson ensure count=%d", ensures)
+	}
+}
+
+func TestGatewayRejectsAmbiguousOrInvalidArgumentsJSONBeforeStartup(t *testing.T) {
+	broker := &fakeBroker{info: &backendInfo{}}
+	_, session := newGatewayFacadeSession(t, "roctup", integrationTools(), broker, nil)
+	for _, test := range []struct {
+		name      string
+		arguments map[string]any
+	}{
+		{name: "both forms", arguments: map[string]any{"name": "echo", "arguments": map[string]any{"value": "x"}, "argumentsJson": `{"value":"x"}`}},
+		{name: "invalid json", arguments: map[string]any{"name": "echo", "argumentsJson": `{"value":`}},
+		{name: "array root", arguments: map[string]any{"name": "echo", "argumentsJson": `["x"]`}},
+		{name: "null root", arguments: map[string]any{"name": "echo", "argumentsJson": `null`}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayCallTool, Arguments: test.arguments})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertToolErrorCode(t, result, "ITL_ONDEMAND_GATEWAY_ARGUMENTS_INVALID")
+		})
+	}
+	tooLarge := strings.Repeat("x", gatewayArgumentsJSONMaxBytes+1)
+	if _, err := decodeGatewayCallInnerArguments(gatewayCallArguments{ArgumentsJSON: &tooLarge}); err == nil {
+		t.Fatal("oversized argumentsJson was accepted")
+	}
+	if ensures, _ := broker.counts(); ensures != 0 {
+		t.Fatalf("invalid gateway arguments started backend: %d", ensures)
+	}
+}
+
 func TestGatewayValidatesBeforeStartupAndForwardsExactTool(t *testing.T) {
 	tools := integrationTools()
 	_, backend := newBackend(t, tools, false)
@@ -650,6 +749,14 @@ func TestGatewayValidatesBeforeStartupAndForwardsExactTool(t *testing.T) {
 	assertToolErrorCode(t, invalid, "ITL_ONDEMAND_ARGUMENTS_INVALID")
 	if ensures, _ := broker.counts(); ensures != 0 {
 		t.Fatalf("invalid inner arguments started backend: %d", ensures)
+	}
+	invalidJSON, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayCallTool, Arguments: map[string]any{"name": "echo", "argumentsJson": `{}`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertToolErrorCode(t, invalidJSON, "ITL_ONDEMAND_ARGUMENTS_INVALID")
+	if ensures, _ := broker.counts(); ensures != 0 {
+		t.Fatalf("invalid JSON-encoded inner arguments started backend: %d", ensures)
 	}
 
 	valid, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayCallTool, Arguments: map[string]any{"name": "echo", "arguments": map[string]any{"value": "x"}}})

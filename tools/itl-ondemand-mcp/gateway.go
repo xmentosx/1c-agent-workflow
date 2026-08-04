@@ -13,15 +13,17 @@ import (
 )
 
 const (
-	gatewayResolveTool  = "resolve_tool"
-	gatewayCallTool     = "call_tool"
-	gatewayToolLimit    = 3
-	gatewaySummaryRunes = 240
+	gatewayResolveTool           = "resolve_tool"
+	gatewayCallTool              = "call_tool"
+	gatewayToolLimit             = 3
+	gatewaySummaryRunes          = 240
+	gatewayArgumentsJSONMaxBytes = 256 * 1024
 )
 
 type gatewayCallArguments struct {
-	Name      string `json:"name"`
-	Arguments any    `json:"arguments,omitempty"`
+	Name          string         `json:"name"`
+	Arguments     map[string]any `json:"arguments,omitempty"`
+	ArgumentsJSON *string        `json:"argumentsJson,omitempty"`
 }
 
 type gatewayResolveArguments struct {
@@ -50,10 +52,11 @@ func addGatewayTools(server *mcp.Server, rt *runtime) {
 		if input.Name == "" {
 			return toolError("ITL_ONDEMAND_GATEWAY_ARGUMENTS_INVALID", "name is required", nil), nil
 		}
-		if input.Arguments == nil {
-			input.Arguments = map[string]any{}
+		arguments, err := decodeGatewayCallInnerArguments(input)
+		if err != nil {
+			return toolError("ITL_ONDEMAND_GATEWAY_ARGUMENTS_INVALID", err.Error(), nil), nil
 		}
-		return rt.callNamed(ctx, req, input.Name, input.Arguments)
+		return rt.callNamed(ctx, req, input.Name, arguments)
 	})
 }
 
@@ -79,17 +82,47 @@ func gatewayBool(value bool) *bool { return &value }
 func gatewayCallDefinition(family string) *mcp.Tool {
 	return &mcp.Tool{
 		Name:        gatewayCallTool,
-		Description: "Call one verified inner " + family + " tool by exact name. Put only explicitly intended inner parameters in arguments; omit absent optional fields. The facade validates the inner schema before lazy backend startup and forwards the original result unchanged.",
+		Description: "Call one verified inner " + family + " tool by exact name. For a parameterized tool, put the exact JSON object in argumentsJson, for example {\"query\":\"...\",\"limit\":10}. Use arguments={} for a no-argument tool. Never send arguments and argumentsJson together. The facade parses and validates the verified inner schema before lazy backend startup.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"name":      map[string]any{"type": "string", "description": "Exact inner tool name returned by resolve_tool or named by the active ITL skill."},
-				"arguments": map[string]any{"type": "object", "description": "Inner tool arguments. Use an empty object for a no-argument tool."},
+				"name": map[string]any{"type": "string", "description": "Exact inner tool name returned by resolve_tool or named by the active ITL skill."},
+				"arguments": map[string]any{
+					"type": "object", "additionalProperties": true,
+					"description": "Backward-compatible inner argument object. Use an empty object for a no-argument tool; schema-restricting clients should use argumentsJson for parameterized calls.",
+				},
+				"argumentsJson": map[string]any{
+					"type": "string", "maxLength": gatewayArgumentsJSONMaxBytes,
+					"description": "JSON-encoded inner argument object for parameterized tools. Preserve exact property names and values; example: {\"query\":\"...\",\"limit\":10}.",
+				},
 			},
 			"required":             []any{"name"},
 			"additionalProperties": false,
 		},
 	}
+}
+
+func decodeGatewayCallInnerArguments(input gatewayCallArguments) (map[string]any, error) {
+	if input.Arguments != nil && input.ArgumentsJSON != nil {
+		return nil, fmt.Errorf("arguments and argumentsJson are mutually exclusive")
+	}
+	if input.ArgumentsJSON == nil {
+		if input.Arguments == nil {
+			return map[string]any{}, nil
+		}
+		return input.Arguments, nil
+	}
+	if len(*input.ArgumentsJSON) > gatewayArgumentsJSONMaxBytes {
+		return nil, fmt.Errorf("argumentsJson exceeds %d bytes", gatewayArgumentsJSONMaxBytes)
+	}
+	var arguments map[string]any
+	if err := json.Unmarshal([]byte(*input.ArgumentsJSON), &arguments); err != nil {
+		return nil, fmt.Errorf("decode argumentsJson: %w", err)
+	}
+	if arguments == nil {
+		return nil, fmt.Errorf("argumentsJson must encode a JSON object")
+	}
+	return arguments, nil
 }
 
 func decodeGatewayArguments(raw json.RawMessage, target any) error {
@@ -131,7 +164,7 @@ func resolveGatewayTool(catalog *loadedCatalog, family string, raw json.RawMessa
 	}
 	payload := map[string]any{
 		"family": family, "query": input.Query, "matched": len(resolutions), "tools": resolutions,
-		"next": "Call call_tool with the exact inner name and only explicitly intended arguments.",
+		"next": "Call call_tool with the exact inner name. Put parameterized input in argumentsJson as a JSON-encoded object; use arguments={} only for a no-argument tool.",
 	}
 	encoded, _ := json.Marshal(payload)
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(encoded)}}}

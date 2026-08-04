@@ -15,7 +15,7 @@ Use this skill when the agent needs to inspect data in the current `itldev/*` br
 
 ## Token Control
 
-- For known tools, skip discovery: call `call_tool` with the exact inner `name` and an `arguments` object containing only explicitly intended fields. Omit absent optional fields; use `{}` for a no-argument inner tool.
+- For known parameterized tools, skip discovery: call `call_tool` with the exact inner `name` and `argumentsJson` containing one JSON-encoded object with only explicitly intended fields. This string form preserves arbitrary inner property names across schema-restricting clients. Omit absent optional fields. For a no-argument inner tool, use `arguments={}` instead. Never send `arguments` and `argumentsJson` together.
 - Use `resolve_tool` once only when the inner tool name or exact schema is unknown. Its static catalog search does not start 1C.
 - Start with inner `get_metadata` using filters and a small `limit`.
 - Default `get_metadata.limit` to `50` or less.

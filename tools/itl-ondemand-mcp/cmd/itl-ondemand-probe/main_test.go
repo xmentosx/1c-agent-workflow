@@ -43,18 +43,28 @@ func newProbeGatewaySession(t *testing.T, handler func(string, map[string]any) *
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"name":      map[string]any{"type": "string"},
-				"arguments": map[string]any{"type": "object"},
+				"name":          map[string]any{"type": "string"},
+				"arguments":     map[string]any{"type": "object", "additionalProperties": true},
+				"argumentsJson": map[string]any{"type": "string"},
 			},
 			"required": []string{"name"},
 		},
 	}, func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var call struct {
-			Name      string         `json:"name"`
-			Arguments map[string]any `json:"arguments"`
+			Name          string         `json:"name"`
+			Arguments     map[string]any `json:"arguments"`
+			ArgumentsJSON string         `json:"argumentsJson"`
 		}
 		if err := json.Unmarshal(req.Params.Arguments, &call); err != nil {
 			t.Fatalf("decode gateway call: %v", err)
+		}
+		if call.ArgumentsJSON != "" {
+			if call.Arguments != nil {
+				t.Fatal("probe sent both arguments forms")
+			}
+			if err := json.Unmarshal([]byte(call.ArgumentsJSON), &call.Arguments); err != nil {
+				t.Fatalf("decode probe argumentsJson: %v", err)
+			}
 		}
 		return handler(call.Name, call.Arguments), nil
 	})
