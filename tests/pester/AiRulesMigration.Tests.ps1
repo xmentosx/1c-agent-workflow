@@ -197,7 +197,7 @@ Describe "ai_rules_1c migration planning" {
         }
     }
 
-    It "clears a USER-RULES marker when the ITL overlay replaced an exact legacy controlled-fork section" {
+    It "clears a USER-RULES marker from the exact controlled commit when the source checkout has client-pruned files" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-user-rules-controlled-" + [guid]::NewGuid().ToString("N"))
         $sourceRoot = "$tempRoot-source"
         try {
@@ -205,14 +205,17 @@ Describe "ai_rules_1c migration planning" {
             $prefix = "# User Rules`r`n`r`n## Migrated content from a previous setup`r`n`r`n<!-- start of migrated content -->`r`n<!-- end of migrated content -->`r`n`r`n"
             $legacySource = $prefix + "## ITL hard gates`r`n`r`n- Legacy managed rule.`r`n"
             [IO.File]::WriteAllText((Join-Path $sourceRoot "USER-RULES.md"), $legacySource, (New-Object Text.UTF8Encoding $false))
+            [IO.File]::WriteAllText((Join-Path $sourceRoot "unused-client-adapter.md"), "pruned after install`r`n", (New-Object Text.UTF8Encoding $false))
             & git -C $sourceRoot init *> $null
             & git -C $sourceRoot config user.email "test@example.com"
             & git -C $sourceRoot config user.name "Test User"
-            & git -C $sourceRoot add USER-RULES.md
+            & git -C $sourceRoot add USER-RULES.md unused-client-adapter.md
             & git -C $sourceRoot commit -m fixture *> $null
             & git -C $sourceRoot remote add origin "https://github.com/xmentosx/itl_ai_rules_1c.git"
             $currentCommit = (& git -C $sourceRoot rev-parse HEAD).Trim()
             $currentRef = "itl-main-fixture-r18"
+            Remove-Item -LiteralPath (Join-Path $sourceRoot "unused-client-adapter.md") -Force
+            (& git -C $sourceRoot status --short) | Should -Match "unused-client-adapter.md"
 
             New-AiRulesMigrationFixture -Root $tempRoot `
                 -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" -CurrentRef $currentRef `

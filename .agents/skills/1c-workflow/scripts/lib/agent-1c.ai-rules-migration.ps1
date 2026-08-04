@@ -205,21 +205,17 @@ function Test-AiRulesUserRulesMatchesControlledSourcePrefix {
     if ($LASTEXITCODE -ne 0 -or $sourceHead.Count -ne 1 -or [string]$sourceHead[0] -ne $currentCommit) {
         return $false
     }
-    $sourceStatus = @(& git -C $sourceRoot status --porcelain --untracked-files=no 2>$null)
-    if ($LASTEXITCODE -ne 0 -or $sourceStatus.Count -ne 0) {
-        return $false
-    }
     $sourceOrigin = @(& git -C $sourceRoot remote get-url origin 2>$null)
     if ($LASTEXITCODE -ne 0 -or $sourceOrigin.Count -ne 1 -or
         (Get-AiRules1cRepositoryIdentity -Repo ([string]$sourceOrigin[0])) -ne (Get-AiRules1cRepositoryIdentity -Repo $currentRepo)) {
         return $false
     }
 
-    $sourcePath = Join-Path $sourceRoot "USER-RULES.md"
-    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+    $sourceLines = @(& git -C $sourceRoot show "$currentCommit`:USER-RULES.md" 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $sourceLines.Count -eq 0) {
         return $false
     }
-    $sourceText = Read-Utf8Text -Path $sourcePath
+    $sourceText = $sourceLines -join "`n"
     $legacyHeadingMatches = [regex]::Matches($sourceText, '(?m)^## ITL hard gates\s*$')
     if ($legacyHeadingMatches.Count -ne 1) {
         return $false
