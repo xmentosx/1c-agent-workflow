@@ -38,8 +38,9 @@
         & git -C $root push -u origin develop *> $null
         $fakeGate = Join-Path $root "fake-gate.ps1"
         Set-Content -LiteralPath $fakeGate -Encoding UTF8 -Value @'
-param([string]$Mode, [string]$BaseRef, [string[]]$CoverageContract, [string]$AiRulesSource, [string]$E2EProjectRoot); $CoverageContract = @($CoverageContract -split ','); if ($CoverageContract -and @($CoverageContract).Count -ne 2) { exit 12 }
+param([string]$Mode, [string]$BaseRef, [string[]]$CoverageContract, [string]$AiRulesSource, [string]$E2EProjectRoot, [string]$ReleaseResumeMode); $CoverageContract = @($CoverageContract -split ','); if ($CoverageContract -and @($CoverageContract).Count -ne 2) { exit 12 }
 Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-modes.log') -Encoding UTF8 -Value $Mode
+if ($Mode -eq 'Release') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-release-resume.log') -Encoding UTF8 -Value $ReleaseResumeMode }
 if ($Mode -eq 'Develop') {
     $qualification = Join-Path (Get-Location) 'build\test-results\qualification'
     New-Item -ItemType Directory -Force -Path $qualification | Out-Null
@@ -53,7 +54,7 @@ exit 0
         & git -C $root add fake-gate.ps1
         & git -C $root commit -m "test: add gate" *> $null
         & git -C $root push origin develop *> $null
-        return [pscustomobject]@{ root = $root; remote = $remote; gate = $fakeGate; modeLog = (Join-Path $root 'build\gate-modes.log'); base = (& git -C $root rev-parse HEAD).Trim() }
+        return [pscustomobject]@{ root = $root; remote = $remote; gate = $fakeGate; modeLog = (Join-Path $root 'build\gate-modes.log'); releaseResumeLog = (Join-Path $root 'build\gate-release-resume.log'); base = (& git -C $root rev-parse HEAD).Trim() }
     }
     function Remove-DeliveryFixture {
         param([object]$Fixture)
@@ -149,14 +150,17 @@ Describe "Source develop queue and delivery" {
             (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Not -Be $candidate
             @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -Not -BeNullOrEmpty
             @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Develop", "Release")
+            @((Get-Content -LiteralPath $fixture.releaseResumeLog -Encoding UTF8)) | Should -Be @("Auto")
 
             Remove-Item -LiteralPath $fixture.modeLog -Force
+            Remove-Item -LiteralPath $fixture.releaseResumeLog -Force
             $env:ITL_TEST_FAIL_DELIVERY_RELEASE = "false"
-            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'))
+            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-ReleaseResumeMode", "Restart", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'))
             $payload = $published.stdout | ConvertFrom-Json
             $payload.releaseQualified | Should -BeTrue
             (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $candidate
             @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Release")
+            @((Get-Content -LiteralPath $fixture.releaseResumeLog -Encoding UTF8)) | Should -Be @("Restart")
         } finally {
             $env:ITL_TEST_FAIL_DELIVERY_RELEASE = $oldFailure
             Remove-DeliveryFixture -Fixture $fixture

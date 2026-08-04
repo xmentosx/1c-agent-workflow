@@ -12,6 +12,8 @@ param(
     [string]$E2EProjectRoot = "",
     [string]$GateScript = "",
     [string]$Version = "",
+    [ValidateSet("Auto", "Restart")]
+    [string]$ReleaseResumeMode = "Auto",
     [switch]$RequireRelease
 )
 
@@ -88,6 +90,7 @@ function Invoke-SourceGate {
     if ($contracts.Count -gt 0) { $arguments += @("-CoverageContract", ($contracts -join ",")) }
     if ($AiRulesSource) { $arguments += @("-AiRulesSource", ([System.IO.Path]::GetFullPath($AiRulesSource))) }
     if ($E2EProjectRoot) { $arguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot))) }
+    if ($Mode -eq "Release") { $arguments += @("-ReleaseResumeMode", $ReleaseResumeMode) }
     $quoted = @($arguments | ForEach-Object {
         $value = [string]$_
         if ($value -notmatch '[\s"]') { $value } else { '"' + $value.Replace('"', '\"') + '"' }
