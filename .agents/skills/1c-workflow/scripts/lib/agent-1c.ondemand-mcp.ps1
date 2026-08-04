@@ -181,10 +181,11 @@ function Install-ItlOnDemandMcp {
 
     # Source-repository development may use a locally built, SHA-verified artifact.
     $sourceRepositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $script:Agent1cScriptRoot "..\..\..\.."))
-    $sourceBuild = ""
-    if (Test-Path -LiteralPath (Join-Path $sourceRepositoryRoot ".git")) {
-        $sourceBuild = Join-Path $sourceRepositoryRoot "tools\itl-ondemand-mcp\build\itl-ondemand-mcp-windows-amd64.exe"
-    }
+    # Publication candidates are exported without Git metadata. Treat the
+    # canonical source-build location as usable only when its bytes match the
+    # dependency lock, so candidates can qualify a not-yet-published release
+    # without trusting an arbitrary local executable.
+    $sourceBuild = Join-Path $sourceRepositoryRoot "tools\itl-ondemand-mcp\build\itl-ondemand-mcp-windows-amd64.exe"
     if ($sourceBuild -and (Test-Path -LiteralPath $sourceBuild -PathType Leaf) -and $sha256) {
         $sourceHash = (Get-FileHash -LiteralPath $sourceBuild -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($sourceHash -cne $sha256.ToLowerInvariant()) {

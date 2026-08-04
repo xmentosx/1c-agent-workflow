@@ -310,6 +310,45 @@ Describe "ITL on-demand MCP facade" {
         }
     }
 
+    It "installs an exact source-build facade from a publication candidate without Git metadata" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-publication-candidate-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $skillRoot = Join-Path $tempRoot ".agents\skills\1c-workflow"
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow") -Destination $skillRoot -Recurse -Force
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
+
+            $sourceBuild = Join-Path $tempRoot "tools\itl-ondemand-mcp\build\itl-ondemand-mcp-windows-amd64.exe"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $sourceBuild) | Out-Null
+            $sourceBytes = [byte[]](8, 6, 7, 5, 3, 0, 9)
+            [IO.File]::WriteAllBytes($sourceBuild, $sourceBytes)
+            $sourceSha256 = (Get-FileHash -LiteralPath $sourceBuild -Algorithm SHA256).Hash.ToLowerInvariant()
+            $installedHelper = Join-Path $skillRoot "scripts\agent-1c.ps1"
+
+            $result = & {
+                . $installedHelper -ProjectRoot $tempRoot -Action help *> $null
+                $installRoot = Join-Path $tempRoot "localapp\ondemand"
+                function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
+                function Get-DependencyLockEntry {
+                    param([string]$Name)
+                    return [pscustomobject]@{
+                        version = "0.4.4"
+                        assetName = "itl-ondemand-mcp-windows-amd64.exe"
+                        url = "https://example.invalid/itl-ondemand-mcp.exe"
+                        sha256 = $sourceSha256
+                    }
+                }
+                Install-ItlOnDemandMcp
+            }
+
+            $result.sha256 | Should -Be $sourceSha256
+            [IO.File]::ReadAllBytes([string]$result.path) | Should -Be $sourceBytes
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".git")) | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "does not overwrite an identical source-build facade that another project is using" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-shared-binary-" + [guid]::NewGuid().ToString("N"))
         $handle = $null
