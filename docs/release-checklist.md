@@ -27,7 +27,7 @@ First publish and qualify the exact accumulated development candidate:
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r22-rebuild `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r23-rebuild `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
@@ -39,7 +39,7 @@ When that remote development commit is ready for the stable channel, run:
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action ReleaseMaster `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r22-rebuild `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r23-rebuild `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 

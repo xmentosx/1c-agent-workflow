@@ -748,6 +748,24 @@
                               "resultSha256":  "e7f781f96a6300b1396415db08fcd1045e0929057d9f21020191455202cffb94"
                           },
                           {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/form-add.ps1",
+                              "requirementId":  "ITL-LIFECYCLE-DB-001",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r23 repeatable form scaffold required by the workflow Release contract.",
+                              "upstreamSha256":  "624c47d16a7da73be3b99960bbf4eacd56f479d58612c62be9b02f32ecea9aed",
+                              "baselineSha256":  "624c47d16a7da73be3b99960bbf4eacd56f479d58612c62be9b02f32ecea9aed",
+                              "resultSha256":  "b821879f5f77575ec1868871803e3270117a7556dc6faf083cf6ca471dbd8a9d"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-template-manage/scripts/add-template.ps1",
+                              "requirementId":  "ITL-LIFECYCLE-DB-001",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r23 repeatable template scaffold required by the workflow Release contract.",
+                              "upstreamSha256":  "c5574ef66fde3d60a8c4fe09859a12b0fcd7417123a1fb75ce486da6321a7e83",
+                              "baselineSha256":  "c5574ef66fde3d60a8c4fe09859a12b0fcd7417123a1fb75ce486da6321a7e83",
+                              "resultSha256":  "cb894564e5daf821420cca43887e13e544ac00cd201891f942e25a306e6efd99"
+                          },
+                          {
                               "path":  "content/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-publish.ps1",
                               "requirementId":  "ITL-LIFECYCLE-DB-001",
                               "disposition":  "carry-forward",
@@ -809,6 +827,15 @@
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "\u003cabsent\u003e",
                               "resultSha256":  "0b1d214a3ffaf62e63fa2543d19b610b1f50d1d866a16aa8538097ab13ae70cf"
+                          },
+                          {
+                              "path":  "docs/releases/itl-main-410951e7-r23.md",
+                              "requirementId":  "ITL-INFRA-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Record the immutable r23 scope and qualification contract.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "4fd984ddd98db902acfc2123078ba4b2d5d2b5402f08d0e0cb9339f30c0b2e12"
                           },
                           {
                               "path":  "docs/releases/itl-main-5ae333ed-r18.md",
@@ -1047,11 +1074,11 @@
                           {
                               "path":  "tests/ReleaseTooling.Tests.ps1",
                               "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the qualified r21 release-tooling tests unchanged.",
+                              "disposition":  "resolved",
+                              "reason":  "Record the reviewed r23 form and template repeatability regression required by ITL-INFRA-001.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "afd14b50b19d7c651c06aa6f53c1a3e61a982d1eb29c44db0612be9f3e772a60",
-                              "resultSha256":  "afd14b50b19d7c651c06aa6f53c1a3e61a982d1eb29c44db0612be9f3e772a60"
+                              "resultSha256":  "e5075157ed846e4c7f5c0bdb47550ef3c266dd20a143289fd391b9add789d1b1"
                           },
                           {
                               "path":  "tests/TestSupport.ps1",
