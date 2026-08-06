@@ -396,6 +396,44 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "gives a waiting nightly index priority over recurring watchdog runs" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-nightly-index-priority-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                stateRoot = (Join-Path $tempRoot "state")
+                watchdog = [ordered]@{ enabled = $true; taskName = "ITL fixture watchdog" }
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                $priorityLease = Enter-McpHostNightlyPriorityLock -Config $hostConfig
+                try {
+                    $priorityLease.acquired | Should -BeTrue
+                    $script:WatchdogCoreInvoked = $false
+                    function Invoke-McpHostWatchdogRunCore { param([object]$Config); $script:WatchdogCoreInvoked = $true }
+
+                    Invoke-McpHostWatchdogRun -Config $hostConfig *> $null
+
+                    $script:WatchdogCoreInvoked | Should -BeFalse
+                    $runState = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $hostConfig)
+                    $runState.status | Should -Be "skipped"
+                    $runState.message | Should -Match "Nightly indexing is pending or active"
+                } finally {
+                    Exit-McpHostNightlyPriorityLock -Lease $priorityLease
+                }
+
+                Test-McpHostNightlyPriorityLockActive -Config $hostConfig | Should -BeFalse
+                Invoke-McpHostWatchdogRun -Config $hostConfig *> $null
+                $script:WatchdogCoreInvoked | Should -BeTrue
+                Remove-Variable -Scope Script -Name WatchdogCoreInvoked -ErrorAction SilentlyContinue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "excludes the 1C dump cursor from the nightly content fingerprint" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-nightly-index-fingerprint-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"

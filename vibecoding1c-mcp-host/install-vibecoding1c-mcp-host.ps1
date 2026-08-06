@@ -329,6 +329,51 @@ function Exit-McpHostMaintenanceLock {
     if ($null -ne $Lease -and $null -ne $Lease.stream) { $Lease.stream.Dispose() }
 }
 
+function Get-McpHostNightlyPriorityLockPath {
+    param([object]$Config)
+    return (Join-Path (Get-StateRoot -Config $Config) "nightly-index.priority.lock")
+}
+
+function Enter-McpHostNightlyPriorityLock {
+    param([object]$Config)
+    if ($DryRun) { return [pscustomobject]@{ acquired = $true; stream = $null; path = "<dry-run>" } }
+    $stateRoot = Get-StateRoot -Config $Config
+    New-Item -ItemType Directory -Force -Path $stateRoot | Out-Null
+    $lockPath = Get-McpHostNightlyPriorityLockPath -Config $Config
+    try {
+        $stream = New-Object System.IO.FileStream($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        $payload = $script:Utf8NoBom.GetBytes(("operation=nightly-index`npid={0}`nstartedAt={1}`n" -f $PID, (Get-Date).ToString("o")))
+        $stream.SetLength(0)
+        $stream.Write($payload, 0, $payload.Length)
+        $stream.Flush()
+        return [pscustomobject]@{ acquired = $true; stream = $stream; path = $lockPath }
+    } catch [System.IO.IOException] {
+        return [pscustomobject]@{ acquired = $false; stream = $null; path = $lockPath }
+    }
+}
+
+function Test-McpHostNightlyPriorityLockActive {
+    param([object]$Config)
+    if ($DryRun) { return $false }
+    $lockPath = Get-McpHostNightlyPriorityLockPath -Config $Config
+    try {
+        $stream = New-Object System.IO.FileStream($lockPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        $stream.Dispose()
+        return $false
+    } catch [System.IO.FileNotFoundException] {
+        return $false
+    } catch [System.IO.DirectoryNotFoundException] {
+        return $false
+    } catch [System.IO.IOException] {
+        return $true
+    }
+}
+
+function Exit-McpHostNightlyPriorityLock {
+    param([AllowNull()][object]$Lease)
+    if ($null -ne $Lease -and $null -ne $Lease.stream) { $Lease.stream.Dispose() }
+}
+
 function Get-DistributionRoot {
     param([object]$Config)
     return (Join-Path (Get-StateRoot -Config $Config) "distribution")
@@ -2811,6 +2856,12 @@ function Invoke-McpHostWatchdogRunCore {
 function Invoke-McpHostWatchdogRun {
     param([object]$Config)
     $startedAt = (Get-Date).ToString("o")
+    if (Test-McpHostNightlyPriorityLockActive -Config $Config) {
+        $message = "Nightly indexing is pending or active; watchdog reconcile skipped."
+        Write-McpHostWatchdogRunState -Config $Config -StartedAt $startedAt -Status "skipped" -Message $message
+        Write-Host $message
+        return
+    }
     $lease = Enter-McpHostMaintenanceLock -Config $Config -Operation "watchdog" -WaitSeconds 0
     if (-not $lease.acquired) {
         $message = "Host maintenance is already active; watchdog reconcile skipped."
@@ -3347,14 +3398,18 @@ function Invoke-McpHostNightlyIndexRunCore {
 
 function Invoke-McpHostNightlyIndexRun {
     param([object]$Config)
-    $lease = Enter-McpHostMaintenanceLock -Config $Config -Operation "nightly-index" -WaitSeconds 1800
-    if (-not $lease.acquired) {
-        throw "MCP host nightly indexing could not acquire the host maintenance lock within 30 minutes."
-    }
+    $priorityLease = Enter-McpHostNightlyPriorityLock -Config $Config
+    if (-not $priorityLease.acquired) { throw "MCP host nightly indexing is already pending or active." }
+    $lease = $null
     try {
+        $lease = Enter-McpHostMaintenanceLock -Config $Config -Operation "nightly-index" -WaitSeconds 1800
+        if (-not $lease.acquired) {
+            throw "MCP host nightly indexing could not acquire the host maintenance lock within 30 minutes."
+        }
         Invoke-McpHostNightlyIndexRunCore -Config $Config
     } finally {
         Exit-McpHostMaintenanceLock -Lease $lease
+        Exit-McpHostNightlyPriorityLock -Lease $priorityLease
     }
 }
 
