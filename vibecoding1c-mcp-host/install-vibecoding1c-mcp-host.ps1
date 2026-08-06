@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "publish", "proxy", "reconcile", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "dump-config")]
+    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "publish", "proxy", "reconcile", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "dump-config")]
     [string]$Action = "status",
 
     [string]$ConfigPath = ".\host.config.json",
@@ -18,6 +18,7 @@ $OutputEncoding = $script:Utf8NoBom
 $script:PythonExecutable = ""
 $script:HostInstallerPath = [System.IO.Path]::GetFullPath($PSCommandPath)
 $script:WatchdogDescription = "Managed by 1c-agent-workflow standalone MCP host watchdog."
+$script:NightlyIndexDescription = "Managed by 1c-agent-workflow standalone MCP host nightly configuration indexing."
 $script:WatchdogTaskPath = "\"
 
 function Read-Text {
@@ -258,15 +259,24 @@ function Get-FileSha256OrEmpty {
 }
 
 function Get-DirectoryFingerprint {
-    param([string]$Path)
+    param(
+        [string]$Path,
+        [string[]]$ExcludeRelativePaths = @()
+    )
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
         return "<missing>"
     }
     $root = [System.IO.Path]::GetFullPath($Path).TrimEnd("\", "/")
+    $excluded = @{}
+    foreach ($item in @($ExcludeRelativePaths)) {
+        $normalizedItem = ([string]$item -replace "\\", "/").TrimStart("/")
+        if ($normalizedItem) { $excluded[$normalizedItem.ToLowerInvariant()] = $true }
+    }
     $lines = @()
     $files = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force | Sort-Object FullName)
     foreach ($file in $files) {
         $relative = $file.FullName.Substring($root.Length).TrimStart("\", "/") -replace "\\", "/"
+        if ($excluded.ContainsKey($relative.ToLowerInvariant())) { continue }
         $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
         $lines += "$relative=$hash"
     }
@@ -284,6 +294,39 @@ function Read-HostConfig {
 function Get-StateRoot {
     param([object]$Config)
     return (Get-FullPath ([string](Get-ObjectValue -Object $Config -Name "stateRoot" -Default "D:/ITL/MCP")))
+}
+
+function Enter-McpHostMaintenanceLock {
+    param(
+        [object]$Config,
+        [string]$Operation,
+        [int]$WaitSeconds = 0
+    )
+    if ($DryRun) { return [pscustomobject]@{ acquired = $true; stream = $null; path = "<dry-run>" } }
+    $stateRoot = Get-StateRoot -Config $Config
+    New-Item -ItemType Directory -Force -Path $stateRoot | Out-Null
+    $lockPath = Join-Path $stateRoot "host-maintenance.lock"
+    $deadline = (Get-Date).AddSeconds([Math]::Max(0, $WaitSeconds))
+    do {
+        try {
+            $stream = New-Object System.IO.FileStream($lockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+            $payload = $script:Utf8NoBom.GetBytes(("operation={0}`npid={1}`nstartedAt={2}`n" -f $Operation, $PID, (Get-Date).ToString("o")))
+            $stream.SetLength(0)
+            $stream.Write($payload, 0, $payload.Length)
+            $stream.Flush()
+            return [pscustomobject]@{ acquired = $true; stream = $stream; path = $lockPath }
+        } catch [System.IO.IOException] {
+            if ((Get-Date) -ge $deadline) {
+                return [pscustomobject]@{ acquired = $false; stream = $null; path = $lockPath }
+            }
+            Start-Sleep -Seconds 2
+        }
+    } while ($true)
+}
+
+function Exit-McpHostMaintenanceLock {
+    param([AllowNull()][object]$Lease)
+    if ($null -ne $Lease -and $null -ne $Lease.stream) { $Lease.stream.Dispose() }
 }
 
 function Get-DistributionRoot {
@@ -1343,6 +1386,7 @@ function Get-ConfigurationState {
     $sourceStatus = ""
     $mainPath = [string](Get-ObjectValue -Object $Configuration -Name "mainConfigPath" -Default "src/cf")
     $treeHash = ""
+    $contentTreeHash = ""
     $source = $sourceRepo
     if ($sourceRepo) {
         try {
@@ -1356,14 +1400,18 @@ function Get-ConfigurationState {
             $normalized = ($mainPath -replace "\\", "/").Trim("/")
             $treeRef = if ($normalized) { "HEAD:$normalized" } else { "HEAD^{tree}" }
             $treeHash = ((Get-GitOutput -Root $sourceRoot -Arguments @("rev-parse", $treeRef)) -join "").Trim()
+            $contentTreeHash = $treeHash
         } catch {
             $treeHash = "<missing>"
+            $contentTreeHash = "<missing>"
         }
     } else {
         $source = $(if ($sourceLabel) { $sourceLabel } else { "local:$configId" })
         $sourceCommit = ""
         $sourceStatus = "local-source"
-        $treeHash = Get-DirectoryFingerprint -Path (Get-ConfigSubPath -Root $sourceRoot -RelativePath $mainPath)
+        $mainConfigRoot = Get-ConfigSubPath -Root $sourceRoot -RelativePath $mainPath
+        $treeHash = Get-DirectoryFingerprint -Path $mainConfigRoot
+        $contentTreeHash = Get-DirectoryFingerprint -Path $mainConfigRoot -ExcludeRelativePaths @("ConfigDumpInfo.xml")
     }
 
     $workRoot = Get-ConfigWorkRoot -Config $Config -ConfigId $configId
@@ -1382,6 +1430,7 @@ function Get-ConfigurationState {
         sourceRoot = $sourceRoot
         sourceCommit = $sourceCommit
         sourceFingerprint = "commit=$sourceCommit|$mainPath=$treeHash|worktree=$(if ($sourceStatus) { $sourceStatus } else { '<clean>' })"
+        sourceContentFingerprint = "commit=$sourceCommit|$mainPath=$contentTreeHash"
         mainConfigPath = $mainPath
         extensionPath = [string](Get-ObjectValue -Object $Configuration -Name "extensionPath" -Default "")
         metadataRoot = $metadataRoot
@@ -2675,7 +2724,7 @@ function Write-McpHostWatchdogRunState {
     param(
         [object]$Config,
         [string]$StartedAt,
-        [ValidateSet("succeeded", "failed", "disabled")][string]$Status,
+        [ValidateSet("succeeded", "failed", "disabled", "skipped")][string]$Status,
         [string]$Message = ""
     )
 
@@ -2690,7 +2739,7 @@ function Write-McpHostWatchdogRunState {
     Write-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $Config) -Value $state
 }
 
-function Invoke-McpHostWatchdogRun {
+function Invoke-McpHostWatchdogRunCore {
     param([object]$Config)
 
     $settings = Get-McpHostWatchdogSettings -Config $Config
@@ -2756,6 +2805,23 @@ function Invoke-McpHostWatchdogRun {
             Write-Warning "Could not persist watchdog failure state: $($_.Exception.Message)"
         }
         throw "MCP host watchdog reconcile failed: $message"
+    }
+}
+
+function Invoke-McpHostWatchdogRun {
+    param([object]$Config)
+    $startedAt = (Get-Date).ToString("o")
+    $lease = Enter-McpHostMaintenanceLock -Config $Config -Operation "watchdog" -WaitSeconds 0
+    if (-not $lease.acquired) {
+        $message = "Host maintenance is already active; watchdog reconcile skipped."
+        Write-McpHostWatchdogRunState -Config $Config -StartedAt $startedAt -Status "skipped" -Message $message
+        Write-Host $message
+        return
+    }
+    try {
+        Invoke-McpHostWatchdogRunCore -Config $Config
+    } finally {
+        Exit-McpHostMaintenanceLock -Lease $lease
     }
 }
 
@@ -2878,6 +2944,506 @@ function Uninstall-McpHostWatchdog {
     }
     Unregister-ScheduledTask -TaskName $settings.taskName -TaskPath $script:WatchdogTaskPath -Confirm:$false
     Write-Host "MCP host watchdog task uninstalled: $($settings.taskName)"
+}
+
+function Get-McpHostNightlyIndexSettings {
+    param([object]$Config)
+
+    $raw = Get-ObjectValue -Object $Config -Name "nightlyIndex" -Default $null
+    $enabled = [System.Convert]::ToBoolean((Get-ObjectValue -Object $raw -Name "enabled" -Default $false))
+    $at = [string](Get-ObjectValue -Object $raw -Name "at" -Default "02:00")
+    $taskName = [string](Get-ObjectValue -Object $raw -Name "taskName" -Default "ITL MCP Host Nightly Index")
+    $timeoutMinutes = [int](Get-ObjectValue -Object $raw -Name "timeoutMinutes" -Default 480)
+    $pollSeconds = [int](Get-ObjectValue -Object $raw -Name "pollSeconds" -Default 15)
+    $configIds = @(As-Array (Get-ObjectValue -Object $raw -Name "configIds" -Default @()) | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ } | Select-Object -Unique)
+    if ($at -notmatch '^(?<hour>[01][0-9]|2[0-3]):(?<minute>[0-5][0-9])$') {
+        throw "nightlyIndex.at must use 24-hour HH:mm format."
+    }
+    $hour = [int]$Matches.hour
+    $minute = [int]$Matches.minute
+    if ([string]::IsNullOrWhiteSpace($taskName) -or $taskName.IndexOfAny([char[]]@("\", "/")) -ge 0) {
+        throw "nightlyIndex.taskName must be a non-empty scheduled task name without path separators."
+    }
+    if ($timeoutMinutes -lt 30 -or $timeoutMinutes -gt 1440) {
+        throw "nightlyIndex.timeoutMinutes must be between 30 and 1440."
+    }
+    if ($pollSeconds -lt 5 -or $pollSeconds -gt 300) {
+        throw "nightlyIndex.pollSeconds must be between 5 and 300."
+    }
+    return [pscustomobject]@{
+        enabled = $enabled
+        at = $at
+        hour = $hour
+        minute = $minute
+        taskName = $taskName
+        timeoutMinutes = $timeoutMinutes
+        pollSeconds = $pollSeconds
+        configIds = $configIds
+    }
+}
+
+function Get-McpHostNightlyIndexStatePath {
+    param([object]$Config)
+    return (Join-Path (Get-StateRoot -Config $Config) "nightly-index-state.json")
+}
+
+function ConvertFrom-HostMcpResponse {
+    param([string]$Text)
+    foreach ($line in ($Text -split "`r?`n")) {
+        if ($line.StartsWith("data:")) { return ($line.Substring(5).Trim() | ConvertFrom-Json) }
+    }
+    return ($Text | ConvertFrom-Json)
+}
+
+function Open-HostMcpConnection {
+    param([string]$Url)
+    $headers = @{ Accept = "application/json, text/event-stream" }
+    $body = [ordered]@{
+        jsonrpc = "2.0"
+        id = 1
+        method = "initialize"
+        params = [ordered]@{
+            protocolVersion = "2025-03-26"
+            capabilities = [ordered]@{}
+            clientInfo = [ordered]@{ name = "itl-nightly-index"; version = "1" }
+        }
+    } | ConvertTo-Json -Depth 8 -Compress
+    $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -Method Post -ContentType "application/json" -Headers $headers -Body $body -TimeoutSec 60
+    $sessionId = [string]$response.Headers["mcp-session-id"]
+    if ($sessionId) { $headers["mcp-session-id"] = $sessionId }
+    $effectiveUrl = $response.BaseResponse.ResponseUri.AbsoluteUri
+    Invoke-WebRequest -UseBasicParsing -Uri $effectiveUrl -Method Post -ContentType "application/json" -Headers $headers -Body '{"jsonrpc":"2.0","method":"notifications/initialized"}' -TimeoutSec 60 | Out-Null
+    return [pscustomobject]@{ url = $effectiveUrl; headers = $headers; nextId = 2 }
+}
+
+function Invoke-HostMcpTool {
+    param(
+        [object]$Connection,
+        [string]$Name,
+        [object]$Arguments = $null
+    )
+    if ($null -eq $Arguments) { $Arguments = [ordered]@{} }
+    $payload = [ordered]@{
+        jsonrpc = "2.0"
+        id = [int]$Connection.nextId
+        method = "tools/call"
+        params = [ordered]@{ name = $Name; arguments = $Arguments }
+    }
+    $Connection.nextId = [int]$Connection.nextId + 1
+    $response = Invoke-WebRequest -UseBasicParsing -Uri $Connection.url -Method Post -ContentType "application/json" -Headers $Connection.headers -Body ($payload | ConvertTo-Json -Depth 20 -Compress) -TimeoutSec 120
+    $result = ConvertFrom-HostMcpResponse -Text $response.Content
+    if ($null -ne $result.PSObject.Properties["error"]) {
+        throw "MCP tool '$Name' returned a JSON-RPC error: $($result.error | ConvertTo-Json -Depth 10 -Compress)"
+    }
+    $toolResult = Get-ObjectValue -Object $result -Name "result" -Default $null
+    if ($null -eq $toolResult) { throw "MCP tool '$Name' returned no result." }
+    if ([System.Convert]::ToBoolean((Get-ObjectValue -Object $toolResult -Name "isError" -Default $false))) {
+        throw "MCP tool '$Name' reported an error: $($toolResult | ConvertTo-Json -Depth 10 -Compress)"
+    }
+    return $toolResult
+}
+
+function Get-HostMcpToolResultText {
+    param([AllowNull()][object]$Result)
+    if ($null -eq $Result) { return "" }
+    $parts = New-Object System.Collections.Generic.List[string]
+    $structured = Get-ObjectValue -Object $Result -Name "structuredContent" -Default $null
+    if ($null -ne $structured) { [void]$parts.Add(($structured | ConvertTo-Json -Depth 20 -Compress)) }
+    foreach ($item in As-Array (Get-ObjectValue -Object $Result -Name "content" -Default @())) {
+        $text = [string](Get-ObjectValue -Object $item -Name "text" -Default "")
+        if ($text) { [void]$parts.Add($text) }
+    }
+    if ($parts.Count -eq 0) { [void]$parts.Add(($Result | ConvertTo-Json -Depth 20 -Compress)) }
+    return (@($parts) -join [Environment]::NewLine)
+}
+
+function Get-HostMcpIndexState {
+    param([string]$Text)
+    $value = $Text.Trim()
+    if (-not $value) { return "unknown" }
+    if ($value -match '(?i)("(?:status|state)"\s*:\s*"(?:failed|error)"|"failed"\s*:\s*(?:true|[1-9][0-9]*)|\bindex(?:ing)?[_ -]?failed\b|ошибк[аи].{0,40}индексац)') {
+        return "failed"
+    }
+    if ($value -match '(?i)("(?:is_)?indexing"\s*:\s*true|"(?:pending|running)"\s*:\s*[1-9][0-9]*|"(?:status|state)"\s*:\s*"(?:pending|running|indexing|in_progress|processing)")') {
+        return "running"
+    }
+    if ($value -match '(?i)("(?:is_)?indexing"\s*:\s*false|"(?:pending|running|failed)"\s*:\s*0|"(?:status|state)"\s*:\s*"(?:completed|complete|succeeded|idle|skipped)"|индексац.{0,40}заверш)') {
+        return "succeeded"
+    }
+    if ($value -match '(?i)\b(?:pending|in[_ -]?progress|processing|indexing)\b') { return "running" }
+    if ($value -match '(?i)\b(?:completed|succeeded|idle|skipped)\b') { return "succeeded" }
+    return "unknown"
+}
+
+function Wait-HostMcpIndexCompletion {
+    param(
+        [object]$Connection,
+        [string]$StatusTool,
+        [string]$ServerId,
+        [string]$ConfigId,
+        [int]$TimeoutMinutes,
+        [int]$PollSeconds
+    )
+    $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    $successfulPolls = 0
+    $lastText = ""
+    while ((Get-Date) -lt $deadline) {
+        $result = Invoke-HostMcpTool -Connection $Connection -Name $StatusTool
+        $lastText = Get-HostMcpToolResultText -Result $result
+        $state = Get-HostMcpIndexState -Text $lastText
+        Write-Host "Index status: server=$ServerId configId=$ConfigId state=$state"
+        if ($state -eq "failed") {
+            throw "Incremental indexing failed for '$ServerId' configId '$ConfigId': $lastText"
+        }
+        if ($state -eq "succeeded") {
+            $successfulPolls++
+            if ($successfulPolls -ge 2) { return }
+        } else {
+            $successfulPolls = 0
+        }
+        Start-Sleep -Seconds $PollSeconds
+    }
+    throw "Incremental indexing did not reach a stable successful status for '$ServerId' configId '$ConfigId' within $TimeoutMinutes minute(s). Last status: $lastText"
+}
+
+function Get-TrackedProjectServerForConfig {
+    param(
+        [object]$Config,
+        [string]$ConfigId,
+        [string]$ServerId
+    )
+    $state = Read-HostState -Config $Config
+    $matches = @(As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @()) | Where-Object {
+        [string](Get-ObjectValue -Object $_ -Name "scope" -Default "") -eq "project" -and
+        [string](Get-ObjectValue -Object $_ -Name "configId" -Default "") -eq $ConfigId -and
+        [string](Get-ObjectValue -Object $_ -Name "id" -Default "") -eq $ServerId
+    })
+    if ($matches.Count -ne 1) {
+        throw "Expected exactly one tracked '$ServerId' project server for configId '$ConfigId', found $($matches.Count). Run setup before installing nightly indexing."
+    }
+    return $matches[0]
+}
+
+function Get-TrackedServerControlUrl {
+    param([object]$Server)
+    $hostPort = [int](Get-ObjectValue -Object $Server -Name "hostPort" -Default 0)
+    if ($hostPort -le 0) { throw "Tracked MCP server has no valid hostPort." }
+    return "http://127.0.0.1:$hostPort/mcp"
+}
+
+function Invoke-CodeIncrementalIndex {
+    param(
+        [object]$Server,
+        [string]$ConfigId,
+        [object]$Settings
+    )
+    $url = Get-TrackedServerControlUrl -Server $Server
+    Write-Host "Starting incremental code indexing for configId '$ConfigId' through $url"
+    if ($DryRun) { return }
+    $connection = Open-HostMcpConnection -Url $url
+    $accepted = Invoke-HostMcpTool -Connection $connection -Name "reindex" -Arguments ([ordered]@{ force = $false })
+    Write-Host "Code incremental indexing accepted: $(Get-HostMcpToolResultText -Result $accepted)"
+    Start-Sleep -Seconds $Settings.pollSeconds
+    Wait-HostMcpIndexCompletion -Connection $connection -StatusTool "stats" -ServerId "code" -ConfigId $ConfigId -TimeoutMinutes $Settings.timeoutMinutes -PollSeconds $Settings.pollSeconds
+}
+
+function Restart-GraphForIncrementalIndex {
+    param(
+        [object]$Config,
+        [object]$Server,
+        [string]$ConfigId
+    )
+    $runtimePath = [string](Get-ObjectValue -Object $Server -Name "runtimePath" -Default "")
+    $composeProject = [string](Get-ObjectValue -Object $Server -Name "composeProject" -Default "")
+    if (-not $runtimePath -or -not $composeProject) {
+        throw "Tracked graph server for configId '$ConfigId' has no compose runtime state. Run setup before nightly indexing."
+    }
+    $composePath = Join-Path $runtimePath "docker-compose.yml"
+    $envPath = Join-Path $runtimePath ".env"
+    if (-not (Test-Path -LiteralPath $composePath -PathType Leaf) -or -not (Test-Path -LiteralPath $envPath -PathType Leaf)) {
+        throw "Tracked graph runtime files are missing for configId '$ConfigId': $runtimePath"
+    }
+    $envText = Read-Text -Path $envPath
+    if ($envText -notmatch '(?m)^RESET_DATABASE=false\s*$') {
+        throw "Graph incremental indexing refuses to restart configId '$ConfigId' because runtime .env does not prove RESET_DATABASE=false."
+    }
+    if ($envText -notmatch '(?m)^AUTO_UPDATE_ON_STARTUP=true\s*$') {
+        throw "Graph incremental indexing refuses to restart configId '$ConfigId' because runtime .env does not prove AUTO_UPDATE_ON_STARTUP=true."
+    }
+    $graphSettings = Get-ObjectValue -Object $Config -Name "graphMetadataSearchServer" -Default $null
+    $service = [string](Get-ObjectValue -Object $graphSettings -Name "composeService" -Default "mcp-app")
+    if ($service -notmatch '^[A-Za-z0-9_.-]+$') { throw "graphMetadataSearchServer.composeService contains unsupported characters." }
+    Write-Host "Restarting only graph MCP service '$service' for incremental indexing of configId '$ConfigId'; Neo4j is preserved."
+    if ($DryRun) { return }
+    Invoke-DockerCommandChecked -Arguments @("compose", "-p", $composeProject, "-f", $composePath, "--env-file", $envPath, "restart", $service) -TimeoutSec 240 -Description "docker compose restart graph MCP service for $ConfigId"
+    $hostPort = [int](Get-ObjectValue -Object $Server -Name "hostPort" -Default 0)
+    for ($attempt = 0; $attempt -lt 60; $attempt++) {
+        if (Test-HostTcpPortOpen -Port $hostPort -TimeoutMilliseconds 1000) { return }
+        Start-Sleep -Seconds 2
+    }
+    throw "Graph MCP service for configId '$ConfigId' did not reopen port $hostPort after incremental restart."
+}
+
+function Invoke-GraphIncrementalIndex {
+    param(
+        [object]$Config,
+        [object]$Server,
+        [string]$ConfigId,
+        [object]$Settings
+    )
+    Restart-GraphForIncrementalIndex -Config $Config -Server $Server -ConfigId $ConfigId
+    if ($DryRun) { return }
+    $connection = Open-HostMcpConnection -Url (Get-TrackedServerControlUrl -Server $Server)
+    Wait-HostMcpIndexCompletion -Connection $connection -StatusTool "get_indexing_status" -ServerId "graph" -ConfigId $ConfigId -TimeoutMinutes $Settings.timeoutMinutes -PollSeconds $Settings.pollSeconds
+}
+
+function Get-TrackedConfigurationStateForId {
+    param([object]$Config, [string]$ConfigId)
+    $state = Read-HostState -Config $Config
+    return @(As-Array (Get-ObjectValue -Object $state -Name "configurations" -Default @()) | Where-Object {
+        [string](Get-ObjectValue -Object $_ -Name "configId" -Default "") -eq $ConfigId
+    } | Select-Object -First 1)
+}
+
+function Set-NightlyConfigurationState {
+    param(
+        [object]$Config,
+        [object]$ConfigurationState,
+        [AllowNull()][object]$PreviousState,
+        [string]$DumpedAt,
+        [string]$ReportGeneratedAt,
+        [ValidateSet("running", "unchanged", "succeeded", "failed")][string]$Status,
+        [string]$Message = "",
+        [string]$IndexedAt = "",
+        [string]$IndexInputFingerprint = ""
+    )
+    if ($DryRun) {
+        Write-Host "Would persist nightly index state for configId '$([string]$ConfigurationState.configId)': status=$Status"
+        return
+    }
+    $configHash = Convert-ToHash -Object $ConfigurationState
+    $previousIndexedAt = [string](Get-ObjectValue -Object $PreviousState -Name "indexedAt" -Default "")
+    $configHash["dumpedAt"] = $DumpedAt
+    $configHash["reportGeneratedAt"] = $ReportGeneratedAt
+    $configHash["nightlyIndexStatus"] = $Status
+    $configHash["nightlyIndexMessage"] = $Message
+    $configHash["indexedAt"] = $(if ($IndexedAt) { $IndexedAt } else { $previousIndexedAt })
+    if ($IndexInputFingerprint -and $Status -in @("succeeded", "unchanged")) {
+        $configHash["indexInputFingerprint"] = $IndexInputFingerprint
+    } else {
+        $previousInputFingerprint = [string](Get-ObjectValue -Object $PreviousState -Name "indexInputFingerprint" -Default "")
+        if ($previousInputFingerprint) { $configHash["indexInputFingerprint"] = $previousInputFingerprint }
+    }
+    Update-HostStateConfigurations -Config $Config -ConfigStates @([pscustomobject]$configHash)
+
+    if ($Status -ne "succeeded") { return }
+    $state = Read-HostState -Config $Config
+    $stateHash = Convert-ToHash -Object $state
+    $servers = @()
+    foreach ($server in As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @())) {
+        $serverHash = Convert-ToHash -Object $server
+        if ([string](Get-ObjectValue -Object $server -Name "scope" -Default "") -eq "project" -and
+            [string](Get-ObjectValue -Object $server -Name "configId" -Default "") -eq [string]$ConfigurationState.configId -and
+            [string](Get-ObjectValue -Object $server -Name "id" -Default "") -in @("code", "graph")) {
+            $serverHash["sourceFingerprint"] = [string]$ConfigurationState.sourceFingerprint
+            $serverHash["sourceContentFingerprint"] = [string]$ConfigurationState.sourceContentFingerprint
+            $serverHash["reportHash"] = [string]$ConfigurationState.reportHash
+            $serverHash["indexInputFingerprint"] = $IndexInputFingerprint
+            $serverHash["indexedAt"] = $IndexedAt
+        }
+        $servers += [pscustomobject]$serverHash
+    }
+    $stateHash["servers"] = $servers
+    Write-HostState -Config $Config -State $stateHash
+}
+
+function Invoke-NightlyConfigurationIndex {
+    param(
+        [object]$Config,
+        [object]$Configuration,
+        [object]$Settings
+    )
+    $configId = [string](Get-ObjectValue -Object $Configuration -Name "configId" -Default "")
+    $dump = Get-ObjectValue -Object $Configuration -Name "dump" -Default $null
+    if ($null -eq $dump) {
+        throw "Nightly indexing requires configuration.dump settings for configId '$configId' so the index cannot be refreshed from a stale source folder."
+    }
+    $previousState = Get-TrackedConfigurationStateForId -Config $Config -ConfigId $configId
+    Write-HostPhase "Nightly configuration refresh for configId $configId"
+    Invoke-HostConfigDumpHelper -ResolvedConfigPath (Get-FullPath $ConfigPath) -TargetConfigId $configId
+    $dumpedAt = (Get-Date).ToString("o")
+    $configurationState = Refresh-Configuration -Config $Config -Configuration $Configuration
+    $reportGeneratedAt = (Get-Date).ToString("o")
+    $inputFingerprint = Get-Sha256Text -Value ("source={0}|report={1}" -f [string]$configurationState.sourceContentFingerprint, [string]$configurationState.reportHash)
+    $previousInputFingerprint = [string](Get-ObjectValue -Object $previousState -Name "indexInputFingerprint" -Default "")
+    $previousNightlyStatus = [string](Get-ObjectValue -Object $previousState -Name "nightlyIndexStatus" -Default "")
+    $previousIndexedAt = [string](Get-ObjectValue -Object $previousState -Name "indexedAt" -Default "")
+    if (-not $previousInputFingerprint -and $null -ne $previousState -and $previousIndexedAt -and $previousNightlyStatus -notin @("running", "failed")) {
+        $previousInputFingerprint = Get-Sha256Text -Value ("source={0}|report={1}" -f [string](Get-ObjectValue -Object $previousState -Name "sourceContentFingerprint" -Default ""), [string](Get-ObjectValue -Object $previousState -Name "reportHash" -Default ""))
+    }
+    if ($previousInputFingerprint -and $previousInputFingerprint -eq $inputFingerprint) {
+        Set-NightlyConfigurationState -Config $Config -ConfigurationState $configurationState -PreviousState $previousState -DumpedAt $dumpedAt -ReportGeneratedAt $reportGeneratedAt -Status "unchanged" -Message "Fresh dump and report match the indexed input." -IndexInputFingerprint $inputFingerprint
+        Write-Host "Nightly indexing skipped for configId '$configId': fresh dump and report are unchanged."
+        return [pscustomobject]@{ configId = $configId; status = "unchanged"; inputFingerprint = $inputFingerprint }
+    }
+
+    Set-NightlyConfigurationState -Config $Config -ConfigurationState $configurationState -PreviousState $previousState -DumpedAt $dumpedAt -ReportGeneratedAt $reportGeneratedAt -Status "running" -Message "Incremental code and graph indexing is running." -IndexInputFingerprint $inputFingerprint
+    try {
+        $codeServer = Get-TrackedProjectServerForConfig -Config $Config -ConfigId $configId -ServerId "code"
+        $graphServer = Get-TrackedProjectServerForConfig -Config $Config -ConfigId $configId -ServerId "graph"
+        Invoke-CodeIncrementalIndex -Server $codeServer -ConfigId $configId -Settings $Settings
+        Invoke-GraphIncrementalIndex -Config $Config -Server $graphServer -ConfigId $configId -Settings $Settings
+        $indexedAt = (Get-Date).ToString("o")
+        Set-NightlyConfigurationState -Config $Config -ConfigurationState $configurationState -PreviousState $previousState -DumpedAt $dumpedAt -ReportGeneratedAt $reportGeneratedAt -Status "succeeded" -Message "Fresh dump and report were incrementally indexed by code and graph." -IndexedAt $indexedAt -IndexInputFingerprint $inputFingerprint
+        return [pscustomobject]@{ configId = $configId; status = "succeeded"; inputFingerprint = $inputFingerprint; indexedAt = $indexedAt }
+    } catch {
+        $message = $_.Exception.Message
+        Set-NightlyConfigurationState -Config $Config -ConfigurationState $configurationState -PreviousState $previousState -DumpedAt $dumpedAt -ReportGeneratedAt $reportGeneratedAt -Status "failed" -Message $message -IndexInputFingerprint $inputFingerprint
+        throw
+    }
+}
+
+function Invoke-McpHostNightlyIndexRunCore {
+    param([object]$Config)
+    $settings = Get-McpHostNightlyIndexSettings -Config $Config
+    $startedAt = (Get-Date).ToString("o")
+    if (-not $settings.enabled) {
+        $disabled = [ordered]@{ schemaVersion = 1; taskName = $settings.taskName; startedAt = $startedAt; completedAt = (Get-Date).ToString("o"); status = "disabled"; configurations = @(); message = "nightlyIndex.enabled is false" }
+        if (-not $DryRun) { Write-JsonFile -Path (Get-McpHostNightlyIndexStatePath -Config $Config) -Value $disabled }
+        Write-Host "MCP host nightly indexing is disabled in host config."
+        return
+    }
+    $selected = @()
+    foreach ($configuration in As-Array (Get-ObjectValue -Object $Config -Name "configurations" -Default @())) {
+        $id = [string](Get-ObjectValue -Object $configuration -Name "configId" -Default "")
+        if ($settings.configIds.Count -gt 0 -and $settings.configIds -notcontains $id) { continue }
+        $selected += $configuration
+    }
+    if ($selected.Count -eq 0) { throw "No configurations matched nightlyIndex.configIds." }
+    if ($settings.configIds.Count -gt 0) {
+        $selectedIds = @($selected | ForEach-Object { [string](Get-ObjectValue -Object $_ -Name "configId" -Default "") })
+        $missing = @($settings.configIds | Where-Object { $selectedIds -notcontains $_ })
+        if ($missing.Count -gt 0) { throw "nightlyIndex.configIds contains unknown configuration(s): $($missing -join ', ')" }
+    }
+    $results = @()
+    try {
+        foreach ($configuration in $selected) {
+            $result = Invoke-NightlyConfigurationIndex -Config $Config -Configuration $configuration -Settings $settings
+            $results += $result
+            if (-not $DryRun) { Publish-Registry -Config $Config }
+        }
+        $state = [ordered]@{ schemaVersion = 1; taskName = $settings.taskName; startedAt = $startedAt; completedAt = (Get-Date).ToString("o"); status = "succeeded"; configurations = $results; message = "Fresh configuration dumps, reports, and incremental indexes completed." }
+        if (-not $DryRun) { Write-JsonFile -Path (Get-McpHostNightlyIndexStatePath -Config $Config) -Value $state }
+        Write-Host "MCP host nightly indexing completed."
+    } catch {
+        $message = $_.Exception.Message
+        $state = [ordered]@{ schemaVersion = 1; taskName = $settings.taskName; startedAt = $startedAt; completedAt = (Get-Date).ToString("o"); status = "failed"; configurations = $results; message = $message }
+        if (-not $DryRun) {
+            try { Write-JsonFile -Path (Get-McpHostNightlyIndexStatePath -Config $Config) -Value $state } catch { Write-Warning "Could not persist nightly indexing failure state: $($_.Exception.Message)" }
+        }
+        throw "MCP host nightly indexing failed: $message"
+    }
+}
+
+function Invoke-McpHostNightlyIndexRun {
+    param([object]$Config)
+    $lease = Enter-McpHostMaintenanceLock -Config $Config -Operation "nightly-index" -WaitSeconds 1800
+    if (-not $lease.acquired) {
+        throw "MCP host nightly indexing could not acquire the host maintenance lock within 30 minutes."
+    }
+    try {
+        Invoke-McpHostNightlyIndexRunCore -Config $Config
+    } finally {
+        Exit-McpHostMaintenanceLock -Lease $lease
+    }
+}
+
+function Assert-McpHostNightlyIndexTaskOwned {
+    param([AllowNull()][object]$Task, [string]$TaskName)
+    if ($null -eq $Task) { return }
+    if ([string](Get-ObjectValue -Object $Task -Name "Description" -Default "") -ne $script:NightlyIndexDescription) {
+        throw "Scheduled task '$TaskName' already exists and is not managed by this installer."
+    }
+}
+
+function Get-McpHostNightlyIndexTask {
+    param([string]$TaskName)
+    if (-not (Get-Command "Get-ScheduledTask" -ErrorAction SilentlyContinue)) {
+        throw "Windows ScheduledTasks module is unavailable; nightly index management requires Windows Scheduled Tasks."
+    }
+    return (Get-ScheduledTask -TaskName $TaskName -TaskPath $script:WatchdogTaskPath -ErrorAction SilentlyContinue)
+}
+
+function Install-McpHostNightlyIndex {
+    param([object]$Config)
+    $settings = Get-McpHostNightlyIndexSettings -Config $Config
+    if (-not $settings.enabled) { throw "nightlyIndex.enabled must be true for -Action nightly-index-install." }
+    $resolvedConfigPath = Get-FullPath $ConfigPath
+    $workingDirectory = Split-Path -Parent $script:HostInstallerPath
+    if ($script:HostInstallerPath.Contains('"') -or $resolvedConfigPath.Contains('"')) { throw "Nightly index installer and config paths must not contain double quotes." }
+    $taskArguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -Action nightly-index-run -ConfigPath "{1}"' -f $script:HostInstallerPath, $resolvedConfigPath
+    if ($DryRun) {
+        Write-Host "Would install scheduled task '$($settings.taskName)' for the current user."
+        Write-Host "Would run daily at $($settings.at), timeout $($settings.timeoutMinutes) minute(s); overlapping runs would be ignored."
+        Write-Host "Task command: powershell.exe $taskArguments"
+        return
+    }
+    foreach ($command in @("New-ScheduledTaskAction", "New-ScheduledTaskTrigger", "New-ScheduledTaskSettingsSet", "Register-ScheduledTask")) {
+        if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "Windows ScheduledTasks command was not found: $command" }
+    }
+    $existingTask = Get-McpHostNightlyIndexTask -TaskName $settings.taskName
+    Assert-McpHostNightlyIndexTaskOwned -Task $existingTask -TaskName $settings.taskName
+    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $taskArguments -WorkingDirectory $workingDirectory
+    $runAt = (Get-Date).Date.AddHours($settings.hour).AddMinutes($settings.minute)
+    $trigger = New-ScheduledTaskTrigger -Daily -At $runAt
+    $taskSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes ($settings.timeoutMinutes + 30))
+    Register-ScheduledTask -TaskName $settings.taskName -TaskPath $script:WatchdogTaskPath -Action $action -Trigger $trigger -Settings $taskSettings -Description $script:NightlyIndexDescription -User $currentUser -RunLevel Highest -Force | Out-Null
+    Write-Host "MCP host nightly index task installed: $($settings.taskName)"
+    Write-Host "Schedule: daily at $($settings.at); overlapping runs are ignored."
+}
+
+function Show-McpHostNightlyIndexStatus {
+    param([object]$Config)
+    $settings = Get-McpHostNightlyIndexSettings -Config $Config
+    Write-Host "Nightly index config: enabled=$($settings.enabled) at=$($settings.at) timeoutMinutes=$($settings.timeoutMinutes) pollSeconds=$($settings.pollSeconds) configIds=$(if ($settings.configIds.Count -gt 0) { $settings.configIds -join ',' } else { '<all>' })"
+    Write-Host "Scheduled task: $($settings.taskName)"
+    $task = Get-McpHostNightlyIndexTask -TaskName $settings.taskName
+    if ($null -eq $task) {
+        Write-Host "Task state: not-installed"
+    } else {
+        Assert-McpHostNightlyIndexTaskOwned -Task $task -TaskName $settings.taskName
+        Write-Host "Task state: $(Get-ObjectValue -Object $task -Name 'State' -Default 'unknown')"
+        if (Get-Command "Get-ScheduledTaskInfo" -ErrorAction SilentlyContinue) {
+            $info = Get-ScheduledTaskInfo -TaskName $settings.taskName -TaskPath $script:WatchdogTaskPath -ErrorAction SilentlyContinue
+            if ($null -ne $info) {
+                Write-Host "Last task result: $(Get-ObjectValue -Object $info -Name 'LastTaskResult' -Default 'unknown')"
+                Write-Host "Last run time: $(Get-ObjectValue -Object $info -Name 'LastRunTime' -Default 'unknown')"
+                Write-Host "Next run time: $(Get-ObjectValue -Object $info -Name 'NextRunTime' -Default 'unknown')"
+            }
+        }
+    }
+    $statePath = Get-McpHostNightlyIndexStatePath -Config $Config
+    if (Test-Path -LiteralPath $statePath -PathType Leaf) {
+        $state = Read-JsonFile -Path $statePath
+        Write-Host "Last nightly index: status=$(Get-ObjectValue -Object $state -Name 'status' -Default 'unknown') startedAt=$(Get-ObjectValue -Object $state -Name 'startedAt' -Default '') completedAt=$(Get-ObjectValue -Object $state -Name 'completedAt' -Default '')"
+        $message = [string](Get-ObjectValue -Object $state -Name "message" -Default "")
+        if ($message) { Write-Host "Last nightly index message: $message" }
+    } else {
+        Write-Host "Last nightly index: no persisted run state"
+    }
+}
+
+function Uninstall-McpHostNightlyIndex {
+    param([object]$Config)
+    $settings = Get-McpHostNightlyIndexSettings -Config $Config
+    $task = Get-McpHostNightlyIndexTask -TaskName $settings.taskName
+    if ($null -eq $task) { Write-Host "MCP host nightly index task is not installed: $($settings.taskName)"; return }
+    Assert-McpHostNightlyIndexTaskOwned -Task $task -TaskName $settings.taskName
+    if ($DryRun) { Write-Host "Would uninstall managed scheduled task '$($settings.taskName)'."; return }
+    if (-not (Get-Command "Unregister-ScheduledTask" -ErrorAction SilentlyContinue)) { throw "Windows ScheduledTasks command was not found: Unregister-ScheduledTask" }
+    Unregister-ScheduledTask -TaskName $settings.taskName -TaskPath $script:WatchdogTaskPath -Confirm:$false
+    Write-Host "MCP host nightly index task uninstalled: $($settings.taskName)"
 }
 
 function Get-HostServerPublishStatus {
@@ -3285,8 +3851,13 @@ function ConvertTo-RegistryConfigurations {
             source = [string](Get-ObjectValue -Object $configuration -Name "source" -Default "")
             sourceCommit = [string](Get-ObjectValue -Object $configuration -Name "sourceCommit" -Default "")
             sourceFingerprint = [string](Get-ObjectValue -Object $configuration -Name "sourceFingerprint" -Default "")
+            sourceContentFingerprint = [string](Get-ObjectValue -Object $configuration -Name "sourceContentFingerprint" -Default "")
             reportHash = [string](Get-ObjectValue -Object $configuration -Name "reportHash" -Default "")
             indexedAt = [string](Get-ObjectValue -Object $configuration -Name "indexedAt" -Default "")
+            dumpedAt = [string](Get-ObjectValue -Object $configuration -Name "dumpedAt" -Default "")
+            reportGeneratedAt = [string](Get-ObjectValue -Object $configuration -Name "reportGeneratedAt" -Default "")
+            nightlyIndexStatus = [string](Get-ObjectValue -Object $configuration -Name "nightlyIndexStatus" -Default "")
+            nightlyIndexMessage = [string](Get-ObjectValue -Object $configuration -Name "nightlyIndexMessage" -Default "")
         }
     }
     return @($configurations)
@@ -3331,8 +3902,10 @@ function ConvertTo-RegistryServers {
             embeddingModel = [string](Get-ObjectValue -Object $server -Name "embeddingModel" -Default "")
             sourceCommit = [string](Get-ObjectValue -Object $server -Name "sourceCommit" -Default "")
             sourceFingerprint = [string](Get-ObjectValue -Object $server -Name "sourceFingerprint" -Default "")
+            sourceContentFingerprint = [string](Get-ObjectValue -Object $server -Name "sourceContentFingerprint" -Default "")
             reportHash = [string](Get-ObjectValue -Object $server -Name "reportHash" -Default "")
             indexedAt = [string](Get-ObjectValue -Object $server -Name "indexedAt" -Default "")
+            indexInputFingerprint = [string](Get-ObjectValue -Object $server -Name "indexInputFingerprint" -Default "")
         }
     }
     return @($servers)
@@ -3602,6 +4175,18 @@ switch ($Action) {
     }
     "watchdog-uninstall" {
         Uninstall-McpHostWatchdog -Config $config
+    }
+    "nightly-index-install" {
+        Install-McpHostNightlyIndex -Config $config
+    }
+    "nightly-index-status" {
+        Show-McpHostNightlyIndexStatus -Config $config
+    }
+    "nightly-index-run" {
+        Invoke-McpHostNightlyIndexRun -Config $config
+    }
+    "nightly-index-uninstall" {
+        Uninstall-McpHostNightlyIndex -Config $config
     }
     "dump-config" {
         Invoke-HostConfigDumpHelper -ResolvedConfigPath $ConfigPath -TargetConfigId $ConfigId

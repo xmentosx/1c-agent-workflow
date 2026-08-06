@@ -307,6 +307,115 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "plans a managed nightly incremental index task and validates its settings" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-nightly-index-action-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                stateRoot = (Join-Path $tempRoot "state")
+                nightlyIndex = [ordered]@{
+                    enabled = $true
+                    at = "02:15"
+                    taskName = "ITL fixture nightly index"
+                    timeoutMinutes = 360
+                    pollSeconds = 20
+                    configIds = @("pm5corp", "pm4corp")
+                }
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $McpHostPath -Action nightly-index-install -ConfigPath $configPath -DryRun 2>&1
+
+            $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+            ($output -join [Environment]::NewLine) | Should -Match "Would install scheduled task 'ITL fixture nightly index'"
+            ($output -join [Environment]::NewLine) | Should -Match "daily at 02:15"
+            ($output -join [Environment]::NewLine) | Should -Match ([regex]::Escape("-Action nightly-index-run"))
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $settings = Get-McpHostNightlyIndexSettings -Config (Read-JsonFile -Path $configPath)
+                $settings.hour | Should -Be 2
+                $settings.minute | Should -Be 15
+                @($settings.configIds) | Should -Be @("pm5corp", "pm4corp")
+                { Get-McpHostNightlyIndexSettings -Config ([pscustomobject]@{ nightlyIndex = [pscustomobject]@{ at = "25:00" } }) } | Should -Throw "*HH:mm*"
+                { Get-McpHostNightlyIndexSettings -Config ([pscustomobject]@{ nightlyIndex = [pscustomobject]@{ pollSeconds = 1 } }) } | Should -Throw "*between 5 and 300*"
+                { Assert-McpHostNightlyIndexTaskOwned -Task ([pscustomobject]@{ Description = "another owner" }) -TaskName "ITL fixture nightly index" } | Should -Throw "*is not managed by this installer*"
+                { Assert-McpHostNightlyIndexTaskOwned -Task ([pscustomobject]@{ Description = $script:NightlyIndexDescription }) -TaskName "ITL fixture nightly index" } | Should -Not -Throw
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "classifies code and graph index status without treating an idle server as busy" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-nightly-index-status-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1}'
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                (Get-HostMcpIndexState -Text '{"server_status":"running","is_indexing":false,"last_indexed_at":"2026-08-06T00:00:00Z"}') | Should -Be "succeeded"
+                (Get-HostMcpIndexState -Text '{"pending":2,"running":1,"completed":8,"failed":0}') | Should -Be "running"
+                (Get-HostMcpIndexState -Text '{"pending":0,"running":0,"completed":11,"failed":0}') | Should -Be "succeeded"
+                (Get-HostMcpIndexState -Text '{"status":"failed","message":"fixture"}') | Should -Be "failed"
+                (Get-HostMcpIndexState -Text 'unrecognized payload') | Should -Be "unknown"
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "keeps the watchdog out of an active nightly maintenance window" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-nightly-index-lock-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                stateRoot = (Join-Path $tempRoot "state")
+                watchdog = [ordered]@{ enabled = $true; taskName = "ITL fixture watchdog" }
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                $lease = Enter-McpHostMaintenanceLock -Config $hostConfig -Operation "nightly-index"
+                try {
+                    $script:WatchdogCoreInvoked = $false
+                    function Invoke-McpHostWatchdogRunCore { param([object]$Config); $script:WatchdogCoreInvoked = $true }
+
+                    Invoke-McpHostWatchdogRun -Config $hostConfig *> $null
+
+                    $script:WatchdogCoreInvoked | Should -BeFalse
+                    $runState = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $hostConfig)
+                    $runState.status | Should -Be "skipped"
+                    $runState.message | Should -Match "maintenance is already active"
+                    Remove-Variable -Scope Script -Name WatchdogCoreInvoked -ErrorAction SilentlyContinue
+                } finally {
+                    Exit-McpHostMaintenanceLock -Lease $lease
+                }
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "excludes the 1C dump cursor from the nightly content fingerprint" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-nightly-index-fingerprint-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1}'
+            Set-Content -LiteralPath (Join-Path $tempRoot "Configuration.xml") -Encoding UTF8 -Value "configuration"
+            Set-Content -LiteralPath (Join-Path $tempRoot "ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor-1"
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $contentBefore = Get-DirectoryFingerprint -Path $tempRoot -ExcludeRelativePaths @("ConfigDumpInfo.xml", "host.config.json")
+                $rawBefore = Get-DirectoryFingerprint -Path $tempRoot -ExcludeRelativePaths @("host.config.json")
+                Set-Content -LiteralPath (Join-Path $tempRoot "ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor-2"
+
+                (Get-DirectoryFingerprint -Path $tempRoot -ExcludeRelativePaths @("ConfigDumpInfo.xml", "host.config.json")) | Should -Be $contentBefore
+                (Get-DirectoryFingerprint -Path $tempRoot -ExcludeRelativePaths @("host.config.json")) | Should -Not -Be $rawBefore
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "recovers an unavailable Docker Desktop daemon with one bounded restart" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-docker-recovery-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
@@ -678,6 +787,10 @@ services:
         $hostConfig.watchdog.dockerDesktopRecovery.timeoutSeconds | Should -Be 120
         $hostConfig.watchdog.dockerDesktopRecovery.commandTimeoutSeconds | Should -Be 90
         $hostConfig.watchdog.dockerDesktopRecovery.pollSeconds | Should -Be 5
+        $hostConfig.nightlyIndex.enabled | Should -BeFalse
+        $hostConfig.nightlyIndex.at | Should -Be "02:00"
+        $hostConfig.nightlyIndex.timeoutMinutes | Should -Be 480
+        $hostConfig.nightlyIndex.pollSeconds | Should -Be 15
         $hostConfig.graphMetadataSearchServer.autoUpdateOnStartup | Should -Be $true
         $hostConfig.configurations[0].configId | Should -Be "trade"
         $hostConfig.configurations[0].sourceRepo | Should -Match "trade-config-dump"
@@ -767,6 +880,11 @@ services:
         $McpHostText | Should -Match "ConfigurationRepositoryUpdateCfg"
         $McpHostText | Should -Match "DumpConfigToFiles"
         $McpHostText | Should -Match "ConfigDumpInfo.xml"
+        $McpHostText | Should -Match "nightly-index-install"
+        $McpHostText | Should -Match 'reindex" -Arguments \(\[ordered\]@\{ force = \$false \}\)'
+        $McpHostText | Should -Match "get_indexing_status"
+        $McpHostText | Should -Match "host-maintenance.lock"
+        $McpHostText | Should -Match "AUTO_UPDATE_ON_STARTUP=true"
         $readmeText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\README.md")
         $readmeText | Should -Match ([regex]::Escape("-Action setup -ConfigPath .\host.config.json -ServerId bookstack"))
         $readmeText | Should -Match ([regex]::Escape("-Action start -ConfigPath .\host.config.json -ServerId bookstack"))
@@ -790,6 +908,9 @@ services:
         $readmeText | Should -Match "Docker Desktop CLI"
         $readmeText | Should -Match "without a container restart or indexing"
         $readmeText | Should -Match "restart=unless-stopped"
+        $readmeText | Should -Match ([regex]::Escape("https://docs.onerpa.ru/mcp-servery-1c"))
+        $readmeText | Should -Match ([regex]::Escape("-Action nightly-index-run -ConfigPath .\host.config.json"))
+        $readmeText | Should -Match ([regex]::Escape("reindex(force=false)"))
         $runbookText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\RUNBOOK.ru.md")
         $runbookText | Should -Match ([regex]::Escape("-Action setup -ConfigPath .\host.config.json -ServerId bookstack"))
         $runbookText | Should -Match ([regex]::Escape("-Action start -ConfigPath .\host.config.json -ServerId bookstack"))
@@ -812,6 +933,9 @@ services:
         $runbookText | Should -Match ([regex]::Escape("-Action watchdog-uninstall -ConfigPath .\host.config.json"))
         $runbookText | Should -Match "dockerDesktopRecovery"
         $runbookText | Should -Match "без перезапуска контейнера и без индексации"
+        $runbookText | Should -Match ([regex]::Escape("https://docs.onerpa.ru/mcp-servery-1c"))
+        $runbookText | Should -Match ([regex]::Escape("-Action nightly-index-run -ConfigPath .\host.config.json"))
+        $runbookText | Should -Match ([regex]::Escape("reindex(force=false)"))
         $McpHostDumpText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1")
         $nativeEmptyStringFunction = [regex]::Match($McpHostDumpText, '(?s)function ConvertTo-NativeEmptyStringArgument \{.*?\n\}')
         $nativeEmptyStringFunction.Success | Should -Be $true
@@ -1895,6 +2019,161 @@ services:
                 $events | Should -Contain "start"
                 [array]::IndexOf($events, "embedding") | Should -BeLessThan ([array]::IndexOf($events, "start"))
                 Remove-Variable -Scope Script -Name HostBootstrapTestEvents -ErrorAction SilentlyContinue
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "indexes only changed fresh dump inputs and advances code and graph freshness together" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-nightly-index-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                stateRoot = (Join-Path $tempRoot "state")
+                configurations = @([ordered]@{
+                    configId = "trade"
+                    sourcePath = (Join-Path $tempRoot "source")
+                    mainConfigPath = "src/cf"
+                    dump = [ordered]@{ sourceInfoBasePath = "fixture" }
+                })
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                $configuration = @($hostConfig.configurations)[0]
+                $oldInput = Get-Sha256Text -Value "source=old-content|report=old-report"
+                Write-HostState -Config $hostConfig -State ([ordered]@{
+                    schemaVersion = 1
+                    configurations = @([ordered]@{
+                        configId = "trade"
+                        sourceContentFingerprint = "old-content"
+                        reportHash = "old-report"
+                        indexInputFingerprint = $oldInput
+                        indexedAt = "2026-07-05T00:00:00Z"
+                    })
+                    servers = @(
+                        [ordered]@{ id = "code"; scope = "project"; configId = "trade"; hostPort = 18100; indexedAt = "2026-07-05T00:00:00Z" },
+                        [ordered]@{ id = "graph"; scope = "project"; configId = "trade"; hostPort = 18101; indexedAt = "2026-07-05T00:00:00Z" }
+                    )
+                })
+                $script:NightlyIndexEvents = New-Object System.Collections.Generic.List[string]
+                $script:NightlySourceContent = "new-content"
+                $script:NightlyReportHash = "new-report"
+                $script:NightlyGraphFailure = $false
+                function Invoke-HostConfigDumpHelper {
+                    param([string]$ResolvedConfigPath, [string]$TargetConfigId)
+                    $script:NightlyIndexEvents.Add("dump:$TargetConfigId")
+                }
+                function Refresh-Configuration {
+                    param([object]$Config, [object]$Configuration)
+                    $script:NightlyIndexEvents.Add("report:$([string]$Configuration.configId)")
+                    return [pscustomobject]@{
+                        configId = "trade"
+                        title = "Trade"
+                        sourceFingerprint = "source-with-cursor"
+                        sourceContentFingerprint = $script:NightlySourceContent
+                        reportHash = $script:NightlyReportHash
+                        indexedAt = "premature-report-time"
+                    }
+                }
+                function Invoke-CodeIncrementalIndex {
+                    param([object]$Server, [string]$ConfigId, [object]$Settings)
+                    $script:NightlyIndexEvents.Add("code:$ConfigId")
+                }
+                function Invoke-GraphIncrementalIndex {
+                    param([object]$Config, [object]$Server, [string]$ConfigId, [object]$Settings)
+                    $script:NightlyIndexEvents.Add("graph:$ConfigId")
+                    if ($script:NightlyGraphFailure) { throw "fixture graph indexing failure" }
+                }
+                $settings = [pscustomobject]@{ timeoutMinutes = 60; pollSeconds = 5 }
+
+                $result = Invoke-NightlyConfigurationIndex -Config $hostConfig -Configuration $configuration -Settings $settings
+
+                $result.status | Should -Be "succeeded"
+                @($script:NightlyIndexEvents) | Should -Be @("dump:trade", "report:trade", "code:trade", "graph:trade")
+                $state = Read-HostState -Config $hostConfig
+                $configState = @($state.configurations | Where-Object configId -eq "trade")[0]
+                $codeState = @($state.servers | Where-Object id -eq "code")[0]
+                $graphState = @($state.servers | Where-Object id -eq "graph")[0]
+                $configState.nightlyIndexStatus | Should -Be "succeeded"
+                $configState.indexedAt | Should -Not -Be "premature-report-time"
+                $configState.indexedAt | Should -Be $codeState.indexedAt
+                $codeState.indexedAt | Should -Be $graphState.indexedAt
+                $codeState.indexInputFingerprint | Should -Be $configState.indexInputFingerprint
+                $graphState.sourceContentFingerprint | Should -Be "new-content"
+
+                $script:NightlyIndexEvents.Clear()
+                $unchanged = Invoke-NightlyConfigurationIndex -Config $hostConfig -Configuration $configuration -Settings $settings
+                $unchanged.status | Should -Be "unchanged"
+                @($script:NightlyIndexEvents) | Should -Be @("dump:trade", "report:trade")
+                $unchangedState = Read-HostState -Config $hostConfig
+                @($unchangedState.configurations | Where-Object configId -eq "trade")[0].indexedAt | Should -Be $configState.indexedAt
+
+                $script:NightlySourceContent = "failed-content"
+                $script:NightlyReportHash = "failed-report"
+                $script:NightlyGraphFailure = $true
+                $script:NightlyIndexEvents.Clear()
+                { Invoke-NightlyConfigurationIndex -Config $hostConfig -Configuration $configuration -Settings $settings } | Should -Throw "*fixture graph indexing failure*"
+                @($script:NightlyIndexEvents) | Should -Be @("dump:trade", "report:trade", "code:trade", "graph:trade")
+                $failedState = Read-HostState -Config $hostConfig
+                $failedConfig = @($failedState.configurations | Where-Object configId -eq "trade")[0]
+                $failedConfig.nightlyIndexStatus | Should -Be "failed"
+                $failedConfig.indexedAt | Should -Be $configState.indexedAt
+                $failedConfig.indexInputFingerprint | Should -Be $configState.indexInputFingerprint
+                @($failedState.servers | Where-Object id -eq "code")[0].indexInputFingerprint | Should -Be $configState.indexInputFingerprint
+                @($failedState.servers | Where-Object id -eq "graph")[0].indexInputFingerprint | Should -Be $configState.indexInputFingerprint
+
+                $script:NightlyGraphFailure = $false
+                $script:NightlyIndexEvents.Clear()
+                $retry = Invoke-NightlyConfigurationIndex -Config $hostConfig -Configuration $configuration -Settings $settings
+                $retry.status | Should -Be "succeeded"
+                @($script:NightlyIndexEvents) | Should -Be @("dump:trade", "report:trade", "code:trade", "graph:trade")
+                Remove-Variable -Scope Script -Name NightlyIndexEvents -ErrorAction SilentlyContinue
+                Remove-Variable -Scope Script -Name NightlySourceContent -ErrorAction SilentlyContinue
+                Remove-Variable -Scope Script -Name NightlyReportHash -ErrorAction SilentlyContinue
+                Remove-Variable -Scope Script -Name NightlyGraphFailure -ErrorAction SilentlyContinue
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "refuses graph incremental restart unless reset is disabled and restarts only the MCP service" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-graph-incremental-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $runtimePath = Join-Path $tempRoot "runtime"
+        try {
+            New-Item -ItemType Directory -Force -Path $runtimePath | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1}'
+            Set-Content -LiteralPath (Join-Path $runtimePath "docker-compose.yml") -Encoding UTF8 -Value "services:`n  mcp-app:`n    image: fixture"
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = [pscustomobject]@{ graphMetadataSearchServer = [pscustomobject]@{ composeService = "mcp-app" } }
+                $server = [pscustomobject]@{ runtimePath = $runtimePath; composeProject = "fixture-graph"; hostPort = 18101 }
+                Set-Content -LiteralPath (Join-Path $runtimePath ".env") -Encoding UTF8 -Value "RESET_DATABASE=true`nAUTO_UPDATE_ON_STARTUP=true`n"
+                { Restart-GraphForIncrementalIndex -Config $hostConfig -Server $server -ConfigId "trade" } | Should -Throw "*RESET_DATABASE=false*"
+
+                Set-Content -LiteralPath (Join-Path $runtimePath ".env") -Encoding UTF8 -Value "RESET_DATABASE=false`nAUTO_UPDATE_ON_STARTUP=true`n"
+                $script:GraphIncrementalDockerCalls = New-Object System.Collections.Generic.List[string]
+                function Invoke-DockerCommandChecked {
+                    param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
+                    $script:GraphIncrementalDockerCalls.Add(($Arguments -join " "))
+                }
+                function Test-HostTcpPortOpen { param([int]$Port, [int]$TimeoutMilliseconds); return $true }
+                Restart-GraphForIncrementalIndex -Config $hostConfig -Server $server -ConfigId "trade"
+                @($script:GraphIncrementalDockerCalls).Count | Should -Be 1
+                $script:GraphIncrementalDockerCalls[0] | Should -Match "compose -p fixture-graph"
+                $script:GraphIncrementalDockerCalls[0] | Should -Match "restart mcp-app$"
+                $script:GraphIncrementalDockerCalls[0] | Should -Not -Match "down|neo4j|force-recreate"
+                Remove-Variable -Scope Script -Name GraphIncrementalDockerCalls -ErrorAction SilentlyContinue
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {

@@ -4,6 +4,7 @@ This folder is for the dedicated LAN machine that runs shared vibecoding1c MCP s
 It does not require Codex, Kilo, the workflow agent, or a target 1C project.
 
 For the administrator runbook in Russian, see [`RUNBOOK.ru.md`](RUNBOOK.ru.md).
+The canonical upstream MCP behavior and environment contract is documented at [OneRPA MCP servers for 1C](https://docs.onerpa.ru/mcp-servery-1c).
 
 ## Setup
 
@@ -131,6 +132,45 @@ Installation refuses to replace a same-named task that is not marked as installe
 `watchdog-run` exits successfully without repair when `watchdog.enabled` is false, so configuration
 can disable recovery before the managed task is removed.
 
+## Nightly incremental configuration indexing
+
+Enable the managed nightly job only for local `sourcePath` configurations that have complete
+`dump` settings:
+
+```json
+"nightlyIndex": {
+  "enabled": true,
+  "at": "02:00",
+  "taskName": "ITL MCP Host Nightly Index",
+  "timeoutMinutes": 480,
+  "pollSeconds": 15,
+  "configIds": ["pm5corp", "pm4corp"]
+}
+```
+
+Install it and inspect or run it from the same host console:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action nightly-index-install -ConfigPath .\host.config.json
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action nightly-index-status -ConfigPath .\host.config.json
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action nightly-index-run -ConfigPath .\host.config.json
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action nightly-index-uninstall -ConfigPath .\host.config.json
+```
+
+Each run first updates the repository-connected infobase and performs a fresh incremental
+`/DumpConfigToFiles -update -force`, then regenerates `Report.txt`. If the configuration content
+and report hash match the last successfully indexed input, MCP indexing is skipped. Otherwise the
+Code server receives `reindex(force=false)` and is polled through `stats`; the Graph MCP service
+alone is restarted and polled through `get_indexing_status`, with its Neo4j service and data left
+running. Graph restart is refused unless the effective runtime proves `RESET_DATABASE=false` and
+`AUTO_UPDATE_ON_STARTUP=true`.
+
+The job advances the shared Code/Graph `indexedAt` and publishes registry freshness only after both
+servers reach a stable successful status. A failure keeps the previous published index freshness.
+The host maintenance lock makes the watchdog skip reconciliation while a nightly run is active.
+Task installation does not start an immediate index run; use `nightly-index-run` for the first
+controlled execution. `<stateRoot>/nightly-index-state.json` records the last result.
+
 `read_ticket` returns comments, issue-level and comment-level attachments, sanitized
 rendered HTML, formatting spans, and prompt-ready markdown. Image originals are always
 represented as attachment resource handles; OCR text is only draft accompaniment and tells
@@ -183,6 +223,7 @@ reindex         Regenerate Report.txt, recreate RESET_DATABASE-capable servers.
 publish         Publish current host state to the registry repo.
 proxy           Transactionally rebuild and qualify tracked tools-list proxies, then publish.
 reconcile       Recover tracked runtimes/proxies and publish only MCP-ready endpoints.
+nightly-index-* Manage or run fresh-dump incremental Code and Graph indexing.
 ```
 
 Use `-ConfigId <id>` with `start`, `refresh-config`, or `reindex` to limit config-specific work.
@@ -218,8 +259,8 @@ Config-specific vector stores from `PATH_BASES` are isolated as `<stateRoot>/bas
 The registry repo stores `registry.json` with:
 
 - `schemaVersion`, `publishedAt`, `host`
-- `configurations[]`: `configId`, title/source, source fingerprint, report hash, indexed time
-- `servers[]`: server id/scope/provider/configId/name/url/health and freshness inputs
+- `configurations[]`: `configId`, title/source, source/content fingerprints, report hash, dump/report times, nightly status, indexed time
+- `servers[]`: server id/scope/provider/configId/name/url/health, index-input fingerprint, and freshness inputs
 
 The registry must not contain license keys, API tokens, Mantis tokens, infobase passwords, or local host paths that are not needed by clients.
 

@@ -4,6 +4,8 @@
 
 Машина не требует установленного Codex, Kilo Code, workflow agent или конкретного рабочего 1C-проекта. Она работает как отдельный хост Docker-контейнеров и registry publisher.
 
+Каноническое описание инструментов и переменных MCP: [документация OneRPA по MCP-серверам 1С](https://docs.onerpa.ru/mcp-servery-1c).
+
 ## Что получается
 
 После `setup` на выделенной машине будут:
@@ -332,6 +334,46 @@ Installer не перезаписывает одноимённую чужую з
 `watchdog-run` ничего не восстанавливает; после этого задачу можно удалить через
 `watchdog-uninstall`.
 
+## Ночная инкрементальная индексация конфигураций
+
+Ночная задача поддерживается только для локальных `sourcePath` с заполненным блоком `dump`:
+
+```json
+"nightlyIndex": {
+  "enabled": true,
+  "at": "02:00",
+  "taskName": "ITL MCP Host Nightly Index",
+  "timeoutMinutes": 480,
+  "pollSeconds": 15,
+  "configIds": ["pm5corp", "pm4corp"]
+}
+```
+
+Установка, просмотр состояния, ручной запуск и удаление задачи:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action nightly-index-install -ConfigPath .\host.config.json
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action nightly-index-status -ConfigPath .\host.config.json
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action nightly-index-run -ConfigPath .\host.config.json
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action nightly-index-uninstall -ConfigPath .\host.config.json
+```
+
+Каждый запуск сначала обновляет ИБ из хранилища и выполняет свежую инкрементальную выгрузку
+`/DumpConfigToFiles -update -force`, затем заново строит `Report.txt`. Из fingerprint содержимого
+исключается служебный `ConfigDumpInfo.xml`. Если содержимое конфигурации и hash нового отчёта
+совпали с последним успешно проиндексированным входом, вызовы MCP пропускаются.
+
+При изменениях Code MCP получает `reindex(force=false)` и контролируется через `stats`. Для Graph
+перезапускается только compose service `mcp-app`; Neo4j и его данные не останавливаются. Перед
+перезапуском runtime обязан подтвердить `RESET_DATABASE=false` и `AUTO_UPDATE_ON_STARTUP=true`,
+после чего завершение контролируется через `get_indexing_status`.
+
+Общий `indexedAt` серверов Code и Graph и registry обновляются только после устойчивого успеха
+обоих индексов. При ошибке остаётся прежняя опубликованная свежесть. Общий maintenance lock не
+позволяет watchdog вмешаться в активную ночную индексацию. Установка задачи не запускает её сразу;
+первый контролируемый запуск выполняйте через `nightly-index-run`. Результат сохраняется в
+`<stateRoot>\nightly-index-state.json`.
+
 ## Проверка
 
 Проверьте локальное состояние:
@@ -436,6 +478,9 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 
 `dump-config` сначала выполняет `/ConfigurationRepositoryUpdateCfg -force /UpdateDBCfg`, затем `/DumpConfigToFiles`. Если в папке уже есть `ConfigDumpInfo.xml`, используется incremental режим `-update -force`; если папка не пустая и `ConfigDumpInfo.xml` отсутствует, команда останавливается.
 
+Для штатного ночного обновления Code и Graph используйте `nightly-index-run`. Обычный `reindex`
+ниже остаётся отдельной ручной операцией полной пересборки с `RESET_DATABASE=true`.
+
 Пересобрать `Report.txt` и fingerprints по всем конфигурациям:
 
 ```powershell
@@ -521,8 +566,8 @@ Developer-side helper пишет только ignored runtime/client config:
 
 - `schemaVersion`, `publishedAt`;
 - `host.hostId`, `host.baseUrl`;
-- `configurations[]`: `configId`, title/source, source commit, source fingerprint, report hash, indexed time. Для локального `sourcePath` поле `source` содержит `sourceLabel` или `local:<configId>`, но не абсолютный локальный путь;
-- `servers[]`: server id, scope, family, provider, configId, name, URL, health, image и freshness inputs.
+- `configurations[]`: `configId`, title/source, source commit, source/content fingerprints, report hash, времена выгрузки/отчёта, статус ночной индексации и indexed time. Для локального `sourcePath` поле `source` содержит `sourceLabel` или `local:<configId>`, но не абсолютный локальный путь;
+- `servers[]`: server id, scope, family, provider, configId, name, URL, health, image, index-input fingerprint и freshness inputs.
 
 Не публикуйте туда:
 

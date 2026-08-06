@@ -74,6 +74,14 @@
       "pollSeconds": 5
     }
   },
+  "nightlyIndex": {
+    "enabled": false,
+    "at": "02:00",
+    "taskName": "ITL MCP Host Nightly Index",
+    "timeoutMinutes": 480,
+    "pollSeconds": 15,
+    "configIds": []
+  },
   "enabledServers": {
     "global": [ "docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis" ],
     "project": [ "code", "graph" ]
