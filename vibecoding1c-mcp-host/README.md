@@ -113,6 +113,9 @@ registry checkout. Manage the shipped task from the same console:
 
 When `docker info` is unavailable, the watchdog uses the bounded Docker Desktop CLI
 `status` plus `start` or `restart`, then waits for the daemon before reconciling containers.
+If the daemon disappears after that initial probe during any tracked Docker operation, the
+watchdog performs one bounded Docker Desktop recovery and retries the complete tracked
+reconciliation. A failed retry remains bounded; the next scheduled watchdog interval tries again.
 If recovery fails, it publishes the tracked host as `unavailable` without Docker inspection.
 The watchdog never invokes `setup`, source refresh, or `reindex`. It also replaces the broken
 graph image `curl` healthcheck in generated compose files. Existing running graph containers

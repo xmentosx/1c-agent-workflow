@@ -443,6 +443,136 @@ services:
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "recovers Docker and retries the complete reconciliation once when the daemon disappears mid-run" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-mid-run-docker-recovery-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                stateRoot = (Join-Path $tempRoot "state")
+                watchdog = [ordered]@{ enabled = $true }
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                $script:MidRunDockerRecoveryCalls = 0
+                $script:MidRunReconcileCalls = 0
+                function Repair-DockerDesktopAvailability {
+                    param([object]$Settings)
+                    $script:MidRunDockerRecoveryCalls++
+                    return $(if ($script:MidRunDockerRecoveryCalls -eq 1) { "already-available" } else { "restart" })
+                }
+                function Repair-TrackedGraphHealthchecks { param([object]$Config); return 0 }
+                function Repair-TrackedMcpHostAndPublish {
+                    param([object]$Config)
+                    $script:MidRunReconcileCalls++
+                    if ($script:MidRunReconcileCalls -eq 1) {
+                        throw "docker start itl-1c-docs failed: failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine"
+                    }
+                }
+
+                Invoke-McpHostWatchdogRun -Config $hostConfig *> $null
+
+                $script:MidRunDockerRecoveryCalls | Should -Be 2
+                $script:MidRunReconcileCalls | Should -Be 2
+                $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $hostConfig)
+                $state.status | Should -Be "succeeded"
+                $state.message | Should -Match "already-available -> restart"
+                Remove-Variable -Scope Script -Name MidRunDockerRecoveryCalls -ErrorAction SilentlyContinue
+                Remove-Variable -Scope Script -Name MidRunReconcileCalls -ErrorAction SilentlyContinue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "bounds mid-run Docker recovery to one retry and records the failed recovery" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-mid-run-docker-recovery-failure-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                stateRoot = (Join-Path $tempRoot "state")
+                watchdog = [ordered]@{ enabled = $true }
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                $script:FailedMidRunDockerRecoveryCalls = 0
+                $script:FailedMidRunUnavailablePublished = $false
+                function Repair-DockerDesktopAvailability {
+                    param([object]$Settings)
+                    $script:FailedMidRunDockerRecoveryCalls++
+                    if ($script:FailedMidRunDockerRecoveryCalls -eq 1) { return "already-available" }
+                    throw "Docker Desktop restart did not restore docker info within 120 seconds."
+                }
+                function Repair-TrackedGraphHealthchecks { param([object]$Config); return 0 }
+                function Repair-TrackedMcpHostAndPublish {
+                    param([object]$Config)
+                    throw "docker start itl-1c-docs failed: failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine"
+                }
+                function Set-TrackedHostRuntimeStatus { param([object]$Config, [string]$Status) }
+                function Publish-Registry {
+                    param([object]$Config, [switch]$SkipUnchangedHost, [switch]$SkipRuntimeRefresh)
+                    $script:FailedMidRunUnavailablePublished = [bool]$SkipRuntimeRefresh
+                }
+
+                { Invoke-McpHostWatchdogRun -Config $hostConfig *> $null } | Should -Throw "*did not restore docker info*"
+
+                $script:FailedMidRunDockerRecoveryCalls | Should -Be 2
+                $script:FailedMidRunUnavailablePublished | Should -BeTrue
+                $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $hostConfig)
+                $state.status | Should -Be "failed"
+                $state.message | Should -Match "did not restore docker info"
+                Remove-Variable -Scope Script -Name FailedMidRunDockerRecoveryCalls -ErrorAction SilentlyContinue
+                Remove-Variable -Scope Script -Name FailedMidRunUnavailablePublished -ErrorAction SilentlyContinue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "does not restart Docker Desktop for a container failure while the daemon remains available" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-container-failure-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $config = [ordered]@{
+                schemaVersion = 1
+                stateRoot = (Join-Path $tempRoot "state")
+                watchdog = [ordered]@{ enabled = $true }
+            }
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                $script:ContainerFailureDockerRecoveryCalls = 0
+                $script:ContainerFailureReconcileCalls = 0
+                function Repair-DockerDesktopAvailability {
+                    param([object]$Settings)
+                    $script:ContainerFailureDockerRecoveryCalls++
+                    return "already-available"
+                }
+                function Test-DockerDaemonAvailable { param([int]$TimeoutSec); return $true }
+                function Repair-TrackedGraphHealthchecks { param([object]$Config); return 0 }
+                function Repair-TrackedMcpHostAndPublish {
+                    param([object]$Config)
+                    $script:ContainerFailureReconcileCalls++
+                    throw "Direct MCP runtime 'docs' did not open tracked port 18000 after restart."
+                }
+
+                { Invoke-McpHostWatchdogRun -Config $hostConfig *> $null } | Should -Throw "*did not open tracked port*"
+
+                $script:ContainerFailureDockerRecoveryCalls | Should -Be 1
+                $script:ContainerFailureReconcileCalls | Should -Be 1
+                $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $hostConfig)
+                $state.status | Should -Be "failed"
+                Remove-Variable -Scope Script -Name ContainerFailureDockerRecoveryCalls -ErrorAction SilentlyContinue
+                Remove-Variable -Scope Script -Name ContainerFailureReconcileCalls -ErrorAction SilentlyContinue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "publishes unavailable host state without runtime refresh when Docker recovery fails" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-docker-failure-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"

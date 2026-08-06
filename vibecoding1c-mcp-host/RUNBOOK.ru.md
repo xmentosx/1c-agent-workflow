@@ -308,7 +308,10 @@ Installer регистрирует Windows Scheduled Task от текущего 
 
 Если `docker info` недоступен, watchdog ограниченно вызывает Docker Desktop CLI: читает `status`,
 выполняет `start` для остановленного Desktop или `restart` для зависшего backend и ожидает
-восстановления daemon. При неуспехе registry публикуется со статусом `unavailable` без долгой
+восстановления daemon. Если daemon исчезает уже после начальной проверки во время любой
+отслеживаемой Docker-операции, watchdog один раз восстанавливает Docker Desktop и повторяет полный
+tracked reconcile. Повтор остаётся ограниченным; следующий плановый запуск снова пытается вернуть
+серверы в рабочее состояние. При неуспехе registry публикуется со статусом `unavailable` без долгой
 серии `docker inspect`. Этот recovery не вызывает `setup`, refresh конфигураций или `reindex`.
 
 Для graph MCP установщик заменяет ошибочный image healthcheck с отсутствующим `curl` на проверку

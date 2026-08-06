@@ -393,6 +393,19 @@ function Test-DockerDaemonAvailable {
     }
 }
 
+function Test-DockerDaemonUnavailableFailure {
+    param(
+        [string]$Message,
+        [switch]$ProbeDaemon
+    )
+
+    $normalized = [string]$Message
+    if ($normalized -match '(?i)dockerDesktopLinuxEngine|failed to connect to the docker API|cannot connect to (the )?docker daemon|docker daemon is not running|docker is installed but not available|Docker Desktop .+ did not restore docker info') {
+        return $true
+    }
+    return ($ProbeDaemon -and -not (Test-DockerDaemonAvailable -TimeoutSec 10))
+}
+
 function Wait-DockerDaemonAvailable {
     param(
         [int]$TimeoutSec = 180,
@@ -2688,37 +2701,55 @@ function Invoke-McpHostWatchdogRun {
         return
     }
 
+    $dockerRecoveryAttemptActive = $false
     try {
-        try {
-            $dockerRecovery = Repair-DockerDesktopAvailability -Settings $settings
-        } catch {
-            $dockerFailure = $_.Exception.Message
+        $dockerRecoveryEvents = New-Object System.Collections.Generic.List[string]
+        $dockerRecoveryAttemptActive = $true
+        [void]$dockerRecoveryEvents.Add((Repair-DockerDesktopAvailability -Settings $settings))
+        $dockerRecoveryAttemptActive = $false
+        $daemonRecoveryRetries = 0
+        $graphRepairMessage = ""
+        while ($true) {
+            try {
+                try {
+                    $graphRepairCount = Repair-TrackedGraphHealthchecks -Config $Config
+                    if ($graphRepairCount -gt 0) {
+                        $graphRepairMessage = " Graph healthchecks repaired: $graphRepairCount."
+                    }
+                } catch {
+                    $graphRepairMessage = " Graph healthcheck repair warning: $($_.Exception.Message)"
+                    Write-Warning $graphRepairMessage.Trim()
+                }
+
+                Repair-TrackedMcpHostAndPublish -Config $Config -SkipUnchangedRegistryPublish
+                break
+            } catch {
+                $reconcileFailure = $_.Exception.Message
+                if ($daemonRecoveryRetries -ge 1 -or -not (Test-DockerDaemonUnavailableFailure -Message $reconcileFailure -ProbeDaemon)) {
+                    throw
+                }
+                $daemonRecoveryRetries++
+                Write-Warning "Docker daemon became unavailable during MCP reconciliation; recovering Docker Desktop and retrying the complete tracked reconciliation once. $reconcileFailure"
+                $dockerRecoveryAttemptActive = $true
+                [void]$dockerRecoveryEvents.Add((Repair-DockerDesktopAvailability -Settings $settings))
+                $dockerRecoveryAttemptActive = $false
+            }
+        }
+
+        $dockerRecovery = @($dockerRecoveryEvents) -join " -> "
+        $message = "Tracked MCP runtimes, proxies, and registry reconciled. Docker availability: $dockerRecovery.$graphRepairMessage"
+        Write-McpHostWatchdogRunState -Config $Config -StartedAt $startedAt -Status "succeeded" -Message $message
+        Write-Host "MCP host watchdog reconcile completed."
+    } catch {
+        $message = $_.Exception.Message
+        if ($dockerRecoveryAttemptActive -or (Test-DockerDaemonUnavailableFailure -Message $message)) {
             try {
                 Set-TrackedHostRuntimeStatus -Config $Config -Status "unavailable"
                 Publish-Registry -Config $Config -SkipRuntimeRefresh
             } catch {
                 Write-Warning "Could not publish unavailable MCP host state after Docker recovery failure: $($_.Exception.Message)"
             }
-            throw $dockerFailure
         }
-
-        $graphRepairMessage = ""
-        try {
-            $graphRepairCount = Repair-TrackedGraphHealthchecks -Config $Config
-            if ($graphRepairCount -gt 0) {
-                $graphRepairMessage = " Graph healthchecks repaired: $graphRepairCount."
-            }
-        } catch {
-            $graphRepairMessage = " Graph healthcheck repair warning: $($_.Exception.Message)"
-            Write-Warning $graphRepairMessage.Trim()
-        }
-
-        Repair-TrackedMcpHostAndPublish -Config $Config -SkipUnchangedRegistryPublish
-        $message = "Tracked MCP runtimes, proxies, and registry reconciled. Docker availability: $dockerRecovery.$graphRepairMessage"
-        Write-McpHostWatchdogRunState -Config $Config -StartedAt $startedAt -Status "succeeded" -Message $message
-        Write-Host "MCP host watchdog reconcile completed."
-    } catch {
-        $message = $_.Exception.Message
         try {
             Write-McpHostWatchdogRunState -Config $Config -StartedAt $startedAt -Status "failed" -Message $message
         } catch {
