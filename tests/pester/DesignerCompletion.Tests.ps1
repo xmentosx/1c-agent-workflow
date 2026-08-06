@@ -940,7 +940,51 @@ Describe "1C Designer completion evidence" {
         $result.postExitProbeSeconds | Should -Be 30
     }
 
-    It "turns a repository lock error into a failing Designer result" {
+    It "ignores error words embedded in Designer metadata identifiers" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $logPath = Join-Path $TestDrive "metadata-identifiers.log"
+            $metadataLines = @(
+                [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0J7QsdGJ0LDRj9Ck0L7RgNC80LAu0J7RiNC40LHQutCw0KHQvtC+0LHRidC10L3QuNGP0JLQodC70YPQttCx0YPQotC10YXQvdC40YfQtdGB0LrQvtC50J/QvtC00LTQtdGA0LbQutC4")),
+                [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0J7QsdGA0LDQsdC+0YLQutCwLtCg0LDQsdC+0YLQsNCh0KDQtdC30YPQu9GM0YLQsNGC0LDQvNC40J7QsdC80LXQvdCwLtCk0L7RgNC80LAu0J7RiNC40LHQutC40JrQvtC90LLQtdGA0YLQsNGG0LjQuA==")),
+                [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0J7QsdGA0LDQsdC+0YLQutCwLtCg0LDQsdC+0YLQsNCh0KDQtdC30YPQu9GM0YLQsNGC0LDQvNC40J7QsdC80LXQvdCwLtCc0LDQutC10YIu0KDQtdC60L7QvNC10L3QtNCw0YbQuNC40J7RiNC40LHQutCw0J/RgNC+0LLQtdC00LXQvdC40Y/QndC10J7QsdC90L7QstC70LXQvQ==")),
+                "CommonForm.ErrorMessage",
+                "Report.ErrorsCount"
+            )
+            $failureLine = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0J7RiNC40LHQutCwOiDQvtC/0LXRgNCw0YbQuNGPINC90LUg0LLRi9C/0L7Qu9C90LXQvdCw"))
+            [System.IO.File]::WriteAllLines($logPath, @(
+                $metadataLines
+            ), (Get-Utf8Encoding))
+            $metadataState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
+
+            [System.IO.File]::WriteAllText($logPath, $failureLine, (Get-Utf8Encoding))
+            $failureState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
+            $englishFailures = foreach ($line in @("Error: operation aborted", "Errors detected", "Operation failed")) {
+                [System.IO.File]::WriteAllText($logPath, $line, (Get-Utf8Encoding))
+                Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
+            }
+            $englishNoFailures = foreach ($line in @("0 errors", "no errors")) {
+                [System.IO.File]::WriteAllText($logPath, $line, (Get-Utf8Encoding))
+                Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
+            }
+            [pscustomobject]@{
+                metadataState = $metadataState
+                failureState = $failureState
+                failureLine = $failureLine
+                englishFailures = @($englishFailures)
+                englishNoFailures = @($englishNoFailures)
+            }
+        }
+
+        $result.metadataState.state | Should -Be "pending"
+        $result.metadataState.detail | Should -BeNullOrEmpty
+        $result.failureState.state | Should -Be "failure"
+        $result.failureState.detail | Should -Be $result.failureLine
+        @($result.englishFailures | ForEach-Object { $_.state }) | Should -Be @("failure", "failure", "failure")
+        @($result.englishNoFailures | ForEach-Object { $_.state }) | Should -Be @("pending", "pending")
+    }
+
+    It "does not complete a live Designer process from a repository log error alone" {
         $fixtureRoot = Join-Path $TestDrive "repository-lock-error"
         $basePath = Join-Path $fixtureRoot "base"
         $platformPath = Join-Path $fixtureRoot "1cv8.exe"
@@ -967,7 +1011,18 @@ Describe "1C Designer completion evidence" {
                 $logPath = [string]$Arguments[$outIndex + 1]
                 $lockError = -join ([char[]](1054, 1096, 1080, 1073, 1082, 1072, 32, 1073, 1083, 1086, 1082, 1080, 1088, 1086, 1074, 1082, 1080, 32, 1080, 1085, 1092, 1086, 1088, 1084, 1072, 1094, 1080, 1086, 1085, 1085, 1086, 1081, 32, 1073, 1072, 1079, 1099))
                 [System.IO.File]::WriteAllText($logPath, $lockError, (Get-Utf8Encoding))
-                (& $CompletionProbe ([pscustomobject]@{ launcherExited = $true; launcherExitCode = 0; processId = 7003 })) | Should -BeTrue
+                $script:LiveErrorProbeResult = [bool](& $CompletionProbe ([pscustomobject]@{
+                    launcherExited = $false
+                    launcherExitCode = $null
+                    processId = 7003
+                    observedAtUtc = [DateTime]::UtcNow
+                    elapsedSeconds = 1
+                    timeoutSeconds = 30
+                    timeoutRemainingSeconds = 29
+                    launcherExitedAtUtc = $null
+                    postExitProbeDeadlineUtc = $null
+                    postExitElapsedSeconds = 0
+                }))
                 return [pscustomobject]@{
                     processId = 7003; exitCode = 0; timedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
@@ -985,6 +1040,7 @@ Describe "1C Designer completion evidence" {
             return ""
         }
 
+        $script:LiveErrorProbeResult | Should -BeFalse
         $message | Should -Match "repository update failed"
         $message | Should -Match "Log:"
     }

@@ -4655,7 +4655,7 @@ function Get-DesignerLogTerminalState {
     $impossibleText = -join ([char[]](1085, 1077, 1074, 1086, 1079, 1084, 1086, 1078, 1085, 1086))
     $errorText = -join ([char[]](1086, 1096, 1080, 1073, 1082, 1072))
     $errorsText = -join ([char[]](1086, 1096, 1080, 1073, 1082, 1080))
-    $failurePattern = '(?im)^.*(?:{0}|{1}|{2}|{3}|{4}|\berror\b|\bfailed\b).*$' -f `
+    $failurePattern = '(?im)^.*(?:(?<![\p{{L}}\p{{N}}_])(?:{0}|{1}|{2}|{3}|{4})(?![\p{{L}}\p{{N}}_])|\berrors?\b|\bfailed\b).*$' -f `
         [regex]::Escape($lockErrorText),
         [regex]::Escape($couldNotText),
         [regex]::Escape($impossibleText),
@@ -5635,10 +5635,6 @@ function Invoke-Designer {
         $invocationProbeState = New-DesignerInvocationProbeState -LauncherProcessId 0
         $completionProbe = {
             param($probeContext)
-            $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
-            if ($terminalState.state -eq "failure") {
-                return $true
-            }
             if (-not $invocationProbeState.trackedProcessIds.Contains([int]$probeContext.processId)) {
                 $invocationProbeState.trackedProcessIds.Add([int]$probeContext.processId) | Out-Null
             }
@@ -5674,10 +5670,6 @@ function Invoke-Designer {
         $invocationProbeState = New-DesignerInvocationProbeState -LauncherProcessId 0
         $completionProbe = {
             param($probeContext)
-            $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
-            if ($terminalState.state -eq "failure") {
-                return $true
-            }
             if (-not $invocationProbeState.trackedProcessIds.Contains([int]$probeContext.processId)) {
                 $invocationProbeState.trackedProcessIds.Add([int]$probeContext.processId) | Out-Null
             }
@@ -5716,10 +5708,6 @@ function Invoke-Designer {
         $invocationProbeState = New-DesignerInvocationProbeState -LauncherProcessId 0
         $completionProbe = {
             param($probeContext)
-            $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern ""
-            if ($terminalState.state -eq "failure") {
-                return $true
-            }
             if (-not $invocationProbeState.trackedProcessIds.Contains([int]$probeContext.processId)) {
                 $invocationProbeState.trackedProcessIds.Add([int]$probeContext.processId) | Out-Null
             }
@@ -5752,13 +5740,8 @@ function Invoke-Designer {
         $initialSignature = [string]$initialLogState.signature
         $artifactProbeState = New-DesignerArtifactProbeState
         $invocationProbeState = New-DesignerInvocationProbeState -LauncherProcessId 0
-        $configurationSuccessPattern = $(if ($operationKind -eq "configuration-update") { Get-DesignerConfigurationUpdateSuccessPattern } else { "" })
         $completionProbe = {
             param($probeContext)
-            $terminalState = Get-DesignerLogTerminalState -LogPath $logPath -SuccessPattern $configurationSuccessPattern
-            if ($terminalState.state -eq "failure") {
-                return $true
-            }
             if (-not $invocationProbeState.trackedProcessIds.Contains([int]$probeContext.processId)) {
                 $invocationProbeState.trackedProcessIds.Add([int]$probeContext.processId) | Out-Null
             }
