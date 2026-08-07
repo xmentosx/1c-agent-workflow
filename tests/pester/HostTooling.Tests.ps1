@@ -2203,6 +2203,30 @@ services:
         }
     }
 
+    It "keeps config dump diagnostics out of nightly result objects" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-dump-output-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1}'
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function powershell {
+                    Write-Output "child dump diagnostic"
+                    $global:LASTEXITCODE = 0
+                }
+                try {
+                    $result = @(Invoke-HostConfigDumpHelper -ResolvedConfigPath $configPath -TargetConfigId "trade")
+                    $result.Count | Should -Be 0
+                } finally {
+                    Remove-Item function:\powershell -ErrorAction SilentlyContinue
+                }
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "waits for graph MCP readiness after the container port opens" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-graph-ready-test-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"

@@ -1673,7 +1673,7 @@ function Invoke-HostConfigDumpHelper {
     if ($DryRun) {
         $args += "-DryRun"
     }
-    & powershell @args
+    & powershell @args | ForEach-Object { Write-Host ([string]$_) }
     if ($LASTEXITCODE -ne 0) {
         throw "Config dump helper failed with exit code $LASTEXITCODE."
     }
