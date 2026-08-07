@@ -40,17 +40,7 @@ Describe "Local quality gate contract" {
         @($onDemandOnly.contracts.id) | Should -Be @("mcp-hosts")
         @($onDemandOnly.tests) | Should -Contain "tests/pester/OnDemandMcp.Tests.ps1"
         @($catalog.contracts.paths | ForEach-Object { @($_) } | Where-Object { [string]$_ -in @("*", "**", "*/*") }) | Should -BeNullOrEmpty
-        $testFiles = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot "tests\pester") -File -Filter "*.Tests.ps1")
-        $caseCount = 0
-        $lineCount = 0
-        foreach ($testFile in $testFiles) {
-            $testText = Get-Content -LiteralPath $testFile.FullName -Raw -Encoding UTF8
-            $caseCount += ([regex]::Matches($testText, '(?m)^\s*It\s+["'']')).Count
-            $lineCount += (Get-Content -LiteralPath $testFile.FullName -Encoding UTF8).Count
-        }
-        $testFiles.Count | Should -BeLessThan ([int]$catalog.baseline.testFiles)
-        $caseCount | Should -BeLessThan ([int]$catalog.baseline.testCases)
-        $lineCount | Should -BeLessThan ([int]$catalog.baseline.testLines)
+        $catalog.PSObject.Properties["baseline"] | Should -BeNullOrEmpty
     }
     It "qualifies static and live candidate evidence without repeating Develop during Release" {
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8; $qualification = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-qualification.ps1") -Raw -Encoding UTF8
