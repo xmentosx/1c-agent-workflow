@@ -2203,6 +2203,49 @@ services:
         }
     }
 
+    It "waits for graph MCP readiness after the container port opens" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-graph-ready-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1}'
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:GraphReadyAttempts = 0
+                $script:GraphReadyWaitCalls = 0
+                function Restart-GraphForIncrementalIndex {
+                    param([object]$Config, [object]$Server, [string]$ConfigId)
+                }
+                function Open-HostMcpConnection {
+                    param([string]$Url)
+                    $script:GraphReadyAttempts++
+                    if ($script:GraphReadyAttempts -lt 3) { throw "fixture startup connection closed" }
+                    return [pscustomobject]@{ url = $Url; headers = @{}; nextId = 2 }
+                }
+                function Start-Sleep { param([int]$Seconds) }
+                function Wait-HostMcpIndexCompletion {
+                    param([object]$Connection, [string]$StatusTool, [string]$ServerId, [string]$ConfigId, [int]$TimeoutMinutes, [int]$PollSeconds)
+                    $script:GraphReadyWaitCalls++
+                    $Connection.url | Should -Be "http://127.0.0.1:18101/mcp"
+                    $StatusTool | Should -Be "get_indexing_status"
+                }
+
+                $server = [pscustomobject]@{ hostPort = 18101 }
+                $settings = [pscustomobject]@{ timeoutMinutes = 60; pollSeconds = 5 }
+                Invoke-GraphIncrementalIndex -Config ([pscustomobject]@{}) -Server $server -ConfigId "trade" -Settings $settings
+
+                $script:GraphReadyAttempts | Should -Be 3
+                $script:GraphReadyWaitCalls | Should -Be 1
+                Remove-Variable -Scope Script -Name GraphReadyAttempts -ErrorAction SilentlyContinue
+                Remove-Variable -Scope Script -Name GraphReadyWaitCalls -ErrorAction SilentlyContinue
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "reindexes only embedding-dependent standalone servers with stable port indexes" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-reindex-test-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"

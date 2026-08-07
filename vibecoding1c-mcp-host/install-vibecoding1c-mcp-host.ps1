@@ -3067,6 +3067,29 @@ function Open-HostMcpConnection {
     return [pscustomobject]@{ url = $effectiveUrl; headers = $headers; nextId = 2 }
 }
 
+function Wait-HostMcpReadyConnection {
+    param(
+        [string]$Url,
+        [string]$ServerId,
+        [string]$ConfigId,
+        [int]$TimeoutSeconds = 300,
+        [int]$RetrySeconds = 2
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $lastError = ""
+    do {
+        try {
+            return Open-HostMcpConnection -Url $Url
+        } catch {
+            $lastError = $_.Exception.Message
+            if ((Get-Date) -ge $deadline) { break }
+            Write-Host "MCP readiness pending: server=$ServerId configId=$ConfigId error=$lastError"
+            Start-Sleep -Seconds $RetrySeconds
+        }
+    } while ((Get-Date) -lt $deadline)
+    throw "MCP server '$ServerId' for configId '$ConfigId' did not become ready within $TimeoutSeconds second(s). Last error: $lastError"
+}
+
 function Invoke-HostMcpTool {
     param(
         [object]$Connection,
@@ -3244,7 +3267,7 @@ function Invoke-GraphIncrementalIndex {
     )
     Restart-GraphForIncrementalIndex -Config $Config -Server $Server -ConfigId $ConfigId
     if ($DryRun) { return }
-    $connection = Open-HostMcpConnection -Url (Get-TrackedServerControlUrl -Server $Server)
+    $connection = Wait-HostMcpReadyConnection -Url (Get-TrackedServerControlUrl -Server $Server) -ServerId "graph" -ConfigId $ConfigId
     Wait-HostMcpIndexCompletion -Connection $connection -StatusTool "get_indexing_status" -ServerId "graph" -ConfigId $ConfigId -TimeoutMinutes $Settings.timeoutMinutes -PollSeconds $Settings.pollSeconds
 }
 
