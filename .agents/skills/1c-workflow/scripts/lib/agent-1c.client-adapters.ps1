@@ -102,6 +102,7 @@
             workspacePluginPath = ".opencode/plugins/itl-workspace.js"
             workspacePluginPackageLockKey = "opencodePlugin"
             workspacePluginPackageName = "@opencode-ai/plugin"
+            workspacePluginSdkPackageName = "@opencode-ai/sdk"
             workspacePluginRuntimePath = ".opencode"
             requiredUserEnvironment = [ordered]@{
                 OPENCODE_EXPERIMENTAL_WORKSPACES = "true"
@@ -215,6 +216,7 @@
         if (-not $entry.Contains("workspacePluginPath")) { $entry["workspacePluginPath"] = "" }
         if (-not $entry.Contains("workspacePluginPackageLockKey")) { $entry["workspacePluginPackageLockKey"] = "" }
         if (-not $entry.Contains("workspacePluginPackageName")) { $entry["workspacePluginPackageName"] = "" }
+        if (-not $entry.Contains("workspacePluginSdkPackageName")) { $entry["workspacePluginSdkPackageName"] = "" }
         if (-not $entry.Contains("workspacePluginRuntimePath")) { $entry["workspacePluginRuntimePath"] = "" }
     }
     return $registry
@@ -1182,8 +1184,14 @@ function Get-ItlOpenCodePluginRuntimeContract {
     $version = [string](Get-ConfigValueFromObject -Object $locked -Path "version" -Default "")
     $source = [string](Get-ConfigValueFromObject -Object $locked -Path "source" -Default "")
     $integrity = [string](Get-ConfigValueFromObject -Object $locked -Path "integrity" -Default "")
+    $sdkPackageName = [string]$adapter.workspacePluginSdkPackageName
+    $sdkVersion = [string](Get-ConfigValueFromObject -Object $locked -Path "sdk.version" -Default "")
+    $sdkSource = [string](Get-ConfigValueFromObject -Object $locked -Path "sdk.source" -Default "")
+    $sdkIntegrity = [string](Get-ConfigValueFromObject -Object $locked -Path "sdk.integrity" -Default "")
     $expectedSource = "npm:$([string]$adapter.workspacePluginPackageName)@$version"
-    if (-not $version -or $source -ne $expectedSource -or -not $integrity) {
+    $expectedSdkSource = "npm:$sdkPackageName@$sdkVersion"
+    if (-not $version -or $source -ne $expectedSource -or -not $integrity -or
+        -not $sdkPackageName -or -not $sdkVersion -or $sdkSource -ne $expectedSdkSource -or -not $sdkIntegrity) {
         throw "OPENCODE_PLUGIN_RUNTIME_LOCK_MISMATCH: workflow registry and dependency-lock.json disagree about the OpenCode plugin runtime."
     }
     return [pscustomobject]@{
@@ -1193,6 +1201,10 @@ function Get-ItlOpenCodePluginRuntimeContract {
         version = $version
         source = $source
         integrity = $integrity
+        sdkPackageName = $sdkPackageName
+        sdkVersion = $sdkVersion
+        sdkSource = $sdkSource
+        sdkIntegrity = $sdkIntegrity
         minimumNodeMajor = [int](Get-ConfigValueFromObject -Object $locked -Path "minimumNodeMajor" -Default 22)
     }
 }
@@ -1220,6 +1232,7 @@ function Get-ItlOpenCodePluginRuntimeStatus {
     }
     $packageManifestPath = Join-Path $contract.runtimeRoot "package.json"
     $installedManifestPath = Join-Path $contract.runtimeRoot "node_modules\@opencode-ai\plugin\package.json"
+    $installedSdkManifestPath = Join-Path $contract.runtimeRoot "node_modules\@opencode-ai\sdk\package.json"
     $packageLockPath = Join-Path $contract.runtimeRoot "package-lock.json"
     if (-not (Test-Path -LiteralPath $packageManifestPath -PathType Leaf)) {
         return [pscustomobject]@{ required = $true; ready = $false; detail = "package manifest missing: $packageManifestPath" }
@@ -1227,12 +1240,16 @@ function Get-ItlOpenCodePluginRuntimeStatus {
     if (-not (Test-Path -LiteralPath $installedManifestPath -PathType Leaf)) {
         return [pscustomobject]@{ required = $true; ready = $false; detail = "installed package missing: $installedManifestPath" }
     }
+    if (-not (Test-Path -LiteralPath $installedSdkManifestPath -PathType Leaf)) {
+        return [pscustomobject]@{ required = $true; ready = $false; detail = "installed SDK package missing: $installedSdkManifestPath" }
+    }
     if (-not (Test-Path -LiteralPath $packageLockPath -PathType Leaf)) {
         return [pscustomobject]@{ required = $true; ready = $false; detail = "package lock missing: $packageLockPath" }
     }
     try {
         $packageManifest = Read-Utf8Text -Path $packageManifestPath | ConvertFrom-Json
         $installedManifest = Read-Utf8Text -Path $installedManifestPath | ConvertFrom-Json
+        $installedSdkManifest = Read-Utf8Text -Path $installedSdkManifestPath | ConvertFrom-Json
         # Windows PowerShell 5 ConvertFrom-Json rejects npm lockfile v3's required packages[""] root entry.
         $packageLockText = (Read-Utf8Text -Path $packageLockPath).Replace('"":', '"_itl_root":')
         $packageLock = $packageLockText | ConvertFrom-Json
@@ -1240,16 +1257,23 @@ function Get-ItlOpenCodePluginRuntimeStatus {
         return [pscustomobject]@{ required = $true; ready = $false; detail = "runtime package metadata is invalid JSON: $($_.Exception.Message)" }
     }
     $declared = [string](Get-ConfigValueFromObject -Object $packageManifest -Path "dependencies.$($contract.packageName)" -Default "")
+    $declaredSdk = [string](Get-ConfigValueFromObject -Object $packageManifest -Path "dependencies.$($contract.sdkPackageName)" -Default "")
     $installed = [string](Get-ConfigValueFromObject -Object $installedManifest -Path "version" -Default "")
+    $installedSdk = [string](Get-ConfigValueFromObject -Object $installedSdkManifest -Path "version" -Default "")
     $lockedPackage = Get-ConfigValueFromObject -Object $packageLock -Path "packages.node_modules/@opencode-ai/plugin" -Default $null
+    $lockedSdkPackage = Get-ConfigValueFromObject -Object $packageLock -Path "packages.node_modules/@opencode-ai/sdk" -Default $null
     $lockVersion = [string](Get-ConfigValueFromObject -Object $lockedPackage -Path "version" -Default "")
     $lockIntegrity = [string](Get-ConfigValueFromObject -Object $lockedPackage -Path "integrity" -Default "")
+    $sdkLockVersion = [string](Get-ConfigValueFromObject -Object $lockedSdkPackage -Path "version" -Default "")
+    $sdkLockIntegrity = [string](Get-ConfigValueFromObject -Object $lockedSdkPackage -Path "integrity" -Default "")
     $ready = $declared -eq $contract.version -and $installed -eq $contract.version -and
-        $lockVersion -eq $contract.version -and $lockIntegrity -eq $contract.integrity
+        $lockVersion -eq $contract.version -and $lockIntegrity -eq $contract.integrity -and
+        $declaredSdk -eq $contract.sdkVersion -and $installedSdk -eq $contract.sdkVersion -and
+        $sdkLockVersion -eq $contract.sdkVersion -and $sdkLockIntegrity -eq $contract.sdkIntegrity
     return [pscustomobject]@{
         required = $true
         ready = $ready
-        detail = "expected=$($contract.version); declared=$(if ($declared) { $declared } else { '<missing>' }); installed=$(if ($installed) { $installed } else { '<missing>' }); lock=$(if ($lockVersion) { $lockVersion } else { '<missing>' }); integrity=$(if ($lockIntegrity -eq $contract.integrity) { 'matched' } else { 'mismatch' })"
+        detail = "plugin expected=$($contract.version); declared=$(if ($declared) { $declared } else { '<missing>' }); installed=$(if ($installed) { $installed } else { '<missing>' }); lock=$(if ($lockVersion) { $lockVersion } else { '<missing>' }); integrity=$(if ($lockIntegrity -eq $contract.integrity) { 'matched' } else { 'mismatch' }); sdk expected=$($contract.sdkVersion); declared=$(if ($declaredSdk) { $declaredSdk } else { '<missing>' }); installed=$(if ($installedSdk) { $installedSdk } else { '<missing>' }); lock=$(if ($sdkLockVersion) { $sdkLockVersion } else { '<missing>' }); integrity=$(if ($sdkLockIntegrity -eq $contract.sdkIntegrity) { 'matched' } else { 'mismatch' })"
     }
 }
 
@@ -1275,6 +1299,7 @@ function Set-ItlOpenCodePluginPackageManifest {
         $manifest["private"] = $true
     }
     $manifest["dependencies"][$Contract.packageName] = $Contract.version
+    $manifest["dependencies"][$Contract.sdkPackageName] = $Contract.sdkVersion
     Write-Vibecoding1cMcpJsonFile -Path $packageManifestPath -Value $manifest
 }
 

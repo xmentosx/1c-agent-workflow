@@ -1,4 +1,5 @@
 import { tool } from "@opencode-ai/plugin"
+import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
@@ -78,10 +79,10 @@ async function waitUntilReady(plan, workspace) {
   throw new Error(`OPENCODE_WORKSPACE_NOT_READY: native workspace did not finish checkout within 60 seconds: ${workspace.directory}`)
 }
 
-async function requireWorktreeAdapter(client, mainRoot) {
+async function requireWorktreeAdapter(workspaceClient, mainRoot) {
   let adapters
   try {
-    adapters = unwrap(await client.experimental.workspace.adapter.list({ directory: mainRoot }), "workspace adapter probe")
+    adapters = unwrap(await workspaceClient.experimental.workspace.adapter.list({ directory: mainRoot }), "workspace adapter probe")
   } catch (error) {
     throw new Error(`OPENCODE_WORKSPACE_API_UNAVAILABLE: ${error instanceof Error ? error.message : String(error)}`)
   }
@@ -118,8 +119,12 @@ async function setDeregistration(plan, status, workspaceID, error = "") {
   }
 }
 
-export const ItlWorkspacePlugin = async ({ client }) => ({
-  tool: {
+export const ItlWorkspacePlugin = async ({ serverUrl }) => {
+  const workspaceClient = createOpencodeClient({
+    baseUrl: serverUrl.toString(),
+  })
+
+  const workspaceTools = {
     itl_create_dev_workspace: tool({
       description: "Create a native OpenCode workspace for a new ITL development branch and initialize its branch runtime.",
       args: {
@@ -142,18 +147,18 @@ export const ItlWorkspacePlugin = async ({ client }) => ({
         }
         const plan = parsePlan(planResult.stdout)
 
-        await requireWorktreeAdapter(client, mainRoot)
+        await requireWorktreeAdapter(workspaceClient, mainRoot)
 
-        const list = async () => unwrap(await client.experimental.workspace.list({ directory: mainRoot }), "workspace list")
+        const list = async () => unwrap(await workspaceClient.experimental.workspace.list({ directory: mainRoot }), "workspace list")
         let workspaces = await list()
         let workspace = Array.isArray(workspaces) ? workspaces.find((item) => item?.branch === plan.branch) : undefined
         if (!workspace && plan.mode === "resume") {
-          unwrap(await client.experimental.workspace.syncList({ directory: mainRoot }), "workspace registration sync")
+          unwrap(await workspaceClient.experimental.workspace.syncList({ directory: mainRoot }), "workspace registration sync")
           workspaces = await list()
           workspace = Array.isArray(workspaces) ? workspaces.find((item) => item?.branch === plan.branch) : undefined
         }
         if (!workspace && plan.mode === "create") {
-          workspace = unwrap(await client.experimental.workspace.create({
+          workspace = unwrap(await workspaceClient.experimental.workspace.create({
             directory: mainRoot,
             type: "worktree",
             branch: plan.branch,
@@ -181,7 +186,7 @@ export const ItlWorkspacePlugin = async ({ client }) => ({
           throw new Error(adopted.stderr.trim() || adopted.stdout.trim() || `ITL adopt failed for ${workspace.directory}`)
         }
 
-        unwrap(await client.experimental.workspace.warp({
+        unwrap(await workspaceClient.experimental.workspace.warp({
           directory: mainRoot,
           id: workspace.id,
           sessionID: context.sessionID,
@@ -212,7 +217,7 @@ export const ItlWorkspacePlugin = async ({ client }) => ({
         }
 
         let plan = await getClosePlan(worktree, name)
-        await requireWorktreeAdapter(client, plan.mainWorktreePath)
+        await requireWorktreeAdapter(workspaceClient, plan.mainWorktreePath)
         if (!plan.closed) {
           const wrapper = join(worktree, ".agents", "skills", "1c-workflow", "scripts", "run-itl-command.ps1")
           const closeArgs = [
@@ -228,11 +233,11 @@ export const ItlWorkspacePlugin = async ({ client }) => ({
           if (!plan.closed) throw new Error(`ITL close completed without closed state for ${plan.branch}`)
         }
 
-        const list = async () => unwrap(await client.experimental.workspace.list({ directory: plan.mainWorktreePath }), "workspace list")
+        const list = async () => unwrap(await workspaceClient.experimental.workspace.list({ directory: plan.mainWorktreePath }), "workspace list")
         let workspaces = await list()
         let workspace = Array.isArray(workspaces) ? workspaces.find((item) => item?.branch === plan.branch) : undefined
         if (!workspace) {
-          unwrap(await client.experimental.workspace.syncList({ directory: plan.mainWorktreePath }), "workspace registration sync")
+          unwrap(await workspaceClient.experimental.workspace.syncList({ directory: plan.mainWorktreePath }), "workspace registration sync")
           workspaces = await list()
           workspace = Array.isArray(workspaces) ? workspaces.find((item) => item?.branch === plan.branch) : undefined
         }
@@ -240,7 +245,7 @@ export const ItlWorkspacePlugin = async ({ client }) => ({
           throw new Error(`OPENCODE_WORKSPACE_DEREGISTRATION_PENDING: native registration cannot be recovered for ${plan.branch}; locked Git worktree and ITL state were preserved.`)
         }
 
-        unwrap(await client.experimental.workspace.warp({
+        unwrap(await workspaceClient.experimental.workspace.warp({
           directory: plan.mainWorktreePath,
           id: null,
           sessionID: context.sessionID,
@@ -249,7 +254,7 @@ export const ItlWorkspacePlugin = async ({ client }) => ({
 
         await setDeregistration(plan, "pending", workspace.id)
         try {
-          unwrap(await client.experimental.workspace.remove({ directory: plan.mainWorktreePath, id: workspace.id }), "workspace remove")
+          unwrap(await workspaceClient.experimental.workspace.remove({ directory: plan.mainWorktreePath, id: workspace.id }), "workspace remove")
           await setDeregistration(plan, "complete", workspace.id)
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -264,5 +269,6 @@ export const ItlWorkspacePlugin = async ({ client }) => ({
         }
       },
     }),
-  },
-})
+  }
+  return { tool: workspaceTools }
+}

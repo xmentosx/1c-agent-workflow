@@ -112,6 +112,7 @@
             $registry.opencode.workspacePluginPath | Should -Be ".opencode/plugins/itl-workspace.js"
             $registry.opencode.workspacePluginPackageLockKey | Should -Be "opencodePlugin"
             $registry.opencode.workspacePluginPackageName | Should -Be "@opencode-ai/plugin"
+            $registry.opencode.workspacePluginSdkPackageName | Should -Be "@opencode-ai/sdk"
             $registry.opencode.workspacePluginRuntimePath | Should -Be ".opencode"
             $registry.opencode.requiredUserEnvironment.OPENCODE_EXPERIMENTAL_WORKSPACES | Should -Be "true"
             $registry.kimi.commandsPath | Should -Be ".kimi-code/skills"
@@ -134,6 +135,7 @@
                     $registry[$client].workspaceProvider | Should -Be "git"
                     $registry[$client].workspacePluginPath | Should -Be ""
                     $registry[$client].workspacePluginPackageLockKey | Should -Be ""
+                    $registry[$client].workspacePluginSdkPackageName | Should -Be ""
                     $registry[$client].PSObject.Properties.Name | Should -Not -Contain "requiredUserEnvironment"
                 }
             }

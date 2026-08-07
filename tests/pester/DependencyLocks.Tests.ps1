@@ -174,6 +174,10 @@
         $lockTemplate.dependencies.opencodePlugin.source | Should -Be "npm:@opencode-ai/plugin@1.18.4"
         $lockTemplate.dependencies.opencodePlugin.tarball | Should -Be "https://registry.npmjs.org/@opencode-ai/plugin/-/plugin-1.18.4.tgz"
         $lockTemplate.dependencies.opencodePlugin.integrity | Should -Be "sha512-Mkq128aLJo4E8Sb2bX8zrRlQ+I2WPaJ/n1kzaor8nTi/K/zNP4t8LGKwyMbuRoD/lhw4veSbzDOASSSypv3mcQ=="
+        $lockTemplate.dependencies.opencodePlugin.sdk.version | Should -Be "1.18.4"
+        $lockTemplate.dependencies.opencodePlugin.sdk.source | Should -Be "npm:@opencode-ai/sdk@1.18.4"
+        $lockTemplate.dependencies.opencodePlugin.sdk.tarball | Should -Be "https://registry.npmjs.org/@opencode-ai/sdk/-/sdk-1.18.4.tgz"
+        $lockTemplate.dependencies.opencodePlugin.sdk.integrity | Should -Be "sha512-p/3P0KtWknoLvpsk8QrUzCKd4Q1A5Z3RmACEvwuQBGxnUy4AGo379lUYMgt7fczFn53079oroLuo6BosQri+HA=="
         $lockTemplate.dependencies.opencodePlugin.scope | Should -Be "project-runtime"
         $lockTemplate.dependencies.opencodePlugin.minimumNodeMajor | Should -Be 22
         $lockTemplate.dependencies.opencodePlugin.qualifiedOpenCodeDesktop | Should -Be "1.18.4"

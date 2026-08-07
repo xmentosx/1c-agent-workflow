@@ -208,6 +208,11 @@ Describe "OpenCode native ITL workspaces" {
 
     It "encodes capability failure readiness adopt resume and warp in the plugin contract" {
         $PluginText | Should -Match 'OPENCODE_WORKSPACE_API_UNAVAILABLE'
+        $PluginText | Should -Match 'createOpencodeClient\s*}\s*from "@opencode-ai/sdk/v2"'
+        $PluginText | Should -Match 'ItlWorkspacePlugin = async \(\{ serverUrl \}\)'
+        $PluginText | Should -Match 'baseUrl: serverUrl\.toString\(\)'
+        $PluginText | Should -Match 'workspaceClient\.experimental\.workspace'
+        $PluginText | Should -Not -Match '(?<!workspace)client\.experimental\.workspace'
         $PluginText | Should -Match 'workspace\.adapter\.list'
         $PluginText | Should -Match 'workspace\.syncList'
         $PluginText | Should -Match 'workspace\.create'
@@ -234,13 +239,16 @@ Describe "OpenCode native ITL workspaces" {
         $mockRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-opencode-node-runner-" + [guid]::NewGuid().ToString("N"))
         try {
             $packageRoot = Join-Path $mockRoot "node_modules\@opencode-ai\plugin"
-            New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+            $sdkRoot = Join-Path $mockRoot "node_modules\@opencode-ai\sdk"
+            New-Item -ItemType Directory -Force -Path $packageRoot, $sdkRoot | Out-Null
             Set-Content -LiteralPath (Join-Path $packageRoot "package.json") -Encoding UTF8 -Value '{"type":"module","exports":"./index.js"}'
             Set-Content -LiteralPath (Join-Path $packageRoot "index.js") -Encoding UTF8 -Value @'
 export const tool = (config) => config
 const schema = () => ({ optional() { return this }, min() { return this } })
 tool.schema = { enum: schema, string: schema, boolean: schema }
 '@
+            Set-Content -LiteralPath (Join-Path $sdkRoot "package.json") -Encoding UTF8 -Value '{"type":"module","exports":{"./v2":"./v2.js"}}'
+            Set-Content -LiteralPath (Join-Path $sdkRoot "v2.js") -Encoding UTF8 -Value 'export const createOpencodeClient = () => ({})'
             $pluginCopy = Join-Path $mockRoot "itl-workspace.mjs"
             $testablePlugin = $PluginText.Replace('async function run(cwd, args)', 'export async function run(cwd, args)')
             Set-Content -LiteralPath $pluginCopy -Encoding UTF8 -Value $testablePlugin
@@ -281,15 +289,21 @@ $prefixIndex = [Array]::IndexOf($args, "--prefix")
 if ($prefixIndex -lt 0) { exit 2 }
 $runtimeRoot = [string]$args[$prefixIndex + 1]
 $packageRoot = Join-Path $runtimeRoot "node_modules\@opencode-ai\plugin"
-New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+$sdkRoot = Join-Path $runtimeRoot "node_modules\@opencode-ai\sdk"
+New-Item -ItemType Directory -Force -Path $packageRoot, $sdkRoot | Out-Null
 Set-Content -LiteralPath (Join-Path $packageRoot "package.json") -Encoding UTF8 -Value '{"name":"@opencode-ai/plugin","version":"1.18.4"}'
+Set-Content -LiteralPath (Join-Path $sdkRoot "package.json") -Encoding UTF8 -Value '{"name":"@opencode-ai/sdk","version":"1.18.4"}'
 $lock = [ordered]@{
     lockfileVersion = 3
     packages = [ordered]@{
-        "" = [ordered]@{ dependencies = [ordered]@{ "@opencode-ai/plugin" = "1.18.4" } }
+        "" = [ordered]@{ dependencies = [ordered]@{ "@opencode-ai/plugin" = "1.18.4"; "@opencode-ai/sdk" = "1.18.4" } }
         "node_modules/@opencode-ai/plugin" = [ordered]@{
             version = "1.18.4"
             integrity = "sha512-Mkq128aLJo4E8Sb2bX8zrRlQ+I2WPaJ/n1kzaor8nTi/K/zNP4t8LGKwyMbuRoD/lhw4veSbzDOASSSypv3mcQ=="
+        }
+        "node_modules/@opencode-ai/sdk" = [ordered]@{
+            version = "1.18.4"
+            integrity = "sha512-p/3P0KtWknoLvpsk8QrUzCKd4Q1A5Z3RmACEvwuQBGxnUy4AGo379lUYMgt7fczFn53079oroLuo6BosQri+HA=="
         }
     }
 }
@@ -301,12 +315,20 @@ Set-Content -LiteralPath (Join-Path $runtimeRoot "package-lock.json") -Encoding 
                 $ready = Get-ItlOpenCodePluginRuntimeStatus -Client opencode
                 $manifest = Get-Content -LiteralPath (Join-Path $tempRoot ".opencode\package.json") -Raw -Encoding UTF8 | ConvertFrom-Json
                 $lock = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-                [pscustomobject]@{ status = $ready; declared = $manifest.dependencies.'@opencode-ai/plugin'; locked = $lock.dependencies.opencodePlugin.version }
+                [pscustomobject]@{
+                    status = $ready
+                    declared = $manifest.dependencies.'@opencode-ai/plugin'
+                    declaredSdk = $manifest.dependencies.'@opencode-ai/sdk'
+                    locked = $lock.dependencies.opencodePlugin.version
+                    lockedSdk = $lock.dependencies.opencodePlugin.sdk.version
+                }
             }
             $result.status.required | Should -BeTrue
             $result.status.ready | Should -BeTrue
             $result.declared | Should -Be "1.18.4"
+            $result.declaredSdk | Should -Be "1.18.4"
             $result.locked | Should -Be "1.18.4"
+            $result.lockedSdk | Should -Be "1.18.4"
             $ignore = Get-Content -LiteralPath (Join-Path $tempRoot ".opencode\.gitignore") -Raw -Encoding UTF8
             $ignore | Should -Match '(?m)^node_modules\r?$'
             $ignore | Should -Match '(?m)^package-lock\.json\r?$'
@@ -319,12 +341,13 @@ Set-Content -LiteralPath (Join-Path $runtimeRoot "package-lock.json") -Encoding 
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "runs create readiness adopt and warp against the mock native API contract" {
+    It "uses the v2 client and serverUrl for create when the legacy plugin client has no experimental API" {
         $mockRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-opencode-mock-" + [guid]::NewGuid().ToString("N"))
         $workspaceRoot = Join-Path $mockRoot "workspace"
         try {
             $packageRoot = Join-Path $mockRoot "node_modules\@opencode-ai\plugin"
-            New-Item -ItemType Directory -Force -Path $packageRoot, (Join-Path $workspaceRoot ".agents\skills\1c-workflow\scripts") | Out-Null
+            $sdkRoot = Join-Path $mockRoot "node_modules\@opencode-ai\sdk"
+            New-Item -ItemType Directory -Force -Path $packageRoot, $sdkRoot, (Join-Path $workspaceRoot ".agents\skills\1c-workflow\scripts") | Out-Null
             Set-Content -LiteralPath (Join-Path $workspaceRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1") -Encoding UTF8 -Value "# mock"
             Set-Content -LiteralPath (Join-Path $packageRoot "package.json") -Encoding UTF8 -Value '{"type":"module","exports":"./index.js"}'
             Set-Content -LiteralPath (Join-Path $packageRoot "index.js") -Encoding UTF8 -Value @'
@@ -332,16 +355,45 @@ export const tool = (config) => config
 const schema = () => ({ optional() { return this }, min() { return this } })
 tool.schema = { enum: schema, string: schema, boolean: schema }
 '@
+            Set-Content -LiteralPath (Join-Path $sdkRoot "package.json") -Encoding UTF8 -Value '{"type":"module","exports":{"./v2":"./v2.js"}}'
+            Set-Content -LiteralPath (Join-Path $sdkRoot "v2.js") -Encoding UTF8 -Value @'
+async function request(baseUrl, path, method, input = {}) {
+  const url = new URL(path, baseUrl)
+  if (input.directory) url.searchParams.set("directory", input.directory)
+  const body = Object.fromEntries(Object.entries(input).filter(([key, value]) => key !== "directory" && value !== undefined))
+  const options = { method }
+  if (method !== "GET") {
+    options.headers = { "content-type": "application/json" }
+    options.body = JSON.stringify(body)
+  }
+  const response = await fetch(url, options)
+  return response.json()
+}
+
+export function createOpencodeClient({ baseUrl }) {
+  const call = (path, method, input) => request(baseUrl, path, method, input)
+  return { experimental: { workspace: {
+    adapter: { list: (input) => call("/experimental/workspace/adapter", "GET", input) },
+    list: (input) => call("/experimental/workspace", "GET", input),
+    create: (input) => call("/experimental/workspace", "POST", input),
+    syncList: (input) => call("/experimental/workspace/sync-list", "POST", input),
+    warp: (input) => call("/experimental/workspace/warp", "POST", input),
+    remove: (input) => call(`/experimental/workspace/${encodeURIComponent(input.id)}`, "DELETE", input),
+  } } }
+}
+'@
             $pluginCopy = Join-Path $mockRoot "itl-workspace.mjs"
             Set-Content -LiteralPath $pluginCopy -Encoding UTF8 -Value $PluginText
             $harness = Join-Path $mockRoot "harness.mjs"
             Set-Content -LiteralPath $harness -Encoding UTF8 -Value @'
+import { createServer } from "node:http"
 import { pathToFileURL } from "node:url"
 const main = process.env.ITL_MOCK_MAIN
 const workspace = process.env.ITL_MOCK_WORKSPACE
 const branch = "itldev/mock"
 const commit = "0123456789012345678901234567890123456789"
 const events = []
+const requests = []
 const output = (text, code = 0) => ({ stdout: new Blob([text]), stderr: new Blob([""]), exited: Promise.resolve(code) })
 globalThis.Bun = { spawn(args) {
   const joined = args.join(" ")
@@ -352,17 +404,30 @@ globalThis.Bun = { spawn(args) {
   if (joined.includes("adopt-dev-worktree")) { events.push("adopt"); return output('{"status":"succeeded"}\n') }
   throw new Error("unexpected spawn: " + joined)
 } }
-const client = { experimental: { workspace: {
-  adapter: { list: async () => { events.push("probe"); return { data: [{ type: "worktree" }] } } },
-  list: async () => { events.push("list"); return { data: [] } },
-  create: async (input) => { events.push("create:" + input.branch); return { data: { id: "workspace-id", directory: workspace, branch } } },
-  syncList: async () => { events.push("sync") },
-  warp: async (input) => { events.push("warp:" + input.id); return {} },
-} } }
-const { ItlWorkspacePlugin } = await import(pathToFileURL(process.env.ITL_PLUGIN))
-const plugin = await ItlWorkspacePlugin({ client })
-await plugin.tool.itl_create_dev_workspace.execute({ kind: "configuration", name: "mock" }, { worktree: main, sessionID: "session-id" })
-process.stdout.write(JSON.stringify(events))
+const server = createServer(async (request, response) => {
+  const url = new URL(request.url, "http://127.0.0.1")
+  let body = ""
+  for await (const chunk of request) body += chunk
+  requests.push({ method: request.method, path: url.pathname, query: Object.fromEntries(url.searchParams), body: body ? JSON.parse(body) : null })
+  response.setHeader("content-type", "application/json")
+  if (url.pathname === "/experimental/workspace/adapter") return response.end(JSON.stringify({ data: [{ type: "worktree" }] }))
+  if (url.pathname === "/experimental/workspace" && request.method === "GET") return response.end(JSON.stringify({ data: [] }))
+  if (url.pathname === "/experimental/workspace" && request.method === "POST") return response.end(JSON.stringify({ data: { id: "workspace-id", directory: workspace, branch } }))
+  if (url.pathname === "/experimental/workspace/warp") return response.end(JSON.stringify({ data: true }))
+  response.statusCode = 500
+  response.end(JSON.stringify({ error: `unexpected request: ${request.method} ${url.pathname}` }))
+})
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+try {
+  const address = server.address()
+  const serverUrl = new URL(`http://127.0.0.1:${address.port}`)
+  const { ItlWorkspacePlugin } = await import(pathToFileURL(process.env.ITL_PLUGIN))
+  const plugin = await ItlWorkspacePlugin({ client: {}, serverUrl })
+  await plugin.tool.itl_create_dev_workspace.execute({ kind: "configuration", name: "mock" }, { worktree: main, sessionID: "session-id" })
+  process.stdout.write(JSON.stringify({ events, requests, tools: Object.keys(plugin.tool).sort() }))
+} finally {
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+}
 '@
             $oldMain = $env:ITL_MOCK_MAIN
             $oldWorkspace = $env:ITL_MOCK_WORKSPACE
@@ -371,9 +436,15 @@ process.stdout.write(JSON.stringify(events))
                 $env:ITL_MOCK_MAIN = $mockRoot
                 $env:ITL_MOCK_WORKSPACE = $workspaceRoot
                 $env:ITL_PLUGIN = $pluginCopy
-                $events = (& node $harness) | ConvertFrom-Json
+                $result = (& node $harness) | ConvertFrom-Json
                 $LASTEXITCODE | Should -Be 0
-                @($events) -join "," | Should -Be "probe,list,create:itldev/mock,adopt,warp:workspace-id"
+                @($result.tools) -join "," | Should -Be "itl_close_dev_workspace,itl_create_dev_workspace"
+                @($result.events) -join "," | Should -Be "adopt"
+                @($result.requests.path) -join "," | Should -Be "/experimental/workspace/adapter,/experimental/workspace,/experimental/workspace,/experimental/workspace/warp"
+                @($result.requests.method) -join "," | Should -Be "GET,GET,POST,POST"
+                $result.requests[0].query.directory | Should -Be $mockRoot
+                $result.requests[2].body.branch | Should -Be "itldev/mock"
+                $result.requests[3].body.sessionID | Should -Be "session-id"
             } finally {
                 $env:ITL_MOCK_MAIN = $oldMain
                 $env:ITL_MOCK_WORKSPACE = $oldWorkspace
