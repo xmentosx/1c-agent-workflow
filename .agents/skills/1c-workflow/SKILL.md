@@ -1,11 +1,11 @@
 ---
 name: 1c-workflow
-description: Initialize and operate installed ITL 1C projects for bootstrap, checks, MCP, branch lifecycle, verification, export, refresh, switching, and command help. Never use for development, review, tests, or docs of the 1c-agent-workflow source repository.
+description: Route non-routine work in installed ITL 1C projects for initialization, MCP, unclear development modes, recovery, unusual topology, and detailed explanations. For routine status, branch creation, checks, refresh, export, or switching use 1c-workflow-fast or an explicit generated itl-* skill. Never use for development, review, tests, or docs of the 1c-agent-workflow source repository.
 ---
 
 # 1C Workflow
 
-Detailed ITL workflow router. For routine installed-project work, prefer `1c-workflow-fast` or Kilo `/itl-*`.
+Detailed ITL workflow router for non-routine work. Explicit generated `itl-*` skills run alone; natural-language routines use only `1c-workflow-fast`.
 
 ## Routing
 

@@ -851,6 +851,31 @@ function Get-ItlRoutineCommandNames {
     )
 }
 
+function Get-ItlExplicitRoutineContractText {
+    param([string]$NewLine = [Environment]::NewLine)
+
+    return @(
+        '<!-- ITL_EXPLICIT_ROUTINE_CONTRACT: self-contained-v1 -->',
+        '',
+        'This explicit ITL routine is self-contained. Do not preload `1c-workflow` or `1c-workflow-fast`. A path under `.agents\skills\1c-workflow\scripts\` names the helper implementation, not a router-skill dependency. Follow `requiredAction`/`nextAction`; when either names another explicit ITL wrapper, use that wrapper alone. Load detailed recovery guidance only when the helper requires recovery without an explicit wrapper.'
+    ) -join $NewLine
+}
+
+function Add-ItlExplicitRoutineContract {
+    param([string]$Text, [string]$FileName)
+
+    if ($FileName -notin (Get-ItlRoutineCommandNames)) { return $Text }
+    if ($Text -match '(?m)^<!-- ITL_EXPLICIT_ROUTINE_CONTRACT:') { return $Text }
+
+    $frontmatter = [regex]::Match($Text, '\A---\r?\n.*?\r?\n---\r?\n', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+    if (-not $frontmatter.Success) {
+        throw "ITL explicit routine template has no frontmatter: $FileName"
+    }
+    $newLine = if ($Text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $insert = $newLine + (Get-ItlExplicitRoutineContractText -NewLine $newLine) + $newLine
+    return $Text.Insert($frontmatter.Length, $insert)
+}
+
 function Get-ItlRoutineLongCommandNames {
     return @(
         "itl-new-config-branch.md", "itl-new-extension-branch.md",
@@ -962,11 +987,14 @@ function Convert-ItlCommandForClient {
         $extension = if ($kind -eq "extension") { @"
 Before calling the tool, collect the extension initialization mode (`Empty` or `Cfe`), extension name, and CFE path when applicable. If the developer explicitly does not know them yet, omit all extension arguments so initialization remains pending.
 "@ } else { "" }
+        $explicitRoutineContract = Get-ItlExplicitRoutineContractText -NewLine "`n"
         return @"
 ---
 description: $description
 agent: build
 ---
+
+$explicitRoutineContract
 
 Use this command only from the `master` workspace. Treat any text after the command as the development branch name; if it is missing, ask for one short value.
 
@@ -976,6 +1004,7 @@ Do not load a skill and do not use `read`, `glob`, `grep`, `bash`, or any other 
 If `itl_create_dev_workspace` is not present in the current tool list, return exactly `ITL_OPENCODE_WORKSPACE_TOOL_UNAVAILABLE: run /itl-update-workflow, fully restart OpenCode Desktop, and retry this command.` and stop. Do not search for its implementation and do not create an external worktree. If the tool reports `OPENCODE_WORKSPACE_API_UNAVAILABLE`, return that result and stop.
 "@
     }
+    $Text = Add-ItlExplicitRoutineContract -Text $Text -FileName $FileName
     if ($adapter.commandRouting -eq "none") {
         $Text = [regex]::Replace($Text, '(?m)^agent:\s*[^\r\n]+\r?\n', '')
     } elseif (Test-ItlRoutineEnabledForCommand -FileName $FileName) {

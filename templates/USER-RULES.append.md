@@ -1,6 +1,6 @@
 ## 1C Project Lifecycle
 
-ITL owns lifecycle, bases, MCP, verification, export. Use `1c-workflow-fast`; use `1c-workflow` plus one recovery reference. 1C Designer/Enterprise LoadConfigFromFiles/UpdateDBCfg actions need `timeout_ms >= 3900000`; status/help do not. Do not use `120000 ms`.
+ITL owns lifecycle, bases, MCP, verification, export. Explicit generated `itl-*` skills run alone; other routine requests use only `1c-workflow-fast`. Use `1c-workflow` plus one reference only for non-routine work or helper-directed recovery without an explicit wrapper. 1C Designer/Enterprise LoadConfigFromFiles/UpdateDBCfg actions need `timeout_ms >= 3900000`; status/help do not. Do not use `120000 ms`.
 
 On Enterprise failure/timeout/suspected hang, inspect fresh branch `1Cv8Log` entries for its operation window; `/Out` is secondary. Correlate errors with process/state progress and expected duration. Proven failure/stall means stop waiting for the hard timeout; use helper recovery; never kill arbitrary 1C PIDs.
 

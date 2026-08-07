@@ -1,6 +1,6 @@
 ---
 name: 1c-workflow-fast
-description: Run routine helper commands in installed ITL 1C projects for status, branch creation, Vanessa verification, refresh, and CF/CFE export. Never use for development, review, tests, or docs of the 1c-agent-workflow source repository.
+description: Route routine natural-language requests in installed ITL 1C projects to helper commands for status, branch creation, Vanessa verification, refresh, and CF/CFE export. Explicit generated itl-* skills run alone. Never use for development, review, tests, or docs of the 1c-agent-workflow source repository.
 ---
 
 # 1C Workflow Fast
@@ -9,7 +9,7 @@ description: Run routine helper commands in installed ITL 1C projects for status
 
 ## Purpose
 
-Map routine requests in an installed ITL project to one helper action. Use the monitored compact runner for mutations and long checks, then parse its terminal JSON. Open full workflow references only for failure recovery, missing setup, or explanation.
+Map natural-language routine requests in an installed ITL project to one helper action. Explicit generated `itl-*` skills run alone; do not preload either router for them. Use the monitored compact runner for mutations and long checks, then parse its terminal JSON. Open full workflow references only for helper-directed recovery, missing setup, or explanation.
 
 ## Intent Map
 
@@ -64,8 +64,8 @@ Read `status`, exit code, `errorCategory`, `requiredAction`, and `nextAction`.
 - Report the action, concise error, and artifact paths. Read 80 console-log tail lines only for unclassified `runner` failure.
 - Follow `requiredAction` or `nextAction` exactly. Ask only for a value that the helper explicitly identifies as missing.
 - Before recovery edits, apply the installed `USER-RULES.md` runner/fixture/product ownership, unchanged-rerun, and unrelated-dirty-change guards.
-- For an agent-made change with `requiredAction=/itl-verify-fix`, activate full `1c-workflow` and continue its bounded verification recovery. Do not return completion to the user. Standalone diagnostics only report failure.
+- For an agent-made change with `requiredAction=/itl-verify-fix`, continue through the active client's explicit `itl-verify-fix` wrapper. If that surface is unavailable, activate full `1c-workflow` and its one matching recovery reference. Do not return completion to the user. Standalone diagnostics only report failure.
 - Development completion still requires fresh passed evidence after the last edit; partial/skipped is insufficient.
-- Use full `1c-workflow` for recovery, unusual topology, or initialization.
+- Use full `1c-workflow` for helper-directed recovery without an explicit wrapper, unusual topology, initialization, or detailed explanation.
 
 For first-time project bootstrap, follow `AGENT-INSTALL.md`. This fast skill is optimized for regular branch operations after installation.

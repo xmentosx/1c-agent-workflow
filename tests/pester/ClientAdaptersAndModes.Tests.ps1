@@ -284,6 +284,11 @@
                 $adapted[$client]["itl-litemode.md"] | Should -Match 'exactly one fenced `text` code block'
                 foreach ($fileName in $templates.Keys) {
                     $adapted[$client][$fileName] | Should -Match '(?m)^description:\s*[^\r\n]*[А-Яа-яЁё]'
+                    ([regex]::Matches([string]$adapted[$client][$fileName], 'ITL_EXPLICIT_ROUTINE_CONTRACT: self-contained-v1')).Count | Should -Be 1 -Because "$client $fileName"
+                    $adapted[$client][$fileName] | Should -Match 'Do not preload `1c-workflow` or `1c-workflow-fast`'
+                    $adapted[$client][$fileName] | Should -Match 'helper implementation, not a router-skill dependency'
+                    $adapted[$client][$fileName] | Should -Match 'requiredAction`/`nextAction`.*explicit ITL wrapper.*wrapper alone'
+                    $adapted[$client][$fileName] | Should -Match 'recovery without an explicit wrapper'
                 }
             }
             $adapted.codex["itl.md"] | Should -Match '(?m)^name:\s*itl$'
@@ -409,6 +414,7 @@
             foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-new-config-branch", "itl-new-extension-branch", "itl-update-workflow", "itl-switch-client")) {
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/agents/openai.yaml"
+                [string]$masterFiles[".agents/skills/$name/SKILL.md"] | Should -Match 'ITL_EXPLICIT_ROUTINE_CONTRACT: self-contained-v1'
             }
             @($masterFiles.Keys) | Should -Not -Contain ".agents/skills/itl-check/SKILL.md"
 
@@ -421,6 +427,13 @@
             foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-result")) {
                 @($devFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match 'allow_implicit_invocation:\s*false'
+                $skillText = [string]$devFiles[".agents/skills/$name/SKILL.md"]
+                if ($name -eq "itl-verify-fix") {
+                    $skillText | Should -Not -Match 'ITL_EXPLICIT_ROUTINE_CONTRACT:'
+                    $skillText | Should -Match ([regex]::Escape('.agents/skills/1c-workflow/references/vanessa-tests.md'))
+                } else {
+                    $skillText | Should -Match 'ITL_EXPLICIT_ROUTINE_CONTRACT: self-contained-v1'
+                }
             }
             @($devFiles.Keys) | Should -Not -Contain ".agents/skills/itl-new-config-branch/SKILL.md"
         } finally {
@@ -691,11 +704,15 @@
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             [pscustomobject]@{
                 listed = (Get-ItlRoutineCommandNames) -contains "itl-vanessa-author.md"
+                verifyFixListed = (Get-ItlRoutineCommandNames) -contains "itl-verify-fix.md"
                 opencodeVerifyFix = Convert-ItlCommandForClient -Text $verifyFix -Client "opencode" -FileName "itl-verify-fix.md"
             }
         }
         $routing.listed | Should -BeFalse
+        $routing.verifyFixListed | Should -BeFalse
         $routing.opencodeVerifyFix | Should -Match '(?m)^agent:\s*build\s*$'
+        $routing.opencodeVerifyFix | Should -Not -Match 'ITL_EXPLICIT_ROUTINE_CONTRACT:'
+        $routing.opencodeVerifyFix | Should -Match ([regex]::Escape('.agents/skills/1c-workflow/references/vanessa-tests.md'))
         Test-Path -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-vanessa-author.md.template") | Should -BeFalse
     }
 

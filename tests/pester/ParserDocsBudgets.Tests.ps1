@@ -40,7 +40,7 @@
 
     It 'keeps the detailed skill as a compact router and routes human documentation separately' {
         $skillText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.agents\skills\1c-workflow\SKILL.md')
-        ([regex]::Matches($skillText, '\S+')).Count | Should -BeLessOrEqual 750
+        ([regex]::Matches($skillText, '\S+')).Count | Should -BeLessOrEqual 775
         $skillText | Should -Match 'detailed ITL workflow router'
         $skillText | Should -Match ([regex]::Escape('references/workflow.md'))
         $skillText | Should -Match 'workflow\.md` only for help, an unclear request'
@@ -115,7 +115,7 @@
             @{ path = "AGENTS.md"; maxWords = 950; reviewApproxTokens = 1500; maxApproxTokens = 1700; rationale = "source-maintainer router plus source delivery, cross-process lock, and component release contracts" },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1600; rationale = "routine helper router" },
-            @{ path = "templates\USER-RULES.append.md"; maxWords = 750; reviewApproxTokens = 1200; maxApproxTokens = 1600; rationale = "always-on ITL safety overlay" },
+            @{ path = "templates\USER-RULES.append.md"; maxWords = 775; reviewApproxTokens = 1200; maxApproxTokens = 1600; rationale = "always-on ITL safety overlay with explicit routine routing precedence" },
             @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 1000; reviewApproxTokens = 1600; maxApproxTokens = 1800; rationale = "on-demand command menu" },
             @{ path = ".agents\skills\1c-workflow\references\vanessa-tests.md"; maxWords = 1400; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "on-demand Vanessa authoring contract" }
         )
@@ -214,6 +214,24 @@
         )) {
             $userRulesText | Should -Match ([regex]::Escape($marker))
         }
+    }
+
+    It "routes explicit routines before the fast and detailed workflow routers" {
+        $workflowSkill = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\SKILL.md") -Raw -Encoding UTF8
+        $fastSkill = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md") -Raw -Encoding UTF8
+        $agentsTemplate = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\AGENTS.append.md") -Raw -Encoding UTF8
+        $userRulesTemplate = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\USER-RULES.append.md") -Raw -Encoding UTF8
+
+        foreach ($text in @($workflowSkill, $fastSkill, $agentsTemplate, $userRulesTemplate)) {
+            $text | Should -Match 'Explicit generated `itl-\*` skills run alone'
+        }
+        $workflowSkill | Should -Match 'description:.*Route non-routine work.*routine status.*1c-workflow-fast.*explicit generated itl-\* skill'
+        $fastSkill | Should -Match 'description:.*Route routine natural-language requests.*Explicit generated itl-\* skills run alone'
+        $fastSkill | Should -Match 'requiredAction=/itl-verify-fix.*explicit `itl-verify-fix` wrapper.*If that surface is unavailable.*full `1c-workflow`'
+        $agentsTemplate | Should -Match 'routine natural-language lifecycle requests.*use only.*1c-workflow-fast/SKILL.md'
+        $agentsTemplate | Should -Match '1c-workflow/SKILL.md` plus one matching reference only'
+        $userRulesTemplate | Should -Match 'other routine requests use only `1c-workflow-fast`'
+        $userRulesTemplate | Should -Match 'helper-directed recovery without an explicit wrapper'
     }
 
     It "requires Enterprise failure and stall diagnosis to use fresh event-log evidence before Out" {
