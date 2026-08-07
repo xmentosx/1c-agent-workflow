@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "baseline": {
     "testFiles": 40,
-    "testCases": 661,
+    "testCases": 662,
     "testLines": 27600
   },
   "budgets": {
