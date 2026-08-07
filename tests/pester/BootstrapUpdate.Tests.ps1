@@ -300,8 +300,8 @@ exit 0
         $userRulesTemplateText | Should -Match "OpenSpec phases read rules"
         $userRulesTemplateText | Should -Match 'Never install missing `openspec` or run `openspec update`'
         $userRulesTemplateText | Should -Match "activate required skills"
-        $userRulesTemplateText | Should -Match "code, tests, current 1C metadata"
-        $userRulesTemplateText | Should -Match "available MCP evidence"
+        $userRulesTemplateText | Should -Match "sufficient non-duplicative current evidence"
+        $userRulesTemplateText | Should -Match "never repeat native discovery after sufficient code/graph MCP results"
         $userRulesTemplateText | Should -Match "surface conflicts"
         $userRulesTemplateText | Should -Not -Match ([regex]::Escape("/itl-vibecoding1c-mcp"))
 
@@ -320,18 +320,24 @@ exit 0
         $productDocsSkillText | Should -Match "max_chars=0"
         $productDocsSkillText | Should -Match "source of product context and intended behavior"
         $productDocsSkillText | Should -Match "technical or implementation architecture"
-        $productDocsSkillText | Should -Match "internal design of a subsystem"
+        $productDocsSkillText | Should -Match "internal subsystem design"
         $productDocsSkillText | Should -Match "before a broad repository traversal"
         $productDocsSkillText | Should -Match ([regex]::Escape('как устроена архитектура редактора планов'))
         $productDocsSkillText | Should -Match "Explicitly describe documentation/implementation differences"
         $productDocsSkillText | Should -Not -Match "source of product behavior truth"
         $productDocsSkillText | Should -Match "## Evidence Policy"
         $productDocsSkillText | Should -Match "## Verification Workflow"
-        $productDocsSkillText | Should -Match "current code, tests, 1C metadata"
+        $productDocsSkillText | Should -Match "minimum sufficient non-duplicative evidence"
         $productDocsSkillText | Should -Match "BookStack is advisory"
         $productDocsSkillText | Should -Match "1c-code-metadata-mcp"
         $productDocsSkillText | Should -Match "1C-docs-mcp"
         $productDocsSkillText | Should -Match "Code/MCP evidence"
+        $productDocsSkillText | Should -Match "primary discovery path"
+        $productDocsSkillText | Should -Match "targeted read complements discovery and is not a second search"
+        $productDocsSkillText | Should -Match 'Do not run `rg`'
+        $productDocsSkillText | Should -Match "bounded tuned MCP attempt is insufficient"
+        $productDocsSkillText | Should -Match "They are not mandatory for every explanation"
+        $productDocsSkillText | Should -Not -Match ([regex]::Escape('verify the current behavior in code with `rg`, targeted file reads, tests, and available MCP tools'))
         foreach ($marker in @(
             "### OpenSpec Context Reuse",
             "### Lookup When Reuse Does Not Apply",
@@ -339,10 +345,10 @@ exit 0
             'do not repeat `search_docs` or `read_page`',
             "proposal.md",
             'exact `updated_at` returned by BookStack',
-            "page update is known or suspected",
+            "page update known or suspected",
             "unresolved product-context gap",
             'provenance, not proof of live freshness',
-            "Reuse applies only to BookStack product context"
+            "Reuse avoids only repeated BookStack lookup"
         )) {
             $productDocsSkillText | Should -Match ([regex]::Escape($marker))
         }
@@ -354,7 +360,7 @@ exit 0
 
         $productDocsOpenAiText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\product-docs\agents\openai.yaml")
         $productDocsOpenAiText | Should -Match "technical architecture through BookStack"
-        $productDocsOpenAiText | Should -Match "verify it against code/MCP evidence"
+        $productDocsOpenAiText | Should -Match "minimum sufficient non-duplicative code/MCP evidence"
         $productDocsOpenAiText | Should -Match "answering, researching, planning, proposing, applying"
 
         $HelperText | Should -Match "function Update-AgentGuidanceBridge"
