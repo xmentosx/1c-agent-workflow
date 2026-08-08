@@ -1529,6 +1529,21 @@ VANESSA_MCP_VA_EXTENSION_CFE_PATH=$invalidExtensionPath
         @($catalog.tools.name) | Should -Contain "search_for_steps_by_keywords"
         @($catalog.tools.name) | Should -Contain "run_scenario"
 
+        $vanessaSkill = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md")
+        $vanessaSkill | Should -Match 'user_actions_recording'
+        $vanessaSkill | Should -Match 'execute_form_actions'
+        $vanessaSkill | Should -Match 'get_window_list_os.*get_window_screenshot_os'
+        $vanessaSkill | Should -Match 'questions_only.*one_question'
+        $vanessaSkill | Should -Match 'reloadAndRunFromLine'
+
+        $knowledgeTool = @($catalog.tools | Where-Object name -eq 'get_data_from_knowledge_base')[0]
+        $searchType = [string]$knowledgeTool.inputSchema.properties.search_string.type
+        $searchType | Should -Be 'string'
+        $vanessaSkill | Should -Match '`search_string` is text'
+        $screenshotTool = @($catalog.tools | Where-Object name -eq 'get_window_screenshot_os')[0]
+        $screenshotTool.description | Should -Match 'get_window_list_os'
+        $screenshotTool.description | Should -Not -Match 'вызвать get_window_screenshot_os'
+
         $mcpToolPath = ".agent-1c/tools/vanessa-mcp/"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($mcpToolPath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($mcpToolPath))

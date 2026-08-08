@@ -3206,13 +3206,16 @@ if (`$?) { exit 0 } else { exit 1 }
             }
         }
         $codexHandoff.output | Should -Match 'как отдельный project'
+        $codexHandoff.requiredAction | Should -Match 'После добавления project полностью перезапустите приложение Codex'
+        $codexHandoff.requiredAction | Should -Match ([regex]::Escape('.codex/config.toml'))
+        $codexHandoff.requiredAction | Should -Match 'подключило MCP-серверы'
         $codexHandoff.requiredAction | Should -Match 'новую задачу в режиме Local'
         $codexHandoff.requiredAction | Should -Match 'Режим Worktree не выбирайте'
         $codexHandoff.requiredAction | Should -Match 'Git worktree и среда 1С уже созданы ITL'
         $codexHandoff.worktreePath | Should -Be "C:\fixture\branch-codex"
     }
 
-    It "requires initial Kilo reload in the existing master window only" {
+    It "requires the client-specific post-init reload handoff" {
         $initHandoffFunction = [regex]::Match($HelperText, '(?s)function Write-PostInitClientReloadHandoff \{.*?(?=\r?\nfunction )').Value
         $initHandoffFunction | Should -Not -BeNullOrEmpty
         $initHandoffFunction | Should -Match ([regex]::Escape('выполните /reload'))
@@ -3232,6 +3235,21 @@ if (`$?) { exit 0 } else { exit 1 }
         }
         $handoff.output | Should -Match ([regex]::Escape('выполните /reload'))
         $handoff.requiredAction | Should -Match 'до следующего действия в master'
+
+        $codexHandoff = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-ItlActiveClient { return "codex" }
+            $script:RunRequiredAction = ""
+            $output = Write-PostInitClientReloadHandoff 6>&1
+            [pscustomobject]@{
+                output = ($output -join [Environment]::NewLine)
+                requiredAction = $script:RunRequiredAction
+            }
+        }
+        $codexHandoff.output | Should -Match 'полностью перезапустите приложение Codex'
+        $codexHandoff.requiredAction | Should -Match ([regex]::Escape('.codex/config.toml'))
+        $codexHandoff.requiredAction | Should -Match 'подключило MCP-серверы'
+        $codexHandoff.requiredAction | Should -Match 'новую задачу в режиме Local'
     }
 
     It "requires Kilo reload only after a semantic on-demand MCP command change" {
@@ -3257,6 +3275,22 @@ if (`$?) { exit 0 } else { exit 1 }
         $result.changed | Should -BeTrue
         $result.changedAction | Should -Match ([regex]::Escape('/reload'))
         $result.changedAction | Should -Match 'до следующего вызова ROCTUP или Vanessa UI'
+    }
+
+    It "requires a Codex application restart after a semantic on-demand MCP command change" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-ItlActiveClient { return "codex" }
+            $script:RunRequiredAction = ""
+            $script:ItlClientMcpSemanticChanges = [ordered]@{}
+            Register-ItlClientMcpSemanticChange -Client codex -Owner "ondemand-facade" -Path "C:\fixture\.codex\config.toml"
+            Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation "refresh-dev-branch" | Out-Null
+            $script:RunRequiredAction
+        }
+        $script:ItlClientMcpSemanticChanges = [ordered]@{}
+        $result | Should -Match 'полностью перезапустите приложение Codex'
+        $result | Should -Match ([regex]::Escape('.codex/config.toml'))
+        $result | Should -Match 'подключил MCP-серверы'
     }
 
     It "builds a complete safe branch user report with MCP Browser and advice" {

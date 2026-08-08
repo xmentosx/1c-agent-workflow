@@ -1,4 +1,4 @@
-Describe "Vanessa test development and verification" {
+﻿Describe "Vanessa test development and verification" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -29,6 +29,65 @@ Describe "Vanessa test development and verification" {
         $reference | Should -Match 'scenario run is optional diagnostic feedback'
         $reference | Should -Match '/itl-check` is the only executable verification gate'
         $reference | Should -Match 'Do not delete, skip, filter, or weaken'
+        $reference | Should -Match 'user_actions_recording'
+        $reference | Should -Match 'execute_form_actions'
+        $reference | Should -Match 'modal dialog, window change, or intermediate state'
+        $reference | Should -Match 'frequently_used_steps.*optional fallback'
+        $reference | Should -Match 'get_all.*route itself is unknown.*complete command interface'
+        $reference | Should -Match 'get_window_list_os.*get_window_screenshot_os'
+        $reference | Should -Match 'reloadAndRunFromLine'
+        $reference | Should -Match 'question_search.*answers_search.*questions_only.*one_question'
+    }
+
+    It "ships five bounded recipes with a portable example and safe template contracts" {
+        $exampleRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\vanessa-authoring-examples"
+        $expected = @(
+            'integration-persistence.feature',
+            'report-output.feature',
+            'table-row.feature',
+            'ui-navigation.feature',
+            'unit-like.feature'
+        )
+        $features = @(Get-ChildItem -LiteralPath $exampleRoot -File -Filter '*.feature' | Sort-Object Name)
+        @($features.Name) | Should -Be $expected
+
+        $portable = Get-Content -LiteralPath (Join-Path $exampleRoot 'unit-like.feature') -Raw -Encoding UTF8
+        $portable | Should -Not -Match '@template|<\.\.\.>|<[^>]+>'
+        $portable | Should -Match 'Если Результат <> 42 Тогда'
+
+        foreach ($templateName in @($expected | Where-Object { $_ -ne 'unit-like.feature' })) {
+            $template = Get-Content -LiteralPath (Join-Path $exampleRoot $templateName) -Raw -Encoding UTF8
+            $template | Should -Match '@template'
+            $template | Should -Match '<[^>]+>'
+        }
+
+        $uiTemplate = Get-Content -LiteralPath (Join-Path $exampleRoot 'ui-navigation.feature') -Raw -Encoding UTF8
+        $uiTemplate | Should -Match 'сохраняю навигационную ссылку текущего окна в переменную "Ссылка"'
+        $uiTemplate | Should -Match ([regex]::Escape('открываю навигационную ссылку "$Ссылка$"'))
+        $uiTemplate | Should -Not -Match ([regex]::Escape('$НавигационнаяСсылка$'))
+
+        $integrationTemplate = Get-Content -LiteralPath (Join-Path $exampleRoot 'integration-persistence.feature') -Raw -Encoding UTF8
+        $integrationTemplate | Should -Match 'РегистрНакопления\.<ИмяРегистра>'
+        $integrationTemplate | Should -Match '<ОжидаемоеКоличествоДвижений>'
+
+        $recipes = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents\skills\1c-workflow\references\vanessa-recipes.md') -Raw -Encoding UTF8
+        $batchExample = [regex]::Match($recipes, '(?m)^(?<json>\{"name":"execute_form_actions".+\})\r?$')
+        $batchExample.Success | Should -BeTrue
+        $gatewayArguments = $batchExample.Groups['json'].Value | ConvertFrom-Json
+        $innerArguments = $gatewayArguments.argumentsJson | ConvertFrom-Json
+        $actions = @($innerArguments.actions_json | ConvertFrom-Json)
+        $gatewayArguments.name | Should -Be 'execute_form_actions'
+        $actions.Count | Should -Be 1
+        $actions[0].action | Should -Be 'set_value'
+
+        $warnings = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            Get-VanessaAuthoringLintWarnings -FeatureRecords @($features | ForEach-Object {
+                $relativePath = $_.FullName.Substring($RepoRoot.TrimEnd([char]'\').Length).TrimStart([char]'\').Replace('\', '/')
+                [pscustomobject]@{ path = $relativePath }
+            })
+        }
+        @($warnings).Count | Should -Be 0
     }
 
     It "does not classify runMcp as a final Vanessa test process" {

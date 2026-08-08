@@ -3391,7 +3391,9 @@ function Set-ItlOnDemandMcpSemanticReloadRequiredAction {
     if ($client -eq "kilocode") {
         $script:RunRequiredAction = "До следующего вызова ROCTUP или Vanessa UI обязательно выполните /reload, чтобы Kilo перечитал обновлённую команду MCP."
     } else {
-        $instruction = [string](Get-StateValue -State (Get-ItlClientAdapter -Client $client) -Name "reloadUserReport" -Default "Перезапустите активный AI-клиент.")
+        $adapter = Get-ItlClientAdapter -Client $client
+        $fallbackInstruction = [string](Get-StateValue -State $adapter -Name "reloadUserReport" -Default "Перезапустите активный AI-клиент.")
+        $instruction = [string](Get-StateValue -State $adapter -Name "mcpReloadUserReport" -Default $fallbackInstruction)
         $script:RunRequiredAction = "$instruction Причина: операция '$Operation' семантически изменила команду запуска ITL on-demand MCP."
     }
     return $true
@@ -3938,7 +3940,7 @@ function Write-DevBranchWorktreeOpenMessage {
 
     $client = Get-ItlActiveClient
     if ($client -eq "codex") {
-        $instruction = "Откройте папку '$WorktreePath' в Codex как отдельный project (добавьте её, если project ещё не создан) и создайте новую задачу в режиме Local. Режим Worktree не выбирайте: Git worktree и среда 1С уже созданы ITL. Новая задача прочитает контекст этого worktree при запуске; дополнительная перезагрузка клиента в ней не требуется."
+        $instruction = "Откройте папку '$WorktreePath' в Codex как отдельный project (добавьте её, если project ещё не создан). После добавления project полностью перезапустите приложение Codex, чтобы оно перечитало проектный .codex/config.toml и подключило MCP-серверы. Затем создайте в этом project новую задачу в режиме Local. Режим Worktree не выбирайте: Git worktree и среда 1С уже созданы ITL."
         Write-Host $instruction
     } else {
         Write-Host "Чтобы продолжить работу агентом с этой линией разработки, откройте отдельное окно выбранного агента или IDE в этой папке."
@@ -3953,7 +3955,9 @@ function Write-DevBranchWorktreeOpenMessage {
 
 function Write-PostInitClientReloadHandoff {
     $client = Get-ItlActiveClient
-    if ($client -eq "kilocode") {
+    if ($client -eq "codex") {
+        $instruction = "После инициализации полностью перезапустите приложение Codex, чтобы оно перечитало проектный .codex/config.toml и подключило MCP-серверы. Затем откройте новую задачу в режиме Local в project master."
+    } elseif ($client -eq "kilocode") {
         $instruction = "В окне Kilo Code, которое было открыто на master до инициализации, сейчас выполните /reload, чтобы клиент перечитал инициализированный проект. Сделайте это до следующего действия в master. Новое окно worktree, открытое позднее, прочитает собственный контекст при запуске."
     } else {
         $adapterInstruction = [string](Get-StateValue -State (Get-ItlClientAdapter -Client $client) -Name "reloadUserReport" -Default "Перезапустите активный клиент.")

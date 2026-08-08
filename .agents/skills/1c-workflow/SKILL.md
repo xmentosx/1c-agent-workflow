@@ -21,6 +21,7 @@ Use `scripts/agent-1c.ps1` when PowerShell is available. Open only the matching 
 - `references/dev-branch-openspec.md`: an already selected OpenSpec planning flow, with quick-fix or full-cycle execution chosen independently, inside `itldev/*`.
 - `references/vanessa-tests.md`: author or edit focused Vanessa Automation feature tests.
 - `references/vanessa-authoring.md`: use MCP selectively while developing or diagnosing Vanessa tests.
+- `references/vanessa-recipes.md`: open one matching worked Vanessa pattern only after `vanessa-tests.md` selects the check type.
 - `references/advanced-actions.md`: diagnostics and full helper action catalog.
 
 Human-facing guides live under `docs/itl-workflow/`; read them only for explanation. For unclear intent, show helper `help` unchanged.

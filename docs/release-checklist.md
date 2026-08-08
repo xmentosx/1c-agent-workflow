@@ -157,16 +157,23 @@ release failure.
 For the patched Vanessa Automation artifact, pre-publication qualification must
 set `ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE` to the exact local candidate.
 The release smoke must record the canonical archive and EPF SHA-256, compatibility
-version `1.2.043.28`, downstream revision `itl-r4`, a matching live `tools/list`
+version `1.2.043.28`, downstream revision `itl-r5`, a matching live `tools/list`
 catalog, successful file and directory calls on a Windows path containing spaces
 and Cyrillic text, and structured `PATH_INVALID`, `PATH_NOT_FOUND`, and
-`PATH_ACCESS_DENIED` results. `runner-fallback-required` is not release evidence.
+`PATH_ACCESS_DENIED` results. The live catalog must additionally expose
+`get_data_from_knowledge_base.search_string` as `string` and direct
+`get_window_screenshot_os` callers to `get_window_list_os`; every other pinned
+tool contract remains exact. `runner-fallback-required` is not release evidence.
 The 1C compiler output is qualified as exact bytes rather than assumed
 reproducible: after live qualification, publish that same EPF/distribution
 without rebuilding it. Deterministic ZIP packaging may be repeated only against
 the unchanged qualified distribution and must retain the recorded EPF SHA-256.
-The lock URL remains a contract only until a separate publication step changes
-`publicationStatus`; this checklist does not assert that the asset exists.
+Before `itl-r5` publication, the installed lock and compatibility manifest remain
+on released `itl-r4`. The pre-publication candidate may use its exact local archive
+override only on the dedicated release stand. After the same qualified bytes are
+published, commit their lock, live catalog, and exact hashes together before
+publishing `develop`; never expose an installed `published` pin whose asset URL is
+not yet live.
 
 The real file-infobase release gate must rebuild the single latest seed, restore
 two disposable branches from that same seed under overlapping read leases,

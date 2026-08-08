@@ -17,6 +17,8 @@
             trackedMcpConfig = $false
             reload = "Start a new Codex task so project rules and skills are reread."
             reloadUserReport = "Откройте новую задачу Codex, чтобы заново прочитать правила и skills проекта."
+            mcpReload = "Restart the Codex app, then start a new task so project MCP configuration is loaded."
+            mcpReloadUserReport = "Полностью перезапустите приложение Codex, затем откройте новую задачу, чтобы Codex перечитал проектный .codex/config.toml и подключил MCP-серверы."
         }
         kilocode = [ordered]@{
             id = "kilocode"
@@ -1039,7 +1041,8 @@ function Get-ItlExpectedSurfaceFiles {
                 $files[$relative] = Convert-ItlCommandForClient -Text (Read-Utf8Text -Path $source.FullName) -Client $Client -FileName $name
                 if ($Client -eq "codex") {
                     $skillRoot = $relative.Substring(0, $relative.Length - "/SKILL.md".Length)
-                    $files["$skillRoot/agents/openai.yaml"] = "policy:`n  allow_implicit_invocation: false`n"
+                    $displayName = [IO.Path]::GetFileNameWithoutExtension($name)
+                    $files["$skillRoot/agents/openai.yaml"] = "interface:`n  display_name: `"$displayName`"`npolicy:`n  allow_implicit_invocation: false`n"
                 }
             }
         }

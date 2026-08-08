@@ -114,7 +114,7 @@ Goal: create baseline project state.
 7. Initial dump must produce `src/cf/ConfigDumpInfo.xml`; later dumps use incremental `-update -force` when that file exists. Stop if `src/cf` is non-empty without `ConfigDumpInfo.xml`.
 8. Install/cache dependencies, install `ai_rules_1c` for exactly the selected client, record pins, reconcile MCP only for that client, render its ITL surface, generate the Kilo/OpenCode routine agent when applicable, and apply the ITL overlay.
 9. Commit rules and workflow files when there are changes.
-10. If the active client window was already open before initialization, make it reread the initialized `master` project before the next lifecycle action. For Kilo Code this means one `/reload` in that already-open `master` window. A later newly opened worktree window reads its own context on startup and needs no second reload.
+10. Make the active client reread the initialized `master` project before the next lifecycle action. For Codex, fully restart the application so it loads the generated project `.codex/config.toml` and connects its MCP servers, then open a new `Local` task. For Kilo Code, run one `/reload` in the already-open `master` window. Apply the matching adapter instruction for other clients.
 
 ## Tool Actions
 
