@@ -24,13 +24,13 @@
         "vanessaExt": "1.3.9.131"
       },
       "backendRevisions": {
-        "vanessaAutomation": "itl-r4"
+        "vanessaAutomation": "itl-r5"
       },
       "vanessaAutomationArtifact": {
-        "archiveSha256": "55f487363b297251042e962146a73b08c9cffd115072c40d8143bbd2d1cb2f04",
-        "epfSha256": "7e52c7ed277bd69526fa07cc41b1d240d2d252a5ccc515712c6285610e1e1858",
-        "manifestSha256": "f13a22deede14dd958d72d9eeb1c00b8bef99792e72d26b88cdbe8c148091adb",
-        "patchSha256": "aff0100f62861552a63421990ea362cca10295e702a0eca6cbb4cb486d500455",
+        "archiveSha256": "b2427e90704b7682b2f976524777ea199dbfb0cad695376017cf38dbe447ffd8",
+        "epfSha256": "e0f77c9fb48278ca91b16db61db87a887c25b384458b6475c30e260c8fafc75a",
+        "manifestSha256": "5be437d295dde4def8aa2b08c019263989f28163d920fc7556ff0b76bdaec33b",
+        "patchSha256": "62032de3b1cded55cb286578452d67815680c23d76e552a0c3d7efd24db20ff4",
         "upstreamCommit": "f3a01778a14d29b38204685deea0131274d438ff"
       },
       "lockKeys": [
@@ -47,7 +47,7 @@
       },
       "qualification": "live-tools-list",
       "catalog": "catalogs/vanessa-ui-v0.6.5-va-1.2.043.28.json",
-      "catalogSha256": "2d285e0ccca2e49c275b4abac2c0e3f4147a75fc18d9910541a222d937939675"
+      "catalogSha256": "4d262a09d1faa4a4a74425e434088d628405892d745617f16f002d3b7f5e07eb"
     }
   }
 }

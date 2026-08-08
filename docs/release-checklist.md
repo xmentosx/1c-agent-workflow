@@ -168,11 +168,12 @@ The 1C compiler output is qualified as exact bytes rather than assumed
 reproducible: after live qualification, publish that same EPF/distribution
 without rebuilding it. Deterministic ZIP packaging may be repeated only against
 the unchanged qualified distribution and must retain the recorded EPF SHA-256.
-The installed lock and compatibility manifest remain on released `itl-r4` until
-the separately qualified `itl-r5` bytes are published and their exact hashes are
-committed. The lock URL remains a contract only until that publication step
-changes `publicationStatus`; this checklist does not assert that the candidate
-asset exists.
+Before `itl-r5` publication, the installed lock and compatibility manifest remain
+on released `itl-r4`. The pre-publication candidate may use its exact local archive
+override only on the dedicated release stand. After the same qualified bytes are
+published, commit their lock, live catalog, and exact hashes together before
+publishing `develop`; never expose an installed `published` pin whose asset URL is
+not yet live.
 
 The real file-infobase release gate must rebuild the single latest seed, restore
 two disposable branches from that same seed under overlapping read leases,

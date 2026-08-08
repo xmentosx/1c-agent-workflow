@@ -1538,15 +1538,11 @@ VANESSA_MCP_VA_EXTENSION_CFE_PATH=$invalidExtensionPath
 
         $knowledgeTool = @($catalog.tools | Where-Object name -eq 'get_data_from_knowledge_base')[0]
         $searchType = [string]$knowledgeTool.inputSchema.properties.search_string.type
-        if ($searchType -eq 'number') {
-            $vanessaSkill | Should -Match 'pinned catalog declares text `search_string` as a number'
-        } else {
-            $searchType | Should -Be 'string'
-        }
+        $searchType | Should -Be 'string'
+        $vanessaSkill | Should -Match '`search_string` is text'
         $screenshotTool = @($catalog.tools | Where-Object name -eq 'get_window_screenshot_os')[0]
-        if ($screenshotTool.description -match 'вызвать get_window_screenshot_os') {
-            $vanessaSkill | Should -Match 'always call `get_window_list_os`.*then call `get_window_screenshot_os`'
-        }
+        $screenshotTool.description | Should -Match 'get_window_list_os'
+        $screenshotTool.description | Should -Not -Match 'вызвать get_window_screenshot_os'
 
         $mcpToolPath = ".agent-1c/tools/vanessa-mcp/"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($mcpToolPath))

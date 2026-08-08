@@ -36,7 +36,7 @@
         $reference | Should -Match 'get_all.*route itself is unknown.*complete command interface'
         $reference | Should -Match 'get_window_list_os.*get_window_screenshot_os'
         $reference | Should -Match 'reloadAndRunFromLine'
-        $reference | Should -Match 'questions_only.*one_question'
+        $reference | Should -Match 'question_search.*answers_search.*questions_only.*one_question'
     }
 
     It "ships five bounded recipes with a portable example and safe template contracts" {

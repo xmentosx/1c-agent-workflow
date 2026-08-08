@@ -88,9 +88,9 @@ state that must be checked before the next action. The inner call shape is:
 For visual evidence, call `get_window_list_os`, select
 the exact returned title, then call `get_window_screenshot_os`; screenshots are
 supplementary. Query the knowledge base only for a named gap and request a small
-portion; never load `format=all`. In the pinned catalog, text search is blocked by
-an upstream `search_string` schema defect, so use `questions_only` followed by one
-`one_question` until the patched component is active.
+portion; never load `format=all`. Text `search_string` is supported for narrow
+`question_search` or `answers_search`; use `questions_only` followed by one
+`one_question` when browsing by question number is cheaper.
 
 During diagnosis, `run_scenario` with `reloadAndRunFromLine` and a real step line
 may shorten a rerun, for example inner arguments
