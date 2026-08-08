@@ -1285,14 +1285,14 @@ services:
         }
     }
 
-    It "supplies a placeholder graph OpenAI key in standalone CPU embedding mode" {
+    It "keeps standalone Graph CPU embeddings local when distribution defaults point to OpenRouter" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-graph-cpu-key-test-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
 
         try {
             $stateRoot = Join-Path $tempRoot "state"
             New-Item -ItemType Directory -Force -Path (Join-Path $stateRoot "distribution") | Out-Null
-            Set-Content -LiteralPath (Join-Path $stateRoot "distribution\config.env") -Encoding UTF8 -Value "CHAT_API_KEY=`nCHAT_API_BASE=`nCHAT_MODEL=`n"
+            Set-Content -LiteralPath (Join-Path $stateRoot "distribution\config.env") -Encoding UTF8 -Value "CHAT_API_KEY=`nCHAT_API_BASE=https://openrouter.ai/api`nCHAT_MODEL=qwen/qwen3-235b-a22b`nEMBEDDING_API_BASE=https://openrouter.ai/api`nEMBEDDING_MODEL=qwen/qwen3-embedding-8b`n"
 
             $config = [ordered]@{
                 schemaVersion = 1
@@ -1329,9 +1329,14 @@ services:
 
                 $graphEnv = Resolve-ServerEnv -Config $hostConfig -Server $graphServer
                 $graphEnv["OPENAI_API_KEY"] | Should -Be "standalone-cpu-embedding-placeholder"
-                $graphEnv.Contains("OPENAI_API_BASE") | Should -Be $false
+                $graphEnv["OPENAI_API_BASE"] | Should -Be "http://127.0.0.1:65535/v1"
                 $graphEnv.Contains("OPENAI_MODEL") | Should -Be $false
+                $graphEnv["OPENAI_EMBEDDING_API_KEY"] | Should -Be "standalone-cpu-embedding-placeholder"
+                $graphEnv["OPENAI_EMBEDDING_API_BASE"] | Should -Be "http://127.0.0.1:65535/v1"
+                $graphEnv["OPENAI_EMBEDDING_MODEL"] | Should -Be "intfloat/multilingual-e5-base"
+                $graphEnv["EMBEDDING_ALLOW_OFFLINE_FALLBACK"] | Should -Be "true"
                 $graphEnv["EMBEDDING_MODEL"] | Should -Be "intfloat/multilingual-e5-base"
+                @($graphEnv.Values | Where-Object { [string]$_ -match "openrouter" }).Count | Should -Be 0
 
                 $codeEnv = Resolve-ServerEnv -Config $hostConfig -Server $codeServer
                 $codeEnv.Contains("OPENAI_API_KEY") | Should -Be $false
@@ -2080,8 +2085,8 @@ services:
                         indexedAt = "2026-07-05T00:00:00Z"
                     })
                     servers = @(
-                        [ordered]@{ id = "code"; scope = "project"; configId = "trade"; hostPort = 18100; indexedAt = "2026-07-05T00:00:00Z" },
-                        [ordered]@{ id = "graph"; scope = "project"; configId = "trade"; hostPort = 18101; indexedAt = "2026-07-05T00:00:00Z" }
+                        [ordered]@{ id = "code"; scope = "project"; configId = "trade"; hostPort = 18100; configurationName = "Trade Old"; configurationVersion = "1.0"; indexedAt = "2026-07-05T00:00:00Z" },
+                        [ordered]@{ id = "graph"; scope = "project"; configId = "trade"; hostPort = 18101; configurationName = "Trade Old"; configurationVersion = "1.0"; indexedAt = "2026-07-05T00:00:00Z" }
                     )
                 })
                 $script:NightlyIndexEvents = New-Object System.Collections.Generic.List[string]
@@ -2098,6 +2103,9 @@ services:
                     return [pscustomobject]@{
                         configId = "trade"
                         title = "Trade"
+                        configurationName = "Trade Current"
+                        configurationVersion = "2.0"
+                        sourceCommit = "fresh-source"
                         sourceFingerprint = "source-with-cursor"
                         sourceContentFingerprint = $script:NightlySourceContent
                         reportHash = $script:NightlyReportHash
@@ -2129,6 +2137,10 @@ services:
                 $codeState.indexedAt | Should -Be $graphState.indexedAt
                 $codeState.indexInputFingerprint | Should -Be $configState.indexInputFingerprint
                 $graphState.sourceContentFingerprint | Should -Be "new-content"
+                $codeState.configurationName | Should -Be "Trade Current"
+                $codeState.configurationVersion | Should -Be "2.0"
+                $graphState.configurationVersion | Should -Be "2.0"
+                $graphState.sourceCommit | Should -Be "fresh-source"
 
                 $script:NightlyIndexEvents.Clear()
                 $unchanged = Invoke-NightlyConfigurationIndex -Config $hostConfig -Configuration $configuration -Settings $settings

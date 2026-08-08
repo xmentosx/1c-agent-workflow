@@ -520,7 +520,7 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 
 CPU embedding mode всегда передает `RESET_CACHE=false`: общий cache модели смонтирован как `/app/model_cache`, и контейнер не должен удалять эту mount point.
 
-В CPU embedding mode Graph server получает не секретный placeholder `OPENAI_API_KEY` только для прохождения startup initialization OpenAI client. Если Graph должен реально вызывать LLM для chat-функций, задайте `CHAT_API_KEY`, `CHAT_API_BASE` и `CHAT_MODEL` в `config.env` distribution или в `host.config.json` secrets.
+В CPU embedding mode Graph server использует локальную `EMBEDDING_MODEL`. Совместимые OpenAI-переменные направляются на fail-closed loopback endpoint, поэтому значения OpenRouter/OpenAI из distribution defaults не вызывают внешних запросов. Если Graph должен реально вызывать LLM для chat-функций, задайте `CHAT_API_KEY`, `CHAT_API_BASE` и `CHAT_MODEL` в `host.config.json` secrets.
 
 Config-specific vector stores из `PATH_BASES` изолируются как `<stateRoot>/bases/<configId>/<serverId>/...`, чтобы несколько `code` containers не делили один zvec lock.
 

@@ -1810,13 +1810,23 @@ function Set-GraphOpenAiFallbackEnv {
     }
     $settings = Get-HostEmbeddingSettings -Config $Config
     if ($settings.mode -eq "cpu") {
+        $cpuLocalApiBase = "http://127.0.0.1:65535/v1"
+        $placeholderKey = "standalone-cpu-embedding-placeholder"
         $currentKey = ""
         if ($Values.Contains("OPENAI_API_KEY")) {
             $currentKey = [string]$Values["OPENAI_API_KEY"]
         }
         if ([string]::IsNullOrWhiteSpace($currentKey)) {
-            $Values["OPENAI_API_KEY"] = "standalone-cpu-embedding-placeholder"
+            $Values["OPENAI_API_KEY"] = $placeholderKey
+            $Values["OPENAI_API_BASE"] = $cpuLocalApiBase
+            if ($Values.Contains("OPENAI_MODEL")) {
+                $Values.Remove("OPENAI_MODEL")
+            }
         }
+        $Values["OPENAI_EMBEDDING_API_KEY"] = $placeholderKey
+        $Values["OPENAI_EMBEDDING_API_BASE"] = $cpuLocalApiBase
+        $Values["OPENAI_EMBEDDING_MODEL"] = [string]$settings.model
+        $Values["EMBEDDING_ALLOW_OFFLINE_FALLBACK"] = "true"
         return
     }
     if ($settings.mode -ne "openai") {
@@ -3310,7 +3320,9 @@ function Set-NightlyConfigurationState {
     }
     Update-HostStateConfigurations -Config $Config -ConfigStates @([pscustomobject]$configHash)
 
-    if ($Status -ne "succeeded") { return }
+    if ($Status -notin @("succeeded", "unchanged")) { return }
+    $effectiveIndexedAt = [string]$configHash["indexedAt"]
+    $effectiveInputFingerprint = [string]$configHash["indexInputFingerprint"]
     $state = Read-HostState -Config $Config
     $stateHash = Convert-ToHash -Object $state
     $servers = @()
@@ -3319,11 +3331,14 @@ function Set-NightlyConfigurationState {
         if ([string](Get-ObjectValue -Object $server -Name "scope" -Default "") -eq "project" -and
             [string](Get-ObjectValue -Object $server -Name "configId" -Default "") -eq [string]$ConfigurationState.configId -and
             [string](Get-ObjectValue -Object $server -Name "id" -Default "") -in @("code", "graph")) {
+            $serverHash["configurationName"] = [string](Get-ObjectValue -Object $ConfigurationState -Name "configurationName" -Default "")
+            $serverHash["configurationVersion"] = [string](Get-ObjectValue -Object $ConfigurationState -Name "configurationVersion" -Default "")
+            $serverHash["sourceCommit"] = [string](Get-ObjectValue -Object $ConfigurationState -Name "sourceCommit" -Default "")
             $serverHash["sourceFingerprint"] = [string]$ConfigurationState.sourceFingerprint
             $serverHash["sourceContentFingerprint"] = [string]$ConfigurationState.sourceContentFingerprint
             $serverHash["reportHash"] = [string]$ConfigurationState.reportHash
-            $serverHash["indexInputFingerprint"] = $IndexInputFingerprint
-            $serverHash["indexedAt"] = $IndexedAt
+            $serverHash["indexInputFingerprint"] = $effectiveInputFingerprint
+            $serverHash["indexedAt"] = $effectiveIndexedAt
         }
         $servers += [pscustomobject]$serverHash
     }
