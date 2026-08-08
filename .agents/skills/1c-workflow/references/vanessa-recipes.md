@@ -78,7 +78,8 @@ assertions.
 
 For deterministic exploratory input, prefer one `execute_form_actions` call with
 a short `actions_json` array over repeated single-field calls. First inspect only
-the relevant form state. The inner call shape is:
+the relevant form state. End a batch before a modal dialog, window change, or
+state that must be checked before the next action. The inner call shape is:
 
 ```json
 {"name":"execute_form_actions","argumentsJson":"{\"actions_json\":\"[{\\\"action\\\":\\\"set_value\\\",\\\"element_name\\\":\\\"<ИмяПоля>\\\",\\\"value\\\":\\\"<Значение>\\\"}]\"}"}

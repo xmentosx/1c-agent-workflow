@@ -31,6 +31,9 @@
         $reference | Should -Match 'Do not delete, skip, filter, or weaken'
         $reference | Should -Match 'user_actions_recording'
         $reference | Should -Match 'execute_form_actions'
+        $reference | Should -Match 'modal dialog, window change, or intermediate state'
+        $reference | Should -Match 'frequently_used_steps.*optional fallback'
+        $reference | Should -Match 'get_all.*route itself is unknown.*complete command interface'
         $reference | Should -Match 'get_window_list_os.*get_window_screenshot_os'
         $reference | Should -Match 'reloadAndRunFromLine'
         $reference | Should -Match 'questions_only.*one_question'
@@ -62,6 +65,10 @@
         $uiTemplate | Should -Match 'сохраняю навигационную ссылку текущего окна в переменную "Ссылка"'
         $uiTemplate | Should -Match ([regex]::Escape('открываю навигационную ссылку "$Ссылка$"'))
         $uiTemplate | Should -Not -Match ([regex]::Escape('$НавигационнаяСсылка$'))
+
+        $integrationTemplate = Get-Content -LiteralPath (Join-Path $exampleRoot 'integration-persistence.feature') -Raw -Encoding UTF8
+        $integrationTemplate | Should -Match 'РегистрНакопления\.<ИмяРегистра>'
+        $integrationTemplate | Should -Match '<ОжидаемоеКоличествоДвижений>'
 
         $recipes = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents\skills\1c-workflow\references\vanessa-recipes.md') -Raw -Encoding UTF8
         $batchExample = [regex]::Match($recipes, '(?m)^(?<json>\{"name":"execute_form_actions".+\})$')

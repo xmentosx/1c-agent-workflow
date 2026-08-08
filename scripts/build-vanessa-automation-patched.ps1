@@ -3,6 +3,7 @@ param(
     [string]$OutputDirectory = "",
     [string]$PlatformBin = "C:\Program Files\1cv8\8.3.27.2130\bin",
     [string]$WorkRoot = "C:\itlvabld",
+    [ValidateSet("itl-r4", "itl-r5")][string]$DownstreamRevision = "itl-r5",
     [switch]$KeepWork,
     [switch]$Force
 )
@@ -186,14 +187,15 @@ function Exit-ScopedUnsafeActionProtectionBypass {
 }
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.28-itl-r4"
+$assetVersion = "1.2.043.28-$DownstreamRevision"
+$assetRoot = Join-Path $repoRoot ("third-party\vanessa-automation\" + $assetVersion)
 $manifestPath = Join-Path $assetRoot "manifest.json"
 $patchPath = Join-Path $assetRoot "file-operations.patch"
 $noticePath = Join-Path $assetRoot "ITL-NOTICE.txt"
 $licenseNoticePath = Join-Path $assetRoot "LICENSE.upstream"
 
 if (-not $OutputDirectory) {
-    $OutputDirectory = Join-Path $repoRoot "build\third-party\vanessa-automation\1.2.043.28-itl-r4"
+    $OutputDirectory = Join-Path $repoRoot ("build\third-party\vanessa-automation\" + $assetVersion)
 }
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 $WorkRoot = [System.IO.Path]::GetFullPath($WorkRoot)
@@ -205,6 +207,7 @@ foreach ($requiredPath in @($manifestPath, $patchPath, $noticePath, $licenseNoti
 }
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+Assert-Equal ([string]$manifest.downstreamRevision) $DownstreamRevision "Manifest downstream revision"
 $artifactPath = Join-Path $OutputDirectory ([string]$manifest.artifact.fileName)
 $provenancePath = Join-Path $OutputDirectory "candidate.provenance.json"
 if ((Test-Path -LiteralPath $artifactPath) -and -not $Force) {
