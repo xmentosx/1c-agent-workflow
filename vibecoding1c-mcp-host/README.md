@@ -49,6 +49,9 @@ The `mantis` global server is built locally from `mantis-ticket-mcp/`.
 Configure `mantisTicketServer.baseUrl`, set read-only `MANTIS_API_TOKEN` in `secrets`,
 and keep `mantis` in `enabledServers.global`. The MCP publishes as
 `itl-mantis-ticket-mcp` and exposes `read_ticket`, `get_attachment`, and `health`.
+Ticket reads return original image attachments as MCP image content. Per-call OCR is disabled by
+default so vision-capable models inspect the original; clients without image support can repeat
+`read_ticket` with `image_ocr=true` to receive the draft OCR fallback alongside the original.
 
 The optional `toolsListProxy` (enabled in the example config) supports all permanently hosted
 MCP servers and excludes branch-local on-demand MCP. It forwards MCP sessions and `tools/call`
