@@ -708,7 +708,7 @@ class MantisTicketService:
         url_or_id: str,
         include_comments: bool = True,
         include_attachments: bool = True,
-        image_ocr: bool = True,
+        image_ocr: bool = False,
     ) -> Dict[str, Any]:
         issue_id = extract_issue_id(url_or_id)
         issue = self.client.get_issue(issue_id)
@@ -910,14 +910,29 @@ class MantisTicketService:
         }
 
     def cache_attachment(self, issue_id: int, file_id: int, filename: str, content: bytes) -> Dict[str, Any]:
-        issue_dir = self.settings.attachment_cache_path / str(issue_id)
-        issue_dir.mkdir(parents=True, exist_ok=True)
-        path = issue_dir / f"{file_id}-{safe_filename(filename)}"
+        path = self.cached_attachment_path(issue_id, file_id, filename)
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
         return {
             "cache_key": f"{issue_id}/{file_id}",
             "cached": True,
         }
+
+    def cached_attachment_path(self, issue_id: int, file_id: int, filename: str) -> Path:
+        return self.settings.attachment_cache_path / str(issue_id) / f"{file_id}-{safe_filename(filename)}"
+
+    def read_cached_attachment(self, attachment: Dict[str, Any]) -> bytes:
+        if not attachment.get("cached"):
+            return b""
+        path = self.cached_attachment_path(
+            int_value(attachment.get("issue_id")),
+            int_value(attachment.get("id")),
+            str(attachment.get("filename") or "attachment"),
+        )
+        try:
+            return path.read_bytes()
+        except OSError:
+            return b""
 
     def build_agent_context(self, ticket: Dict[str, Any]) -> str:
         lines: List[str] = []
@@ -979,14 +994,20 @@ class MantisTicketService:
         if isinstance(image, dict):
             lines.append("  Original image is the source of truth.")
             ocr = image.get("ocr", {})
-            notice = ocr.get("notice") or OCR_NOTICE
-            lines.append(f"  OCR note: {notice}")
-            if ocr.get("text"):
-                lines.append("  OCR draft:")
-                for line in str(ocr.get("text")).splitlines():
-                    lines.append(f"    {line}")
-            elif ocr.get("error"):
-                lines.append(f"  OCR error: {ocr.get('error')}")
+            if ocr.get("enabled"):
+                notice = ocr.get("notice") or OCR_NOTICE
+                lines.append(f"  OCR note: {notice}")
+                if ocr.get("text"):
+                    lines.append("  OCR draft:")
+                    for line in str(ocr.get("text")).splitlines():
+                        lines.append(f"    {line}")
+                elif ocr.get("error"):
+                    lines.append(f"  OCR error: {ocr.get('error')}")
+            else:
+                lines.append(
+                    "  OCR fallback is not included. If this client cannot inspect image content, "
+                    "call read_ticket again with image_ocr=true."
+                )
         extracted = attachment.get("extracted_text", {})
         if isinstance(extracted, dict) and extracted.get("text"):
             lines.append(f"  Extracted text ({extracted.get('method')}):")
@@ -1004,36 +1025,126 @@ class MantisTicketService:
 
 def create_mcp() -> Tuple[Any, MantisTicketService]:
     from fastmcp import FastMCP
+    from fastmcp.tools.tool import ToolResult
+    from mcp.types import ImageContent, TextContent
 
     settings = Settings.from_env()
     service = MantisTicketService(settings)
     mcp = FastMCP("mantis-ticket", stateless_http=True)
 
-    @mcp.tool
+    output_schema = {"type": "object", "additionalProperties": True}
+
+    def attachment_content_blocks(ticket: Dict[str, Any], image_ocr: bool) -> List[Any]:
+        blocks: List[Any] = []
+        attachments: List[Tuple[str, Dict[str, Any]]] = []
+        attachments.extend(("issue", item) for item in MantisTicketService.as_list(ticket.get("attachments")))
+        for note in MantisTicketService.as_list(ticket.get("comments")):
+            note_id = int_value(note.get("id")) if isinstance(note, dict) else 0
+            note_attachments = note.get("attachments") if isinstance(note, dict) else []
+            attachments.extend(
+                (f"comment {note_id}", item) for item in MantisTicketService.as_list(note_attachments)
+            )
+
+        for scope, attachment in attachments:
+            if not isinstance(attachment, dict) or not isinstance(attachment.get("image"), dict):
+                continue
+            content = service.read_cached_attachment(attachment)
+            if not content:
+                continue
+            filename = str(attachment.get("filename") or "image")
+            fallback = (
+                " OCR was requested as a fallback; analyze the original first when image input is available."
+                if image_ocr
+                else " If this client cannot inspect image content, call read_ticket again with image_ocr=true."
+            )
+            blocks.append(
+                TextContent(
+                    type="text",
+                    text=(
+                        f"Original Mantis image from {scope}: {filename}. "
+                        f"Analyze this image directly as the source of truth.{fallback}"
+                    ),
+                )
+            )
+            blocks.append(
+                ImageContent(
+                    type="image",
+                    data=base64.b64encode(content).decode("ascii"),
+                    mimeType=str(attachment.get("content_type") or "image/png"),
+                )
+            )
+        return blocks
+
+    def ticket_tool_result(result: Dict[str, Any], image_ocr: bool) -> Any:
+        ticket = result.get("ticket") if isinstance(result.get("ticket"), dict) else {}
+        content: List[Any] = [
+            TextContent(
+                type="text",
+                text=str(ticket.get("agent_context_markdown") or json.dumps(result, ensure_ascii=False)),
+            )
+        ]
+        content.extend(attachment_content_blocks(ticket, image_ocr=image_ocr))
+        return ToolResult(content=content, structured_content=result)
+
+    def attachment_tool_result(result: Dict[str, Any]) -> Any:
+        attachment = result.get("attachment") if isinstance(result.get("attachment"), dict) else {}
+        content_base64 = str(attachment.get("content_base64") or "")
+        content: List[Any] = [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "ok": result.get("ok", False),
+                        "attachment": {key: value for key, value in attachment.items() if key != "content_base64"},
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        ]
+        if content_base64 and is_image(str(attachment.get("content_type") or ""), str(attachment.get("filename") or "")):
+            content.append(
+                ImageContent(
+                    type="image",
+                    data=content_base64,
+                    mimeType=str(attachment.get("content_type") or "image/png"),
+                )
+            )
+        return ToolResult(content=content, structured_content=result)
+
+    def error_tool_result(exc: Exception) -> Any:
+        result = {"ok": False, "error": str(exc), "trace": traceback.format_exc(limit=3)}
+        return ToolResult(
+            content=[TextContent(type="text", text=f"Mantis MCP error: {exc}")],
+            structured_content=result,
+        )
+
+    @mcp.tool(output_schema=output_schema)
     def read_ticket(
         url_or_id: str,
         include_comments: bool = True,
         include_attachments: bool = True,
-        image_ocr: bool = True,
-    ) -> Dict[str, Any]:
-        """Read a Mantis ticket by URL or id with comments, attachments, image originals, and OCR accompaniment."""
+        image_ocr: bool = False,
+    ) -> Any:
+        """Read a Mantis ticket with original images as visual content. Set image_ocr=true only as a non-visual fallback."""
         try:
-            return service.read_ticket(
+            result = service.read_ticket(
                 url_or_id=url_or_id,
                 include_comments=include_comments,
                 include_attachments=include_attachments,
                 image_ocr=image_ocr,
             )
+            return ticket_tool_result(result, image_ocr=image_ocr)
         except Exception as exc:
-            return {"ok": False, "error": str(exc), "trace": traceback.format_exc(limit=3)}
+            return error_tool_result(exc)
 
-    @mcp.tool
-    def get_attachment(issue_id: int, file_id: int, include_content: bool = True) -> Dict[str, Any]:
-        """Return the original Mantis attachment content as base64 by issue id and file id."""
+    @mcp.tool(output_schema=output_schema)
+    def get_attachment(issue_id: int, file_id: int, include_content: bool = True) -> Any:
+        """Return an original Mantis image as visual content and preserve structured attachment metadata."""
         try:
-            return service.get_attachment(issue_id=issue_id, file_id=file_id, include_content=include_content)
+            result = service.get_attachment(issue_id=issue_id, file_id=file_id, include_content=include_content)
+            return attachment_tool_result(result)
         except Exception as exc:
-            return {"ok": False, "error": str(exc), "trace": traceback.format_exc(limit=3)}
+            return error_tool_result(exc)
 
     @mcp.tool
     def health() -> Dict[str, Any]:

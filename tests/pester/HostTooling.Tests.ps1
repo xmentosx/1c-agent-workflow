@@ -105,7 +105,7 @@
             $ErrorActionPreference = $previousErrorActionPreference
         }
         $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 4 tests"
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 8 tests"
     }
 
     It "falls back to the direct endpoint when the qualified proxy is unavailable" {
@@ -768,6 +768,7 @@ services:
         $bookStackServerText | Should -Match "next_cursor"
         $bookStackServerText | Should -Match "semantic_min_score"
         $mantisRequirementsText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\requirements.txt")
+        $mantisRequirementsText | Should -Match "fastmcp>=2\.10,<3\.0"
         $mantisRequirementsText | Should -Match "pytesseract"
         $mantisRequirementsText | Should -Match "Pillow"
         $mantisServerText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\server.py")
