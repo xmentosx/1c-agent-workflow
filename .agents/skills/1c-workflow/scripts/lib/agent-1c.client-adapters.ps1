@@ -17,6 +17,8 @@
             trackedMcpConfig = $false
             reload = "Start a new Codex task so project rules and skills are reread."
             reloadUserReport = "Откройте новую задачу Codex, чтобы заново прочитать правила и skills проекта."
+            mcpReload = "Restart the Codex app, then start a new task so project MCP configuration is loaded."
+            mcpReloadUserReport = "Полностью перезапустите приложение Codex, затем откройте новую задачу, чтобы Codex перечитал проектный .codex/config.toml и подключил MCP-серверы."
         }
         kilocode = [ordered]@{
             id = "kilocode"
