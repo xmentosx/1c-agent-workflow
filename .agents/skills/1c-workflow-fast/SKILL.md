@@ -11,6 +11,8 @@ description: Route routine natural-language requests in installed ITL 1C project
 
 Map natural-language routine requests in an installed ITL project to one helper action. Explicit generated `itl-*` skills run alone; do not preload either router for them. Use the monitored compact runner for mutations and long checks, then parse its terminal JSON. Open full workflow references only for helper-directed recovery, missing setup, or explanation.
 
+For a mapped routine, use at most one short sentence before the command and make the helper the first and only tool action. Do not separately read `.dev.env`, inspect Git, or repeat helper-owned preflight. Apply an explicit session Caveman override first; otherwise use `ITL response-style`/`responseStyle` emitted by the helper. Keep required progress heartbeats to one line with the current stage and material liveness state. A successful `userReport` remains verbatim in every style.
+
 ## Intent Map
 
 - status or worktree paths: `status`

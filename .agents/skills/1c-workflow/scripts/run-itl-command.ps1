@@ -89,6 +89,40 @@ function Get-ObjectValue {
     return $property.Value
 }
 
+function Get-ProjectSetting {
+    param([string]$ProjectRoot, [string]$Name)
+
+    $dotEnvPath = Join-Path $ProjectRoot ".dev.env"
+    if (Test-Path -LiteralPath $dotEnvPath -PathType Leaf) {
+        foreach ($line in @(Get-Content -LiteralPath $dotEnvPath -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+            if ([string]$line -notmatch ("^\s*" + [regex]::Escape($Name) + "\s*=\s*(.*?)\s*$")) { continue }
+            $value = [string]$Matches[1]
+            if ($value.Length -ge 2 -and (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'")))) {
+                $value = $value.Substring(1, $value.Length - 2)
+            }
+            return $value
+        }
+    }
+    return [string]([Environment]::GetEnvironmentVariable($Name, "Process"))
+}
+
+function Resolve-ItlResponseStyle {
+    param([string]$ProjectRoot)
+
+    $mode = (Get-ProjectSetting -ProjectRoot $ProjectRoot -Name "CAVEMAN").Trim().ToLowerInvariant()
+    if ($mode -notin @("on", "auto", "off")) { $mode = "on" }
+    $level = (Get-ProjectSetting -ProjectRoot $ProjectRoot -Name "CAVEMAN_LEVEL").Trim().ToLowerInvariant()
+    if ($level -notin @("lite", "full", "ultra")) { $level = "full" }
+    $active = $mode -in @("on", "auto")
+    return [ordered]@{
+        mode = $mode
+        level = $level
+        active = $active
+        profile = $(if ($active) { "caveman-$level" } else { "normal" })
+        taskClass = "execution"
+    }
+}
+
 function Set-ObjectValue {
     param(
         [object]$Object,
@@ -230,6 +264,8 @@ if ($windowed -ne ($action -in $branchActions)) {
 }
 
 $projectRoot = [System.IO.Path]::GetFullPath((Get-Location).Path)
+$responseStyle = Resolve-ItlResponseStyle -ProjectRoot $projectRoot
+[Console]::Error.WriteLine("ITL response-style: mode=$($responseStyle.mode); level=$($responseStyle.level); active=$(([string]$responseStyle.active).ToLowerInvariant()); profile=$($responseStyle.profile); task=execution")
 $runsRoot = Join-Path $projectRoot ".agent-1c\runs"
 New-Item -ItemType Directory -Force -Path $runsRoot | Out-Null
 $startedAt = Get-Date
@@ -423,6 +459,7 @@ $summary = [ordered]@{
     userReport = $userReport
     resultPath = $resultPath
     resultManifestPath = $resultManifestPath
+    responseStyle = $responseStyle
     liveness = [string](Get-ObjectValue -Object $status -Name "liveness" -Default "")
     noProgressSeconds = [int](Get-ObjectValue -Object $status -Name "noProgressSeconds" -Default 0)
     timeoutRemainingSeconds = [int](Get-ObjectValue -Object $status -Name "timeoutRemainingSeconds" -Default 0)

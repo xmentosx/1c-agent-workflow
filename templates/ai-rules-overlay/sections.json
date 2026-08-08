@@ -38,6 +38,7 @@
                                   "verification-delivery",
                                   "## Active model adaptation",
                                   "VERIFICATION_DEPTH=standard",
+                                  "CAVEMAN_LEVEL=lite|full|ultra",
                                   "Gate 3a is conditional",
                                   "Vendor support",
                                   "XDTO and UUID",
@@ -45,6 +46,15 @@
                                   "project `1c-explorer`"
                               ],
     "pathDecisions":  [
+                          {
+                              "path":  ".dev.env.example",
+                              "requirementId":  "ITL-CAVEMAN-001",
+                              "disposition":  "resolved",
+                              "reason":  "Add the reviewed r25 implementation of ITL-CAVEMAN-001.",
+                              "upstreamSha256":  "7abb49e884be7352f47e5fc09b50026443d4b03b4eca78aafe5361407467b0a8",
+                              "baselineSha256":  "7abb49e884be7352f47e5fc09b50026443d4b03b4eca78aafe5361407467b0a8",
+                              "resultSha256":  "8f6abfa7d3996a36dd7fc0244cc63600d3b7e0d82a72b8654d0d65c0bf532238"
+                          },
                           {
                               "path":  ".gitignore",
                               "requirementId":  "ITL-INFRA-001",
@@ -164,12 +174,21 @@
                           },
                           {
                               "path":  "AGENTS.md",
-                              "requirementId":  "ITL-CONTEXT-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-CONTEXT-001.",
+                              "requirementId":  "ITL-CAVEMAN-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-CAVEMAN-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "0af764d24fbc2b6d25335daa9fdffd3125ee98a45b14735ac4d93f2cfe9faa22",
                               "baselineSha256":  "36c6dff82e759138ffb7ae3eea3f13bebe2afdfcc26d38b7de667fd3142f0503",
-                              "resultSha256":  "36c6dff82e759138ffb7ae3eea3f13bebe2afdfcc26d38b7de667fd3142f0503"
+                              "resultSha256":  "ead4f7af2ff07edc6d1e35a901066b6c730ea90b73c7aa84a993886b86629632"
+                          },
+                          {
+                              "path":  "content/commands/caveman.md",
+                              "requirementId":  "ITL-CAVEMAN-001",
+                              "disposition":  "resolved",
+                              "reason":  "Add the reviewed r25 implementation of ITL-CAVEMAN-001.",
+                              "upstreamSha256":  "c4c3b339fe661a12006e9fcc65884b38302f2e8e59ea248f54ccea7deb87468d",
+                              "baselineSha256":  "c4c3b339fe661a12006e9fcc65884b38302f2e8e59ea248f54ccea7deb87468d",
+                              "resultSha256":  "6d7e8a148fe1036d1dfeecef5510411c8bf3aa1523f8db16cdfd0b460a675ba7"
                           },
                           {
                               "path":  "content/commands/deploy-and-test.md",
@@ -246,92 +265,146 @@
                           {
                               "path":  "content/openspec-bundle/claude-code/.claude/commands/opsx/apply.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 by replacing the Claude namespace command with its flat opsx-apply entrypoint.",
                               "upstreamSha256":  "0c7162a4ed3b95235c1af1a9b837dc218162fdb8ae1a10b3799668243b9d090b",
                               "baselineSha256":  "fce9cf8b923563a52ca41487f1c44039b2750e95b4a9aafda4882370a52aa5ba",
-                              "resultSha256":  "fce9cf8b923563a52ca41487f1c44039b2750e95b4a9aafda4882370a52aa5ba"
+                              "resultSha256":  "\u003cabsent\u003e"
                           },
                           {
                               "path":  "content/openspec-bundle/claude-code/.claude/commands/opsx/explore.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 by replacing the Claude namespace command with its flat opsx-explore entrypoint.",
                               "upstreamSha256":  "1cddd21ea336bdd459e74a1183be3bab6cca1563419ea7ca5d6c3cc4f55210e1",
                               "baselineSha256":  "d296531b33da662d3771f8f54f8f2d494ecb8f78e494af9e5d8bf2b8a8c74c2c",
-                              "resultSha256":  "d296531b33da662d3771f8f54f8f2d494ecb8f78e494af9e5d8bf2b8a8c74c2c"
+                              "resultSha256":  "\u003cabsent\u003e"
                           },
                           {
                               "path":  "content/openspec-bundle/claude-code/.claude/commands/opsx/propose.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 by replacing the Claude namespace command with its flat opsx-propose entrypoint.",
                               "upstreamSha256":  "19f074fdde10336f5d38425fcd6ce6af466f44ad7ffb55612bf1492926026dcb",
                               "baselineSha256":  "6f74be0f02a53d20460a7bc52086b0fed48a84a4cb9c9fe481ef961340d147fb",
-                              "resultSha256":  "6f74be0f02a53d20460a7bc52086b0fed48a84a4cb9c9fe481ef961340d147fb"
+                              "resultSha256":  "\u003cabsent\u003e"
+                          },
+                          {
+                              "path":  "content/openspec-bundle/claude-code/.claude/commands/opsx-apply.md",
+                              "requirementId":  "ITL-OPENSPEC-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the reviewed r25 implementation of ITL-OPENSPEC-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "cba6a9c70d4e173fc2c8034d625d1b5e54e38d92feeb18836e4f82cf6a66bca9"
+                          },
+                          {
+                              "path":  "content/openspec-bundle/claude-code/.claude/commands/opsx-archive.md",
+                              "requirementId":  "ITL-OPENSPEC-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the reviewed r25 implementation of ITL-OPENSPEC-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "38f48fff27fa40dbabd3db533362c6ef9738b6762003c244e3cf23246b5f7834"
+                          },
+                          {
+                              "path":  "content/openspec-bundle/claude-code/.claude/commands/opsx-explore.md",
+                              "requirementId":  "ITL-OPENSPEC-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the reviewed r25 implementation of ITL-OPENSPEC-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "873411f2f49dd311946729a3f8d80c430deff8f99fc25f32486c06b7a37b6a50"
+                          },
+                          {
+                              "path":  "content/openspec-bundle/claude-code/.claude/commands/opsx-propose.md",
+                              "requirementId":  "ITL-OPENSPEC-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the reviewed r25 implementation of ITL-OPENSPEC-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "f7a19511ccdffc5315b8cd49b5086d3f4aa91642d8a438f7ea6d5656ebe06700"
                           },
                           {
                               "path":  "content/openspec-bundle/claude-code/.claude/skills/openspec-apply-change/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "93dc7b3b4af8e5257a2a8bb3c72e0239cc241b5e31f28660bb4effb67ecf9803",
                               "baselineSha256":  "8ff9f8db3ba2ed52d4adcd83a06318cb61163a1011d3dca3b6bbe98fa1e454ad",
-                              "resultSha256":  "8ff9f8db3ba2ed52d4adcd83a06318cb61163a1011d3dca3b6bbe98fa1e454ad"
+                              "resultSha256":  "1a274cf6ed3e4846bd39671c6bdf90e40db846bda884cf0b7964ba5142968ea8"
+                          },
+                          {
+                              "path":  "content/openspec-bundle/claude-code/.claude/skills/openspec-archive-change/SKILL.md",
+                              "requirementId":  "ITL-OPENSPEC-001",
+                              "disposition":  "resolved",
+                              "reason":  "Add the reviewed r25 implementation of ITL-OPENSPEC-001.",
+                              "upstreamSha256":  "dd8783f590c0488b2026bee9aae2adbc3cda1d7152ab04e9b9cf2ff3924fce50",
+                              "baselineSha256":  "dd8783f590c0488b2026bee9aae2adbc3cda1d7152ab04e9b9cf2ff3924fce50",
+                              "resultSha256":  "1a80737215fb8862a4f03ca7c3fa7c6fd16dfa5e3c7a97b491eb33532482cc6b"
                           },
                           {
                               "path":  "content/openspec-bundle/claude-code/.claude/skills/openspec-explore/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "4f534b22c2e04839f965186a9dd49129dcef318752260f5d67468d0a8d649826",
                               "baselineSha256":  "c8ef5752e3b997719637a0486a7ae97ccf40b362c0839dfb87391da70734cecd",
-                              "resultSha256":  "c8ef5752e3b997719637a0486a7ae97ccf40b362c0839dfb87391da70734cecd"
+                              "resultSha256":  "380d6058560e9be41dea05bd74e39cfdb5f2d24378d1419a60a8ac67e505f97e"
                           },
                           {
                               "path":  "content/openspec-bundle/claude-code/.claude/skills/openspec-propose/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "7d1e0a1b1b57ca4eb37c0bf1532b863df4d5234c96fbb0a0324b66c2ead8d64d",
                               "baselineSha256":  "fdeb274b8c3856e6c8f6b6600b2aa899963e17c1dcc84ebc47acc1682e7b59f9",
-                              "resultSha256":  "fdeb274b8c3856e6c8f6b6600b2aa899963e17c1dcc84ebc47acc1682e7b59f9"
+                              "resultSha256":  "fae11485037bd9e3b4059e814ee2fcc18430a957404b1835cab9d001179b20a9"
                           },
                           {
                               "path":  "content/openspec-bundle/codex/.codex/skills/openspec-apply-change/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "93dc7b3b4af8e5257a2a8bb3c72e0239cc241b5e31f28660bb4effb67ecf9803",
                               "baselineSha256":  "8ff9f8db3ba2ed52d4adcd83a06318cb61163a1011d3dca3b6bbe98fa1e454ad",
-                              "resultSha256":  "8ff9f8db3ba2ed52d4adcd83a06318cb61163a1011d3dca3b6bbe98fa1e454ad"
+                              "resultSha256":  "bae3a3701e4b65b3377fa0dddae68020acd1ec6dfa3ffefa3022cda228923a81"
+                          },
+                          {
+                              "path":  "content/openspec-bundle/codex/.codex/skills/openspec-archive-change/SKILL.md",
+                              "requirementId":  "ITL-OPENSPEC-001",
+                              "disposition":  "resolved",
+                              "reason":  "Add the reviewed r25 implementation of ITL-OPENSPEC-001.",
+                              "upstreamSha256":  "dd8783f590c0488b2026bee9aae2adbc3cda1d7152ab04e9b9cf2ff3924fce50",
+                              "baselineSha256":  "dd8783f590c0488b2026bee9aae2adbc3cda1d7152ab04e9b9cf2ff3924fce50",
+                              "resultSha256":  "1a80737215fb8862a4f03ca7c3fa7c6fd16dfa5e3c7a97b491eb33532482cc6b"
                           },
                           {
                               "path":  "content/openspec-bundle/codex/.codex/skills/openspec-explore/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "4f534b22c2e04839f965186a9dd49129dcef318752260f5d67468d0a8d649826",
                               "baselineSha256":  "c8ef5752e3b997719637a0486a7ae97ccf40b362c0839dfb87391da70734cecd",
-                              "resultSha256":  "c8ef5752e3b997719637a0486a7ae97ccf40b362c0839dfb87391da70734cecd"
+                              "resultSha256":  "d72edafb9d667436fa72255b93972fb7a5ad42fcb8074e99d01c52a9b7ab796d"
                           },
                           {
                               "path":  "content/openspec-bundle/codex/.codex/skills/openspec-propose/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "7d1e0a1b1b57ca4eb37c0bf1532b863df4d5234c96fbb0a0324b66c2ead8d64d",
                               "baselineSha256":  "fdeb274b8c3856e6c8f6b6600b2aa899963e17c1dcc84ebc47acc1682e7b59f9",
-                              "resultSha256":  "fdeb274b8c3856e6c8f6b6600b2aa899963e17c1dcc84ebc47acc1682e7b59f9"
+                              "resultSha256":  "67276024d6c93cfd56985df6c0d195b19913ce50a6379938aec99a9bed1b0898"
                           },
                           {
                               "path":  "content/openspec-bundle/codex/.codex/skills/opsx-apply/agents/openai.yaml",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "a1499d95abd8447558c535fe5554adcc3c9b988a0a39264a6283d430effe1e94",
-                              "resultSha256":  "a1499d95abd8447558c535fe5554adcc3c9b988a0a39264a6283d430effe1e94"
+                              "resultSha256":  "d6c5e6a2eeda3a3fa75b7ea3540d4ca3df5298bc42c647ea13189cc6cf92c7ae"
                           },
                           {
                               "path":  "content/openspec-bundle/codex/.codex/skills/opsx-apply/SKILL.md",
@@ -345,11 +418,11 @@
                           {
                               "path":  "content/openspec-bundle/codex/.codex/skills/opsx-archive/agents/openai.yaml",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "a1499d95abd8447558c535fe5554adcc3c9b988a0a39264a6283d430effe1e94",
-                              "resultSha256":  "a1499d95abd8447558c535fe5554adcc3c9b988a0a39264a6283d430effe1e94"
+                              "resultSha256":  "461d16ef6498dd1bc1591759c14b2b6e37579d35d47d3911c5a9905b5a32d4d4"
                           },
                           {
                               "path":  "content/openspec-bundle/codex/.codex/skills/opsx-archive/SKILL.md",
@@ -363,11 +436,11 @@
                           {
                               "path":  "content/openspec-bundle/codex/.codex/skills/opsx-explore/agents/openai.yaml",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "a1499d95abd8447558c535fe5554adcc3c9b988a0a39264a6283d430effe1e94",
-                              "resultSha256":  "a1499d95abd8447558c535fe5554adcc3c9b988a0a39264a6283d430effe1e94"
+                              "resultSha256":  "78f21954be33dc9cc7609c2bee53b629e465063ef0bb8d0cec7ddcbd731235fb"
                           },
                           {
                               "path":  "content/openspec-bundle/codex/.codex/skills/opsx-explore/SKILL.md",
@@ -381,11 +454,11 @@
                           {
                               "path":  "content/openspec-bundle/codex/.codex/skills/opsx-propose/agents/openai.yaml",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "a1499d95abd8447558c535fe5554adcc3c9b988a0a39264a6283d430effe1e94",
-                              "resultSha256":  "a1499d95abd8447558c535fe5554adcc3c9b988a0a39264a6283d430effe1e94"
+                              "resultSha256":  "9e45c94cce14e0c4f34e8d6875f2a8993b68f3b9122dddf6cf45c87fb14aa376"
                           },
                           {
                               "path":  "content/openspec-bundle/codex/.codex/skills/opsx-propose/SKILL.md",
@@ -399,173 +472,227 @@
                           {
                               "path":  "content/openspec-bundle/cursor/.cursor/commands/opsx-apply.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "81ad6a976f9cb9f2094fc0d3047dad7561d91a9d80abd03ca3d896c9612324f6",
                               "baselineSha256":  "ec769380a53e5942f8a3c3e797e0725cb8586b4510bde2275e19d9bc4caf1ba5",
-                              "resultSha256":  "ec769380a53e5942f8a3c3e797e0725cb8586b4510bde2275e19d9bc4caf1ba5"
+                              "resultSha256":  "7a7b21eaf115f356998b2401bc2b7fc1b0bb5ecc13500cf1263463fa378fc15a"
+                          },
+                          {
+                              "path":  "content/openspec-bundle/cursor/.cursor/commands/opsx-archive.md",
+                              "requirementId":  "ITL-OPENSPEC-001",
+                              "disposition":  "resolved",
+                              "reason":  "Add the reviewed r25 implementation of ITL-OPENSPEC-001.",
+                              "upstreamSha256":  "e6bc801fd54c6c3f62545cc7b9b9b2d11a2d334adb5e43febe074c0992604ffd",
+                              "baselineSha256":  "e6bc801fd54c6c3f62545cc7b9b9b2d11a2d334adb5e43febe074c0992604ffd",
+                              "resultSha256":  "1a3d880a7754ff651d28956781f4d7c14c634ae2a3611e9aecf770732208df81"
                           },
                           {
                               "path":  "content/openspec-bundle/cursor/.cursor/commands/opsx-explore.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "9c6bdca52f361c97e74bee06ebd3a1e6e6d4b9fde419a407967684ca08435a57",
                               "baselineSha256":  "2f2c3226fca4b9aeb41c5038f36005f3a6c96fdfac227da008256c4f8a5944eb",
-                              "resultSha256":  "2f2c3226fca4b9aeb41c5038f36005f3a6c96fdfac227da008256c4f8a5944eb"
+                              "resultSha256":  "aac37db121c33a26e9fff094c36e223894f23ae6c131feb5b6784ef4736bed96"
                           },
                           {
                               "path":  "content/openspec-bundle/cursor/.cursor/commands/opsx-propose.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "e5a4b4ad42c1e867d6b2f6bfc340c60560bc4ca58000b0f09f54f6892a98fb3e",
                               "baselineSha256":  "72d07e1a910e594c1b60f6e4cf39c7e15bc7fbc31dc136d698b42994f81f2fdc",
-                              "resultSha256":  "72d07e1a910e594c1b60f6e4cf39c7e15bc7fbc31dc136d698b42994f81f2fdc"
+                              "resultSha256":  "856a6952a86bd624baf71af9f05c9d50ef939a163d92f85369d642abe0e4d47c"
                           },
                           {
                               "path":  "content/openspec-bundle/cursor/.cursor/skills/openspec-apply-change/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "93dc7b3b4af8e5257a2a8bb3c72e0239cc241b5e31f28660bb4effb67ecf9803",
                               "baselineSha256":  "8ff9f8db3ba2ed52d4adcd83a06318cb61163a1011d3dca3b6bbe98fa1e454ad",
-                              "resultSha256":  "8ff9f8db3ba2ed52d4adcd83a06318cb61163a1011d3dca3b6bbe98fa1e454ad"
+                              "resultSha256":  "1a274cf6ed3e4846bd39671c6bdf90e40db846bda884cf0b7964ba5142968ea8"
+                          },
+                          {
+                              "path":  "content/openspec-bundle/cursor/.cursor/skills/openspec-archive-change/SKILL.md",
+                              "requirementId":  "ITL-OPENSPEC-001",
+                              "disposition":  "resolved",
+                              "reason":  "Add the reviewed r25 implementation of ITL-OPENSPEC-001.",
+                              "upstreamSha256":  "dd8783f590c0488b2026bee9aae2adbc3cda1d7152ab04e9b9cf2ff3924fce50",
+                              "baselineSha256":  "dd8783f590c0488b2026bee9aae2adbc3cda1d7152ab04e9b9cf2ff3924fce50",
+                              "resultSha256":  "1a80737215fb8862a4f03ca7c3fa7c6fd16dfa5e3c7a97b491eb33532482cc6b"
                           },
                           {
                               "path":  "content/openspec-bundle/cursor/.cursor/skills/openspec-explore/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "4f534b22c2e04839f965186a9dd49129dcef318752260f5d67468d0a8d649826",
                               "baselineSha256":  "c8ef5752e3b997719637a0486a7ae97ccf40b362c0839dfb87391da70734cecd",
-                              "resultSha256":  "c8ef5752e3b997719637a0486a7ae97ccf40b362c0839dfb87391da70734cecd"
+                              "resultSha256":  "380d6058560e9be41dea05bd74e39cfdb5f2d24378d1419a60a8ac67e505f97e"
                           },
                           {
                               "path":  "content/openspec-bundle/cursor/.cursor/skills/openspec-propose/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "7d1e0a1b1b57ca4eb37c0bf1532b863df4d5234c96fbb0a0324b66c2ead8d64d",
                               "baselineSha256":  "fdeb274b8c3856e6c8f6b6600b2aa899963e17c1dcc84ebc47acc1682e7b59f9",
-                              "resultSha256":  "fdeb274b8c3856e6c8f6b6600b2aa899963e17c1dcc84ebc47acc1682e7b59f9"
+                              "resultSha256":  "fae11485037bd9e3b4059e814ee2fcc18430a957404b1835cab9d001179b20a9"
                           },
                           {
                               "path":  "content/openspec-bundle/kilocode/.kilocode/skills/openspec-apply-change/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "93dc7b3b4af8e5257a2a8bb3c72e0239cc241b5e31f28660bb4effb67ecf9803",
                               "baselineSha256":  "8ff9f8db3ba2ed52d4adcd83a06318cb61163a1011d3dca3b6bbe98fa1e454ad",
-                              "resultSha256":  "8ff9f8db3ba2ed52d4adcd83a06318cb61163a1011d3dca3b6bbe98fa1e454ad"
+                              "resultSha256":  "1a274cf6ed3e4846bd39671c6bdf90e40db846bda884cf0b7964ba5142968ea8"
+                          },
+                          {
+                              "path":  "content/openspec-bundle/kilocode/.kilocode/skills/openspec-archive-change/SKILL.md",
+                              "requirementId":  "ITL-OPENSPEC-001",
+                              "disposition":  "resolved",
+                              "reason":  "Add the reviewed r25 implementation of ITL-OPENSPEC-001.",
+                              "upstreamSha256":  "dd8783f590c0488b2026bee9aae2adbc3cda1d7152ab04e9b9cf2ff3924fce50",
+                              "baselineSha256":  "dd8783f590c0488b2026bee9aae2adbc3cda1d7152ab04e9b9cf2ff3924fce50",
+                              "resultSha256":  "1a80737215fb8862a4f03ca7c3fa7c6fd16dfa5e3c7a97b491eb33532482cc6b"
                           },
                           {
                               "path":  "content/openspec-bundle/kilocode/.kilocode/skills/openspec-explore/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "4f534b22c2e04839f965186a9dd49129dcef318752260f5d67468d0a8d649826",
                               "baselineSha256":  "c8ef5752e3b997719637a0486a7ae97ccf40b362c0839dfb87391da70734cecd",
-                              "resultSha256":  "c8ef5752e3b997719637a0486a7ae97ccf40b362c0839dfb87391da70734cecd"
+                              "resultSha256":  "380d6058560e9be41dea05bd74e39cfdb5f2d24378d1419a60a8ac67e505f97e"
                           },
                           {
                               "path":  "content/openspec-bundle/kilocode/.kilocode/skills/openspec-propose/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "7d1e0a1b1b57ca4eb37c0bf1532b863df4d5234c96fbb0a0324b66c2ead8d64d",
                               "baselineSha256":  "fdeb274b8c3856e6c8f6b6600b2aa899963e17c1dcc84ebc47acc1682e7b59f9",
-                              "resultSha256":  "fdeb274b8c3856e6c8f6b6600b2aa899963e17c1dcc84ebc47acc1682e7b59f9"
+                              "resultSha256":  "fae11485037bd9e3b4059e814ee2fcc18430a957404b1835cab9d001179b20a9"
                           },
                           {
                               "path":  "content/openspec-bundle/kilocode/.kilocode/workflows/opsx-apply.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "2bac7d66fcbe4f3584b0bd056c9f4ada6bd942e52105d75b0817c4669a5bcd61",
                               "baselineSha256":  "8fc5d540f36daa18f5cd1868f4b2eac87bf37292f69912c4272ff497bb543d1e",
-                              "resultSha256":  "8fc5d540f36daa18f5cd1868f4b2eac87bf37292f69912c4272ff497bb543d1e"
+                              "resultSha256":  "fe610bdce29874acd2a122342790d9e62ba5e0c21476a985a0f3dbac9eadbee3"
+                          },
+                          {
+                              "path":  "content/openspec-bundle/kilocode/.kilocode/workflows/opsx-archive.md",
+                              "requirementId":  "ITL-OPENSPEC-001",
+                              "disposition":  "resolved",
+                              "reason":  "Add the reviewed r25 implementation of ITL-OPENSPEC-001.",
+                              "upstreamSha256":  "90ae2e71e2facca2413d75267a5a5ba3013bb92b918b9a155c0523e21ed14141",
+                              "baselineSha256":  "90ae2e71e2facca2413d75267a5a5ba3013bb92b918b9a155c0523e21ed14141",
+                              "resultSha256":  "b47c9cc77cf187cc067d1cad64ef96f1a53f966a0ad10ead83635302b41bd21d"
                           },
                           {
                               "path":  "content/openspec-bundle/kilocode/.kilocode/workflows/opsx-explore.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "91ee3c89835f94f5fa22575f3c414620ec63f0fc8ca796de775a105c7a272fbb",
                               "baselineSha256":  "335594ed5a0f1a4e5b473df34f1de5c8cb4b71a755f1ed435db9491bcc91dfc9",
-                              "resultSha256":  "335594ed5a0f1a4e5b473df34f1de5c8cb4b71a755f1ed435db9491bcc91dfc9"
+                              "resultSha256":  "9fb0c0736d1ab48d3ec6b5945b219c673d96a31dfd5078f35e690eded4613264"
                           },
                           {
                               "path":  "content/openspec-bundle/kilocode/.kilocode/workflows/opsx-propose.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "8e70c1171b4a2fffcf73dae25872fd493da1ba7e038db7708afbde8b08b5339c",
                               "baselineSha256":  "3414499955cf5bd266211259744761098ebd777db0131684641f39eedcbce929",
-                              "resultSha256":  "3414499955cf5bd266211259744761098ebd777db0131684641f39eedcbce929"
+                              "resultSha256":  "d788ebb34ac6c3e769609d15e34f3979061dea4f0971addbf4786ea47cd533fb"
                           },
                           {
                               "path":  "content/openspec-bundle/opencode/.opencode/command/opsx-apply.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "babdd8c6b064cb8ab31a5c805e89e5b19a8770423213a1f271757a41104d8fb2",
                               "baselineSha256":  "d8e7b91863336bb020a21045c3e3be15b9703ab36840a885bc66488a873f1dc4",
-                              "resultSha256":  "d8e7b91863336bb020a21045c3e3be15b9703ab36840a885bc66488a873f1dc4"
+                              "resultSha256":  "ac068a8b107a514cdf0f74129636aa58d46248d171b48b0be475a0b0c5fb9e5f"
+                          },
+                          {
+                              "path":  "content/openspec-bundle/opencode/.opencode/command/opsx-archive.md",
+                              "requirementId":  "ITL-OPENSPEC-001",
+                              "disposition":  "resolved",
+                              "reason":  "Add the reviewed r25 implementation of ITL-OPENSPEC-001.",
+                              "upstreamSha256":  "712934f32d4ed4f0082c8e294fbb637308df0bab025737d18e14d64cf8b356cc",
+                              "baselineSha256":  "712934f32d4ed4f0082c8e294fbb637308df0bab025737d18e14d64cf8b356cc",
+                              "resultSha256":  "b22628b7f572712aa73e8c7af72c608a7d4f9f9a10a81c2f9c6d53f64c60cd77"
                           },
                           {
                               "path":  "content/openspec-bundle/opencode/.opencode/command/opsx-explore.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "182558eea0c995a9e2c1b33c1130013edd503254b6631e0c6d447aa86487dcc0",
                               "baselineSha256":  "127f7a3e12b9638279f81920f93240625d7fe678223ff12fb353ed5123a49d9f",
-                              "resultSha256":  "127f7a3e12b9638279f81920f93240625d7fe678223ff12fb353ed5123a49d9f"
+                              "resultSha256":  "24a6cc6eadb6e1ec2305d84a2492ec8b560a7c1434d9c5643743ac9eeec6820c"
                           },
                           {
                               "path":  "content/openspec-bundle/opencode/.opencode/command/opsx-propose.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "b6921663a15b41c8d7f8c5fc7d0ae468f5393dd3754465c0eac05c3de24fcb51",
                               "baselineSha256":  "06597842034b425261ac593f26f599cb0e40aa93865cfe4a56a4c27213e7a2a3",
-                              "resultSha256":  "06597842034b425261ac593f26f599cb0e40aa93865cfe4a56a4c27213e7a2a3"
+                              "resultSha256":  "58a70c4fb254dd177a35efdf660274a3de29392c6b629b1cc14d38c2441a2c6f"
                           },
                           {
                               "path":  "content/openspec-bundle/opencode/.opencode/skills/openspec-apply-change/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "9760f6a545ca53a30e7e47451ee7784ac8cb299d9f781528761168838eb10739",
                               "baselineSha256":  "742926ec990b9afad44d3d05717e43ef303312760909302e869ceef0a4ce942a",
-                              "resultSha256":  "742926ec990b9afad44d3d05717e43ef303312760909302e869ceef0a4ce942a"
+                              "resultSha256":  "1a274cf6ed3e4846bd39671c6bdf90e40db846bda884cf0b7964ba5142968ea8"
+                          },
+                          {
+                              "path":  "content/openspec-bundle/opencode/.opencode/skills/openspec-archive-change/SKILL.md",
+                              "requirementId":  "ITL-OPENSPEC-001",
+                              "disposition":  "resolved",
+                              "reason":  "Add the reviewed r25 implementation of ITL-OPENSPEC-001.",
+                              "upstreamSha256":  "dd8783f590c0488b2026bee9aae2adbc3cda1d7152ab04e9b9cf2ff3924fce50",
+                              "baselineSha256":  "dd8783f590c0488b2026bee9aae2adbc3cda1d7152ab04e9b9cf2ff3924fce50",
+                              "resultSha256":  "1a80737215fb8862a4f03ca7c3fa7c6fd16dfa5e3c7a97b491eb33532482cc6b"
                           },
                           {
                               "path":  "content/openspec-bundle/opencode/.opencode/skills/openspec-explore/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "e75c925da4f0c2c0049d248484365a7641312806103272c870ef95b6a990a44b",
                               "baselineSha256":  "b9969d11dd522d79080c7a0f403076d8fc809e4a43e9e18c0562d567513cc7ec",
-                              "resultSha256":  "b9969d11dd522d79080c7a0f403076d8fc809e4a43e9e18c0562d567513cc7ec"
+                              "resultSha256":  "380d6058560e9be41dea05bd74e39cfdb5f2d24378d1419a60a8ac67e505f97e"
                           },
                           {
                               "path":  "content/openspec-bundle/opencode/.opencode/skills/openspec-propose/SKILL.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "ce74e891199a760c1c6a33701b2f228f9c94e1907ad00875c4aa109d2545e50b",
                               "baselineSha256":  "1d2adbbbbab492ea2cb58d4b4939d7feddeaec8201a10c218e8fbd427aac3be4",
-                              "resultSha256":  "1d2adbbbbab492ea2cb58d4b4939d7feddeaec8201a10c218e8fbd427aac3be4"
+                              "resultSha256":  "fae11485037bd9e3b4059e814ee2fcc18430a957404b1835cab9d001179b20a9"
                           },
                           {
                               "path":  "content/openspec-bundle/README.md",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "7b91bab5ec8df0d278ec3e5e657d9bb0db6af6f3d05bdcc89ed9b9224176ac9b",
                               "baselineSha256":  "1efef595bd2e4e25042c8883fed3e90de3e875343e44868422f71ea8ae629ef3",
-                              "resultSha256":  "1efef595bd2e4e25042c8883fed3e90de3e875343e44868422f71ea8ae629ef3"
+                              "resultSha256":  "9447ced913bd188be86e92cb2b64dc17dcaae6bdc09215d72464163fe21929ed"
                           },
                           {
                               "path":  "content/rules/development-process.md",
@@ -584,6 +711,15 @@
                               "upstreamSha256":  "408846169abc871d3a1b8bd5cea3e6e8b88e14757e2285a146ef6b92d9f70ea3",
                               "baselineSha256":  "408846169abc871d3a1b8bd5cea3e6e8b88e14757e2285a146ef6b92d9f70ea3",
                               "resultSha256":  "408846169abc871d3a1b8bd5cea3e6e8b88e14757e2285a146ef6b92d9f70ea3"
+                          },
+                          {
+                              "path":  "content/rules/dev-standards-env.md",
+                              "requirementId":  "ITL-CAVEMAN-001",
+                              "disposition":  "resolved",
+                              "reason":  "Add the reviewed r25 implementation of ITL-CAVEMAN-001.",
+                              "upstreamSha256":  "9a1f694853c9a5984cafaa5049a1e9f3da5a7b3eba56fb01e10776155e27eea5",
+                              "baselineSha256":  "9a1f694853c9a5984cafaa5049a1e9f3da5a7b3eba56fb01e10776155e27eea5",
+                              "resultSha256":  "333076125df7d17f706714bd77fe60a8864fa28c86d8603b5d708d90196bae94"
                           },
                           {
                               "path":  "content/rules/extension-patterns.md",
@@ -793,13 +929,22 @@
                               "resultSha256":  "a3ccab1acfa90655a9552e59bd4dbe5e23cca721f2e646eb874fb6c57a317468"
                           },
                           {
+                              "path":  "content/skills/caveman/SKILL.md",
+                              "requirementId":  "ITL-CAVEMAN-001",
+                              "disposition":  "resolved",
+                              "reason":  "Add the reviewed r25 implementation of ITL-CAVEMAN-001.",
+                              "upstreamSha256":  "3264a82df7ebae15de4ad814f9fe447d10ff404aa1b1b9396d4c3f3e619aa342",
+                              "baselineSha256":  "3264a82df7ebae15de4ad814f9fe447d10ff404aa1b1b9396d4c3f3e619aa342",
+                              "resultSha256":  "1acd1606db5d497cfabf9bc8179802487da599e5ebf210f888d61d4242ed0cf3"
+                          },
+                          {
                               "path":  "docs/DOWNSTREAM-PATCHES.md",
                               "requirementId":  "ITL-INFRA-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-INFRA-001 for r24 with reviewed managed-file EOL and legacy migration behavior.",
+                              "reason":  "Resolve ITL-INFRA-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "bf06a8b85b2985fc9a8c5e09c701b0324901e52799bf113ce9dc325788f8b301",
-                              "resultSha256":  "a1e84c7405e1d9decb02337ee7302f9473b65c83f8bec8052bf063b2473cfbde"
+                              "resultSha256":  "e016aa2c7c419cc5ae9e65d3a9383e199f8fe6314301590c4b18fb82954cf963"
                           },
                           {
                               "path":  "docs/FORK-POLICY.md",
@@ -845,6 +990,15 @@
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "\u003cabsent\u003e",
                               "resultSha256":  "a2850902911ff79a15a62021a672336dcd22376f3955a526c8a0dc5cff9670f3"
+                          },
+                          {
+                              "path":  "docs/releases/itl-main-410951e7-r25.md",
+                              "requirementId":  "ITL-INFRA-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the reviewed r25 implementation of ITL-INFRA-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "c3d42ac13c388ac47cb828a4a6dd542a247be51b9282dd6da2deaade0546585b"
                           },
                           {
                               "path":  "docs/releases/itl-main-5ae333ed-r18.md",
@@ -1057,10 +1211,10 @@
                               "path":  "tests/Installer.Tests.ps1",
                               "requirementId":  "ITL-INFRA-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-INFRA-001 for r24 with reviewed managed-file EOL and legacy migration behavior.",
+                              "reason":  "Resolve ITL-INFRA-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "d40cb13a12addd6e6fe8b13db0d55549ba39bf1bb8798362f4decc5e0b03a941",
-                              "resultSha256":  "c3b46a0afcf9655143a10ce97ed57c3ba5844596b105ecc72f9143aee61606f9"
+                              "resultSha256":  "3b4083848529dec647b518d9425c2d0da7352e095bed94480ed5b77b7cfc77fe"
                           },
                           {
                               "path":  "tests/ItlLifecycleGuard.Tests.ps1",
@@ -1074,20 +1228,20 @@
                           {
                               "path":  "tests/LayoutAndManifest.Tests.ps1",
                               "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-INFRA-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-INFRA-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "e16a2959f68a0d5647dac9adce9a109b9611b2cebcdc88fa466ffe21e8001848",
-                              "resultSha256":  "e16a2959f68a0d5647dac9adce9a109b9611b2cebcdc88fa466ffe21e8001848"
+                              "resultSha256":  "f4a33e1ad0a89d7c36c2a1585259d339003e51cd6d4278ff34554c074042fcdc"
                           },
                           {
                               "path":  "tests/R8Policy.Tests.ps1",
                               "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-INFRA-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-INFRA-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "9c64e70c476fb2733e44aa87e9165ccec07607f41acd3768d1c8c0c8ad87b92d",
-                              "resultSha256":  "9c64e70c476fb2733e44aa87e9165ccec07607f41acd3768d1c8c0c8ad87b92d"
+                              "resultSha256":  "40b81a4696a20e2489b17aab23aa82b7923e7d727bd1bbf6c3f48f41c856ec7f"
                           },
                           {
                               "path":  "tests/ReleaseTooling.Tests.ps1",
@@ -1119,11 +1273,11 @@
                           {
                               "path":  "tools/apply-openspec-downstream-overlay.ps1",
                               "requirementId":  "ITL-OPENSPEC-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001.",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "a710bf11c9b366638f6596d85d858a65a0452f7d6778c85fdabfc0518b0f954e",
-                              "resultSha256":  "a710bf11c9b366638f6596d85d858a65a0452f7d6778c85fdabfc0518b0f954e"
+                              "resultSha256":  "f446a9bc13bd04512ccc934d0ca8e810c32ffd8ee1850dbccccb17ff2bbc4dd7"
                           },
                           {
                               "path":  "tools/refresh-openspec-bundle.ps1",

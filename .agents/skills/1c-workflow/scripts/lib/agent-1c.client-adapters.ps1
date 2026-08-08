@@ -857,9 +857,11 @@ function Get-ItlExplicitRoutineContractText {
     param([string]$NewLine = [Environment]::NewLine)
 
     return @(
-        '<!-- ITL_EXPLICIT_ROUTINE_CONTRACT: self-contained-v1 -->',
+        '<!-- ITL_EXPLICIT_ROUTINE_CONTRACT: self-contained-v2 -->',
         '',
-        'This explicit ITL routine is self-contained. Do not preload `1c-workflow` or `1c-workflow-fast`. A path under `.agents\skills\1c-workflow\scripts\` names the helper implementation, not a router-skill dependency. Follow `requiredAction`/`nextAction`; when either names another explicit ITL wrapper, use that wrapper alone. Load detailed recovery guidance only when the helper requires recovery without an explicit wrapper.'
+        'This explicit ITL routine is self-contained. Do not preload `1c-workflow` or `1c-workflow-fast`. A path under `.agents\skills\1c-workflow\scripts\` names the helper implementation, not a router-skill dependency. Follow `requiredAction`/`nextAction`; when either names another explicit ITL wrapper, use that wrapper alone. Load detailed recovery guidance only when the helper requires recovery without an explicit wrapper.',
+        '',
+        'Before the helper call, use at most one short sentence and make the exact helper command the first and only tool action: do not read skills or `.dev.env`, inspect Git, or duplicate helper-owned preflight. The helper emits `ITL response-style` on stderr and `responseStyle` in its bounded JSON; apply an explicit session Caveman override first, otherwise use that runtime profile. Keep every required progress heartbeat to one line containing only the current stage and material liveness state; do not narrate unchanged diagnostics. Preserve a successful `userReport` verbatim regardless of style.'
     ) -join $NewLine
 }
 
@@ -943,8 +945,6 @@ function New-ItlRoutineAgentText {
     $frontmatter.Add('    "powershell -ExecutionPolicy Bypass -File .\\.agents\\skills\\1c-workflow\\scripts\\run-itl-command.ps1*": allow')
     $frontmatter.Add('    "powershell -ExecutionPolicy Bypass -File .\\.agents\\skills\\1c-workflow\\scripts\\agent-1c.ps1*": allow')
     $frontmatter.Add("---")
-    $caveman = ([string](Get-EnvValue -Name "CAVEMAN" -Default "on")).Trim().ToLowerInvariant()
-    $responseStyle = if ($caveman -eq "off") { "normal concise prose" } else { "CAVEMAN terse prose" }
     $body = @(
         "",
         "# ITL routine helper",
@@ -952,7 +952,7 @@ function New-ItlRoutineAgentText {
         "Make exactly one shell call: run the exact run-itl-command.ps1 command supplied by the invoking ITL command, then return its bounded summary.",
         "Do not edit code or metadata, author or repair tests, resolve merge conflicts, or substitute your own lifecycle steps.",
         "Do not load skills, call MCP tools, research, inspect unrelated files, or retry the lifecycle helper.",
-        "Use $responseStyle for your own words; preserve the compact helper summary verbatim.",
+        "Use an explicit session Caveman override when present; otherwise use the helper's runtime responseStyle profile for your own words. Keep progress to one current-stage line and preserve the compact helper summary verbatim.",
         "If the helper refuses the operation, return that refusal unchanged."
     )
     return ((@($frontmatter) + $body) -join [Environment]::NewLine) + [Environment]::NewLine
