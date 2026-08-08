@@ -66,6 +66,22 @@ function Remove-BranchSeedFileRuntimeSidecars {
     }
 }
 
+function Copy-BranchSeedFileDoNotCopyMarker {
+    param(
+        [Parameter(Mandatory)][string]$SourceInfoBasePath,
+        [Parameter(Mandatory)][string]$DestinationInfoBasePath
+    )
+
+    $markerName = "DoNotCopy.txt"
+    $sourceMarkerPath = Join-Path $SourceInfoBasePath $markerName
+    $destinationMarkerPath = Join-Path $DestinationInfoBasePath $markerName
+    if (Test-Path -LiteralPath $sourceMarkerPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        Copy-Item -LiteralPath $sourceMarkerPath -Destination $destinationMarkerPath -Force
+    } elseif (Test-Path -LiteralPath $destinationMarkerPath -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $destinationMarkerPath -Force -ErrorAction Stop
+    }
+}
+
 function Disconnect-BranchSeedFileFromRepository {
     param([Parameter(Mandatory)][string]$ArtifactPath)
 
@@ -363,11 +379,15 @@ function New-BranchSeed {
         Write-Utf8Text -Path $paths.baselinePath -Value (($baseline | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
 
         if ($kind -eq "file") {
-            $sourceArtifact = Join-Path (Resolve-InfoBasePath (Get-SourceInfoBasePath)) "1Cv8.1CD"
+            $sourceInfoBasePath = Resolve-InfoBasePath (Get-SourceInfoBasePath)
+            $sourceArtifact = Join-Path $sourceInfoBasePath "1Cv8.1CD"
             if (-not (Test-Path -LiteralPath $sourceArtifact -PathType Leaf)) {
                 throw "BRANCH_SEED_SOURCE_ARTIFACT_MISSING: $sourceArtifact"
             }
             Copy-Item -LiteralPath $sourceArtifact -Destination $paths.artifactPath
+            Copy-BranchSeedFileDoNotCopyMarker `
+                -SourceInfoBasePath $sourceInfoBasePath `
+                -DestinationInfoBasePath $artifactParent
         } else {
             $provider = Get-BranchSeedServerProviderCapabilities
             Invoke-Designer `
@@ -496,6 +516,9 @@ function Restore-DevBranchFromSeed {
             }
             New-Item -ItemType Directory -Force -Path $DevBranchInfoBasePath | Out-Null
             Copy-Item -LiteralPath ([string]$manifest.artifactPath) -Destination (Join-Path $DevBranchInfoBasePath "1Cv8.1CD")
+            Copy-BranchSeedFileDoNotCopyMarker `
+                -SourceInfoBasePath (Split-Path -Parent ([string]$manifest.artifactPath)) `
+                -DestinationInfoBasePath $DevBranchInfoBasePath
         } else {
             $provider = Get-BranchSeedServerProviderCapabilities
             & powershell -NoProfile -ExecutionPolicy Bypass -File $provider.path `

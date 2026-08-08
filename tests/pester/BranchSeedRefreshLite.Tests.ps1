@@ -6,13 +6,14 @@ Describe "latest-only branch seed and two-level refresh" {
         $HelperPath = $context.HelperPath
     }
 
-    It "keeps one latest file seed and transfers signatures without raw 1Cv8Log" {
+    It "keeps one latest file seed with DoNotCopy marker and transfers signatures without raw 1Cv8Log" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-seed-latest-" + [guid]::NewGuid().ToString("N"))
         try {
             $sourceRoot = Join-Path $tempRoot "source база"
             $seedRoot = Join-Path $tempRoot "общий seed"
             New-Item -ItemType Directory -Force -Path (Join-Path $sourceRoot "1Cv8Log") | Out-Null
             [IO.File]::WriteAllBytes((Join-Path $sourceRoot "1Cv8.1CD"), [byte[]](1, 2, 3))
+            Set-Content -LiteralPath (Join-Path $sourceRoot "DoNotCopy.txt") -Encoding ASCII -Value "source-marker-one"
             [IO.File]::WriteAllBytes((Join-Path $sourceRoot "1Cv8Log\1Cv8.lgf"), [byte[]](9, 9))
 
             $result = & {
@@ -44,7 +45,10 @@ Describe "latest-only branch seed and two-level refresh" {
 
                 $first = New-BranchSeed -ConfigurationFingerprint "old" -ConfigurationFileCount 1 -DumpConfigurationFromSeed
                 [IO.File]::WriteAllBytes((Join-Path $sourceRoot "1Cv8.1CD"), [byte[]](4, 5, 6, 7))
+                Set-Content -LiteralPath (Join-Path $sourceRoot "DoNotCopy.txt") -Encoding ASCII -Value "source-marker-two"
                 $second = New-BranchSeed -ConfigurationFingerprint "old" -ConfigurationFileCount 1 -DumpConfigurationFromSeed
+                $branchInfoBasePath = Join-Path $tempRoot "branch base"
+                Restore-DevBranchFromSeed -DevBranchName "feature" -DevBranchInfoBasePath $branchInfoBasePath | Out-Null
                 [pscustomobject]@{
                     firstSyncId = [string]$first.syncId
                     secondSyncId = [string]$second.syncId
@@ -53,6 +57,8 @@ Describe "latest-only branch seed and two-level refresh" {
                     rawLogs = @(Get-ChildItem -LiteralPath $seedRoot -Recurse -Directory -Filter "1Cv8Log")
                     baseline = Read-Utf8Text -Path ([string]$second.baselinePath) | ConvertFrom-Json
                     artifactBytes = [IO.File]::ReadAllBytes([string]$second.artifactPath)
+                    seedMarker = Get-Content -LiteralPath (Join-Path (Split-Path -Parent ([string]$second.artifactPath)) "DoNotCopy.txt") -Raw
+                    branchMarker = Get-Content -LiteralPath (Join-Path $branchInfoBasePath "DoNotCopy.txt") -Raw
                 }
             }
 
@@ -61,6 +67,8 @@ Describe "latest-only branch seed and two-level refresh" {
             $result.manifest.configurationFingerprint | Should -Be "fingerprint"
             @($result.artifacts).Count | Should -Be 1
             @($result.rawLogs).Count | Should -Be 0
+            $result.seedMarker.Trim() | Should -Be "source-marker-two"
+            $result.branchMarker.Trim() | Should -Be "source-marker-two"
             @($result.baseline.signatures) | Should -Be @("ошибка один", "error two")
             @($result.artifactBytes) | Should -Be @([byte]4, [byte]5, [byte]6, [byte]7)
         } finally {

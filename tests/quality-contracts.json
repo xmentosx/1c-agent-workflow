@@ -85,7 +85,7 @@
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/BranchSeedRefreshLite.Tests.ps1",
-      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.branch*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.result*.ps1"],
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.branch*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.seed.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.result*.ps1"],
       "tests": ["tests/pester/BranchSeedRefreshLite.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/ExtensionInitialization.Tests.ps1"]
     },
     {

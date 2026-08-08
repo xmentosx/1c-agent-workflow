@@ -28,7 +28,7 @@ Use the monitored launcher by default when `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_
 3. Create `itldev/<safe-dev-branch-name>` in a sibling worktree unless explicit branch/worktree paths are supplied. In a new OpenCode project, the managed plugin asks the native workspace adapter to create that exact branch, waits for checkout readiness, and lets the helper adopt the existing worktree without issuing another `git worktree add`.
 4. Copy `.dev.env` into the new worktree.
 5. Restore the branch infobase from the single compatible latest-only seed. Never fall back to a direct source copy.
-   - File base: copy only the closed seed `1Cv8.1CD`; raw `1Cv8Log` is never copied.
+   - File base: copy the closed seed `1Cv8.1CD` and its optional `DoNotCopy.txt` marker; raw `1Cv8Log` is never copied.
    - Server base: restore the seed DT through `serverBaseCopyScript` schema v2 capabilities `restore-seed` and `event-log-baseline`; legacy providers fail with `SERVER_SEED_PROVIDER_UPGRADE_REQUIRED`.
    - The `ConfigDumpInfo.xml` committed in `master` is the initial synchronization cursor for this one-time source-base copy. After creation, the development worktree and its copied infobase own that cursor; later master refreshes must not replace it.
 6. If `sourceUsesRepository=true`, unbind the development branch copy from 1C configuration repository storage without repository parameters.
