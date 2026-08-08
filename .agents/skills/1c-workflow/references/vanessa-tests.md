@@ -13,6 +13,9 @@ or long regressions only when explicitly requested.
    - `integration`: object, document, register, exchange, or data movement between subsystems;
    - `UI`: form, command, or visible user behavior.
 3. Search existing steps and local `Libraries`/`@exportscenarios` before inventing new steps.
+   When a concrete pattern is needed, open only the matching recipe in
+   `vanessa-recipes.md`; its companion files are under
+   `assets/vanessa-authoring-examples`.
 4. For OpenSpec, write 2-3 scenarios: the main path and one meaningful
    boundary or negative case. A fourth needs justification. A quick-fix starts
    with one focused regression and adds another only for a separate boundary.
@@ -81,69 +84,19 @@ Rules:
 - Add `@exportscenarios` only to library feature files that are actually reused.
 - Do not add tags for large smoke/E2E suites to feature-focused checks.
 
-## Unit-Like Template
+## Worked Recipes
 
-Use this when logic can be checked without a form. Create and assert local data in
-the same BSL block; replace the placeholder call and expected value.
+`vanessa-recipes.md` contains five narrow patterns: unit-like logic,
+integration/persistence, UI navigation, stable table-row selection, and report
+output. Read only the selected recipe. The companion `.feature` files are
+machine-linted examples, not a product test suite: `@template` files still
+require replacement of every `<...>` marker and validation against the current
+step catalog, metadata, and runtime form. The portable unit-like example has no
+such marker and may be syntax-checked as-is.
 
-```gherkin
-Сценарий: Проверяемая логика возвращает ожидаемый результат
-	И я выполняю код встроенного языка на сервере
-		"""bsl
-			Результат = 100; // Вызов проверяемой логики.
-			Если Результат <> 100 Тогда
-				ВызватьИсключение "Ожидался результат 100";
-			КонецЕсли;
-		"""
-```
-
-## Integration Template
-
-Use this when persistence, posting, register movements, objects, or exchange
-behavior matters. In one focused scenario:
-
-```gherkin
-	# Подготовка
-		И я создаю только необходимые уникальные данные
-	# Действие
-		И я выполняю одну проверяемую прикладную операцию
-	# Проверка
-		И я читаю измененный объект или регистр и проверяю точный результат
-```
-
-## UI Template
-
-Use UI checks only for forms, commands, or visible behavior. Prefer form element names over captions and coordinates.
-
-```gherkin
-#language: ru
-
-@feature_order_command
-
-Функционал: Команда заполнения заказа
-
-Контекст:
-	Дано Я запускаю сценарий открытия TestClient или подключаю уже существующий
-	И я закрываю все окна клиентского приложения
-
-Сценарий: Команда Заполнить добавляет строку товара
-	# Подготовка
-		И я выполняю код встроенного языка на сервере
-		"""bsl
-			// Создайте минимальные данные и получите навигационную ссылку.
-		"""
-
-	# Действие
-		И Я открываю навигационную ссылку "$НавигационнаяСсылка$"
-		Если появилось предупреждение Тогда
-			Тогда я вызываю исключение "Не удалось открыть заказ для проверки команды заполнения"
-		Если имя текущей формы "ErrorWindow" Тогда
-			Тогда я вызываю исключение "Открылась форма ошибки при открытии заказа"
-		И я нажимаю на кнопку с именем 'ФормаЗаполнить'
-
-	# Проверка
-		Тогда в таблице "Товары" количество строк "больше" 0
-```
+Do not copy an upstream prompt, an entire external scenario, or all recipes into
+the task context. Adapt the smallest matching pattern and retain only steps that
+prove the changed behavior.
 
 ## Reliability
 

@@ -117,7 +117,8 @@
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1600; rationale = "routine helper router" },
             @{ path = "templates\USER-RULES.append.md"; maxWords = 775; reviewApproxTokens = 1200; maxApproxTokens = 1600; rationale = "always-on ITL safety overlay with explicit routine routing precedence" },
             @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 1000; reviewApproxTokens = 1600; maxApproxTokens = 1800; rationale = "on-demand command menu" },
-            @{ path = ".agents\skills\1c-workflow\references\vanessa-tests.md"; maxWords = 1400; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "on-demand Vanessa authoring contract" }
+            @{ path = ".agents\skills\1c-workflow\references\vanessa-tests.md"; maxWords = 1400; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "on-demand Vanessa authoring contract" },
+            @{ path = ".agents\skills\1c-workflow\references\vanessa-recipes.md"; maxWords = 1100; reviewApproxTokens = 2100; maxApproxTokens = 2400; rationale = "selective worked Vanessa recipes and runtime discovery bounds" }
         )
 
         foreach ($budget in $budgets) {
@@ -909,6 +910,14 @@
             "freeze it during infrastructure diagnosis"
         )) { $vanessaGuide | Should -Match ([regex]::Escape($marker)) }
         $vanessaGuide | Should -Not -Match "PM5"
+
+        $recipeGuide = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\vanessa-recipes.md")
+        foreach ($marker in @(
+            "assets/vanessa-authoring-examples", "Unit-Like Logic", "Integration Or Persistence", "UI Navigation And Command",
+            "Stable Table Row", "Report Output", "user_actions_recording", "execute_form_actions", "get_window_list_os",
+            "get_window_screenshot_os", "reloadAndRunFromLine", '/itl-check` remains the only executable verification gate'
+        )) { $recipeGuide | Should -Match ([regex]::Escape($marker)) }
+        $recipeGuide | Should -Not -Match "PM5"
     }
 
     It "documents native examples and natural OpenSpec requests at matching development steps" {
