@@ -393,6 +393,7 @@
         }
         [string]$result.codex[$expected.codex] | Should -Match '(?m)^name:\s*itl$'
         @($result.codex.Keys) | Should -Contain ".agents/skills/itl/agents/openai.yaml"
+        [string]$result.codex[".agents/skills/itl/agents/openai.yaml"] | Should -Match '(?m)^  display_name: "itl"$'
         [string]$result.codex[".agents/skills/itl/agents/openai.yaml"] | Should -Match 'allow_implicit_invocation:\s*false'
         [string]$result.kimi[$expected.kimi] | Should -Match '(?m)^name:\s*itl$'
         [string]$result.cline[$expected.cline] | Should -Match '(?m)^name:\s*itl$'
@@ -414,6 +415,7 @@
             foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-new-config-branch", "itl-new-extension-branch", "itl-update-workflow", "itl-switch-client")) {
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/agents/openai.yaml"
+                [string]$masterFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match ("(?m)^  display_name: `"" + [regex]::Escape($name) + "`"$")
                 [string]$masterFiles[".agents/skills/$name/SKILL.md"] | Should -Match 'ITL_EXPLICIT_ROUTINE_CONTRACT: self-contained-v1'
             }
             @($masterFiles.Keys) | Should -Not -Contain ".agents/skills/itl-check/SKILL.md"
@@ -426,6 +428,7 @@
             @($devFiles.Keys).Count | Should -Be 18
             foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-result")) {
                 @($devFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
+                [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match ("(?m)^  display_name: `"" + [regex]::Escape($name) + "`"$")
                 [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match 'allow_implicit_invocation:\s*false'
                 $skillText = [string]$devFiles[".agents/skills/$name/SKILL.md"]
                 if ($name -eq "itl-verify-fix") {

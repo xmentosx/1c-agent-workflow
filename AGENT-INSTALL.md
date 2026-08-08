@@ -429,7 +429,7 @@ $itl-result
 $itl-litemode
 ```
 
-Only the seven skills valid for the current Git context are generated. They are ignored runtime files, refreshed by the normal client-surface synchronization, and configured with `allow_implicit_invocation: false`, so they do not compete for implicit routing context. Open a new Codex task after generation so the picker rereads them.
+Only the skills valid for the current Git context are generated. They are ignored runtime files, refreshed by the normal client-surface synchronization, and configured with their exact hyphenated command token as `interface.display_name` plus `allow_implicit_invocation: false`. The Codex picker therefore shows names such as `itl-refresh` and `itl-result` consistently with the other clients without making the aliases compete for implicit routing context. Open a new Codex task after generation so the picker rereads them.
 
 Natural language and the general workflow skills remain available for advanced or recovery work:
 
