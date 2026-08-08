@@ -226,8 +226,12 @@ function Commit-StandUpdate {
     if ($changed.Count -eq 0) { return (& git -C $Root rev-parse HEAD).Trim() }
     & git -C $Root add --all
     if ($LASTEXITCODE -ne 0) { throw "Unable to stage $Message." }
+    # A fresh Windows checkout can report CRLF-only drift that git add normalizes back to a clean index.
     & git -C $Root commit -m $Message | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Unable to commit $Message." }
+    if ($LASTEXITCODE -ne 0) {
+        $remaining = @(& git -C $Root status --porcelain --untracked-files=no)
+        if ($remaining.Count -ne 0) { throw "Unable to commit $Message." }
+    }
     return (& git -C $Root rev-parse HEAD).Trim()
 }
 
