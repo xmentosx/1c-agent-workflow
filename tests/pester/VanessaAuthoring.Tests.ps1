@@ -71,7 +71,7 @@
         $integrationTemplate | Should -Match '<ОжидаемоеКоличествоДвижений>'
 
         $recipes = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents\skills\1c-workflow\references\vanessa-recipes.md') -Raw -Encoding UTF8
-        $batchExample = [regex]::Match($recipes, '(?m)^(?<json>\{"name":"execute_form_actions".+\})$')
+        $batchExample = [regex]::Match($recipes, '(?m)^(?<json>\{"name":"execute_form_actions".+\})\r?$')
         $batchExample.Success | Should -BeTrue
         $gatewayArguments = $batchExample.Groups['json'].Value | ConvertFrom-Json
         $innerArguments = $gatewayArguments.argumentsJson | ConvertFrom-Json
