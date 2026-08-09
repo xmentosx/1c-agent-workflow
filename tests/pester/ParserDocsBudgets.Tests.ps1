@@ -293,10 +293,11 @@
         }
         $envTemplateText | Should -Match '(?m)^DEBUG_FAST_PATH=standard\r?$'
         $envTemplateText | Should -Match '(?m)^CAVEMAN=on\r?$'
+        $envTemplateText | Should -Match '(?m)^CAVEMAN_LEVEL=full\r?$'
         $envTemplateText | Should -Match '(?m)^ITL_ROUTINE_MODE=off\r?$'
         foreach ($marker in @(
             'VERIFICATION_DEPTH=standard', 'UI_TESTING=manual', 'ORCHESTRATION=standard',
-            'CAVEMAN=on', 'DEPENDENCY_MODE=fresh', 'VERIFICATION_POLICY=warn',
+            'CAVEMAN=on', 'CAVEMAN_LEVEL=full', 'DEPENDENCY_MODE=fresh', 'VERIFICATION_POLICY=warn',
             '/litemode', '/itl-litemode', '/rulesmodel', 'rtk', 'SUBAGENT_MODEL_CODING', 'ITL_ROUTINE_MODE=off',
             'AGENT_MODEL=', 'SUPPORT_GUARD=deny', 'agent-browser', 'Windows-MCP'
         )) {

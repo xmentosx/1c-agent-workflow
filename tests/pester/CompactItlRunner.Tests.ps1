@@ -27,12 +27,73 @@ exit 0
             $summary.action | Should -Be "check-dev-branch"
             $summary.status | Should -Be "succeeded"
             $summary.confirmationRequired | Should -BeFalse
+            $summary.responseStyle.mode | Should -Be "on"
+            $summary.responseStyle.level | Should -Be "full"
+            $summary.responseStyle.active | Should -BeTrue
+            $summary.responseStyle.profile | Should -Be "caveman-full"
+            $summary.responseStyle.taskClass | Should -Be "execution"
+            ($processResult.stderr -join "`n") | Should -Match 'ITL response-style: mode=on; level=full; active=true; profile=caveman-full; task=execution'
             (Get-Item -LiteralPath $summary.logPath).Length | Should -BeGreaterThan 10000
             (Get-Content -LiteralPath $summary.logPath -Raw -Encoding UTF8) | Should -Match 'Проверка UTF-8 журнала'
             $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $summary.userReport | Should -BeExactly $status.userReport
             $status.nextAction | Should -Be "none"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "resolves the ITL Caveman mode and level matrix from project env with safe defaults" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-response-style-" + [guid]::NewGuid().ToString("N"))
+        $previousMode = [Environment]::GetEnvironmentVariable("CAVEMAN", "Process")
+        $previousLevel = [Environment]::GetEnvironmentVariable("CAVEMAN_LEVEL", "Process")
+        try {
+            [Environment]::SetEnvironmentVariable("CAVEMAN", $null, "Process")
+            [Environment]::SetEnvironmentVariable("CAVEMAN_LEVEL", $null, "Process")
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport='unchanged report' }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+            $cases = @(
+                [pscustomobject]@{ mode=$null; level=$null; expectedMode='on'; expectedLevel='full'; active=$true; profile='caveman-full' },
+                [pscustomobject]@{ mode='invalid'; level='invalid'; expectedMode='on'; expectedLevel='full'; active=$true; profile='caveman-full' },
+                [pscustomobject]@{ mode='on'; level='lite'; expectedMode='on'; expectedLevel='lite'; active=$true; profile='caveman-lite' },
+                [pscustomobject]@{ mode='on'; level='ultra'; expectedMode='on'; expectedLevel='ultra'; active=$true; profile='caveman-ultra' },
+                [pscustomobject]@{ mode='auto'; level='lite'; expectedMode='auto'; expectedLevel='lite'; active=$true; profile='caveman-lite' },
+                [pscustomobject]@{ mode='auto'; level='full'; expectedMode='auto'; expectedLevel='full'; active=$true; profile='caveman-full' },
+                [pscustomobject]@{ mode='auto'; level='ultra'; expectedMode='auto'; expectedLevel='ultra'; active=$true; profile='caveman-ultra' },
+                [pscustomobject]@{ mode='off'; level='lite'; expectedMode='off'; expectedLevel='lite'; active=$false; profile='normal' },
+                [pscustomobject]@{ mode='off'; level='full'; expectedMode='off'; expectedLevel='full'; active=$false; profile='normal' },
+                [pscustomobject]@{ mode='off'; level='ultra'; expectedMode='off'; expectedLevel='ultra'; active=$false; profile='normal' }
+            )
+            foreach ($case in $cases) {
+                $envPath = Join-Path $tempRoot ".dev.env"
+                if ($null -eq $case.mode -and $null -eq $case.level) {
+                    Remove-Item -LiteralPath $envPath -Force -ErrorAction SilentlyContinue
+                } else {
+                    Set-Content -LiteralPath $envPath -Encoding UTF8 -Value "CAVEMAN=$($case.mode)`nCAVEMAN_LEVEL=$($case.level)`n"
+                }
+                Push-Location $tempRoot
+                try {
+                    $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch")
+                } finally { Pop-Location }
+                $processResult.exitCode | Should -Be 0
+                $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+                $summary.responseStyle.mode | Should -Be $case.expectedMode
+                $summary.responseStyle.level | Should -Be $case.expectedLevel
+                $summary.responseStyle.active | Should -Be $case.active
+                $summary.responseStyle.profile | Should -Be $case.profile
+                $summary.responseStyle.taskClass | Should -Be 'execution'
+                $summary.userReport | Should -BeExactly 'unchanged report'
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("CAVEMAN", $previousMode, "Process")
+            [Environment]::SetEnvironmentVariable("CAVEMAN_LEVEL", $previousLevel, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "returns absolute result paths and artifacts in the successful export summary" {

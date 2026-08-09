@@ -15,7 +15,7 @@
   └─ непроверенный результат: VERIFICATION_POLICY=warn
 ```
 
-Штатные значения: `VERIFICATION_DEPTH=standard`, `UI_TESTING=manual`, `ORCHESTRATION=standard`, `ITL_ROUTINE_MODE=off`, `CAVEMAN=on`, `AGENT_MODEL=` (`auto`), `SUPPORT_GUARD=deny`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
+Штатные значения: `VERIFICATION_DEPTH=standard`, `UI_TESTING=manual`, `ORCHESTRATION=standard`, `ITL_ROUTINE_MODE=off`, `CAVEMAN=on`, `CAVEMAN_LEVEL=full`, `AGENT_MODEL=` (`auto`), `SUPPORT_GUARD=deny`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
 
 Меняйте режим только ради понятной цели: уменьшить глубину низкорисковой статической проверки, вручную отключить компонент executable verification, выбрать экономную оркестрацию или запретить непроверенную выгрузку.
 
@@ -41,7 +41,7 @@ ITL не включает и не выключает Browser Automation и не 
 | Модели субагентов | `SUBAGENT_MODEL_CODING`, `SUBAGENT_MODEL_ANALYSIS`, `SUBAGENT_MODEL_LIGHT` | model id клиента или пусто | модель клиента | после re-render/restart |
 | Профиль головной модели | `/rulesmodel`, `AGENT_MODEL` | `opus5`, `sonnet5`, `fable5`, `gpt56`, `auto` | `auto` | новый чат после смены |
 | Защита объектов на поддержке | `SUPPORT_GUARD` | `deny`, `warn`, `off` | `deny` | сразу |
-| Стиль ответов | `/caveman`, `CAVEMAN` | `on`, `auto`, `off` | `on` | проект; level может быть session-only |
+| Стиль ответов | `/caveman`, `CAVEMAN`, `CAVEMAN_LEVEL` | mode: `on`, `auto`, `off`; level: `lite`, `full`, `ultra` | `on/full` | проект; явный session override приоритетнее |
 | Лимит quick-fix | `QUICKFIX_MAX_LINES` | положительное число | `40` | проект |
 | Быстрый путь отладки | `DEBUG_FAST_PATH` | `standard`, `extended`, `off` | `standard` | проект |
 | Зависимости | `DEPENDENCY_MODE` | `fresh`, `locked` | `fresh` | проект |
@@ -100,7 +100,9 @@ ITL не включает и не выключает Browser Automation и не 
 - `auto` — краткий стиль для разработки, обычный для анализа, review и документации;
 - `off` — автоматическая активация выключена.
 
-`/caveman lite|full|ultra` меняет только уровень текущей сессии. Фразы `caveman please` и `stop caveman` также действуют только в текущем чате и имеют приоритет над `.dev.env`. Режим влияет на форму ответа, но не на верификацию, модели или обязательные отчеты.
+Постоянный уровень хранится отдельно в `CAVEMAN_LEVEL=lite|full|ultra`; отсутствующее или невалидное значение означает `full`. `/caveman persist <level>` меняет только `CAVEMAN_LEVEL` и не включает `CAVEMAN`.
+
+`/caveman lite|full|ultra` меняет только уровень текущей сессии и не пишет `.dev.env`. Фразы `caveman please` и `stop caveman` также действуют только в текущем чате. Приоритет: session override → `CAVEMAN`/`CAVEMAN_LEVEL` проекта → `on/full`. При `auto` все `itl-*` и `opsx-apply` используют Caveman, а `opsx-explore`, `opsx-propose` и `opsx-archive` — обычный стиль. Режим влияет на форму рабочего ответа и heartbeat, но не сокращает `userReport`, OpenSpec-артефакты, проверки, safety-контракты или обязательные отчеты.
 
 ## Настройка процесса
 

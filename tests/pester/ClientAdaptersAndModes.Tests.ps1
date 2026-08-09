@@ -284,11 +284,15 @@
                 $adapted[$client]["itl-litemode.md"] | Should -Match 'exactly one fenced `text` code block'
                 foreach ($fileName in $templates.Keys) {
                     $adapted[$client][$fileName] | Should -Match '(?m)^description:\s*[^\r\n]*[А-Яа-яЁё]'
-                    ([regex]::Matches([string]$adapted[$client][$fileName], 'ITL_EXPLICIT_ROUTINE_CONTRACT: self-contained-v1')).Count | Should -Be 1 -Because "$client $fileName"
+                    ([regex]::Matches([string]$adapted[$client][$fileName], 'ITL_EXPLICIT_ROUTINE_CONTRACT: self-contained-v2')).Count | Should -Be 1 -Because "$client $fileName"
                     $adapted[$client][$fileName] | Should -Match 'Do not preload `1c-workflow` or `1c-workflow-fast`'
                     $adapted[$client][$fileName] | Should -Match 'helper implementation, not a router-skill dependency'
                     $adapted[$client][$fileName] | Should -Match 'requiredAction`/`nextAction`.*explicit ITL wrapper.*wrapper alone'
                     $adapted[$client][$fileName] | Should -Match 'recovery without an explicit wrapper'
+                    $adapted[$client][$fileName] | Should -Match 'at most one short sentence'
+                    $adapted[$client][$fileName] | Should -Match 'first and only tool action'
+                    $adapted[$client][$fileName] | Should -Match 'responseStyle'
+                    $adapted[$client][$fileName] | Should -Match 'userReport` verbatim'
                 }
             }
             $adapted.codex["itl.md"] | Should -Match '(?m)^name:\s*itl$'
@@ -416,7 +420,7 @@
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/agents/openai.yaml"
                 [string]$masterFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match ("(?m)^  display_name: `"" + [regex]::Escape($name) + "`"$")
-                [string]$masterFiles[".agents/skills/$name/SKILL.md"] | Should -Match 'ITL_EXPLICIT_ROUTINE_CONTRACT: self-contained-v1'
+                [string]$masterFiles[".agents/skills/$name/SKILL.md"] | Should -Match 'ITL_EXPLICIT_ROUTINE_CONTRACT: self-contained-v2'
             }
             @($masterFiles.Keys) | Should -Not -Contain ".agents/skills/itl-check/SKILL.md"
 
@@ -435,7 +439,7 @@
                     $skillText | Should -Not -Match 'ITL_EXPLICIT_ROUTINE_CONTRACT:'
                     $skillText | Should -Match ([regex]::Escape('.agents/skills/1c-workflow/references/vanessa-tests.md'))
                 } else {
-                    $skillText | Should -Match 'ITL_EXPLICIT_ROUTINE_CONTRACT: self-contained-v1'
+                    $skillText | Should -Match 'ITL_EXPLICIT_ROUTINE_CONTRACT: self-contained-v2'
                 }
             }
             @($devFiles.Keys) | Should -Not -Contain ".agents/skills/itl-new-config-branch/SKILL.md"
@@ -650,7 +654,9 @@
                     $agentText | Should -Match 'steps: 2'
                     $agentText | Should -Match '"\*": deny'
                     $agentText | Should -Match 'run-itl-command\.ps1\*": allow'
-                    $agentText | Should -Match 'CAVEMAN terse prose'
+                    $agentText | Should -Match "helper's runtime responseStyle profile"
+                    $agentText | Should -Match 'progress to one current-stage line'
+                    $agentText | Should -Match 'compact helper summary verbatim'
                 }
                 $commandRoot = if ($client -eq "kilocode") { Join-Path $tempRoot ".kilo\commands" } else { Join-Path $tempRoot ".opencode\command" }
                 $shortText = Get-Content -LiteralPath (Join-Path $commandRoot "itl.md") -Raw

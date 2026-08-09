@@ -113,7 +113,7 @@ Load only the rule matching the current need; do not bulk-read the catalog.
 
 ## Skills and Subagents
 
-- `CAVEMAN=on` activates `content/skills/caveman/SKILL.md` for all tasks; `auto` only for development work; `off` disables automatic activation. Style never overrides safety or verification.
+- `CAVEMAN=on` activates `content/skills/caveman/SKILL.md` for all tasks; `auto` only for development work; `off` disables automatic activation. `CAVEMAN_LEVEL=lite|full|ultra` selects the persistent level, with missing or invalid values resolving to `full`; explicit session overrides win. Style never overrides safety or verification.
 - Consider subagents only for genuinely separable large/multi-module work. Load `content/rules/subagents.md`; with `ORCHESTRATION=economy`, also load `orchestrator-economy.md`. Every subagent inherits this contract and must raise material ambiguity instead of silently deciding.
 - Delegated read-only 1C exploration uses the project `1c-explorer`, never a host tool's generic built-in explorer. Narrow lookups stay in the parent.
 - Load `subagent-pipeline.md` only when full-cycle execution is actually delegated.
