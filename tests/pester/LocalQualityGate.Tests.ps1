@@ -192,6 +192,11 @@ Describe "Local quality gate contract" {
             Get-WorkflowContinuationProof -RepositoryRoot $tempRoot -QualifiedCommit $base -CurrentCommit $productionCommit -CurrentTree $productionTree | Should -BeNullOrEmpty
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
+    It "classifies Release readiness repairs as resumable Release harness changes" {
+        $catalog = Get-Content -LiteralPath (Join-Path $RepoRoot "tests\quality-contracts.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        @($catalog.continuationScopes.release) | Should -Contain "scripts/test-release-readiness.ps1"
+    }
+
     It "keeps repository-only guidance out of installed packages and preserves the five skills" {
         Test-Path -LiteralPath (Join-Path $RepoRoot ".githooks") | Should -BeFalse
         $expected = @("1c-workflow", "1c-workflow-fast", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "product-docs") | Sort-Object
