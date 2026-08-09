@@ -22,8 +22,8 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match '"-VanessaFeaturePath", \$vanessaFixture\.path'
         $e2eText | Should -Match "\`$authoringOutcome -ne `"passed`""
         $e2eText | Should -Not -Match "runner-fallback-required"
-        $e2eText | Should -Match "open_feature_file:file.*check_syntax:file.*load_features:directory"
-        $e2eText | Should -Not -Match "load_features:file"
+        $e2eText | Should -Match "open_feature_file:file.*check_syntax:file.*load_features:file"
+        $e2eText | Should -Not -Match "load_features:directory"
         $e2eText | Should -Match "clientMcpSafeMode"
         $e2eText | Should -Match "vaExtensionSafeMode"
         $e2eText | Should -Match "vanessaAutomationArchiveSha256"

@@ -119,7 +119,7 @@ func TestRunVanessaSmokeCoversOrdinaryFileAndDirectoryWindowsPathsBeforeUI(t *te
 	if clientCount != 0 || maxClientCount != 1 {
 		t.Fatalf("unexpected TestClient concurrency observation: current=%d max=%d", clientCount, maxClientCount)
 	}
-	if outcome != "passed" || strings.Join(authoringCalls, ",") != "open_feature_file:file,check_syntax:file,load_features:directory" {
+	if outcome != "passed" || strings.Join(authoringCalls, ",") != "open_feature_file:file,check_syntax:file,load_features:file" {
 		t.Fatalf("outcome=%q authoringCalls=%#v", outcome, authoringCalls)
 	}
 	if len(calls) < 8 {
@@ -138,11 +138,8 @@ func TestRunVanessaSmokeCoversOrdinaryFileAndDirectoryWindowsPathsBeforeUI(t *te
 		if call.name != expected.name || len(call.arguments) != 1 {
 			t.Fatalf("call %d changed file smoke order or arguments: %#v", index, call)
 		}
-		if index != 2 && call.arguments[expected.key] != featurePath {
+		if call.arguments[expected.key] != featurePath {
 			t.Fatalf("call %d changed feature path: %#v", index, call)
-		}
-		if index == 2 && call.arguments[expected.key] != `D:\Git\PM5 КОРП - work 1-perf1\tests\features` {
-			t.Fatalf("directory load path=%#v", call.arguments)
 		}
 	}
 	for index := 0; index < 3; index++ {

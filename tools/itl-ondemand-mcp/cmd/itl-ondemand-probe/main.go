@@ -416,7 +416,6 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 	if !filepath.IsAbs(featurePath) || !strings.Contains(featurePath, " ") || !containsCyrillic(featurePath) {
 		return "", nil, fmt.Errorf("Vanessa authoring smoke requires an absolute Windows path containing spaces and Cyrillic text: %q", featurePath)
 	}
-	featureDirectory := filepath.Dir(featurePath)
 	authoringCalls := make([]string, 0, 4)
 	for _, call := range []struct {
 		name      string
@@ -425,7 +424,7 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 	}{
 		{name: "open_feature_file", arguments: map[string]any{"filePath": featurePath}, proof: "open_feature_file:file"},
 		{name: "check_syntax", arguments: map[string]any{"filePath": featurePath}, proof: "check_syntax:file"},
-		{name: "load_features", arguments: map[string]any{"path": featureDirectory}, proof: "load_features:directory"},
+		{name: "load_features", arguments: map[string]any{"path": featurePath}, proof: "load_features:file"},
 	} {
 		result, err := callInnerTool(ctx, session, call.name, call.arguments)
 		if err != nil {
