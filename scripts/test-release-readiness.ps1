@@ -15,6 +15,8 @@ $ProgressPreference = "SilentlyContinue"
 
 if (-not $RepositoryRoot) { $RepositoryRoot = Split-Path -Parent $PSScriptRoot }
 $RepositoryRoot = [System.IO.Path]::GetFullPath($RepositoryRoot)
+. (Join-Path $PSScriptRoot "git-path-list.ps1")
+. (Join-Path $PSScriptRoot "release-qualification.ps1")
 if (-not $OutputPath) { $OutputPath = Join-Path $RepositoryRoot "build\test-results\local\release-context.json" }
 $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 $startedAt = [DateTime]::UtcNow
@@ -409,9 +411,12 @@ if ($Mode -eq "Release") {
                     Test-LockAgreement -Expected $vanessaLock -Actual $installedLock.dependencies.vanessaAutomation -Label $lockRoot
                     $installedWorkflowCommit = [string]$installedLock.dependencies.workflowPackage.commit
                     if ($installedWorkflowCommit -cne $commit) {
-                        Add-ReadinessIssue -Code "RELEASE_STAND_WORKFLOW_COMMIT_DRIFT" -Category "STAND_STALE" `
-                            -Message "$lockRoot is installed from workflow commit '$installedWorkflowCommit'; candidate='$commit'." `
-                            -Recovery "Run update-workflow from the exact candidate, commit the managed update, and create or refresh the disposable Release branch."
+                        $standContinuation = Get-WorkflowContinuationProof -RepositoryRoot $RepositoryRoot -QualifiedCommit $installedWorkflowCommit -CurrentCommit $commit -CurrentTree $tree
+                        if (-not $standContinuation -or @($standContinuation.scopes) -contains "develop") {
+                            Add-ReadinessIssue -Code "RELEASE_STAND_WORKFLOW_COMMIT_DRIFT" -Category "STAND_STALE" `
+                                -Message "$lockRoot is installed from workflow commit '$installedWorkflowCommit'; candidate='$commit'." `
+                                -Recovery "Run update-workflow from the exact candidate, commit the managed update, and create or refresh the disposable Release branch."
+                        }
                     }
                 }
             }

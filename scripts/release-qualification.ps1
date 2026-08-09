@@ -65,16 +65,16 @@ function Get-WorkflowContinuationProof {
     )
 
     if ($QualifiedCommit -notmatch '^[a-fA-F0-9]{40}$' -or $CurrentCommit -notmatch '^[a-fA-F0-9]{40}$' -or $CurrentTree -notmatch '^[a-fA-F0-9]{40}$') { return $null }
-    & git -C $RepositoryRoot merge-base --is-ancestor $QualifiedCommit $CurrentCommit 2>$null
-    if ($LASTEXITCODE -ne 0) { return $null }
+    if (-not (Get-Command Invoke-RepositoryGit -ErrorAction SilentlyContinue)) {
+        . (Join-Path $PSScriptRoot "git-path-list.ps1")
+    }
+    $ancestor = Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("merge-base", "--is-ancestor", $QualifiedCommit, $CurrentCommit) -AllowFailure
+    if ([int]$ancestor.exitCode -ne 0) { return $null }
     if (-not $CatalogPath) { $CatalogPath = Join-Path $RepositoryRoot "tests\quality-contracts.json" }
     if (-not (Test-Path -LiteralPath $CatalogPath -PathType Leaf)) { return $null }
     try { $catalog = Get-Content -LiteralPath $CatalogPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
     if (-not $catalog.PSObject.Properties["continuationScopes"]) { return $null }
 
-    if (-not (Get-Command Get-RepositoryGitPathList -ErrorAction SilentlyContinue)) {
-        . (Join-Path $PSScriptRoot "git-path-list.ps1")
-    }
     $changedPaths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("diff", "--name-only", "-z", "$QualifiedCommit...$CurrentCommit", "--") | ForEach-Object { ([string]$_).Replace('\', '/') })
     if ($changedPaths.Count -eq 0) { return $null }
     $scopeNames = @($catalog.continuationScopes.PSObject.Properties | ForEach-Object { [string]$_.Name })

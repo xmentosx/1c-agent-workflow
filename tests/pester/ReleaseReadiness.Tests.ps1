@@ -115,6 +115,13 @@ Describe "Deterministic Release readiness" {
         }
     }
 
+    It "allows stand commit continuation only with exact Targeted proof outside develop scope" {
+        $runner = Get-Content -LiteralPath $script:ReadinessRunnerPath -Raw -Encoding UTF8
+        $runner | Should -Match 'Get-WorkflowContinuationProof.*-QualifiedCommit \$installedWorkflowCommit'
+        $runner | Should -Match 'standContinuation\.scopes.*-contains "develop"'
+        $runner | Should -Match 'Test-ManagedPackageAgreement -ExpectedInventory \$managedInventory'
+    }
+
     It "resolves the canonical immutable archive and writes a passed Full context" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-readiness-pass-" + [guid]::NewGuid().ToString("N"))
         try {
