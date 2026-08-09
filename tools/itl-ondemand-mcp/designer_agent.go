@@ -155,13 +155,13 @@ func executeDesignerAgentRequest(ctx context.Context, request *designerAgentRequ
 	if err := connection.SetDeadline(time.Now().Add(time.Duration(request.CommandTimeoutSeconds) * time.Second)); err != nil {
 		return nil, err
 	}
-	if _, err := readDesignerPrompt(reader, false); err != nil {
+	if _, _, err := readDesignerPrompt(reader, false); err != nil {
 		return nil, fmt.Errorf("ITL_DESIGNER_AGENT_PROMPT_FAILED: %w", err)
 	}
 	if _, err := io.WriteString(stdin, "options set --output-format=json\r\n"); err != nil {
 		return nil, fmt.Errorf("ITL_DESIGNER_AGENT_WRITE_FAILED: %w", err)
 	}
-	formatOutput, err := readDesignerPrompt(reader, false)
+	formatOutput, _, err := readDesignerPrompt(reader, false)
 	if err != nil {
 		return nil, fmt.Errorf("ITL_DESIGNER_AGENT_FORMAT_FAILED: %w", err)
 	}
@@ -182,9 +182,13 @@ func executeDesignerAgentRequest(ctx context.Context, request *designerAgentRequ
 			return nil, fmt.Errorf("ITL_DESIGNER_AGENT_WRITE_FAILED: command %d: %w", index+1, err)
 		}
 		allowEOF := command == "common shutdown"
-		commandOutput, err := readDesignerPrompt(reader, allowEOF)
+		commandOutput, ended, err := readDesignerPrompt(reader, allowEOF)
 		if err != nil {
 			return nil, fmt.Errorf("ITL_DESIGNER_AGENT_COMMAND_FAILED: command %d: %w", index+1, err)
+		}
+		if command == "common shutdown" && ended {
+			response.Commands = append(response.Commands, designerAgentCommandResult{Command: command})
+			continue
 		}
 		messages, err := parseDesignerMessages(commandOutput)
 		if err != nil {
@@ -222,21 +226,21 @@ func designerCommandAcceptsTerminalType(command, messageType string) bool {
 	return strings.EqualFold(messageType, expectedType)
 }
 
-func readDesignerPrompt(reader *bufio.Reader, allowEOF bool) ([]byte, error) {
+func readDesignerPrompt(reader *bufio.Reader, allowEOF bool) ([]byte, bool, error) {
 	const prompt = "designer>"
 	var output bytes.Buffer
 	for {
 		value, err := reader.ReadByte()
 		if err != nil {
-			if allowEOF && errors.Is(err, io.EOF) && output.Len() > 0 {
-				return output.Bytes(), nil
+			if allowEOF && errors.Is(err, io.EOF) {
+				return bytes.TrimSpace(output.Bytes()), true, nil
 			}
-			return nil, err
+			return nil, false, err
 		}
 		output.WriteByte(value)
 		if strings.HasSuffix(strings.TrimSpace(output.String()), prompt) {
 			data := output.Bytes()
-			return bytes.TrimSpace(data[:len(data)-len(prompt)]), nil
+			return bytes.TrimSpace(data[:len(data)-len(prompt)]), false, nil
 		}
 	}
 }

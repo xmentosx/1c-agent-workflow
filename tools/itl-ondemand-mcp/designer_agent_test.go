@@ -53,6 +53,9 @@ func TestDesignerAgentSafeModeUsesPinnedLocalSSHAndFixedCommands(t *testing.T) {
 			t.Fatalf("unsafe action protection was changed: %q", result.Command)
 		}
 	}
+	if got := response.Commands[len(response.Commands)-1]; got.Command != "common shutdown" || len(got.Messages) != 0 {
+		t.Fatalf("shutdown did not complete through clean EOF: %#v", got)
+	}
 }
 
 func TestDesignerAgentSafeModeRejectsAnyOtherCommandOrHost(t *testing.T) {
@@ -183,11 +186,12 @@ func startDesignerAgentTestServer(t *testing.T, user, password string) (string, 
 							body = ",\"body\":{\"safeMode\":false}"
 							messageType = "extension-properties"
 						}
-						_, _ = channel.Write([]byte("[{\"type\":\"" + messageType + "\"" + body + ",\"message\":\"\"}]\r\n"))
 						if command == "common shutdown" {
+							_, _ = channel.Write([]byte("Designer shutdown complete\r\n"))
 							_ = channel.Close()
 							return
 						}
+						_, _ = channel.Write([]byte("[{\"type\":\"" + messageType + "\"" + body + ",\"message\":\"\"}]\r\n"))
 						_, _ = channel.Write([]byte("designer>"))
 					}
 				default:
