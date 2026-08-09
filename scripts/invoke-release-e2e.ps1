@@ -1298,6 +1298,116 @@ function Save-E2ECapabilityCache {
     }
 }
 
+function Find-E2ECompletedCapabilityCache {
+    $preferredPath = if ($checkpoint.Contains("capabilityCache")) { [string]$checkpoint["capabilityCache"]["manifestPath"] } else { "" }
+    $candidates = New-Object System.Collections.Generic.List[System.IO.FileInfo]
+    if ($preferredPath -and (Test-Path -LiteralPath $preferredPath -PathType Leaf)) {
+        $candidates.Add((Get-Item -LiteralPath $preferredPath)) | Out-Null
+    }
+    foreach ($file in @(Get-ChildItem -LiteralPath $capabilityCacheRoot -Recurse -File -Filter "manifest.json" -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending)) {
+        if ($preferredPath -and $file.FullName -eq $preferredPath) { continue }
+        $candidates.Add($file) | Out-Null
+    }
+
+    $capabilityStages = @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")
+    foreach ($file in $candidates) {
+        try {
+            $cache = ConvertTo-E2EHashtable (Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
+            $identity = $cache["identity"]
+            if ([int]$cache["schemaVersion"] -ne 1 -or [string]$identity["projectRoot"] -ne $ProjectRoot -or
+                [string]$identity["worktreePath"] -ne $worktreePath -or [string]$identity["branch"] -ne $branch -or
+                [string]$identity["aiRulesCommit"] -ne $aiRulesCommit -or [string]$identity["aiRulesTree"] -ne $aiRulesTree -or
+                [string]$identity["helperSha256"] -ne $helperSha256 -or [string]$identity["projectConfigSha256"] -ne $projectConfigSha256) { Write-Verbose "Completed capability cache identity mismatch: $($file.FullName)"; continue }
+            $cacheContinuation = Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit ([string]$identity["workflowCommit"]) -CurrentCommit $workflowCommit -CurrentTree $workflowTree
+            if (-not $cacheContinuation) { Write-Verbose "Completed capability cache has no exact Targeted continuation: $($file.FullName)"; continue }
+            $compatible = $true
+            foreach ($stageName in $capabilityStages) {
+                if (-not $cache["stages"].Contains($stageName)) { Write-Verbose "Completed capability cache is missing stage '$stageName': $($file.FullName)"; $compatible = $false; break }
+                $record = $cache["stages"][$stageName]
+                if ([string]$record["status"] -ne "passed" -or [string]$record["fingerprint"] -ne (Get-E2EStageFingerprint -Name $stageName -RunnerSha256 ([string]$identity["runnerSha256"]))) { Write-Verbose "Completed capability cache stage '$stageName' is not a compatible pass: $($file.FullName)"; $compatible = $false; break }
+                if ([string]$record["evidencePath"]) {
+                    Assert-E2ECheckpointFile -Path ([string]$record["evidencePath"]) -Sha256 ([string]$record["evidenceSha256"]) -Label "$stageName completed cache evidence"
+                }
+            }
+            if (-not $compatible) { continue }
+            foreach ($snapshotName in @("baseline", "postConfig")) {
+                if (-not $cache["snapshots"].Contains($snapshotName)) { $compatible = $false; break }
+                $snapshot = $cache["snapshots"][$snapshotName]
+                Assert-E2ECheckpointFile -Path ([string]$snapshot["path"]) -Sha256 ([string]$snapshot["sha256"]) -Label "$snapshotName completed cache snapshot"
+            }
+            if (-not $compatible) { continue }
+            foreach ($stateName in @("baseline", "postConfig")) {
+                if (-not $cache["stateFiles"].Contains($stateName)) { $compatible = $false; break }
+                $state = $cache["stateFiles"][$stateName]
+                Assert-E2ECheckpointFile -Path ([string]$state["stateCopyPath"]) -Sha256 ([string]$state["stateSha256"]) -Label "$stateName completed cache state"
+                if ([string]$state["envCopyPath"]) {
+                    Assert-E2ECheckpointFile -Path ([string]$state["envCopyPath"]) -Sha256 ([string]$state["envSha256"]) -Label "$stateName completed cache env"
+                }
+            }
+            if ($compatible) { return $file.FullName }
+        } catch { Write-Verbose "Completed capability cache rejected: $($file.FullName). $($_.Exception.Message)"; continue }
+    }
+    return ""
+}
+
+function Restore-E2EInterruptedCapabilityStage {
+    param([string]$Name)
+    if (-not $checkpoint["stages"].Contains($Name) -or [string]$checkpoint["stages"][$Name]["status"] -ne "running") { return $false }
+
+    $preferredPath = if ($checkpoint.Contains("capabilityCache")) { [string]$checkpoint["capabilityCache"]["manifestPath"] } else { "" }
+    $candidates = New-Object System.Collections.Generic.List[System.IO.FileInfo]
+    if ($preferredPath -and (Test-Path -LiteralPath $preferredPath -PathType Leaf)) {
+        $candidates.Add((Get-Item -LiteralPath $preferredPath)) | Out-Null
+    }
+    foreach ($file in @(Get-ChildItem -LiteralPath $capabilityCacheRoot -Recurse -File -Filter "manifest.json" -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending)) {
+        if ($preferredPath -and $file.FullName -eq $preferredPath) { continue }
+        $candidates.Add($file) | Out-Null
+    }
+
+    foreach ($file in $candidates) {
+        try {
+            $cache = ConvertTo-E2EHashtable (Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
+            $identity = $cache["identity"]
+            if ([int]$cache["schemaVersion"] -ne 1 -or [string]$identity["projectRoot"] -ne $ProjectRoot -or
+                [string]$identity["worktreePath"] -ne $worktreePath -or [string]$identity["branch"] -ne $branch -or
+                [string]$identity["initialHead"] -ne [string]$checkpoint["identity"]["initialHead"] -or
+                [string]$identity["aiRulesCommit"] -ne $aiRulesCommit -or [string]$identity["aiRulesTree"] -ne $aiRulesTree -or
+                [string]$identity["helperSha256"] -ne $helperSha256 -or [string]$identity["projectConfigSha256"] -ne $projectConfigSha256 -or
+                -not $cache["stages"].Contains($Name)) { continue }
+            if (-not (Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit ([string]$identity["workflowCommit"]) -CurrentCommit $workflowCommit -CurrentTree $workflowTree)) { continue }
+            $record = $cache["stages"][$Name]
+            if ([string]$record["status"] -ne "passed" -or
+                [string]$record["fingerprint"] -ne (Get-E2EStageFingerprint -Name $Name -RunnerSha256 ([string]$identity["runnerSha256"]))) { continue }
+            if ([string]$record["evidencePath"]) {
+                Assert-E2ECheckpointFile -Path ([string]$record["evidencePath"]) -Sha256 ([string]$record["evidenceSha256"]) -Label "$Name interrupted-stage evidence"
+            }
+            if ($Name -eq "config-cadence") {
+                foreach ($supportName in @("postConfig")) {
+                    if (-not $cache["snapshots"].Contains($supportName) -or -not $cache["stateFiles"].Contains($supportName)) { throw "missing $supportName support state" }
+                    $snapshot = $cache["snapshots"][$supportName]
+                    Assert-E2ECheckpointFile -Path ([string]$snapshot["path"]) -Sha256 ([string]$snapshot["sha256"]) -Label "$supportName interrupted-stage snapshot"
+                    $state = $cache["stateFiles"][$supportName]
+                    Assert-E2ECheckpointFile -Path ([string]$state["stateCopyPath"]) -Sha256 ([string]$state["stateSha256"]) -Label "$supportName interrupted-stage state"
+                    if ([string]$state["envCopyPath"]) {
+                        Assert-E2ECheckpointFile -Path ([string]$state["envCopyPath"]) -Sha256 ([string]$state["envSha256"]) -Label "$supportName interrupted-stage env"
+                    }
+                    $checkpoint["snapshots"][$supportName] = $snapshot
+                    $checkpoint["stateFiles"][$supportName] = $state
+                }
+                $checkpoint["generatedCommits"] = @($cache["generatedCommits"])
+                if ($cache["configEvidence"]) { $checkpoint["configEvidence"] = $cache["configEvidence"] }
+            }
+            $checkpoint["stages"][$Name] = $record
+            $checkpoint["stages"][$Name]["recoveredFromCapabilityCache"] = $file.FullName
+            Write-E2ECheckpoint
+            return $true
+        } catch {
+            Write-Verbose "Interrupted capability stage '$Name' was not recovered from $($file.FullName): $($_.Exception.Message)"
+        }
+    }
+    return $false
+}
+
 function Set-E2ECheckpointCapabilityEvidence {
     param([string]$ManifestPath)
     try { $cache = ConvertTo-E2EHashtable (Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json) }
@@ -1379,6 +1489,9 @@ if ($checkpoint) {
         $previousRunnerSha256 = [string]$identity.runnerSha256
         $releaseContinuationProof = Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit $previousWorkflowCommit -CurrentCommit $workflowCommit -CurrentTree $workflowTree
         if ($releaseContinuationProof) {
+            foreach ($stageName in @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
+                [void](Restore-E2EInterruptedCapabilityStage -Name $stageName)
+            }
             foreach ($stageName in @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp", "verification-refresh", "result-cleanup")) {
                 if ($checkpoint["stages"].Contains($stageName) -and [string]$checkpoint["stages"][$stageName].status -ne "passed") {
                     $continuationBoundaryStage = $stageName
@@ -1442,7 +1555,14 @@ if ($checkpoint) {
     } elseif (-not $crossReleaseReuse) {
         $checkpointWasResumed = $true
     } else {
-        $promotedCapabilityPath = Save-E2ECapabilityCache
+        $promotedCapabilityPath = Find-E2ECompletedCapabilityCache
+        if (-not $promotedCapabilityPath) {
+            # The immutable manifest for this run may predate a resumed stage.
+            # Seal the now-current checkpoint under a new cache identity.
+            $checkpoint["runId"] = [guid]::NewGuid().ToString("N")
+            Write-E2ECheckpoint
+            $promotedCapabilityPath = Save-E2ECapabilityCache
+        }
         Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["baseline"] -StateFiles $checkpoint["stateFiles"]["baseline"]
         & git -C $worktreePath reset --hard ([string]$identity.initialHead) *> $null
         if ($LASTEXITCODE -ne 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: could not restore the prior rollback baseline before candidate promotion." }

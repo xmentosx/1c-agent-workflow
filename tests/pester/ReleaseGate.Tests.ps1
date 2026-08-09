@@ -680,6 +680,8 @@ switch ($Action) {
             $legacyCheckpoint = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $legacyCheckpoint.stateFiles.baseline.actualEnvPath = [pscustomobject]@{ Length = 67 }
             $legacyCheckpoint.stateFiles.postConfig.actualEnvPath = [pscustomobject]@{ Length = 67 }
+            $legacyCheckpoint.stages.'seed-parallel'.status = "running"
+            $legacyCheckpoint.stages.'seed-parallel'.execution = "executed"
             [IO.File]::WriteAllText($checkpointPath, (($legacyCheckpoint | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
             $harnessSummaryPath = Join-Path $tempRoot "harness-continuation-summary.json"
             & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $candidateRunnerPath `
