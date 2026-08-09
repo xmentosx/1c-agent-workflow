@@ -165,8 +165,12 @@ func executeDesignerAgentRequest(ctx context.Context, request *designerAgentRequ
 	if err != nil {
 		return nil, fmt.Errorf("ITL_DESIGNER_AGENT_FORMAT_FAILED: %w", err)
 	}
-	if _, err := parseDesignerMessages(formatOutput); err != nil {
+	formatMessages, err := parseDesignerMessages(formatOutput)
+	if err != nil {
 		return nil, fmt.Errorf("ITL_DESIGNER_AGENT_FORMAT_FAILED: %w", err)
+	}
+	if !designerCommandAcceptsTerminalType("options set --output-format=json", formatMessages[len(formatMessages)-1].Type) {
+		return nil, fmt.Errorf("ITL_DESIGNER_AGENT_FORMAT_FAILED: unsupported terminal message type %q", formatMessages[len(formatMessages)-1].Type)
 	}
 
 	response := &designerAgentResponse{Success: true}
@@ -191,6 +195,9 @@ func executeDesignerAgentRequest(ctx context.Context, request *designerAgentRequ
 				return nil, fmt.Errorf("ITL_DESIGNER_AGENT_COMMAND_REJECTED: command %d returned %s: %s", index+1, message.Type, message.Message)
 			}
 		}
+		if !designerCommandAcceptsTerminalType(command, messages[len(messages)-1].Type) {
+			return nil, fmt.Errorf("ITL_DESIGNER_AGENT_COMMAND_FAILED: command %d: unsupported terminal message type %q", index+1, messages[len(messages)-1].Type)
+		}
 		response.Commands = append(response.Commands, designerAgentCommandResult{Command: command, Messages: messages})
 	}
 	_ = connection.SetDeadline(time.Time{})
@@ -204,6 +211,15 @@ func designerMessageRejectsCommand(message designerAgentMessage) bool {
 	default:
 		return false
 	}
+}
+
+func designerCommandAcceptsTerminalType(command, messageType string) bool {
+	expectedType := "success"
+	switch command {
+	case "config extensions properties get --extension client_mcp", "config extensions properties get --extension VAExtension":
+		expectedType = "extension-properties"
+	}
+	return strings.EqualFold(messageType, expectedType)
 }
 
 func readDesignerPrompt(reader *bufio.Reader, allowEOF bool) ([]byte, error) {
@@ -237,10 +253,6 @@ func parseDesignerMessages(output []byte) ([]designerAgentMessage, error) {
 	}
 	if len(messages) == 0 {
 		return nil, fmt.Errorf("Designer Agent returned an empty JSON result")
-	}
-	terminalType := strings.ToLower(messages[len(messages)-1].Type)
-	if terminalType != "success" && terminalType != "result" {
-		return nil, fmt.Errorf("Designer Agent result has unsupported terminal message type %q", messages[len(messages)-1].Type)
 	}
 	return messages, nil
 }

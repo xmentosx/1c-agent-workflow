@@ -99,13 +99,19 @@ func TestDesignerAgentSafeModeRejectsCanceledResult(t *testing.T) {
 	}
 }
 
-func TestDesignerAgentMessagesAcceptDataResultAndRejectNonTerminalInfo(t *testing.T) {
-	messages, err := parseDesignerMessages([]byte(`[{"type":"result","body":{"safeMode":false}}]`))
-	if err != nil || len(messages) != 1 || messages[0].Type != "result" {
-		t.Fatalf("Designer Agent data result was not accepted: messages=%#v err=%v", messages, err)
+func TestDesignerAgentTerminalTypesAreCommandSpecific(t *testing.T) {
+	getCommand := "config extensions properties get --extension client_mcp"
+	if !designerCommandAcceptsTerminalType(getCommand, "extension-properties") {
+		t.Fatal("Designer Agent extension-properties result was not accepted for properties get")
 	}
-	if _, err := parseDesignerMessages([]byte(`[{"type":"info","message":"still running"}]`)); err == nil {
-		t.Fatal("Designer Agent non-terminal info result was accepted")
+	if designerCommandAcceptsTerminalType(getCommand, "success") || designerCommandAcceptsTerminalType(getCommand, "result") {
+		t.Fatal("Designer Agent properties get accepted a generic terminal type")
+	}
+	if !designerCommandAcceptsTerminalType("common connect-ib", "success") {
+		t.Fatal("Designer Agent success was not accepted for connect")
+	}
+	if designerCommandAcceptsTerminalType("common connect-ib", "extension-properties") {
+		t.Fatal("Designer Agent connect accepted an extension-properties terminal type")
 	}
 }
 
@@ -175,7 +181,7 @@ func startDesignerAgentTestServer(t *testing.T, user, password string) (string, 
 						messageType := "success"
 						if strings.Contains(command, "properties get") {
 							body = ",\"body\":{\"safeMode\":false}"
-							messageType = "result"
+							messageType = "extension-properties"
 						}
 						_, _ = channel.Write([]byte("[{\"type\":\"" + messageType + "\"" + body + ",\"message\":\"\"}]\r\n"))
 						if command == "common shutdown" {
