@@ -43,7 +43,7 @@ Describe "ITL on-demand MCP facade" {
         $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.5"
         [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.5/itl-ondemand-mcp-windows-amd64.exe"
-        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "4991d63d06533a04d8fb78ca762edf26606fcce691a7e24c61e8341bd1171805"
+        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "aed7ffb7358ca7651ed5de7abbe202fca8caf91a6869474ac2289eda6759d509"
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Not -Be "45debfd236dcb1b1b00dcfbf5343e236be05884cba0f00e42eb94ae72d1cfb13"
         foreach ($family in @("roctup", "vanessa-ui")) {
             $definition = $manifest.families.$family

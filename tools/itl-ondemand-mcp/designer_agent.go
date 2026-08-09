@@ -182,11 +182,11 @@ func executeDesignerAgentRequest(ctx context.Context, request *designerAgentRequ
 			return nil, fmt.Errorf("ITL_DESIGNER_AGENT_WRITE_FAILED: command %d: %w", index+1, err)
 		}
 		allowEOF := command == "common shutdown"
-		commandOutput, ended, err := readDesignerPrompt(reader, allowEOF)
+		commandOutput, _, err := readDesignerPrompt(reader, allowEOF)
 		if err != nil {
 			return nil, fmt.Errorf("ITL_DESIGNER_AGENT_COMMAND_FAILED: command %d: %w", index+1, err)
 		}
-		if command == "common shutdown" && ended {
+		if command == "common shutdown" && designerOutputHasNoJSON(commandOutput) {
 			response.Commands = append(response.Commands, designerAgentCommandResult{Command: command})
 			continue
 		}
@@ -206,6 +206,10 @@ func executeDesignerAgentRequest(ctx context.Context, request *designerAgentRequ
 	}
 	_ = connection.SetDeadline(time.Time{})
 	return response, nil
+}
+
+func designerOutputHasNoJSON(output []byte) bool {
+	return bytes.IndexByte(output, '[') < 0 && bytes.LastIndexByte(output, ']') < 0
 }
 
 func designerMessageRejectsCommand(message designerAgentMessage) bool {

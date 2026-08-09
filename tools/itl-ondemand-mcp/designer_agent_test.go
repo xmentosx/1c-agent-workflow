@@ -54,7 +54,7 @@ func TestDesignerAgentSafeModeUsesPinnedLocalSSHAndFixedCommands(t *testing.T) {
 		}
 	}
 	if got := response.Commands[len(response.Commands)-1]; got.Command != "common shutdown" || len(got.Messages) != 0 {
-		t.Fatalf("shutdown did not complete through clean EOF: %#v", got)
+		t.Fatalf("shutdown did not complete without a JSON result: %#v", got)
 	}
 }
 
@@ -187,8 +187,7 @@ func startDesignerAgentTestServer(t *testing.T, user, password string) (string, 
 							messageType = "extension-properties"
 						}
 						if command == "common shutdown" {
-							_, _ = channel.Write([]byte("Designer shutdown complete\r\n"))
-							_ = channel.Close()
+							_, _ = channel.Write([]byte("Designer shutdown complete\r\ndesigner>"))
 							return
 						}
 						_, _ = channel.Write([]byte("[{\"type\":\"" + messageType + "\"" + body + ",\"message\":\"\"}]\r\n"))
