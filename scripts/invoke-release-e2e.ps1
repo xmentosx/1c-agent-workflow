@@ -1384,7 +1384,18 @@ if ($checkpoint) {
         }
     }
     $currentHead = (& git -C $worktreePath rev-parse HEAD).Trim()
-    if ($ResumeMode -eq "Auto" -and $currentHead -ne [string]$checkpoint["expectedHead"]) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: current HEAD '$currentHead' differs from checkpoint HEAD '$($checkpoint['expectedHead'])'." }
+    if ($ResumeMode -eq "Auto" -and $currentHead -ne [string]$checkpoint["expectedHead"]) {
+        $managedRefreshMerge = $false
+        $worktreeCleanForRefresh = @(& git -C $worktreePath status --porcelain --untracked-files=all).Count -eq 0
+        $parents = @()
+        $standMasterHead = ""
+        if ($crossReleaseReuse -and $worktreeCleanForRefresh) {
+            $parents = @((& git -C $worktreePath rev-list --parents -n 1 $currentHead).Trim() -split '\s+')
+            $standMasterHead = (& git -C $ProjectRoot rev-parse HEAD).Trim()
+            $managedRefreshMerge = $parents.Count -eq 3 -and $parents[1] -eq [string]$checkpoint["expectedHead"] -and $parents[2] -eq $standMasterHead
+        }
+        if (-not $managedRefreshMerge) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: current HEAD '$currentHead' differs from checkpoint HEAD '$($checkpoint['expectedHead'])'. crossRelease=$crossReleaseReuse continuation=$([bool]$releaseContinuationProof) clean=$worktreeCleanForRefresh parents='$($parents -join ',')' master='$standMasterHead'." }
+    }
 
     if (-not $checkpoint["snapshots"].Contains("baseline")) {
         if ($checkpoint["stages"].Count -gt 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: baseline snapshot was not checkpointed before stage execution." }

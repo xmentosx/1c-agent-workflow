@@ -471,6 +471,10 @@ switch ($Action) {
         $state | Add-Member -NotePropertyName lastResultPath -NotePropertyValue $artifact -Force
         Set-Content -LiteralPath $statePath -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 8)
     }
+    "refresh-dev-branch" {
+        & git -C $ProjectRoot merge --no-edit master *> $null
+        if ($LASTEXITCODE -ne 0) { throw "fixture refresh-dev-branch merge failed" }
+    }
     "stop-dev-branch-test-clients" { }
     default { throw "unexpected action: $Action" }
 }
@@ -631,6 +635,13 @@ switch ($Action) {
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $installedOnDemandPath) | Out-Null
             Copy-Item -LiteralPath $candidateOnDemandPath -Destination $installedOnDemandPath -Force
             (Get-FileHash -LiteralPath $installedOnDemandPath -Algorithm SHA256).Hash | Should -Be (Get-FileHash -LiteralPath $candidateOnDemandPath -Algorithm SHA256).Hash
+            Set-Content -LiteralPath (Join-Path $mainRoot "managed-workflow-refresh.txt") -Encoding ASCII -Value "managed refresh"
+            & git -C $mainRoot add managed-workflow-refresh.txt; & git -C $mainRoot commit -m "test: install managed workflow refresh" *> $null
+            $standMasterHead = (& git -C $mainRoot rev-parse HEAD).Trim()
+            $checkpointExpectedHead = [string](Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json).expectedHead
+            & git -C $worktreeRoot merge --no-edit master *> $null
+            $managedRefreshParents = @((& git -C $worktreeRoot rev-list --parents -n 1 HEAD).Trim() -split '\s+')
+            $managedRefreshParents | Should -Be @((& git -C $worktreeRoot rev-parse HEAD).Trim(), $checkpointExpectedHead, $standMasterHead)
             $checkpointBeforeManagedAdvance = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $managedAdvanceSummaryPath = Join-Path $tempRoot "managed-advance-summary.json"
             & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $workflowFixtureRoot "scripts\invoke-release-e2e.ps1") `
