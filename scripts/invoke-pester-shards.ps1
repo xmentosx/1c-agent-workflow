@@ -140,7 +140,7 @@ function Get-ExternalInputIdentity {
 }
 
 function Get-ShardInputDigest {
-    param([string[]]$Paths)
+    param([string[]]$Paths, [string]$RunnerSha256Override = "")
     $relativeTests = @($Paths | ForEach-Object { [IO.Path]::GetFullPath($_).Substring($RepositoryRoot.TrimEnd('\').Length).TrimStart('\').Replace('\','/') })
     $contracts = @($catalog.contracts | Where-Object { $tests=@($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }); @($relativeTests | Where-Object { $_ -in $tests }).Count -gt 0 })
     foreach ($test in $relativeTests) { if (@($contracts | Where-Object { $test -in @($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }) }).Count -eq 0) { return "" } }
@@ -151,8 +151,42 @@ function Get-ShardInputDigest {
     if (-not $pester) { return "" }
     $lines.Add("powershell=$($PSVersionTable.PSVersion)|pester=$($pester.Version)|workers=$WorkerCount")
     foreach ($name in @("ITL_AI_RULES_SOURCE_PATH", "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE")) { $lines.Add((Get-ExternalInputIdentity -Name $name)) }
-    foreach ($path in $inputs) { $absolute=Join-Path $RepositoryRoot $path.Replace('/','\'); if(Test-Path -LiteralPath $absolute -PathType Leaf){$lines.Add("$path=$((Get-FileHash -LiteralPath $absolute -Algorithm SHA256).Hash.ToLowerInvariant())")}else{$lines.Add("$path=<missing>")} }
+    foreach ($path in $inputs) {
+        $absolute=Join-Path $RepositoryRoot $path.Replace('/','\')
+        if ($path -eq "scripts/invoke-pester-shards.ps1" -and $RunnerSha256Override) { $lines.Add("$path=$RunnerSha256Override") }
+        elseif(Test-Path -LiteralPath $absolute -PathType Leaf){$lines.Add("$path=$((Get-FileHash -LiteralPath $absolute -Algorithm SHA256).Hash.ToLowerInvariant())")}
+        else{$lines.Add("$path=<missing>")}
+    }
     return Get-TextSha256 -Lines $lines
+}
+
+function Get-GitBlobSha256 {
+    param([string]$Revision, [string]$Path)
+    $start = [Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = "git.exe"; $start.WorkingDirectory = $RepositoryRoot; $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true; $start.CreateNoWindow = $true
+    $start.Arguments = "cat-file blob `"$Revision`:$Path`""
+    $process = [Diagnostics.Process]::new(); $process.StartInfo = $start
+    try {
+        if (-not $process.Start()) { return "" }
+        $memory = [IO.MemoryStream]::new()
+        try {
+            $process.StandardOutput.BaseStream.CopyTo($memory); $process.WaitForExit()
+            if ($process.ExitCode -ne 0) { return "" }
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try { return ([BitConverter]::ToString($sha.ComputeHash($memory.ToArray()))).Replace("-", "").ToLowerInvariant() } finally { $sha.Dispose() }
+        } finally { $memory.Dispose() }
+    } finally { $process.Dispose() }
+}
+
+$previousRunnerSha256 = ""
+$previousPreference = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+try { $parent = (& git -C $RepositoryRoot rev-parse HEAD^ 2>$null); $parentExitCode = $LASTEXITCODE } finally { $ErrorActionPreference = $previousPreference }
+if ($parentExitCode -eq 0 -and $parent) {
+    $changedFromParent = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("diff", "--name-only", "-z", "$($parent.Trim())...HEAD", "--"))
+    if ($changedFromParent.Count -gt 0 -and @($changedFromParent | Where-Object { ([string]$_).Replace('\','/') -notin @("scripts/invoke-pester-shards.ps1", "tests/pester/LocalQualityGate.Tests.ps1") }).Count -eq 0) {
+        $previousRunnerSha256 = Get-GitBlobSha256 -Revision $parent.Trim() -Path "scripts/invoke-pester-shards.ps1"
+    }
 }
 
 function Restore-ShardCache {
@@ -223,7 +257,8 @@ $items = @($testFiles | ForEach-Object {
 
 $workerScript = Join-Path $PSScriptRoot "run-pester-shard.ps1"
 $entries = New-Object System.Collections.Generic.List[object]
-$pending = New-Object System.Collections.Generic.Queue[object]
+$pendingParallel = New-Object System.Collections.Generic.Queue[object]
+$pendingSerial = New-Object System.Collections.Generic.Queue[object]
 $results = @()
 $failures = @()
 $index = 0
@@ -241,6 +276,11 @@ foreach ($item in $items) {
     [System.IO.File]::WriteAllText($planPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
     $digest = Get-ShardInputDigest -Paths @([string]$item.path)
     $cached = Restore-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit
+    if (-not $cached -and $previousRunnerSha256) {
+        $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -RunnerSha256Override $previousRunnerSha256
+        $cached = Restore-ShardCache -Digest $legacyDigest -ResultPath $resultPath -JunitPath $workerJunit
+        if ($cached) { $cached | Add-Member -NotePropertyName reuseReason -NotePropertyValue "previous runner input fingerprint" -Force }
+    }
     $entry = [pscustomobject]@{
         worker = $index; serial = [bool]$item.serial; process = $null; reused = [bool]$cached; digest = $digest
         planPath = $planPath; resultPath = $resultPath; junitPath = $workerJunit; stdoutPath = $stdoutPath; stderrPath = $stderrPath; stdinPath = $stdinPath
@@ -249,7 +289,7 @@ foreach ($item in $items) {
     if ($cached) {
         $results += $cached
     } else {
-        $pending.Enqueue($entry)
+        if ([bool]$entry.serial) { $pendingSerial.Enqueue($entry) } else { $pendingParallel.Enqueue($entry) }
     }
 }
 
@@ -281,15 +321,11 @@ function Complete-PesterFileEntry {
 
 $active = New-Object System.Collections.Generic.List[object]
 $stopScheduling = $false
-while ($active.Count -gt 0 -or (-not $stopScheduling -and $pending.Count -gt 0)) {
-    while (-not $stopScheduling -and $pending.Count -gt 0 -and $active.Count -lt $WorkerCount) {
-        $next = $pending.Peek()
-        if ([bool]$next.serial -and $active.Count -gt 0) { break }
-        if (@($active | Where-Object { [bool]$_.serial }).Count -gt 0) { break }
-        $next = $pending.Dequeue()
+while ($active.Count -gt 0 -or (-not $stopScheduling -and $pendingParallel.Count -gt 0)) {
+    while (-not $stopScheduling -and $pendingParallel.Count -gt 0 -and $active.Count -lt $WorkerCount) {
+        $next = $pendingParallel.Dequeue()
         Start-PesterFileEntry -Entry $next
         $active.Add($next) | Out-Null
-        if ([bool]$next.serial) { break }
     }
     if ($active.Count -eq 0) { break }
     $completed = @($active | Where-Object { $_.process.HasExited })
@@ -297,6 +333,18 @@ while ($active.Count -gt 0 -or (-not $stopScheduling -and $pending.Count -gt 0))
     foreach ($entry in $completed) {
         if (-not (Complete-PesterFileEntry -Entry $entry)) { $stopScheduling = $true }
         [void]$active.Remove($entry)
+    }
+}
+
+while (-not $stopScheduling -and $pendingSerial.Count -gt 0) {
+    $entry = $pendingSerial.Dequeue()
+    Start-PesterFileEntry -Entry $entry
+    if (-not $entry.process.WaitForExit(900000)) {
+        try { $entry.process.Kill() } catch {}
+        $failures += "worker $($entry.worker) timed out"
+        $stopScheduling = $true
+    } elseif (-not (Complete-PesterFileEntry -Entry $entry)) {
+        $stopScheduling = $true
     }
 }
 
