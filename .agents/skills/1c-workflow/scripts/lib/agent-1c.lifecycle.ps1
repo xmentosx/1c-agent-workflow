@@ -3488,6 +3488,7 @@ function Update-WorkflowPackage {
     Ensure-OneCSessionLimitDotEnv | Out-Null
     $aiRulesPathsBefore = @(Get-AiRules1cManifestFileEntries | ForEach-Object { [string]$_.target })
     $clientSurfacePathsBefore = @(Get-WorkflowUpdateClientSurfacePaths)
+    Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $script:ProjectRoot
     Ensure-GitIgnore
     Sync-ItlVanessaLibraries
     Update-AgentGuidanceBridge

@@ -6,6 +6,7 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $HelperPath = $context.HelperPath
         $VanessaPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1"
         $VanessaText = Get-Content -Encoding UTF8 -Raw $VanessaPath
+        $LifecycleText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1")
     }
 
     It "keeps LoadCfg unchanged and reconciles only the two Vanessa extensions afterward" {
@@ -25,6 +26,7 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
 
     It "keeps the project-owned Designer Agent host key outside Git status" {
         (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('.agent-1c/runtime/'))
+        $LifecycleText | Should -Match ([regex]::Escape('Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $script:ProjectRoot'))
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             Test-IgnorableLocalGitStatusLine -Line '?? .agent-1c/runtime/'
