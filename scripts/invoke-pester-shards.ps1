@@ -161,7 +161,7 @@ function Get-ShardInputDigest {
 }
 
 function Get-GitBlobSha256 {
-    param([string]$Revision, [string]$Path)
+    param([string]$Revision, [string]$Path, [switch]$Crlf)
     $start = [Diagnostics.ProcessStartInfo]::new()
     $start.FileName = "git.exe"; $start.WorkingDirectory = $RepositoryRoot; $start.UseShellExecute = $false
     $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true; $start.CreateNoWindow = $true
@@ -173,19 +173,27 @@ function Get-GitBlobSha256 {
         try {
             $process.StandardOutput.BaseStream.CopyTo($memory); $process.WaitForExit()
             if ($process.ExitCode -ne 0) { return "" }
+            $bytes = $memory.ToArray()
+            if ($Crlf) {
+                $text = [Text.Encoding]::UTF8.GetString($bytes).Replace("`r`n", "`n").Replace("`n", "`r`n")
+                $bytes = [Text.Encoding]::UTF8.GetBytes($text)
+            }
             $sha = [Security.Cryptography.SHA256]::Create()
-            try { return ([BitConverter]::ToString($sha.ComputeHash($memory.ToArray()))).Replace("-", "").ToLowerInvariant() } finally { $sha.Dispose() }
+            try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant() } finally { $sha.Dispose() }
         } finally { $memory.Dispose() }
     } finally { $process.Dispose() }
 }
 
-$previousRunnerSha256 = ""
+$previousRunnerSha256s = @()
 $previousPreference = $ErrorActionPreference; $ErrorActionPreference = "Continue"
 try { $parent = (& git -C $RepositoryRoot rev-parse HEAD^ 2>$null); $parentExitCode = $LASTEXITCODE } finally { $ErrorActionPreference = $previousPreference }
 if ($parentExitCode -eq 0 -and $parent) {
     $changedFromParent = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("diff", "--name-only", "-z", "$($parent.Trim())...HEAD", "--"))
     if ($changedFromParent.Count -gt 0 -and @($changedFromParent | Where-Object { ([string]$_).Replace('\','/') -notin @("scripts/invoke-pester-shards.ps1", "tests/pester/LocalQualityGate.Tests.ps1") }).Count -eq 0) {
-        $previousRunnerSha256 = Get-GitBlobSha256 -Revision $parent.Trim() -Path "scripts/invoke-pester-shards.ps1"
+        $previousRunnerSha256s = @(
+            (Get-GitBlobSha256 -Revision $parent.Trim() -Path "scripts/invoke-pester-shards.ps1"),
+            (Get-GitBlobSha256 -Revision $parent.Trim() -Path "scripts/invoke-pester-shards.ps1" -Crlf)
+        ) | Where-Object { $_ } | Sort-Object -Unique
     }
 }
 
@@ -276,10 +284,12 @@ foreach ($item in $items) {
     [System.IO.File]::WriteAllText($planPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
     $digest = Get-ShardInputDigest -Paths @([string]$item.path)
     $cached = Restore-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit
-    if (-not $cached -and $previousRunnerSha256) {
-        $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -RunnerSha256Override $previousRunnerSha256
-        $cached = Restore-ShardCache -Digest $legacyDigest -ResultPath $resultPath -JunitPath $workerJunit
-        if ($cached) { $cached | Add-Member -NotePropertyName reuseReason -NotePropertyValue "previous runner input fingerprint" -Force }
+    if (-not $cached) {
+        foreach ($previousRunnerSha256 in $previousRunnerSha256s) {
+            $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -RunnerSha256Override $previousRunnerSha256
+            $cached = Restore-ShardCache -Digest $legacyDigest -ResultPath $resultPath -JunitPath $workerJunit
+            if ($cached) { $cached | Add-Member -NotePropertyName reuseReason -NotePropertyValue "previous runner input fingerprint" -Force; break }
+        }
     }
     $entry = [pscustomobject]@{
         worker = $index; serial = [bool]$item.serial; process = $null; reused = [bool]$cached; digest = $digest
@@ -306,9 +316,14 @@ function Complete-PesterFileEntry {
     if (Test-Path -LiteralPath $Entry.resultPath -PathType Leaf) {
         $workerResult = Get-Content -LiteralPath $Entry.resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $workerResult | Add-Member -NotePropertyName execution -NotePropertyValue "executed" -Force
+        $workerResult | Add-Member -NotePropertyName inputDigest -NotePropertyValue ([string]$Entry.digest) -Force
+        [IO.File]::WriteAllText($Entry.resultPath, (($workerResult | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
         $script:results += $workerResult
         if ([string]$workerResult.status -eq "passed" -and [int]$Entry.process.ExitCode -eq 0) {
             Save-ShardCache -Digest $Entry.digest -ResultPath $Entry.resultPath -JunitPath $Entry.junitPath
+            if (-not (Test-Path -LiteralPath (Join-Path $cacheRoot "$([string]$Entry.digest)\result.json") -PathType Leaf)) {
+                throw "Passed Pester file cache was not persisted for worker $($Entry.worker)."
+            }
             return $true
         }
         $script:failures += "worker $($Entry.worker) reported $([string]$workerResult.status): $([string]$workerResult.error)"
