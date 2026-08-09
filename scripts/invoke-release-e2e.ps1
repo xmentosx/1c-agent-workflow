@@ -1430,6 +1430,9 @@ function Import-E2ECapabilityCache {
     $cache = ConvertTo-E2EHashtable (Get-Content -LiteralPath $ManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json)
     if ([int]$cache["schemaVersion"] -ne 1) { throw "RELEASE_E2E_CACHE_CORRUPT: unsupported capability cache schema." }
     $oldInitialHead = [string]$cache["identity"]["initialHead"]
+    # Rebinding must use the runner that created the imported stage records,
+    # which can be older than the interrupted checkpoint's runner.
+    $script:previousRunnerSha256 = [string]$cache["identity"]["runnerSha256"]
     $commitMap = @{}
     foreach ($record in @($cache["generatedCommits"])) {
         $oldCommit = [string]$record["commit"]

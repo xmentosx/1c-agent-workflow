@@ -669,6 +669,13 @@ switch ($Action) {
             # A harness-only repair after a completed release starts at fresh
             # verification/cleanup. It must not rerun any passed capability.
             $candidateRunnerPath = Join-Path $workflowFixtureRoot "scripts\invoke-release-e2e.ps1"
+            Add-Content -LiteralPath $candidateRunnerPath -Encoding UTF8 -Value "# fixture interrupted harness attempt"
+            & git -C $workflowFixtureRoot add -- "scripts/invoke-release-e2e.ps1"
+            & git -C $workflowFixtureRoot commit -m "test: record interrupted release harness" *> $null
+            $LASTEXITCODE | Should -Be 0
+            $interruptedHarnessCommit = (& git -C $workflowFixtureRoot rev-parse HEAD).Trim()
+            $interruptedHarnessTree = (& git -C $workflowFixtureRoot rev-parse 'HEAD^{tree}').Trim()
+            $interruptedRunnerSha256 = (Get-FileHash -LiteralPath $candidateRunnerPath -Algorithm SHA256).Hash.ToLowerInvariant()
             Add-Content -LiteralPath $candidateRunnerPath -Encoding UTF8 -Value "# fixture harness-only repair"
             & git -C $workflowFixtureRoot add -- "scripts/invoke-release-e2e.ps1"
             & git -C $workflowFixtureRoot commit -m "test: repair only the release harness" *> $null
@@ -678,6 +685,9 @@ switch ($Action) {
             $harnessTargetedRun = [ordered]@{ schemaVersion=1; mode='Targeted'; status='passed'; exitCode=0; commit=$harnessCommit; tree=$harnessTree; finishedAt=[DateTime]::UtcNow.ToString('o'); stages=@([ordered]@{name='pester';status='passed'},[ordered]@{name='tracked-state';status='passed'},[ordered]@{name='git-diff-check';status='passed'}) }
             [IO.File]::WriteAllText((Join-Path $targetedRunRoot "fixture-harness-targeted-continuation.json"), (($harnessTargetedRun | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
             $legacyCheckpoint = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $legacyCheckpoint.identity.workflowCommit = $interruptedHarnessCommit
+            $legacyCheckpoint.identity.workflowTree = $interruptedHarnessTree
+            $legacyCheckpoint.identity.runnerSha256 = $interruptedRunnerSha256
             $legacyCheckpoint.stateFiles.baseline.actualEnvPath = [pscustomobject]@{ Length = 67 }
             $legacyCheckpoint.stateFiles.postConfig.actualEnvPath = [pscustomobject]@{ Length = 67 }
             $legacyCheckpoint.stages.'seed-parallel'.status = "running"
