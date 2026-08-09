@@ -658,6 +658,14 @@ function Restore-E2EStateFiles {
     }
 }
 
+function Get-E2ECanonicalTextSha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $text = [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false))
+    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($text.Replace("`r`n", "`n").Replace("`r", "`n"))
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }
+}
+
 function Invoke-E2EInfobaseSnapshot {
     param([string]$Path)
     $relative = $Path.Substring($worktreePath.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
@@ -1147,8 +1155,8 @@ $workflowTree = (& git -C $workflowRoot rev-parse 'HEAD^{tree}').Trim()
 if ($LASTEXITCODE -ne 0 -or -not $workflowCommit -or -not $workflowTree) { throw "Release workflow source is not a readable Git checkout: $workflowRoot" }
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
 . (Join-Path $PSScriptRoot "release-qualification.ps1")
-$runnerSha256 = Get-E2EFileSha256 -Path $PSCommandPath
-$helperSha256 = Get-E2EFileSha256 -Path $HelperPath
+$runnerSha256 = Get-E2ECanonicalTextSha256 -Path $PSCommandPath
+$helperSha256 = Get-E2ECanonicalTextSha256 -Path $HelperPath
 $projectConfigSha256 = Get-E2EFileSha256 -Path (Join-Path $worktreePath ".agent-1c\project.json")
 $stageModuleRoot = Join-Path $PSScriptRoot "release-e2e"
 . (Join-Path $stageModuleRoot "common.ps1")
@@ -1188,7 +1196,7 @@ function Get-E2EStageFingerprint {
     $definition = $script:ReleaseE2EStageDefinitions[$Name]
     $inputs = @()
     foreach ($path in @(Get-E2EStageInputFiles -Name $Name)) {
-        $inputs += [ordered]@{ path = $path.Substring($workflowRoot.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/'); sha256 = Get-E2EFileSha256 -Path $path }
+        $inputs += [ordered]@{ path = $path.Substring($workflowRoot.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/'); sha256 = Get-E2ECanonicalTextSha256 -Path $path }
     }
     $dependencies = @()
     foreach ($dependency in @($definition.dependsOn)) { $dependencies += [ordered]@{ name = $dependency; fingerprint = Get-E2EStageFingerprint -Name $dependency -RunnerSha256 $RunnerSha256 } }

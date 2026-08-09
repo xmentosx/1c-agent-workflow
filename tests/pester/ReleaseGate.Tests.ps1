@@ -36,6 +36,8 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match '\$actualEnvPath = Join-Path \$worktreePath "\.dev\.env"'
         $e2eText | Should -Not -Match 'Destination \(\[string\]\$Record\.actualEnvPath\)'
         $e2eText | Should -Match 'runnerSha256'
+        $e2eText | Should -Match 'Get-E2ECanonicalTextSha256 -Path \$PSCommandPath'
+        $e2eText | Should -Match 'Get-E2ECanonicalTextSha256 -Path \$path'
         $e2eText | Should -Match 'Get-E2EStageFingerprint'
         $e2eText | Should -Match 'Get-WorkflowContinuationProof'
         $e2eText | Should -Match 'previousRunnerSha256'
@@ -706,6 +708,27 @@ switch ($Action) {
             @($harnessSummary.executedStages) | Should -Contain "verification-refresh"
             @($harnessSummary.executedStages) | Should -Contain "result-cleanup"
             Test-Path -LiteralPath (Join-Path $RepoRoot "System.Collections.Specialized.OrderedDictionary") | Should -BeFalse
+
+            # The same commit can be materialized with LF or CRLF in another
+            # checkout. Line endings alone must not invalidate stage proof.
+            foreach ($path in @(
+                $candidateRunnerPath,
+                (Join-Path $workflowFixtureRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1")
+            )) {
+                $text = [IO.File]::ReadAllText($path, [Text.UTF8Encoding]::new($false))
+                $normalized = $text.Replace("`r`n", "`n").Replace("`r", "`n")
+                $materialized = if ($text.Contains("`r`n")) { $normalized } else { $normalized.Replace("`n", "`r`n") }
+                [IO.File]::WriteAllText($path, $materialized, [Text.UTF8Encoding]::new($false))
+            }
+            $materializationSummaryPath = Join-Path $tempRoot "materialization-summary.json"
+            & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $candidateRunnerPath `
+                -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $materializationSummaryPath -ResumeMode Auto
+            $LASTEXITCODE | Should -Be 0
+            $materializationSummary = Get-Content -LiteralPath $materializationSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($stageName in @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
+                $materializationSummary.stages.$stageName.execution | Should -Be "reused"
+                @($materializationSummary.executedStages) | Should -Not -Contain $stageName
+            }
 
             # A declared reusable stage with corrupt evidence must fail closed
             # before any capability action is invoked.
