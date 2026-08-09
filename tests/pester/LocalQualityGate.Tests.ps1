@@ -48,6 +48,8 @@ Describe "Local quality gate contract" {
         $check | Should -Match 'itl-workflow-full-qualification'
         $check | Should -Match 'itl-workflow-develop-qualification'
         $check | Should -Match 'Test-DevelopQualification'
+        $check | Should -Match 'Test-WorkflowQualification -Path \$qualificationFullPath.*-ForkIdentity \$aiRulesRelease'
+        $check | Should -Match 'FullProof\.qualification\.repository\.commit'
         $check | Should -Match 'Write-DevelopQualification'
         $developProofIndex = $check.IndexOf('$releaseDevelopProof = Test-DevelopQualification', [StringComparison]::Ordinal)
         $fullRewriteIndex = $check.IndexOf('$existingQualification = Write-WorkflowQualification', [StringComparison]::Ordinal)

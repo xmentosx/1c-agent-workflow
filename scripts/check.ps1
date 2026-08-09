@@ -96,6 +96,7 @@ $parallelCompatibility = $null
 $releaseContextPath = ""
 $releaseContext = $null
 $releaseDevelopProof = $null
+$releaseFullProof = $null
 $continuationProof = $null
 
 function Add-StageResult {
@@ -468,7 +469,7 @@ function Write-WorkflowQualification {
 }
 
 function Test-DevelopQualification {
-    param([string]$Commit, [string]$Tree)
+    param([string]$Commit, [string]$Tree, [object]$FullProof = $null)
     if (-not (Test-Path -LiteralPath $developQualificationFullPath -PathType Leaf) -or -not (Test-Path -LiteralPath $qualificationFullPath -PathType Leaf)) { return $null }
     try {
         $qualification = Get-Content -LiteralPath $developQualificationFullPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -481,7 +482,10 @@ function Test-DevelopQualification {
             if (-not $continuation -or @($continuation.scopes) -contains "develop") { return $null }
             $reuseKind = "targeted-continuation"
         }
-        if ((Get-FileHash -LiteralPath $qualificationFullPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$qualification.fullQualificationSha256).ToLowerInvariant()) { return $null }
+        $currentFullHash = (Get-FileHash -LiteralPath $qualificationFullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($currentFullHash -ne ([string]$qualification.fullQualificationSha256).ToLowerInvariant()) {
+            if (-not $FullProof -or [string]$FullProof.qualification.repository.commit -ne [string]$qualification.repository.commit -or [string]$FullProof.qualification.repository.tree -ne [string]$qualification.repository.tree) { return $null }
+        }
         $reportPath = if ([IO.Path]::IsPathRooted([string]$qualification.e2e.path)) { [string]$qualification.e2e.path } else { Join-Path $repoRoot ([string]$qualification.e2e.path).Replace('/', '\') }
         if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { return $null }
         if ((Get-FileHash -LiteralPath $reportPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$qualification.e2e.sha256).ToLowerInvariant()) { return $null }
@@ -564,7 +568,9 @@ try {
         try { $aiRulesRelease = Get-LocalForkRelease -SourceRoot ([System.IO.Path]::GetFullPath($resolvedAiRulesSource)) } catch { if ($effectiveMode -eq "Release") { throw } }
     }
     if ($effectiveMode -eq "Release") {
-        $releaseDevelopProof = Test-DevelopQualification -Commit $commit -Tree $tree
+        $releaseFullProof = Test-WorkflowQualification -Path $qualificationFullPath -Commit $commit -Tree $tree -ForkIdentity $aiRulesRelease
+        if (-not $releaseFullProof) { throw "Release requires reusable Full evidence or an exact Targeted continuation for the candidate tree." }
+        $releaseDevelopProof = Test-DevelopQualification -Commit $commit -Tree $tree -FullProof $releaseFullProof
         if (-not $releaseDevelopProof) { throw "Release requires a reusable Develop qualification for the exact candidate tree. Run Develop once before Release." }
     }
 
