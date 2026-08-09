@@ -4219,22 +4219,168 @@ function Get-SupportedAgentTargets {
     return @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
 }
 
+function Get-InitAgentExecutionEnvironment {
+    $names = @(
+        "CODEX_THREAD_ID",
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+        "CLAUDECODE",
+        "CLAUDE_CODE_SSE_PORT",
+        "KILOCODE_FEATURE",
+        "KILO_APP_NAME",
+        "CURSOR_AGENT",
+        "CURSOR_TRACE_ID"
+    )
+    $result = @{}
+    foreach ($name in $names) {
+        $value = [Environment]::GetEnvironmentVariable($name, "Process")
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            $result[$name] = $value
+        }
+    }
+    return $result
+}
+
+function Get-InitAgentExecutionProcessChain {
+    param([int]$StartProcessId = $PID)
+
+    $result = [System.Collections.Generic.List[object]]::new()
+    $visited = @{}
+    $currentProcessId = $StartProcessId
+    for ($depth = 0; $depth -lt 16 -and $currentProcessId -gt 0; $depth++) {
+        if ($visited.ContainsKey($currentProcessId)) {
+            break
+        }
+        $visited[$currentProcessId] = $true
+        try {
+            $process = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$currentProcessId" -ErrorAction Stop
+        } catch {
+            break
+        }
+        if ($null -eq $process) {
+            break
+        }
+        $result.Add([pscustomobject]@{
+            name = [string]$process.Name
+            executablePath = [string]$process.ExecutablePath
+            commandLine = [string]$process.CommandLine
+        }) | Out-Null
+        $currentProcessId = [int]$process.ParentProcessId
+    }
+    return @($result)
+}
+
+function Resolve-InitAgentTargetFromExecutionContext {
+    param(
+        [System.Collections.IDictionary]$Environment = @{},
+        [object[]]$ProcessChain = @()
+    )
+
+    function Test-InitAgentEnvironmentValue {
+        param([string]$Name)
+        return $Environment.Contains($Name) -and -not [string]::IsNullOrWhiteSpace([string]$Environment[$Name])
+    }
+
+    # Runtime-owned environment markers win over a containing IDE. This keeps,
+    # for example, Codex or Claude launched from a Cursor terminal identifiable
+    # as the client that is actually executing the initialization.
+    if ((Test-InitAgentEnvironmentValue "CODEX_THREAD_ID") -or (Test-InitAgentEnvironmentValue "CODEX_INTERNAL_ORIGINATOR_OVERRIDE")) {
+        return "codex"
+    }
+    if ((Test-InitAgentEnvironmentValue "CLAUDECODE") -or (Test-InitAgentEnvironmentValue "CLAUDE_CODE_SSE_PORT")) {
+        return "claude-code"
+    }
+    if ((Test-InitAgentEnvironmentValue "KILOCODE_FEATURE") -or ((Test-InitAgentEnvironmentValue "KILO_APP_NAME") -and ([string]$Environment["KILO_APP_NAME"] -eq "kilo-code"))) {
+        return "kilocode"
+    }
+    if ((Test-InitAgentEnvironmentValue "CURSOR_AGENT") -or (Test-InitAgentEnvironmentValue "CURSOR_TRACE_ID")) {
+        return "cursor"
+    }
+
+    $nameMap = [ordered]@{
+        codex = @("codex")
+        "claude-code" = @("claude", "claude-code")
+        kilocode = @("kilo", "kilocode", "kilo-code")
+        opencode = @("opencode")
+        cursor = @("cursor")
+        kimi = @("kimi", "kimi-code")
+        qwen = @("qwen", "qwen-code")
+        "command-code" = @("command-code", "commandcode")
+        cline = @("cline")
+        pi = @("pi")
+    }
+    $commandMarkers = [ordered]@{
+        codex = @("@openai/codex", "@openai\\codex")
+        "claude-code" = @("@anthropic-ai/claude-code", "@anthropic-ai\\claude-code")
+        kilocode = @("@kilocode/cli", "@kilocode\\cli", "kilo-org/kilocode")
+        opencode = @("anomalyco/opencode", "opencode-ai")
+        kimi = @("kimi-cli", "kimi-code")
+        qwen = @("@qwen-code/qwen-code", "@qwen-code\\qwen-code")
+        "command-code" = @("command-code", "commandcode")
+        cline = @("cline.bot", "cline-cli")
+        pi = @("@mariozechner/pi-coding-agent", "pi-coding-agent")
+    }
+
+    # Walk from the helper process outwards. The nearest recognized runtime is
+    # the executor; a containing IDE farther up the chain must not replace it.
+    foreach ($process in @($ProcessChain)) {
+        $processNames = @([string]$process.name, [string]$process.executablePath) | ForEach-Object {
+            if (-not [string]::IsNullOrWhiteSpace($_)) {
+                [System.IO.Path]::GetFileNameWithoutExtension($_).ToLowerInvariant()
+            }
+        }
+        foreach ($client in $nameMap.Keys) {
+            if (@($processNames | Where-Object { $_ -in $nameMap[$client] }).Count -gt 0) {
+                return [string]$client
+            }
+        }
+        $commandText = ([string]$process.commandLine).ToLowerInvariant()
+        foreach ($client in $commandMarkers.Keys) {
+            foreach ($marker in $commandMarkers[$client]) {
+                if ($commandText.Contains($marker)) {
+                    return [string]$client
+                }
+            }
+        }
+    }
+    return ""
+}
+
+function Get-InitAgentTargetDefault {
+    $detected = Resolve-InitAgentTargetFromExecutionContext `
+        -Environment (Get-InitAgentExecutionEnvironment) `
+        -ProcessChain @(Get-InitAgentExecutionProcessChain)
+    if ($detected -in (Get-SupportedAgentTargets)) {
+        return $detected
+    }
+    return "kilocode"
+}
+
 function Get-InitAgentTargetChoices {
+    param([string]$DefaultClient = (Get-InitAgentTargetDefault))
+
     $supported = @(Get-SupportedAgentTargets)
-    return @("kilocode") + @($supported | Where-Object { $_ -ne "kilocode" })
+    if ($DefaultClient -notin $supported) {
+        $DefaultClient = "kilocode"
+    }
+    return @($DefaultClient) + @($supported | Where-Object { $_ -ne $DefaultClient })
 }
 
 function Read-InitAgentTarget {
+    param([string]$DefaultClient = (Get-InitAgentTargetDefault))
+
+    if ($DefaultClient -notin (Get-SupportedAgentTargets)) {
+        $DefaultClient = "kilocode"
+    }
     Write-Host (Get-Agent1cUtf8Text "0JLRi9Cx0LXRgNC40YLQtSDQtdC00LjQvdGB0YLQstC10L3QvdGL0Lkg0LDQs9C10L3RgtGB0LrQuNC5INC60LvQuNC10L3RgiDQtNC70Y8g0L/RgNC+0LXQutGC0LA6")
-    $supported = @(Get-InitAgentTargetChoices)
+    $supported = @(Get-InitAgentTargetChoices -DefaultClient $DefaultClient)
     for ($index = 0; $index -lt $supported.Count; $index++) {
-        $label = if ($supported[$index] -eq "kilocode") { "kilocode (recommended)" } else { $supported[$index] }
+        $label = if ($supported[$index] -eq $DefaultClient) { "$DefaultClient (recommended)" } else { $supported[$index] }
         Write-Host ("{0}. {1}" -f ($index + 1), $label)
     }
     while ($true) {
-        $answer = (Read-Host ((Get-Agent1cUtf8Text "0JrQu9C40LXQvdGCINCw0LPQtdC90YLQsA==") + " [kilocode]")).Trim().ToLowerInvariant()
+        $answer = (Read-Host ((Get-Agent1cUtf8Text "0JrQu9C40LXQvdGCINCw0LPQtdC90YLQsA==") + " [$DefaultClient]")).Trim().ToLowerInvariant()
         if (-not $answer) {
-            return "kilocode"
+            return $DefaultClient
         }
         $number = 0
         if ([int]::TryParse($answer, [ref]$number) -and $number -ge 1 -and $number -le $supported.Count) {

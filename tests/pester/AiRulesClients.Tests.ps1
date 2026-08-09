@@ -6,38 +6,98 @@ Describe "1C workflow ai_rules_1c client checks" {
         $HelperPath = $context.HelperPath
     }
 
-    It "offers Kilo Code first as recommended and selects it when the wizard answer is skipped" {
-        $result = & {
+    It "offers the executing client first as recommended and selects it when the wizard answer is skipped" {
+        $results = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-            $capture = [pscustomobject]@{
-                lines = [System.Collections.Generic.List[string]]::new()
-                prompt = ""
-            }
-            function Write-Host {
-                param([Parameter(Position = 0)]$Object)
-                [void]$capture.lines.Add([string]$Object)
-            }
-            function Read-Host {
-                param([Parameter(Position = 0)]$Prompt)
-                $capture.prompt = [string]$Prompt
-                return ""
-            }
+            foreach ($defaultClient in @(Get-SupportedAgentTargets)) {
+                $capture = [pscustomobject]@{
+                    lines = [System.Collections.Generic.List[string]]::new()
+                    prompt = ""
+                }
+                function Write-Host {
+                    param([Parameter(Position = 0)]$Object)
+                    [void]$capture.lines.Add([string]$Object)
+                }
+                function Read-Host {
+                    param([Parameter(Position = 0)]$Prompt)
+                    $capture.prompt = [string]$Prompt
+                    return ""
+                }
 
-            $selected = Read-InitAgentTarget
-            [pscustomobject]@{
-                selected = $selected
-                choices = @(Get-InitAgentTargetChoices)
-                supportedCount = @(Get-SupportedAgentTargets).Count
-                lines = @($capture.lines)
-                prompt = $capture.prompt
+                [pscustomobject]@{
+                    defaultClient = $defaultClient
+                    selected = Read-InitAgentTarget -DefaultClient $defaultClient
+                    choices = @(Get-InitAgentTargetChoices -DefaultClient $defaultClient)
+                    supportedCount = @(Get-SupportedAgentTargets).Count
+                    lines = @($capture.lines)
+                    prompt = $capture.prompt
+                }
             }
         }
 
-        $result.selected | Should -Be "kilocode"
-        @($result.choices)[0] | Should -Be "kilocode"
-        @($result.choices | Select-Object -Unique).Count | Should -Be $result.supportedCount
-        @($result.lines) | Should -Contain "1. kilocode (recommended)"
-        $result.prompt | Should -Match "\[kilocode\]$"
+        @($results).Count | Should -Be 10
+        foreach ($result in @($results)) {
+            $result.selected | Should -Be $result.defaultClient
+            @($result.choices)[0] | Should -Be $result.defaultClient
+            @($result.choices | Select-Object -Unique).Count | Should -Be $result.supportedCount
+            @($result.lines) | Should -Contain "1. $($result.defaultClient) (recommended)"
+            $result.prompt | Should -Match ("\[" + [regex]::Escape($result.defaultClient) + "\]$")
+        }
+    }
+
+    It "detects supported agent runtimes from inherited markers and the process chain" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $environmentCases = [ordered]@{
+                codex = @{ CODEX_THREAD_ID = "thread-test" }
+                "claude-code" = @{ CLAUDECODE = "1" }
+                kilocode = @{ KILOCODE_FEATURE = "vscode-extension" }
+                cursor = @{ CURSOR_TRACE_ID = "trace-test" }
+            }
+            $processCases = [ordered]@{
+                codex = "codex.exe"
+                "claude-code" = "claude.exe"
+                kilocode = "kilo.exe"
+                cursor = "Cursor.exe"
+                opencode = "opencode.exe"
+                kimi = "kimi.exe"
+                qwen = "qwen.exe"
+                "command-code" = "command-code.exe"
+                cline = "cline.exe"
+                pi = "pi.exe"
+            }
+            [pscustomobject]@{
+                environment = @($environmentCases.Keys | ForEach-Object {
+                    [pscustomobject]@{
+                        expected = $_
+                        actual = Resolve-InitAgentTargetFromExecutionContext -Environment $environmentCases[$_] -ProcessChain @()
+                    }
+                })
+                process = @($processCases.Keys | ForEach-Object {
+                    [pscustomobject]@{
+                        expected = $_
+                        actual = Resolve-InitAgentTargetFromExecutionContext -Environment @{} -ProcessChain @([pscustomobject]@{ name = $processCases[$_]; executablePath = ""; commandLine = "" })
+                    }
+                })
+                nested = Resolve-InitAgentTargetFromExecutionContext `
+                    -Environment @{ CLAUDECODE = "1" } `
+                    -ProcessChain @([pscustomobject]@{ name = "Cursor.exe"; executablePath = ""; commandLine = "" })
+                nestedProcess = Resolve-InitAgentTargetFromExecutionContext `
+                    -Environment @{} `
+                    -ProcessChain @(
+                        [pscustomobject]@{ name = "opencode.exe"; executablePath = ""; commandLine = "" },
+                        [pscustomobject]@{ name = "Cursor.exe"; executablePath = ""; commandLine = "" }
+                    )
+                unknown = Resolve-InitAgentTargetFromExecutionContext -Environment @{} -ProcessChain @()
+            }
+        }
+
+        foreach ($case in @($result.environment) + @($result.process)) {
+            $case.actual | Should -Be $case.expected
+        }
+        $result.nested | Should -Be "claude-code"
+        $result.nestedProcess | Should -Be "opencode"
+        $result.unknown | Should -Be ""
     }
 
     It "migrates only the legacy dual client and rejects other multi-client inputs" {
