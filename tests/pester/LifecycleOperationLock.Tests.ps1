@@ -103,7 +103,9 @@ Describe "1C workflow lifecycle operation lock" {
             if (-not [System.IO.Path]::IsPathRooted($commonGitDirectory)) {
                 $commonGitDirectory = Join-Path $tempRoot $commonGitDirectory
             }
-            (Get-Content -LiteralPath (Join-Path $commonGitDirectory "info\exclude") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape(".agent-1c/locks/"))
+            $excludeText = Get-Content -LiteralPath (Join-Path $commonGitDirectory "info\exclude") -Raw -Encoding UTF8
+            $excludeText | Should -Match ([regex]::Escape(".agent-1c/locks/"))
+            $excludeText | Should -Match ([regex]::Escape(".agent-1c/runtime/"))
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

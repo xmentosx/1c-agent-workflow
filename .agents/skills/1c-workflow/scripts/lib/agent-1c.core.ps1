@@ -495,14 +495,17 @@ function Ensure-Agent1cLifecycleLocksIgnored {
         Resolve-Agent1cFullPath -Path (Join-Path $resolvedWorktree $commonGitDirectoryText)
     }
     $excludePath = Join-Path $commonGitDirectory "info\exclude"
-    $ignoreLine = ".agent-1c/locks/"
+    $ignoreLines = @(".agent-1c/locks/", ".agent-1c/runtime/")
+    $existingLines = @()
     if (Test-Path -LiteralPath $excludePath -PathType Leaf -ErrorAction SilentlyContinue) {
-        $hasRule = [bool](Read-Utf8Lines -Path $excludePath | Where-Object { ([string]$_).Trim() -eq $ignoreLine } | Select-Object -First 1)
-        if ($hasRule) {
-            return
-        }
+        $existingLines = @(Read-Utf8Lines -Path $excludePath | ForEach-Object { ([string]$_).Trim() })
     }
-    Add-Utf8Text -Path $excludePath -Value ($ignoreLine + [Environment]::NewLine)
+    foreach ($ignoreLine in $ignoreLines) {
+        if ($existingLines -contains $ignoreLine) {
+            continue
+        }
+        Add-Utf8Text -Path $excludePath -Value ($ignoreLine + [Environment]::NewLine)
+    }
 }
 
 function Read-Agent1cLifecycleOperationRecord {
@@ -1819,7 +1822,7 @@ function Test-IgnorableLocalGitStatusLine {
         return $true
     }
 
-    if ($normalizedPath -eq ".agent-1c/mcp/" -or $normalizedPath -eq ".agent-1c/locks/") {
+    if ($normalizedPath -in @(".agent-1c/mcp/", ".agent-1c/locks/", ".agent-1c/runtime/")) {
         return $true
     }
 
@@ -2115,6 +2118,7 @@ function Ensure-GitIgnore {
         ".agent-1c/vanessa-authoring/",
         ".agent-1c/verification-repair/",
         ".agent-1c/locks/",
+        ".agent-1c/runtime/",
         ".agent-1c/branch-dumps/",
         ".agent-1c/config-dump/",
         ".agent-1c/extension-dump/",

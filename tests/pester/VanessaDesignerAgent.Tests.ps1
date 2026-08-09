@@ -23,6 +23,15 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $VanessaText | Should -Match ([regex]::Escape('$process.StandardInput.BaseStream.Write($stdinBytes, 0, $stdinBytes.Length)'))
     }
 
+    It "keeps the project-owned Designer Agent host key outside Git status" {
+        (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('.agent-1c/runtime/'))
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            Test-IgnorableLocalGitStatusLine -Line '?? .agent-1c/runtime/'
+        }
+        $result | Should -BeTrue
+    }
+
     It "records installation state only after both CFE loads and successful safe-mode proof" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
