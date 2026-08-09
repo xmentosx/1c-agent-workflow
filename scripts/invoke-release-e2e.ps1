@@ -633,9 +633,11 @@ function Save-E2EStateFiles {
 function Restore-E2EStateFiles {
     param([object]$Record)
     Assert-E2ECheckpointFile -Path ([string]$Record.stateCopyPath) -Sha256 ([string]$Record.stateSha256) -Label "saved branch state"
-    Copy-Item -LiteralPath ([string]$Record.stateCopyPath) -Destination ([string]$Record.actualStatePath) -Force
+    $actualStatePath = [string](Get-E2EState).path
+    $actualEnvPath = Join-Path $worktreePath ".dev.env"
+    Copy-Item -LiteralPath ([string]$Record.stateCopyPath) -Destination $actualStatePath -Force
     if ($script:e2eUnsafeActionProtectionConfirmation) {
-        $restoredState = Get-Content -LiteralPath ([string]$Record.actualStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
+        $restoredState = Get-Content -LiteralPath $actualStatePath -Raw -Encoding UTF8 | ConvertFrom-Json
         foreach ($name in @($script:e2eUnsafeActionProtectionConfirmation.Keys)) {
             $property = $restoredState.PSObject.Properties[$name]
             if ($null -eq $property) {
@@ -645,14 +647,14 @@ function Restore-E2EStateFiles {
             }
         }
         [IO.File]::WriteAllText(
-            [string]$Record.actualStatePath,
+            $actualStatePath,
             (($restoredState | ConvertTo-Json -Depth 16) + [Environment]::NewLine),
             [Text.UTF8Encoding]::new($false)
         )
     }
     if ([string]$Record.envCopyPath) {
         Assert-E2ECheckpointFile -Path ([string]$Record.envCopyPath) -Sha256 ([string]$Record.envSha256) -Label "saved .dev.env"
-        Copy-Item -LiteralPath ([string]$Record.envCopyPath) -Destination ([string]$Record.actualEnvPath) -Force
+        Copy-Item -LiteralPath ([string]$Record.envCopyPath) -Destination $actualEnvPath -Force
     }
 }
 
