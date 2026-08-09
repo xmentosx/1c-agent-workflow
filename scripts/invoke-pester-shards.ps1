@@ -238,11 +238,24 @@ foreach ($item in $items) {
     $stdoutPath = Join-Path $workerRoot ("worker-{0}.stdout.log" -f $index)
     $stderrPath = Join-Path $workerRoot ("worker-{0}.stderr.log" -f $index)
     $stdinPath = Join-Path $workerRoot ("worker-{0}.stdin.txt" -f $index)
+    $digest = Get-ShardInputDigest -Paths @([string]$item.path)
+    if ((Test-Path -LiteralPath $planPath -PathType Leaf) -and (Test-Path -LiteralPath $resultPath -PathType Leaf) -and (Test-Path -LiteralPath $workerJunit -PathType Leaf)) {
+        try {
+            $priorPlan = Get-Content -LiteralPath $planPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $priorResult = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if (@($priorPlan.paths).Count -eq 1 -and [string]$priorPlan.paths[0] -eq [string]$item.path -and
+                [string]$priorResult.status -eq "passed" -and [int]$priorResult.failed -eq 0) {
+                $priorResult | Add-Member -NotePropertyName execution -NotePropertyValue "executed" -Force
+                $priorResult | Add-Member -NotePropertyName inputDigest -NotePropertyValue $digest -Force
+                [IO.File]::WriteAllText($resultPath, (($priorResult | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+                Save-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit
+            }
+        } catch {}
+    }
     Remove-Item -LiteralPath $resultPath, $workerJunit, $stdoutPath, $stderrPath, $stdinPath -Force -ErrorAction SilentlyContinue
     [System.IO.File]::WriteAllText($stdinPath, "", [System.Text.UTF8Encoding]::new($false))
     $payload = [ordered]@{ schemaVersion = 1; worker = $index; estimatedSeconds = [double]$item.weight; paths = @([string]$item.path) }
     [System.IO.File]::WriteAllText($planPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
-    $digest = Get-ShardInputDigest -Paths @([string]$item.path)
     $cached = Restore-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit
     if ($cached) { $cached | Add-Member -NotePropertyName reuseReason -NotePropertyValue "exact owner input fingerprint" -Force }
     $entry = [pscustomobject]@{
@@ -290,6 +303,7 @@ function Complete-PesterFileEntry {
 
 $active = New-Object System.Collections.Generic.List[object]
 $stopScheduling = $false
+$nextHeartbeat = [DateTime]::UtcNow.AddSeconds(15)
 while ($active.Count -gt 0 -or (-not $stopScheduling -and $pendingParallel.Count -gt 0)) {
     while (-not $stopScheduling -and $pendingParallel.Count -gt 0 -and $active.Count -lt $WorkerCount) {
         $next = $pendingParallel.Dequeue()
@@ -298,7 +312,14 @@ while ($active.Count -gt 0 -or (-not $stopScheduling -and $pendingParallel.Count
     }
     if ($active.Count -eq 0) { break }
     $completed = @($active | Where-Object { $_.process.HasExited })
-    if ($completed.Count -eq 0) { Start-Sleep -Milliseconds 200; continue }
+    if ($completed.Count -eq 0) {
+        if ([DateTime]::UtcNow -ge $nextHeartbeat) {
+            Write-Host "Pester shard heartbeat: active=$(@($active.worker) -join ','); pending=$($pendingParallel.Count)."
+            $nextHeartbeat = [DateTime]::UtcNow.AddSeconds(15)
+        }
+        Start-Sleep -Milliseconds 200
+        continue
+    }
     foreach ($entry in $completed) {
         if (-not (Complete-PesterFileEntry -Entry $entry)) { $stopScheduling = $true }
         [void]$active.Remove($entry)
@@ -308,7 +329,11 @@ while ($active.Count -gt 0 -or (-not $stopScheduling -and $pendingParallel.Count
 while (-not $stopScheduling -and $pendingSerial.Count -gt 0) {
     $entry = $pendingSerial.Dequeue()
     Start-PesterFileEntry -Entry $entry
-    if (-not $entry.process.WaitForExit(900000)) {
+    $serialDeadline = [DateTime]::UtcNow.AddMinutes(15)
+    while (-not $entry.process.WaitForExit(15000) -and [DateTime]::UtcNow -lt $serialDeadline) {
+        Write-Host "Pester shard heartbeat: serial=$($entry.worker); pending=$($pendingSerial.Count)."
+    }
+    if (-not $entry.process.HasExited) {
         try { $entry.process.Kill() } catch {}
         $failures += "worker $($entry.worker) timed out"
         $stopScheduling = $true
