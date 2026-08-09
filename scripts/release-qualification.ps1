@@ -33,13 +33,10 @@ function Get-ExactTargetedRunProof {
         [Parameter(Mandatory = $true)][string]$Tree
     )
 
-    $commonGit = (& git -C $RepositoryRoot rev-parse --git-common-dir 2>$null)
-    if ($LASTEXITCODE -ne 0 -or -not $commonGit) { return $null }
-    $commonGitPath = if ([IO.Path]::IsPathRooted([string]$commonGit)) {
-        [IO.Path]::GetFullPath([string]$commonGit)
-    } else {
-        [IO.Path]::GetFullPath((Join-Path $RepositoryRoot ([string]$commonGit)))
+    if (-not (Get-Command Get-RepositoryCommonGitDirectory -ErrorAction SilentlyContinue)) {
+        . (Join-Path $PSScriptRoot "git-path-list.ps1")
     }
+    try { $commonGitPath = Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot } catch { return $null }
     $runRoot = Join-Path $commonGitPath "itl\runs"
     if (-not (Test-Path -LiteralPath $runRoot -PathType Container)) { return $null }
 

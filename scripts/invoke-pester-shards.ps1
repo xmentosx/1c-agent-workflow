@@ -35,7 +35,7 @@ New-Item -ItemType Directory -Force -Path $workerRoot | Out-Null
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
 $catalog = Get-QualityContractCatalog -RepositoryRoot $RepositoryRoot
 $trackedPaths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("ls-files", "-z"))
-$commonGitDir = (& git -C $RepositoryRoot rev-parse --git-common-dir).Trim(); if (-not [IO.Path]::IsPathRooted($commonGitDir)) { $commonGitDir = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot $commonGitDir)) }
+$commonGitDir = Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot
 $cacheRoot = Join-Path $commonGitDir "itl\pester-shards\v1"; New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
 $sharedInputs = @(
     "tests/quality-contracts.json", "tests/pester/TestSupport.ps1", "scripts/invoke-pester-shards.ps1",
@@ -140,7 +140,7 @@ function Get-ExternalInputIdentity {
 }
 
 function Get-ShardInputDigest {
-    param([string[]]$Paths, [string]$RunnerSha256Override = "")
+    param([string[]]$Paths, [hashtable]$SharedInputSha256Overrides = @{})
     $relativeTests = @($Paths | ForEach-Object { [IO.Path]::GetFullPath($_).Substring($RepositoryRoot.TrimEnd('\').Length).TrimStart('\').Replace('\','/') })
     $contracts = @($catalog.contracts | Where-Object { $tests=@($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }); @($relativeTests | Where-Object { $_ -in $tests }).Count -gt 0 })
     foreach ($test in $relativeTests) { if (@($contracts | Where-Object { $test -in @($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }) }).Count -eq 0) { return "" } }
@@ -153,7 +153,8 @@ function Get-ShardInputDigest {
     foreach ($name in @("ITL_AI_RULES_SOURCE_PATH", "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE")) { $lines.Add((Get-ExternalInputIdentity -Name $name)) }
     foreach ($path in $inputs) {
         $absolute=Join-Path $RepositoryRoot $path.Replace('/','\')
-        if ($path -eq "scripts/invoke-pester-shards.ps1" -and $RunnerSha256Override) { $lines.Add("$path=$RunnerSha256Override") }
+        $ownedInput = @($patterns | Where-Object { $path -like $_ }).Count -gt 0
+        if (-not $ownedInput -and $SharedInputSha256Overrides.ContainsKey($path) -and [string]$SharedInputSha256Overrides[$path]) { $lines.Add("$path=$([string]$SharedInputSha256Overrides[$path])") }
         elseif(Test-Path -LiteralPath $absolute -PathType Leaf){$lines.Add("$path=$((Get-FileHash -LiteralPath $absolute -Algorithm SHA256).Hash.ToLowerInvariant())")}
         else{$lines.Add("$path=<missing>")}
     }
@@ -184,16 +185,17 @@ function Get-GitBlobSha256 {
     } finally { $process.Dispose() }
 }
 
-$previousRunnerSha256s = @()
+$previousSharedInputOverrides = @()
 $previousPreference = $ErrorActionPreference; $ErrorActionPreference = "Continue"
 try { $parent = (& git -C $RepositoryRoot rev-parse HEAD^ 2>$null); $parentExitCode = $LASTEXITCODE } finally { $ErrorActionPreference = $previousPreference }
 if ($parentExitCode -eq 0 -and $parent) {
-    $changedFromParent = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("diff", "--name-only", "-z", "$($parent.Trim())...HEAD", "--"))
-    if ($changedFromParent.Count -gt 0 -and @($changedFromParent | Where-Object { ([string]$_).Replace('\','/') -notin @("scripts/invoke-pester-shards.ps1", "tests/pester/LocalQualityGate.Tests.ps1") }).Count -eq 0) {
-        $previousRunnerSha256s = @(
-            (Get-GitBlobSha256 -Revision $parent.Trim() -Path "scripts/invoke-pester-shards.ps1"),
-            (Get-GitBlobSha256 -Revision $parent.Trim() -Path "scripts/invoke-pester-shards.ps1" -Crlf)
-        ) | Where-Object { $_ } | Sort-Object -Unique
+    foreach ($useCrlf in @($false, $true)) {
+        $overrides = @{}
+        foreach ($path in @("scripts/invoke-pester-shards.ps1", "scripts/git-path-list.ps1")) {
+            $sha256 = if ($useCrlf) { Get-GitBlobSha256 -Revision $parent.Trim() -Path $path -Crlf } else { Get-GitBlobSha256 -Revision $parent.Trim() -Path $path }
+            if ($sha256) { $overrides[$path] = $sha256 }
+        }
+        if ($overrides.Count -gt 0) { $previousSharedInputOverrides += ,$overrides }
     }
 }
 
@@ -285,8 +287,8 @@ foreach ($item in $items) {
     $digest = Get-ShardInputDigest -Paths @([string]$item.path)
     $cached = Restore-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit
     if (-not $cached) {
-        foreach ($previousRunnerSha256 in $previousRunnerSha256s) {
-            $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -RunnerSha256Override $previousRunnerSha256
+        foreach ($inputOverrides in $previousSharedInputOverrides) {
+            $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -SharedInputSha256Overrides $inputOverrides
             $cached = Restore-ShardCache -Digest $legacyDigest -ResultPath $resultPath -JunitPath $workerJunit
             if ($cached) { $cached | Add-Member -NotePropertyName reuseReason -NotePropertyValue "previous runner input fingerprint" -Force; break }
         }

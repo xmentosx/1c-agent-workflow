@@ -84,3 +84,14 @@ function Get-RepositoryGitPathList {
     if (-not $result.stdout) { return @() }
     return @($result.stdout.Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries) | Where-Object { $_ })
 }
+
+function Get-RepositoryCommonGitDirectory {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+
+    $result = Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("rev-parse", "--path-format=absolute", "--git-common-dir")
+    $path = $result.stdout.Trim()
+    if (-not $path -or -not [System.IO.Path]::IsPathRooted($path)) {
+        throw "Git did not return an absolute common directory for '$RepositoryRoot'."
+    }
+    return [System.IO.Path]::GetFullPath($path)
+}
