@@ -303,7 +303,14 @@ exit 0
         $userRulesTemplateText | Should -Match "sufficient non-duplicative current evidence"
         $userRulesTemplateText | Should -Match "never repeat native discovery after sufficient code/graph MCP results"
         $userRulesTemplateText | Should -Match "surface conflicts"
+        $userRulesTemplateText | Should -Match 'Qualify remote `vibecoding1c` and branch-local MCP separately'
+        $userRulesTemplateText | Should -Match 'deferred discovery, including Codex `ALL_TOOLS`.*`1c-workflow/references/mcp.md`'
         $userRulesTemplateText | Should -Not -Match ([regex]::Escape("/itl-vibecoding1c-mcp"))
+
+        $mcpReferenceText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\mcp.md")
+        $mcpReferenceText | Should -Match 'unavailable or unexposed remote `vibecoding1c` tools do not make.*`itl-roctup-data`.*`itl-vanessa-ui`.*unavailable'
+        $mcpReferenceText | Should -Match 'deferred/lazy catalog.*Codex search `ALL_TOOLS`.*hyphenated logical name.*normalized underscore name'
+        $mcpReferenceText | Should -Match 'A deferred facade counts as exposed'
 
         $productDocsSkillPath = Join-Path $RepoRoot ".agents\skills\product-docs\SKILL.md"
         (Test-Path -LiteralPath $productDocsSkillPath -PathType Leaf) | Should -Be $true

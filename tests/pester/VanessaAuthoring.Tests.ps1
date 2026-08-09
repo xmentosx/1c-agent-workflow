@@ -37,6 +37,14 @@
         $reference | Should -Match 'get_window_list_os.*get_window_screenshot_os'
         $reference | Should -Match 'reloadAndRunFromLine'
         $reference | Should -Match 'question_search.*answers_search.*questions_only.*one_question'
+        $reference | Should -Match 'terminal failed `/itl-check`.*named UI/runtime question unresolved'
+        $reference | Should -Match 'unchanged tree.*owned cleanup finish.*before editing or spending the next full repair attempt'
+        $reference | Should -Match 'Skip this diagnostic when the artifacts already answer the question'
+        $reference | Should -Match 'consumes no repair attempt, creates no pass.*three-run limit.*final `/itl-check`'
+
+        $repairTemplate = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-verify-fix.md.template") -Raw -Encoding UTF8
+        $repairTemplate | Should -Match 'conditional post-failure runtime diagnostic from `vanessa-authoring.md`'
+        $repairTemplate | Should -Match 'not an extra gate or repair attempt'
     }
 
     It "ships five bounded recipes with a portable example and safe template contracts" {

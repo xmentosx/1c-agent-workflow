@@ -10,6 +10,8 @@ Use this reference for ROCTUP branch data MCP, vibecoding1c MCP, branch-local Va
 - External MCP entries are user-provided or future integrations. ITL must preserve entries not marked as `managedBy = vibecoding1c-mcp` with `family = vibecoding1c`.
 - Final verification never uses MCP. Use `/itl-check` through Vanessa Automation `TESTMANAGER -> TESTCLIENT`.
 
+Qualify each family against the current client surface independently. Unavailable or unexposed remote `vibecoding1c` tools do not make the pre-registered branch-local `itl-roctup-data` or `itl-vanessa-ui` facades unavailable. When a concrete task routes to either facade, inspect both direct tools and every client-supported deferred/lazy catalog before declaring it unavailable or falling back; in Codex search `ALL_TOOLS` for the hyphenated logical name and normalized underscore name. A deferred facade counts as exposed. Do not call either facade without the concrete data or runtime question required by its skill.
+
 Do not paste MCP license keys into chat or tracked files. Helper-managed private keys and model state live under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c`; helper-managed local ports are reserved through the ITL port registry (`ITL_PORT_REGISTRY_SCOPE`, `ITL_PORT_REGISTRY_HOME`); ignored project/worktree state lives under `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
 
 ## ROCTUP MCP Toolkit

@@ -46,4 +46,6 @@ Treat its category as a routing hint, not a proven root cause:
 - a new event-log error in changed BSL or failure of previously passing unchanged coverage strongly points to the product;
 - missing UI elements and assertion mismatches remain ambiguous until compared with the requirement and actual runtime state.
 
+After a terminal failed `/itl-check`, if the current artifacts leave a named UI/runtime question unresolved and the next edit depends on its answer, use one bounded `itl-vanessa-ui` diagnostic on the unchanged tree after the helper run and its owned cleanup finish, before editing or spending the next full repair attempt. If the facade is not exposed, cannot start, or cannot answer that question, record the limitation and continue from the minimum sufficient current evidence. Skip this diagnostic when the artifacts already answer the question; it consumes no repair attempt, creates no pass, and does not relax the three-run limit or final `/itl-check`.
+
 Do not delete, skip, filter, or weaken a scenario merely to make verification green. Change an expected value or core assertion only when requirement evidence shows that the test was wrong. A screenshot is supplementary: capture the intended TestManager window before cleanup and never substitute it for structured results.
