@@ -734,11 +734,13 @@ function Test-E2EStagePassed {
         $stageIndex = [Array]::IndexOf($stageOrder, $Name)
         $boundaryIndex = [Array]::IndexOf($stageOrder, $continuationBoundaryStage)
         $legacyFingerprint = if ($previousRunnerSha256) { Get-E2EStageFingerprint -Name $Name -RunnerSha256 $previousRunnerSha256 } else { "" }
-        $canRebind = $crossReleaseReuse -and $releaseContinuationProof -and $boundaryIndex -ge 0 -and $stageIndex -ge 0 -and
-            $stageIndex -lt $boundaryIndex -and [string]$record.fingerprint -eq $legacyFingerprint
+        $completedReleaseContinuation = $crossReleaseReuse -and $releaseContinuationProof -and -not $continuationBoundaryStage
+        $beforeFailedStage = $boundaryIndex -ge 0 -and $stageIndex -ge 0 -and $stageIndex -lt $boundaryIndex
+        $canRebind = $crossReleaseReuse -and $releaseContinuationProof -and ($completedReleaseContinuation -or $beforeFailedStage) -and
+            [string]$record.fingerprint -eq $legacyFingerprint
         if ($canRebind) {
             $record["fingerprint"] = $expectedFingerprint
-            $record["reuseReason"] = "exact Targeted continuation before failed stage '$continuationBoundaryStage'"
+            $record["reuseReason"] = if ($completedReleaseContinuation) { "exact Targeted continuation after completed release" } else { "exact Targeted continuation before failed stage '$continuationBoundaryStage'" }
             Write-E2ECheckpoint
         } else {
             $script:invalidatedStages += $Name

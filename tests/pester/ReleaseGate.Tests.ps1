@@ -40,6 +40,7 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'Get-WorkflowContinuationProof'
         $e2eText | Should -Match 'previousRunnerSha256'
         $e2eText | Should -Match 'continuationBoundaryStage'
+        $e2eText | Should -Match 'exact Targeted continuation after completed release'
         $e2eText | Should -Match 'if \(\$checkpointWasResumed\) \{ \$resultPassed = \$false'
         $e2eText | Should -Match 'RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED'
         $e2eText | Should -Match 'RELEASE_E2E_CACHE_CORRUPT'
@@ -664,6 +665,35 @@ switch ($Action) {
             $checkpointAfterManagedAdvance.runId | Should -Not -Be $checkpointBeforeManagedAdvance.runId
             $checkpointAfterManagedAdvance.identity.workflowCommit | Should -Be (& git -C $workflowFixtureRoot rev-parse HEAD).Trim()
             Test-Path -LiteralPath ([string]$checkpointAfterManagedAdvance.capabilityCache.manifestPath) -PathType Leaf | Should -BeTrue
+
+            # A harness-only repair after a completed release starts at fresh
+            # verification/cleanup. It must not rerun any passed capability.
+            $candidateRunnerPath = Join-Path $workflowFixtureRoot "scripts\invoke-release-e2e.ps1"
+            Add-Content -LiteralPath $candidateRunnerPath -Encoding UTF8 -Value "# fixture harness-only repair"
+            & git -C $workflowFixtureRoot add -- "scripts/invoke-release-e2e.ps1"
+            & git -C $workflowFixtureRoot commit -m "test: repair only the release harness" *> $null
+            $LASTEXITCODE | Should -Be 0
+            $harnessCommit = (& git -C $workflowFixtureRoot rev-parse HEAD).Trim()
+            $harnessTree = (& git -C $workflowFixtureRoot rev-parse 'HEAD^{tree}').Trim()
+            $harnessTargetedRun = [ordered]@{ schemaVersion=1; mode='Targeted'; status='passed'; exitCode=0; commit=$harnessCommit; tree=$harnessTree; finishedAt=[DateTime]::UtcNow.ToString('o'); stages=@([ordered]@{name='pester';status='passed'},[ordered]@{name='tracked-state';status='passed'},[ordered]@{name='git-diff-check';status='passed'}) }
+            [IO.File]::WriteAllText((Join-Path $targetedRunRoot "fixture-harness-targeted-continuation.json"), (($harnessTargetedRun | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $legacyCheckpoint = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $legacyCheckpoint.stateFiles.baseline.actualEnvPath = [pscustomobject]@{ Length = 67 }
+            $legacyCheckpoint.stateFiles.postConfig.actualEnvPath = [pscustomobject]@{ Length = 67 }
+            [IO.File]::WriteAllText($checkpointPath, (($legacyCheckpoint | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $harnessSummaryPath = Join-Path $tempRoot "harness-continuation-summary.json"
+            & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $candidateRunnerPath `
+                -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $harnessSummaryPath -ResumeMode Auto
+            $LASTEXITCODE | Should -Be 0
+            $harnessSummary = Get-Content -LiteralPath $harnessSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($stageName in @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
+                @($harnessSummary.resumedStages) | Should -Contain $stageName
+                $harnessSummary.stages.$stageName.execution | Should -Be "reused"
+                @($harnessSummary.executedStages) | Should -Not -Contain $stageName
+            }
+            @($harnessSummary.executedStages) | Should -Contain "verification-refresh"
+            @($harnessSummary.executedStages) | Should -Contain "result-cleanup"
+            Test-Path -LiteralPath (Join-Path $RepoRoot "System.Collections.Specialized.OrderedDictionary") | Should -BeFalse
 
             # A declared reusable stage with corrupt evidence must fail closed
             # before any capability action is invoked.
