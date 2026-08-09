@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const version = "0.4.4"
+const version = "0.4.5"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -30,6 +30,9 @@ func run(args []string) error {
 	}
 	if len(args) == 0 {
 		return fmt.Errorf("usage: itl-ondemand-mcp serve|vanessa-profile-start")
+	}
+	if args[0] == "designer-agent-safe-mode" {
+		return runDesignerAgentSafeMode(os.Stdin, os.Stdout)
 	}
 	if args[0] == "vanessa-profile-start" {
 		return runVanessaProfileStart(args[1:])

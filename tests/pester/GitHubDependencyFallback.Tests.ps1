@@ -71,8 +71,8 @@ Describe "GitHub dependency rate-limit fallback" {
 
         $info = Get-VanessaAutomationDownloadInfo
         $info.source | Should -Be "workflow-pinned"
-        $info.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r5/vanessa-automation-single.1.2.043.28-itl-r5.zip"
-        $info.expectedSha256 | Should -Be "b2427e90704b7682b2f976524777ea199dbfb0cad695376017cf38dbe447ffd8"
+        $info.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r6/vanessa-automation-single.1.2.043.28-itl-r6.zip"
+        $info.expectedSha256 | Should -Be "4d38ee94a5324b2681eb292d725038b10a544e9c4396b1907fe3dc4c2dccccf8"
         Assert-MockCalled Invoke-RestMethod -Times 0
     }
 

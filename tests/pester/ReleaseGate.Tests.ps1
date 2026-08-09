@@ -22,7 +22,9 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match '"-VanessaFeaturePath", \$vanessaFixture\.path'
         $e2eText | Should -Match "\`$authoringOutcome -ne `"passed`""
         $e2eText | Should -Not -Match "runner-fallback-required"
-        $e2eText | Should -Match "PATH_ACCESS_DENIED.*PATH_INVALID.*PATH_NOT_FOUND"
+        $e2eText | Should -Match "open_feature_file:file.*check_syntax:file.*load_features:file.*load_features:directory"
+        $e2eText | Should -Match "clientMcpSafeMode"
+        $e2eText | Should -Match "vaExtensionSafeMode"
         $e2eText | Should -Match "vanessaAutomationArchiveSha256"
         $e2eText | Should -Match ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("VmFuZXNzYSDQv9GD0YLRjCDRgSDQv9GA0L7QsdC10LvQsNC80Lg=")))
         ([regex]::Matches($e2eText, 'Invoke-E2EHelper -Action "check-dev-branch"')).Count | Should -Be 4

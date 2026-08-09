@@ -955,6 +955,7 @@ function Start-ItlOnDemandBackendInstance {
             $automationVersion = [string](Get-ConfigValueFromObject -Object $definition.backendVersions -Path "vanessaAutomation" -Default $vanessa.version)
             $extVersion = [string](Get-ConfigValueFromObject -Object $definition.backendVersions -Path "vanessaExt" -Default "")
             $version = "clientMcp=$clientVersion;vaExtension=$vaVersion;vanessaAutomation=$automationVersion;vanessaExt=$extVersion"
+            $vanessaSafeModeProof = Get-StateValue -State $state -Name "vanessaMcpSafeModeProof" -Default $null
         }
         $runtimeState = [pscustomobject][ordered]@{
             schemaVersion = 4; status = "starting"; family = $Family; instanceId = $InstanceId
@@ -967,6 +968,8 @@ function Start-ItlOnDemandBackendInstance {
             vanessaAutomationDownstreamRevision = $(if ($Family -eq "vanessa-ui") { [string]$vanessa.downstreamRevision } else { "" })
             vanessaAutomationArchiveSha256 = $(if ($Family -eq "vanessa-ui") { [string]$vanessa.archiveSha256 } else { "" })
             vanessaAutomationEpfSha256 = $(if ($Family -eq "vanessa-ui") { [string]$vanessa.epfSha256 } else { "" })
+            clientMcpSafeMode = $(if ($Family -eq "vanessa-ui") { [bool](Get-StateValue -State $vanessaSafeModeProof -Name "clientMcpSafeMode" -Default $true) } else { $null })
+            vaExtensionSafeMode = $(if ($Family -eq "vanessa-ui") { [bool](Get-StateValue -State $vanessaSafeModeProof -Name "vaExtensionSafeMode" -Default $true) } else { $null })
             infoBasePath = [string]$state.devBranchInfoBasePath
             testClientProfile = $(if ($Family -eq "vanessa-ui") { "itl-ondemand" } else { "" })
             testClientPortFamily = $testClientPortFamily; testClientPortKey = $testClientPortKey; testClientPortLeaseToken = $testClientPortLeaseToken; testClientPort = $testClientPort

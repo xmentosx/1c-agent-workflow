@@ -129,12 +129,14 @@
     }
 
     It "exposes the script-owned action without Designer Agent or CFE unpacking" {
+        $lifecycleText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1")
+        $extensionInitText = [regex]::Match($lifecycleText, '(?s)function Init-DevBranchExtension\s*\{.*?(?=\r?\nfunction |\z)').Value
         $HelperText | Should -Match '"init-dev-branch-extension"'
         $HelperText | Should -Match "ExtensionInitMode"
         $HelperText | Should -Match ([regex]::Escape('"/LoadConfigFromFiles", $scaffoldPath, "-Extension", $ExtensionName'))
         $HelperText | Should -Match ([regex]::Escape('"/LoadCfg", $sourceCfe, "-Extension", $ExtensionName'))
         $HelperText | Should -Match ([regex]::Escape('-DesignerArgs @("/DumpDBCfgList", "-Extension", $Name)'))
-        $HelperText | Should -Not -Match '\bAgentMode\b'
+        $extensionInitText | Should -Not -Match '\bAgentMode\b'
         $HelperText | Should -Not -Match "v8unpack"
         $HelperText | Should -Not -Match '"/Extension"'
         $HelperText | Should -Match "extension-init.delegate"

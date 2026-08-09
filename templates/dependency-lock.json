@@ -10,10 +10,10 @@
       "updatedAt": ""
     },
     "itlOndemandMcp": {
-      "version": "0.4.4",
+      "version": "0.4.5",
       "assetName": "itl-ondemand-mcp-windows-amd64.exe",
-      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.4/itl-ondemand-mcp-windows-amd64.exe",
-      "sha256": "510a7704ec975fe5bdb218eb68983e7a65187f41181475d6591481279d8a359f",
+      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.5/itl-ondemand-mcp-windows-amd64.exe",
+      "sha256": "092d4b9f72ea4de179e7d783a80aed20a7b5215ef8362f138997ad56686d4c20",
       "os": "windows",
       "arch": "amd64",
       "source": "workflow release asset"
@@ -83,14 +83,14 @@
     "vanessaAutomation": {
       "version": "1.2.043.28",
       "compatibilityVersion": "1.2.043.28",
-      "downstreamRevision": "itl-r5",
-      "assetName": "vanessa-automation-single.1.2.043.28-itl-r5.zip",
-      "releaseTag": "vanessa-automation-v1.2.043.28-itl-r5",
-      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r5/vanessa-automation-single.1.2.043.28-itl-r5.zip",
-      "sha256": "b2427e90704b7682b2f976524777ea199dbfb0cad695376017cf38dbe447ffd8",
-      "epfSha256": "e0f77c9fb48278ca91b16db61db87a887c25b384458b6475c30e260c8fafc75a",
-      "manifestSha256": "5be437d295dde4def8aa2b08c019263989f28163d920fc7556ff0b76bdaec33b",
-      "patchSha256": "62032de3b1cded55cb286578452d67815680c23d76e552a0c3d7efd24db20ff4",
+      "downstreamRevision": "itl-r6",
+      "assetName": "vanessa-automation-single.1.2.043.28-itl-r6.zip",
+      "releaseTag": "vanessa-automation-v1.2.043.28-itl-r6",
+      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r6/vanessa-automation-single.1.2.043.28-itl-r6.zip",
+      "sha256": "4d38ee94a5324b2681eb292d725038b10a544e9c4396b1907fe3dc4c2dccccf8",
+      "epfSha256": "bdbfa8cb130b2d8534b46704f5c1ac1c958c63ba5990653a3d0aa05df42f501f",
+      "manifestSha256": "422aac4809159629f25821348b1965eddf4c3833af0ca54e7acc1b28525eedc2",
+      "patchSha256": "1bcafbee51deb36008a4311df4560a001a863ac9694566f4b3aa90d2aa61cfb0",
       "upstreamCommit": "f3a01778a14d29b38204685deea0131274d438ff",
       "publicationStatus": "published",
       "source": "workflow-pinned"

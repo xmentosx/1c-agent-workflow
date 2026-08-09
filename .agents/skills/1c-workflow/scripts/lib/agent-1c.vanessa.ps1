@@ -5385,6 +5385,256 @@ function Install-VanessaMcpExtensionCfe {
     return $script:LastLogPath
 }
 
+function Get-VanessaDesignerAgentPortRange {
+    $range = [string](Get-EnvValue -Name "VANESSA_DESIGNER_AGENT_PORT_RANGE" -Default "")
+    if ($range -match '^\s*(\d+)\s*(?:\.\.|-|:)\s*(\d+)\s*$') {
+        $start = [int]$matches[1]
+        $end = [int]$matches[2]
+    } else {
+        $start = 48251
+        $end = 48350
+    }
+    if ($start -lt 1 -or $end -gt 65535 -or $start -gt $end) {
+        throw "Invalid Vanessa Designer Agent port range: $start..$end"
+    }
+    return [pscustomobject]@{ start = $start; end = $end }
+}
+
+function Get-VanessaDesignerAgentRuntimeRoot {
+    param([object]$State)
+
+    $safeName = [string](Get-StateValue -State $State -Name "safeDevBranchName" -Default "dev-branch")
+    return (Resolve-ProjectPath (Join-Path ".agent-1c\runtime\designer-agent" (ConvertTo-SafeName $safeName)))
+}
+
+function Ensure-VanessaDesignerAgentHostKey {
+    param([object]$State)
+
+    $root = Get-VanessaDesignerAgentRuntimeRoot -State $State
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $privateKeyPath = Join-Path $root "host_id"
+    $publicKeyPath = "$privateKeyPath.pub"
+    if ((Test-Path -LiteralPath $privateKeyPath -PathType Leaf) -and (Test-Path -LiteralPath $publicKeyPath -PathType Leaf)) {
+        return [pscustomobject]@{ privateKeyPath = $privateKeyPath; publicKeyPath = $publicKeyPath }
+    }
+
+    $sshKeygen = Get-Command ssh-keygen.exe -ErrorAction SilentlyContinue
+    if ($null -eq $sshKeygen) {
+        throw "ITL_DESIGNER_AGENT_SSH_KEYGEN_MISSING: Windows OpenSSH ssh-keygen.exe is required to create the project-owned Designer Agent host key."
+    }
+    $arguments = @("-q", "-t", "rsa", "-b", "2048", "-m", "PEM", "-N", (ConvertTo-NativeEmptyStringArgument ""), "-f", $privateKeyPath)
+    $result = Invoke-NativeProcessAndWaitResult -FilePath $sshKeygen.Source -Arguments $arguments -TimeoutSeconds 30
+    if ($result.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $privateKeyPath -PathType Leaf) -or -not (Test-Path -LiteralPath $publicKeyPath -PathType Leaf)) {
+        throw "ITL_DESIGNER_AGENT_SSH_KEYGEN_FAILED: ssh-keygen exited with code $($result.ExitCode)."
+    }
+    return [pscustomobject]@{ privateKeyPath = $privateKeyPath; publicKeyPath = $publicKeyPath }
+}
+
+function Invoke-VanessaDesignerAgentClient {
+    param(
+        [string]$ExecutablePath,
+        [hashtable]$Request,
+        [int]$TimeoutSeconds = 180
+    )
+
+    if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
+        throw "ITL_DESIGNER_AGENT_CLIENT_MISSING: $ExecutablePath"
+    }
+    $json = $Request | ConvertTo-Json -Compress -Depth 20
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $ExecutablePath
+    $startInfo.Arguments = "designer-agent-safe-mode"
+    $startInfo.WorkingDirectory = $script:ProjectRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.StandardInputEncoding = Get-Utf8Encoding
+    $startInfo.StandardOutputEncoding = Get-Utf8Encoding
+    $startInfo.StandardErrorEncoding = Get-Utf8Encoding
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) {
+            throw "ITL_DESIGNER_AGENT_CLIENT_START_FAILED"
+        }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $process.StandardInput.Write($json)
+        $process.StandardInput.Close()
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            $cleanup = Stop-NativeProcessForSafety -Process $process
+            throw "ITL_DESIGNER_AGENT_CLIENT_TIMEOUT: stopped=$($cleanup.confirmed) error='$($cleanup.error)'"
+        }
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        if ($process.ExitCode -ne 0) {
+            throw "ITL_DESIGNER_AGENT_CLIENT_FAILED: exitCode=$($process.ExitCode) error='$($stderr.Trim())'"
+        }
+        try {
+            return ($stdout | ConvertFrom-Json)
+        } catch {
+            throw "ITL_DESIGNER_AGENT_CLIENT_RESULT_INVALID: $($_.Exception.Message)"
+        }
+    } finally {
+        $process.Dispose()
+    }
+}
+
+function Test-VanessaDesignerAgentSafeModeResult {
+    param(
+        [object]$Result,
+        [string]$ExtensionName
+    )
+
+    if ($null -eq $Result -or -not [bool](Get-StateValue -State $Result -Name "success" -Default $false)) {
+        return $false
+    }
+    $command = "config extensions properties get --extension $ExtensionName"
+    $matches = @($Result.commands | Where-Object { [string]$_.command -ceq $command })
+    if ($matches.Count -ne 1) {
+        return $false
+    }
+    $serialized = $matches[0].messages | ConvertTo-Json -Compress -Depth 20
+    return ($serialized -match '(?i)"safe(?:-)?mode"\s*:\s*(?:false|"no")')
+}
+
+function Stop-VanessaDesignerAgentOwnedProcess {
+    param(
+        [object]$Process,
+        [DateTime]$ExpectedStartTime
+    )
+
+    $current = Get-Process -Id $Process.Id -ErrorAction SilentlyContinue
+    if ($null -eq $current) {
+        return [pscustomobject]@{ confirmed = $true; error = "" }
+    }
+    try {
+        if ([Math]::Abs(($current.StartTime.ToUniversalTime() - $ExpectedStartTime.ToUniversalTime()).TotalSeconds) -ge 2) {
+            return [pscustomobject]@{ confirmed = $false; error = "PID $($Process.Id) start time changed; refusing to stop a foreign process." }
+        }
+    } catch {
+        return [pscustomobject]@{ confirmed = $false; error = "PID $($Process.Id) identity could not be verified: $($_.Exception.Message)" }
+    }
+    return (Stop-NativeProcessForSafety -Process $current)
+}
+
+function Set-VanessaMcpExtensionsUnsafeMode {
+    param(
+        [object]$State,
+        [object]$ClientArtifact,
+        [object]$VaExtensionArtifact
+    )
+
+    $platformPath = Get-PlatformPath
+    $key = Ensure-VanessaDesignerAgentHostKey -State $State
+    $range = Get-VanessaDesignerAgentPortRange
+    $leaseToken = New-ItlManagedPortLeaseToken
+    $portFamily = "vanessa-designer-agent"
+    $portKey = Get-ItlBranchManagedPortKey -Family $portFamily -State $State
+    $lease = Resolve-ItlManagedPortLease -Family $portFamily -Key $portKey -Start $range.start -End $range.end -State $State -Subject "Vanessa Designer Agent port" -LeaseToken $leaseToken
+    $agentRoot = Get-VanessaDesignerAgentRuntimeRoot -State $State
+    $process = $null
+    $processStartTime = [DateTime]::MinValue
+    $releaseLease = $true
+    try {
+        $infoBaseArgs = New-InfobaseArgs -Kind $State.infoBaseKind -Path $State.devBranchInfoBasePath -User "" -Password ""
+        $arguments = @("DESIGNER") + $infoBaseArgs + @(
+            "/AgentMode",
+            "/AgentPort", [string]$lease.port,
+            "/AgentListenAddress", "127.0.0.1",
+            "/AgentSSHHostKey", $key.privateKeyPath,
+            "/AgentBaseDir", $agentRoot
+        )
+        Write-Host "Starting Designer Agent for Vanessa extension property reconciliation on 127.0.0.1:$($lease.port)."
+        $process = Start-OneCProcessBackground -FilePath $platformPath -Arguments $arguments -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath -Purpose "vanessa-designer-agent-safe-mode"
+        $processStartTime = $process.StartTime
+        Set-ItlManagedPortAllocationStatus -Family $portFamily -Key $portKey -Status "running" -ProcessId $process.Id -LeaseToken $leaseToken
+        if (-not (Wait-VanessaMcpPort -Port ([int]$lease.port) -TimeoutSeconds 30)) {
+            throw "ITL_DESIGNER_AGENT_NOT_READY: PID $($process.Id) did not listen on 127.0.0.1:$($lease.port)."
+        }
+
+        $clientPath = Get-ItlOnDemandMcpExecutablePath
+        $commands = @(
+            "common connect-ib",
+            "config extensions properties set --extension client_mcp --safe-mode no",
+            "config extensions properties get --extension client_mcp",
+            "config extensions properties set --extension VAExtension --safe-mode no",
+            "config extensions properties get --extension VAExtension",
+            "common disconnect-ib",
+            "common shutdown"
+        )
+        $request = @{
+            host = "127.0.0.1"
+            port = [int]$lease.port
+            username = [string](Get-EnvValue -Name "IB_USER")
+            password = [string](Get-EnvValue -Name "IB_PASSWORD")
+            hostPublicKey = [string](Read-Utf8Text -Path $key.publicKeyPath)
+            commands = $commands
+            connectTimeoutSeconds = 30
+            commandTimeoutSeconds = 120
+        }
+        $result = Invoke-VanessaDesignerAgentClient -ExecutablePath $clientPath -Request $request
+        foreach ($extensionName in @("client_mcp", "VAExtension")) {
+            if (-not (Test-VanessaDesignerAgentSafeModeResult -Result $result -ExtensionName $extensionName)) {
+                throw "ITL_DESIGNER_AGENT_SAFE_MODE_VERIFY_FAILED: extension '$extensionName' was not proven with safe mode disabled."
+            }
+        }
+        if (-not (Wait-ItlOnDemandProcessExit -ProcessId $process.Id -TimeoutSeconds 30)) {
+            throw "ITL_DESIGNER_AGENT_SHUTDOWN_FAILED: Designer Agent PID $($process.Id) did not exit after common shutdown."
+        }
+        $platformVersion = [string](Get-Item -LiteralPath $platformPath).VersionInfo.FileVersion
+        $infoBaseIdentity = Get-OneCInfoBaseIdentity -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath
+        return [pscustomobject][ordered]@{
+            verifiedAt = (Get-Date).ToString("o")
+            infoBaseKind = [string]$State.infoBaseKind
+            infoBasePath = [string]$State.devBranchInfoBasePath
+            infoBaseKey = [string]$infoBaseIdentity.key
+            platformVersion = $platformVersion
+            clientMcpSha256 = [string]$ClientArtifact.sha256
+            vaExtensionSha256 = [string]$VaExtensionArtifact.sha256
+            clientMcpSafeMode = $false
+            vaExtensionSafeMode = $false
+        }
+    } finally {
+        if ($null -ne $process -and $null -ne (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
+            $cleanup = Stop-VanessaDesignerAgentOwnedProcess -Process $process -ExpectedStartTime $processStartTime
+            if (-not $cleanup.confirmed) {
+                $releaseLease = $false
+            }
+        }
+        if ($releaseLease) {
+            Release-ItlManagedPortAllocation -Family $portFamily -Key $portKey -LeaseToken $leaseToken
+        } else {
+            throw "ITL_DESIGNER_AGENT_CLEANUP_UNCONFIRMED: $($cleanup.error) The managed port lease was retained."
+        }
+    }
+}
+
+function Test-VanessaMcpSafeModeProofMatchesState {
+    param([object]$State)
+
+    $proof = Get-StateValue -State $State -Name "vanessaMcpSafeModeProof" -Default $null
+    if ($null -eq $proof -or
+        [bool](Get-StateValue -State $proof -Name "clientMcpSafeMode" -Default $true) -or
+        [bool](Get-StateValue -State $proof -Name "vaExtensionSafeMode" -Default $true)) {
+        return $false
+    }
+    try {
+        $identity = Get-OneCInfoBaseIdentity `
+            -InfoBaseKind ([string](Get-StateValue -State $State -Name "infoBaseKind" -Default "")) `
+            -InfoBasePath ([string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default ""))
+    } catch {
+        return $false
+    }
+    return (
+        [string](Get-StateValue -State $proof -Name "infoBaseKey" -Default "") -ceq [string]$identity.key -and
+        [string](Get-StateValue -State $proof -Name "clientMcpSha256" -Default "") -ceq [string](Get-StateValue -State $State -Name "vanessaMcpClientMcpSha256" -Default "") -and
+        [string](Get-StateValue -State $proof -Name "vaExtensionSha256" -Default "") -ceq [string](Get-StateValue -State $State -Name "vanessaMcpVaExtensionSha256" -Default "")
+    )
+}
+
 function Install-VanessaMcp {
     Write-Section "Install Vanessa UI MCP"
 
@@ -5410,6 +5660,8 @@ function Install-VanessaMcp {
     $clientLog = Install-VanessaMcpExtensionCfe -State $state -CfePath $clientArtifact.path -ExtensionName "client_mcp"
     $vaExtensionLog = Install-VanessaMcpExtensionCfe -State $state -CfePath $vaExtensionArtifact.path -ExtensionName "VAExtension"
 
+    $safeModeProof = Set-VanessaMcpExtensionsUnsafeMode -State $state -ClientArtifact $clientArtifact -VaExtensionArtifact $vaExtensionArtifact
+
     Update-DevBranchState -State $state -Updates @{
         vanessaMcpClientMcpCfePath = $clientArtifact.path
         vanessaMcpClientMcpVersion = $clientArtifact.version
@@ -5420,6 +5672,7 @@ function Install-VanessaMcp {
         vanessaMcpInstalledAt = (Get-Date).ToString("o")
         vanessaMcpClientMcpInstallLogPath = $clientLog
         vanessaMcpVaExtensionInstallLogPath = $vaExtensionLog
+        vanessaMcpSafeModeProof = $safeModeProof
     }
 
     Write-Host "Vanessa UI MCP extensions installed in development branch infobase."
@@ -5435,7 +5688,8 @@ function Ensure-VanessaMcpInstalled {
     $vaExtensionPath = Get-StateValue -State $State -Name "vanessaMcpVaExtensionCfePath" -Default ""
     if ($clientPath -and $vaExtensionPath -and
         (Test-Path -LiteralPath $clientPath -PathType Leaf -ErrorAction SilentlyContinue) -and
-        (Test-Path -LiteralPath $vaExtensionPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        (Test-Path -LiteralPath $vaExtensionPath -PathType Leaf -ErrorAction SilentlyContinue) -and
+        (Test-VanessaMcpSafeModeProofMatchesState -State $State)) {
         return $State
     }
 

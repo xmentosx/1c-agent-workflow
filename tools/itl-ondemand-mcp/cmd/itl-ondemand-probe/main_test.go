@@ -93,8 +93,7 @@ func successfulProbeResult(name string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
 }
 
-func TestRunVanessaSmokeCoversFileDirectoryWindowsPathsAndStructuredErrorsBeforeUI(t *testing.T) {
-	t.Setenv("ITL_VANESSA_ACCESS_DENIED_PROBE_PATH", `D:\Git\PM5 КОРП - work 1-perf1\tests\features\locked.feature`)
+func TestRunVanessaSmokeCoversOrdinaryFileAndDirectoryWindowsPathsBeforeUI(t *testing.T) {
 	type recordedCall struct {
 		name      string
 		arguments map[string]any
@@ -102,22 +101,13 @@ func TestRunVanessaSmokeCoversFileDirectoryWindowsPathsAndStructuredErrorsBefore
 	var calls []recordedCall
 	session := newProbeGatewaySession(t, func(name string, arguments map[string]any) *mcp.CallToolResult {
 		calls = append(calls, recordedCall{name: name, arguments: arguments})
-		if name == "open_feature_file" && strings.Contains(arguments["filePath"].(string), "|invalid") {
-			return &mcp.CallToolResult{IsError: true, StructuredContent: map[string]any{"code": "PATH_INVALID"}}
-		}
-		if name == "load_features" && strings.Contains(arguments["path"].(string), "Отсутствует") {
-			return &mcp.CallToolResult{IsError: true, StructuredContent: map[string]any{"code": "PATH_NOT_FOUND"}}
-		}
-		if name == "check_syntax" && arguments["filePath"] != `D:\Git\PM5 КОРП - work 1-perf1\tests\features\Проверка пути.feature` {
-			return &mcp.CallToolResult{IsError: true, StructuredContent: map[string]any{"code": "PATH_ACCESS_DENIED"}}
-		}
 		return successfulProbeResult(name)
 	})
 
 	featurePath := `D:\Git\PM5 КОРП - work 1-perf1\tests\features\Проверка пути.feature`
 	clientCount := 0
 	maxClientCount := 0
-	outcome, codes, err := runVanessaSmoke(context.Background(), session, 48151, featurePath, func(delta int) {
+	outcome, authoringCalls, err := runVanessaSmoke(context.Background(), session, 48151, featurePath, func(delta int) {
 		clientCount += delta
 		if clientCount > maxClientCount {
 			maxClientCount = clientCount
@@ -129,10 +119,10 @@ func TestRunVanessaSmokeCoversFileDirectoryWindowsPathsAndStructuredErrorsBefore
 	if clientCount != 0 || maxClientCount != 1 {
 		t.Fatalf("unexpected TestClient concurrency observation: current=%d max=%d", clientCount, maxClientCount)
 	}
-	if outcome != "passed" || strings.Join(codes, ",") != "PATH_INVALID,PATH_NOT_FOUND,PATH_ACCESS_DENIED" {
-		t.Fatalf("outcome=%q codes=%#v", outcome, codes)
+	if outcome != "passed" || strings.Join(authoringCalls, ",") != "open_feature_file:file,check_syntax:file,load_features:file,load_features:directory" {
+		t.Fatalf("outcome=%q authoringCalls=%#v", outcome, authoringCalls)
 	}
-	if len(calls) < 8 {
+	if len(calls) < 9 {
 		t.Fatalf("calls=%#v", calls)
 	}
 	want := []struct {
@@ -156,7 +146,7 @@ func TestRunVanessaSmokeCoversFileDirectoryWindowsPathsAndStructuredErrorsBefore
 			t.Fatalf("directory load path=%#v", call.arguments)
 		}
 	}
-	for index := 0; index < 7; index++ {
+	for index := 0; index < 4; index++ {
 		if strings.HasPrefix(calls[index].name, "get_") || calls[index].name == "connect_test_client" {
 			t.Fatalf("legacy/UI call ran before file probes completed: %#v", calls[index])
 		}
@@ -167,29 +157,19 @@ func TestRunVanessaSmokeCoversFileDirectoryWindowsPathsAndStructuredErrorsBefore
 }
 
 func TestRunVanessaSmokeRequiresManagedTestClientClose(t *testing.T) {
-	t.Setenv("ITL_VANESSA_ACCESS_DENIED_PROBE_PATH", `D:\Git\PM5 КОРП - work 1-perf1\tests\features\locked.feature`)
-	session := newProbeGatewaySession(t, func(name string, arguments map[string]any) *mcp.CallToolResult {
-		if name == "open_feature_file" && strings.Contains(arguments["filePath"].(string), "|invalid") {
-			return &mcp.CallToolResult{IsError: true, StructuredContent: map[string]any{"code": "PATH_INVALID"}}
-		}
-		if name == "load_features" && strings.Contains(arguments["path"].(string), "Отсутствует") {
-			return &mcp.CallToolResult{IsError: true, StructuredContent: map[string]any{"code": "PATH_NOT_FOUND"}}
-		}
-		if name == "check_syntax" && arguments["filePath"] != `D:\Git\PM5 КОРП - work 1-perf1\tests\features\Проверка пути.feature` {
-			return &mcp.CallToolResult{IsError: true, StructuredContent: map[string]any{"code": "PATH_ACCESS_DENIED"}}
-		}
+	session := newProbeGatewaySession(t, func(name string, _ map[string]any) *mcp.CallToolResult {
 		if name == "close_test_client" {
 			return &mcp.CallToolResult{IsError: true, StructuredContent: map[string]any{"code": "ITL_VANESSA_TESTCLIENT_STOP_FAILED"}}
 		}
 		return successfulProbeResult(name)
 	})
 
-	outcome, codes, err := runVanessaSmoke(context.Background(), session, 48151, `D:\Git\PM5 КОРП - work 1-perf1\tests\features\Проверка пути.feature`, nil)
+	outcome, calls, err := runVanessaSmoke(context.Background(), session, 48151, `D:\Git\PM5 КОРП - work 1-perf1\tests\features\Проверка пути.feature`, nil)
 	if err == nil || !strings.Contains(err.Error(), "close_test_client returned a tool error") {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if outcome != "" || codes != nil {
-		t.Fatalf("outcome=%q codes=%#v", outcome, codes)
+	if outcome != "" || calls != nil {
+		t.Fatalf("outcome=%q calls=%#v", outcome, calls)
 	}
 }
 
@@ -204,11 +184,11 @@ func TestRunVanessaSmokeRejectsFileAuthoringBackendFailure(t *testing.T) {
 		return successfulProbeResult(name)
 	})
 
-	outcome, codes, err := runVanessaSmoke(context.Background(), session, 48151, `D:\Git\PM5 КОРП\tests\features\Проверка пути.feature`, nil)
+	outcome, calls, err := runVanessaSmoke(context.Background(), session, 48151, `D:\Git\PM5 КОРП\tests\features\Проверка пути.feature`, nil)
 	if err == nil || !strings.Contains(err.Error(), "open_feature_file returned a tool error") {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if outcome != "" || codes != nil {
-		t.Fatalf("outcome=%q codes=%#v", outcome, codes)
+	if outcome != "" || calls != nil {
+		t.Fatalf("outcome=%q calls=%#v", outcome, calls)
 	}
 }

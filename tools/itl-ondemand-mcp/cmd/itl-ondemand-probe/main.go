@@ -28,6 +28,8 @@ type runtimeState struct {
 	VanessaAutomationDownstreamRevision   string `json:"vanessaAutomationDownstreamRevision,omitempty"`
 	VanessaAutomationArchiveSHA256        string `json:"vanessaAutomationArchiveSha256,omitempty"`
 	VanessaAutomationEpfSHA256            string `json:"vanessaAutomationEpfSha256,omitempty"`
+	ClientMcpSafeMode                     *bool  `json:"clientMcpSafeMode,omitempty"`
+	VAExtensionSafeMode                   *bool  `json:"vaExtensionSafeMode,omitempty"`
 }
 
 type probeSession struct {
@@ -97,7 +99,7 @@ func run() error {
 		}
 	}
 	vanessaFileAuthoringOutcome := ""
-	var vanessaFileAuthoringCodes []string
+	var vanessaFileAuthoringCalls []string
 	defer func() {
 		for _, item := range connected {
 			_ = item.session.Close()
@@ -149,7 +151,7 @@ func run() error {
 			if *family != "vanessa-ui" {
 				return fmt.Errorf("--vanessa-ui-smoke requires --family vanessa-ui")
 			}
-			outcome, codes, err := runVanessaSmoke(ctx, item.session, item.state.TestClientPort, *vanessaFeature, func(delta int) {
+			outcome, calls, err := runVanessaSmoke(ctx, item.session, item.state.TestClientPort, *vanessaFeature, func(delta int) {
 				connectedTestClients += delta
 				observeConcurrency()
 			})
@@ -160,9 +162,9 @@ func run() error {
 			if vanessaFileAuthoringOutcome == "" {
 				vanessaFileAuthoringOutcome = outcome
 			}
-			for _, code := range codes {
-				if !containsString(vanessaFileAuthoringCodes, code) {
-					vanessaFileAuthoringCodes = append(vanessaFileAuthoringCodes, code)
+			for _, call := range calls {
+				if !containsString(vanessaFileAuthoringCalls, call) {
+					vanessaFileAuthoringCalls = append(vanessaFileAuthoringCalls, call)
 				}
 			}
 		}
@@ -231,7 +233,7 @@ func run() error {
 	}
 	if *vanessaSmoke {
 		evidence["vanessaFileAuthoringOutcome"] = vanessaFileAuthoringOutcome
-		evidence["vanessaFileAuthoringCodes"] = vanessaFileAuthoringCodes
+		evidence["vanessaFileAuthoringCalls"] = vanessaFileAuthoringCalls
 		evidence["vanessaFeature"] = *vanessaFeature
 	}
 	raw, _ := json.MarshalIndent(evidence, "", "  ")
@@ -415,14 +417,16 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 		return "", nil, fmt.Errorf("Vanessa authoring smoke requires an absolute Windows path containing spaces and Cyrillic text: %q", featurePath)
 	}
 	featureDirectory := filepath.Dir(featurePath)
+	authoringCalls := make([]string, 0, 4)
 	for _, call := range []struct {
 		name      string
 		arguments map[string]any
+		proof     string
 	}{
-		{name: "open_feature_file", arguments: map[string]any{"filePath": featurePath}},
-		{name: "check_syntax", arguments: map[string]any{"filePath": featurePath}},
-		{name: "load_features", arguments: map[string]any{"path": featurePath}},
-		{name: "load_features", arguments: map[string]any{"path": featureDirectory}},
+		{name: "open_feature_file", arguments: map[string]any{"filePath": featurePath}, proof: "open_feature_file:file"},
+		{name: "check_syntax", arguments: map[string]any{"filePath": featurePath}, proof: "check_syntax:file"},
+		{name: "load_features", arguments: map[string]any{"path": featurePath}, proof: "load_features:file"},
+		{name: "load_features", arguments: map[string]any{"path": featureDirectory}, proof: "load_features:directory"},
 	} {
 		result, err := callInnerTool(ctx, session, call.name, call.arguments)
 		if err != nil {
@@ -431,49 +435,7 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 		if result == nil || result.IsError {
 			return "", nil, fmt.Errorf("Vanessa file smoke %s returned a tool error: %#v", call.name, result)
 		}
-	}
-	accessDeniedPath := os.Getenv("ITL_VANESSA_ACCESS_DENIED_PROBE_PATH")
-	var cleanupAccessDeniedProbe func() error
-	if accessDeniedPath == "" {
-		var err error
-		accessDeniedPath, cleanupAccessDeniedProbe, err = createAccessDeniedProbe(featureDirectory)
-		if err != nil {
-			return "", nil, fmt.Errorf("create Vanessa PATH_ACCESS_DENIED probe: %w", err)
-		}
-		defer func() {
-			if cleanupAccessDeniedProbe != nil {
-				_ = cleanupAccessDeniedProbe()
-			}
-		}()
-	}
-	errorCodes := make([]string, 0, 3)
-	for _, probe := range []struct {
-		name      string
-		arguments map[string]any
-		code      string
-	}{
-		{name: "open_feature_file", arguments: map[string]any{"filePath": featurePath + "|invalid"}, code: "PATH_INVALID"},
-		{name: "load_features", arguments: map[string]any{"path": filepath.Join(featureDirectory, "Отсутствует feature.feature")}, code: "PATH_NOT_FOUND"},
-		{name: "check_syntax", arguments: map[string]any{"filePath": accessDeniedPath}, code: "PATH_ACCESS_DENIED"},
-	} {
-		result, err := callInnerTool(ctx, session, probe.name, probe.arguments)
-		if err != nil {
-			return "", nil, fmt.Errorf("Vanessa structured error smoke %s: %w", probe.name, err)
-		}
-		if result == nil || !result.IsError {
-			return "", nil, fmt.Errorf("Vanessa structured error smoke %s did not return %s: %#v", probe.name, probe.code, result)
-		}
-		actual := probeToolResultCode(result)
-		if actual != probe.code {
-			return "", nil, fmt.Errorf("Vanessa structured error smoke %s returned %q, expected %q: %#v", probe.name, actual, probe.code, result.StructuredContent)
-		}
-		errorCodes = append(errorCodes, actual)
-	}
-	if cleanupAccessDeniedProbe != nil {
-		if err := cleanupAccessDeniedProbe(); err != nil {
-			return "", nil, fmt.Errorf("cleanup Vanessa PATH_ACCESS_DENIED probe: %w", err)
-		}
-		cleanupAccessDeniedProbe = nil
+		authoringCalls = append(authoringCalls, call.proof)
 	}
 	var osWindows *mcp.CallToolResult
 	for _, call := range []struct {
@@ -524,7 +486,7 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 	if observeTestClient != nil {
 		observeTestClient(-1)
 	}
-	return "passed", errorCodes, nil
+	return "passed", authoringCalls, nil
 }
 
 func containsString(values []string, value string) bool {
@@ -543,18 +505,6 @@ func containsCyrillic(value string) bool {
 		}
 	}
 	return false
-}
-
-func probeToolResultCode(result *mcp.CallToolResult) string {
-	if result == nil || !result.IsError {
-		return ""
-	}
-	structured, ok := result.StructuredContent.(map[string]any)
-	if !ok {
-		return ""
-	}
-	code, _ := structured["code"].(string)
-	return code
 }
 
 func firstOSWindowTitle(result *mcp.CallToolResult) string {

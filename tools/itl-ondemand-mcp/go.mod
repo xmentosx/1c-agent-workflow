@@ -7,7 +7,8 @@ toolchain go1.26.4
 require (
 	github.com/google/jsonschema-go v0.4.3
 	github.com/modelcontextprotocol/go-sdk v1.6.1
-	golang.org/x/sys v0.41.0
+	golang.org/x/crypto v0.54.0
+	golang.org/x/sys v0.47.0
 )
 
 require (

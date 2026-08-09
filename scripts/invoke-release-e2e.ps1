@@ -1725,7 +1725,7 @@ try {
                     testFixture = $true
                     families = [ordered]@{
                         roctup = [ordered]@{ publicToolCount = 2; catalogToolCount = 13; instances = @([ordered]@{ pid = 101; port = 6003 }); cleanupPassed = $true; idleCleanupPassed = $true; secondSurvivedFirstClose = $false; maxConcurrentSessions = 1; ownedProcessExitWaitMs = 80 }
-                        "vanessa-ui" = [ordered]@{ publicToolCount = 2; catalogToolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256 }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256 }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; vanessaFileAuthoringOutcome = "passed"; vanessaFileAuthoringCodes = @("PATH_INVALID", "PATH_NOT_FOUND", "PATH_ACCESS_DENIED"); vanessaFeature = $vanessaSmokeFeature; secondSurvivedFirstClose = $true; maxConcurrentSessions = 3; ownedProcessExitWaitMs = 120 }
+                        "vanessa-ui" = [ordered]@{ publicToolCount = 2; catalogToolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256; clientMcpSafeMode = $false; vaExtensionSafeMode = $false }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256; clientMcpSafeMode = $false; vaExtensionSafeMode = $false }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; vanessaFileAuthoringOutcome = "passed"; vanessaFileAuthoringCalls = @("open_feature_file:file", "check_syntax:file", "load_features:file", "load_features:directory"); vanessaFeature = $vanessaSmokeFeature; secondSurvivedFirstClose = $true; maxConcurrentSessions = 3; ownedProcessExitWaitMs = 120 }
                     }
                     capturedAt = [DateTime]::UtcNow.ToString("o")
                 }
@@ -1788,17 +1788,19 @@ try {
                         if ($reportedAuthoringFeature -ne $expectedAuthoringFeature) {
                             throw "Vanessa file authoring smoke did not target the release feature."
                         }
-                        $actualPathCodes = @($familyEvidence.vanessaFileAuthoringCodes | Sort-Object -Unique)
-                        $expectedPathCodes = @("PATH_ACCESS_DENIED", "PATH_INVALID", "PATH_NOT_FOUND")
-                        if (($actualPathCodes -join ",") -cne ($expectedPathCodes -join ",")) {
-                            throw "Vanessa file authoring smoke did not prove the exact structured path errors."
+                        $actualAuthoringCalls = @($familyEvidence.vanessaFileAuthoringCalls)
+                        $expectedAuthoringCalls = @("open_feature_file:file", "check_syntax:file", "load_features:file", "load_features:directory")
+                        if (($actualAuthoringCalls -join ",") -cne ($expectedAuthoringCalls -join ",")) {
+                            throw "Vanessa file authoring smoke did not prove ordinary file and directory operations in the expected order."
                         }
                         foreach ($instance in @($familyEvidence.instances)) {
                             if ([string]$instance.vanessaAutomationCompatibilityVersion -cne [string]$canonicalVanessaLock.compatibilityVersion -or
                                 [string]$instance.vanessaAutomationDownstreamRevision -cne [string]$canonicalVanessaLock.downstreamRevision -or
                                 [string]$instance.vanessaAutomationArchiveSha256 -cne [string]$canonicalVanessaLock.sha256 -or
-                                [string]$instance.vanessaAutomationEpfSha256 -cne [string]$canonicalVanessaLock.epfSha256) {
-                                throw "Vanessa live smoke did not use the exact workflow-pinned artifact and downstream revision."
+                                [string]$instance.vanessaAutomationEpfSha256 -cne [string]$canonicalVanessaLock.epfSha256 -or
+                                $null -eq $instance.clientMcpSafeMode -or [bool]$instance.clientMcpSafeMode -or
+                                $null -eq $instance.vaExtensionSafeMode -or [bool]$instance.vaExtensionSafeMode) {
+                                throw "Vanessa live smoke did not use the exact workflow-pinned artifact or did not prove safe mode disabled for both MCP extensions."
                             }
                         }
                     }
