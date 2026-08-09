@@ -21,6 +21,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
+. (Join-Path $PSScriptRoot "release-qualification.ps1")
 
 $script:Root = [System.IO.Path]::GetFullPath($RepositoryRoot)
 $script:Remote = $Remote
@@ -299,6 +300,37 @@ function Restore-DeliveryQualification {
     return $true
 }
 
+function Restore-DeliveryContinuationQualification {
+    param(
+        [Parameter(Mandatory = $true)][string]$CandidateRoot,
+        [Parameter(Mandatory = $true)][string]$Commit,
+        [Parameter(Mandatory = $true)][string]$Tree
+    )
+    $cacheRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\qualifications"
+    if (-not (Test-Path -LiteralPath $cacheRoot -PathType Container)) { return $false }
+    foreach ($directory in @(Get-ChildItem -LiteralPath $cacheRoot -Directory | Sort-Object LastWriteTimeUtc -Descending)) {
+        $fullPath = Join-Path $directory.FullName "full.json"
+        $developPath = Join-Path $directory.FullName "develop.json"
+        $reportPath = Join-Path $directory.FullName "develop-e2e-summary.json"
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $developPath -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { continue }
+        try {
+            $full = Get-Content -LiteralPath $fullPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $develop = Get-Content -LiteralPath $developPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string]$full.status -ne "passed" -or [string]$develop.status -ne "passed") { continue }
+            $fullContinuation = Get-WorkflowContinuationProof -RepositoryRoot $CandidateRoot -QualifiedCommit ([string]$full.repository.commit) -CurrentCommit $Commit -CurrentTree $Tree
+            $developContinuation = Get-WorkflowContinuationProof -RepositoryRoot $CandidateRoot -QualifiedCommit ([string]$develop.repository.commit) -CurrentCommit $Commit -CurrentTree $Tree
+            if (-not $fullContinuation -or -not $developContinuation -or @($developContinuation.scopes) -contains "develop") { continue }
+            $target = Join-Path $CandidateRoot "build\test-results\qualification"
+            New-Item -ItemType Directory -Force -Path $target | Out-Null
+            Get-ChildItem -LiteralPath $directory.FullName -File | Copy-Item -Destination $target -Force
+            return $true
+        } catch { continue }
+    }
+    return $false
+}
+
 function Import-DeliveryQualificationFromCleanWorktree {
     param([Parameter(Mandatory = $true)][string]$Tree)
 
@@ -448,12 +480,17 @@ function Publish-AccumulatedDevelop {
         if ($RequireRelease -and -not $developQualificationRestored -and (Import-DeliveryQualificationFromCleanWorktree -Tree $candidateTree)) {
             $developQualificationRestored = Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree
         }
+        if ($RequireRelease -and -not $developQualificationRestored) {
+            $candidateCommit = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
+            $developQualificationRestored = Restore-DeliveryContinuationQualification -CandidateRoot $worktree.path -Commit $candidateCommit -Tree $candidateTree
+        }
         if (-not ($RequireRelease -and $developQualificationRestored)) {
             Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path
             [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
         }
         if ($RequireRelease) {
             Invoke-SourceGate -Mode "Release" -WorkingRoot $worktree.path
+            [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
         }
 
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()

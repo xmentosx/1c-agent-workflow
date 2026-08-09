@@ -189,6 +189,41 @@ Describe "Source develop queue and delivery" {
             Test-Path -LiteralPath (Join-Path $fixture.root ".git\itl\qualifications\$tree\develop.json") | Should -BeTrue
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
+    It "imports an ancestor qualification after exact Targeted harness tests and resumes at Release" {
+        $fixture = $null
+        try {
+            $fixture = New-DeliveryFixture
+            New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
+            $catalog = [ordered]@{ continuationScopes = [ordered]@{ static = @("tests/pester/*"); gate = @(); develop = @(); release = @() } }
+            [IO.File]::WriteAllText((Join-Path $fixture.root "tests\quality-contracts.json"), (($catalog | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add --all; & git -C $fixture.root commit -m "test: add continuation catalog" *> $null
+            & git -C $fixture.root push --quiet origin develop *> $null
+            $qualifiedCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            $qualifiedTree = (& git -C $fixture.root rev-parse 'HEAD^{tree}').Trim()
+            $cache = Join-Path $fixture.root ".git\itl\qualifications\$qualifiedTree"
+            New-Item -ItemType Directory -Force -Path $cache | Out-Null
+            $qualification = [ordered]@{ status = "passed"; repository = [ordered]@{ commit = $qualifiedCommit; tree = $qualifiedTree } }
+            foreach ($name in @("full.json", "develop.json")) {
+                [IO.File]::WriteAllText((Join-Path $cache $name), (($qualification | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            }
+            Set-Content -LiteralPath (Join-Path $cache "develop-e2e-summary.json") -Encoding UTF8 -Value '{}'
+
+            Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\Harness.Tests.ps1") -Encoding UTF8 -Value "Describe 'harness repair' { It 'works' { `$true | Should -BeTrue } }"
+            & git -C $fixture.root add --all; & git -C $fixture.root commit -m "test: repair harness" *> $null
+            $candidateCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            $candidateTree = (& git -C $fixture.root rev-parse 'HEAD^{tree}').Trim()
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) | Out-Null
+            $runRoot = Join-Path $fixture.root ".git\itl\runs"
+            New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
+            $targeted = [ordered]@{ schemaVersion=1; mode="Targeted"; status="passed"; exitCode=0; commit=$candidateCommit; tree=$candidateTree; finishedAt=[DateTime]::UtcNow.ToString("o"); stages=@([ordered]@{name="pester";status="passed"},[ordered]@{name="tracked-state";status="passed"},[ordered]@{name="git-diff-check";status="passed"}) }
+            [IO.File]::WriteAllText((Join-Path $runRoot "fixture-targeted-continuation.json"), (($targeted | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            Remove-Item -LiteralPath $fixture.modeLog -Force -ErrorAction SilentlyContinue
+
+            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'))
+            ($published.stdout | ConvertFrom-Json).releaseQualified | Should -BeTrue
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Release")
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
     It "preserves the queue when origin develop moves during qualification" {
         $fixture = $null; try {
             $fixture = New-DeliveryFixture
