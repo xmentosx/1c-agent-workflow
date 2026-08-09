@@ -99,6 +99,16 @@ func TestDesignerAgentSafeModeRejectsCanceledResult(t *testing.T) {
 	}
 }
 
+func TestDesignerAgentMessagesAcceptDataResultAndRejectNonTerminalInfo(t *testing.T) {
+	messages, err := parseDesignerMessages([]byte(`[{"type":"result","body":{"safeMode":false}}]`))
+	if err != nil || len(messages) != 1 || messages[0].Type != "result" {
+		t.Fatalf("Designer Agent data result was not accepted: messages=%#v err=%v", messages, err)
+	}
+	if _, err := parseDesignerMessages([]byte(`[{"type":"info","message":"still running"}]`)); err == nil {
+		t.Fatal("Designer Agent non-terminal info result was accepted")
+	}
+}
+
 func startDesignerAgentTestServer(t *testing.T, user, password string) (string, string, <-chan string, func()) {
 	t.Helper()
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -162,10 +172,12 @@ func startDesignerAgentTestServer(t *testing.T, user, password string) (string, 
 						}
 						received <- command
 						body := ""
+						messageType := "success"
 						if strings.Contains(command, "properties get") {
 							body = ",\"body\":{\"safeMode\":false}"
+							messageType = "result"
 						}
-						_, _ = channel.Write([]byte("[{\"type\":\"success\"" + body + ",\"message\":\"\"}]\r\n"))
+						_, _ = channel.Write([]byte("[{\"type\":\"" + messageType + "\"" + body + ",\"message\":\"\"}]\r\n"))
 						if command == "common shutdown" {
 							_ = channel.Close()
 							return

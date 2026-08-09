@@ -238,8 +238,9 @@ func parseDesignerMessages(output []byte) ([]designerAgentMessage, error) {
 	if len(messages) == 0 {
 		return nil, fmt.Errorf("Designer Agent returned an empty JSON result")
 	}
-	if strings.ToLower(messages[len(messages)-1].Type) != "success" {
-		return nil, fmt.Errorf("Designer Agent result has no terminal success message")
+	terminalType := strings.ToLower(messages[len(messages)-1].Type)
+	if terminalType != "success" && terminalType != "result" {
+		return nil, fmt.Errorf("Designer Agent result has unsupported terminal message type %q", messages[len(messages)-1].Type)
 	}
 	return messages, nil
 }
