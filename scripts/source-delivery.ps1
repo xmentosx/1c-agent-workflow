@@ -299,6 +299,35 @@ function Restore-DeliveryQualification {
     return $true
 }
 
+function Import-DeliveryQualificationFromCleanWorktree {
+    param([Parameter(Mandatory = $true)][string]$Tree)
+
+    $worktreeRoots = [System.Collections.Generic.List[string]]::new()
+    $worktreeRoots.Add($script:Root)
+    foreach ($line in @(& git -C $script:Root worktree list --porcelain)) {
+        if ($line -like "worktree *") { $worktreeRoots.Add($line.Substring(9)) }
+    }
+    foreach ($candidateRoot in @($worktreeRoots | Select-Object -Unique)) {
+        $candidateTree = (Invoke-WorktreeGit -Root $candidateRoot -Arguments @("rev-parse", "HEAD^{tree}") -AllowFailure)
+        if ($candidateTree.exitCode -ne 0 -or $candidateTree.stdout.Trim() -ne $Tree) { continue }
+        if (@(Get-RepositoryGitPathList -RepositoryRoot $candidateRoot -Arguments @("status", "--porcelain=v1", "-z", "--untracked-files=all")).Count -gt 0) { continue }
+        $qualificationRoot = Join-Path $candidateRoot "build\test-results\qualification"
+        $fullPath = Join-Path $qualificationRoot "full.json"
+        $developPath = Join-Path $qualificationRoot "develop.json"
+        $reportPath = Join-Path $qualificationRoot "develop-e2e-summary.json"
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf) -or -not (Test-Path -LiteralPath $developPath -PathType Leaf) -or -not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { continue }
+        try {
+            $full = Get-Content -LiteralPath $fullPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $develop = Get-Content -LiteralPath $developPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        } catch { continue }
+        if ([string]$full.status -ne "passed" -or [string]$full.repository.tree -ne $Tree -or
+            [string]$develop.status -ne "passed" -or [string]$develop.repository.tree -ne $Tree) { continue }
+        [void](Save-DeliveryQualification -CandidateRoot $candidateRoot -Tree $Tree)
+        return $true
+    }
+    return $false
+}
+
 function Archive-StaleDeliveryOperation {
     param([Parameter(Mandatory = $true)][object]$Operation)
     $workingRoot = [string]$Operation.workingRoot
@@ -416,6 +445,9 @@ function Publish-AccumulatedDevelop {
         Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries
         $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
         $developQualificationRestored = Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree
+        if ($RequireRelease -and -not $developQualificationRestored -and (Import-DeliveryQualificationFromCleanWorktree -Tree $candidateTree)) {
+            $developQualificationRestored = Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree
+        }
         if (-not ($RequireRelease -and $developQualificationRestored)) {
             Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path
             [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)

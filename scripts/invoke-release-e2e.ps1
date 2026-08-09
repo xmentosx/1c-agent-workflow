@@ -580,6 +580,9 @@ $executedStages = @()
 $invalidatedStages = @()
 $crossReleaseReuse = $false
 $previousWorkflowCommit = ""
+$previousRunnerSha256 = ""
+$releaseContinuationProof = $null
+$continuationBoundaryStage = ""
 $promotedCapabilityPath = ""
 $stageTimers = @{}
 
@@ -725,8 +728,20 @@ function Test-E2EStagePassed {
     if ([string]$record.status -ne "passed") { return $false }
     $expectedFingerprint = Get-E2EStageFingerprint -Name $Name
     if ([string]$record.fingerprint -ne $expectedFingerprint) {
-        $script:invalidatedStages += $Name
-        return $false
+        $stageOrder = @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp", "verification-refresh", "result-cleanup")
+        $stageIndex = [Array]::IndexOf($stageOrder, $Name)
+        $boundaryIndex = [Array]::IndexOf($stageOrder, $continuationBoundaryStage)
+        $legacyFingerprint = if ($previousRunnerSha256) { Get-E2EStageFingerprint -Name $Name -RunnerSha256 $previousRunnerSha256 } else { "" }
+        $canRebind = $crossReleaseReuse -and $releaseContinuationProof -and $boundaryIndex -ge 0 -and $stageIndex -ge 0 -and
+            $stageIndex -lt $boundaryIndex -and [string]$record.fingerprint -eq $legacyFingerprint
+        if ($canRebind) {
+            $record["fingerprint"] = $expectedFingerprint
+            $record["reuseReason"] = "exact Targeted continuation before failed stage '$continuationBoundaryStage'"
+            Write-E2ECheckpoint
+        } else {
+            $script:invalidatedStages += $Name
+            return $false
+        }
     }
     if ([string]$record.evidencePath) {
         try { Assert-E2ECheckpointFile -Path ([string]$record.evidencePath) -Sha256 ([string]$record.evidenceSha256) -Label "$Name evidence" }
@@ -1126,6 +1141,8 @@ $workflowRoot = Split-Path -Parent $PSScriptRoot
 $workflowCommit = (& git -C $workflowRoot rev-parse HEAD).Trim()
 $workflowTree = (& git -C $workflowRoot rev-parse 'HEAD^{tree}').Trim()
 if ($LASTEXITCODE -ne 0 -or -not $workflowCommit -or -not $workflowTree) { throw "Release workflow source is not a readable Git checkout: $workflowRoot" }
+. (Join-Path $PSScriptRoot "git-path-list.ps1")
+. (Join-Path $PSScriptRoot "release-qualification.ps1")
 $runnerSha256 = Get-E2EFileSha256 -Path $PSCommandPath
 $helperSha256 = Get-E2EFileSha256 -Path $HelperPath
 $projectConfigSha256 = Get-E2EFileSha256 -Path (Join-Path $worktreePath ".agent-1c\project.json")
@@ -1163,16 +1180,16 @@ function Get-E2EStageInputFiles {
 }
 
 function Get-E2EStageFingerprint {
-    param([string]$Name)
+    param([string]$Name, [string]$RunnerSha256 = $runnerSha256)
     $definition = $script:ReleaseE2EStageDefinitions[$Name]
     $inputs = @()
     foreach ($path in @(Get-E2EStageInputFiles -Name $Name)) {
         $inputs += [ordered]@{ path = $path.Substring($workflowRoot.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/'); sha256 = Get-E2EFileSha256 -Path $path }
     }
     $dependencies = @()
-    foreach ($dependency in @($definition.dependsOn)) { $dependencies += [ordered]@{ name = $dependency; fingerprint = Get-E2EStageFingerprint -Name $dependency } }
+    foreach ($dependency in @($definition.dependsOn)) { $dependencies += [ordered]@{ name = $dependency; fingerprint = Get-E2EStageFingerprint -Name $dependency -RunnerSha256 $RunnerSha256 } }
     $payload = [ordered]@{
-        name = $Name; version = [int]$definition.version; runnerSha256 = $runnerSha256; helperSha256 = $helperSha256
+        name = $Name; version = [int]$definition.version; runnerSha256 = $RunnerSha256; helperSha256 = $helperSha256
         aiRulesCommit = $aiRulesCommit; aiRulesTree = $aiRulesTree; projectConfigSha256 = $projectConfigSha256
         inputs = $inputs; dependencies = $dependencies
     }
@@ -1355,6 +1372,16 @@ if ($checkpoint) {
     if ($ResumeMode -eq "Auto" -and -not $releaseIdentityMatches) {
         $crossReleaseReuse = $true
         $previousWorkflowCommit = [string]$identity.workflowCommit
+        $previousRunnerSha256 = [string]$identity.runnerSha256
+        $releaseContinuationProof = Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit $previousWorkflowCommit -CurrentCommit $workflowCommit -CurrentTree $workflowTree
+        if ($releaseContinuationProof) {
+            foreach ($stageName in @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp", "verification-refresh", "result-cleanup")) {
+                if ($checkpoint["stages"].Contains($stageName) -and [string]$checkpoint["stages"][$stageName].status -ne "passed") {
+                    $continuationBoundaryStage = $stageName
+                    break
+                }
+            }
+        }
     }
     $currentHead = (& git -C $worktreePath rev-parse HEAD).Trim()
     if ($ResumeMode -eq "Auto" -and $currentHead -ne [string]$checkpoint["expectedHead"]) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: current HEAD '$currentHead' differs from checkpoint HEAD '$($checkpoint['expectedHead'])'." }
@@ -1868,7 +1895,7 @@ try {
     }
 
     $resultPassed = Test-E2EStagePassed -Name "result-cleanup"
-    if ($crossReleaseReuse) { $resultPassed = $false; $invalidatedStages += "result-cleanup" }
+    if ($checkpointWasResumed) { $resultPassed = $false; $invalidatedStages += "result-cleanup" }
     if (-not $resultPassed) {
         Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
         Set-E2EStageStatus -Name "result-cleanup" -Status "running"

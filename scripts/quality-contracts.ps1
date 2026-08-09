@@ -31,6 +31,18 @@ function Test-QualityContractCatalog {
         [Parameter(Mandatory = $true)][object]$Catalog
     )
 
+    $expectedContinuationScopes = @("develop", "gate", "release", "static")
+    $actualContinuationScopes = @($Catalog.continuationScopes.PSObject.Properties | ForEach-Object { [string]$_.Name } | Sort-Object -Unique)
+    if (($actualContinuationScopes -join "`n") -ne ($expectedContinuationScopes -join "`n")) {
+        throw "Quality contract continuationScopes must define exactly: $($expectedContinuationScopes -join ', ')."
+    }
+    foreach ($scopeName in $expectedContinuationScopes) {
+        $patterns = @($Catalog.continuationScopes.$scopeName | ForEach-Object { [string]$_ })
+        if ($patterns.Count -eq 0 -or @($patterns | Where-Object { -not $_ -or [IO.Path]::IsPathRooted($_) -or $_ -match '(^|[\\/])\.\.([\\/]|$)' }).Count -gt 0) {
+            throw "Quality contract continuation scope '$scopeName' must contain only non-empty repository-relative patterns."
+        }
+    }
+
     $ids = @($Catalog.contracts | ForEach-Object { [string]$_.id })
     if ($ids.Count -eq 0 -or @($ids | Sort-Object -Unique).Count -ne $ids.Count) { throw "Quality contracts must have unique non-empty ids." }
     foreach ($contract in @($Catalog.contracts)) {

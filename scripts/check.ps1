@@ -96,6 +96,7 @@ $parallelCompatibility = $null
 $releaseContextPath = ""
 $releaseContext = $null
 $releaseDevelopProof = $null
+$continuationProof = $null
 
 function Add-StageResult {
     param(
@@ -368,11 +369,17 @@ function Test-WorkflowQualification {
     if (-not (Test-Path $Path -PathType Leaf)) { return $null }
     try {
         $q = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ([int]$q.schemaVersion -notin @(1, 2) -or [string]$q.kind -ne "itl-workflow-full-qualification" -or [string]$q.status -ne "passed" -or -not [bool]$q.reusable) { return $null }
-        if ([string]$q.repository.tree -ne $Tree -or -not [bool]$q.repository.worktreeClean) { return $null }
+        if ([int]$q.schemaVersion -notin @(1, 2, 3) -or [string]$q.kind -ne "itl-workflow-full-qualification" -or [string]$q.status -ne "passed" -or -not [bool]$q.reusable) { return $null }
+        if (-not [bool]$q.repository.worktreeClean) { return $null }
+        if ([int]$q.schemaVersion -eq 3 -and -not (Test-RecordedWorkflowContinuation -Record $q.continuation -Commit ([string]$q.repository.commit) -Tree ([string]$q.repository.tree))) { return $null }
         $evidenceCommit = if ([int]$q.schemaVersion -ge 2 -and [string]$q.repository.evidenceCommit) { [string]$q.repository.evidenceCommit } else { [string]$q.repository.commit }
+        $continuation = $null
         $reuseKind = Get-WorkflowQualificationReuseKind -RepositoryRoot $repoRoot -SchemaVersion ([int]$q.schemaVersion) -QualifiedCommit ([string]$q.repository.commit) -EvidenceCommit $evidenceCommit -QualifiedTree ([string]$q.repository.tree) -CurrentCommit $Commit -CurrentTree $Tree
-        if (-not $reuseKind) { return $null }
+        if (-not $reuseKind) {
+            $continuation = Get-WorkflowContinuationProof -RepositoryRoot $repoRoot -QualifiedCommit ([string]$q.repository.commit) -CurrentCommit $Commit -CurrentTree $Tree
+            if (-not $continuation) { return $null }
+            $reuseKind = "targeted-continuation"
+        }
         if ([string]$q.fork.commit -ne [string]$ForkIdentity.commit -or [string]$q.fork.tree -ne [string]$ForkIdentity.tree -or
             [string]$q.fork.tag -ne [string]$ForkIdentity.tag -or [string]$q.fork.upstreamRef -ne [string]$ForkIdentity.upstreamRef -or
             [string]$q.fork.upstreamCommit -ne [string]$ForkIdentity.upstreamCommit) { return $null }
@@ -385,14 +392,16 @@ function Test-WorkflowQualification {
             [string]$q.environment.powershellEdition -ne [string]$PSVersionTable.PSEdition -or
             [string]$q.environment.pesterVersion -ne [string]$currentPester.Version -or
             [string]$q.environment.platform -ne $currentPlatform -or [string]$q.environment.os -ne $currentOs) { return $null }
-        $actualTests = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot "tests\pester") -Recurse -File -Filter "*.ps1" | ForEach-Object { Get-RelativeRepositoryPath -Path $_.FullName -Root $repoRoot })
-        if (-not (Test-HasExactInventory -Entries @($q.inventory.tests) -ActualPaths $actualTests -Root $repoRoot)) { return $null }
-        $requiredScripts = @(Get-WorkflowGateScriptPaths | ForEach-Object { Get-RelativeRepositoryPath -Path $_ -Root $repoRoot })
-        if (-not (Test-HasExactInventory -Entries @($q.inventory.scripts) -ActualPaths $requiredScripts -Root $repoRoot)) { return $null }
+        if (-not $continuation) {
+            $actualTests = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot "tests\pester") -Recurse -File -Filter "*.ps1" | ForEach-Object { Get-RelativeRepositoryPath -Path $_.FullName -Root $repoRoot })
+            if (-not (Test-HasExactInventory -Entries @($q.inventory.tests) -ActualPaths $actualTests -Root $repoRoot)) { return $null }
+            $requiredScripts = @(Get-WorkflowGateScriptPaths | ForEach-Object { Get-RelativeRepositoryPath -Path $_ -Root $repoRoot })
+            if (-not (Test-HasExactInventory -Entries @($q.inventory.scripts) -ActualPaths $requiredScripts -Root $repoRoot)) { return $null }
+        }
         $junit = if ([System.IO.Path]::IsPathRooted([string]$q.junit.path)) { [string]$q.junit.path } else { Join-Path $repoRoot ([string]$q.junit.path).Replace('/', '\') }
         if (-not (Test-Path $junit -PathType Leaf)) { return $null }
         if ((Get-FileHash -LiteralPath $junit -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$q.junit.sha256).ToLowerInvariant()) { return $null }
-        return [pscustomobject]@{ qualification = $q; reuseKind = $reuseKind; evidenceCommit = $evidenceCommit }
+        return [pscustomobject]@{ qualification = $q; reuseKind = $reuseKind; evidenceCommit = $evidenceCommit; continuation = $continuation }
     } catch { return $null }
 }
 
@@ -403,7 +412,8 @@ function Write-WorkflowQualification {
         [object]$Result,
         [string]$EvidenceCommit,
         [string]$ReuseKind,
-        [object]$SourceQualification = $null
+        [object]$SourceQualification = $null,
+        [object]$ContinuationProof = $null
     )
     $qualificationRoot = Split-Path -Parent $qualificationFullPath
     $qualificationJunitPath = Join-Path $qualificationRoot "pester.xml"
@@ -422,7 +432,7 @@ function Write-WorkflowQualification {
         }
     }
     $qualification = [ordered]@{
-        schemaVersion = 2
+        schemaVersion = $(if ($ContinuationProof) { 3 } else { 2 })
         kind = "itl-workflow-full-qualification"
         status = "passed"
         reusable = $true
@@ -443,6 +453,16 @@ function Write-WorkflowQualification {
         durationMs = [int64]$overallStopwatch.ElapsedMilliseconds
         error = $null
     }
+    if ($ContinuationProof) {
+        $qualification["continuation"] = [ordered]@{
+            qualifiedCommit = [string]$ContinuationProof.qualifiedCommit
+            paths = @($ContinuationProof.paths)
+            scopes = @($ContinuationProof.scopes)
+            targetedRunPath = [string]$ContinuationProof.targetedRunPath
+            targetedRunSha256 = [string]$ContinuationProof.targetedRunSha256
+            targetedFinishedAt = [string]$ContinuationProof.targetedFinishedAt
+        }
+    }
     [System.IO.File]::WriteAllText($qualificationFullPath, (($qualification | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
     return $qualification
 }
@@ -452,15 +472,54 @@ function Test-DevelopQualification {
     if (-not (Test-Path -LiteralPath $developQualificationFullPath -PathType Leaf) -or -not (Test-Path -LiteralPath $qualificationFullPath -PathType Leaf)) { return $null }
     try {
         $qualification = Get-Content -LiteralPath $developQualificationFullPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ([int]$qualification.schemaVersion -ne 1 -or [string]$qualification.kind -ne "itl-workflow-develop-qualification" -or [string]$qualification.status -ne "passed") { return $null }
+        if ([int]$qualification.schemaVersion -notin @(1, 2) -or [string]$qualification.kind -ne "itl-workflow-develop-qualification" -or [string]$qualification.status -ne "passed") { return $null }
+        if ([int]$qualification.schemaVersion -eq 2 -and $qualification.PSObject.Properties["continuation"] -and -not (Test-RecordedWorkflowContinuation -Record $qualification.continuation -Commit ([string]$qualification.repository.commit) -Tree ([string]$qualification.repository.tree))) { return $null }
         $reuseKind = Get-WorkflowQualificationReuseKind -RepositoryRoot $repoRoot -SchemaVersion 2 -QualifiedCommit ([string]$qualification.repository.commit) -EvidenceCommit ([string]$qualification.repository.evidenceCommit) -QualifiedTree ([string]$qualification.repository.tree) -CurrentCommit $Commit -CurrentTree $Tree
-        if (-not $reuseKind) { return $null }
+        $continuation = $null
+        if (-not $reuseKind) {
+            $continuation = Get-WorkflowContinuationProof -RepositoryRoot $repoRoot -QualifiedCommit ([string]$qualification.repository.commit) -CurrentCommit $Commit -CurrentTree $Tree
+            if (-not $continuation -or @($continuation.scopes) -contains "develop") { return $null }
+            $reuseKind = "targeted-continuation"
+        }
         if ((Get-FileHash -LiteralPath $qualificationFullPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$qualification.fullQualificationSha256).ToLowerInvariant()) { return $null }
         $reportPath = if ([IO.Path]::IsPathRooted([string]$qualification.e2e.path)) { [string]$qualification.e2e.path } else { Join-Path $repoRoot ([string]$qualification.e2e.path).Replace('/', '\') }
         if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { return $null }
         if ((Get-FileHash -LiteralPath $reportPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$qualification.e2e.sha256).ToLowerInvariant()) { return $null }
-        return [pscustomobject]@{ qualification = $qualification; reuseKind = $reuseKind }
+        return [pscustomobject]@{ qualification = $qualification; reuseKind = $reuseKind; continuation = $continuation }
     } catch { return $null }
+}
+
+function Write-DevelopContinuationQualification {
+    param([string]$Commit, [string]$Tree, [object]$SourceProof, [object]$ContinuationProof)
+
+    $source = $SourceProof.qualification
+    $qualification = [ordered]@{
+        schemaVersion = 2
+        kind = "itl-workflow-develop-qualification"
+        status = "passed"
+        reusable = $true
+        repository = [ordered]@{
+            commit = $Commit
+            tree = $Tree
+            evidenceCommit = [string]$source.repository.evidenceCommit
+            evidenceTree = [string]$source.repository.tree
+            worktreeClean = $true
+            reuseKind = "targeted-continuation"
+        }
+        fullQualificationSha256 = (Get-FileHash -LiteralPath $qualificationFullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        e2e = $source.e2e
+        continuation = [ordered]@{
+            qualifiedCommit = [string]$ContinuationProof.qualifiedCommit
+            paths = @($ContinuationProof.paths)
+            scopes = @($ContinuationProof.scopes)
+            targetedRunPath = [string]$ContinuationProof.targetedRunPath
+            targetedRunSha256 = [string]$ContinuationProof.targetedRunSha256
+            targetedFinishedAt = [string]$ContinuationProof.targetedFinishedAt
+        }
+        finishedAt = [DateTime]::UtcNow.ToString("o")
+    }
+    [IO.File]::WriteAllText($developQualificationFullPath, (($qualification | ConvertTo-Json -Depth 10) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    return $qualification
 }
 
 function Write-DevelopQualification {
@@ -541,6 +600,7 @@ try {
             $reuseQualification = $true
             $existingQualification = $qualificationMatch.qualification
             $qualificationReuseKind = [string]$qualificationMatch.reuseKind
+            $continuationProof = $qualificationMatch.continuation
             $qualifiedResult = $existingQualification.result
             $pesterVersion = [string]$existingQualification.environment.pesterVersion
         }
@@ -558,7 +618,12 @@ try {
     }
 
     if ($reuseQualification) {
-        Add-ReusedStage -Name "pester" -Reason $(if ($qualificationReuseKind -eq "ancestor-same-tree") { "ancestor same-tree Full qualification" } else { "exact clean Full qualification" }) -Detail $qualificationFullPath
+        $pesterReuseReason = switch ($qualificationReuseKind) {
+            "ancestor-same-tree" { "ancestor same-tree Full qualification" }
+            "targeted-continuation" { "ancestor Full qualification plus exact Targeted continuation" }
+            default { "exact clean Full qualification" }
+        }
+        Add-ReusedStage -Name "pester" -Reason $pesterReuseReason -Detail $qualificationFullPath
     } else {
         Invoke-GateStage -Name "pester" -Reason $(if ($effectiveMode -in @("Targeted", "Smoke")) { "$effectiveMode owner inventory" } else { "complete workflow inventory" }) -Body {
             if ($effectiveMode -in @("Targeted", "Smoke")) {
@@ -662,11 +727,17 @@ try {
         if ($aiRulesRelease -and $worktreeCleanAtStart) {
             if ($reuseQualification) {
                 $evidenceCommit = if ([string]$existingQualification.repository.evidenceCommit) { [string]$existingQualification.repository.evidenceCommit } else { [string]$existingQualification.repository.commit }
-                $existingQualification = Write-WorkflowQualification -Commit $commit -Tree $tree -Result $staticResult -EvidenceCommit $evidenceCommit -ReuseKind $qualificationReuseKind -SourceQualification $existingQualification
+                $existingQualification = Write-WorkflowQualification -Commit $commit -Tree $tree -Result $staticResult -EvidenceCommit $evidenceCommit -ReuseKind $qualificationReuseKind -SourceQualification $existingQualification -ContinuationProof $continuationProof
             } else {
                 $existingQualification = Write-WorkflowQualification -Commit $commit -Tree $tree -Result $staticResult -EvidenceCommit $commit -ReuseKind "executed" -SourceQualification $null
             }
         }
+    }
+
+    if ($effectiveMode -eq "Release" -and [string]$releaseDevelopProof.reuseKind -eq "targeted-continuation") {
+        [void](Write-DevelopContinuationQualification -Commit $commit -Tree $tree -SourceProof $releaseDevelopProof -ContinuationProof $releaseDevelopProof.continuation)
+        $releaseDevelopProof = Test-DevelopQualification -Commit $commit -Tree $tree
+        if (-not $releaseDevelopProof) { throw "Release continuation did not materialize an exact reusable Develop qualification." }
     }
 
     if ($effectiveMode -eq "Develop") {

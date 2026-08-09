@@ -25,17 +25,17 @@
         $root = Join-Path ([IO.Path]::GetTempPath()) ("itl delivery путь " + [guid]::NewGuid().ToString("N"))
         $remote = Join-Path ([IO.Path]::GetTempPath()) ("itl-delivery-remote-" + [guid]::NewGuid().ToString("N") + ".git")
         New-Item -ItemType Directory -Force -Path $root | Out-Null
-        & git init --bare $remote *> $null
-        & git -C $root init *> $null
+        & git init --quiet --bare $remote *> $null
+        & git -C $root init --quiet *> $null
         & git -C $root config user.name "ITL Test"
         & git -C $root config user.email "itl-test@example.invalid"
-        & git -C $root switch -c develop *> $null
+        & git -C $root switch --quiet -c develop *> $null
         Set-Content -LiteralPath (Join-Path $root ".gitignore") -Encoding UTF8 -Value "build/"
         Set-Content -LiteralPath (Join-Path $root "README.md") -Encoding UTF8 -Value "base"
         & git -C $root add .gitignore README.md
-        & git -C $root commit -m base *> $null
+        & git -C $root commit --quiet -m base *> $null
         & git -C $root remote add origin $remote
-        & git -C $root push -u origin develop *> $null
+        & git -C $root push --quiet -u origin develop *> $null
         $fakeGate = Join-Path $root "fake-gate.ps1"
         Set-Content -LiteralPath $fakeGate -Encoding UTF8 -Value @'
 param([string]$Mode, [string]$BaseRef, [string[]]$CoverageContract, [string]$AiRulesSource, [string]$E2EProjectRoot, [string]$ReleaseResumeMode); $CoverageContract = @($CoverageContract -split ','); if ($CoverageContract -and @($CoverageContract).Count -ne 2) { exit 12 }
@@ -52,8 +52,8 @@ if ($Mode -eq 'Release' -and $env:ITL_TEST_FAIL_DELIVERY_RELEASE -eq 'true') { e
 exit 0
 '@
         & git -C $root add fake-gate.ps1
-        & git -C $root commit -m "test: add gate" *> $null
-        & git -C $root push origin develop *> $null
+        & git -C $root commit --quiet -m "test: add gate" *> $null
+        & git -C $root push --quiet origin develop *> $null
         return [pscustomobject]@{ root = $root; remote = $remote; gate = $fakeGate; modeLog = (Join-Path $root 'build\gate-modes.log'); releaseResumeLog = (Join-Path $root 'build\gate-release-resume.log'); base = (& git -C $root rev-parse HEAD).Trim() }
     }
     function Remove-DeliveryFixture {
@@ -165,6 +165,29 @@ Describe "Source develop queue and delivery" {
             $env:ITL_TEST_FAIL_DELIVERY_RELEASE = $oldFailure
             Remove-DeliveryFixture -Fixture $fixture
         }
+    }
+    It "imports an exact-tree continuation qualification from a clean worktree and resumes at Release" {
+        $fixture = $null
+        try {
+            $fixture = New-DeliveryFixture
+            New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
+            Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\Continuation.Tests.ps1") -Encoding UTF8 -Value "Describe 'continuation' { It 'works' { `$true | Should -BeTrue } }"
+            & git -C $fixture.root add --all; & git -C $fixture.root commit -m "test: continuation candidate" *> $null
+            $tree = (& git -C $fixture.root rev-parse 'HEAD^{tree}').Trim()
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) | Out-Null
+            Remove-Item -LiteralPath $fixture.modeLog -Force -ErrorAction SilentlyContinue
+
+            $qualification = Join-Path $fixture.root "build\test-results\qualification"
+            New-Item -ItemType Directory -Force -Path $qualification | Out-Null
+            [IO.File]::WriteAllText((Join-Path $qualification "full.json"), (([ordered]@{status="passed";repository=[ordered]@{tree=$tree}} | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $qualification "develop.json"), (([ordered]@{status="passed";repository=[ordered]@{tree=$tree}} | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            Set-Content -LiteralPath (Join-Path $qualification "develop-e2e-summary.json") -Encoding UTF8 -Value '{}'
+
+            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'))
+            ($published.stdout | ConvertFrom-Json).releaseQualified | Should -BeTrue
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Release")
+            Test-Path -LiteralPath (Join-Path $fixture.root ".git\itl\qualifications\$tree\develop.json") | Should -BeTrue
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
     It "preserves the queue when origin develop moves during qualification" {
         $fixture = $null; try {

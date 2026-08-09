@@ -12,6 +12,36 @@
     "releaseTargetSeconds": 3600,
     "releaseHardSeconds": 7200
   },
+  "continuationScopes": {
+    "static": [
+      "tests/pester/*",
+      "tests/node/*",
+      "tests/fixtures/*"
+    ],
+    "gate": [
+      "scripts/check.ps1",
+      "scripts/release-qualification.ps1",
+      "scripts/source-delivery.ps1",
+      "scripts/git-path-list.ps1",
+      "scripts/quality-contracts.ps1",
+      "scripts/resolve-targeted-tests.ps1",
+      "scripts/invoke-pester-*.ps1",
+      "scripts/run-pester-*.ps1",
+      "scripts/test.ps1",
+      "scripts/pester-timings.json",
+      "tests/quality-contracts.json",
+      "docs/local-quality-gate.md"
+    ],
+    "develop": [
+      "scripts/invoke-develop-e2e.ps1",
+      "scripts/develop-e2e-cleanup.ps1"
+    ],
+    "release": [
+      "scripts/invoke-release-e2e.ps1",
+      "scripts/release-e2e/*",
+      "tools/itl-ondemand-mcp/cmd/itl-ondemand-probe/*"
+    ]
+  },
   "smokeTests": [
     "tests/pester/LocalQualityGate.Tests.ps1",
     "tests/pester/SourceDelivery.Tests.ps1",
@@ -103,7 +133,7 @@
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/McpConfig.Tests.ps1",
-      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1", ".agents/skills/1c-workflow/assets/ondemand-mcp/*", "mcp-host/*", "vibecoding1c-mcp-host/*", "tools/*"],
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1", ".agents/skills/1c-workflow/assets/ondemand-mcp/*", "mcp-host/*", "vibecoding1c-mcp-host/*", "tools/*", "tests/node/*"],
       "tests": ["tests/pester/McpConfig.Tests.ps1", "tests/pester/OnDemandMcp.Tests.ps1", "tests/pester/HostTooling.Tests.ps1"]
     },
     {
