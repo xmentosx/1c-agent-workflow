@@ -148,9 +148,6 @@ func executeDesignerAgentRequest(ctx context.Context, request *designerAgentRequ
 	if err != nil {
 		return nil, fmt.Errorf("ITL_DESIGNER_AGENT_SESSION_FAILED: %w", err)
 	}
-	if err := session.RequestPty("xterm", 80, 40, ssh.TerminalModes{ssh.ECHO: 0}); err != nil {
-		return nil, fmt.Errorf("ITL_DESIGNER_AGENT_SESSION_FAILED: %w", err)
-	}
 	if err := session.Shell(); err != nil {
 		return nil, fmt.Errorf("ITL_DESIGNER_AGENT_SESSION_FAILED: %w", err)
 	}

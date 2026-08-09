@@ -146,7 +146,7 @@ func startDesignerAgentTestServer(t *testing.T, user, password string) (string, 
 			for request := range channelRequests {
 				switch request.Type {
 				case "pty-req":
-					request.Reply(true, nil)
+					request.Reply(false, nil)
 				case "shell":
 					request.Reply(true, nil)
 					_, _ = channel.Write([]byte("1C Designer Shell\r\ndesigner>"))
