@@ -1766,6 +1766,17 @@
         $body | Should -Match ([regex]::Escape("-Operation refreshed -LoadResult `$loadResult"))
     }
 
+    It "synchronizes the pinned Vanessa runtime before refreshing a branch infobase" {
+        $match = [regex]::Match($HelperText, "(?s)function\s+Invoke-RefreshDevBranchCore\s*\{(?<body>.*?)(?=`r?`nfunction\s+Refresh-DevBranch\s*\{)")
+        $match.Success | Should -BeTrue
+        $body = $match.Groups["body"].Value
+        $installIndex = $body.IndexOf("Install-VanessaAutomation")
+        $loadIndex = $body.IndexOf("Load-ConfigFromFiles")
+
+        $installIndex | Should -BeGreaterOrEqual 0
+        $loadIndex | Should -BeGreaterThan $installIndex
+    }
+
     It "routes branch master synchronization through the main worktree helper first" {
         $match = [regex]::Match($HelperText, "(?s)function\s+Sync-Master\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
         $match.Success | Should -Be $true
@@ -4083,6 +4094,7 @@ if (`$?) { exit 0 } else { exit 1 }
             function Assert-DevBranchExtensionInitialized {}
             function Assert-CleanGit {}
             function Sync-DevBranchContextToDotEnv {}
+            function Install-VanessaAutomation {}
             function Invoke-DevBranchDefaultMcpSetup { param([object]$State) return $State }
             function Load-ConfigFromFiles { throw "simulated load failure after ConfigDumpInfo rollback" }
             function Complete-RefreshConfigDumpInfoPostcondition { $script:PostconditionCalls++ }

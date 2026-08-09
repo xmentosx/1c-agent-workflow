@@ -7433,6 +7433,7 @@ function Invoke-RefreshDevBranchCore {
         throw "REFRESH_MASTER_COMMIT_MISSING: the exact master SHA was not preserved across the merge."
     }
     Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
+    Install-VanessaAutomation
     Set-RunStage -Stage "refresh.load" -Detail "Updating the branch infobase after the merge."
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     $trackedKiloSnapshot = New-RefreshTrackedKiloConfigSnapshot
