@@ -46,7 +46,7 @@ function New-InventoryEntry {
     param([string]$Path, [string]$Root)
     return [ordered]@{
         path = Get-RelativeRepositoryPath -Path $Path -Root $Root
-        sha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+        sha256 = Get-CanonicalTextSha256 -Path $Path
     }
 }
 
@@ -317,7 +317,7 @@ function Test-HasExactInventory {
         foreach ($entry in @($Entries)) {
             $path = if ([System.IO.Path]::IsPathRooted([string]$entry.path)) { [string]$entry.path } else { Join-Path $Root ([string]$entry.path).Replace('/', '\') }
             if (-not (Test-Path $path -PathType Leaf)) { return $false }
-            if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$entry.sha256).ToLowerInvariant()) { return $false }
+            if ((Get-CanonicalTextSha256 -Path $path) -ne ([string]$entry.sha256).ToLowerInvariant()) { return $false }
         }
         return $true
     } catch { return $false }

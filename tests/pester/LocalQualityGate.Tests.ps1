@@ -56,6 +56,8 @@ Describe "Local quality gate contract" {
         $developProofIndex | Should -BeGreaterThan -1; $fullRewriteIndex | Should -BeGreaterThan $developProofIndex
         $check | Should -Match 'Add-ReusedStage -Name "develop-e2e"'
         $check | Should -Match 'Test-HasExactInventory'
+        $check | Should -Match 'sha256 = Get-CanonicalTextSha256 -Path \$Path'
+        $check | Should -Match '\(Get-CanonicalTextSha256 -Path \$path\) -ne'
         $check | Should -Match 'static-tracked-state'; $check | Should -Match ([regex]::Escape("-split ','"))
         $qualification | Should -Match 'merge-base --is-ancestor'
         $promoter | Should -Match 'qualificationSha256'
