@@ -5450,7 +5450,6 @@ function Invoke-VanessaDesignerAgentClient {
     $startInfo.RedirectStandardInput = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
-    $startInfo.StandardInputEncoding = Get-Utf8Encoding
     $startInfo.StandardOutputEncoding = Get-Utf8Encoding
     $startInfo.StandardErrorEncoding = Get-Utf8Encoding
     $process = New-Object System.Diagnostics.Process
@@ -5461,7 +5460,9 @@ function Invoke-VanessaDesignerAgentClient {
         }
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        $process.StandardInput.Write($json)
+        $stdinBytes = (Get-Utf8Encoding).GetBytes($json)
+        $process.StandardInput.BaseStream.Write($stdinBytes, 0, $stdinBytes.Length)
+        $process.StandardInput.BaseStream.Flush()
         $process.StandardInput.Close()
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             $cleanup = Stop-NativeProcessForSafety -Process $process

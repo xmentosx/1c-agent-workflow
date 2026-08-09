@@ -17,6 +17,12 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $VanessaText | Should -Not -Match 'config extensions properties set[^\r\n]*unsafe-action-protection'
     }
 
+    It "writes Designer Agent input as UTF-8 bytes on Windows PowerShell 5.1" {
+        $VanessaText | Should -Not -Match 'StandardInputEncoding'
+        $VanessaText | Should -Match ([regex]::Escape('$stdinBytes = (Get-Utf8Encoding).GetBytes($json)'))
+        $VanessaText | Should -Match ([regex]::Escape('$process.StandardInput.BaseStream.Write($stdinBytes, 0, $stdinBytes.Length)'))
+    }
+
     It "records installation state only after both CFE loads and successful safe-mode proof" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -116,7 +122,7 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
 
     It "passes credentials only through stdin JSON and refuses cleanup after PID identity changes" {
         $VanessaText | Should -Match '\.Arguments = "designer-agent-safe-mode"'
-        $VanessaText | Should -Match '\$process\.StandardInput\.Write\(\$json\)'
+        $VanessaText | Should -Match '\$process\.StandardInput\.BaseStream\.Write\(\$stdinBytes, 0, \$stdinBytes\.Length\)'
         $VanessaText | Should -Not -Match '\.Arguments\s*=\s*[^\r\n]*(?:password|IB_PASSWORD)'
 
         $result = & {
