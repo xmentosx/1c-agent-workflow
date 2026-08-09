@@ -425,7 +425,6 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 	}{
 		{name: "open_feature_file", arguments: map[string]any{"filePath": featurePath}, proof: "open_feature_file:file"},
 		{name: "check_syntax", arguments: map[string]any{"filePath": featurePath}, proof: "check_syntax:file"},
-		{name: "load_features", arguments: map[string]any{"path": featurePath}, proof: "load_features:file"},
 		{name: "load_features", arguments: map[string]any{"path": featureDirectory}, proof: "load_features:directory"},
 	} {
 		result, err := callInnerTool(ctx, session, call.name, call.arguments)

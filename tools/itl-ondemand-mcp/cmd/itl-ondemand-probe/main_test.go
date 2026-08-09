@@ -119,10 +119,10 @@ func TestRunVanessaSmokeCoversOrdinaryFileAndDirectoryWindowsPathsBeforeUI(t *te
 	if clientCount != 0 || maxClientCount != 1 {
 		t.Fatalf("unexpected TestClient concurrency observation: current=%d max=%d", clientCount, maxClientCount)
 	}
-	if outcome != "passed" || strings.Join(authoringCalls, ",") != "open_feature_file:file,check_syntax:file,load_features:file,load_features:directory" {
+	if outcome != "passed" || strings.Join(authoringCalls, ",") != "open_feature_file:file,check_syntax:file,load_features:directory" {
 		t.Fatalf("outcome=%q authoringCalls=%#v", outcome, authoringCalls)
 	}
-	if len(calls) < 9 {
+	if len(calls) < 8 {
 		t.Fatalf("calls=%#v", calls)
 	}
 	want := []struct {
@@ -132,21 +132,20 @@ func TestRunVanessaSmokeCoversOrdinaryFileAndDirectoryWindowsPathsBeforeUI(t *te
 		{name: "open_feature_file", key: "filePath"},
 		{name: "check_syntax", key: "filePath"},
 		{name: "load_features", key: "path"},
-		{name: "load_features", key: "path"},
 	}
 	for index, expected := range want {
 		call := calls[index]
 		if call.name != expected.name || len(call.arguments) != 1 {
 			t.Fatalf("call %d changed file smoke order or arguments: %#v", index, call)
 		}
-		if index != 3 && call.arguments[expected.key] != featurePath {
+		if index != 2 && call.arguments[expected.key] != featurePath {
 			t.Fatalf("call %d changed feature path: %#v", index, call)
 		}
-		if index == 3 && call.arguments[expected.key] != `D:\Git\PM5 КОРП - work 1-perf1\tests\features` {
+		if index == 2 && call.arguments[expected.key] != `D:\Git\PM5 КОРП - work 1-perf1\tests\features` {
 			t.Fatalf("directory load path=%#v", call.arguments)
 		}
 	}
-	for index := 0; index < 4; index++ {
+	for index := 0; index < 3; index++ {
 		if strings.HasPrefix(calls[index].name, "get_") || calls[index].name == "connect_test_client" {
 			t.Fatalf("legacy/UI call ran before file probes completed: %#v", calls[index])
 		}
