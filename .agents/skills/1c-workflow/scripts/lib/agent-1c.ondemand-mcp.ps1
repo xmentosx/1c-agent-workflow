@@ -990,8 +990,8 @@ function Start-ItlOnDemandBackendInstance {
                 -InfoBaseKind $serviceInfoBase.kind `
                 -UseTestManager `
                 -TestClientPort $testClientPort `
-                -User "" `
-                -Password "" `
+                -User $serviceInfoBase.user `
+                -Password $serviceInfoBase.password `
                 -EnterpriseArgs @("/Execute", $vanessa.epfPath, "/C$command")
         }
         $process = Get-Process -Id $result.process.Id -ErrorAction Stop

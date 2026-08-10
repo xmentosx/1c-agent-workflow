@@ -2,6 +2,7 @@
 *.cf
 *.cfe
 *.dt
+!.agents/skills/1c-workflow/assets/vanessa-service/service-infobase.dt
 *.log
 *.zip
 build/

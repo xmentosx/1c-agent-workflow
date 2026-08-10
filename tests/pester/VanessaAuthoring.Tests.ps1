@@ -120,7 +120,10 @@
             & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlVanessaLibraries }
             $navigationLibrary = Join-Path $tempRoot "tests\features\Libraries\ITL\Core\NavigationLinks.feature"
             Test-Path -LiteralPath $navigationLibrary | Should -BeTrue
-            (Get-Content -LiteralPath $navigationLibrary -Raw -Encoding UTF8) | Should -Match 'TestClient'
+            $navigationText = Get-Content -LiteralPath $navigationLibrary -Raw -Encoding UTF8
+            $navigationText | Should -Match 'TestClient'
+            ($navigationText -cmatch '(?m)^@ExportScenarios\s*$') | Should -BeTrue
+            ($navigationText -cmatch '(?m)^@exportscenarios\s*$') | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $tempRoot "tests\features\Libraries\ITL\PM4\README.md") | Should -BeTrue
             Test-Path -LiteralPath (Join-Path $tempRoot "tests\features\Libraries\ITL\PM5") | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $tempRoot "tests\features\Libraries\Product\keep.feature") | Should -BeTrue

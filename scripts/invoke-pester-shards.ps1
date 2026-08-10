@@ -180,7 +180,7 @@ function Get-ShardCacheEntryRoot {
 }
 
 function Restore-ShardCache {
-    param([string]$Digest, [string]$ResultPath, [string]$JunitPath)
+    param([string]$Digest, [string]$ResultPath, [string]$JunitPath, [int]$Worker, [string]$TestPath)
     $entryRoot = Get-ShardCacheEntryRoot -Digest $Digest
     if (-not $entryRoot) { return $null }
     $cachedResult = Join-Path $entryRoot "result.json"; $cachedJunit = Join-Path $entryRoot "pester.xml"
@@ -188,6 +188,8 @@ function Restore-ShardCache {
         $result = Get-Content -LiteralPath $cachedResult -Raw -Encoding UTF8 | ConvertFrom-Json
         if ([string]$result.status -ne "passed" -or [int]$result.failed -ne 0) { return $null }
         Copy-Item -LiteralPath $cachedJunit -Destination $JunitPath -Force
+        $result | Add-Member -NotePropertyName worker -NotePropertyValue $Worker -Force
+        $result.paths = @($TestPath)
         $result.junitPath = $JunitPath
         $result | Add-Member -NotePropertyName execution -NotePropertyValue "reused" -Force
         $result | Add-Member -NotePropertyName cachedDurationMs -NotePropertyValue ([int64]$result.durationMs) -Force
@@ -271,6 +273,8 @@ foreach ($item in $items) {
                 [string]$priorResult.status -eq "passed" -and [int]$priorResult.failed -eq 0) {
                 $priorResult | Add-Member -NotePropertyName execution -NotePropertyValue "executed" -Force
                 $priorResult | Add-Member -NotePropertyName inputDigest -NotePropertyValue $digest -Force
+                $priorResult | Add-Member -NotePropertyName worker -NotePropertyValue $index -Force
+                $priorResult.paths = @([string]$item.path)
                 [IO.File]::WriteAllText($resultPath, (($priorResult | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
                 Save-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit
             }
@@ -280,7 +284,7 @@ foreach ($item in $items) {
     [System.IO.File]::WriteAllText($stdinPath, "", [System.Text.UTF8Encoding]::new($false))
     $payload = [ordered]@{ schemaVersion = 1; worker = $index; estimatedSeconds = [double]$item.weight; inputDigest = $digest; paths = @([string]$item.path) }
     [System.IO.File]::WriteAllText($planPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
-    $cached = Restore-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit
+    $cached = Restore-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit -Worker $index -TestPath ([string]$item.path)
     if ($cached) { $cached | Add-Member -NotePropertyName reuseReason -NotePropertyValue "exact owner input fingerprint" -Force }
     $entry = [pscustomobject]@{
         worker = $index; serial = [bool]$item.serial; process = $null; reused = [bool]$cached; digest = $digest

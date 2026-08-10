@@ -1,6 +1,6 @@
 #language: ru
 
-@exportscenarios
+@ExportScenarios
 Функционал: Универсальные операции с навигационными ссылками
 
 Контекст:

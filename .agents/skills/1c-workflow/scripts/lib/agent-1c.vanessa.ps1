@@ -2552,19 +2552,138 @@ function ConvertFrom-Utf8Base64 {
 }
 
 function Get-VanessaServiceInfoBasePath {
-    param([object]$State)
+    param(
+        [object]$State,
+        [Parameter(Mandatory = $true)][string]$Generation
+    )
 
     $saved = [string](Get-StateValue -State $State -Name "vanessaServiceInfoBasePath" -Default "")
-    if (-not [string]::IsNullOrWhiteSpace($saved)) {
-        return (Resolve-Agent1cFullPath -Path $saved)
+    $savedSchema = [int](Get-StateValue -State $State -Name "vanessaServiceInfoBaseSchemaVersion" -Default 0)
+    $savedGeneration = [string](Get-StateValue -State $State -Name "vanessaServiceInfoBaseGeneration" -Default "")
+    if ($savedSchema -ge 3 -and $savedGeneration -ceq $Generation -and
+        -not [string]::IsNullOrWhiteSpace($saved)) {
+        $resolvedSaved = Resolve-Agent1cFullPath -Path $saved
+        $expected = Resolve-ProjectPath (".agent-1c/infobases/vanessa-service-" + $Generation)
+        if (-not [string]::Equals($resolvedSaved, $expected, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "ITL_VANESSA_SERVICE_INFOBASE_PATH_INVALID: saved='$resolvedSaved' expected='$expected'."
+        }
+        return $resolvedSaved
     }
-    return (Resolve-ProjectPath ".agent-1c/infobases/vanessa-service")
+    if ($Generation -notmatch '^[a-f0-9]{32}$') {
+        throw "ITL_VANESSA_SERVICE_INFOBASE_GENERATION_INVALID: '$Generation'."
+    }
+    return (Resolve-ProjectPath (".agent-1c/infobases/vanessa-service-" + $Generation))
+}
+
+function Get-VanessaSelectedScenarioCount {
+    param(
+        [string[]]$FeatureFiles,
+        [string]$FilterTags = ""
+    )
+
+    $filters = @(ConvertTo-VanessaTagFilterList -Value $FilterTags)
+    $wanted = @{}
+    foreach ($filter in $filters) { $wanted[$filter.ToLowerInvariant()] = $true }
+
+    $count = 0
+    foreach ($scenario in @(Get-VanessaFeatureScenarioDefinitions -FeatureFiles $FeatureFiles)) {
+        if ($wanted.Count -gt 0) {
+            $selected = $false
+            foreach ($tag in @($scenario.tags)) {
+                if ($wanted.ContainsKey(([string]$tag).ToLowerInvariant())) {
+                    $selected = $true
+                    break
+                }
+            }
+            if (-not $selected) { continue }
+        }
+        if ($scenario.isOutline) {
+            $count += $scenario.exampleRows.Count
+        } else {
+            $count++
+        }
+    }
+    return $count
+}
+
+function Get-VanessaServiceInfoBaseTemplate {
+    $assetRoot = Resolve-Agent1cFullPath -Path (Join-Path $PSScriptRoot "..\..\assets\vanessa-service")
+    $manifestPath = Join-Path $assetRoot "manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "ITL_VANESSA_SERVICE_INFOBASE_TEMPLATE_MANIFEST_MISSING: '$manifestPath'."
+    }
+    try {
+        $manifest = Read-Utf8Text -Path $manifestPath | ConvertFrom-Json
+    } catch {
+        throw "ITL_VANESSA_SERVICE_INFOBASE_TEMPLATE_MANIFEST_INVALID: '$manifestPath': $($_.Exception.Message)"
+    }
+    $artifactName = [string](Get-StateValue -State $manifest -Name "artifact" -Default "")
+    $expectedSha256 = [string](Get-StateValue -State $manifest -Name "sha256" -Default "")
+    $user = [string](Get-StateValue -State $manifest -Name "serviceUser" -Default "")
+    if ([int](Get-StateValue -State $manifest -Name "schemaVersion" -Default 0) -ne 1 -or
+        $artifactName -cne "service-infobase.dt" -or
+        $expectedSha256 -notmatch '^[a-f0-9]{64}$' -or
+        [string]::IsNullOrWhiteSpace($user) -or
+        [bool](Get-StateValue -State $manifest -Name "passwordRequired" -Default $true) -or
+        -not [bool](Get-StateValue -State $manifest -Name "unsafeActionProtectionDisabled" -Default $false)) {
+        throw "ITL_VANESSA_SERVICE_INFOBASE_TEMPLATE_MANIFEST_INVALID: '$manifestPath' does not describe the qualified service template."
+    }
+    $artifactPath = Join-Path $assetRoot $artifactName
+    if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "ITL_VANESSA_SERVICE_INFOBASE_TEMPLATE_MISSING: '$artifactPath'."
+    }
+    $actualSha256 = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualSha256 -cne $expectedSha256) {
+        throw "ITL_VANESSA_SERVICE_INFOBASE_TEMPLATE_HASH_MISMATCH: expected='$expectedSha256' actual='$actualSha256' path='$artifactPath'."
+    }
+    return [pscustomobject][ordered]@{
+        path = $artifactPath
+        sha256 = $actualSha256
+        user = $user
+        password = ""
+    }
 }
 
 function Ensure-VanessaServiceInfoBase {
     param([Parameter(Mandatory = $true)][object]$State)
 
-    $path = Get-VanessaServiceInfoBasePath -State $State
+    $template = Get-VanessaServiceInfoBaseTemplate
+    $savedSchema = [int](Get-StateValue -State $State -Name "vanessaServiceInfoBaseSchemaVersion" -Default 0)
+    $savedGeneration = [string](Get-StateValue -State $State -Name "vanessaServiceInfoBaseGeneration" -Default "")
+    $savedTemplateSha256 = [string](Get-StateValue -State $State -Name "vanessaServiceInfoBaseTemplateSha256" -Default "")
+    $savedUser = [string](Get-StateValue -State $State -Name "vanessaServiceInfoBaseUser" -Default "")
+    $savedPath = [string](Get-StateValue -State $State -Name "vanessaServiceInfoBasePath" -Default "")
+    $markerMatches = $false
+    $savedPathIsOwned = $false
+    if ($savedGeneration -match '^[a-f0-9]{32}$' -and -not [string]::IsNullOrWhiteSpace($savedPath)) {
+        $expectedSavedPath = Resolve-ProjectPath (".agent-1c/infobases/vanessa-service-" + $savedGeneration)
+        $savedPathIsOwned = [string]::Equals(
+            (Resolve-Agent1cFullPath -Path $savedPath),
+            $expectedSavedPath,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    }
+    if ($savedPathIsOwned) {
+        $savedMarkerPath = Join-Path (Resolve-Agent1cFullPath -Path $savedPath) ".itl-service-template.json"
+        if (Test-Path -LiteralPath $savedMarkerPath -PathType Leaf -ErrorAction SilentlyContinue) {
+            try {
+                $savedMarker = Read-Utf8Text -Path $savedMarkerPath | ConvertFrom-Json
+                $markerMatches = (
+                    [int](Get-StateValue -State $savedMarker -Name "schemaVersion" -Default 0) -eq 1 -and
+                    [string](Get-StateValue -State $savedMarker -Name "generation" -Default "") -ceq $savedGeneration -and
+                    [string](Get-StateValue -State $savedMarker -Name "templateSha256" -Default "") -ceq $template.sha256 -and
+                    [string](Get-StateValue -State $savedMarker -Name "serviceUser" -Default "") -ceq $template.user
+                )
+            } catch {
+                $markerMatches = $false
+            }
+        }
+    }
+    $canReuse = ($savedSchema -ge 3 -and $savedGeneration -match '^[a-f0-9]{32}$' -and
+        $savedTemplateSha256 -ceq $template.sha256 -and $savedUser -ceq $template.user -and
+        $savedPathIsOwned -and $markerMatches)
+    $generation = $(if ($canReuse) { $savedGeneration } else { [guid]::NewGuid().ToString("N") })
+    $path = Get-VanessaServiceInfoBasePath -State $State -Generation $generation
     $databasePath = Join-Path $path "1Cv8.1CD"
     $created = $false
     if (-not (Test-Path -LiteralPath $databasePath -PathType Leaf -ErrorAction SilentlyContinue)) {
@@ -2605,22 +2724,132 @@ function Ensure-VanessaServiceInfoBase {
         $created = $true
     }
 
-    $savedPath = [string](Get-StateValue -State $State -Name "vanessaServiceInfoBasePath" -Default "")
+    $restored = $false
+    if ($created) {
+        Write-Host "Restoring qualified Vanessa service infobase template: $($template.path)"
+        try {
+            Invoke-Designer `
+                -InfoBasePath $path `
+                -InfoBaseKind "file" `
+                -User "" `
+                -Password "" `
+                -DesignerArgs @("/RestoreIB", $template.path) | Out-Null
+        } catch {
+            throw "ITL_VANESSA_SERVICE_INFOBASE_RESTORE_FAILED: path='$path' template='$($template.path)': $($_.Exception.Message)"
+        }
+        $marker = [ordered]@{
+            schemaVersion = 1
+            generation = $generation
+            templateSha256 = $template.sha256
+            serviceUser = $template.user
+        }
+        Write-Utf8TextAtomic `
+            -Path (Join-Path $path ".itl-service-template.json") `
+            -Value (($marker | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
+        $restored = $true
+    }
+
     $savedKind = [string](Get-StateValue -State $State -Name "vanessaServiceInfoBaseKind" -Default "")
-    $savedGeneration = [string](Get-StateValue -State $State -Name "vanessaServiceInfoBaseGeneration" -Default "")
-    $generation = $(if ($created -or [string]::IsNullOrWhiteSpace($savedGeneration)) { [guid]::NewGuid().ToString("N") } else { $savedGeneration })
     if ($created -or $savedKind -cne "file" -or [string]::IsNullOrWhiteSpace($savedPath) -or
-        [string]::IsNullOrWhiteSpace($savedGeneration) -or
+        $savedSchema -lt 3 -or [string]::IsNullOrWhiteSpace($savedGeneration) -or
+        $savedTemplateSha256 -cne $template.sha256 -or $savedUser -cne $template.user -or
         -not [string]::Equals((Resolve-Agent1cFullPath -Path $savedPath), $path, [System.StringComparison]::OrdinalIgnoreCase)) {
         Update-DevBranchState -State $State -Updates @{
             vanessaServiceInfoBaseKind = "file"
             vanessaServiceInfoBasePath = $path
             vanessaServiceInfoBaseGeneration = $generation
-            vanessaServiceInfoBaseSchemaVersion = 1
+            vanessaServiceInfoBaseSchemaVersion = 3
+            vanessaServiceInfoBaseTemplateSha256 = $template.sha256
+            vanessaServiceInfoBaseUser = $template.user
             vanessaServiceInfoBaseUpdatedAt = (Get-Date).ToString("o")
         }
     }
-    return [pscustomobject][ordered]@{ kind = "file"; path = $path; generation = $generation; created = $created }
+    return [pscustomobject][ordered]@{
+        kind = "file"
+        path = $path
+        generation = $generation
+        created = $created
+        restored = $restored
+        templateSha256 = $template.sha256
+        user = $template.user
+        password = $template.password
+    }
+}
+
+function New-VanessaExecutionFeaturePath {
+    param(
+        [string]$FeaturePath,
+        [string]$RunDirectory,
+        [object]$TestClientTopology
+    )
+
+    $resolvedFeaturePath = Resolve-ProjectPath $FeaturePath
+    if ($null -eq $TestClientTopology -or [int]$TestClientTopology.requiredTestClientSlots -le 0) {
+        return $resolvedFeaturePath
+    }
+
+    $profiles = @($TestClientTopology.profiles)
+    if ($profiles.Count -eq 0) {
+        return $resolvedFeaturePath
+    }
+
+    $genericOpenPattern = '^(?<indent>[^\S\r\n]*)(?:Дано|И|Когда|Тогда|Но)[^\S\r\n]+Я[^\S\r\n]+запускаю[^\S\r\n]+сценарий[^\S\r\n]+открытия[^\S\r\n]+TestClient[^\S\r\n]+или[^\S\r\n]+подключаю[^\S\r\n]+уже[^\S\r\n]+существующий[^\S\r\n]*$'
+    $featureFiles = @(Get-VanessaFeatureFiles -FeaturePath $resolvedFeaturePath)
+    $filesToNormalize = New-Object System.Collections.Generic.List[string]
+    foreach ($featureFile in $featureFiles) {
+        $hasGenericOpener = @([System.IO.File]::ReadAllLines($featureFile) | Where-Object {
+            [regex]::IsMatch([string]$_, $genericOpenPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        }).Count -gt 0
+        if ($hasGenericOpener) {
+            $filesToNormalize.Add($featureFile)
+        }
+    }
+    if ($filesToNormalize.Count -eq 0) {
+        return $resolvedFeaturePath
+    }
+
+    $defaultProfileName = [string]$profiles[0].name
+    if ([string]::IsNullOrWhiteSpace($defaultProfileName) -or $defaultProfileName.Contains("'")) {
+        throw "ITL_VANESSA_DEFAULT_TESTCLIENT_PROFILE_INVALID: the first TestClient profile must have a non-empty name without a single quote when a scenario uses the generic TestClient opener. Use an explicit named-profile step instead."
+    }
+
+    $stagedRoot = Join-Path $RunDirectory "execution-features"
+    if (Test-Path -LiteralPath $resolvedFeaturePath -PathType Container) {
+        Copy-Item -LiteralPath $resolvedFeaturePath -Destination $stagedRoot -Recurse -Force
+        $stagedFeaturePath = $stagedRoot
+    } else {
+        New-Item -ItemType Directory -Force -Path $stagedRoot | Out-Null
+        $stagedFeaturePath = Join-Path $stagedRoot (Split-Path -Leaf $resolvedFeaturePath)
+        Copy-Item -LiteralPath $resolvedFeaturePath -Destination $stagedFeaturePath -Force
+    }
+
+    $normalizedCount = 0
+    foreach ($sourceFeatureFile in @($filesToNormalize.ToArray())) {
+        if (Test-Path -LiteralPath $resolvedFeaturePath -PathType Container) {
+            $relativePath = $sourceFeatureFile.Substring($resolvedFeaturePath.Length).TrimStart([char[]]@('\', '/'))
+            $stagedFeatureFile = Join-Path $stagedRoot $relativePath
+        } else {
+            $stagedFeatureFile = $stagedFeaturePath
+        }
+        $sourceLines = @([System.IO.File]::ReadAllLines($stagedFeatureFile))
+        $normalizedLines = New-Object System.Collections.Generic.List[string]
+        $changed = $false
+        foreach ($sourceLine in $sourceLines) {
+            $match = [regex]::Match([string]$sourceLine, $genericOpenPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            if ($match.Success) {
+                $normalizedLines.Add($match.Groups['indent'].Value + "И в таблице клиентов тестирования я активизирую строку '$defaultProfileName'")
+                $changed = $true
+            }
+            $normalizedLines.Add([string]$sourceLine)
+        }
+        if ($changed) {
+            [System.IO.File]::WriteAllLines($stagedFeatureFile, $normalizedLines.ToArray(), [System.Text.UTF8Encoding]::new($false))
+            $normalizedCount++
+        }
+    }
+
+    Write-Host "Vanessa generic TestClient opener normalized to product profile '$defaultProfileName' in $normalizedCount execution feature file(s); sources were not modified."
+    return $stagedFeaturePath
 }
 
 function New-VanessaParamsFile {
@@ -2636,7 +2865,10 @@ function New-VanessaParamsFile {
         [string]$FilterTags = $VanessaFilterTags
     )
 
-    $resolvedFeaturePath = Resolve-ProjectPath $FeaturePath
+    $resolvedFeaturePath = New-VanessaExecutionFeaturePath `
+        -FeaturePath $FeaturePath `
+        -RunDirectory $RunDirectory `
+        -TestClientTopology $TestClientTopology
     $infoBaseKind = Get-StateValue -State $State -Name "infoBaseKind" -Default (Get-InfoBaseKind)
     $infoBasePath = Require-Value "devBranchInfoBasePath" (Get-StateValue -State $State -Name "devBranchInfoBasePath")
     $windowSearchTimeout = ConvertTo-IntOrDefault -Value (Get-EnvValue -Name "VANESSA_TEST_WINDOW_SEARCH_TIMEOUT_SECONDS" -Default 60) -Default 60
@@ -2708,6 +2940,12 @@ function New-VanessaParamsFile {
     $params["Version"] = $VanessaVersion
     $params["Lang"] = "ru"
     $params["featurepath"] = $resolvedFeaturePath
+    $applicationFeatureFiles = if (Test-Path -LiteralPath $resolvedFeaturePath -PathType Container) {
+        @(Get-VanessaApplicationFeatureFiles -FeaturePath $resolvedFeaturePath)
+    } else {
+        @($resolvedFeaturePath)
+    }
+    $params["FeaturesToRun"] = @($applicationFeatureFiles)
     $params["projectpath"] = $script:ProjectRoot
     $params["gherkinlanguage"] = "ru"
     $params["createlogs"] = $true
@@ -2973,6 +3211,29 @@ function Assert-VanessaTagFilterJunitEvidence {
     }
     if ([int]$junit.tests -ne $ExpectedScenarioCount) {
         throw "ITL_VANESSA_TAG_FILTER_COUNT_MISMATCH: filter=$($normalizedTags -join ',') expected=$ExpectedScenarioCount actual=$($junit.tests)."
+    }
+    return [pscustomobject][ordered]@{
+        filterTags = @($normalizedTags)
+        expectedScenarioCount = $ExpectedScenarioCount
+        junitScenarioCount = [int]$junit.tests
+        files = @($junit.files)
+    }
+}
+
+function Assert-VanessaScenarioCountJunitEvidence {
+    param(
+        [string]$RunDirectory,
+        [int]$ExpectedScenarioCount,
+        [string]$FilterTags = ""
+    )
+
+    $normalizedTags = @(ConvertTo-VanessaTagFilterList -Value $FilterTags)
+    $junit = Get-VanessaJunitSummary -RunDirectory $RunDirectory
+    if (-not $junit.found) {
+        throw "ITL_VANESSA_SCENARIO_COUNT_EVIDENCE_MISSING: filter=$($normalizedTags -join ',') expected=$ExpectedScenarioCount JUnit was not found."
+    }
+    if ([int]$junit.tests -ne $ExpectedScenarioCount) {
+        throw "ITL_VANESSA_SCENARIO_COUNT_MISMATCH: filter=$($normalizedTags -join ',') expected=$ExpectedScenarioCount actual=$($junit.tests). Library/export scenarios must not execute as application tests."
     }
     return [pscustomobject][ordered]@{
         filterTags = @($normalizedTags)
@@ -3301,6 +3562,7 @@ function Run-DevBranchTests {
     Sync-DevBranchContextToDotEnv -State $state
     $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $state
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
+    $state = Ensure-VanessaMcpInstalled -State $state
 
     Assert-VanessaSourceBuildArchiveMatchesActivePin
     $vanessa = Get-VanessaAutomationState
@@ -3317,12 +3579,12 @@ function Run-DevBranchTests {
 
     try {
         $testClientTopology = Get-VanessaTestClientTopology -FeatureFiles $applicationFeatureFiles -FilterTags $VanessaFilterTags
-        $expectedFilteredScenarioCount = 0
-        if (@(ConvertTo-VanessaTagFilterList -Value $VanessaFilterTags).Count -gt 0) {
-            $expectedFilteredScenarioCount = Get-VanessaFilteredScenarioCount -FeatureFiles $applicationFeatureFiles -FilterTags $VanessaFilterTags
-            if ($expectedFilteredScenarioCount -le 0) {
+        $expectedScenarioCount = Get-VanessaSelectedScenarioCount -FeatureFiles $applicationFeatureFiles -FilterTags $VanessaFilterTags
+        if ($expectedScenarioCount -le 0) {
+            if (@(ConvertTo-VanessaTagFilterList -Value $VanessaFilterTags).Count -gt 0) {
                 throw "ITL_VANESSA_TAG_FILTER_NO_SCENARIOS: filter='$VanessaFilterTags' selected no scenarios."
             }
+            throw "ITL_VANESSA_APPLICATION_SCENARIOS_MISSING: no application scenarios were found outside the Libraries directory."
         }
     } catch {
         if ($_.Exception.Message -match '^ITL_VANESSA_TEST_FIXTURE_') {
@@ -3357,6 +3619,7 @@ function Run-DevBranchTests {
     Save-VanessaTestSettingsToDotEnv -Port $testPort
     Invoke-ForeignVanessaTestProcessPolicy -State $state -TestPort $testPort
     $state = Ensure-DevBranchEventLogBaseline -State $state
+    Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "Vanessa verification preflight" | Out-Null
 
     $runDirectory = New-VanessaRunDirectory
     $statusPath = Join-Path $runDirectory "status.json"
@@ -3411,6 +3674,8 @@ function Run-DevBranchTests {
         $logPath = Invoke-Enterprise `
             -InfoBasePath $serviceInfoBase.path `
             -InfoBaseKind $serviceInfoBase.kind `
+            -User $serviceInfoBase.user `
+            -Password $serviceInfoBase.password `
             -EnterpriseArgs $enterpriseArgs `
             -TestClientPort $testPort `
             -ExpectedSessionCount 1 `
@@ -3421,8 +3686,6 @@ function Run-DevBranchTests {
                 expectedChildRole = "test-client"
                 purpose = "vanessa-test-clients"
             }) `
-            -User "" `
-            -Password "" `
             -TimeoutSeconds $timeoutSeconds `
             -CompletionProbe {
                 $probeStatus = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
@@ -3505,23 +3768,23 @@ function Run-DevBranchTests {
         Update-DevBranchState -State $state -Updates $updates
         throw
     }
-
     Set-RunStage -Stage "vanessa.postprocess" -Detail "Cleaning up and reading JUnit and event-log evidence."
     $runFinishedAt = Get-Date
     $postProcessStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $verification = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
     $tagFilterEvidence = $null
-    if (@(ConvertTo-VanessaTagFilterList -Value $VanessaFilterTags).Count -gt 0) {
-        try {
-            $tagFilterEvidence = Assert-VanessaTagFilterJunitEvidence `
-                -RunDirectory $runDirectory `
-                -ExpectedScenarioCount $expectedFilteredScenarioCount `
-                -FilterTags $VanessaFilterTags
-        } catch {
-            $verification = [pscustomobject]@{
-                status = "failed"
-                reason = $_.Exception.Message
-            }
+    try {
+        $scenarioCountEvidence = Assert-VanessaScenarioCountJunitEvidence `
+            -RunDirectory $runDirectory `
+            -ExpectedScenarioCount $expectedScenarioCount `
+            -FilterTags $VanessaFilterTags
+        if (@(ConvertTo-VanessaTagFilterList -Value $VanessaFilterTags).Count -gt 0) {
+            $tagFilterEvidence = $scenarioCountEvidence
+        }
+    } catch {
+        $verification = [pscustomobject]@{
+            status = "failed"
+            reason = $_.Exception.Message
         }
     }
     try {
@@ -3588,7 +3851,7 @@ function Run-DevBranchTests {
         lastVanessaTestClientProfileCount = @($testClientTopology.profiles).Count
         lastVanessaTestClientDeclaredCeiling = $testClientTopology.declaredTestClientCeiling
         lastVanessaTestClientRequiredSlots = $testClientTopology.requiredTestClientSlots
-        lastVanessaTagFilterExpectedScenarioCount = $expectedFilteredScenarioCount
+        lastVanessaTagFilterExpectedScenarioCount = $(if (@(ConvertTo-VanessaTagFilterList -Value $VanessaFilterTags).Count -gt 0) { $expectedScenarioCount } else { 0 })
         lastVanessaTagFilterActualScenarioCount = $(if ($null -ne $tagFilterEvidence) { $tagFilterEvidence.junitScenarioCount } else { 0 })
         lastVanessaTestPid = $script:LastProcessId
         lastVanessaTimedOut = $script:LastProcessTimedOut
@@ -6034,8 +6297,8 @@ function Install-VanessaMcp {
         -ExtensionName "client_mcp" `
         -InfoBaseKind $serviceInfoBase.kind `
         -InfoBasePath $serviceInfoBase.path `
-        -User "" `
-        -Password ""
+        -User $serviceInfoBase.user `
+        -Password $serviceInfoBase.password
     $vaExtensionLog = Install-VanessaMcpExtensionCfe `
         -State $state `
         -CfePath $vaExtensionArtifact.path `
@@ -6051,8 +6314,8 @@ function Install-VanessaMcp {
         -InfoBasePath $serviceInfoBase.path `
         -ExtensionName "client_mcp" `
         -Artifact $clientArtifact `
-        -User "" `
-        -Password "" `
+        -User $serviceInfoBase.user `
+        -Password $serviceInfoBase.password `
         -Scope "service-client-mcp"
     $vaSafeModeProof = Set-VanessaMcpExtensionUnsafeMode `
         -State $state `
@@ -6389,8 +6652,8 @@ function Start-VanessaMcp {
         -InfoBasePath $serviceInfoBase.path `
         -InfoBaseKind $serviceInfoBase.kind `
         -UseTestManager `
-        -User "" `
-        -Password "" `
+        -User $serviceInfoBase.user `
+        -Password $serviceInfoBase.password `
         -EnterpriseArgs @("/Execute", $vanessa.epfPath, "/C$command")
 
     $processStartTime = $result.process.StartTime.ToUniversalTime().ToString("o")
@@ -6424,7 +6687,6 @@ function Start-VanessaMcp {
         }
         throw $message
     }
-
     Update-DevBranchState -State $state -Updates @{
         vanessaMcpStatus = "running"
         vanessaMcpError = ""

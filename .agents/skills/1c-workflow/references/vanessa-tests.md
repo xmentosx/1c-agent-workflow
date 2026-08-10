@@ -12,7 +12,7 @@ or long regressions only when explicitly requested.
    - `unit-like`: calculation, condition, filling, or local applied logic;
    - `integration`: object, document, register, exchange, or data movement between subsystems;
    - `UI`: form, command, or visible user behavior.
-3. Search existing steps and local `Libraries`/`@exportscenarios` before inventing new steps.
+3. Search existing steps and local `Libraries`/`@ExportScenarios` before inventing new steps.
    When a concrete pattern is needed, open only the matching recipe in
    `vanessa-recipes.md`; its companion files are under
    `assets/vanessa-authoring-examples`.
@@ -46,7 +46,7 @@ No separate authoring pass. Use `itl-vanessa-ui` only when needed; see `vanessa-
 
 - Vanessa's `Объект` scenario context is not an arbitrary `Структура`. Do not add fields with `Объект.Поле = ...` or `Объект.Вставить(...)`.
 - Keep local BSL values inside one block; across steps use a supported Vanessa variable/library step, not invented `Объект` fields.
-- The TestManager runs in a branch-local empty service infobase; the TestClient runs in the development infobase. Product metadata/data access therefore uses `на сервере (Расширение)`, while the plain `на сервере` step is reserved for code that intentionally belongs to the empty TestManager infobase.
+- The TestManager runs in a branch-local service infobase restored from the packaged qualified empty-base DT template; the TestClient runs in the development infobase. Before verification, the runner reconciles `client_mcp` in the service infobase and `VAExtension` in the development infobase, including exact per-infobase safe-mode proof. The dedicated `itl_vanessa_service` user in the template has unsafe-action protection disabled, so the runner does not edit the user's `conf.cfg` and does not bypass protection in the development infobase. In an execution-only feature copy, the runner binds Vanessa's generic TestClient opener to the first product profile; source feature files remain unchanged. Product metadata/data access therefore uses `на сервере (Расширение)`, while the plain `на сервере` step is reserved for code that intentionally belongs to the empty TestManager infobase.
 - Classify every executable BSL block: product metadata/data access is TestClient server-side through VAExtension; forms and client-only modules are TestClient client-side. Never combine both contexts in one block.
 - Transfer cross-context values through supported Vanessa variables. Do not use `СохранитьЗначение`/`ВосстановитьЗначение` as VAExtension cross-step transport.
 - Extension forms are supported in the real `TESTMANAGER -> TESTCLIENT` run. A requirement about an extension form, command, or visible state needs a UI scenario; a unit-like BSL check does not replace it.
@@ -82,7 +82,7 @@ Rules:
 - Store application scenarios in `tests/features`.
 - Name scenarios by checked behavior, not by internal task number.
 - Keep independent acceptance scenarios flat so each produces its own JUnit verdict. Do not use `@tree` to group them; reserve it for deliberately aggregated non-acceptance output.
-- Add `@exportscenarios` only to library feature files that are actually reused.
+- Add the Vanessa-canonical, case-sensitive `@ExportScenarios` only to library feature files that are actually reused.
 - Do not add tags for large smoke/E2E suites to feature-focused checks.
 
 ## Worked Recipes
@@ -114,7 +114,7 @@ prove the changed behavior.
 ## Libraries And Custom Steps
 
 - Move an action to `Libraries` only when at least two scenarios reuse it or it removes real noise.
-- Mark library `.feature` files with `@exportscenarios`; application scenarios in `tests/features` call them with a business phrase.
+- Mark library `.feature` files with the Vanessa-canonical, case-sensitive `@ExportScenarios`; application scenarios in `tests/features` call them with a business phrase.
 - Add a custom EPF step only when standard Vanessa steps and a library scenario cannot express the action reliably.
 - If a custom step is added, keep a minimal `.feature` example next to it.
 

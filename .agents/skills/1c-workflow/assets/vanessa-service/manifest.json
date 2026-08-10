@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "artifact": "service-infobase.dt",
+  "sha256": "4329197edb639b1da65f594d392a71abcd959df4f22a42c1201f4fecc8f47a74",
+  "serviceUser": "itl_vanessa_service",
+  "passwordRequired": false,
+  "unsafeActionProtectionDisabled": true,
+  "qualifiedPlatformVersion": "8.3.27.2130"
+}
