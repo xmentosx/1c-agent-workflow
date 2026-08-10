@@ -25,6 +25,102 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $VanessaText | Should -Match ([regex]::Escape('$process.StandardInput.BaseStream.Write($stdinBytes, 0, $stdinBytes.Length)'))
     }
 
+    It "starts Designer Agent with a platform log and verifies listener ownership" {
+        $VanessaText | Should -Match '(?s)function Set-VanessaMcpExtensionUnsafeMode.*?"/DisableStartupMessages".*?"/DisableStartupDialogs".*?"/Out", \$logPath.*?Wait-VanessaDesignerAgentReady'
+        $VanessaText | Should -Match 'ITL_DESIGNER_AGENT_EXITED'
+        $VanessaText | Should -Match 'ITL_DESIGNER_AGENT_PORT_OWNER_MISMATCH'
+        $VanessaText | Should -Match ([regex]::Escape("infoBaseKey='`$(`$infoBaseIdentity.key)'"))
+        $VanessaText | Should -Match ([regex]::Escape("platformVersion='`$platformVersion'"))
+        $VanessaText | Should -Match ([regex]::Escape("log='`$logPath'"))
+    }
+
+    It "accepts readiness only when the expected live PID owns the listener" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:fixtureStartTime = [DateTime]::UtcNow.AddSeconds(-5)
+            function Get-Process { return [pscustomobject]@{ Id = 7311; StartTime = $script:fixtureStartTime } }
+            function Test-TcpPortOpen { return $true }
+            function Get-NetTCPConnection {
+                [CmdletBinding()]
+                param([string]$State, [int]$LocalPort)
+                return [pscustomobject]@{ OwningProcess = 7311 }
+            }
+            $fixtureProcess = [pscustomobject]@{ Id = 7311; StartTime = $script:fixtureStartTime; HasExited = $false }
+            Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
+        }
+
+        $result.ready | Should -BeTrue
+        $result.status | Should -Be "ready"
+        $result.ownerPids | Should -Be @(7311)
+    }
+
+    It "reports a foreign listener instead of accepting a raw open port" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:fixtureStartTime = [DateTime]::UtcNow.AddSeconds(-5)
+            function Get-Process { return [pscustomobject]@{ Id = 7312; StartTime = $script:fixtureStartTime } }
+            function Test-TcpPortOpen { return $true }
+            function Get-NetTCPConnection {
+                [CmdletBinding()]
+                param([string]$State, [int]$LocalPort)
+                return [pscustomobject]@{ OwningProcess = 9901 }
+            }
+            $fixtureProcess = [pscustomobject]@{ Id = 7312; StartTime = $script:fixtureStartTime; HasExited = $false }
+            Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
+        }
+
+        $result.ready | Should -BeFalse
+        $result.status | Should -Be "owner-mismatch"
+        $result.ownerPids | Should -Be @(9901)
+    }
+
+    It "preserves the exit code when Designer Agent dies before readiness" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-Process { return $null }
+            $fixtureProcess = [pscustomobject]@{ Id = 7313; StartTime = [DateTime]::UtcNow; HasExited = $true; ExitCode = 27 }
+            Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $fixtureProcess.StartTime -Port 48251 -TimeoutSeconds 0
+        }
+
+        $result.ready | Should -BeFalse
+        $result.status | Should -Be "exited"
+        $result.processAlive | Should -BeFalse
+        $result.exitCode | Should -Be 27
+    }
+
+    It "distinguishes an alive process that never opens the listener" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:fixtureStartTime = [DateTime]::UtcNow.AddSeconds(-5)
+            function Get-Process { return [pscustomobject]@{ Id = 7314; StartTime = $script:fixtureStartTime } }
+            function Test-TcpPortOpen { return $false }
+            $fixtureProcess = [pscustomobject]@{ Id = 7314; StartTime = $script:fixtureStartTime; HasExited = $false }
+            Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
+        }
+
+        $result.ready | Should -BeFalse
+        $result.status | Should -Be "timeout"
+        $result.processAlive | Should -BeTrue
+    }
+
+    It "redacts secrets from the Designer Agent log tail" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-designer-log-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $logPath = Join-Path $tempRoot "designer-agent.log"
+                Set-Content -LiteralPath $logPath -Encoding UTF8 -Value 'startup failed password=do-not-leak /P "also-secret"'
+                Read-VanessaDesignerAgentSafeLogTail -Path $logPath
+            }
+            $result | Should -Match 'startup failed'
+            $result | Should -Match '<redacted>'
+            $result | Should -Not -Match 'do-not-leak|also-secret'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "keeps the project-owned Designer Agent host key outside Git status" {
         (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('.agent-1c/runtime/'))
         $LifecycleText | Should -Match ([regex]::Escape('Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $script:ProjectRoot'))

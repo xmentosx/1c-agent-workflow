@@ -2753,6 +2753,132 @@ function New-VanessaParamsFile {
     return $path
 }
 
+function Protect-VanessaVerificationDiagnosticText {
+    param(
+        [string]$Text,
+        [ValidateRange(80, 4000)][int]$MaxLength = 1500
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return ""
+    }
+    $safe = $Text -replace '\s+', ' '
+    $safe = $safe -replace '(?i)\b(password|passwd|pwd|token|secret|authorization)\s*[:=]\s*(?:"[^"]*"|''[^'']*''|\S+)', '$1=<redacted>'
+    $safe = $safe -replace '(?i)\bBearer\s+\S+', 'Bearer <redacted>'
+    $safe = $safe -replace '(?i)(://)[^/\s:@]+:[^@\s/]+@', '$1<redacted>@'
+    $safe = $safe -replace '(?i)([?&](?:token|access_token|password|secret)=)[^&\s]+', '$1<redacted>'
+    $safe = $safe -replace '(?i)(/(?:P|Password)\s+)(?:"[^"]*"|\S+)', '$1<redacted>'
+    $safe = $safe -replace '(?i)\b(configuration|connectionString|infobase)\s*[:=]\s*(?:"[^"]*"|''[^'']*''|\S+)', '$1=<redacted>'
+    $safe = $safe.Trim()
+    if ($safe.Length -gt $MaxLength) {
+        return ($safe.Substring(0, $MaxLength - 3) + "...")
+    }
+    return $safe
+}
+
+function Test-VanessaTestClientConnectionFailure {
+    param([string]$Diagnostic)
+
+    if ([string]::IsNullOrWhiteSpace($Diagnostic)) {
+        return $false
+    }
+    $connectionFailure = $Diagnostic -match '(?i)(Не получилось подключить TestClient|Не удалось подключить клиент тестирования|(?:could not|failed to) connect (?:the )?TestClient)'
+    $startupEvidence = $Diagnostic -match '(?i)(Прерывание по таймауту|connection timeout|PID(?:КлиентаТестирования)?\s*[:=]\s*0)'
+    return ($connectionFailure -and $startupEvidence)
+}
+
+function New-VanessaTestClientStartupMonitor {
+    param(
+        [string]$RunDirectory,
+        [string[]]$ProfileNames = @(),
+        [ValidateRange(1, 120)][int]$ExitDetectionSeconds = 5
+    )
+
+    return [pscustomobject][ordered]@{
+        runDirectory = Resolve-Agent1cFullPath -Path $RunDirectory
+        profileNames = @($ProfileNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+        exitDetectionSeconds = $ExitDetectionSeconds
+        lastProbeAt = [DateTime]::MinValue
+        candidates = @{}
+        failure = $null
+    }
+}
+
+function Test-VanessaTestClientStartupMonitor {
+    param(
+        [Parameter(Mandatory = $true)][object]$Monitor,
+        [Parameter(Mandatory = $true)][object]$State,
+        [int[]]$TestPorts = @(),
+        [Parameter(Mandatory = $true)][string]$RunParamsPath
+    )
+
+    if ($null -ne $Monitor.failure -or @($Monitor.profileNames).Count -eq 0) {
+        return ($null -ne $Monitor.failure)
+    }
+    $now = Get-Date
+    if ($Monitor.lastProbeAt -ne [DateTime]::MinValue -and ($now - $Monitor.lastProbeAt).TotalMilliseconds -lt 750) {
+        return $false
+    }
+    $Monitor.lastProbeAt = $now
+
+    foreach ($file in @(Get-ChildItem -LiteralPath $Monitor.runDirectory -File -Filter "*.txt" -ErrorAction SilentlyContinue)) {
+        $profileName = @($Monitor.profileNames | Where-Object {
+            $file.BaseName -match ('^' + [regex]::Escape([string]$_) + '_\d{14}$')
+        } | Select-Object -First 1)
+        if ($profileName.Count -ne 1 -or $Monitor.candidates.ContainsKey($file.FullName)) { continue }
+        $Monitor.candidates[$file.FullName] = [pscustomobject][ordered]@{
+            profileName = [string]$profileName[0]
+            outputPath = $file.FullName
+            createdAt = $file.CreationTime
+            processObserved = $false
+            processId = 0
+        }
+    }
+    if ($Monitor.candidates.Count -eq 0) { return $false }
+
+    try {
+        $processes = @(Get-OneCProcessInfo -RequireSuccess | Where-Object {
+            Test-OneCVanessaTestProcessBelongsToRun -ProcessInfo $_ -State $State -TestPorts $TestPorts -RunParamsPath $RunParamsPath
+        })
+    } catch {
+        return $false
+    }
+    foreach ($processInfo in $processes) {
+        $commandLine = [string](Get-StateValue -State $processInfo -Name "commandLine" -Default "")
+        $outputPath = Get-OneCCommandLineSwitchPath -CommandLine $commandLine -SwitchNames @("Out")
+        if ([string]::IsNullOrWhiteSpace($outputPath)) { continue }
+        try { $outputPath = Resolve-Agent1cFullPath -Path $outputPath } catch { continue }
+        foreach ($candidatePath in @($Monitor.candidates.Keys)) {
+            if ([string]::Equals([string]$candidatePath, $outputPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $candidate = $Monitor.candidates[$candidatePath]
+                $candidate.processObserved = $true
+                $candidate.processId = ConvertTo-IntOrDefault -Value (Get-StateValue -State $processInfo -Name "processId" -Default 0)
+            }
+        }
+    }
+
+    foreach ($candidate in @($Monitor.candidates.Values)) {
+        if ($candidate.processObserved) { continue }
+        if (($now - [DateTime]$candidate.createdAt).TotalSeconds -lt [int]$Monitor.exitDetectionSeconds) { continue }
+        $identity = Get-OneCInfoBaseIdentity `
+            -InfoBaseKind ([string](Get-StateValue -State $State -Name "infoBaseKind" -Default "file")) `
+            -InfoBasePath ([string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default ""))
+        $Monitor.failure = [pscustomobject][ordered]@{
+            code = "ITL_VANESSA_TESTCLIENT_STARTUP_EXITED"
+            profileName = [string]$candidate.profileName
+            infoBaseKey = [string]$identity.key
+            ports = @($TestPorts | Where-Object { $_ -gt 0 } | Select-Object -Unique)
+            outputPath = [string]$candidate.outputPath
+            processObserved = $false
+            processId = 0
+            detectedAt = $now
+            waitedSeconds = [Math]::Round(($now - [DateTime]$candidate.createdAt).TotalSeconds, 3)
+        }
+        return $true
+    }
+    return $false
+}
+
 function Get-VanessaJunitSummary {
     param([string]$RunDirectory)
 
@@ -2794,16 +2920,29 @@ function Get-VanessaJunitSummary {
                 }
             }
             foreach ($case in @($xml.SelectNodes('//*[local-name()="testcase"]'))) {
-                $caseSkipped = @($case.SelectNodes('./*[local-name()="skipped"]')).Count -gt 0
-                $caseFailure = @($case.SelectNodes('./*[local-name()="failure"]')).Count -gt 0
-                $caseError = @($case.SelectNodes('./*[local-name()="error"]')).Count -gt 0
+                $caseSkippedNodes = @($case.SelectNodes('./*[local-name()="skipped"]'))
+                $caseFailureNodes = @($case.SelectNodes('./*[local-name()="failure"]'))
+                $caseErrorNodes = @($case.SelectNodes('./*[local-name()="error"]'))
+                $caseSkipped = $caseSkippedNodes.Count -gt 0
+                $caseFailure = $caseFailureNodes.Count -gt 0
+                $caseError = $caseErrorNodes.Count -gt 0
                 if ($caseSkipped) { $summary.skipped++ }
+                $diagnosticParts = @()
+                foreach ($failureNode in @($caseFailureNodes + $caseErrorNodes)) {
+                    if ($failureNode.Attributes["message"]) {
+                        $diagnosticParts += [string]$failureNode.Attributes["message"].Value
+                    }
+                    if (-not [string]::IsNullOrWhiteSpace([string]$failureNode.InnerText)) {
+                        $diagnosticParts += [string]$failureNode.InnerText
+                    }
+                }
                 $summary.testCases += [pscustomobject][ordered]@{
                     name = $(if ($case.Attributes["name"]) { [string]$case.Attributes["name"].Value } else { "" })
                     className = $(if ($case.Attributes["classname"]) { [string]$case.Attributes["classname"].Value } else { "" })
                     skipped = $caseSkipped
                     failure = $caseFailure
                     error = $caseError
+                    diagnostic = Protect-VanessaVerificationDiagnosticText -Text ($diagnosticParts -join " ")
                     source = $file.FullName
                 }
             }
@@ -2852,9 +2991,17 @@ function Get-VanessaVerificationStatus {
     $junit = Get-VanessaJunitSummary -RunDirectory $RunDirectory
     if ($junit.found) {
         if (($junit.failures + $junit.errors) -gt 0) {
+            $failedCases = @($junit.testCases | Where-Object { $_.failure -or $_.error })
+            $diagnostic = if ($failedCases.Count -gt 0) { [string]$failedCases[0].diagnostic } else { "" }
+            $failureCategory = if (Test-VanessaTestClientConnectionFailure -Diagnostic $diagnostic) { "runner" } else { "" }
+            $reason = "Vanessa JUnit report contains failures/errors: failures=$($junit.failures), errors=$($junit.errors)."
+            if ($diagnostic) {
+                $reason += " First failure: $diagnostic"
+            }
             return [pscustomobject]@{
                 status = "failed"
-                reason = "Vanessa JUnit report contains failures/errors: failures=$($junit.failures), errors=$($junit.errors)."
+                reason = $reason
+                failureCategory = $failureCategory
             }
         }
         if ($junit.tests -gt 0) {
@@ -3255,6 +3402,9 @@ function Run-DevBranchTests {
     $cleanupDurationMs = [int64]0
     $eventLogDurationMs = [int64]0
     $postProcessStopwatch = $null
+    $testClientStartupMonitor = New-VanessaTestClientStartupMonitor `
+        -RunDirectory $runDirectory `
+        -ProfileNames @($testClientTopology.profiles | ForEach-Object { [string]$_.name })
     Write-Host "Vanessa test timeout: $timeoutSeconds seconds"
     try {
         Set-RunStage -Stage "vanessa.run" -Detail "Running TESTMANAGER and TESTCLIENT."
@@ -3276,13 +3426,18 @@ function Run-DevBranchTests {
             -TimeoutSeconds $timeoutSeconds `
             -CompletionProbe {
                 $probeStatus = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
-                return ($probeStatus.status -in @("passed", "failed"))
+                if ($probeStatus.status -in @("passed", "failed")) { return $true }
+                return (Test-VanessaTestClientStartupMonitor -Monitor $testClientStartupMonitor -State $state -TestPorts $testPorts -RunParamsPath $paramsPath)
             } `
             -CompletionGraceSeconds 10 `
             -OnTimeout {
                 Write-Host "[WARN] Vanessa verify exceeded timeout; stopping own TESTMANAGER/TESTCLIENT processes."
                 Stop-OwnHungVanessaTestClients -State $state -TestPorts $testPorts -RunParamsPath $paramsPath
             }
+        if ($null -ne $testClientStartupMonitor.failure) {
+            $startupFailure = $testClientStartupMonitor.failure
+            throw "$($startupFailure.code): profile='$($startupFailure.profileName)' infoBaseKey='$($startupFailure.infoBaseKey)' ports='$(@($startupFailure.ports) -join ',')' processObserved=$($startupFailure.processObserved) pid=$($startupFailure.processId) out='$($startupFailure.outputPath)' waitedSeconds=$($startupFailure.waitedSeconds). The TestClient /Out file was created, but no matching owned /TESTCLIENT process remained; the 300-second Vanessa connection timeout was not awaited."
+        }
         $runnerStopwatch.Stop()
     } catch {
         if ($runnerStopwatch.IsRunning) { $runnerStopwatch.Stop() }
@@ -3477,6 +3632,8 @@ function Run-DevBranchTests {
             Stop-OwnHungVanessaTestClients -State $state -TestPorts $testPorts -RunParamsPath $paramsPath
         } elseif ($eventLogVerification.status -eq "failed") {
             Set-RunFailureContext -Category "event-log" -RequiredAction "/itl-verify-fix"
+        } elseif ([string](Get-StateValue -State $verification -Name "failureCategory" -Default "") -eq "runner") {
+            Set-RunFailureContext -Category "runner" -RequiredAction "inspect-testclient-startup-diagnostics-and-repeat-original-command"
         } elseif ([string]$verification.reason -match '(?i)(undefined step|step.+not found|unsupported-step)') {
             Set-RunFailureContext -Category "unsupported-step" -RequiredAction "/itl-verify-fix"
         } elseif ([string]$verification.reason -match '(?i)(scenario context|scenario-context)') {
@@ -4660,21 +4817,7 @@ function Protect-ItlVanessaProfileDiagnosticText {
         [ValidateRange(80, 4000)][int]$MaxLength = 3000
     )
 
-    if ([string]::IsNullOrWhiteSpace($Text)) {
-        return ""
-    }
-    $safe = $Text -replace '\s+', ' '
-    $safe = $safe -replace '(?i)\b(password|passwd|pwd|token|secret|authorization)\s*[:=]\s*(?:"[^"]*"|''[^'']*''|\S+)', '$1=<redacted>'
-    $safe = $safe -replace '(?i)\bBearer\s+\S+', 'Bearer <redacted>'
-    $safe = $safe -replace '(?i)(://)[^/\s:@]+:[^@\s/]+@', '$1<redacted>@'
-    $safe = $safe -replace '(?i)([?&](?:token|access_token|password|secret)=)[^&\s]+', '$1<redacted>'
-    $safe = $safe -replace '(?i)(/(?:P|Password)\s+)(?:"[^"]*"|\S+)', '$1<redacted>'
-    $safe = $safe -replace '(?i)\b(configuration|connectionString|infobase)\s*[:=]\s*(?:"[^"]*"|''[^'']*''|\S+)', '$1=<redacted>'
-    $safe = $safe.Trim()
-    if ($safe.Length -gt $MaxLength) {
-        return ($safe.Substring(0, $MaxLength - 3) + "...")
-    }
-    return $safe
+    return Protect-VanessaVerificationDiagnosticText -Text $Text -MaxLength $MaxLength
 }
 
 function Get-ItlVanessaProfileBrokerLogPath {
@@ -5595,6 +5738,130 @@ function Stop-VanessaDesignerAgentOwnedProcess {
     return (Stop-NativeProcessForSafety -Process $current)
 }
 
+function Read-VanessaDesignerAgentSafeLogTail {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return ""
+    }
+    try {
+        return Protect-VanessaVerificationDiagnosticText -Text ((Get-Content -LiteralPath $Path -Tail 30 -ErrorAction Stop) -join " ") -MaxLength 2000
+    } catch {
+        return ""
+    }
+}
+
+function Wait-VanessaDesignerAgentReady {
+    param(
+        [Parameter(Mandatory = $true)][object]$Process,
+        [Parameter(Mandatory = $true)][DateTime]$ExpectedStartTime,
+        [Parameter(Mandatory = $true)][int]$Port,
+        [ValidateRange(0, 300)][int]$TimeoutSeconds = 30
+    )
+
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $current = Get-Process -Id $Process.Id -ErrorAction SilentlyContinue
+        if ($null -eq $current) {
+            $exitCode = $null
+            try {
+                if ($Process.HasExited) { $exitCode = [int]$Process.ExitCode }
+            } catch {}
+            $stopwatch.Stop()
+            return [pscustomobject][ordered]@{
+                ready = $false
+                status = "exited"
+                processAlive = $false
+                exitCode = $exitCode
+                ownerPids = @()
+                elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                detail = "Designer Agent process exited before readiness."
+            }
+        }
+
+        try {
+            if ([Math]::Abs(($current.StartTime.ToUniversalTime() - $ExpectedStartTime.ToUniversalTime()).TotalSeconds) -ge 2) {
+                $stopwatch.Stop()
+                return [pscustomobject][ordered]@{
+                    ready = $false
+                    status = "identity-changed"
+                    processAlive = $false
+                    exitCode = $null
+                    ownerPids = @()
+                    elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                    detail = "Designer Agent PID identity changed before readiness."
+                }
+            }
+        } catch {
+            $stopwatch.Stop()
+            return [pscustomobject][ordered]@{
+                ready = $false
+                status = "identity-inspection-failed"
+                processAlive = $true
+                exitCode = $null
+                ownerPids = @()
+                elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                detail = "Designer Agent PID identity could not be verified: $($_.Exception.Message)"
+            }
+        }
+
+        if (Test-TcpPortOpen -Port $Port -TimeoutMilliseconds 500) {
+            try {
+                $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop)
+                $ownerPids = @($listeners | ForEach-Object { [int]$_.OwningProcess } | Sort-Object -Unique)
+                if ($ownerPids.Count -eq 1 -and $ownerPids[0] -eq [int]$Process.Id) {
+                    $stopwatch.Stop()
+                    return [pscustomobject][ordered]@{
+                        ready = $true
+                        status = "ready"
+                        processAlive = $true
+                        exitCode = $null
+                        ownerPids = @($ownerPids)
+                        elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                        detail = "Designer Agent owns the expected listener."
+                    }
+                }
+                $stopwatch.Stop()
+                return [pscustomobject][ordered]@{
+                    ready = $false
+                    status = "owner-mismatch"
+                    processAlive = $true
+                    exitCode = $null
+                    ownerPids = @($ownerPids)
+                    elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                    detail = "Expected TCP port is not owned exclusively by the Designer Agent PID."
+                }
+            } catch {
+                $stopwatch.Stop()
+                return [pscustomobject][ordered]@{
+                    ready = $false
+                    status = "listener-inspection-failed"
+                    processAlive = $true
+                    exitCode = $null
+                    ownerPids = @()
+                    elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+                    detail = "TCP listener ownership could not be verified: $($_.Exception.Message)"
+                }
+            }
+        }
+
+        if ((Get-Date) -ge $deadline) { break }
+        Start-Sleep -Milliseconds 500
+    } while ($true)
+
+    $stopwatch.Stop()
+    return [pscustomobject][ordered]@{
+        ready = $false
+        status = "timeout"
+        processAlive = $true
+        exitCode = $null
+        ownerPids = @()
+        elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
+        detail = "Designer Agent stayed alive but did not open the expected TCP listener."
+    }
+}
+
 function Set-VanessaMcpExtensionUnsafeMode {
     param(
         [object]$State,
@@ -5615,12 +5882,19 @@ function Set-VanessaMcpExtensionUnsafeMode {
     $portKey = "$(Get-ItlBranchManagedPortKey -Family $portFamily -State $State)|scope=$Scope"
     $lease = Resolve-ItlManagedPortLease -Family $portFamily -Key $portKey -Start $range.start -End $range.end -State $State -Subject "Vanessa Designer Agent port" -LeaseToken $leaseToken
     $agentRoot = Get-VanessaDesignerAgentRuntimeRoot -State $State
+    $logPath = New-TimestampedFilePath -Directory $agentRoot -Prefix "designer-agent-$Scope-" -Extension ".log"
+    $infoBaseIdentity = Get-OneCInfoBaseIdentity -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+    $platformVersion = ""
+    try { $platformVersion = [string](Get-Item -LiteralPath $platformPath).VersionInfo.FileVersion } catch {}
     $process = $null
     $processStartTime = [DateTime]::MinValue
     $releaseLease = $true
     try {
         $infoBaseArgs = New-InfobaseArgs -Kind $InfoBaseKind -Path $InfoBasePath -User "" -Password ""
         $arguments = @("DESIGNER") + $infoBaseArgs + @(
+            "/DisableStartupMessages",
+            "/DisableStartupDialogs",
+            "/Out", $logPath,
             "/AgentMode",
             "/AgentPort", [string]$lease.port,
             "/AgentListenAddress", "127.0.0.1",
@@ -5631,8 +5905,20 @@ function Set-VanessaMcpExtensionUnsafeMode {
         $process = Start-OneCProcessBackground -FilePath $platformPath -Arguments $arguments -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath -Purpose "vanessa-designer-agent-safe-mode-$Scope"
         $processStartTime = $process.StartTime
         Set-ItlManagedPortAllocationStatus -Family $portFamily -Key $portKey -Status "running" -ProcessId $process.Id -LeaseToken $leaseToken
-        if (-not (Wait-VanessaMcpPort -Port ([int]$lease.port) -TimeoutSeconds 30)) {
-            throw "ITL_DESIGNER_AGENT_NOT_READY: PID $($process.Id) did not listen on 127.0.0.1:$($lease.port)."
+        $readiness = Wait-VanessaDesignerAgentReady -Process $process -ExpectedStartTime $processStartTime -Port ([int]$lease.port) -TimeoutSeconds 30
+        if (-not $readiness.ready) {
+            $code = switch ([string]$readiness.status) {
+                "exited" { "ITL_DESIGNER_AGENT_EXITED" }
+                "identity-changed" { "ITL_DESIGNER_AGENT_IDENTITY_CHANGED" }
+                "identity-inspection-failed" { "ITL_DESIGNER_AGENT_IDENTITY_INSPECTION_FAILED" }
+                "owner-mismatch" { "ITL_DESIGNER_AGENT_PORT_OWNER_MISMATCH" }
+                "listener-inspection-failed" { "ITL_DESIGNER_AGENT_LISTENER_INSPECTION_FAILED" }
+                default { "ITL_DESIGNER_AGENT_NOT_READY" }
+            }
+            $exitCode = if ($null -eq $readiness.exitCode) { "unknown" } else { [string]$readiness.exitCode }
+            $ownerPids = if (@($readiness.ownerPids).Count -gt 0) { @($readiness.ownerPids) -join "," } else { "none" }
+            $logTail = Read-VanessaDesignerAgentSafeLogTail -Path $logPath
+            throw "${code}: extension='$ExtensionName' scope='$Scope' infoBaseKind='$InfoBaseKind' infoBaseKey='$($infoBaseIdentity.key)' platformVersion='$platformVersion' pid=$($process.Id) processAlive=$($readiness.processAlive) exitCode=$exitCode port=$($lease.port) ownerPids=$ownerPids elapsedSeconds=$($readiness.elapsedSeconds) log='$logPath' detail='$($readiness.detail)' logTail='$logTail'"
         }
 
         $clientPath = Get-ItlOnDemandMcpExecutablePath
@@ -5660,8 +5946,6 @@ function Set-VanessaMcpExtensionUnsafeMode {
         if (-not (Wait-ItlOnDemandProcessExit -ProcessId $process.Id -TimeoutSeconds 30)) {
             throw "ITL_DESIGNER_AGENT_SHUTDOWN_FAILED: Designer Agent PID $($process.Id) did not exit after common shutdown."
         }
-        $platformVersion = [string](Get-Item -LiteralPath $platformPath).VersionInfo.FileVersion
-        $infoBaseIdentity = Get-OneCInfoBaseIdentity -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
         return [pscustomobject][ordered]@{
             verifiedAt = (Get-Date).ToString("o")
             extensionName = $ExtensionName
