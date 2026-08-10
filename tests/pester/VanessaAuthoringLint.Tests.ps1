@@ -12,6 +12,7 @@ Describe "Vanessa authoring lint" {
         $script:PauseKeyword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0J/QsNGD0LfQsA=="))
         $script:ClientCodePhrase = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwICjQoNCw0YHRiNC40YDQtdC90LjQtSk="))
         $script:ServerCodePhrase = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwINC90LAg0YHQtdGA0LLQtdGA0LU="))
+        $script:ServerExtensionCodePhrase = $script:ServerCodePhrase + " " + [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("KNCg0LDRgdGI0LjRgNC10L3QuNC1KQ=="))
         $script:SaveValueName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0KHQvtGF0YDQsNC90LjRgtGM0JfQvdCw0YfQtdC90LjQtQ=="))
         $script:CatalogsName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0KHQv9GA0LDQstC+0YfQvdC40LrQuA=="))
         $script:ClientModuleName = "Example" + [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JrQu9C40LXQvdGC"))
@@ -116,6 +117,16 @@ Scenario: Unsafe server
         """bsl
         $($script:ClientModuleName).OpenForm();
         """
+Scenario: Product data in TestManager
+    And $script:ServerCodePhrase
+        """bsl
+        Value = $($script:CatalogsName).Items.FindByCode("42");
+        """
+Scenario: Product data in TestClient extension
+    And $script:ServerExtensionCodePhrase
+        """bsl
+        Value = $($script:CatalogsName).Items.FindByCode("42");
+        """
 Scenario: Stored expression is not executed here
     And remember expression
         """bsl
@@ -128,13 +139,14 @@ Scenario: Stored expression is not executed here
             Get-VanessaAuthoringLintWarnings -FeatureRecords @([pscustomobject]@{ path = 'tests/features/bsl-context.feature' })
         }
 
-        @($warnings).Count | Should -Be 3
+        @($warnings).Count | Should -Be 4
         @($warnings | Select-Object -ExpandProperty code) | Should -Be @(
             'ITL_VANESSA_LINT_CLIENT_METADATA',
             'ITL_VANESSA_LINT_UNSUPPORTED_STATE',
-            'ITL_VANESSA_LINT_SERVER_CLIENT_MODULE'
+            'ITL_VANESSA_LINT_SERVER_CLIENT_MODULE',
+            'ITL_VANESSA_LINT_MANAGER_METADATA'
         )
-        @($warnings | Select-Object -ExpandProperty line) | Should -Be @(5, 6, 11)
+        @($warnings | Select-Object -ExpandProperty line) | Should -Be @(5, 6, 11, 16)
     }
 
     It "bounds warning output and does not echo feature contents" {

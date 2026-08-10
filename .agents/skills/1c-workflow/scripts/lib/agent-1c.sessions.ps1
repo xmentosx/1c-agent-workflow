@@ -330,61 +330,115 @@ function Invoke-OneCSessionAdmission {
         [Parameter(Mandatory = $true)][scriptblock]$StartProcess
     )
 
+    return (Invoke-OneCSessionAdmissionSet `
+        -Admissions @([pscustomobject]@{
+            infoBaseKind = $InfoBaseKind
+            infoBasePath = $InfoBasePath
+            requiredSessions = $RequiredSessions
+            expectedChildRole = $ExpectedChildRole
+            purpose = $Purpose
+        }) `
+        -StartProcess $StartProcess)
+}
+
+function Invoke-OneCSessionAdmissionSet {
+    param(
+        [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][object[]]$Admissions,
+        [Parameter(Mandatory = $true)][scriptblock]$StartProcess
+    )
+
     $maximum = Get-OneCMaxConcurrentSessions
     if ($maximum -eq 0) {
         return (& $StartProcess)
     }
-    $identity = Get-OneCInfoBaseIdentity -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
-    if ($RequiredSessions -gt $maximum) {
-        throw "ITL_ONEC_SESSION_LIMIT: max=$maximum active=0 reserved=0 required=$RequiredSessions infobase='$($identity.value)' purpose=$Purpose errorCategory=session-capacity requiredAction=finish-or-close-owned-sessions-before-retry retryAction=repeat-original-command-after-session-count-changes limitChange=developer-only"
+
+    $normalized = @($Admissions | ForEach-Object {
+        $kind = [string](Get-StateValue -State $_ -Name "infoBaseKind" -Default "")
+        $path = [string](Get-StateValue -State $_ -Name "infoBasePath" -Default "")
+        $required = [int](Get-StateValue -State $_ -Name "requiredSessions" -Default 1)
+        $role = [string](Get-StateValue -State $_ -Name "expectedChildRole" -Default "")
+        $purpose = [string](Get-StateValue -State $_ -Name "purpose" -Default "1c-process")
+        if ($kind -notin @("file", "server") -or [string]::IsNullOrWhiteSpace($path) -or
+            $required -lt 1 -or $required -gt 64 -or $role -notin @("", "test-client")) {
+            throw "ITL_ONEC_SESSION_ADMISSION_INVALID: kind='$kind' path='$path' required=$required role='$role' purpose='$purpose'."
+        }
+        $identity = Get-OneCInfoBaseIdentity -InfoBaseKind $kind -InfoBasePath $path
+        if ($required -gt $maximum) {
+            throw "ITL_ONEC_SESSION_LIMIT: max=$maximum active=0 reserved=0 required=$required infobase='$($identity.value)' purpose=$purpose errorCategory=session-capacity requiredAction=finish-or-close-owned-sessions-before-retry retryAction=repeat-original-command-after-session-count-changes limitChange=developer-only"
+        }
+        [pscustomobject][ordered]@{
+            identity = $identity
+            requiredSessions = $required
+            expectedChildRole = $role
+            purpose = $purpose
+        }
+    })
+    $duplicate = @($normalized | Group-Object { [string]$_.identity.key } | Where-Object Count -gt 1)
+    if ($duplicate.Count -gt 0) {
+        throw "ITL_ONEC_SESSION_ADMISSION_INVALID: duplicate infobase identities are not allowed in one atomic admission set."
     }
 
     return (Invoke-ItlPortRegistryLock {
-        $processes = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $identity.kind -InfoBasePath $identity.value)
         $registry = Read-OneCSessionRegistry
-        $reservationSnapshot = Get-OneCSessionReservationSnapshot -Registry $registry -InfoBaseIdentity $identity -Processes $processes
-        $active = @($processes).Count
-        $reserved = [int]$reservationSnapshot.pending
-        if (($active + $reserved + $RequiredSessions) -gt $maximum) {
-            $processDetails = @($processes | Select-Object pid, role) | ConvertTo-Json -Compress -Depth 4
-            $reservationDetails = @($reservationSnapshot.pendingDetails) | ConvertTo-Json -Compress -Depth 4
-            throw "ITL_ONEC_SESSION_LIMIT: max=$maximum active=$active reserved=$reserved required=$RequiredSessions infobase='$($identity.value)' purpose=$Purpose processes=$processDetails reservations=$reservationDetails errorCategory=session-capacity requiredAction=finish-or-close-owned-sessions-before-retry retryAction=repeat-original-command-after-session-count-changes limitChange=developer-only"
+        $preservedReservations = @($registry.reservations)
+        $snapshots = [System.Collections.Generic.List[object]]::new()
+        foreach ($admission in $normalized) {
+            $identity = $admission.identity
+            $processes = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $identity.kind -InfoBasePath $identity.value)
+            $snapshot = Get-OneCSessionReservationSnapshot `
+                -Registry ([pscustomobject]@{ reservations = @($preservedReservations) }) `
+                -InfoBaseIdentity $identity `
+                -Processes $processes
+            $active = @($processes).Count
+            $reserved = [int]$snapshot.pending
+            if (($active + $reserved + [int]$admission.requiredSessions) -gt $maximum) {
+                $processDetails = @($processes | Select-Object pid, role) | ConvertTo-Json -Compress -Depth 4
+                $reservationDetails = @($snapshot.pendingDetails) | ConvertTo-Json -Compress -Depth 4
+                throw "ITL_ONEC_SESSION_LIMIT: max=$maximum active=$active reserved=$reserved required=$($admission.requiredSessions) infobase='$($identity.value)' purpose=$($admission.purpose) processes=$processDetails reservations=$reservationDetails errorCategory=session-capacity requiredAction=finish-or-close-owned-sessions-before-retry retryAction=repeat-original-command-after-session-count-changes limitChange=developer-only"
+            }
+            $preservedReservations = @($snapshot.reservations)
+            $snapshots.Add([pscustomobject]@{ admission = $admission; processes = @($processes) }) | Out-Null
         }
 
         $startedProcess = & $StartProcess
+        $purposeLabel = @($normalized | ForEach-Object { $_.purpose }) -join "+"
         if ($null -eq $startedProcess -or $startedProcess.PSObject.Properties.Match("Id").Count -eq 0 -or [int]$startedProcess.Id -le 0) {
-            throw "ITL_ONEC_SESSION_START_UNPROVEN: guarded launcher did not return a process identity for '$Purpose'."
+            throw "ITL_ONEC_SESSION_START_UNPROVEN: guarded launcher did not return a process identity for '$purposeLabel'."
         }
         $leaderStartTime = ""
         try { $leaderStartTime = $startedProcess.StartTime.ToUniversalTime().ToString("o") } catch {}
         $ownerStartTime = ""
         try { $ownerStartTime = (Get-Process -Id $PID -ErrorAction Stop).StartTime.ToUniversalTime().ToString("o") } catch {}
-        $reservation = [pscustomobject][ordered]@{
-            id = [guid]::NewGuid().ToString("N")
-            machine = [Environment]::MachineName
-            infoBaseKind = $identity.kind
-            infoBaseValue = $identity.value
-            infoBaseKey = $identity.key
-            requiredSessions = $RequiredSessions
-            expectedChildRole = $ExpectedChildRole
-            initialProcessIds = @($processes | ForEach-Object { [int]$_.pid })
-            ownerPid = $PID
-            ownerProcessStartTime = $ownerStartTime
-            leaderPid = [int]$startedProcess.Id
-            leaderProcessStartTime = $leaderStartTime
-            purpose = $Purpose
-            projectRoot = [string]$script:ProjectRoot
-            createdAt = [DateTime]::UtcNow.ToString("o")
-        }
+        $createdAt = [DateTime]::UtcNow.ToString("o")
+        $newReservations = @($snapshots | ForEach-Object {
+            $identity = $_.admission.identity
+            [pscustomobject][ordered]@{
+                id = [guid]::NewGuid().ToString("N")
+                machine = [Environment]::MachineName
+                infoBaseKind = $identity.kind
+                infoBaseValue = $identity.value
+                infoBaseKey = $identity.key
+                requiredSessions = [int]$_.admission.requiredSessions
+                expectedChildRole = [string]$_.admission.expectedChildRole
+                initialProcessIds = @($_.processes | ForEach-Object { [int]$_.pid })
+                ownerPid = $PID
+                ownerProcessStartTime = $ownerStartTime
+                leaderPid = [int]$startedProcess.Id
+                leaderProcessStartTime = $leaderStartTime
+                purpose = [string]$_.admission.purpose
+                projectRoot = [string]$script:ProjectRoot
+                createdAt = $createdAt
+            }
+        })
         try {
-            Write-OneCSessionRegistry -Reservations (@($reservationSnapshot.reservations) + @($reservation))
+            Write-OneCSessionRegistry -Reservations (@($preservedReservations) + @($newReservations))
         } catch {
             $registryError = $_.Exception.Message
             $cleanup = Stop-NativeProcessForSafety -Process $startedProcess
             throw "ITL_ONEC_SESSION_RESERVATION_FAILED: started PID $($startedProcess.Id) was stopped=$($cleanup.confirmed) because session admission could not be recorded. registryError='$registryError' cleanupError='$($cleanup.error)'"
         }
         if ($null -ne $script:OneCSessionLaunchContext) {
-            $script:OneCSessionLaunchContext.reservationId = $reservation.id
+            $script:OneCSessionLaunchContext.reservationIds = @($newReservations | ForEach-Object { [string]$_.id })
         }
         return $startedProcess
     })
@@ -401,13 +455,7 @@ function Invoke-OneCSessionProcessStart {
         throw "ITL_ONEC_SESSION_ADMISSION_REUSED: one admission context cannot launch more than one process."
     }
     $context.consumed = $true
-    return (Invoke-OneCSessionAdmission `
-        -InfoBaseKind $context.infoBaseKind `
-        -InfoBasePath $context.infoBasePath `
-        -RequiredSessions $context.requiredSessions `
-        -ExpectedChildRole $context.expectedChildRole `
-        -Purpose $context.purpose `
-        -StartProcess $StartProcess)
+    return (Invoke-OneCSessionAdmissionSet -Admissions @($context.admissions) -StartProcess $StartProcess)
 }
 
 function Invoke-WithOneCSessionAdmissionContext {
@@ -417,19 +465,28 @@ function Invoke-WithOneCSessionAdmissionContext {
         [ValidateRange(1, 64)][int]$RequiredSessions = 1,
         [ValidateSet("", "test-client")][string]$ExpectedChildRole = "",
         [string]$Purpose = "1c-process",
+        [object[]]$AdditionalAdmissions = @(),
         [switch]$KeepReservation,
         [Parameter(Mandatory = $true)][scriptblock]$ScriptBlock
     )
 
     $previous = $script:OneCSessionLaunchContext
+    $admissions = @([pscustomobject]@{
+        infoBaseKind = $InfoBaseKind
+        infoBasePath = $InfoBasePath
+        requiredSessions = $RequiredSessions
+        expectedChildRole = $ExpectedChildRole
+        purpose = $Purpose
+    }) + @($AdditionalAdmissions)
     $script:OneCSessionLaunchContext = [pscustomobject]@{
         infoBaseKind = $InfoBaseKind
         infoBasePath = $InfoBasePath
         requiredSessions = $RequiredSessions
         expectedChildRole = $ExpectedChildRole
         purpose = $Purpose
+        admissions = @($admissions)
         consumed = $false
-        reservationId = ""
+        reservationIds = @()
         keepReservation = [bool]$KeepReservation
     }
     try {
@@ -437,8 +494,10 @@ function Invoke-WithOneCSessionAdmissionContext {
     } finally {
         $completedContext = $script:OneCSessionLaunchContext
         $script:OneCSessionLaunchContext = $previous
-        if ($null -ne $completedContext -and -not [bool]$completedContext.keepReservation -and $completedContext.reservationId) {
-            Remove-OneCSessionReservation -ReservationId ([string]$completedContext.reservationId)
+        if ($null -ne $completedContext -and -not [bool]$completedContext.keepReservation) {
+            foreach ($reservationId in @($completedContext.reservationIds)) {
+                Remove-OneCSessionReservation -ReservationId ([string]$reservationId)
+            }
         }
     }
 }

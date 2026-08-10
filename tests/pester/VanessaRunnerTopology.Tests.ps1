@@ -20,7 +20,7 @@
             Set-Content -LiteralPath $featurePath -Encoding UTF8 -Value $FeatureText
 
             $manifestPath = Join-Path $Root "tests\vanessa-testclients.json"
-            if ($null -ne $ManifestText) {
+            if (-not [string]::IsNullOrEmpty($ManifestText)) {
                 Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value $ManifestText
                 Set-Content -LiteralPath (Join-Path $Root ".agent-1c\project.json") -Encoding UTF8 -Value '{"vanessaAutomation":{"testClientManifestPath":"tests/vanessa-testclients.json"}}'
             } else {
@@ -103,6 +103,39 @@
                 $topology.requiredTestClientSlots | Should -Be 0
                 $params.stoponerror | Should -BeFalse
                 @($params.PSObject.Properties[$clientKey].Value.PSObject.Properties[$clientsKey].Value).Count | Should -Be 0
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "starts the legacy default TestClient when a scenario uses a VAExtension step" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-extension-client-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $fixture = New-VanessaRunnerFixture `
+                -Root $tempRoot `
+                -FeatureText "# language: ru`nФункционал: Код конфигурации`nСценарий: Сервер TestClient`n  И я выполняю код встроенного языка на сервере (Расширение)"
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
+                $paramsPath = New-VanessaParamsFile `
+                    -FeaturePath $fixture.featurePath `
+                    -RunDirectory $fixture.runDirectory `
+                    -StatusPath (Join-Path $fixture.runDirectory "status.json") `
+                    -State $fixture.state `
+                    -TestPort 48051 `
+                    -TestPorts @(48051) `
+                    -TestClientTopology $topology
+                $params = Get-Content -Raw -Encoding UTF8 $paramsPath | ConvertFrom-Json
+                $scenarioKey = Get-EncodedVanessaKey "0JLRi9C/0L7Qu9C90LXQvdC40LXQodGG0LXQvdCw0YDQuNC10LI="
+                $startOnErrorKey = Get-EncodedVanessaKey "0J7RgdGC0LDQvdC+0LLQutCw0J/RgNC40JLQvtC30L3QuNC60L3QvtCy0LXQvdC40LjQntGI0LjQsdC60Lg="
+
+                $topology.configured | Should -BeFalse
+                $topology.requiresExtensionTestClient | Should -BeTrue
+                $topology.requiredTestClientSlots | Should -Be 1
+                @($topology.profiles).Count | Should -Be 1
+                $params.stoponerror | Should -BeTrue
+                $params.PSObject.Properties[$scenarioKey].Value.PSObject.Properties[$startOnErrorKey].Value | Should -BeTrue
             }
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -416,7 +449,9 @@
             $runText | Should -Match 'Get-VanessaTestClientTopology -FeatureFiles \$applicationFeatureFiles'
             $runText | Should -Match 'Get-VanessaFilteredScenarioCount -FeatureFiles \$applicationFeatureFiles'
             $runText | Should -Match '(?s)New-VanessaParamsFile.*?-FeaturePath \$featuresPath'
-            $runText | Should -Match '-ExpectedSessionCount \(1 \+ \[int\]\$testClientTopology\.requiredTestClientSlots\)'
+            $runText | Should -Match '-InfoBasePath \$serviceInfoBase\.path'
+            $runText | Should -Match '-ExpectedSessionCount 1'
+            $runText | Should -Match '(?s)-AdditionalSessionAdmissions.*?infoBasePath = \[string\]\$state\.devBranchInfoBasePath.*?requiredSessions = \[int\]\$testClientTopology\.requiredTestClientSlots.*?expectedChildRole = "test-client"'
             $runText | Should -Not -Match 'Assert-VanessaTestClientCapacity'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

@@ -33,7 +33,7 @@ Use the established navigation-link pair:
 
 In BSL use `ПолучитьНавигационнуюСсылку(Объект.Ссылка)`. A local server-block variable does not become a Vanessa `$Переменная$`; consume it inside that block or transfer it through supported Vanessa context/library steps.
 
-For arbitrary BSL, classify the execution context before authoring. Metadata managers and database access run on the server; forms and client-only common modules run in the client/extension context. When both are required, compute and serialize the reference on the server, store it through a supported Vanessa variable step, and restore it in the client block. Do not use `СохранитьЗначение`/`ВосстановитьЗначение` to bridge VAExtension steps.
+For arbitrary BSL, classify the execution context before authoring. The plain server step runs in the empty TestManager service infobase; product metadata managers and database access must use the TestClient-side `на сервере (Расширение)` step. Forms and client-only common modules also run in the TestClient/extension context. When both are required, compute and serialize the reference on the server, store it through a supported Vanessa variable step, and restore it in the client block. Do not use `СохранитьЗначение`/`ВосстановитьЗначение` to bridge VAExtension steps.
 
 ## Diagnose One Run
 
