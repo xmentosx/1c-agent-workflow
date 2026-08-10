@@ -157,14 +157,34 @@ function Get-ShardInputDigest {
     return Get-TextSha256 -Lines $lines
 }
 
+function Get-ShardCacheEntryRoot {
+    param([string]$Digest)
+    if (-not $Digest) { return $null }
+    $target = Join-Path $cacheRoot $Digest
+    $candidates = @($target)
+    if (Test-Path -LiteralPath $target -PathType Container) {
+        $candidates += @(Get-ChildItem -LiteralPath $target -Directory -Filter ".$Digest.*.tmp")
+    }
+    foreach ($candidate in $candidates) {
+        $entryRoot = if ($candidate -is [IO.DirectoryInfo]) { $candidate.FullName } else { [string]$candidate }
+        $cachedResult = Join-Path $entryRoot "result.json"; $cachedJunit = Join-Path $entryRoot "pester.xml"; $manifestPath = Join-Path $entryRoot "manifest.json"
+        if (-not (Test-Path -LiteralPath $cachedResult -PathType Leaf) -or -not (Test-Path -LiteralPath $cachedJunit -PathType Leaf) -or -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { continue }
+        try {
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([int]$manifest.schemaVersion -eq 1 -and [string]$manifest.digest -eq $Digest -and
+                [string]$manifest.resultSha256 -eq (Get-FileHash -LiteralPath $cachedResult -Algorithm SHA256).Hash.ToLowerInvariant() -and
+                [string]$manifest.junitSha256 -eq (Get-FileHash -LiteralPath $cachedJunit -Algorithm SHA256).Hash.ToLowerInvariant()) { return $entryRoot }
+        } catch {}
+    }
+    return ""
+}
+
 function Restore-ShardCache {
     param([string]$Digest, [string]$ResultPath, [string]$JunitPath)
-    if (-not $Digest) { return $null }
-    $entryRoot = Join-Path $cacheRoot $Digest; $cachedResult = Join-Path $entryRoot "result.json"; $cachedJunit = Join-Path $entryRoot "pester.xml"; $manifestPath = Join-Path $entryRoot "manifest.json"
-    if (-not (Test-Path -LiteralPath $cachedResult -PathType Leaf) -or -not (Test-Path -LiteralPath $cachedJunit -PathType Leaf) -or -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { return $null }
+    $entryRoot = Get-ShardCacheEntryRoot -Digest $Digest
+    if (-not $entryRoot) { return $null }
+    $cachedResult = Join-Path $entryRoot "result.json"; $cachedJunit = Join-Path $entryRoot "pester.xml"
     try {
-        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ([int]$manifest.schemaVersion -ne 1 -or [string]$manifest.digest -ne $Digest -or [string]$manifest.resultSha256 -ne (Get-FileHash -LiteralPath $cachedResult -Algorithm SHA256).Hash.ToLowerInvariant() -or [string]$manifest.junitSha256 -ne (Get-FileHash -LiteralPath $cachedJunit -Algorithm SHA256).Hash.ToLowerInvariant()) { return $null }
         $result = Get-Content -LiteralPath $cachedResult -Raw -Encoding UTF8 | ConvertFrom-Json
         if ([string]$result.status -ne "passed" -or [int]$result.failed -ne 0) { return $null }
         Copy-Item -LiteralPath $cachedJunit -Destination $JunitPath -Force
@@ -182,7 +202,7 @@ function Save-ShardCache {
     $result = Get-Content -LiteralPath $ResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ([string]$result.status -ne "passed" -or [int]$result.failed -ne 0 -or -not (Test-Path -LiteralPath $JunitPath -PathType Leaf)) { return }
     $target = Join-Path $cacheRoot $Digest
-    if (Test-Path -LiteralPath (Join-Path $target "result.json") -PathType Leaf) { return }
+    if (Get-ShardCacheEntryRoot -Digest $Digest) { return }
     if (Test-Path -LiteralPath $target -PathType Container) {
         if (@(Get-ChildItem -LiteralPath $target -Force).Count -gt 0) { throw "Incomplete Pester shard cache is not empty: $target" }
         Remove-Item -LiteralPath $target -Force
@@ -292,7 +312,7 @@ function Complete-PesterFileEntry {
         $script:results += $workerResult
         if ([string]$workerResult.status -eq "passed" -and [int]$Entry.process.ExitCode -eq 0) {
             Save-ShardCache -Digest $Entry.digest -ResultPath $Entry.resultPath -JunitPath $Entry.junitPath
-            if (-not (Test-Path -LiteralPath (Join-Path $cacheRoot "$([string]$Entry.digest)\result.json") -PathType Leaf)) {
+            if (-not (Get-ShardCacheEntryRoot -Digest ([string]$Entry.digest))) {
                 throw "Passed Pester file cache was not persisted for worker $($Entry.worker)."
             }
             return $true
