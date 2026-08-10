@@ -121,6 +121,91 @@ Describe "Per-infobase 1C session admission" {
         $message | Should -Match "limitChange=developer-only"
     }
 
+    It "does not count sessions connected to another exact infobase" {
+        $result = & {
+            $saved = $env:ONEC_MAX_CONCURRENT_SESSIONS
+            try {
+                $env:ONEC_MAX_CONCURRENT_SESSIONS = "3"
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $base = Join-Path ([IO.Path]::GetTempPath()) "itl-session-current"
+                $other = Join-Path ([IO.Path]::GetTempPath()) "itl-session-other"
+                $script:FixtureProcesses = @(
+                    [pscustomobject]@{ processId = 111; commandLine = "1cv8.exe DESIGNER /F `"$other`"" },
+                    [pscustomobject]@{ processId = 112; commandLine = "1cv8c.exe ENTERPRISE /TESTMANAGER /F `"$other`"" },
+                    [pscustomobject]@{ processId = 113; commandLine = "1cv8c.exe ENTERPRISE /TESTCLIENT /F `"$other`"" }
+                )
+                function Get-OneCProcessInfo { return @($script:FixtureProcesses) }
+                function Invoke-ItlPortRegistryLock { param([scriptblock]$ScriptBlock) & $ScriptBlock }
+                function Read-OneCSessionRegistry { return [pscustomobject]@{ schemaVersion = 1; reservations = @() } }
+                function Write-OneCSessionRegistry { param([object[]]$Reservations) }
+                Invoke-OneCSessionAdmission -InfoBaseKind file -InfoBasePath $base -Purpose roctup -StartProcess { [pscustomobject]@{ Id = 114 } }
+            } finally { $env:ONEC_MAX_CONCURRENT_SESSIONS = $saved }
+        }
+
+        $result.Id | Should -Be 114
+    }
+
+    It "admits one manager and one TestClient next to one existing session on the same base" {
+        $result = & {
+            $saved = $env:ONEC_MAX_CONCURRENT_SESSIONS
+            try {
+                $env:ONEC_MAX_CONCURRENT_SESSIONS = "3"
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $base = Join-Path ([IO.Path]::GetTempPath()) "itl-session-roctup-plus-vanessa"
+                $script:FixtureProcesses = @(
+                    [pscustomobject]@{ processId = 121; commandLine = "1cv8c.exe ENTERPRISE /F `"$base`"" }
+                )
+                function Get-OneCProcessInfo { return @($script:FixtureProcesses) }
+                function Invoke-ItlPortRegistryLock { param([scriptblock]$ScriptBlock) & $ScriptBlock }
+                function Read-OneCSessionRegistry { return [pscustomobject]@{ schemaVersion = 1; reservations = @() } }
+                function Write-OneCSessionRegistry { param([object[]]$Reservations) $script:WrittenReservations = @($Reservations) }
+                $script:WrittenReservations = @()
+                $started = Invoke-OneCSessionAdmission `
+                    -InfoBaseKind file `
+                    -InfoBasePath $base `
+                    -RequiredSessions 2 `
+                    -ExpectedChildRole test-client `
+                    -Purpose test-manager-run `
+                    -StartProcess { [pscustomobject]@{ Id = 122 } }
+                [pscustomobject]@{ process = $started; reservations = @($script:WrittenReservations) }
+            } finally { $env:ONEC_MAX_CONCURRENT_SESSIONS = $saved }
+        }
+
+        $result.process.Id | Should -Be 122
+        $result.reservations[-1].requiredSessions | Should -Be 2
+        $result.reservations[-1].infoBaseKey | Should -Match '^file\|'
+    }
+
+    It "blocks one manager plus two TestClients next to an existing session on the same base" {
+        $message = & {
+            $saved = $env:ONEC_MAX_CONCURRENT_SESSIONS
+            try {
+                $env:ONEC_MAX_CONCURRENT_SESSIONS = "3"
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $base = Join-Path ([IO.Path]::GetTempPath()) "itl-session-roctup-plus-two-clients"
+                $script:FixtureProcesses = @(
+                    [pscustomobject]@{ processId = 131; commandLine = "1cv8c.exe ENTERPRISE /F `"$base`"" }
+                )
+                function Get-OneCProcessInfo { return @($script:FixtureProcesses) }
+                function Invoke-ItlPortRegistryLock { param([scriptblock]$ScriptBlock) & $ScriptBlock }
+                function Read-OneCSessionRegistry { return [pscustomobject]@{ schemaVersion = 1; reservations = @() } }
+                function Write-OneCSessionRegistry { param([object[]]$Reservations) }
+                try {
+                    Invoke-OneCSessionAdmission `
+                        -InfoBaseKind file `
+                        -InfoBasePath $base `
+                        -RequiredSessions 3 `
+                        -ExpectedChildRole test-client `
+                        -Purpose test-manager-run `
+                        -StartProcess { [pscustomobject]@{ Id = 132 } } | Out-Null
+                    ""
+                } catch { $_.Exception.Message }
+            } finally { $env:ONEC_MAX_CONCURRENT_SESSIONS = $saved }
+        }
+
+        $message | Should -Match '^ITL_ONEC_SESSION_LIMIT: max=3 active=1 reserved=0 required=3'
+    }
+
     It "keeps a future TestClient slot reserved while its TestManager is starting" {
         $message = & {
             $saved = $env:ONEC_MAX_CONCURRENT_SESSIONS
@@ -253,12 +338,9 @@ Describe "Per-infobase 1C session admission" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:Released = @()
-            function Invoke-OneCSessionAdmission {
-                param(
-                    [string]$InfoBaseKind, [string]$InfoBasePath, [int]$RequiredSessions,
-                    [string]$ExpectedChildRole, [string]$Purpose, [scriptblock]$StartProcess
-                )
-                $script:OneCSessionLaunchContext.reservationId = $Purpose
+            function Invoke-OneCSessionAdmissionSet {
+                param([object[]]$Admissions, [scriptblock]$StartProcess)
+                $script:OneCSessionLaunchContext.reservationIds = @([string]$Admissions[0].purpose)
                 return (& $StartProcess)
             }
             function Remove-OneCSessionReservation { param([string]$ReservationId) $script:Released += $ReservationId }
@@ -275,6 +357,37 @@ Describe "Per-infobase 1C session admission" {
         $result.sync | Should -Be 501
         $result.background | Should -Be 502
         @($result.released) | Should -Be @("sync")
+    }
+
+    It "atomically reserves the service TestManager and target TestClients per infobase" {
+        $result = & {
+            $saved = $env:ONEC_MAX_CONCURRENT_SESSIONS
+            try {
+                $env:ONEC_MAX_CONCURRENT_SESSIONS = "3"
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $service = Join-Path ([IO.Path]::GetTempPath()) "itl-session-service-manager"
+                $target = Join-Path ([IO.Path]::GetTempPath()) "itl-session-target-clients"
+                $script:FixtureProcesses = @(
+                    [pscustomobject]@{ processId = 601; commandLine = "1cv8c.exe ENTERPRISE /F `"$target`"" }
+                )
+                $script:WrittenReservations = @()
+                function Get-OneCProcessInfo { return @($script:FixtureProcesses) }
+                function Invoke-ItlPortRegistryLock { param([scriptblock]$ScriptBlock) & $ScriptBlock }
+                function Read-OneCSessionRegistry { return [pscustomobject]@{ schemaVersion = 1; reservations = @() } }
+                function Write-OneCSessionRegistry { param([object[]]$Reservations) $script:WrittenReservations = @($Reservations) }
+                $started = Invoke-OneCSessionAdmissionSet -Admissions @(
+                    [pscustomobject]@{ infoBaseKind = "file"; infoBasePath = $service; requiredSessions = 1; purpose = "manager" },
+                    [pscustomobject]@{ infoBaseKind = "file"; infoBasePath = $target; requiredSessions = 2; expectedChildRole = "test-client"; purpose = "clients" }
+                ) -StartProcess { [pscustomobject]@{ Id = 602 } }
+                [pscustomobject]@{ pid = $started.Id; reservations = @($script:WrittenReservations) }
+            } finally { $env:ONEC_MAX_CONCURRENT_SESSIONS = $saved }
+        }
+
+        $result.pid | Should -Be 602
+        @($result.reservations).Count | Should -Be 2
+        @($result.reservations | ForEach-Object requiredSessions) | Should -Be @(1, 2)
+        @($result.reservations | ForEach-Object infoBaseKey | Select-Object -Unique).Count | Should -Be 2
+        $result.reservations[1].expectedChildRole | Should -Be "test-client"
     }
 
     It "routes Designer, Enterprise, background MCP, and project launches through one admission hook" {

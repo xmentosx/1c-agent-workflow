@@ -565,51 +565,14 @@ Describe "ITL on-demand MCP facade" {
             $broker | Should -Match 'QuietInstallVanessaExt;DisableFirstRunHelper;UseEditor=true;usevanessaeditor=true'
             $broker | Should -Match 'ITL_VANESSA_UNSAFE_ACTION_PROTECTION_UNCONFIRMED'
             $broker | Should -Match 'function Ensure-ItlOnDemandVanessaTestClient'
-            $broker | Should -Match 'Assert-VanessaTestClientCapacity[\s\S]*Start-EnterpriseBackground[\s\S]*-UseTestClient[\s\S]*-TestClientPort'
+            $broker | Should -Match '(?s)Start-EnterpriseBackground.*?-InfoBasePath \$serviceInfoBase\.path.*?-UseTestManager'
+            $broker | Should -Match 'managerInfoBasePath = \$\(if \(\$Family -eq "vanessa-ui"\) \{ \[string\]\$serviceInfoBase\.path \}'
+            $broker | Should -Match 'infoBasePath = \[string\]\$state\.devBranchInfoBasePath'
+            $broker | Should -Match 'Start-EnterpriseBackground[\s\S]*-UseTestClient[\s\S]*-TestClientPort'
+            $broker | Should -Not -Match 'Assert-VanessaTestClientCapacity'
             $broker | Should -Match 'testClientProcessStartTime'
             $broker | Should -Match 'schemaVersion\s*=\s*4'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It "counts owned and foreign TestClients and fails license preflight without exposing secrets" {
-        $oldCapacity = [Environment]::GetEnvironmentVariable("VANESSA_TESTCLIENT_LICENSE_CAPACITY", "Process")
-        try {
-            [Environment]::SetEnvironmentVariable("VANESSA_TESTCLIENT_LICENSE_CAPACITY", "2", "Process")
-            $result = & {
-                $state = [pscustomobject]@{
-                    devBranchInfoBasePath = "D:\work\owned\base"
-                    worktreePath = "D:\work\owned"
-                    stateProjectRoot = "D:\work"
-                    safeDevBranchName = "branch-owned"
-                }
-                function Get-OneCProcessInfo {
-                    param([switch]$RequireSuccess)
-                    @(
-                        [pscustomobject]@{ processId = 71001; name = "1cv8c.exe"; commandLine = '1cv8c.exe /TESTCLIENT -TPort 48151 /F "D:\work\owned\base" /P "owned-secret"' },
-                        [pscustomobject]@{ processId = 71002; name = "1cv8c.exe"; commandLine = '1cv8c.exe /TESTCLIENT -TPort 48152 /F "D:\foreign\base" /P "foreign-secret"' },
-                        [pscustomobject]@{ processId = 71003; name = "1cv8c.exe"; commandLine = '1cv8c.exe /TESTMANAGER -TPort 48153 /F "D:\other\manager"' }
-                    )
-                }
-                $snapshot = Get-VanessaTestClientCapacitySnapshot -State $state
-                $message = ""
-                try {
-                    Assert-VanessaTestClientCapacity -State $state | Out-Null
-                } catch {
-                    $message = $_.Exception.Message
-                }
-                [pscustomobject]@{ snapshot = $snapshot; message = $message }
-            }
-            $result.snapshot.capacity | Should -Be 2
-            $result.snapshot.active | Should -Be 2
-            @($result.snapshot.processes | Where-Object scope -eq "owned").Count | Should -Be 1
-            @($result.snapshot.processes | Where-Object scope -eq "foreign").Count | Should -Be 1
-            $result.message | Should -Match '^ITL_VANESSA_LICENSE_LIMIT:'
-            $result.message | Should -Match '71001'
-            $result.message | Should -Match '71002'
-            $result.message | Should -Not -Match 'secret'
-        } finally {
-            [Environment]::SetEnvironmentVariable("VANESSA_TESTCLIENT_LICENSE_CAPACITY", $oldCapacity, "Process")
-        }
     }
 
     It "records the actual executable returned for an on-demand backend manager" {
@@ -742,9 +705,8 @@ Describe "ITL on-demand MCP facade" {
         $result.foreignWithForeignExcluded | Should -BeFalse
     }
 
-    It "reuses a proven owned on-demand TestClient without capacity check or new process" {
+    It "reuses a proven owned on-demand TestClient without a new process" {
         $result = & {
-            $script:capacityChecks = 0
             $script:testClientStarts = 0
             $runtime = [pscustomobject]@{
                 schemaVersion = 3; status = "running"; family = "vanessa-ui"; instanceId = ("a" * 32)
@@ -757,15 +719,13 @@ Describe "ITL on-demand MCP facade" {
             function Read-CurrentDevBranchStateForRoctupMcp { return [pscustomobject]@{ devBranchInfoBasePath = "D:\owned\base" } }
             function Get-Process { return [pscustomobject]@{ Id = 72002 } }
             function Get-ItlOnDemandOwnedTestClientProcesses { return @([pscustomobject]@{ process = [pscustomobject]@{ Id = 72002 } }) }
-            function Assert-VanessaTestClientCapacity { $script:capacityChecks++ }
             function Start-EnterpriseBackground { $script:testClientStarts++ }
             function Write-ItlOnDemandRuntimeState { return "state.json" }
             $reused = Ensure-ItlOnDemandVanessaTestClient -InstanceId ("a" * 32)
-            [pscustomobject]@{ state = $reused.testClientState; reused = $reused.testClientReused; capacityChecks = $script:capacityChecks; starts = $script:testClientStarts }
+            [pscustomobject]@{ state = $reused.testClientState; reused = $reused.testClientReused; starts = $script:testClientStarts }
         }
         $result.state | Should -Be "port-ready"
         $result.reused | Should -BeTrue
-        $result.capacityChecks | Should -Be 0
         $result.starts | Should -Be 0
     }
 
@@ -796,34 +756,6 @@ Describe "ITL on-demand MCP facade" {
         $result.stops | Should -Be 0
     }
 
-    It "does not start TestClient when the shared license capacity is exhausted" {
-        $result = & {
-            $script:starts = 0
-            $runtime = [pscustomobject]@{
-                schemaVersion = 3; status = "running"; family = "vanessa-ui"; instanceId = ("c" * 32)
-                pid = 74001; port = 9877; url = "http://127.0.0.1:9877/mcp"
-                testClientPid = 0; testClientPort = 48151; testClientState = "not-started"
-            }
-            function Read-ItlOnDemandRuntimeState { return $runtime }
-            function Test-ItlOnDemandOwnedProcess { return $true }
-            function Test-TcpPortOpen { return $true }
-            function Read-CurrentDevBranchStateForRoctupMcp { return [pscustomobject]@{ devBranchInfoBasePath = "D:\owned\base" } }
-            function Test-VanessaTestPortOwnedByState { return $false }
-            function Test-VanessaTestPortUsedByForeignProcess { return $false }
-            function Assert-VanessaTestClientCapacity { throw "ITL_VANESSA_LICENSE_LIMIT: capacity=2 active=2" }
-            function Start-EnterpriseBackground { $script:starts++ }
-            $message = ""
-            try {
-                Ensure-ItlOnDemandVanessaTestClient -InstanceId ("c" * 32) | Out-Null
-            } catch {
-                $message = $_.Exception.Message
-            }
-            [pscustomobject]@{ message = $message; starts = $script:starts }
-        }
-        $result.message | Should -Match '^ITL_VANESSA_LICENSE_LIMIT:'
-        $result.starts | Should -Be 0
-    }
-
     It "records the actual thin TestClient executable returned by the launcher" {
         $result = & {
             $runtime = [pscustomobject]@{
@@ -841,7 +773,6 @@ Describe "ITL on-demand MCP facade" {
             }
             function Test-VanessaTestPortOwnedByState { return $false }
             function Test-VanessaTestPortUsedByForeignProcess { return $false }
-            function Assert-VanessaTestClientCapacity {}
             function Start-EnterpriseBackground {
                 return [pscustomobject]@{
                     process = [pscustomobject]@{ Id = 75002 }

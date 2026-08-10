@@ -5,7 +5,7 @@ description: Use only when a 1C development-branch task needs runtime UI evidenc
 
 # ITL Vanessa UI MCP
 
-Vanessa UI MCP is branch-local runtime tooling for the current `itldev/*` infobase. It runs through `client_mcp` and `VAExtension` CFE extensions plus Vanessa Automation `runMcp`.
+Vanessa UI MCP is branch-local runtime tooling for the current `itldev/*` worktree. Its TestManager and `client_mcp` run in the worktree's empty service infobase; its TestClient and `VAExtension` run in the development infobase through Vanessa Automation `runMcp`.
 
 It is distinct from **Vanessa Automation verification**: `/itl-check` runs `StartFeaturePlayer` in the `TESTMANAGER -> TESTCLIENT` topology, produces JUnit and checks the event-log baseline. That verification flow is not an MCP operation and must not be replaced by this skill.
 

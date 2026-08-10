@@ -25,7 +25,7 @@ contract.
 
 ## 1. Unit-Like Logic
 
-Use `unit-like.feature` when one server-side block can calculate and assert the
+Use `unit-like.feature` when one TestClient-side `(Расширение)` server block can calculate and assert the
 result. Keep all local values in that block. Replace the demonstration expression
 with the application call and an exact expected value; do not open a form merely
 to reach the same logic.

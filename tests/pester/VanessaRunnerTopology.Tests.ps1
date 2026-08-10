@@ -20,7 +20,7 @@
             Set-Content -LiteralPath $featurePath -Encoding UTF8 -Value $FeatureText
 
             $manifestPath = Join-Path $Root "tests\vanessa-testclients.json"
-            if ($null -ne $ManifestText) {
+            if (-not [string]::IsNullOrEmpty($ManifestText)) {
                 Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value $ManifestText
                 Set-Content -LiteralPath (Join-Path $Root ".agent-1c\project.json") -Encoding UTF8 -Value '{"vanessaAutomation":{"testClientManifestPath":"tests/vanessa-testclients.json"}}'
             } else {
@@ -99,10 +99,43 @@
                 $clientsKey = Get-EncodedVanessaKey "0JTQsNC90L3Ri9C10JrQu9C40LXQvdGC0L7QstCi0LXRgdGC0LjRgNC+0LLQsNC90LjRjw=="
 
                 @($topology.profiles).Count | Should -Be 0
-                $topology.declaredLicenseSlots | Should -Be 0
-                $topology.staticPerScenarioMaximum | Should -Be 0
+                $topology.declaredTestClientCeiling | Should -Be 0
+                $topology.requiredTestClientSlots | Should -Be 0
                 $params.stoponerror | Should -BeFalse
                 @($params.PSObject.Properties[$clientKey].Value.PSObject.Properties[$clientsKey].Value).Count | Should -Be 0
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "starts the legacy default TestClient when a scenario uses a VAExtension step" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-extension-client-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $fixture = New-VanessaRunnerFixture `
+                -Root $tempRoot `
+                -FeatureText "# language: ru`nФункционал: Код конфигурации`nСценарий: Сервер TestClient`n  И я выполняю код встроенного языка на сервере (Расширение)"
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
+                $paramsPath = New-VanessaParamsFile `
+                    -FeaturePath $fixture.featurePath `
+                    -RunDirectory $fixture.runDirectory `
+                    -StatusPath (Join-Path $fixture.runDirectory "status.json") `
+                    -State $fixture.state `
+                    -TestPort 48051 `
+                    -TestPorts @(48051) `
+                    -TestClientTopology $topology
+                $params = Get-Content -Raw -Encoding UTF8 $paramsPath | ConvertFrom-Json
+                $scenarioKey = Get-EncodedVanessaKey "0JLRi9C/0L7Qu9C90LXQvdC40LXQodGG0LXQvdCw0YDQuNC10LI="
+                $startOnErrorKey = Get-EncodedVanessaKey "0J7RgdGC0LDQvdC+0LLQutCw0J/RgNC40JLQvtC30L3QuNC60L3QvtCy0LXQvdC40LjQntGI0LjQsdC60Lg="
+
+                $topology.configured | Should -BeFalse
+                $topology.requiresExtensionTestClient | Should -BeTrue
+                $topology.requiredTestClientSlots | Should -Be 1
+                @($topology.profiles).Count | Should -Be 1
+                $params.stoponerror | Should -BeTrue
+                $params.PSObject.Properties[$scenarioKey].Value.PSObject.Properties[$startOnErrorKey].Value | Should -BeTrue
             }
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -139,8 +172,8 @@
                 $clientKey = Get-EncodedVanessaKey "0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP"
                 $closeAfterRunKey = Get-EncodedVanessaKey "0JfQsNC60YDRi9GC0YxUZXN0Q2xpZW500J/QvtGB0LvQtdCX0LDQv9GD0YHQutCw0KHRhtC10L3QsNGA0LjQtdCy"
 
-                $topology.declaredLicenseSlots | Should -Be 1
-                $topology.staticPerScenarioMaximum | Should -Be 1
+                $topology.declaredTestClientCeiling | Should -Be 1
+                $topology.requiredTestClientSlots | Should -Be 1
                 $params.PSObject.Properties[$onlyOneKey].Value | Should -BeTrue
                 $params.stoponerror | Should -BeTrue
                 $params.PSObject.Properties[$scenarioKey].Value.PSObject.Properties[$stopOnErrorKey].Value | Should -BeTrue
@@ -184,8 +217,8 @@
                 $records = @($clientSettings.PSObject.Properties[$clientsKey].Value)
                 $ports = @($records | ForEach-Object { [int]$_.PSObject.Properties[$portKey].Value })
 
-                $topology.declaredLicenseSlots | Should -Be 2
-                $topology.staticPerScenarioMaximum | Should -Be 2
+                $topology.declaredTestClientCeiling | Should -Be 2
+                $topology.requiredTestClientSlots | Should -Be 2
                 $topology.PSObject.Properties.Name | Should -Not -Contain "observedMaximumConcurrency"
                 $topology.PSObject.Properties.Name | Should -Not -Contain "maxConcurrency"
                 $records.Count | Should -Be 3
@@ -203,7 +236,38 @@
         }
     }
 
-    It "allocates a bounded unique port per declared profile and enforces license capacity" {
+    It "reserves only the TestClients required by the selected scenarios below the manifest ceiling" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-selected-capacity-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $fixture = New-VanessaRunnerFixture `
+                -Root $tempRoot `
+                -FeatureText "# language: ru`nФункционал: Выбранная конкурентность`n@Selected`nСценарий: Один клиент`n  Дано я подключаю профиль TestClient `"Alpha`"`nСценарий: Два клиента`n  Дано я подключаю профиль TestClient `"Alpha`"`n  И я подключаю профиль TestClient `"Beta`"" `
+                -ManifestText '{"schemaVersion":1,"maxConcurrency":2,"profiles":[{"name":"Alpha"},{"name":"Beta"}]}'
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath) -FilterTags "@Selected"
+                $paramsPath = New-VanessaParamsFile `
+                    -FeaturePath $fixture.featurePath `
+                    -RunDirectory $fixture.runDirectory `
+                    -StatusPath (Join-Path $fixture.runDirectory "status.json") `
+                    -State $fixture.state `
+                    -TestPort 48051 `
+                    -TestPorts @(48051, 48052) `
+                    -TestClientTopology $topology `
+                    -FilterTags "@Selected"
+                $params = Get-Content -Raw -Encoding UTF8 $paramsPath | ConvertFrom-Json
+                $onlyOneKey = Get-EncodedVanessaKey "0KDQsNC30YDQtdGI0LXQvdC+0JfQsNC/0YPRgdC60LDRgtGM0KLQvtC70YzQutC+0J7QtNC40L3QmtC70LjQtdC90YLQotC10YHRgtC40YDQvtCy0LDQvdC40Y8="
+
+                $topology.declaredTestClientCeiling | Should -Be 2
+                $topology.requiredTestClientSlots | Should -Be 1
+                $params.PSObject.Properties[$onlyOneKey].Value | Should -BeTrue
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "allocates a bounded unique port per declared profile without a separate machine-global session cap" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-ports-" + [guid]::NewGuid().ToString("N"))
         $oldRegistryHome = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", "Process")
         $oldPortRange = [Environment]::GetEnvironmentVariable("VANESSA_TEST_PORT_RANGE", "Process")
@@ -225,10 +289,6 @@
                 @($allocations.key | Sort-Object -Unique).Count | Should -Be 3
                 @($allocations.leaseToken | Where-Object { $_ } | Sort-Object -Unique).Count | Should -Be 1
 
-                function Get-VanessaTestClientCapacitySnapshot {
-                    return [pscustomobject]@{ capacity = 1; active = 0; available = 1; processes = @() }
-                }
-                { Assert-VanessaTestClientCapacity -State $state -RequiredSlots 2 } | Should -Throw "*ITL_VANESSA_LICENSE_LIMIT*"
             }
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", $oldRegistryHome, "Process")
@@ -271,7 +331,7 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
                 $topology.requiredProfiles | Should -Be @("Alpha", "Beta")
-                $topology.staticPerScenarioMaximum | Should -Be 1
+                $topology.requiredTestClientSlots | Should -Be 1
             }
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -290,7 +350,7 @@
                 $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
 
                 @($topology.requiredProfiles).Count | Should -Be 0
-                $topology.staticPerScenarioMaximum | Should -Be 2
+                $topology.requiredTestClientSlots | Should -Be 2
                 @($topology.profiles).Count | Should -Be 0
                 ($topology | ConvertTo-Json -Depth 5) | Should -Not -Match "inline-secret"
             }
@@ -311,7 +371,7 @@
                 $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
 
                 @($topology.requiredProfiles).Count | Should -Be 0
-                $topology.staticPerScenarioMaximum | Should -Be 2
+                $topology.requiredTestClientSlots | Should -Be 2
                 @($topology.profiles).Count | Should -Be 0
                 ($topology | ConvertTo-Json -Depth 5) | Should -Not -Match "table-secret"
             }
@@ -332,7 +392,7 @@
                 $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
 
                 $topology.requiredProfiles | Should -Be @("U1")
-                $topology.staticPerScenarioMaximum | Should -Be 2
+                $topology.requiredTestClientSlots | Should -Be 2
             }
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -389,6 +449,10 @@
             $runText | Should -Match 'Get-VanessaTestClientTopology -FeatureFiles \$applicationFeatureFiles'
             $runText | Should -Match 'Get-VanessaFilteredScenarioCount -FeatureFiles \$applicationFeatureFiles'
             $runText | Should -Match '(?s)New-VanessaParamsFile.*?-FeaturePath \$featuresPath'
+            $runText | Should -Match '-InfoBasePath \$serviceInfoBase\.path'
+            $runText | Should -Match '-ExpectedSessionCount 1'
+            $runText | Should -Match '(?s)-AdditionalSessionAdmissions.*?infoBasePath = \[string\]\$state\.devBranchInfoBasePath.*?requiredSessions = \[int\]\$testClientTopology\.requiredTestClientSlots.*?expectedChildRole = "test-client"'
+            $runText | Should -Not -Match 'Assert-VanessaTestClientCapacity'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -424,6 +488,154 @@
                 Set-Content -LiteralPath (Join-Path $fixture.runDirectory "junit.xml") -Encoding UTF8 -Value '<testsuite tests="2" failures="0" errors="0"><testcase name="Selected"/><testcase name="Not selected"/></testsuite>'
                 { Assert-VanessaTagFilterJunitEvidence -RunDirectory $fixture.runDirectory -ExpectedScenarioCount $expected -FilterTags "@V28" } | Should -Throw "*ITL_VANESSA_TAG_FILTER_COUNT_MISMATCH*"
             }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Describe "Vanessa verification failure classification" {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $RepoRoot = $context.RepoRoot
+        $HelperPath = $context.HelperPath
+        $VanessaPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1"
+        $VanessaText = Get-Content -Encoding UTF8 -Raw $VanessaPath
+    }
+
+    It "classifies a JUnit TestClient connection timeout with PID zero as runner-owned" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-status-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $xml = @(
+                    '<?xml version="1.0" encoding="UTF-8"?>'
+                    '<testsuites>'
+                    '  <testsuite name="suite" tests="1" failures="1" errors="0">'
+                    '    <testcase name="connect profile">'
+                    '      <error>Не получилось подключить TestClient. Прерывание по таймауту &lt;300&gt;'
+                    'Порт запуска=48068'
+                    'PID=0'
+                    'password=DO_NOT_LEAK</error>'
+                    '    </testcase>'
+                    '  </testsuite>'
+                    '</testsuites>'
+                ) -join [Environment]::NewLine
+                [IO.File]::WriteAllText((Join-Path $tempRoot "junit.xml"), $xml, (Get-Utf8Encoding))
+                Get-VanessaVerificationStatus -RunDirectory $tempRoot -StatusPath (Join-Path $tempRoot "status.json")
+            }
+
+            $result.status | Should -Be "failed"
+            $result.failureCategory | Should -Be "runner"
+            $result.reason | Should -Match 'Не получилось подключить TestClient'
+            $result.reason | Should -Match 'PID=0'
+            $result.reason | Should -Match '<redacted>'
+            $result.reason | Should -Not -Match 'DO_NOT_LEAK'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "does not relabel an ordinary product assertion as a runner failure" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-status-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $xml = @(
+                    '<testsuite name="suite" tests="1" failures="1" errors="0">'
+                    '  <testcase name="product assertion">'
+                    '    <failure message="Expected 2, got 3">The form value differs from the fixture.</failure>'
+                    '  </testcase>'
+                    '</testsuite>'
+                ) -join [Environment]::NewLine
+                [IO.File]::WriteAllText((Join-Path $tempRoot "junit.xml"), $xml, (Get-Utf8Encoding))
+                Get-VanessaVerificationStatus -RunDirectory $tempRoot -StatusPath (Join-Path $tempRoot "status.json")
+            }
+
+            $result.status | Should -Be "failed"
+            $result.failureCategory | Should -Be ""
+            $result.reason | Should -Match 'Expected 2, got 3'
+            $VanessaText | Should -Match '(?s)failureCategory.*?-eq "runner".*?Set-RunFailureContext -Category "runner"'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "requires both connection failure and startup evidence for runner classification" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            [pscustomobject]@{
+                connectionOnly = Test-VanessaTestClientConnectionFailure -Diagnostic "Не удалось подключить клиент тестирования: product fixture expected another message"
+                timeoutOnly = Test-VanessaTestClientConnectionFailure -Diagnostic "PID=0 after a generic platform timeout"
+                complete = Test-VanessaTestClientConnectionFailure -Diagnostic "Не удалось подключить клиент тестирования. PIDКлиентаТестирования: 0"
+            }
+        }
+
+        $result.connectionOnly | Should -BeFalse
+        $result.timeoutOnly | Should -BeFalse
+        $result.complete | Should -BeTrue
+    }
+
+    It "stops waiting when a named profile Out file exists but its process vanished before observation" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-startup-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $infoBasePath = Join-Path $tempRoot "ib"
+                New-Item -ItemType Directory -Force -Path $infoBasePath | Out-Null
+                $paramsPath = Join-Path $tempRoot "VAParams.json"
+                Set-Content -LiteralPath $paramsPath -Encoding UTF8 -Value '{}'
+                $outputPath = Join-Path $tempRoot "ProfileOne_20260810235003.txt"
+                Set-Content -LiteralPath $outputPath -Encoding UTF8 -Value ""
+                (Get-Item -LiteralPath $outputPath).CreationTime = (Get-Date).AddSeconds(-10)
+                $state = [pscustomobject]@{ infoBaseKind = "file"; devBranchInfoBasePath = $infoBasePath }
+                $monitor = New-VanessaTestClientStartupMonitor -RunDirectory $tempRoot -ProfileNames @("ProfileOne") -ExitDetectionSeconds 1
+                function Get-OneCProcessInfo { return @() }
+                $completed = Test-VanessaTestClientStartupMonitor -Monitor $monitor -State $state -TestPorts @(48067) -RunParamsPath $paramsPath
+                [pscustomobject]@{ completed = $completed; failure = $monitor.failure }
+            }
+
+            $result.completed | Should -BeTrue
+            $result.failure.code | Should -Be "ITL_VANESSA_TESTCLIENT_STARTUP_EXITED"
+            $result.failure.profileName | Should -Be "ProfileOne"
+            $result.failure.processObserved | Should -BeFalse
+            $result.failure.processId | Should -Be 0
+            $result.failure.outputPath | Should -Be (Join-Path $tempRoot "ProfileOne_20260810235003.txt")
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps waiting when the exact owned TestClient Out process is observable" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-startup-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $infoBasePath = Join-Path $tempRoot "ib"
+                New-Item -ItemType Directory -Force -Path $infoBasePath | Out-Null
+                $paramsPath = Join-Path $tempRoot "VAParams.json"
+                Set-Content -LiteralPath $paramsPath -Encoding UTF8 -Value '{}'
+                $outputPath = Join-Path $tempRoot "ProfileOne_20260810235003.txt"
+                Set-Content -LiteralPath $outputPath -Encoding UTF8 -Value ""
+                (Get-Item -LiteralPath $outputPath).CreationTime = (Get-Date).AddSeconds(-10)
+                $state = [pscustomobject]@{ infoBaseKind = "file"; devBranchInfoBasePath = $infoBasePath; vanessaServiceInfoBasePath = (Join-Path $tempRoot "service") }
+                $monitor = New-VanessaTestClientStartupMonitor -RunDirectory $tempRoot -ProfileNames @("ProfileOne") -ExitDetectionSeconds 1
+                $script:fixtureCommandLine = "1cv8c.exe /TESTCLIENT /F `"$infoBasePath`" -TPort 48067 /Out `"$outputPath`""
+                function Get-OneCProcessInfo { return @([pscustomobject]@{ processId = 7811; commandLine = $script:fixtureCommandLine }) }
+                $completed = Test-VanessaTestClientStartupMonitor -Monitor $monitor -State $state -TestPorts @(48067) -RunParamsPath $paramsPath
+                $candidate = @($monitor.candidates.Values)[0]
+                [pscustomobject]@{ completed = $completed; failure = $monitor.failure; candidate = $candidate }
+            }
+
+            $result.completed | Should -BeFalse
+            $result.failure | Should -BeNullOrEmpty
+            $result.candidate.processObserved | Should -BeTrue
+            $result.candidate.processId | Should -Be 7811
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

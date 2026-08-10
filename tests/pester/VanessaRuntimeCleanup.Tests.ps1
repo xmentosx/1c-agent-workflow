@@ -16,16 +16,18 @@ Describe "Branch-safe Vanessa runtime cleanup" {
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $currentBase = Join-Path $tempRoot "current-base"
+                $serviceBase = Join-Path $tempRoot "vanessa-service-base"
                 $foreignBase = "D:\foreign-worktree\base"
                 $state = [pscustomobject]@{
                     devBranchInfoBasePath = $currentBase
+                    vanessaServiceInfoBasePath = $serviceBase
                     worktreePath = $tempRoot
                     safeDevBranchName = "current"
                     vanessaTestPort = 48151
                 }
                 $script:StoppedIds = @()
                 $script:Processes = @(
-                    [pscustomobject]@{ processId = 1001; name = "1cv8c.exe"; commandLine = "1cv8c.exe /TESTMANAGER /F `"$currentBase`""; workingSetMb = 10 },
+                    [pscustomobject]@{ processId = 1001; name = "1cv8c.exe"; commandLine = "1cv8c.exe /TESTMANAGER /F `"$serviceBase`""; workingSetMb = 10 },
                     [pscustomobject]@{ processId = 1002; name = "1cv8c.exe"; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48151 /F `"$currentBase`""; workingSetMb = 10 },
                     [pscustomobject]@{ processId = 2001; name = "1cv8c.exe"; commandLine = "1cv8c.exe /TESTCLIENT -TPort 48152 /F `"$foreignBase`""; workingSetMb = 10 }
                 )

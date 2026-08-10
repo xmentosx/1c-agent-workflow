@@ -134,7 +134,6 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | `VANESSA_TEST_TIMEOUT_SECONDS` | Timeout прогона | default `1800` | user |
 | `VANESSA_TEST_CLIENT_STARTUP_TIMEOUT_SECONDS` | Timeout TestClient | default `300` | user |
 | `VANESSA_TEST_WINDOW_SEARCH_TIMEOUT_SECONDS` | Timeout поиска окна | default `60` | user |
-| `VANESSA_TESTCLIENT_LICENSE_CAPACITY` | Общая доступная capacity TestClient для verification и Vanessa UI MCP | положительное число, default `2`; должно соответствовать фактическим лицензиям | user |
 | `VANESSA_EVENT_LOG_LEVELS` | Уровни журнала | default `Error` | user |
 | `VANESSA_EVENT_LOG_CLOCK_SKEW_SECONDS` | Допуск времени | default `5` | user |
 | `VANESSA_EVENT_LOG_READER` | Reader журнала | `auto` или поддержанный reader | user |

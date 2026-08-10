@@ -752,7 +752,7 @@ function Set-ItlOnDemandRuntimeStateValues {
     return [pscustomobject]$stateHash
 }
 
-function Test-ItlOnDemandVanessaLicenseLimitLog {
+function Test-ItlOnDemandVanessaPlatformLicenseUnavailableLog {
     param([AllowNull()][string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
     try {
@@ -828,8 +828,6 @@ function Ensure-ItlOnDemandVanessaTestClient {
         (Test-VanessaTestPortUsedByForeignProcess -State $state -Port $testClientPort -ExcludeProcessId $managerPid)) {
         throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: TestClient port $testClientPort is used by an unregistered process; it was not claimed or stopped."
     }
-    Assert-VanessaTestClientCapacity -State $state | Out-Null
-
     $testClientResult = $null
     try {
         $testClientResult = Start-EnterpriseBackground `
@@ -859,8 +857,8 @@ function Ensure-ItlOnDemandVanessaTestClient {
                 testClientState = "exited"
             }
             Write-ItlOnDemandRuntimeState -RuntimeState $runtimeState | Out-Null
-            if (Test-ItlOnDemandVanessaLicenseLimitLog -Path $testClientResult.logPath) {
-                throw "ITL_VANESSA_LICENSE_LIMIT: TestClient exited during startup and its safe log markers report an unavailable license."
+            if (Test-ItlOnDemandVanessaPlatformLicenseUnavailableLog -Path $testClientResult.logPath) {
+                throw "ITL_VANESSA_PLATFORM_LICENSE_UNAVAILABLE: TestClient exited during startup and its safe log markers report an unavailable platform license."
             }
             throw "ITL_VANESSA_TESTCLIENT_NOT_CONNECTED: owned TestClient process did not open port $testClientPort. Log: $($testClientResult.logPath)"
         }
@@ -933,6 +931,8 @@ function Start-ItlOnDemandBackendInstance {
                 throw "ITL_VANESSA_UNSAFE_ACTION_PROTECTION_UNCONFIRMED: run configure-dev-branch-unsafe-action-protection for this worktree."
             }
             $state = Ensure-VanessaMcpInstalled -State $state
+            $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $state
+            $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
             $vanessa = Get-VanessaAutomationState
             if (-not $vanessa.ready) { throw "Vanessa Automation runtime is not installed." }
             $range = Get-VanessaMcpPortRange
@@ -960,7 +960,7 @@ function Start-ItlOnDemandBackendInstance {
         $runtimeState = [pscustomobject][ordered]@{
             schemaVersion = 4; status = "starting"; family = $Family; instanceId = $InstanceId
             pid = 0; processStartTime = ""; executablePath = ""
-            ownershipMarkers = @([string]$state.devBranchInfoBasePath, "port=$port")
+            ownershipMarkers = @($(if ($Family -eq "vanessa-ui") { [string]$serviceInfoBase.path } else { [string]$state.devBranchInfoBasePath }), "port=$port")
             portFamily = $portFamily; portKey = $key; portLeaseToken = $portLeaseToken
             port = $port; url = $url; backendVersion = $version; catalogSha256 = $CatalogSha256
             readiness = "not-started"; readinessAt = ""; runningAt = ""; portOwnerPidVerified = $false
@@ -971,6 +971,8 @@ function Start-ItlOnDemandBackendInstance {
             clientMcpSafeMode = $(if ($Family -eq "vanessa-ui") { [bool](Get-StateValue -State $vanessaSafeModeProof -Name "clientMcpSafeMode" -Default $true) } else { $null })
             vaExtensionSafeMode = $(if ($Family -eq "vanessa-ui") { [bool](Get-StateValue -State $vanessaSafeModeProof -Name "vaExtensionSafeMode" -Default $true) } else { $null })
             infoBasePath = [string]$state.devBranchInfoBasePath
+            managerInfoBaseKind = $(if ($Family -eq "vanessa-ui") { [string]$serviceInfoBase.kind } else { [string]$state.infoBaseKind })
+            managerInfoBasePath = $(if ($Family -eq "vanessa-ui") { [string]$serviceInfoBase.path } else { [string]$state.devBranchInfoBasePath })
             testClientProfile = $(if ($Family -eq "vanessa-ui") { "itl-ondemand" } else { "" })
             testClientPortFamily = $testClientPortFamily; testClientPortKey = $testClientPortKey; testClientPortLeaseToken = $testClientPortLeaseToken; testClientPort = $testClientPort
             testClientState = $(if ($Family -eq "vanessa-ui") { "not-started" } else { "" })
@@ -983,7 +985,14 @@ function Start-ItlOnDemandBackendInstance {
         if ($Family -eq "roctup") {
             $result = Start-EnterpriseBackground -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -EnterpriseArgs @("/Execute", $artifact.path, "/Cstartup;mode=embedded;port=$port")
         } else {
-            $result = Start-EnterpriseBackground -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -UseTestManager -TestClientPort $testClientPort -EnterpriseArgs @("/Execute", $vanessa.epfPath, "/C$command")
+            $result = Start-EnterpriseBackground `
+                -InfoBasePath $serviceInfoBase.path `
+                -InfoBaseKind $serviceInfoBase.kind `
+                -UseTestManager `
+                -TestClientPort $testClientPort `
+                -User "" `
+                -Password "" `
+                -EnterpriseArgs @("/Execute", $vanessa.epfPath, "/C$command")
         }
         $process = Get-Process -Id $result.process.Id -ErrorAction Stop
         $runtimeState = Set-ItlOnDemandRuntimeStateValues -RuntimeState $runtimeState -Values ([ordered]@{

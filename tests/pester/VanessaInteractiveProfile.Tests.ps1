@@ -243,7 +243,7 @@ Describe "Interactive Vanessa profiling lifecycle" {
         }
     }
 
-    It "propagates the shared capacity failure without writing profile ownership" {
+    It "propagates an actual platform license startup failure without writing profile ownership" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-profile-capacity-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
@@ -258,13 +258,13 @@ Describe "Interactive Vanessa profiling lifecycle" {
                 function Read-VanessaInteractiveProfileState { return $null }
                 function Get-VanessaInteractiveProfileRuntimeInstances { return @() }
                 function Get-OwnVanessaTestProcesses { return @() }
-                function Invoke-ItlOnDemandVanessaProfileStart { throw "ITL_VANESSA_LICENSE_LIMIT: capacity=2 active=2" }
+                function Invoke-ItlOnDemandVanessaProfileStart { throw "ITL_VANESSA_PLATFORM_LICENSE_UNAVAILABLE: TestClient startup log reports no platform license" }
                 function Write-VanessaInteractiveProfileState { $script:Writes++ }
                 $message = ""
                 try { Start-DevBranchVanessaInteractiveProfile 6>$null } catch { $message = $_.Exception.Message }
                 [pscustomobject]@{ message = $message; writes = $script:Writes }
             }
-            $result.message | Should -Match "ITL_VANESSA_LICENSE_LIMIT"
+            $result.message | Should -Match "ITL_VANESSA_PLATFORM_LICENSE_UNAVAILABLE"
             $result.writes | Should -Be 0
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

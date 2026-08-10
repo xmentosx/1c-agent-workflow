@@ -46,7 +46,8 @@ No separate authoring pass. Use `itl-vanessa-ui` only when needed; see `vanessa-
 
 - Vanessa's `Объект` scenario context is not an arbitrary `Структура`. Do not add fields with `Объект.Поле = ...` or `Объект.Вставить(...)`.
 - Keep local BSL values inside one block; across steps use a supported Vanessa variable/library step, not invented `Объект` fields.
-- Classify every executable BSL block: metadata/data access is server-side; forms and client-only modules are client-side. Never combine both contexts in one block.
+- The TestManager runs in a branch-local empty service infobase; the TestClient runs in the development infobase. Product metadata/data access therefore uses `на сервере (Расширение)`, while the plain `на сервере` step is reserved for code that intentionally belongs to the empty TestManager infobase.
+- Classify every executable BSL block: product metadata/data access is TestClient server-side through VAExtension; forms and client-only modules are TestClient client-side. Never combine both contexts in one block.
 - Transfer cross-context values through supported Vanessa variables. Do not use `СохранитьЗначение`/`ВосстановитьЗначение` as VAExtension cross-step transport.
 - Extension forms are supported in the real `TESTMANAGER -> TESTCLIENT` run. A requirement about an extension form, command, or visible state needs a UI scenario; a unit-like BSL check does not replace it.
 

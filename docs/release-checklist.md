@@ -190,10 +190,11 @@ The runner checkpoints `seed-parallel`, `config-cadence`, `config-roundtrip`, `e
 `ondemand-mcp`, verification refresh and `result-cleanup` under the ignored branch-local
 `.agent-1c/runs/release-e2e/<branch>/` directory. Baseline and post-config `.dt`
 snapshots, state, `.dev.env`, evidence and expected HEAD are SHA-checked.
-The two-instance Vanessa UI probe keeps both facade/TestManager backends live but
-closes each managed TestClient after its smoke before starting the next one. This
-preserves backend-isolation proof while staying within the configured
-`ONEC_MAX_CONCURRENT_SESSIONS=3` ceiling (`2 x TESTMANAGER + 1 x TESTCLIENT`).
+The two-instance Vanessa UI probe keeps both facade/TestManager backends live in
+their empty service infobase but closes each target-infobase TestClient after its
+smoke before starting the next one. This preserves backend-isolation proof while
+staying within each exact infobase's configured `ONEC_MAX_CONCURRENT_SESSIONS=3`
+ceiling (two service TestManagers and one target TestClient).
 Strict owned-process cleanup allows a bounded Windows exit-confirmation window
 after force-stop; a PID still alive at the deadline retains runtime state and
 leases and fails the release. Release evidence records the actually observed
@@ -202,6 +203,12 @@ leases and fails the release. Release evidence records the actually observed
 Checkpoint v3 separates mutable rollback state from immutable capability cache.
 Before a temporary source candidate can be removed, passed evidence is sealed
 under `.agent-1c/runs/release-e2e-capabilities/<branch>/<runId>/`.
+Only the post-config snapshot/state needed by cross-release import is copied to
+that immutable cache; the baseline stays in the current mutable checkpoint for
+`Restart`. After a successful run, retention keeps only the current capability
+generation and current CF/CFE plus its manifest, and removes older E2E exports
+and completed `release-e2e-*`/`extension-init-*` recovery snapshots. A failed or
+interrupted run retains its current rollback evidence for safe resume.
 `Auto` resumes the same candidate in place. For a new workflow candidate it
 SHA-checks and archives prior capability evidence, restores the prior baseline,
 creates a new baseline/initial HEAD, replays owned fixture commits, and imports

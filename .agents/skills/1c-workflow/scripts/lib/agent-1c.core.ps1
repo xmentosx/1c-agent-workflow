@@ -952,20 +952,22 @@ function Publish-Agent1cVanessaRunEvidence {
         [Parameter(Mandatory = $true)][string]$RunParamsPath
     )
 
-    $infoBasePath = Resolve-Agent1cFullPath -Path ([string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default ""))
+    $targetInfoBasePath = Resolve-Agent1cFullPath -Path ([string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default ""))
+    $managerInfoBasePath = Resolve-Agent1cFullPath -Path ([string](Get-StateValue -State $State -Name "vanessaServiceInfoBasePath" -Default $targetInfoBasePath))
     $paramsPath = Resolve-Agent1cFullPath -Path $RunParamsPath
     $ports = @($TestPorts | Where-Object { $_ -gt 0 } | Select-Object -Unique)
-    if (-not $infoBasePath -or -not $paramsPath -or $ports.Count -eq 0 -or
+    if (-not $managerInfoBasePath -or -not $targetInfoBasePath -or -not $paramsPath -or $ports.Count -eq 0 -or
         $null -eq $script:LifecycleOperationRecord -or [string]::IsNullOrWhiteSpace($script:LifecycleOperationId)) {
         throw "ITL_VANESSA_RUN_EVIDENCE_INVALID: exact lifecycle operation, infobase, VAParams path, and positive TestClient ports are required."
     }
     $evidence = [pscustomobject][ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         operationId = $script:LifecycleOperationId
         ownerPid = $script:LifecycleOperationOwnerPid
         processId = $PID
         projectRoot = $script:ProjectRoot
-        infoBasePath = $infoBasePath
+        infoBasePath = $managerInfoBasePath
+        testClientInfoBasePath = $targetInfoBasePath
         runParamsPath = $paramsPath
         testPorts = @($ports)
         publishedAt = (Get-Date).ToString("o")
@@ -6132,6 +6134,7 @@ function Invoke-Enterprise {
         [scriptblock]$CompletionProbe = $null,
         [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10,
         [ValidateRange(0, 64)][int]$ExpectedSessionCount = 0,
+        [object[]]$AdditionalSessionAdmissions = @(),
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
     )
@@ -6176,6 +6179,7 @@ function Invoke-Enterprise {
         -RequiredSessions $requiredSessions `
         -ExpectedChildRole $(if ($effectiveTestClientPort -gt 0) { "test-client" } else { "" }) `
         -Purpose $(if ($effectiveTestClientPort -gt 0) { "test-manager-run" } else { "enterprise-run" }) `
+        -AdditionalAdmissions $AdditionalSessionAdmissions `
         -ScriptBlock {
             Invoke-NativeProcessAndWaitResult `
                 -FilePath $platformPath `

@@ -9,11 +9,12 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $LifecycleText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1")
     }
 
-    It "keeps LoadCfg unchanged and reconciles only the two Vanessa extensions afterward" {
+    It "keeps LoadCfg unchanged and reconciles each Vanessa extension in its own infobase" {
         $VanessaText | Should -Match ([regex]::Escape('-DesignerArgs @("/LoadCfg", $CfePath, "-Extension", $ExtensionName, "/UpdateDBCfg")'))
-        $VanessaText | Should -Match ([regex]::Escape('$safeModeProof = Set-VanessaMcpExtensionsUnsafeMode -State $state -ClientArtifact $clientArtifact -VaExtensionArtifact $vaExtensionArtifact'))
-        $setCommands = @([regex]::Matches($VanessaText, 'config extensions properties set --extension ([A-Za-z0-9_]+) --safe-mode no'))
-        @($setCommands | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique) | Should -Be @("client_mcp", "VAExtension")
+        $VanessaText | Should -Match 'function Set-VanessaMcpExtensionUnsafeMode'
+        $VanessaText | Should -Match 'config extensions properties set --extension \$ExtensionName --safe-mode no'
+        $VanessaText | Should -Match '(?s)-ExtensionName "client_mcp".*?-InfoBasePath \$serviceInfoBase\.path'
+        $VanessaText | Should -Match '(?s)-ExtensionName "VAExtension".*?-InfoBasePath \(\[string\]\$state\.devBranchInfoBasePath\)'
         $VanessaText | Should -Not -Match 'config extensions properties set --all-extensions'
         $VanessaText | Should -Not -Match 'config extensions properties set[^\r\n]*unsafe-action-protection'
     }
@@ -22,6 +23,102 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $VanessaText | Should -Not -Match 'StandardInputEncoding'
         $VanessaText | Should -Match ([regex]::Escape('$stdinBytes = (Get-Utf8Encoding).GetBytes($json)'))
         $VanessaText | Should -Match ([regex]::Escape('$process.StandardInput.BaseStream.Write($stdinBytes, 0, $stdinBytes.Length)'))
+    }
+
+    It "starts Designer Agent with a platform log and verifies listener ownership" {
+        $VanessaText | Should -Match '(?s)function Set-VanessaMcpExtensionUnsafeMode.*?"/DisableStartupMessages".*?"/DisableStartupDialogs".*?"/Out", \$logPath.*?Wait-VanessaDesignerAgentReady'
+        $VanessaText | Should -Match 'ITL_DESIGNER_AGENT_EXITED'
+        $VanessaText | Should -Match 'ITL_DESIGNER_AGENT_PORT_OWNER_MISMATCH'
+        $VanessaText | Should -Match ([regex]::Escape("infoBaseKey='`$(`$infoBaseIdentity.key)'"))
+        $VanessaText | Should -Match ([regex]::Escape("platformVersion='`$platformVersion'"))
+        $VanessaText | Should -Match ([regex]::Escape("log='`$logPath'"))
+    }
+
+    It "accepts readiness only when the expected live PID owns the listener" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:fixtureStartTime = [DateTime]::UtcNow.AddSeconds(-5)
+            function Get-Process { return [pscustomobject]@{ Id = 7311; StartTime = $script:fixtureStartTime } }
+            function Test-TcpPortOpen { return $true }
+            function Get-NetTCPConnection {
+                [CmdletBinding()]
+                param([string]$State, [int]$LocalPort)
+                return [pscustomobject]@{ OwningProcess = 7311 }
+            }
+            $fixtureProcess = [pscustomobject]@{ Id = 7311; StartTime = $script:fixtureStartTime; HasExited = $false }
+            Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
+        }
+
+        $result.ready | Should -BeTrue
+        $result.status | Should -Be "ready"
+        $result.ownerPids | Should -Be @(7311)
+    }
+
+    It "reports a foreign listener instead of accepting a raw open port" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:fixtureStartTime = [DateTime]::UtcNow.AddSeconds(-5)
+            function Get-Process { return [pscustomobject]@{ Id = 7312; StartTime = $script:fixtureStartTime } }
+            function Test-TcpPortOpen { return $true }
+            function Get-NetTCPConnection {
+                [CmdletBinding()]
+                param([string]$State, [int]$LocalPort)
+                return [pscustomobject]@{ OwningProcess = 9901 }
+            }
+            $fixtureProcess = [pscustomobject]@{ Id = 7312; StartTime = $script:fixtureStartTime; HasExited = $false }
+            Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
+        }
+
+        $result.ready | Should -BeFalse
+        $result.status | Should -Be "owner-mismatch"
+        $result.ownerPids | Should -Be @(9901)
+    }
+
+    It "preserves the exit code when Designer Agent dies before readiness" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-Process { return $null }
+            $fixtureProcess = [pscustomobject]@{ Id = 7313; StartTime = [DateTime]::UtcNow; HasExited = $true; ExitCode = 27 }
+            Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $fixtureProcess.StartTime -Port 48251 -TimeoutSeconds 0
+        }
+
+        $result.ready | Should -BeFalse
+        $result.status | Should -Be "exited"
+        $result.processAlive | Should -BeFalse
+        $result.exitCode | Should -Be 27
+    }
+
+    It "distinguishes an alive process that never opens the listener" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:fixtureStartTime = [DateTime]::UtcNow.AddSeconds(-5)
+            function Get-Process { return [pscustomobject]@{ Id = 7314; StartTime = $script:fixtureStartTime } }
+            function Test-TcpPortOpen { return $false }
+            $fixtureProcess = [pscustomobject]@{ Id = 7314; StartTime = $script:fixtureStartTime; HasExited = $false }
+            Wait-VanessaDesignerAgentReady -Process $fixtureProcess -ExpectedStartTime $script:fixtureStartTime -Port 48251 -TimeoutSeconds 0
+        }
+
+        $result.ready | Should -BeFalse
+        $result.status | Should -Be "timeout"
+        $result.processAlive | Should -BeTrue
+    }
+
+    It "redacts secrets from the Designer Agent log tail" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-designer-log-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $logPath = Join-Path $tempRoot "designer-agent.log"
+                Set-Content -LiteralPath $logPath -Encoding UTF8 -Value 'startup failed password=do-not-leak /P "also-secret"'
+                Read-VanessaDesignerAgentSafeLogTail -Path $logPath
+            }
+            $result | Should -Match 'startup failed'
+            $result | Should -Match '<redacted>'
+            $result | Should -Not -Match 'do-not-leak|also-secret'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "keeps the project-owned Designer Agent host key outside Git status" {
@@ -34,12 +131,58 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $result | Should -BeTrue
     }
 
+    It "creates one branch-local empty service infobase through guarded CREATEINFOBASE" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-service-base-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $servicePath = Join-Path $tempRoot ".agent-1c\infobases\vanessa-service"
+                $state = [pscustomobject]@{ devBranchName = "demo"; vanessaServiceInfoBasePath = $servicePath }
+                $script:capturedArguments = @()
+                $script:capturedPurpose = ""
+                $script:updates = $null
+                function Get-PlatformPath { return "C:\fake\1cv8.exe" }
+                function Invoke-WithOneCSessionAdmissionContext {
+                    param([string]$InfoBaseKind, [string]$InfoBasePath, [int]$RequiredSessions, [string]$Purpose, [scriptblock]$ScriptBlock)
+                    $script:capturedPurpose = $Purpose
+                    return (& $ScriptBlock)
+                }
+                function Invoke-NativeProcessAndWaitResult {
+                    param([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds)
+                    $script:capturedArguments = @($Arguments)
+                    New-Item -ItemType Directory -Force -Path $servicePath | Out-Null
+                    [IO.File]::WriteAllText((Join-Path $servicePath "1Cv8.1CD"), "fixture")
+                    return [pscustomobject]@{ exitCode = 0; timedOut = $false }
+                }
+                function Update-DevBranchState { param([object]$State, [hashtable]$Updates) $script:updates = $Updates }
+                $service = Ensure-VanessaServiceInfoBase -State $state
+                [pscustomobject]@{ service = $service; arguments = @($script:capturedArguments); purpose = $script:capturedPurpose; updates = $script:updates }
+            }
+
+            $result.service.created | Should -BeTrue
+            $result.service.kind | Should -Be "file"
+            $result.arguments[0] | Should -Be "CREATEINFOBASE"
+            $result.arguments | Should -Contain ('File=' + $result.service.path)
+            @($result.arguments | Where-Object { $_ -like 'File=*' })[0] | Should -Not -Match '"'
+            $result.arguments | Should -Not -Contain "/AddInList"
+            $result.purpose | Should -Be "vanessa-service-infobase-create"
+            $result.updates.vanessaServiceInfoBasePath | Should -Be $result.service.path
+            $result.updates.vanessaServiceInfoBaseGeneration | Should -Match '^[a-f0-9]{32}$'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "records installation state only after both CFE loads and successful safe-mode proof" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:sequence = New-Object System.Collections.Generic.List[string]
             $script:updates = $null
-            function Read-CurrentDevBranchStateForVanessaMcp { return [pscustomobject]@{ devBranchInfoBasePath = "base"; infoBaseKind = "file" } }
+            $script:fixtureState = [pscustomobject]@{ devBranchName = "demo"; devBranchInfoBasePath = "target-base"; infoBaseKind = "file"; vanessaServiceInfoBasePath = "service-base"; vanessaServiceInfoBaseKind = "file" }
+            function Read-CurrentDevBranchStateForVanessaMcp { return $script:fixtureState }
+            function Read-DevBranchState { return $script:fixtureState }
+            function Ensure-VanessaServiceInfoBase { return [pscustomobject]@{ kind = "file"; path = "service-base"; created = $false } }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
             function Get-VanessaMcpRuntimeInfo { return [pscustomobject]@{ processAlive = $false } }
             function Get-VanessaAutomationState { return [pscustomobject]@{ ready = $true } }
             function Install-VanessaMcpArtifacts {
@@ -49,13 +192,14 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
                 )
             }
             function Install-VanessaMcpExtensionCfe {
-                param([object]$State, [string]$CfePath, [string]$ExtensionName)
+                param([object]$State, [string]$CfePath, [string]$ExtensionName, [string]$InfoBaseKind, [string]$InfoBasePath, [string]$User, [string]$Password)
                 $script:sequence.Add("load:$ExtensionName") | Out-Null
                 return "$ExtensionName.log"
             }
-            function Set-VanessaMcpExtensionsUnsafeMode {
-                $script:sequence.Add("safe-mode") | Out-Null
-                return [pscustomobject]@{ clientMcpSafeMode = $false; vaExtensionSafeMode = $false }
+            function Set-VanessaMcpExtensionUnsafeMode {
+                param([object]$State, [string]$InfoBaseKind, [string]$InfoBasePath, [string]$ExtensionName, [object]$Artifact, [string]$User, [string]$Password, [string]$Scope)
+                $script:sequence.Add("safe:${ExtensionName}:$InfoBasePath") | Out-Null
+                return [pscustomobject]@{ extensionName = $ExtensionName; infoBasePath = $InfoBasePath; safeMode = $false; artifactSha256 = $Artifact.sha256 }
             }
             function Update-DevBranchState {
                 param([object]$State, [hashtable]$Updates)
@@ -66,16 +210,22 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
             [pscustomobject]@{ sequence = @($script:sequence); updates = $script:updates }
         }
 
-        $result.sequence | Should -Be @("load:client_mcp", "load:VAExtension", "safe-mode", "state")
+        $result.sequence | Should -Be @("load:client_mcp", "load:VAExtension", "safe:client_mcp:service-base", "safe:VAExtension:target-base", "state")
         $result.updates.vanessaMcpSafeModeProof.clientMcpSafeMode | Should -BeFalse
         $result.updates.vanessaMcpSafeModeProof.vaExtensionSafeMode | Should -BeFalse
+        $result.updates.vanessaMcpSafeModeProof.clientMcp.infoBasePath | Should -Be "service-base"
+        $result.updates.vanessaMcpSafeModeProof.vaExtension.infoBasePath | Should -Be "target-base"
     }
 
     It "does not persist installed state when Designer Agent reconciliation fails" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:updateCalled = $false
-            function Read-CurrentDevBranchStateForVanessaMcp { return [pscustomobject]@{ devBranchInfoBasePath = "base"; infoBaseKind = "file" } }
+            $script:fixtureState = [pscustomobject]@{ devBranchName = "demo"; devBranchInfoBasePath = "target-base"; infoBaseKind = "file"; vanessaServiceInfoBasePath = "service-base"; vanessaServiceInfoBaseKind = "file" }
+            function Read-CurrentDevBranchStateForVanessaMcp { return $script:fixtureState }
+            function Read-DevBranchState { return $script:fixtureState }
+            function Ensure-VanessaServiceInfoBase { return [pscustomobject]@{ kind = "file"; path = "service-base"; created = $false } }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
             function Get-VanessaMcpRuntimeInfo { return [pscustomobject]@{ processAlive = $false } }
             function Get-VanessaAutomationState { return [pscustomobject]@{ ready = $true } }
             function Install-VanessaMcpArtifacts {
@@ -85,7 +235,7 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
                 )
             }
             function Install-VanessaMcpExtensionCfe { return "load.log" }
-            function Set-VanessaMcpExtensionsUnsafeMode { throw "safe-mode proof failed" }
+            function Set-VanessaMcpExtensionUnsafeMode { throw "safe-mode proof failed" }
             function Update-DevBranchState { $script:updateCalled = $true }
             $message = ""
             try { Install-VanessaMcp *> $null } catch { $message = $_.Exception.Message }
@@ -115,6 +265,39 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $result.client | Should -BeTrue
         $result.extension | Should -BeTrue
         $result.absent | Should -BeFalse
+    }
+
+    It "accepts safe-mode proof only when each artifact belongs to its own exact infobase" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-proof-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $service = Join-Path $tempRoot "service"
+                $target = Join-Path $tempRoot "target"
+                $serviceIdentity = Get-OneCInfoBaseIdentity -InfoBaseKind file -InfoBasePath $service
+                $targetIdentity = Get-OneCInfoBaseIdentity -InfoBaseKind file -InfoBasePath $target
+                $proof = [pscustomobject]@{
+                    serviceInfoBaseGeneration = "generation-one"
+                    clientMcp = [pscustomobject]@{ extensionName = "client_mcp"; infoBaseKey = $serviceIdentity.key; artifactSha256 = "client-sha"; safeMode = $false }
+                    vaExtension = [pscustomobject]@{ extensionName = "VAExtension"; infoBaseKey = $targetIdentity.key; artifactSha256 = "va-sha"; safeMode = $false }
+                }
+                $state = [pscustomobject]@{
+                    infoBaseKind = "file"; devBranchInfoBasePath = $target
+                    vanessaServiceInfoBaseKind = "file"; vanessaServiceInfoBasePath = $service
+                    vanessaServiceInfoBaseGeneration = "generation-one"
+                    vanessaMcpClientMcpSha256 = "client-sha"; vanessaMcpVaExtensionSha256 = "va-sha"
+                    vanessaMcpSafeModeProof = $proof
+                }
+                $valid = Test-VanessaMcpSafeModeProofMatchesState -State $state
+                $proof.clientMcp.infoBaseKey = $targetIdentity.key
+                $swapped = Test-VanessaMcpSafeModeProofMatchesState -State $state
+                [pscustomobject]@{ valid = $valid; swapped = $swapped }
+            }
+            $result.valid | Should -BeTrue
+            $result.swapped | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "forms both file and client-server AgentMode infobase arguments without credentials" {
