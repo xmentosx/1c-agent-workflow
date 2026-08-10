@@ -470,15 +470,96 @@ function Invoke-DockerCommandCapture {
     return @($result.lines)
 }
 
+function Get-DockerEnginePipeCandidates {
+    $candidates = New-Object System.Collections.Generic.List[string]
+    $dockerHost = [string][Environment]::GetEnvironmentVariable("DOCKER_HOST", "Process")
+    if ($dockerHost -match '(?i)^npipe:/{4}\./pipe/([^/?#]+)$') {
+        [void]$candidates.Add($Matches[1])
+    }
+    foreach ($candidate in @("dockerDesktopLinuxEngine", "docker_engine")) {
+        if (-not $candidates.Contains($candidate)) { [void]$candidates.Add($candidate) }
+    }
+    return @($candidates)
+}
+
+function Invoke-DockerEngineNamedPipePing {
+    param(
+        [string]$PipeName,
+        [int]$TimeoutSec = 5
+    )
+
+    $pipe = $null
+    $writer = $null
+    $reader = $null
+    try {
+        $pipe = [System.IO.Pipes.NamedPipeClientStream]::new(
+            ".", $PipeName,
+            [System.IO.Pipes.PipeDirection]::InOut,
+            [System.IO.Pipes.PipeOptions]::Asynchronous
+        )
+        $pipe.Connect([Math]::Max(1, $TimeoutSec) * 1000)
+        $writer = [System.IO.StreamWriter]::new($pipe, [Text.Encoding]::ASCII, 1024, $true)
+        $writer.NewLine = "`r`n"
+        $writer.Write("GET /_ping HTTP/1.1`r`nHost: docker`r`nConnection: close`r`n`r`n")
+        $writer.Flush()
+        $reader = [System.IO.StreamReader]::new($pipe, [Text.Encoding]::ASCII, $false, 1024, $true)
+        $statusTask = $reader.ReadLineAsync()
+        if (-not $statusTask.Wait([Math]::Max(1, $TimeoutSec) * 1000)) {
+            return [pscustomobject]@{ available = $false; failureKind = "probe-timeout"; message = "Docker Engine pipe '$PipeName' did not answer within $TimeoutSec second(s)." }
+        }
+        $statusLine = [string]$statusTask.Result
+        if ($statusLine -match '^HTTP/1\.[01]\s+200(?:\s|$)') {
+            return [pscustomobject]@{ available = $true; failureKind = "none"; message = "Docker Engine pipe '$PipeName' answered /_ping." }
+        }
+        return [pscustomobject]@{ available = $false; failureKind = "daemon-unavailable"; message = "Docker Engine pipe '$PipeName' returned '$statusLine'." }
+    } catch [System.TimeoutException] {
+        return [pscustomobject]@{ available = $false; failureKind = "daemon-unavailable"; message = "Docker Engine pipe '$PipeName' is unavailable: $($_.Exception.Message)" }
+    } catch {
+        return [pscustomobject]@{ available = $false; failureKind = "daemon-unavailable"; message = "Docker Engine pipe '$PipeName' probe failed: $($_.Exception.Message)" }
+    } finally {
+        if ($null -ne $reader) { $reader.Dispose() }
+        if ($null -ne $writer) { $writer.Dispose() }
+        if ($null -ne $pipe) { $pipe.Dispose() }
+    }
+}
+
+function Get-DockerDaemonProbe {
+    param([int]$TimeoutSec = 20)
+
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        $messages = New-Object System.Collections.Generic.List[string]
+        $perPipeTimeout = [Math]::Max(1, [Math]::Min(5, [Math]::Floor($TimeoutSec / 2)))
+        foreach ($pipeName in @(Get-DockerEnginePipeCandidates)) {
+            $probe = Invoke-DockerEngineNamedPipePing -PipeName $pipeName -TimeoutSec $perPipeTimeout
+            if ($probe.available) { return $probe }
+            [void]$messages.Add([string]$probe.message)
+            if ([string]$probe.failureKind -eq "probe-timeout") {
+                return [pscustomobject]@{ available = $false; failureKind = "probe-timeout"; message = ($messages -join " ") }
+            }
+        }
+        return [pscustomobject]@{ available = $false; failureKind = "daemon-unavailable"; message = ($messages -join " ") }
+    }
+
+    try {
+        $result = Invoke-ProcessWithTimeout -FilePath "docker" -Arguments @("version", "--format", "{{.Server.Version}}") -TimeoutSec $TimeoutSec -Description "Docker Engine availability probe"
+        if ($result.exitCode -eq 0 -and (($result.lines | Where-Object { $_ }) -join "").Trim()) {
+            return [pscustomobject]@{ available = $true; failureKind = "none"; message = "Docker Engine version is available." }
+        }
+        return [pscustomobject]@{ available = $false; failureKind = "daemon-unavailable"; message = (($result.lines | Where-Object { $_ }) -join [Environment]::NewLine).Trim() }
+    } catch {
+        $failureKind = $(if ($_.Exception.Message -match '(?i)timed out') { "probe-timeout" } else { "daemon-unavailable" })
+        return [pscustomobject]@{ available = $false; failureKind = $failureKind; message = $_.Exception.Message }
+    }
+}
+
 function Test-DockerDaemonAvailable {
     param([int]$TimeoutSec = 20)
 
-    try {
-        return ((Invoke-DockerCommand -Arguments @("info") -Quiet -TimeoutSec $TimeoutSec) -eq 0)
-    } catch {
-        Write-Host "WARNING: Docker availability probe failed: $($_.Exception.Message)"
-        return $false
+    $probe = Get-DockerDaemonProbe -TimeoutSec $TimeoutSec
+    if (-not $probe.available -and $probe.message) {
+        Write-Host "WARNING: Docker Engine availability probe failed: $($probe.message)"
     }
+    return [bool]$probe.available
 }
 
 function Test-DockerDaemonUnavailableFailure {
@@ -488,7 +569,7 @@ function Test-DockerDaemonUnavailableFailure {
     )
 
     $normalized = [string]$Message
-    if ($normalized -match '(?i)dockerDesktopLinuxEngine|failed to connect to the docker API|cannot connect to (the )?docker daemon|docker daemon is not running|docker is installed but not available|Docker Desktop .+ did not restore docker info') {
+    if ($normalized -match '(?i)dockerDesktopLinuxEngine|failed to connect to the docker API|cannot connect to (the )?docker daemon|docker daemon is not running|docker is installed but not available|Docker Desktop .+ did not restore (?:docker info|Docker Engine availability)') {
         return $true
     }
     return ($ProbeDaemon -and -not (Test-DockerDaemonAvailable -TimeoutSec 10))
@@ -540,7 +621,8 @@ function Get-DockerDesktopRuntimeStatus {
 function Repair-DockerDesktopAvailability {
     param([object]$Settings)
 
-    if (Test-DockerDaemonAvailable) {
+    $initialProbe = Get-DockerDaemonProbe
+    if ($initialProbe.available) {
         return "already-available"
     }
     if (-not $Settings.dockerDesktopRecoveryEnabled) {
@@ -548,8 +630,14 @@ function Repair-DockerDesktopAvailability {
     }
 
     $desktopStatus = Get-DockerDesktopRuntimeStatus
+    if ([string]$initialProbe.failureKind -eq "probe-timeout" -and $desktopStatus -eq "running") {
+        Write-Warning "Docker Engine probe timed out while Docker Desktop reports running; retrying the probe without restarting Docker Desktop. $($initialProbe.message)"
+        $retryProbe = Get-DockerDaemonProbe
+        if ($retryProbe.available) { return "probe-recovered" }
+        throw "Docker Engine probe timed out while Docker Desktop reports running; refusing to restart a reported-running Docker Desktop instance. Initial probe: $($initialProbe.message) Retry: $($retryProbe.message)"
+    }
     $desktopAction = $(if ($desktopStatus -eq "stopped") { "start" } else { "restart" })
-    Write-Host "Docker daemon is unavailable; running bounded Docker Desktop $desktopAction (reported status: $desktopStatus)."
+    Write-Host "Docker Engine is unavailable; running bounded Docker Desktop $desktopAction (reported status: $desktopStatus)."
     $commandFailure = ""
     try {
         Invoke-DockerCommandChecked -Arguments @(
@@ -561,7 +649,7 @@ function Repair-DockerDesktopAvailability {
     }
 
     if (Wait-DockerDaemonAvailable -TimeoutSec $Settings.dockerDesktopRecoveryTimeoutSeconds -PollSeconds $Settings.dockerDesktopPollSeconds) {
-        Write-Host "Docker Desktop recovery completed; docker info is available."
+        Write-Host "Docker Desktop recovery completed; Docker Engine ping is available."
         return $desktopAction
     }
 
@@ -575,7 +663,7 @@ function Repair-DockerDesktopAvailability {
         $logTail = "Docker Desktop logs unavailable: $($_.Exception.Message)"
     }
     $details = @($commandFailure, $logTail) | Where-Object { $_ }
-    throw "Docker Desktop $desktopAction did not restore docker info within $($Settings.dockerDesktopRecoveryTimeoutSeconds) seconds. $($details -join [Environment]::NewLine)"
+    throw "Docker Desktop $desktopAction did not restore Docker Engine availability within $($Settings.dockerDesktopRecoveryTimeoutSeconds) seconds. $($details -join [Environment]::NewLine)"
 }
 
 function Invoke-ProcessCapture {
@@ -611,6 +699,28 @@ function Join-HostProcessArguments {
     return ($escaped -join " ")
 }
 
+function Stop-HostProcessTree {
+    param([System.Diagnostics.Process]$Process)
+
+    if ($null -eq $Process) { return }
+    try { $Process.Refresh() } catch { return }
+    if ($Process.HasExited) { return }
+
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT -and (Get-Command "taskkill.exe" -ErrorAction SilentlyContinue)) {
+        try {
+            & taskkill.exe /PID ([string]$Process.Id) /T /F 2>&1 | Out-Null
+        } catch {
+        }
+    }
+    try {
+        $Process.Refresh()
+        if (-not $Process.HasExited) { $Process.Kill() }
+    } catch {
+    }
+    try { [void]$Process.WaitForExit(5000) } catch {
+    }
+}
+
 function Invoke-ProcessWithTimeout {
     param(
         [string]$FilePath,
@@ -629,10 +739,7 @@ function Invoke-ProcessWithTimeout {
             -RedirectStandardOutput $stdoutPath `
             -RedirectStandardError $stderrPath
         if (-not $process.WaitForExit($TimeoutSec * 1000)) {
-            try {
-                $process.Kill()
-            } catch {
-            }
+            Stop-HostProcessTree -Process $process
             $commandText = "$FilePath $($Arguments -join ' ')"
             $descriptionText = $(if ($Description) { "$Description. " } else { "" })
             throw "${descriptionText}Command timed out after $TimeoutSec seconds: $commandText"
@@ -721,7 +828,7 @@ function Ensure-HostPrerequisites {
         }
     }
     Ensure-PythonRuntime -Config $Config | Out-Null
-    if ((Invoke-DockerCommand -Arguments @("info") -Quiet -TimeoutSec 60) -ne 0) {
+    if (-not (Test-DockerDaemonAvailable -TimeoutSec 60)) {
         throw "Docker is installed but not available to the current user/session."
     }
 }
@@ -2111,6 +2218,12 @@ function Repair-GraphComposeHealthcheckText {
     return $ComposeText
 }
 
+function Repair-GraphComposeResourceText {
+    param([string]$ComposeText)
+
+    return [regex]::Replace($ComposeText, '(?m)^([ \t]+memory):(?=\S)', '$1: ')
+}
+
 function Start-ComposeServer {
     param(
         [object]$Config,
@@ -2135,12 +2248,14 @@ function Start-ComposeServer {
     $composeText = $composeText -replace '"8006:8006"', "`"$($Runtime.hostPort):$($Runtime.internalPort)`""
     if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "graph") {
         $composeText = Repair-GraphComposeHealthcheckText -ComposeText $composeText
+        $composeText = Repair-GraphComposeResourceText -ComposeText $composeText
     }
     Write-Text -Path $targetCompose -Value $composeText
     $envFilePath = Join-Path $runtimeDir ".env"
     Write-DotEnv -Path $envFilePath -Values (Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase)
     Write-Host "Starting compose project: $($Runtime.composeProject) -> $($Runtime.url)"
     if (-not $DryRun) {
+        Invoke-DockerCommandChecked -Arguments @("compose", "-p", $Runtime.composeProject, "-f", $targetCompose, "--env-file", $envFilePath, "config", "--quiet") -TimeoutSec 60 -Description "docker compose config $($Runtime.composeProject)"
         if ($Recreate) {
             Write-Host "Stopping compose project before reindex: $($Runtime.composeProject)"
             Invoke-DockerCommandChecked -Arguments @("compose", "-p", $Runtime.composeProject, "-f", $targetCompose, "--env-file", $envFilePath, "down") -TimeoutSec 180 -Description "docker compose down $($Runtime.composeProject)"
@@ -2396,6 +2511,70 @@ function Restore-ToolsListProxyTransactions {
     }
 }
 
+function Invoke-HostGitPreflight {
+    param(
+        [string]$Root,
+        [string[]]$Arguments,
+        [int]$TimeoutSec = 45,
+        [string]$Description = "Git preflight"
+    )
+
+    $previousTerminalPrompt = [Environment]::GetEnvironmentVariable("GIT_TERMINAL_PROMPT", "Process")
+    $previousCredentialInteractive = [Environment]::GetEnvironmentVariable("GCM_INTERACTIVE", "Process")
+    try {
+        [Environment]::SetEnvironmentVariable("GIT_TERMINAL_PROMPT", "0", "Process")
+        [Environment]::SetEnvironmentVariable("GCM_INTERACTIVE", "Never", "Process")
+        return (Invoke-ProcessWithTimeout -FilePath "git" -Arguments (@("-C", $Root) + $Arguments) -TimeoutSec $TimeoutSec -Description $Description)
+    } finally {
+        [Environment]::SetEnvironmentVariable("GIT_TERMINAL_PROMPT", $previousTerminalPrompt, "Process")
+        [Environment]::SetEnvironmentVariable("GCM_INTERACTIVE", $previousCredentialInteractive, "Process")
+    }
+}
+
+function Assert-HostSourceCheckoutCurrent {
+    try {
+        $repoRoot = ((Get-GitOutput -Root $PSScriptRoot -Arguments @("rev-parse", "--show-toplevel")) -join "").Trim()
+        $upstream = ((Get-GitOutput -Root $repoRoot -Arguments @("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")) -join "").Trim()
+    } catch {
+        Write-Warning "Host source freshness preflight was skipped because no tracked Git upstream could be resolved."
+        return
+    }
+    if (-not $repoRoot -or -not $upstream) {
+        Write-Warning "Host source freshness preflight was skipped because no tracked Git upstream could be resolved."
+        return
+    }
+
+    $trackedChanges = @(& git -C $repoRoot status --porcelain --untracked-files=no)
+    if ($LASTEXITCODE -ne 0 -or $trackedChanges.Count -gt 0) {
+        throw "Host source checkout has tracked changes. Restore a clean managed checkout before proxy activation."
+    }
+
+    $fetch = Invoke-HostGitPreflight -Root $repoRoot -Arguments @("fetch", "--prune") -Description "refresh host source upstream"
+    if ($fetch.exitCode -ne 0) {
+        throw "Host source freshness preflight failed before proxy activation. Refresh the host checkout interactively and retry."
+    }
+    $head = ((Get-GitOutput -Root $repoRoot -Arguments @("rev-parse", "HEAD")) -join "").Trim()
+    $upstreamHead = ((Get-GitOutput -Root $repoRoot -Arguments @("rev-parse", $upstream)) -join "").Trim()
+    if ($head -eq $upstreamHead) { return }
+
+    $containsUpstream = Invoke-HostGitPreflight -Root $repoRoot -Arguments @("merge-base", "--is-ancestor", $upstreamHead, $head) -Description "compare host source with upstream"
+    if ($containsUpstream.exitCode -eq 0) { return }
+    throw "Host source checkout is stale or diverged from $upstream. Update it before proxy activation."
+}
+
+function Assert-RegistryPushPreflight {
+    param([object]$Config)
+
+    $registryRoot = Get-RegistryRoot -Config $Config
+    if (-not (Test-Path -LiteralPath (Join-Path $registryRoot ".git") -PathType Container)) {
+        throw "Registry checkout is missing: $registryRoot. Run setup interactively before proxy activation."
+    }
+    $result = Invoke-HostGitPreflight -Root $registryRoot -Arguments @("push", "--dry-run", "--porcelain") -Description "verify registry push access"
+    if ($result.exitCode -ne 0) {
+        throw "Registry push preflight failed before proxy activation. Restore non-interactive Git credentials or run the operation interactively."
+    }
+}
+
 function Enable-TrackedToolsListProxiesAndPublish {
     param(
         [object]$Config,
@@ -2433,9 +2612,11 @@ function Enable-TrackedToolsListProxiesAndPublish {
     foreach ($command in @("git", "docker")) {
         if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "Required command was not found: $command" }
     }
-    if ((Invoke-DockerCommand -Arguments @("info") -Quiet -TimeoutSec 60) -ne 0) {
+    if (-not (Test-DockerDaemonAvailable -TimeoutSec 15)) {
         throw "Docker is installed but not available to the current user/session."
     }
+    Assert-HostSourceCheckoutCurrent
+    Assert-RegistryPushPreflight -Config $Config
     Ensure-ToolsListProxyImage -Config $Config
 
     $transactions = @()
@@ -2841,7 +3022,15 @@ function Invoke-McpHostWatchdogRunCore {
         }
 
         $dockerRecovery = @($dockerRecoveryEvents) -join " -> "
-        $message = "Tracked MCP runtimes, proxies, and registry reconciled. Docker availability: $dockerRecovery.$graphRepairMessage"
+        $degradedServers = @(As-Array (Get-ObjectValue -Object (Read-HostState -Config $Config) -Name "servers" -Default @()) | Where-Object {
+            [string](Get-ObjectValue -Object $_ -Name "health" -Default "") -eq "degraded"
+        } | ForEach-Object {
+            $name = [string](Get-ObjectValue -Object $_ -Name "name" -Default (Get-ObjectValue -Object $_ -Name "id" -Default "unknown"))
+            $reason = [string](Get-ObjectValue -Object $_ -Name "functionalMessage" -Default "functional qualification failed")
+            "$name ($reason)"
+        })
+        $degradedMessage = $(if ($degradedServers.Count -gt 0) { " Degraded MCP: $($degradedServers -join '; ')." } else { "" })
+        $message = "Tracked MCP runtimes, proxies, and registry reconciled. Docker availability: $dockerRecovery.$graphRepairMessage$degradedMessage"
         Write-McpHostWatchdogRunState -Config $Config -StartedAt $startedAt -Status "succeeded" -Message $message
         Write-Host "MCP host watchdog reconcile completed."
     } catch {
@@ -3057,7 +3246,10 @@ function ConvertFrom-HostMcpResponse {
 }
 
 function Open-HostMcpConnection {
-    param([string]$Url)
+    param(
+        [string]$Url,
+        [int]$TimeoutSec = 60
+    )
     $headers = @{ Accept = "application/json, text/event-stream" }
     $body = [ordered]@{
         jsonrpc = "2.0"
@@ -3069,11 +3261,11 @@ function Open-HostMcpConnection {
             clientInfo = [ordered]@{ name = "itl-nightly-index"; version = "1" }
         }
     } | ConvertTo-Json -Depth 8 -Compress
-    $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -Method Post -ContentType "application/json" -Headers $headers -Body $body -TimeoutSec 60
+    $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -Method Post -ContentType "application/json" -Headers $headers -Body $body -TimeoutSec $TimeoutSec
     $sessionId = [string]$response.Headers["mcp-session-id"]
     if ($sessionId) { $headers["mcp-session-id"] = $sessionId }
     $effectiveUrl = $response.BaseResponse.ResponseUri.AbsoluteUri
-    Invoke-WebRequest -UseBasicParsing -Uri $effectiveUrl -Method Post -ContentType "application/json" -Headers $headers -Body '{"jsonrpc":"2.0","method":"notifications/initialized"}' -TimeoutSec 60 | Out-Null
+    Invoke-WebRequest -UseBasicParsing -Uri $effectiveUrl -Method Post -ContentType "application/json" -Headers $headers -Body '{"jsonrpc":"2.0","method":"notifications/initialized"}' -TimeoutSec $TimeoutSec | Out-Null
     return [pscustomobject]@{ url = $effectiveUrl; headers = $headers; nextId = 2 }
 }
 
@@ -3104,7 +3296,8 @@ function Invoke-HostMcpTool {
     param(
         [object]$Connection,
         [string]$Name,
-        [object]$Arguments = $null
+        [object]$Arguments = $null,
+        [int]$TimeoutSec = 120
     )
     if ($null -eq $Arguments) { $Arguments = [ordered]@{} }
     $payload = [ordered]@{
@@ -3114,7 +3307,7 @@ function Invoke-HostMcpTool {
         params = [ordered]@{ name = $Name; arguments = $Arguments }
     }
     $Connection.nextId = [int]$Connection.nextId + 1
-    $response = Invoke-WebRequest -UseBasicParsing -Uri $Connection.url -Method Post -ContentType "application/json" -Headers $Connection.headers -Body ($payload | ConvertTo-Json -Depth 20 -Compress) -TimeoutSec 120
+    $response = Invoke-WebRequest -UseBasicParsing -Uri $Connection.url -Method Post -ContentType "application/json" -Headers $Connection.headers -Body ($payload | ConvertTo-Json -Depth 20 -Compress) -TimeoutSec $TimeoutSec
     $result = ConvertFrom-HostMcpResponse -Text $response.Content
     if ($null -ne $result.PSObject.Properties["error"]) {
         throw "MCP tool '$Name' returned a JSON-RPC error: $($result.error | ConvertTo-Json -Depth 10 -Compress)"
@@ -3539,6 +3732,98 @@ function Uninstall-McpHostNightlyIndex {
     Write-Host "MCP host nightly index task uninstalled: $($settings.taskName)"
 }
 
+function Get-HostServerSafeHealthTool {
+    param([string]$ServerId)
+
+    switch ($ServerId) {
+        "templates" { return "list_templates" }
+        "codechecker" { return "fetch_its" }
+        "bookstack" { return "index_status" }
+        "mantis" { return "health" }
+        "code" { return "stats" }
+        "graph" { return "get_indexing_status" }
+        default { return "" }
+    }
+}
+
+function Get-HostServerSafeHealthArguments {
+    param([string]$ServerId)
+
+    if ($ServerId -eq "codechecker") {
+        return [ordered]@{ id = "root" }
+    }
+    return $null
+}
+
+function Get-GraphFunctionalHealth {
+    param(
+        [object]$Server,
+        [AllowNull()][object]$StatusValue
+    )
+
+    try {
+        $status = $(if ($StatusValue -is [string]) { $StatusValue | ConvertFrom-Json } else { $StatusValue })
+        if ($null -eq $status) { throw "get_indexing_status returned no functional status." }
+        $backgroundTasks = Get-ObjectValue -Object $status -Name "background_tasks" -Default $null
+        $tasks = $(if ($null -eq $backgroundTasks) { @() } else { @($backgroundTasks.PSObject.Properties) })
+        $failedTasks = @($tasks | Where-Object {
+            $taskStatus = [string](Get-ObjectValue -Object $_.Value -Name "status" -Default "")
+            $taskError = [string](Get-ObjectValue -Object $_.Value -Name "error" -Default "")
+            $taskStatus -match '^(?i:failed|error)$' -or ($taskError -and $taskStatus -notmatch '^(?i:skipped)$')
+        })
+        if ($failedTasks.Count -gt 0) {
+            $details = @($failedTasks | ForEach-Object { "$($_.Name): $([string](Get-ObjectValue -Object $_.Value -Name 'error' -Default (Get-ObjectValue -Object $_.Value -Name 'status' -Default 'failed')))" })
+            return [pscustomobject]@{ status = "degraded"; message = "Graph background task failure: $($details -join '; ')" }
+        }
+
+        $runningVectorTasks = @($tasks | Where-Object {
+            $_.Name -in @("vector_indexing", "routine_embedding_indexing") -and
+            [string](Get-ObjectValue -Object $_.Value -Name "status" -Default "") -match '^(?i:running|pending|in_progress)$'
+        })
+        if ($runningVectorTasks.Count -gt 0) {
+            $containerName = [string](Get-ObjectValue -Object $Server -Name "containerName" -Default "")
+            if ($containerName) {
+                $logs = @(Invoke-DockerCommandCapture -Arguments @("logs", "--tail", "2000", $containerName) -TimeoutSec 45 -Description "inspect Graph functional health in $containerName")
+                $logText = $logs -join [Environment]::NewLine
+                if ($logText -match '(?i)EMBEDDING MODEL MISMATCH DETECTED|Exiting process due to embedding model mismatch') {
+                    return [pscustomobject]@{ status = "degraded"; message = "Graph vector indexing is blocked by an embedding model mismatch; an explicit reset/reindex is required." }
+                }
+            }
+        }
+    } catch {
+        return [pscustomobject]@{ status = "degraded"; message = "Graph functional status could not be evaluated: $($_.Exception.Message)" }
+    }
+    return [pscustomobject]@{ status = "qualified"; message = "Graph get_indexing_status passed." }
+}
+
+function Get-HostServerFunctionalHealth {
+    param([object]$Server)
+
+    $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
+    $toolName = Get-HostServerSafeHealthTool -ServerId $id
+    if (-not $toolName) {
+        return [pscustomobject]@{ status = "not-probed"; message = "No server-specific safe health tool is configured." }
+    }
+    $url = [string](Get-ObjectValue -Object $Server -Name "url" -Default "")
+    if (-not $url) {
+        return [pscustomobject]@{ status = "degraded"; message = "Tracked MCP server '$id' has no URL for functional qualification." }
+    }
+    try {
+        $connection = Open-HostMcpConnection -Url $url -TimeoutSec 10
+        $arguments = Get-HostServerSafeHealthArguments -ServerId $id
+        $result = Invoke-HostMcpTool -Connection $connection -Name $toolName -Arguments $arguments -TimeoutSec 15
+        $text = Get-HostMcpToolResultText -Result $result
+        if ($id -eq "graph") {
+            $structured = Get-ObjectValue -Object $result -Name "structuredContent" -Default $null
+            $statusValue = $(if ($null -ne $structured) { $structured } else { $text })
+            return (Get-GraphFunctionalHealth -Server $Server -StatusValue $statusValue)
+        }
+        return [pscustomobject]@{ status = "qualified"; message = "MCP safe health tool '$toolName' passed." }
+    } catch {
+        return [pscustomobject]@{ status = "degraded"; message = "MCP safe health tool '$toolName' failed: $($_.Exception.Message)" }
+    }
+}
+
 function Get-HostServerPublishStatus {
     param([object]$Server)
 
@@ -3605,10 +3890,19 @@ function Update-HostStateForPublish {
             $serverHash["status"] = $publishStatus
             $changed = $true
         }
+        $functionalHealth = $(if ($publishStatus -eq "running") { Get-HostServerFunctionalHealth -Server $serverHash } else { [pscustomobject]@{ status = "not-probed"; message = "Transport status is $publishStatus." } })
+        $effectiveHealth = $(if ([string]$functionalHealth.status -eq "degraded") { "degraded" } else { $publishStatus })
         $currentHealth = [string](Get-ObjectValue -Object $serverHash -Name "health" -Default "")
-        if ($currentHealth -ne $publishStatus) {
-            $serverHash["health"] = $publishStatus
+        if ($currentHealth -ne $effectiveHealth) {
+            $serverHash["health"] = $effectiveHealth
             $changed = $true
+        }
+        foreach ($field in @("functionalStatus", "functionalMessage")) {
+            $expectedValue = $(if ($field -eq "functionalStatus") { [string]$functionalHealth.status } else { [string]$functionalHealth.message })
+            if ([string](Get-ObjectValue -Object $serverHash -Name $field -Default "") -ne $expectedValue) {
+                $serverHash[$field] = $expectedValue
+                $changed = $true
+            }
         }
         $servers += $serverHash
     }
@@ -3986,6 +4280,8 @@ function ConvertTo-RegistryServers {
             toolsContractStatus = [string](Get-ObjectValue -Object $server -Name "toolsContractStatus" -Default "")
             status = [string](Get-ObjectValue -Object $server -Name "status" -Default "unknown")
             health = [string](Get-ObjectValue -Object $server -Name "health" -Default "unknown")
+            functionalStatus = [string](Get-ObjectValue -Object $server -Name "functionalStatus" -Default "")
+            functionalMessage = [string](Get-ObjectValue -Object $server -Name "functionalMessage" -Default "")
             image = [string](Get-ObjectValue -Object $server -Name "image" -Default "")
             platformVersion = [string](Get-ObjectValue -Object $server -Name "platformVersion" -Default "")
             bspVersion = [string](Get-ObjectValue -Object $server -Name "bspVersion" -Default "")
@@ -4215,7 +4511,7 @@ function Show-HostStatus {
         if ($TargetServerId -and $id -ne $TargetServerId) {
             continue
         }
-        Write-Host "  $(Get-ObjectValue -Object $server -Name 'name' -Default '<unknown>') [$(Get-ObjectValue -Object $server -Name 'scope' -Default '')] $(Get-ObjectValue -Object $server -Name 'url' -Default '') health=$(Get-ObjectValue -Object $server -Name 'health' -Default 'unknown') toolsContract=$(Get-ObjectValue -Object $server -Name 'toolsContractStatus' -Default 'direct') configId=$(Get-ObjectValue -Object $server -Name 'configId' -Default '') indexedAt=$(Get-ObjectValue -Object $server -Name 'indexedAt' -Default '')"
+        Write-Host "  $(Get-ObjectValue -Object $server -Name 'name' -Default '<unknown>') [$(Get-ObjectValue -Object $server -Name 'scope' -Default '')] $(Get-ObjectValue -Object $server -Name 'url' -Default '') health=$(Get-ObjectValue -Object $server -Name 'health' -Default 'unknown') functional=$(Get-ObjectValue -Object $server -Name 'functionalStatus' -Default 'not-probed') toolsContract=$(Get-ObjectValue -Object $server -Name 'toolsContractStatus' -Default 'direct') configId=$(Get-ObjectValue -Object $server -Name 'configId' -Default '') indexedAt=$(Get-ObjectValue -Object $server -Name 'indexedAt' -Default '')"
         $shown++
     }
     if ($TargetServerId -and $shown -eq 0) {

@@ -446,7 +446,7 @@
             & {
                 . $McpHostPath -Action status -ConfigPath $configPath *> $null
                 $script:DesktopRecoveryCalls = New-Object System.Collections.Generic.List[string]
-                function Test-DockerDaemonAvailable { param([int]$TimeoutSec = 20); return $false }
+                function Get-DockerDaemonProbe { param([int]$TimeoutSec = 20); return [pscustomobject]@{ available = $false; failureKind = "daemon-unavailable"; message = "fixture unavailable" } }
                 function Get-DockerDesktopRuntimeStatus { return "running" }
                 function Wait-DockerDaemonAvailable { param([int]$TimeoutSec, [int]$PollSeconds); return $true }
                 function Invoke-DockerCommandChecked {
@@ -463,6 +463,121 @@
                 (Repair-DockerDesktopAvailability -Settings $settings) | Should -Be "restart"
                 @($script:DesktopRecoveryCalls) | Should -Be @("desktop restart --timeout 60")
                 Remove-Variable -Scope Script -Name DesktopRecoveryCalls -ErrorAction SilentlyContinue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "does not restart a reported-running Docker Desktop after a probe timeout" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-watchdog-docker-probe-timeout-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:ProbeTimeoutCalls = 0
+                $script:ProbeTimeoutDockerCalls = 0
+                function Get-DockerDaemonProbe {
+                    param([int]$TimeoutSec = 20)
+                    $script:ProbeTimeoutCalls++
+                    return [pscustomobject]@{ available = $false; failureKind = "probe-timeout"; message = "fixture plugin timeout" }
+                }
+                function Get-DockerDesktopRuntimeStatus { return "running" }
+                function Invoke-DockerCommandChecked {
+                    param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
+                    $script:ProbeTimeoutDockerCalls++
+                }
+                $settings = [pscustomobject]@{
+                    dockerDesktopRecoveryEnabled = $true
+                    dockerDesktopRecoveryTimeoutSeconds = 90
+                    dockerDesktopCommandTimeoutSeconds = 60
+                    dockerDesktopPollSeconds = 3
+                }
+
+                { Repair-DockerDesktopAvailability -Settings $settings } | Should -Throw "*refusing to restart*"
+                $script:ProbeTimeoutCalls | Should -Be 2
+                $script:ProbeTimeoutDockerCalls | Should -Be 0
+                Remove-Variable -Scope Script -Name ProbeTimeoutCalls,ProbeTimeoutDockerCalls -ErrorAction SilentlyContinue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "terminates the complete child process tree after a native command timeout" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-host-process-tree-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $fixturePath = Join-Path $tempRoot "spawn-child.ps1"
+        $childPidPath = Join-Path $tempRoot "child.pid"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
+            Set-Content -LiteralPath $fixturePath -Encoding UTF8 -Value @'
+param([string]$ChildPidPath)
+$child = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 120") -PassThru
+[IO.File]::WriteAllText($ChildPidPath, [string]$child.Id)
+Start-Sleep -Seconds 120
+'@
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                { Invoke-ProcessWithTimeout -FilePath "powershell.exe" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $fixturePath, $childPidPath) -TimeoutSec 3 -Description "fixture process tree" } | Should -Throw "*timed out*"
+            }
+            (Test-Path -LiteralPath $childPidPath -PathType Leaf) | Should -BeTrue
+            $childPid = [int](Get-Content -LiteralPath $childPidPath -Raw)
+            for ($attempt = 0; $attempt -lt 30 -and (Get-Process -Id $childPid -ErrorAction SilentlyContinue); $attempt++) {
+                Start-Sleep -Milliseconds 100
+            }
+            (Get-Process -Id $childPid -ErrorAction SilentlyContinue) | Should -BeNullOrEmpty
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "normalizes malformed Graph compose memory keys and validates before down" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-graph-compose-preflight-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $distributionRoot = Join-Path $tempRoot "distribution"
+        $workRoot = Join-Path $tempRoot "work"
+        try {
+            New-Item -ItemType Directory -Force -Path $distributionRoot, $workRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
+            Set-Content -LiteralPath (Join-Path $distributionRoot "graph.yml") -Encoding UTF8 -Value @'
+services:
+  mcp-app:
+    deploy:
+      resources:
+        limits:
+          memory:4G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/search"]
+'@
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $hostConfig = Read-JsonFile -Path $configPath
+                $script:GraphComposeCalls = New-Object System.Collections.Generic.List[string]
+                function Get-DistributionRoot { param([object]$Config); return $distributionRoot }
+                function Get-ConfigWorkRoot { param([object]$Config, [string]$ConfigId); return $workRoot }
+                function Resolve-ServerEnv {
+                    param([object]$Config, [object]$Server, [object]$ConfigState, [switch]$ForceResetDatabase)
+                    return [ordered]@{ RESET_DATABASE = "true" }
+                }
+                function Invoke-DockerCommandChecked {
+                    param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
+                    $script:GraphComposeCalls.Add(($Arguments -join " "))
+                    if ($Arguments -contains "config") { throw "fixture compose validation failed" }
+                }
+                $server = [pscustomobject]@{ id = "graph"; composePath = "graph.yml" }
+                $runtime = [pscustomobject]@{
+                    name = "itl-fixture-graph"; composeProject = "itl-fixture-graph"; containerName = "itl-fixture-graph"
+                    url = "http://localhost:18101/mcp"; hostPort = 18101; internalPort = 8006
+                }
+                $configState = [pscustomobject]@{ configId = "fixture" }
+
+                { Start-ComposeServer -Config $hostConfig -Server $server -Runtime $runtime -ConfigState $configState -Recreate -ForceResetDatabase } | Should -Throw "*fixture compose validation failed*"
+                @($script:GraphComposeCalls).Count | Should -Be 1
+                $script:GraphComposeCalls[0] | Should -Match "compose .* config --quiet$"
+                $script:GraphComposeCalls[0] | Should -Not -Match "\sdown\s|\sup\s"
+                $runtimeCompose = Join-Path (Join-Path $workRoot "runtime") "itl-fixture-graph\docker-compose.yml"
+                $composeText = Get-Content -Raw -LiteralPath $runtimeCompose
+                $composeText | Should -Match '(?m)^\s+memory: 4G$'
+                $composeText | Should -Not -Match '(?m)^\s+memory:4G$'
+                Remove-Variable -Scope Script -Name GraphComposeCalls -ErrorAction SilentlyContinue
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
@@ -685,6 +800,9 @@ services:
                 $script:ProxyRollbackDockerCalls = New-Object System.Collections.Generic.List[string]
                 $script:ProxyRollbackPublished = $false
                 function Get-Command { param($Name, $ErrorAction); return [pscustomobject]@{ Source = $Name } }
+                function Test-DockerDaemonAvailable { param([int]$TimeoutSec = 15); return $true }
+                function Assert-HostSourceCheckoutCurrent { }
+                function Assert-RegistryPushPreflight { param([object]$Config) }
                 function Ensure-ToolsListProxyImage { param([object]$Config) }
                 function Get-HostContainerPublishState {
                     param([string]$ContainerName)
@@ -1007,6 +1125,89 @@ services:
                 (Get-HostServerPublishStatus -Server $server) | Should -Be "stopped"
                 Remove-Variable -Scope Script -Name ProxyPublishContainerState -ErrorAction SilentlyContinue
                 Remove-Variable -Scope Script -Name ProxyPublishReady -ErrorAction SilentlyContinue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "fails registry credential preflight before proxy container activation" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-tools-proxy-preflight-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $registryRoot = Join-Path $tempRoot "registry"
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $registryRoot ".git") | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function Invoke-HostGitPreflight {
+                    param([string]$Root, [string[]]$Arguments, [int]$TimeoutSec = 45, [string]$Description = "Git preflight")
+                    return [pscustomobject]@{ exitCode = 1; lines = @("authentication failed") }
+                }
+
+                { Assert-RegistryPushPreflight -Config (Read-JsonFile -Path $configPath) } | Should -Throw "*before proxy activation*"
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "rejects a stale host source checkout before proxy activation" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-host-source-preflight-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function Get-GitOutput {
+                    param([string]$Root, [string[]]$Arguments)
+                    $command = $Arguments -join " "
+                    if ($command -eq "rev-parse --show-toplevel") { return @($tempRoot) }
+                    if ($command -match "--symbolic-full-name") { return @("origin/develop") }
+                    if ($command -eq "rev-parse HEAD") { return @("1111111111111111111111111111111111111111") }
+                    if ($command -eq "rev-parse origin/develop") { return @("2222222222222222222222222222222222222222") }
+                    throw "Unexpected git query: $command"
+                }
+                function global:git { $global:LASTEXITCODE = 0; return @() }
+                function Invoke-HostGitPreflight {
+                    param([string]$Root, [string[]]$Arguments, [int]$TimeoutSec = 45, [string]$Description = "Git preflight")
+                    if ($Arguments[0] -eq "fetch") { return [pscustomobject]@{ exitCode = 0; lines = @() } }
+                    return [pscustomobject]@{ exitCode = 1; lines = @() }
+                }
+
+                { Assert-HostSourceCheckoutCurrent } | Should -Throw "*stale or diverged*"
+                Remove-Item Function:\global:git -ErrorAction SilentlyContinue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item Function:\global:git -ErrorAction SilentlyContinue }
+    }
+
+    It "marks Graph functionally degraded when vector tasks are blocked by an embedding mismatch" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-graph-functional-health-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function Open-HostMcpConnection { param([string]$Url, [int]$TimeoutSec = 60); return [pscustomobject]@{ url = $Url; headers = @{}; nextId = 2 } }
+                function Invoke-HostMcpTool {
+                    param([object]$Connection, [string]$Name, [object]$Arguments = $null, [int]$TimeoutSec = 120)
+                    $status = [ordered]@{
+                        background_tasks = [ordered]@{
+                            structural_indexes = [ordered]@{ status = "completed"; error = $null }
+                            vector_indexing = [ordered]@{ status = "running"; error = $null }
+                            routine_embedding_indexing = [ordered]@{ status = "running"; error = $null }
+                        }
+                        any_running = $true
+                    } | ConvertTo-Json -Depth 8 -Compress
+                    return [pscustomobject]@{ content = @([pscustomobject]@{ type = "text"; text = $status }) }
+                }
+                function Invoke-DockerCommandCapture {
+                    param([string[]]$Arguments, [int]$TimeoutSec = 300, [string]$Description = "docker command")
+                    return @("EMBEDDING MODEL MISMATCH DETECTED!", "Exiting process due to embedding model mismatch.")
+                }
+                $server = [ordered]@{ id = "graph"; name = "itl-trade-graph"; containerName = "itl-trade-graph"; url = "http://host-a:18101/mcp" }
+
+                $health = Get-HostServerFunctionalHealth -Server $server
+                $health.status | Should -Be "degraded"
+                $health.message | Should -Match "embedding model mismatch"
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
@@ -1590,6 +1791,8 @@ services:
                         configurationVersion = "1.0"
                         embeddingMode = "cpu"
                         embeddingModel = "intfloat/multilingual-e5-base"
+                        functionalStatus = "qualified"
+                        functionalMessage = "MCP safe health tool 'stats' passed."
                         indexedAt = "2026-07-05T00:00:00Z"
                     })
                 }
@@ -1691,6 +1894,7 @@ services:
                 ($registryServers | Where-Object { $_.id -eq "ssl" } | Select-Object -First 1).status | Should -Be "running"
                 ($registryServers | Where-Object { $_.id -eq "syntax" } | Select-Object -First 1).status | Should -Be "unknown"
                 ($registryServers | Where-Object { $_.id -eq "code" } | Select-Object -First 1).clientNames.aiRules1c | Should -Be "1c-code-metadata-mcp"
+                ($registryServers | Where-Object { $_.id -eq "code" } | Select-Object -First 1).functionalStatus | Should -Be "not-probed"
                 ($registryServers | Where-Object { $_.id -eq "graph" } | Select-Object -First 1).sourceFingerprint | Should -Be "fp-graph"
                 ($registryServers | Where-Object { $_.id -eq "graph" } | Select-Object -First 1).reportHash | Should -Be "hash-graph"
                 ($registryServers | Where-Object { $_.id -eq "graph" } | Select-Object -First 1).indexedAt | Should -Be "2026-07-05T01:00:00Z"

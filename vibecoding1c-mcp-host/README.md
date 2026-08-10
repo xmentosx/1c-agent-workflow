@@ -85,6 +85,9 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 
 `-Action proxy` qualifies every target before updating host state and publishing the registry.
 On failure it restores prior proxy containers and host state and does not publish the new URLs.
+Before building or replacing a proxy, it also requires a clean host source checkout that contains
+its refreshed upstream and runs a non-interactive registry `git push --dry-run`. Credential or
+source-drift failures therefore stop before any proxy container transaction.
 Use `-ServerId <id>` for one tracked server. Use
 `scripts/export-tools-list-proxy-catalog.ps1` to export the live original/candidate catalog and
 the byte-reduction report before approving description changes.
@@ -112,18 +115,25 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 The task runs as the current Windows user at logon and at the configured interval, invokes the
 same bounded `reconcile` implementation, ignores overlapping runs, and persists the latest result
 to `<stateRoot>/watchdog-state.json`. An unchanged qualified host does not create a new registry
-commit on every interval. The installing account must be able to run `docker info` and push the
-registry checkout. Manage the shipped task from the same console:
+commit on every interval. The installing account must be able to reach the Docker Engine and push
+the registry checkout. Manage the shipped task from the same console:
 
-When `docker info` is unavailable, the watchdog uses the bounded Docker Desktop CLI
-`status` plus `start` or `restart`, then waits for the daemon before reconciling containers.
+The watchdog probes the Windows Docker Engine directly through its named-pipe `/_ping` endpoint,
+without loading Docker CLI plugins. A timed-out native command terminates its complete child
+process tree. If the engine is unavailable, the watchdog uses the bounded Docker Desktop CLI
+`status` plus `start` or `restart`, then waits for the engine before reconciling containers. A probe
+timeout while Docker Desktop reports `running` is retried but does not trigger a destructive restart.
 If the daemon disappears after that initial probe during any tracked Docker operation, the
 watchdog performs one bounded Docker Desktop recovery and retries the complete tracked
 reconciliation. A failed retry remains bounded; the next scheduled watchdog interval tries again.
 If recovery fails, it publishes the tracked host as `unavailable` without Docker inspection.
 The watchdog never invokes `setup`, source refresh, or `reindex`. It also replaces the broken
-graph image `curl` healthcheck in generated compose files. Existing running graph containers
+graph image `curl` healthcheck and malformed resource keys in generated compose files, and validates
+the rendered Compose model before any `down`. Existing running graph containers
 receive a small compatibility shim without a container restart or indexing.
+Registry health now keeps transport status separate from bounded, read-only MCP tool qualification.
+A Graph embedding-model mismatch is published and reported as `degraded`; the watchdog does not
+silently reset or reindex that database.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action watchdog-status -ConfigPath .\host.config.json
