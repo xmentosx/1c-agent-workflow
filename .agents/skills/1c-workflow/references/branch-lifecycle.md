@@ -93,7 +93,7 @@ Goal: refresh the current development branch from fresh `master` and source stat
 
 1. Require an active `itldev/*` worktree and clean tracked Git state.
 2. Refresh `master` from storage/source through the main worktree and reuse a compatible seed. Explicit `sync-master` always rebuilds the seed so its data and baseline are current.
-3. Merge fresh `master` into the branch while retaining every `ConfigDumpInfo.xml` version from the branch head. Cursor-only conflicts are resolved automatically in favor of the branch; any other merge conflict remains fail-closed for normal resolution.
+3. Merge fresh `master` into the branch while retaining every `ConfigDumpInfo.xml` version from the branch head. Cursor-only conflicts are resolved automatically in favor of the branch; any other merge conflict records the exact lifecycle merge transaction and returns `errorCategory=merge-conflict`. Resolve only the listed conflicts, run `git add`, and repeat the same ITL command; do not create the merge commit manually. The repeated command validates the operation, branch, original branch HEAD, exact `MERGE_HEAD`, staged paths, and clean unstaged/untracked state before it runs `git commit --no-edit` and continues post-merge. `refresh-dev-branch-lite` and `close-dev-branch` use the same recovery contract.
 4. If workflow helper scripts changed, re-exec the helper in the correct phase.
 5. Regenerate context-specific Kilo wrappers if workflow files changed.
 6. Update the branch infobase from changed files.

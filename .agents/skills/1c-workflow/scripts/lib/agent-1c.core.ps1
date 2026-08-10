@@ -352,7 +352,7 @@ function Set-RunResultArtifacts {
 
 function Set-RunFailureContext {
     param(
-        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "ai-rules-migration-blocked")]
+        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "ai-rules-migration-blocked", "merge-conflict")]
         [string]$Category = "",
         [string]$RequiredAction = ""
     )

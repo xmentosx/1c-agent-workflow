@@ -18,6 +18,44 @@
             return (Join-Path $parent ("t" + [guid]::NewGuid().ToString("N").Substring(0, 6)))
         }
 
+        function New-LifecycleMergeConflictFixture {
+            $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-merge-resume-" + [guid]::NewGuid().ToString("N"))
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot config core.autocrlf false
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "base-cursor"
+            Set-Content -LiteralPath (Join-Path $tempRoot "conflict.txt") -Encoding UTF8 -Value "base"
+            Set-Content -LiteralPath (Join-Path $tempRoot "unrelated.txt") -Encoding UTF8 -Value "base-unrelated"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            & git -C $tempRoot branch -M master
+
+            & git -C $tempRoot checkout --quiet -b itldev/test
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "branch-cursor"
+            Set-Content -LiteralPath (Join-Path $tempRoot "conflict.txt") -Encoding UTF8 -Value "branch"
+            Set-Content -LiteralPath (Join-Path $tempRoot "branch.txt") -Encoding UTF8 -Value "branch-only"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "branch" *> $null
+            $branchCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+
+            & git -C $tempRoot checkout --quiet master
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "master-cursor"
+            Set-Content -LiteralPath (Join-Path $tempRoot "conflict.txt") -Encoding UTF8 -Value "master"
+            Set-Content -LiteralPath (Join-Path $tempRoot "master.txt") -Encoding UTF8 -Value "master-only"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "master" *> $null
+            $targetCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+            & git -C $tempRoot checkout --quiet itldev/test
+
+            return [pscustomobject]@{
+                root = $tempRoot
+                branchCommit = $branchCommit
+                targetCommit = $targetCommit
+            }
+        }
+
         function Copy-AutoUpdateToolFixture {
             param([string]$TargetRoot)
             $target = Join-Path $TargetRoot ".agents\skills\1c-workflow\tools\auto-update"
@@ -1737,21 +1775,45 @@
         }
     }
 
-    It "restarts after refresh and close merges before loading config files" {
+    It "routes refresh and close through resumable merge validation before loading config files" {
         foreach ($functionName in @("Invoke-RefreshDevBranchCore", "Close-DevBranch")) {
             $match = [regex]::Match($HelperText, "(?s)function\s+$functionName\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
             $match.Success | Should -Be $true
             $body = $match.Groups["body"].Value
-            $mergeIndex = $body.IndexOf("Merge-MasterPreservingBranchConfigDumpInfo")
-            $phaseRestartIndex = $body.IndexOf('Restart-Agent1cAfterDevBranchMerge -Operation')
+            $resumeIndex = $body.IndexOf("Resume-DevBranchLifecycleMergeIfPresent")
+            $cleanIndex = $body.IndexOf("Assert-CleanGit")
+            $mergeIndex = $body.IndexOf("Invoke-NewDevBranchLifecycleMerge")
+            $postMergeIndex = $body.IndexOf("Assert-DevBranchLifecycleMergePostMerge")
             $loadIndex = $body.IndexOf('Load-ConfigFromFiles')
 
+            $resumeIndex | Should -BeGreaterOrEqual 0
+            $cleanIndex | Should -BeGreaterThan $resumeIndex
             $mergeIndex | Should -BeGreaterOrEqual 0
             $body | Should -Match 'if \(\$LifecyclePhase -ne "post-merge"\)'
             $body | Should -Not -Match "Restart-Agent1cIfWorkflowHelperChangedSince"
-            $phaseRestartIndex | Should -BeGreaterThan $mergeIndex
-            $loadIndex | Should -BeGreaterThan $phaseRestartIndex
+            $postMergeIndex | Should -BeGreaterThan $mergeIndex
+            $loadIndex | Should -BeGreaterThan $postMergeIndex
         }
+    }
+
+    It "clears a pending merge transaction only after the operation-specific post-merge work succeeds" {
+        $refreshMatch = [regex]::Match($HelperText, "(?s)function\s+Invoke-RefreshDevBranchCore\s*\{(?<body>.*?)(?=`r?`nfunction\s+Refresh-DevBranch\s*\{)")
+        $refreshMatch.Success | Should -BeTrue
+        $refreshBody = $refreshMatch.Groups["body"].Value
+        $refreshClearIndex = $refreshBody.IndexOf("Add-PendingDevBranchMergeClearUpdates")
+        $refreshPostconditionIndex = $refreshBody.IndexOf("Complete-RefreshConfigDumpInfoPostcondition")
+        $refreshUpdateIndex = $refreshBody.IndexOf("Update-DevBranchState", $refreshClearIndex)
+        $refreshClearIndex | Should -BeGreaterThan $refreshPostconditionIndex
+        $refreshUpdateIndex | Should -BeGreaterThan $refreshClearIndex
+
+        $closeMatch = [regex]::Match($HelperText, "(?s)function\s+Close-DevBranch\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
+        $closeMatch.Success | Should -BeTrue
+        $closeBody = $closeMatch.Groups["body"].Value
+        $closeClearIndex = $closeBody.IndexOf("Add-PendingDevBranchMergeClearUpdates")
+        $closeExportIndex = $closeBody.IndexOf("Export-DevBranchResultFile")
+        $closeFinalUpdateIndex = $closeBody.IndexOf("Update-DevBranchState", $closeClearIndex)
+        $closeClearIndex | Should -BeGreaterThan $closeExportIndex
+        $closeFinalUpdateIndex | Should -BeGreaterThan $closeClearIndex
     }
 
     It "writes the refresh user report only after MCP reconciliation" {
@@ -3841,6 +3903,411 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
+    It "records a resumable conflict transaction and gives the agent the same-command recovery for every lifecycle merge" {
+        foreach ($case in @(
+            @{ operation = "refresh-dev-branch"; stage = "refresh.merge-conflicts" },
+            @{ operation = "refresh-dev-branch-lite"; stage = "refresh.merge-conflicts" },
+            @{ operation = "close-dev-branch"; stage = "close.merge-conflicts" }
+        )) {
+            $fixture = New-LifecycleMergeConflictFixture
+            try {
+                $result = & {
+                    param($Fixture, $Case)
+                    . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                    $DevBranchName = "test"
+                    $script:MergeState = [pscustomobject]@{
+                        safeDevBranchName = "test"
+                        devBranchName = "test"
+                        devBranch = "itldev/test"
+                    }
+                    $script:FailureCategory = ""
+                    $script:RequiredAction = ""
+                    $script:ConflictStage = ""
+                    function Read-DevBranchState { return $script:MergeState }
+                    function Update-DevBranchState {
+                        param([object]$State, [hashtable]$Updates)
+                        foreach ($key in $Updates.Keys) {
+                            if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                                $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                            } else {
+                                $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                            }
+                        }
+                    }
+                    function Set-RunStage { param([string]$Stage); $script:ConflictStage = $Stage }
+                    function Set-RunFailureContext { param([string]$Category, [string]$RequiredAction); $script:FailureCategory = $Category; $script:RequiredAction = $RequiredAction }
+                    function Restart-Agent1cAfterDevBranchMerge { throw "unexpected restart" }
+
+                    $message = ""
+                    try {
+                        Invoke-NewDevBranchLifecycleMerge `
+                            -State $script:MergeState `
+                            -Operation $Case.operation `
+                            -TargetCommit $Fixture.targetCommit `
+                            -ConflictStage $Case.stage
+                    } catch {
+                        $message = $_.Exception.Message
+                    }
+                    [pscustomobject]@{
+                        message = $message
+                        category = $script:FailureCategory
+                        requiredAction = $script:RequiredAction
+                        runStage = $script:ConflictStage
+                        pendingOperation = $script:MergeState.pendingMergeOperation
+                        pendingBranch = $script:MergeState.pendingMergeBranch
+                        pendingBranchCommit = $script:MergeState.pendingMergeBranchCommit
+                        pendingTarget = $script:MergeState.pendingMergeTargetCommit
+                        pendingStage = $script:MergeState.pendingMergeStage
+                        conflicts = @($script:MergeState.pendingMergeConflictPaths)
+                        mergeHead = (Get-GitMergeHeadCommit)
+                        head = (Get-CurrentCommit)
+                        cursor = (Get-Content -LiteralPath (Join-Path $Fixture.root "src\cf\ConfigDumpInfo.xml") -Raw).Trim()
+                    }
+                } $fixture $case
+
+                $result.message | Should -Match "^LIFECYCLE_MERGE_CONFLICT"
+                $result.message | Should -Match "run git add"
+                $result.message | Should -Match "Do not create the merge commit manually"
+                $result.category | Should -Be "merge-conflict"
+                $result.requiredAction | Should -Be "resolve-conflicts-run-git-add-repeat-same-itl-command-no-manual-commit"
+                $result.runStage | Should -Be $case.stage
+                $result.pendingOperation | Should -Be $case.operation
+                $result.pendingBranch | Should -Be "itldev/test"
+                $result.pendingBranchCommit | Should -Be $fixture.branchCommit
+                $result.pendingTarget | Should -Be $fixture.targetCommit
+                $result.pendingStage | Should -Be "conflicts"
+                $result.conflicts | Should -Be @("conflict.txt")
+                $result.mergeHead | Should -Be $fixture.targetCommit
+                $result.head | Should -Be $fixture.branchCommit
+                $result.cursor | Should -Be "branch-cursor"
+            } finally {
+                Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "leaves unresolved conflicts untouched and commits them after resolution, staging, and the same command retry" {
+        $fixture = New-LifecycleMergeConflictFixture
+        try {
+            $result = & {
+                param($Fixture)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = "test"
+                $script:MergeState = [pscustomobject]@{ safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test" }
+                $script:RestartCount = 0
+                function Read-DevBranchState { return $script:MergeState }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) {
+                        if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                            $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                        } else {
+                            $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                        }
+                    }
+                }
+                function Set-RunStage {}
+                function Set-RunFailureContext {}
+                function Restart-Agent1cAfterDevBranchMerge { $script:RestartCount++; throw "RESTART_AFTER_MERGE" }
+
+                try {
+                    Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch" -TargetCommit $Fixture.targetCommit -ConflictStage "refresh.merge-conflicts"
+                } catch {}
+                $headBeforeRetry = Get-CurrentCommit
+                $unresolvedMessage = ""
+                try {
+                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                } catch {
+                    $unresolvedMessage = $_.Exception.Message
+                }
+                $headAfterUnresolvedRetry = Get-CurrentCommit
+
+                Set-Content -LiteralPath (Join-Path $Fixture.root "conflict.txt") -Encoding UTF8 -Value "resolved"
+                Invoke-Git @("add", "--", "conflict.txt")
+                $resolvedMessage = ""
+                try {
+                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                } catch {
+                    $resolvedMessage = $_.Exception.Message
+                }
+                $head = Get-CurrentCommit
+                [pscustomobject]@{
+                    unresolvedMessage = $unresolvedMessage
+                    resolvedMessage = $resolvedMessage
+                    headBeforeRetry = $headBeforeRetry
+                    headAfterUnresolvedRetry = $headAfterUnresolvedRetry
+                    head = $head
+                    parents = @(Get-GitCommitParents -Commit $head)
+                    restartCount = $script:RestartCount
+                    mergeInProgress = Test-GitMergeInProgress
+                    pendingStage = $script:MergeState.pendingMergeStage
+                    pendingCommit = $script:MergeState.pendingMergeCommit
+                    cursor = (Get-Content -LiteralPath (Join-Path $Fixture.root "src\cf\ConfigDumpInfo.xml") -Raw).Trim()
+                    status = @(& git -C $Fixture.root status --porcelain)
+                }
+            } $fixture
+
+            $result.unresolvedMessage | Should -Match "^LIFECYCLE_MERGE_CONFLICT"
+            $result.headBeforeRetry | Should -Be $fixture.branchCommit
+            $result.headAfterUnresolvedRetry | Should -Be $fixture.branchCommit
+            $result.resolvedMessage | Should -Be "RESTART_AFTER_MERGE"
+            $result.parents | Should -Be @($fixture.branchCommit, $fixture.targetCommit)
+            $result.restartCount | Should -Be 1
+            $result.mergeInProgress | Should -BeFalse
+            $result.pendingStage | Should -Be "merged"
+            $result.pendingCommit | Should -Be $result.head
+            $result.cursor | Should -Be "branch-cursor"
+            $result.status | Should -BeNullOrEmpty
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "blocks unstaged resolutions, unrelated untracked files, and unrelated staged files during resume" {
+        foreach ($case in @(
+            @{ kind = "unstaged"; expected = "^LIFECYCLE_MERGE_CONFLICT" },
+            @{ kind = "untracked"; expected = "^LIFECYCLE_MERGE_UNTRACKED_FILES" },
+            @{ kind = "staged"; expected = "^LIFECYCLE_MERGE_UNEXPECTED_STAGED_FILES" }
+        )) {
+            $fixture = New-LifecycleMergeConflictFixture
+            try {
+                $result = & {
+                    param($Fixture, $Case)
+                    . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                    $DevBranchName = "test"
+                    $script:MergeState = [pscustomobject]@{ safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test" }
+                    function Read-DevBranchState { return $script:MergeState }
+                    function Update-DevBranchState {
+                        param([object]$State, [hashtable]$Updates)
+                        foreach ($key in $Updates.Keys) {
+                            if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                                $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                            } else {
+                                $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                            }
+                        }
+                    }
+                    function Set-RunStage {}
+                    function Set-RunFailureContext {}
+                    function Restart-Agent1cAfterDevBranchMerge { throw "unexpected restart" }
+                    try {
+                        Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch" -TargetCommit $Fixture.targetCommit -ConflictStage "refresh.merge-conflicts"
+                    } catch {}
+
+                    Set-Content -LiteralPath (Join-Path $Fixture.root "conflict.txt") -Encoding UTF8 -Value "resolved"
+                    Invoke-Git @("add", "--", "conflict.txt")
+                    switch ($Case.kind) {
+                        "unstaged" { Set-Content -LiteralPath (Join-Path $Fixture.root "conflict.txt") -Encoding UTF8 -Value "resolved-but-not-staged" }
+                        "untracked" { Set-Content -LiteralPath (Join-Path $Fixture.root "foreign.txt") -Encoding UTF8 -Value "foreign" }
+                        "staged" {
+                            Set-Content -LiteralPath (Join-Path $Fixture.root "unrelated.txt") -Encoding UTF8 -Value "foreign-staged"
+                            Invoke-Git @("add", "--", "unrelated.txt")
+                        }
+                    }
+                    $message = ""
+                    try {
+                        Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                    } catch {
+                        $message = $_.Exception.Message
+                    }
+                    [pscustomobject]@{
+                        message = $message
+                        head = Get-CurrentCommit
+                        mergeInProgress = Test-GitMergeInProgress
+                    }
+                } $fixture $case
+
+                $result.message | Should -Match $case.expected
+                $result.head | Should -Be $fixture.branchCommit
+                $result.mergeInProgress | Should -BeTrue
+            } finally {
+                Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "blocks a mismatched MERGE_HEAD without committing anything" {
+        $fixture = New-LifecycleMergeConflictFixture
+        try {
+            $result = & {
+                param($Fixture)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = "test"
+                $script:MergeState = [pscustomobject]@{ safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test" }
+                function Read-DevBranchState { return $script:MergeState }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) {
+                        if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                            $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                        } else {
+                            $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                        }
+                    }
+                }
+                function Set-RunStage {}
+                function Set-RunFailureContext {}
+                function Restart-Agent1cAfterDevBranchMerge { throw "unexpected restart" }
+                try {
+                    Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch" -TargetCommit $Fixture.targetCommit -ConflictStage "refresh.merge-conflicts"
+                } catch {}
+                $operationMessage = ""
+                try {
+                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "close-dev-branch" -ConflictStage "close.merge-conflicts" | Out-Null
+                } catch {
+                    $operationMessage = $_.Exception.Message
+                }
+                $mergeHeadPath = (Get-GitOutput @("rev-parse", "--git-path", "MERGE_HEAD")).Trim()
+                if (-not [System.IO.Path]::IsPathRooted($mergeHeadPath)) {
+                    $mergeHeadPath = Join-Path $Fixture.root $mergeHeadPath
+                }
+                Set-Content -LiteralPath $mergeHeadPath -Encoding ASCII -Value $Fixture.branchCommit
+                $message = ""
+                try {
+                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                } catch {
+                    $message = $_.Exception.Message
+                }
+                [pscustomobject]@{ operationMessage = $operationMessage; message = $message; head = Get-CurrentCommit }
+            } $fixture
+
+            $result.operationMessage | Should -Match "^LIFECYCLE_MERGE_OPERATION_MISMATCH"
+            $result.message | Should -Match "^LIFECYCLE_MERGE_HEAD_MISMATCH"
+            $result.head | Should -Be $fixture.branchCommit
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "recognizes a manually created exact merge commit as an interrupted workflow commit" {
+        $fixture = New-LifecycleMergeConflictFixture
+        try {
+            $result = & {
+                param($Fixture)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = "test"
+                $script:MergeState = [pscustomobject]@{ safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test" }
+                $script:RestartCount = 0
+                function Read-DevBranchState { return $script:MergeState }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) {
+                        if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                            $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                        } else {
+                            $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                        }
+                    }
+                }
+                function Set-RunStage {}
+                function Set-RunFailureContext {}
+                function Restart-Agent1cAfterDevBranchMerge { $script:RestartCount++; throw "RESTART_AFTER_MERGE" }
+                try {
+                    Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch" -TargetCommit $Fixture.targetCommit -ConflictStage "refresh.merge-conflicts"
+                } catch {}
+                foreach ($name in @($script:MergeState.PSObject.Properties.Name | Where-Object { $_ -like "pendingMerge*" })) {
+                    $script:MergeState.PSObject.Properties.Remove($name)
+                }
+                $legacyConflictMessage = ""
+                try {
+                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                } catch {
+                    $legacyConflictMessage = $_.Exception.Message
+                }
+                Set-Content -LiteralPath (Join-Path $Fixture.root "conflict.txt") -Encoding UTF8 -Value "resolved"
+                Invoke-Git @("add", "--", "conflict.txt")
+                Invoke-Git @("commit", "--no-edit")
+                $manualCommit = Get-CurrentCommit
+                $message = ""
+                try {
+                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                } catch {
+                    $message = $_.Exception.Message
+                }
+                [pscustomobject]@{
+                    legacyConflictMessage = $legacyConflictMessage
+                    message = $message
+                    manualCommit = $manualCommit
+                    pendingCommit = $script:MergeState.pendingMergeCommit
+                    pendingStage = $script:MergeState.pendingMergeStage
+                    parents = @(Get-GitCommitParents -Commit $manualCommit)
+                    restartCount = $script:RestartCount
+                }
+            } $fixture
+
+            $result.legacyConflictMessage | Should -Match "^LIFECYCLE_MERGE_CONFLICT"
+            $result.message | Should -Be "RESTART_AFTER_MERGE"
+            $result.pendingCommit | Should -Be $result.manualCommit
+            $result.pendingStage | Should -Be "merged"
+            $result.parents | Should -Be @($fixture.branchCommit, $fixture.targetCommit)
+            $result.restartCount | Should -Be 1
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "records an already-contained target as a proven no-op without creating an empty merge commit" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-merge-noop-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            Set-Content -LiteralPath (Join-Path $tempRoot "base.txt") -Encoding UTF8 -Value "base"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            & git -C $tempRoot branch -M master
+            $targetCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+            & git -C $tempRoot checkout --quiet -b itldev/test
+            Set-Content -LiteralPath (Join-Path $tempRoot "branch.txt") -Encoding UTF8 -Value "branch"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "branch" *> $null
+            $branchCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+
+            $result = & {
+                param($TempRoot, $TargetCommit)
+                . $HelperPath -ProjectRoot $TempRoot -Action help *> $null
+                $DevBranchName = "test"
+                $script:MergeState = [pscustomobject]@{ safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test" }
+                function Read-DevBranchState { return $script:MergeState }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) {
+                        if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                            $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                        } else {
+                            $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                        }
+                    }
+                }
+                function Restart-Agent1cAfterDevBranchMerge { throw "RESTART_AFTER_MERGE" }
+                $message = ""
+                try {
+                    Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch-lite" -TargetCommit $TargetCommit -ConflictStage "refresh.merge-conflicts"
+                } catch {
+                    $message = $_.Exception.Message
+                }
+                [pscustomobject]@{
+                    message = $message
+                    head = Get-CurrentCommit
+                    stage = $script:MergeState.pendingMergeStage
+                    result = $script:MergeState.pendingMergeResult
+                    mergeCommit = $script:MergeState.pendingMergeCommit
+                    parents = @(Get-GitCommitParents -Commit (Get-CurrentCommit))
+                }
+            } $tempRoot $targetCommit
+
+            $result.message | Should -Be "RESTART_AFTER_MERGE"
+            $result.head | Should -Be $branchCommit
+            $result.stage | Should -Be "merged"
+            $result.result | Should -Be "already-up-to-date"
+            $result.mergeCommit | Should -Be $branchCommit
+            $result.parents | Should -Be @($targetCommit)
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "keeps branch ConfigDumpInfo cursors with Unicode paths when master is merged" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-dump-info-merge-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -4093,6 +4560,7 @@ if (`$?) { exit 0 } else { exit 1 }
             function Assert-DevelopmentBranchWorktreeContext {}
             function Assert-DevBranchExtensionInitialized {}
             function Assert-CleanGit {}
+            function Assert-DevBranchLifecycleMergePostMerge { [pscustomobject]@{ targetCommit = ("a" * 40) } }
             function Sync-DevBranchContextToDotEnv {}
             function Install-VanessaAutomation {}
             function Invoke-DevBranchDefaultMcpSetup { param([object]$State) return $State }
