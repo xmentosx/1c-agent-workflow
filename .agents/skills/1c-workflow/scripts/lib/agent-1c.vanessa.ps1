@@ -2583,7 +2583,7 @@ function Ensure-VanessaServiceInfoBase {
         $logPath = New-TimestampedFilePath -Directory $logsPath -Prefix "1c-vanessa-service-create-" -Extension ".log"
         $arguments = @(
             "CREATEINFOBASE",
-            ('File="' + $path + '"'),
+            ('File=' + $path),
             "/DisableStartupDialogs",
             "/Out", $logPath
         )

@@ -66,7 +66,8 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
             $result.service.created | Should -BeTrue
             $result.service.kind | Should -Be "file"
             $result.arguments[0] | Should -Be "CREATEINFOBASE"
-            $result.arguments | Should -Contain ('File="' + $result.service.path + '"')
+            $result.arguments | Should -Contain ('File=' + $result.service.path)
+            @($result.arguments | Where-Object { $_ -like 'File=*' })[0] | Should -Not -Match '"'
             $result.arguments | Should -Not -Contain "/AddInList"
             $result.purpose | Should -Be "vanessa-service-infobase-create"
             $result.updates.vanessaServiceInfoBasePath | Should -Be $result.service.path
