@@ -142,6 +142,45 @@
         }
     }
 
+    It "binds the generic TestClient opener to the first product profile in an execution-only feature copy" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-default-profile-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $featureText = "# language: ru`nФункционал: Клиент продукта`nКонтекст:`n  `rДано Я запускаю сценарий открытия TestClient или подключаю уже существующий`nСценарий: Сервер TestClient`n  И я выполняю код встроенного языка на сервере (Расширение)"
+            $fixture = New-VanessaRunnerFixture `
+                -Root $tempRoot `
+                -FeatureText $featureText `
+                -ManifestText '{"schemaVersion":1,"maxConcurrency":1,"profiles":[{"name":"ProductAdmin","user":"admin"}]}'
+            $libraryPath = Join-Path (Split-Path -Parent $fixture.featurePath) "Libraries\ITL\Core\Library.feature"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $libraryPath) | Out-Null
+            Set-Content -LiteralPath $libraryPath -Encoding UTF8 -Value "# language: ru`n@ExportScenarios`nФункционал: Library`nСценарий: Helper`n  Тогда Истина равна Истине"
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $originalText = Get-Content -LiteralPath $fixture.featurePath -Raw -Encoding UTF8
+                $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
+                $paramsPath = New-VanessaParamsFile `
+                    -FeaturePath (Split-Path -Parent $fixture.featurePath) `
+                    -RunDirectory $fixture.runDirectory `
+                    -StatusPath (Join-Path $fixture.runDirectory "status.json") `
+                    -State $fixture.state `
+                    -TestPort 48051 `
+                    -TestPorts @(48051) `
+                    -TestClientTopology $topology
+                $params = Get-Content -Raw -Encoding UTF8 $paramsPath | ConvertFrom-Json
+                $stagedFeature = Join-Path $params.featurepath "fixture.feature"
+                $stagedText = Get-Content -LiteralPath $stagedFeature -Raw -Encoding UTF8
+
+                $params.featurepath | Should -Not -Be (Split-Path -Parent $fixture.featurePath)
+                @($params.FeaturesToRun) | Should -Be @($stagedFeature)
+                @($params.FeaturesToRun) | Should -Not -Contain (Join-Path $params.featurepath "Libraries\ITL\Core\Library.feature")
+                $stagedText | Should -Match "активизирую строку 'ProductAdmin'"
+                ([regex]::Matches($stagedText, 'Я запускаю сценарий открытия TestClient или подключаю уже существующий')).Count | Should -Be 1
+                (Get-Content -LiteralPath $fixture.featurePath -Raw -Encoding UTF8) | Should -Be $originalText
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "loads one secret-safe profile and rejects a tracked password value" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-one-" + [guid]::NewGuid().ToString("N"))
         $oldPassword = [Environment]::GetEnvironmentVariable("ITL_TEST_PROFILE_ONE_PASSWORD", "Process")
@@ -447,7 +486,10 @@
             $runText = $helperText.Substring($runStart, ($runEnd - $runStart))
             $runText | Should -Match 'Get-VanessaApplicationFeatureFiles -FeaturePath \$featuresPath'
             $runText | Should -Match 'Get-VanessaTestClientTopology -FeatureFiles \$applicationFeatureFiles'
-            $runText | Should -Match 'Get-VanessaFilteredScenarioCount -FeatureFiles \$applicationFeatureFiles'
+            $runText | Should -Match 'Get-VanessaSelectedScenarioCount -FeatureFiles \$applicationFeatureFiles'
+            $runText | Should -Match 'Ensure-VanessaMcpInstalled -State \$state'
+            $runText | Should -Match 'Invoke-DevBranchVanessaRuntimeRelease -State \$state -Reason "Vanessa verification preflight"'
+            $runText | Should -Match 'Assert-VanessaScenarioCountJunitEvidence'
             $runText | Should -Match '(?s)New-VanessaParamsFile.*?-FeaturePath \$featuresPath'
             $runText | Should -Match '-InfoBasePath \$serviceInfoBase\.path'
             $runText | Should -Match '-ExpectedSessionCount 1'
@@ -480,6 +522,7 @@
                 $params = Get-Content -Raw -Encoding UTF8 $paramsPath | ConvertFrom-Json
                 @($params.filtertags) | Should -Be @("V28")
                 $params.PSObject.Properties.Name | Should -Not -Contain "tags"
+                @($params.FeaturesToRun) | Should -Be @($fixture.featurePath)
 
                 Set-Content -LiteralPath (Join-Path $fixture.runDirectory "junit.xml") -Encoding UTF8 -Value '<testsuite tests="1" failures="0" errors="0"><testcase name="Selected"/></testsuite>'
                 $evidence = Assert-VanessaTagFilterJunitEvidence -RunDirectory $fixture.runDirectory -ExpectedScenarioCount $expected -FilterTags "@V28"
@@ -487,6 +530,13 @@
 
                 Set-Content -LiteralPath (Join-Path $fixture.runDirectory "junit.xml") -Encoding UTF8 -Value '<testsuite tests="2" failures="0" errors="0"><testcase name="Selected"/><testcase name="Not selected"/></testsuite>'
                 { Assert-VanessaTagFilterJunitEvidence -RunDirectory $fixture.runDirectory -ExpectedScenarioCount $expected -FilterTags "@V28" } | Should -Throw "*ITL_VANESSA_TAG_FILTER_COUNT_MISMATCH*"
+
+                $allExpected = Get-VanessaSelectedScenarioCount -FeatureFiles @($fixture.featurePath)
+                $allExpected | Should -Be 2
+                $allEvidence = Assert-VanessaScenarioCountJunitEvidence -RunDirectory $fixture.runDirectory -ExpectedScenarioCount $allExpected
+                $allEvidence.junitScenarioCount | Should -Be 2
+                Set-Content -LiteralPath (Join-Path $fixture.runDirectory "junit.xml") -Encoding UTF8 -Value '<testsuite tests="3" failures="0" errors="0"><testcase name="Selected"/><testcase name="Not selected"/><testcase name="Library"/></testsuite>'
+                { Assert-VanessaScenarioCountJunitEvidence -RunDirectory $fixture.runDirectory -ExpectedScenarioCount $allExpected } | Should -Throw "*ITL_VANESSA_SCENARIO_COUNT_MISMATCH*"
             }
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

@@ -22,6 +22,12 @@ var designerSafeModeCommands = []string{
 	"common connect-ib",
 	"config extensions properties set --extension client_mcp --safe-mode no",
 	"config extensions properties get --extension client_mcp",
+	"common disconnect-ib",
+	"common shutdown",
+}
+
+var designerVAExtensionSafeModeCommands = []string{
+	"common connect-ib",
 	"config extensions properties set --extension VAExtension --safe-mode no",
 	"config extensions properties get --extension VAExtension",
 	"common disconnect-ib",
@@ -84,13 +90,25 @@ func validateDesignerAgentRequest(request *designerAgentRequest) error {
 	if strings.TrimSpace(request.HostPublicKey) == "" {
 		return fmt.Errorf("ITL_DESIGNER_AGENT_HOST_KEY_MISSING")
 	}
-	if len(request.Commands) != len(designerSafeModeCommands) {
-		return fmt.Errorf("ITL_DESIGNER_AGENT_COMMANDS_INVALID: expected the fixed Vanessa safe-mode command sequence")
-	}
-	for index := range designerSafeModeCommands {
-		if request.Commands[index] != designerSafeModeCommands[index] {
-			return fmt.Errorf("ITL_DESIGNER_AGENT_COMMANDS_INVALID: command %d is outside the fixed Vanessa safe-mode contract", index+1)
+	validCommands := false
+	for _, allowedCommands := range [][]string{designerSafeModeCommands, designerVAExtensionSafeModeCommands} {
+		if len(request.Commands) != len(allowedCommands) {
+			continue
 		}
+		matches := true
+		for index := range allowedCommands {
+			if request.Commands[index] != allowedCommands[index] {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			validCommands = true
+			break
+		}
+	}
+	if !validCommands {
+		return fmt.Errorf("ITL_DESIGNER_AGENT_COMMANDS_INVALID: expected one fixed per-extension Vanessa safe-mode command sequence")
 	}
 	if request.ConnectTimeoutSeconds == 0 {
 		request.ConnectTimeoutSeconds = 30

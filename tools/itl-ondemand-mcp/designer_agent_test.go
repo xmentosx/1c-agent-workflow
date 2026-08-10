@@ -67,9 +67,26 @@ func TestDesignerAgentSafeModeRejectsAnyOtherCommandOrHost(t *testing.T) {
 		t.Fatalf("unexpected host validation error: %v", err)
 	}
 	request.Host = "127.0.0.1"
+	request.Commands = append([]string(nil), designerVAExtensionSafeModeCommands...)
+	if err := validateDesignerAgentRequest(request); err != nil {
+		t.Fatalf("VAExtension fixed command sequence was rejected: %v", err)
+	}
+	request.Commands = append([]string(nil), designerSafeModeCommands...)
 	request.Commands[1] = "config extensions properties set --all-extensions --safe-mode no"
 	if err := validateDesignerAgentRequest(request); err == nil || !strings.Contains(err.Error(), "COMMANDS_INVALID") {
 		t.Fatalf("unexpected command validation error: %v", err)
+	}
+	request.Commands = []string{
+		"common connect-ib",
+		"config extensions properties set --extension client_mcp --safe-mode no",
+		"config extensions properties get --extension client_mcp",
+		"config extensions properties set --extension VAExtension --safe-mode no",
+		"config extensions properties get --extension VAExtension",
+		"common disconnect-ib",
+		"common shutdown",
+	}
+	if err := validateDesignerAgentRequest(request); err == nil || !strings.Contains(err.Error(), "COMMANDS_INVALID") {
+		t.Fatalf("combined cross-infobase command sequence was accepted: %v", err)
 	}
 }
 

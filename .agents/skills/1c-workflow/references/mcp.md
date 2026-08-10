@@ -78,7 +78,7 @@ Rules:
 7. A catalog mismatch returns `ITL_ONDEMAND_CATALOG_MISMATCH`, stops the backend, and exposes no unverified tools.
 8. Final verification remains `/itl-check` through Vanessa Automation `TESTMANAGER -> TESTCLIENT`, not MCP.
 9. For MCP UI work, the workflow broker starts and owns TestClient lazily through the reserved `itl-ondemand` profile. Agents never start a separate `1cv8.exe`, change the reserved profile, or reuse the `/itl-check` TestClient port.
-10. A branch must have confirmed unsafe-action protection setup before Vanessa starts. The gateway returns `ITL_VANESSA_UNSAFE_ACTION_PROTECTION_UNCONFIRMED` instead of editing `conf.cfg` automatically. TestClient-dependent tools auto-connect only after process/capacity preflight. A positive window-list postcondition proves logical connection; explicit absence returns `ITL_VANESSA_TESTCLIENT_NOT_CONNECTED`, and an ambiguous upstream response returns fail-closed `ITL_VANESSA_TESTCLIENT_CONNECTION_STATE_UNAVAILABLE`.
+10. A branch must have confirmed unsafe-action protection setup before Vanessa starts. The gateway never weakens protection for the development/TestClient infobase and never edits the user's `conf.cfg`. TestManager uses a branch-local infobase restored from the packaged qualified empty-base DT template; its dedicated `itl_vanessa_service` user already has unsafe-action protection disabled. TestClient-dependent tools auto-connect only after process/capacity preflight. A positive window-list postcondition proves logical connection; explicit absence returns `ITL_VANESSA_TESTCLIENT_NOT_CONNECTED`, and an ambiguous upstream response returns fail-closed `ITL_VANESSA_TESTCLIENT_CONNECTION_STATE_UNAVAILABLE`.
 
 ## Legacy Branch Data MCP
 

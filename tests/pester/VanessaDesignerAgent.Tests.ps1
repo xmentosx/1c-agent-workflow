@@ -6,6 +6,7 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $HelperPath = $context.HelperPath
         $VanessaPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1"
         $VanessaText = Get-Content -Encoding UTF8 -Raw $VanessaPath
+        $OnDemandText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.ondemand-mcp.ps1")
         $LifecycleText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1")
     }
 
@@ -35,14 +36,26 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $result | Should -BeTrue
     }
 
-    It "creates one branch-local empty service infobase through guarded CREATEINFOBASE" {
+    It "creates and restores one qualified branch-local service infobase through guarded 1C calls" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-service-base-" + [guid]::NewGuid().ToString("N"))
         try {
             $result = & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-                $servicePath = Join-Path $tempRoot ".agent-1c\infobases\vanessa-service"
-                $state = [pscustomobject]@{ devBranchName = "demo"; vanessaServiceInfoBasePath = $servicePath }
+                $script:ProjectRoot = $tempRoot
+                $template = Get-VanessaServiceInfoBaseTemplate
+                $generation = "a" * 32
+                $servicePath = Join-Path $tempRoot ".agent-1c\infobases\vanessa-service-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                $state = [pscustomobject]@{
+                    devBranchName = "demo"
+                    vanessaServiceInfoBasePath = $servicePath
+                    vanessaServiceInfoBaseGeneration = $generation
+                    vanessaServiceInfoBaseSchemaVersion = 3
+                    vanessaServiceInfoBaseTemplateSha256 = $template.sha256
+                    vanessaServiceInfoBaseUser = $template.user
+                }
                 $script:capturedArguments = @()
+                $script:capturedDesignerArgs = @()
+                $script:capturedDesignerUser = $null
                 $script:capturedPurpose = ""
                 $script:updates = $null
                 function Get-PlatformPath { return "C:\fake\1cv8.exe" }
@@ -54,27 +67,77 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
                 function Invoke-NativeProcessAndWaitResult {
                     param([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds)
                     $script:capturedArguments = @($Arguments)
-                    New-Item -ItemType Directory -Force -Path $servicePath | Out-Null
-                    [IO.File]::WriteAllText((Join-Path $servicePath "1Cv8.1CD"), "fixture")
+                    $createdPath = [string]$Arguments[1].Substring(5)
+                    New-Item -ItemType Directory -Force -Path $createdPath | Out-Null
+                    [IO.File]::WriteAllText((Join-Path $createdPath "1Cv8.1CD"), "fixture")
                     return [pscustomobject]@{ exitCode = 0; timedOut = $false }
+                }
+                function Invoke-Designer {
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs, [string]$User, [string]$Password)
+                    $script:capturedDesignerArgs = @($DesignerArgs)
+                    $script:capturedDesignerUser = $User
                 }
                 function Update-DevBranchState { param([object]$State, [hashtable]$Updates) $script:updates = $Updates }
                 $service = Ensure-VanessaServiceInfoBase -State $state
-                [pscustomobject]@{ service = $service; arguments = @($script:capturedArguments); purpose = $script:capturedPurpose; updates = $script:updates }
+                [pscustomobject]@{
+                    service = $service
+                    arguments = @($script:capturedArguments)
+                    designerArgs = @($script:capturedDesignerArgs)
+                    designerUser = $script:capturedDesignerUser
+                    purpose = $script:capturedPurpose
+                    updates = $script:updates
+                }
             }
 
             $result.service.created | Should -BeTrue
+            $result.service.restored | Should -BeTrue
             $result.service.kind | Should -Be "file"
+            $result.service.user | Should -Be "itl_vanessa_service"
+            (Split-Path -Leaf $result.service.path) | Should -Match '^vanessa-service-[a-f0-9]{32}$'
             $result.arguments[0] | Should -Be "CREATEINFOBASE"
             $result.arguments | Should -Contain ('File=' + $result.service.path)
             @($result.arguments | Where-Object { $_ -like 'File=*' })[0] | Should -Not -Match '"'
             $result.arguments | Should -Not -Contain "/AddInList"
             $result.purpose | Should -Be "vanessa-service-infobase-create"
+            $result.designerArgs[0] | Should -Be "/RestoreIB"
+            (Split-Path -Leaf $result.designerArgs[1]) | Should -Be "service-infobase.dt"
+            $result.designerUser | Should -Be ""
             $result.updates.vanessaServiceInfoBasePath | Should -Be $result.service.path
             $result.updates.vanessaServiceInfoBaseGeneration | Should -Match '^[a-f0-9]{32}$'
+            $result.updates.vanessaServiceInfoBaseSchemaVersion | Should -Be 3
+            $result.updates.vanessaServiceInfoBaseTemplateSha256 | Should -Be $result.service.templateSha256
+            $result.updates.vanessaServiceInfoBaseUser | Should -Be "itl_vanessa_service"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It "packages the qualified template and uses its service user without editing user-level configuration" {
+        $manifestPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\vanessa-service\manifest.json"
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $artifactPath = Join-Path (Split-Path -Parent $manifestPath) ([string]$manifest.artifact)
+        (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be ([string]$manifest.sha256)
+        $manifest.serviceUser | Should -Be "itl_vanessa_service"
+        $manifest.passwordRequired | Should -BeFalse
+        $manifest.unsafeActionProtectionDisabled | Should -BeTrue
+        (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Raw -Encoding UTF8) |
+            Should -Match '!\.agents/skills/1c-workflow/assets/vanessa-service/service-infobase\.dt'
+
+        foreach ($functionName in @("Run-DevBranchTests", "Install-VanessaMcp", "Start-VanessaMcp")) {
+            $functionText = [regex]::Match(
+                $VanessaText,
+                ("function " + [regex]::Escape($functionName) + "\s*\{[\s\S]*?^}"),
+                [Text.RegularExpressions.RegexOptions]::Multiline
+            ).Value
+            $functionText | Should -Match '\$serviceInfoBase\.user'
+        }
+        $onDemandStart = [regex]::Match(
+            $OnDemandText,
+            'function Start-ItlOnDemandBackendInstance[\s\S]*?^}',
+            [Text.RegularExpressions.RegexOptions]::Multiline
+        ).Value
+        $onDemandStart | Should -Match '\$serviceInfoBase\.user'
+        ($VanessaText + $OnDemandText) | Should -Not -Match 'conf\.cfg|DisableUnsafeActionProtection|UnsafeActionProtectionBypass'
     }
 
     It "records installation state only after both CFE loads and successful safe-mode proof" {
@@ -85,7 +148,7 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
             $script:fixtureState = [pscustomobject]@{ devBranchName = "demo"; devBranchInfoBasePath = "target-base"; infoBaseKind = "file"; vanessaServiceInfoBasePath = "service-base"; vanessaServiceInfoBaseKind = "file" }
             function Read-CurrentDevBranchStateForVanessaMcp { return $script:fixtureState }
             function Read-DevBranchState { return $script:fixtureState }
-            function Ensure-VanessaServiceInfoBase { return [pscustomobject]@{ kind = "file"; path = "service-base"; created = $false } }
+            function Ensure-VanessaServiceInfoBase { return [pscustomobject]@{ kind = "file"; path = "service-base"; user = "itl_vanessa_service"; password = ""; created = $false } }
             function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
             function Get-VanessaMcpRuntimeInfo { return [pscustomobject]@{ processAlive = $false } }
             function Get-VanessaAutomationState { return [pscustomobject]@{ ready = $true } }
@@ -128,7 +191,7 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
             $script:fixtureState = [pscustomobject]@{ devBranchName = "demo"; devBranchInfoBasePath = "target-base"; infoBaseKind = "file"; vanessaServiceInfoBasePath = "service-base"; vanessaServiceInfoBaseKind = "file" }
             function Read-CurrentDevBranchStateForVanessaMcp { return $script:fixtureState }
             function Read-DevBranchState { return $script:fixtureState }
-            function Ensure-VanessaServiceInfoBase { return [pscustomobject]@{ kind = "file"; path = "service-base"; created = $false } }
+            function Ensure-VanessaServiceInfoBase { return [pscustomobject]@{ kind = "file"; path = "service-base"; user = "itl_vanessa_service"; password = ""; created = $false } }
             function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
             function Get-VanessaMcpRuntimeInfo { return [pscustomobject]@{ processAlive = $false } }
             function Get-VanessaAutomationState { return [pscustomobject]@{ ready = $true } }
