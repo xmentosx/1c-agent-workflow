@@ -317,7 +317,11 @@ function Test-HasExactInventory {
         foreach ($entry in @($Entries)) {
             $path = if ([System.IO.Path]::IsPathRooted([string]$entry.path)) { [string]$entry.path } else { Join-Path $Root ([string]$entry.path).Replace('/', '\') }
             if (-not (Test-Path $path -PathType Leaf)) { return $false }
-            if ((Get-CanonicalTextSha256 -Path $path) -ne ([string]$entry.sha256).ToLowerInvariant()) { return $false }
+            $expectedHash = ([string]$entry.sha256).ToLowerInvariant()
+            $canonicalHash = Get-CanonicalTextSha256 -Path $path
+            $byteHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            # Workflow qualifications use canonical text hashes; controlled-fork schema 1 uses exact byte hashes.
+            if ($canonicalHash -ne $expectedHash -and $byteHash -ne $expectedHash) { return $false }
         }
         return $true
     } catch { return $false }

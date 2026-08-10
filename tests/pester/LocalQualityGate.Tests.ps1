@@ -57,7 +57,9 @@ Describe "Local quality gate contract" {
         $check | Should -Match 'Add-ReusedStage -Name "develop-e2e"'
         $check | Should -Match 'Test-HasExactInventory'
         $check | Should -Match 'sha256 = Get-CanonicalTextSha256 -Path \$Path'
-        $check | Should -Match '\(Get-CanonicalTextSha256 -Path \$path\) -ne'
+        $check | Should -Match '\$canonicalHash = Get-CanonicalTextSha256 -Path \$path'
+        $check | Should -Match '\$byteHash = \(Get-FileHash -LiteralPath \$path -Algorithm SHA256\)'
+        $check | Should -Match '\$canonicalHash -ne \$expectedHash -and \$byteHash -ne \$expectedHash'
         $check | Should -Match 'static-tracked-state'; $check | Should -Match ([regex]::Escape("-split ','"))
         $qualification | Should -Match 'merge-base --is-ancestor'
         $promoter | Should -Match 'qualificationSha256'
