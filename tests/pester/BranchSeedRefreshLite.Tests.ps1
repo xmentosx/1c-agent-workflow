@@ -377,11 +377,11 @@ param([string]$Operation,[string]$ProjectRoot)
             function Get-GitOutput { return $sha }
             function Update-DevBranchState {}
             function Set-RunStage {}
-            function Merge-MasterPreservingBranchConfigDumpInfo {
-                param([string]$MasterBranch)
-                $script:mergedCommit = $MasterBranch
+            function Invoke-NewDevBranchLifecycleMerge {
+                param([object]$State, [string]$Operation, [string]$TargetCommit, [string]$ConflictStage)
+                $script:mergedCommit = $TargetCommit
+                throw "STOP_AFTER_MERGE"
             }
-            function Restart-Agent1cAfterDevBranchMerge { throw "STOP_AFTER_MERGE" }
 
             { Invoke-RefreshDevBranchCore -OperationName "refresh-dev-branch-lite" } | Should -Throw "*STOP_AFTER_MERGE*"
             $script:syncCalls | Should -Be 0

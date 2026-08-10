@@ -5780,46 +5780,245 @@ function Test-GitMergeInProgress {
     return (Test-Path -LiteralPath $mergeHeadPath -PathType Leaf)
 }
 
+function Get-GitMergeHeadCommit {
+    if (-not (Test-GitMergeInProgress)) {
+        return ""
+    }
+    return (Get-GitOutput @("rev-parse", "MERGE_HEAD")).Trim()
+}
+
+function Get-GitCommitParents {
+    param([string]$Commit)
+
+    $record = (Get-GitOutput @("rev-list", "--parents", "-n", "1", $Commit)).Trim()
+    if (-not $record) {
+        return @()
+    }
+    $parts = @($record -split '\s+' | Where-Object { $_ })
+    if ($parts.Count -le 1) {
+        return @()
+    }
+    return @($parts[1..($parts.Count - 1)])
+}
+
+function Test-GitCommitIsAncestor {
+    param(
+        [string]$Ancestor,
+        [string]$Descendant
+    )
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & git -C $script:ProjectRoot merge-base --is-ancestor $Ancestor $Descendant *> $null
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -eq 0) { return $true }
+    if ($exitCode -eq 1) { return $false }
+    throw "Cannot test Git ancestry for '$Ancestor' and '$Descendant'."
+}
+
+function Test-GitCommitHasExactMergeParents {
+    param(
+        [string]$Commit,
+        [string]$FirstParent,
+        [string]$SecondParent
+    )
+
+    $parents = @(Get-GitCommitParents -Commit $Commit)
+    return ($parents.Count -eq 2 -and $parents[0] -ceq $FirstParent -and $parents[1] -ceq $SecondParent)
+}
+
+function Assert-DevBranchLifecycleMergeCommitPaths {
+    param(
+        [string]$BranchCommit,
+        [string]$MergeCommit,
+        [string[]]$AllowedPaths
+    )
+
+    if (@($AllowedPaths).Count -eq 0) {
+        return
+    }
+    $committedPaths = @(
+        Get-GitPathList -Arguments @("diff", "--name-only", "-z", $BranchCommit, $MergeCommit, "--") |
+            ForEach-Object { ([string]$_).Replace("\", "/").Trim() } |
+            Where-Object { $_ } |
+            Sort-Object -Unique
+    )
+    $unexpectedPaths = @($committedPaths | Where-Object { @($AllowedPaths) -cnotcontains $_ })
+    if ($unexpectedPaths.Count -gt 0) {
+        throw "LIFECYCLE_MERGE_COMMIT_PATHS_MISMATCH branchCommit='$BranchCommit' mergeCommit='$MergeCommit' files='$($unexpectedPaths -join ', ')'."
+    }
+}
+
+function Get-DevBranchMergeIndexPaths {
+    return @(
+        @(
+            Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--")
+            Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=U", "--")
+        ) |
+            ForEach-Object { ([string]$_).Replace("\", "/").Trim() } |
+            Where-Object { $_ } |
+            Sort-Object -Unique
+    )
+}
+
+function Get-DevBranchMergeUnmergedPaths {
+    return @(
+        Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=U", "--") |
+            ForEach-Object { ([string]$_).Replace("\", "/").Trim() } |
+            Where-Object { $_ } |
+            Sort-Object -Unique
+    )
+}
+
+function Get-DevBranchMergeUnstagedPaths {
+    return @(
+        Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--") |
+            ForEach-Object { ([string]$_).Replace("\", "/").Trim() } |
+            Where-Object { $_ } |
+            Sort-Object -Unique
+    )
+}
+
+function Get-DevBranchMergeUntrackedPaths {
+    return @(
+        Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard", "--") |
+            ForEach-Object { ([string]$_).Replace("\", "/").Trim() } |
+            Where-Object { $_ } |
+            Sort-Object -Unique
+    )
+}
+
+function Get-PendingDevBranchMergeTransaction {
+    param([object]$State)
+
+    $operation = [string](Get-StateValue -State $State -Name "pendingMergeOperation" -Default "")
+    $targetCommit = [string](Get-StateValue -State $State -Name "pendingMergeTargetCommit" -Default "")
+    $legacy = $false
+    if (-not $operation -and -not $targetCommit) {
+        $operation = [string](Get-StateValue -State $State -Name "pendingRefreshOperation" -Default "")
+        $targetCommit = [string](Get-StateValue -State $State -Name "pendingRefreshMasterCommit" -Default "")
+        $legacy = [bool]($operation -or $targetCommit)
+    }
+    if (-not $operation -and -not $targetCommit) {
+        return $null
+    }
+
+    return [pscustomobject]@{
+        operation = $operation
+        branch = [string](Get-StateValue -State $State -Name "pendingMergeBranch" -Default (Get-StateValue -State $State -Name "devBranch" -Default ""))
+        branchCommit = [string](Get-StateValue -State $State -Name "pendingMergeBranchCommit" -Default "")
+        targetCommit = $targetCommit
+        stage = [string](Get-StateValue -State $State -Name "pendingMergeStage" -Default $(if ($legacy) { "legacy" } else { "" }))
+        allowedPaths = @(Get-StateValue -State $State -Name "pendingMergePaths" -Default @())
+        conflictPaths = @(Get-StateValue -State $State -Name "pendingMergeConflictPaths" -Default @())
+        mergeCommit = [string](Get-StateValue -State $State -Name "pendingMergeCommit" -Default "")
+        result = [string](Get-StateValue -State $State -Name "pendingMergeResult" -Default "")
+        legacy = $legacy
+    }
+}
+
+function Set-PendingDevBranchMergeTransaction {
+    param(
+        [object]$State,
+        [string]$Operation,
+        [string]$Branch,
+        [string]$BranchCommit,
+        [string]$TargetCommit,
+        [string]$Stage,
+        [string[]]$AllowedPaths = @(),
+        [string[]]$ConflictPaths = @(),
+        [string]$MergeCommit = "",
+        [string]$Result = ""
+    )
+
+    $isRefresh = $Operation -in @("refresh-dev-branch", "refresh-dev-branch-lite")
+    Update-DevBranchState -State $State -Updates @{
+        pendingMergeOperation = $Operation
+        pendingMergeBranch = $Branch
+        pendingMergeBranchCommit = $BranchCommit
+        pendingMergeTargetCommit = $TargetCommit
+        pendingMergeStage = $Stage
+        pendingMergePaths = @($AllowedPaths | Sort-Object -Unique)
+        pendingMergeConflictPaths = @($ConflictPaths | Sort-Object -Unique)
+        pendingMergeCommit = $MergeCommit
+        pendingMergeResult = $Result
+        pendingRefreshMasterCommit = $(if ($isRefresh) { $TargetCommit } else { "" })
+        pendingRefreshOperation = $(if ($isRefresh) { $Operation } else { "" })
+    }
+}
+
+function Add-PendingDevBranchMergeClearUpdates {
+    param([hashtable]$Updates)
+
+    foreach ($name in @(
+        "pendingMergeOperation",
+        "pendingMergeBranch",
+        "pendingMergeBranchCommit",
+        "pendingMergeTargetCommit",
+        "pendingMergeStage",
+        "pendingMergeCommit",
+        "pendingMergeResult",
+        "pendingRefreshMasterCommit",
+        "pendingRefreshOperation"
+    )) {
+        $Updates[$name] = ""
+    }
+    $Updates["pendingMergePaths"] = @()
+    $Updates["pendingMergeConflictPaths"] = @()
+}
+
+function Stop-DevBranchLifecycleMergeForConflicts {
+    param(
+        [string]$Operation,
+        [string]$Stage,
+        [string[]]$ConflictPaths,
+        [string]$Reason = "merge conflicts remain"
+    )
+
+    $paths = @($ConflictPaths | Where-Object { $_ } | Sort-Object -Unique)
+    Set-RunStage -Stage $Stage -Detail "$Reason; resolve the listed files, run git add, and repeat $Operation."
+    Set-RunFailureContext `
+        -Category "merge-conflict" `
+        -RequiredAction "resolve-conflicts-run-git-add-repeat-same-itl-command-no-manual-commit"
+    $pathText = if ($paths.Count -gt 0) { $paths -join ", " } else { "<none>" }
+    throw "LIFECYCLE_MERGE_CONFLICT operation='$Operation' reason='$Reason' files='$pathText'. Resolve the listed conflicts, run git add for the resolved files, and repeat the same ITL command. Do not create the merge commit manually; the workflow will run git commit --no-edit after validation."
+}
+
 function Restore-BranchConfigDumpInfoFromCommit {
     param(
         [string]$Commit,
         [string[]]$RepoPaths
     )
 
+    $branchPaths = @(Get-ConfigDumpInfoRepoPathsAtCommit -Commit $Commit)
     foreach ($repoPath in @($RepoPaths)) {
-        Invoke-Git @("checkout", $Commit, "--", $repoPath)
-        Invoke-Git @("add", "--", $repoPath)
+        if ($branchPaths -ccontains $repoPath) {
+            Invoke-Git @("checkout", $Commit, "--", $repoPath)
+            Invoke-Git @("add", "--", $repoPath)
+        } else {
+            Invoke-Git @("rm", "-f", "--ignore-unmatch", "--", $repoPath)
+        }
     }
 }
 
 function Merge-MasterPreservingBranchConfigDumpInfo {
-    param([string]$MasterBranch = (Get-MasterBranch))
+    param(
+        [string]$MasterBranch = (Get-MasterBranch),
+        [string]$BranchCommit = (Get-CurrentCommit)
+    )
 
-    $branchCommit = Get-CurrentCommit
-    $branchDumpInfoPaths = @(Get-ConfigDumpInfoRepoPathsAtCommit -Commit $branchCommit)
+    $branchDumpInfoPaths = @(Get-ConfigDumpInfoRepoPathsAtCommit -Commit $BranchCommit)
+    $targetDumpInfoPaths = @(Get-ConfigDumpInfoRepoPathsAtCommit -Commit $MasterBranch)
+    $allDumpInfoPaths = @($branchDumpInfoPaths + $targetDumpInfoPaths | Sort-Object -Unique)
     $mergeException = $null
     try {
         Invoke-Git @("merge", "--no-ff", "--no-commit", $MasterBranch)
     } catch {
         $mergeException = $_
-    }
-
-    if ($mergeException) {
-        $unmergedPaths = @(
-            Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=U") |
-                ForEach-Object { ([string]$_).Replace("\", "/").Trim() } |
-                Where-Object { $_ }
-        )
-        $dumpInfoConflicts = @($unmergedPaths | Where-Object { $branchDumpInfoPaths -contains $_ })
-        if ($dumpInfoConflicts.Count -eq 0) {
-            throw $mergeException
-        }
-
-        Restore-BranchConfigDumpInfoFromCommit -Commit $branchCommit -RepoPaths $dumpInfoConflicts
-        $remainingConflicts = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=U"))
-        if ($remainingConflicts.Count -gt 0) {
-            throw "Master merge still has non-ConfigDumpInfo conflicts after preserving the branch synchronization cursor: $($remainingConflicts -join ', ')"
-        }
     }
 
     if (-not (Test-GitMergeInProgress)) {
@@ -5829,8 +6028,312 @@ function Merge-MasterPreservingBranchConfigDumpInfo {
         return
     }
 
-    Restore-BranchConfigDumpInfoFromCommit -Commit $branchCommit -RepoPaths $branchDumpInfoPaths
+    Restore-BranchConfigDumpInfoFromCommit -Commit $BranchCommit -RepoPaths $allDumpInfoPaths
+    $remainingConflicts = @(Get-DevBranchMergeUnmergedPaths)
+    if ($remainingConflicts.Count -gt 0) {
+        throw "Master merge still has non-ConfigDumpInfo conflicts after preserving the branch synchronization cursor: $($remainingConflicts -join ', ')"
+    }
     Invoke-Git @("commit", "--no-edit")
+}
+
+function Complete-DevBranchLifecycleMergeTransaction {
+    param(
+        [object]$State,
+        [object]$Transaction
+    )
+
+    $head = Get-CurrentCommit
+    $result = ""
+    if ($head -ceq $Transaction.branchCommit -and (Test-GitCommitIsAncestor -Ancestor $Transaction.targetCommit -Descendant $head)) {
+        $result = "already-up-to-date"
+    } elseif (Test-GitCommitHasExactMergeParents -Commit $head -FirstParent $Transaction.branchCommit -SecondParent $Transaction.targetCommit) {
+        $result = "merge-commit"
+        Assert-DevBranchLifecycleMergeCommitPaths `
+            -BranchCommit $Transaction.branchCommit `
+            -MergeCommit $head `
+            -AllowedPaths $Transaction.allowedPaths
+    } else {
+        throw "LIFECYCLE_MERGE_RESULT_MISMATCH operation='$($Transaction.operation)' branchCommit='$($Transaction.branchCommit)' targetCommit='$($Transaction.targetCommit)' head='$head'."
+    }
+
+    Set-PendingDevBranchMergeTransaction `
+        -State $State `
+        -Operation $Transaction.operation `
+        -Branch $Transaction.branch `
+        -BranchCommit $Transaction.branchCommit `
+        -TargetCommit $Transaction.targetCommit `
+        -Stage "merged" `
+        -AllowedPaths $Transaction.allowedPaths `
+        -ConflictPaths @() `
+        -MergeCommit $head `
+        -Result $result
+}
+
+function Invoke-NewDevBranchLifecycleMerge {
+    param(
+        [object]$State,
+        [string]$Operation,
+        [string]$TargetCommit,
+        [string]$ConflictStage
+    )
+
+    $branch = [string](Get-StateValue -State $State -Name "devBranch" -Default "")
+    $branchCommit = Get-CurrentCommit
+    Set-PendingDevBranchMergeTransaction `
+        -State $State `
+        -Operation $Operation `
+        -Branch $branch `
+        -BranchCommit $branchCommit `
+        -TargetCommit $TargetCommit `
+        -Stage "prepared"
+
+    try {
+        Merge-MasterPreservingBranchConfigDumpInfo -MasterBranch $TargetCommit -BranchCommit $branchCommit
+    } catch {
+        if (-not (Test-GitMergeInProgress)) {
+            throw
+        }
+        $stateAfterConflict = Read-DevBranchState -Name $DevBranchName
+        $allowedPaths = @(Get-DevBranchMergeIndexPaths)
+        $conflictPaths = @(Get-DevBranchMergeUnmergedPaths)
+        Set-PendingDevBranchMergeTransaction `
+            -State $stateAfterConflict `
+            -Operation $Operation `
+            -Branch $branch `
+            -BranchCommit $branchCommit `
+            -TargetCommit $TargetCommit `
+            -Stage "conflicts" `
+            -AllowedPaths $allowedPaths `
+            -ConflictPaths $conflictPaths
+        Stop-DevBranchLifecycleMergeForConflicts `
+            -Operation $Operation `
+            -Stage $ConflictStage `
+            -ConflictPaths $conflictPaths
+    }
+
+    $stateAfterMerge = Read-DevBranchState -Name $DevBranchName
+    $transaction = Get-PendingDevBranchMergeTransaction -State $stateAfterMerge
+    Complete-DevBranchLifecycleMergeTransaction -State $stateAfterMerge -Transaction $transaction
+    Restart-Agent1cAfterDevBranchMerge -Operation $Operation
+}
+
+function Convert-LegacyPendingRefreshMergeTransaction {
+    param(
+        [object]$State,
+        [object]$Transaction
+    )
+
+    $currentBranch = Get-CurrentBranch
+    $expectedBranch = [string](Get-StateValue -State $State -Name "devBranch" -Default "")
+    if ($currentBranch -cne $expectedBranch) {
+        throw "LIFECYCLE_MERGE_BRANCH_MISMATCH pending='$expectedBranch' expected='$expectedBranch' current='$currentBranch'."
+    }
+    if ($Transaction.targetCommit -notmatch '^[a-f0-9]{40}$' -or -not (Test-GitCommitExists -Commit $Transaction.targetCommit)) {
+        throw "LIFECYCLE_MERGE_COMMIT_INVALID operation='$($Transaction.operation)' commit='$($Transaction.targetCommit)'."
+    }
+    $head = Get-CurrentCommit
+    $branchCommit = ""
+    $stage = ""
+    $mergeCommit = ""
+    $result = ""
+    $allowedPaths = @()
+    $conflictPaths = @()
+
+    if (Test-GitMergeInProgress) {
+        $mergeHead = Get-GitMergeHeadCommit
+        if ($mergeHead -cne $Transaction.targetCommit) {
+            throw "LIFECYCLE_MERGE_HEAD_MISMATCH operation='$($Transaction.operation)' expected='$($Transaction.targetCommit)' actual='$mergeHead'."
+        }
+        $branchCommit = $head
+        $stage = "conflicts"
+        $allowedPaths = @(Get-DevBranchMergeIndexPaths)
+        $conflictPaths = @(Get-DevBranchMergeUnmergedPaths)
+    } else {
+        $parents = @(Get-GitCommitParents -Commit $head)
+        if ($parents.Count -eq 2 -and $parents[1] -ceq $Transaction.targetCommit) {
+            $branchCommit = $parents[0]
+            $stage = "merged"
+            $mergeCommit = $head
+            $result = "merge-commit"
+        } else {
+            throw "LIFECYCLE_LEGACY_MERGE_STATE_UNPROVEN operation='$($Transaction.operation)' targetCommit='$($Transaction.targetCommit)' head='$head'."
+        }
+    }
+
+    Set-PendingDevBranchMergeTransaction `
+        -State $State `
+        -Operation $Transaction.operation `
+        -Branch $currentBranch `
+        -BranchCommit $branchCommit `
+        -TargetCommit $Transaction.targetCommit `
+        -Stage $stage `
+        -AllowedPaths $allowedPaths `
+        -ConflictPaths $conflictPaths `
+        -MergeCommit $mergeCommit `
+        -Result $result
+    return (Get-PendingDevBranchMergeTransaction -State (Read-DevBranchState -Name $DevBranchName))
+}
+
+function Assert-DevBranchLifecycleMergeIdentity {
+    param(
+        [object]$State,
+        [object]$Transaction,
+        [string]$Operation
+    )
+
+    $expectedBranch = [string](Get-StateValue -State $State -Name "devBranch" -Default "")
+    $currentBranch = Get-CurrentBranch
+    if ($Transaction.operation -cne $Operation) {
+        throw "LIFECYCLE_MERGE_OPERATION_MISMATCH pending='$($Transaction.operation)' requested='$Operation'. Repeat the same ITL command that started the merge."
+    }
+    if ($Transaction.branch -cne $expectedBranch -or $currentBranch -cne $expectedBranch) {
+        throw "LIFECYCLE_MERGE_BRANCH_MISMATCH pending='$($Transaction.branch)' expected='$expectedBranch' current='$currentBranch'."
+    }
+    foreach ($entry in @($Transaction.branchCommit, $Transaction.targetCommit)) {
+        if ($entry -notmatch '^[a-f0-9]{40}$' -or -not (Test-GitCommitExists -Commit $entry)) {
+            throw "LIFECYCLE_MERGE_COMMIT_INVALID operation='$Operation' commit='$entry'."
+        }
+    }
+}
+
+function Resume-DevBranchLifecycleMergeIfPresent {
+    param(
+        [object]$State,
+        [string]$Operation,
+        [string]$ConflictStage
+    )
+
+    $transaction = Get-PendingDevBranchMergeTransaction -State $State
+    if ($null -eq $transaction) {
+        return $false
+    }
+    if ($transaction.operation -cne $Operation) {
+        throw "LIFECYCLE_MERGE_OPERATION_MISMATCH pending='$($transaction.operation)' requested='$Operation'. Repeat the same ITL command that started the merge."
+    }
+    if ($transaction.legacy) {
+        $transaction = Convert-LegacyPendingRefreshMergeTransaction -State $State -Transaction $transaction
+        $State = Read-DevBranchState -Name $DevBranchName
+    }
+    Assert-DevBranchLifecycleMergeIdentity -State $State -Transaction $transaction -Operation $Operation
+
+    $head = Get-CurrentCommit
+    if (Test-GitMergeInProgress) {
+        $mergeHead = Get-GitMergeHeadCommit
+        if ($mergeHead -cne $transaction.targetCommit) {
+            throw "LIFECYCLE_MERGE_HEAD_MISMATCH operation='$Operation' expected='$($transaction.targetCommit)' actual='$mergeHead'."
+        }
+        if ($head -cne $transaction.branchCommit) {
+            throw "LIFECYCLE_MERGE_BRANCH_HEAD_MISMATCH operation='$Operation' expected='$($transaction.branchCommit)' actual='$head'."
+        }
+
+        $cursorPaths = @(
+            @(Get-ConfigDumpInfoRepoPathsAtCommit -Commit $transaction.branchCommit) +
+            @(Get-ConfigDumpInfoRepoPathsAtCommit -Commit $transaction.targetCommit) |
+                Sort-Object -Unique
+        )
+        Restore-BranchConfigDumpInfoFromCommit -Commit $transaction.branchCommit -RepoPaths $cursorPaths
+
+        $unmergedPaths = @(Get-DevBranchMergeUnmergedPaths)
+        if ($unmergedPaths.Count -gt 0) {
+            $allowedPaths = @($transaction.allowedPaths)
+            if ($allowedPaths.Count -eq 0) {
+                $allowedPaths = @(Get-DevBranchMergeIndexPaths)
+            }
+            Set-PendingDevBranchMergeTransaction `
+                -State $State `
+                -Operation $Operation `
+                -Branch $transaction.branch `
+                -BranchCommit $transaction.branchCommit `
+                -TargetCommit $transaction.targetCommit `
+                -Stage "conflicts" `
+                -AllowedPaths $allowedPaths `
+                -ConflictPaths $unmergedPaths
+            Stop-DevBranchLifecycleMergeForConflicts `
+                -Operation $Operation `
+                -Stage $ConflictStage `
+                -ConflictPaths $unmergedPaths
+        }
+
+        $unstagedPaths = @(Get-DevBranchMergeUnstagedPaths)
+        if ($unstagedPaths.Count -gt 0) {
+            Stop-DevBranchLifecycleMergeForConflicts `
+                -Operation $Operation `
+                -Stage $ConflictStage `
+                -ConflictPaths $unstagedPaths `
+                -Reason "resolved files still have unstaged changes"
+        }
+        $untrackedPaths = @(Get-DevBranchMergeUntrackedPaths)
+        if ($untrackedPaths.Count -gt 0) {
+            Set-RunFailureContext -Category "runner" -RequiredAction "remove-or-commit-unrelated-untracked-files-then-repeat-same-itl-command"
+            throw "LIFECYCLE_MERGE_UNTRACKED_FILES operation='$Operation' files='$($untrackedPaths -join ', ')'. Remove or commit unrelated untracked files outside this merge, then repeat the same ITL command."
+        }
+
+        $stagedPaths = @(Get-DevBranchMergeIndexPaths)
+        $unexpectedStagedPaths = @($stagedPaths | Where-Object { @($transaction.allowedPaths) -cnotcontains $_ })
+        if ($unexpectedStagedPaths.Count -gt 0) {
+            Set-RunFailureContext -Category "runner" -RequiredAction "remove-unrelated-staged-changes-then-repeat-same-itl-command"
+            throw "LIFECYCLE_MERGE_UNEXPECTED_STAGED_FILES operation='$Operation' files='$($unexpectedStagedPaths -join ', ')'. The workflow will not include unrelated staged changes in its merge commit."
+        }
+
+        Invoke-Git @("commit", "--no-edit")
+        $State = Read-DevBranchState -Name $DevBranchName
+        Complete-DevBranchLifecycleMergeTransaction -State $State -Transaction $transaction
+        Restart-Agent1cAfterDevBranchMerge -Operation $Operation
+    }
+
+    if ($transaction.stage -ceq "merged" -and $transaction.mergeCommit -ceq $head) {
+        if ($transaction.result -ceq "merge-commit" -and -not (Test-GitCommitHasExactMergeParents -Commit $head -FirstParent $transaction.branchCommit -SecondParent $transaction.targetCommit)) {
+            throw "LIFECYCLE_MERGE_RESULT_MISMATCH operation='$Operation' recordedMergeCommit='$($transaction.mergeCommit)' head='$head'."
+        }
+        if ($transaction.result -ceq "already-up-to-date" -and ($head -cne $transaction.branchCommit -or -not (Test-GitCommitIsAncestor -Ancestor $transaction.targetCommit -Descendant $head))) {
+            throw "LIFECYCLE_MERGE_RESULT_MISMATCH operation='$Operation' recordedNoOpCommit='$($transaction.mergeCommit)' head='$head'."
+        }
+        Assert-CleanGit
+        Restart-Agent1cAfterDevBranchMerge -Operation $Operation
+    }
+
+    if (Test-GitCommitHasExactMergeParents -Commit $head -FirstParent $transaction.branchCommit -SecondParent $transaction.targetCommit) {
+        Complete-DevBranchLifecycleMergeTransaction -State $State -Transaction $transaction
+        Restart-Agent1cAfterDevBranchMerge -Operation $Operation
+    }
+    if ($head -ceq $transaction.branchCommit -and $transaction.stage -ceq "prepared") {
+        if (Test-GitCommitIsAncestor -Ancestor $transaction.targetCommit -Descendant $head) {
+            Complete-DevBranchLifecycleMergeTransaction -State $State -Transaction $transaction
+            Restart-Agent1cAfterDevBranchMerge -Operation $Operation
+        }
+        Invoke-NewDevBranchLifecycleMerge `
+            -State $State `
+            -Operation $Operation `
+            -TargetCommit $transaction.targetCommit `
+            -ConflictStage $ConflictStage
+    }
+
+    throw "LIFECYCLE_MERGE_STATE_MISMATCH operation='$Operation' stage='$($transaction.stage)' branchCommit='$($transaction.branchCommit)' targetCommit='$($transaction.targetCommit)' head='$head'."
+}
+
+function Assert-DevBranchLifecycleMergePostMerge {
+    param(
+        [object]$State,
+        [string]$Operation
+    )
+
+    $transaction = Get-PendingDevBranchMergeTransaction -State $State
+    if ($null -eq $transaction) {
+        throw "LIFECYCLE_MERGE_TRANSACTION_MISSING operation='$Operation' phase='post-merge'."
+    }
+    Assert-DevBranchLifecycleMergeIdentity -State $State -Transaction $transaction -Operation $Operation
+    if ($transaction.stage -cne "merged" -or -not $transaction.mergeCommit) {
+        throw "LIFECYCLE_MERGE_TRANSACTION_NOT_COMMITTED operation='$Operation' stage='$($transaction.stage)'."
+    }
+    if (Test-GitMergeInProgress) {
+        throw "LIFECYCLE_MERGE_STILL_IN_PROGRESS operation='$Operation' phase='post-merge'."
+    }
+    $head = Get-CurrentCommit
+    if ($head -cne $transaction.mergeCommit) {
+        throw "LIFECYCLE_MERGE_POST_HEAD_MISMATCH operation='$Operation' expected='$($transaction.mergeCommit)' actual='$head'."
+    }
+    Assert-CleanGit
+    return $transaction
 }
 
 function Initialize-DevBranchRuntime {
@@ -7405,6 +7908,9 @@ function Invoke-RefreshDevBranchCore {
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
 
     if ($LifecyclePhase -ne "post-merge") {
+        if (Resume-DevBranchLifecycleMergeIfPresent -State $state -Operation $OperationName -ConflictStage "refresh.merge-conflicts") {
+            return
+        }
         Assert-CleanGit
         if ($SynchronizeMaster) {
             Set-RunStage -Stage "refresh.master" -Detail "Synchronizing master and ensuring a compatible branch seed."
@@ -7418,18 +7924,17 @@ function Invoke-RefreshDevBranchCore {
         if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
             throw "REFRESH_MASTER_COMMIT_INVALID: $targetMasterCommit"
         }
-        Update-DevBranchState -State $state -Updates @{
-            pendingRefreshMasterCommit = $targetMasterCommit
-            pendingRefreshOperation = $OperationName
-        }
         Set-RunStage -Stage "refresh.merge" -Detail "Merging master into the development branch."
-        Merge-MasterPreservingBranchConfigDumpInfo -MasterBranch $targetMasterCommit
-        Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
-        Restart-Agent1cAfterDevBranchMerge -Operation $OperationName
+        Invoke-NewDevBranchLifecycleMerge `
+            -State $state `
+            -Operation $OperationName `
+            -TargetCommit $targetMasterCommit `
+            -ConflictStage "refresh.merge-conflicts"
     }
 
     $state = Read-DevBranchState -Name $DevBranchName
-    $targetMasterCommit = [string](Get-StateValue -State $state -Name "pendingRefreshMasterCommit" -Default "")
+    $mergeTransaction = Assert-DevBranchLifecycleMergePostMerge -State $state -Operation $OperationName
+    $targetMasterCommit = [string]$mergeTransaction.targetCommit
     if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
         throw "REFRESH_MASTER_COMMIT_MISSING: the exact master SHA was not preserved across the merge."
     }
@@ -7456,8 +7961,7 @@ function Invoke-RefreshDevBranchCore {
         $updates["lastRefreshAt"] = (Get-Date).ToString("o")
         $updates["lastRefreshMasterCommit"] = $targetMasterCommit
         $updates["lastRefreshMode"] = $(if ($SynchronizeMaster) { "full" } else { "lite" })
-        $updates["pendingRefreshMasterCommit"] = ""
-        $updates["pendingRefreshOperation"] = ""
+        Add-PendingDevBranchMergeClearUpdates -Updates $updates
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch was refreshed from master." -CurrentCommit $loadResult.currentCommit
         Update-DevBranchState -State $state -Updates $updates
         $updatedState = Read-DevBranchState -Name $DevBranchName
@@ -8363,17 +8867,31 @@ function Close-DevBranch {
     Sync-DevBranchContextToDotEnv -State $state
 
     if ($LifecyclePhase -ne "post-merge") {
+        if (Resume-DevBranchLifecycleMergeIfPresent -State $state -Operation "close-dev-branch" -ConflictStage "close.merge-conflicts") {
+            return
+        }
         Set-RunStage -Stage "close.master" -Detail "Synchronizing master before closing the development branch."
         Assert-CleanGit
         Sync-Master
         if ((Get-CurrentBranch) -ne $state.devBranch) {
             Invoke-Git @("checkout", $state.devBranch)
         }
+        $masterRef = "refs/heads/$(Get-MasterBranch)"
+        $targetMasterCommit = (Get-GitOutput @("rev-parse", $masterRef)).Trim()
+        if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
+            throw "CLOSE_MASTER_COMMIT_INVALID: $targetMasterCommit"
+        }
         Set-RunStage -Stage "close.merge" -Detail "Merging master into the development branch before close."
-        Merge-MasterPreservingBranchConfigDumpInfo
-        Restart-Agent1cAfterDevBranchMerge -Operation "close-dev-branch"
+        Invoke-NewDevBranchLifecycleMerge `
+            -State $state `
+            -Operation "close-dev-branch" `
+            -TargetCommit $targetMasterCommit `
+            -ConflictStage "close.merge-conflicts"
     }
 
+    $state = Read-DevBranchState -Name $DevBranchName
+    $mergeTransaction = Assert-DevBranchLifecycleMergePostMerge -State $state -Operation "close-dev-branch"
+    $targetMasterCommit = [string]$mergeTransaction.targetCommit
     Set-RunStage -Stage "close.load" -Detail "Updating the branch infobase before result export."
     Sync-DevBranchContextToDotEnv -State $state
 
@@ -8402,7 +8920,7 @@ function Close-DevBranch {
     Assert-DevBranchToolArtifactExportGuard -State $state -ContentKind $kind -ResultPath $resultPath
 
     $masterBranch = Get-MasterBranch
-    $masterCommit = (Get-GitOutput @("rev-parse", $masterBranch)).Trim()
+    $masterCommit = $targetMasterCommit
     $devBranchCommit = Get-CurrentCommit
     $resultKind = $(if ($kind -eq "extension") { "cfe" } else { "cf" })
     $manifestPath = New-ResultManifest `
@@ -8462,6 +8980,11 @@ function Close-DevBranch {
         Write-Host "Switched to master branch: $masterBranch"
         Write-Host "Current commit: $currentCommit"
     }
+
+    $completedState = Read-DevBranchState -Name $DevBranchName
+    $completionUpdates = @{}
+    Add-PendingDevBranchMergeClearUpdates -Updates $completionUpdates
+    Update-DevBranchState -State $completedState -Updates $completionUpdates
 }
 
 function List-DevBranches {
