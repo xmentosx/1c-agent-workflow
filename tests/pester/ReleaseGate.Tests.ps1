@@ -700,7 +700,7 @@ switch ($Action) {
             $legacyCheckpoint.stages.'seed-parallel'.status = "running"
             $legacyCheckpoint.stages.'seed-parallel'.execution = "executed"
             [IO.File]::WriteAllText($checkpointPath, (($legacyCheckpoint | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-            $harnessSummaryPath = Join-Path $tempRoot "harness-continuation-summary.json"
+            $harnessSummaryPath = Join-Path $tempRoot "harness-continuation\summary.json"
             & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $candidateRunnerPath `
                 -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $harnessSummaryPath -ResumeMode Auto
             $LASTEXITCODE | Should -Be 0

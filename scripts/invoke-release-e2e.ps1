@@ -738,6 +738,14 @@ function Set-E2EStageReused {
     Write-E2ECheckpoint
 }
 
+function Get-E2EReusedStageEvidencePath {
+    param([string]$Name, [string]$DefaultPath)
+    $record = $checkpoint["stages"][$Name]
+    $path = if ([string]$record["evidencePath"]) { [string]$record["evidencePath"] } else { $DefaultPath }
+    Assert-E2ECheckpointFile -Path $path -Sha256 ([string]$record["evidenceSha256"]) -Label "$Name reused evidence"
+    return $path
+}
+
 function Test-E2EStagePassed {
     param([string]$Name)
     if (-not $checkpoint["stages"].Contains($Name)) { return $false }
@@ -1728,6 +1736,7 @@ try {
     } else {
         $resumedStages += "seed-parallel"
         Set-E2EStageReused -Name "seed-parallel" -Reason $(if ($crossReleaseReuse) { "exact stage fingerprint across workflow release" } else { "same release checkpoint" })
+        $seedParallelEvidencePath = Get-E2EReusedStageEvidencePath -Name "seed-parallel" -DefaultPath $seedParallelEvidencePath
         $seedParallelEvidence = Get-Content -LiteralPath $seedParallelEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
 
@@ -1871,6 +1880,7 @@ try {
     } else {
         $resumedStages += "config-roundtrip"
         Set-E2EStageReused -Name "config-roundtrip" -Reason $(if ($crossReleaseReuse) { "exact stage fingerprint across workflow release" } else { "same release checkpoint" })
+        $roundtripEvidencePath = Get-E2EReusedStageEvidencePath -Name "config-roundtrip" -DefaultPath $roundtripEvidencePath
         $roundtripEvidence = Get-Content -LiteralPath $roundtripEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
 
@@ -1916,6 +1926,7 @@ try {
     } else {
         $resumedStages += "extension-smoke"
         Set-E2EStageReused -Name "extension-smoke" -Reason $(if ($crossReleaseReuse) { "exact stage fingerprint across workflow release" } else { "same release checkpoint" })
+        $extensionSmokeEvidencePath = Get-E2EReusedStageEvidencePath -Name "extension-smoke" -DefaultPath $extensionSmokeEvidencePath
         $extensionSmokeEvidence = Get-Content -LiteralPath $extensionSmokeEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
 
@@ -2041,6 +2052,7 @@ try {
     } else {
         $resumedStages += "ondemand-mcp"
         Set-E2EStageReused -Name "ondemand-mcp" -Reason $(if ($crossReleaseReuse) { "exact stage fingerprint across workflow release" } else { "same release checkpoint" })
+        $onDemandMcpEvidencePath = Get-E2EReusedStageEvidencePath -Name "ondemand-mcp" -DefaultPath $onDemandMcpEvidencePath
         $onDemandMcpEvidence = Get-Content -LiteralPath $onDemandMcpEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
     $onDemandMaxConcurrentSessions = [int]((@(
