@@ -575,8 +575,8 @@ services:
                 $script:GraphComposeCalls[0] | Should -Not -Match "\sdown\s|\sup\s"
                 $runtimeCompose = Join-Path (Join-Path $workRoot "runtime") "itl-fixture-graph\docker-compose.yml"
                 $composeText = Get-Content -Raw -LiteralPath $runtimeCompose
-                $composeText | Should -Match '(?m)^\s+memory: 4G$'
-                $composeText | Should -Not -Match '(?m)^\s+memory:4G$'
+                $composeText | Should -Match '(?m)^\s+memory: 4G\r?$'
+                $composeText | Should -Not -Match '(?m)^\s+memory:4G\r?$'
                 Remove-Variable -Scope Script -Name GraphComposeCalls -ErrorAction SilentlyContinue
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
