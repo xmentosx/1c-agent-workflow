@@ -752,7 +752,7 @@ function Set-ItlOnDemandRuntimeStateValues {
     return [pscustomobject]$stateHash
 }
 
-function Test-ItlOnDemandVanessaLicenseLimitLog {
+function Test-ItlOnDemandVanessaPlatformLicenseUnavailableLog {
     param([AllowNull()][string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
     try {
@@ -828,8 +828,6 @@ function Ensure-ItlOnDemandVanessaTestClient {
         (Test-VanessaTestPortUsedByForeignProcess -State $state -Port $testClientPort -ExcludeProcessId $managerPid)) {
         throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: TestClient port $testClientPort is used by an unregistered process; it was not claimed or stopped."
     }
-    Assert-VanessaTestClientCapacity -State $state | Out-Null
-
     $testClientResult = $null
     try {
         $testClientResult = Start-EnterpriseBackground `
@@ -859,8 +857,8 @@ function Ensure-ItlOnDemandVanessaTestClient {
                 testClientState = "exited"
             }
             Write-ItlOnDemandRuntimeState -RuntimeState $runtimeState | Out-Null
-            if (Test-ItlOnDemandVanessaLicenseLimitLog -Path $testClientResult.logPath) {
-                throw "ITL_VANESSA_LICENSE_LIMIT: TestClient exited during startup and its safe log markers report an unavailable license."
+            if (Test-ItlOnDemandVanessaPlatformLicenseUnavailableLog -Path $testClientResult.logPath) {
+                throw "ITL_VANESSA_PLATFORM_LICENSE_UNAVAILABLE: TestClient exited during startup and its safe log markers report an unavailable platform license."
             }
             throw "ITL_VANESSA_TESTCLIENT_NOT_CONNECTED: owned TestClient process did not open port $testClientPort. Log: $($testClientResult.logPath)"
         }

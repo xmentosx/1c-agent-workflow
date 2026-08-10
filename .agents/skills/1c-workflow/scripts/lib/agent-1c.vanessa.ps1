@@ -920,16 +920,16 @@ function Get-VanessaTestClientTopology {
         throw "ITL_VANESSA_TESTCLIENT_PROFILES_MISSING: profiles=$missingJson manifest='$($manifest.path)'"
     }
     if ([int]$requirements.maximumConcurrency -gt [int]$manifest.maxConcurrency) {
-        throw "ITL_VANESSA_TESTCLIENT_CONCURRENCY_INSUFFICIENT: staticPerScenarioRequired=$($requirements.maximumConcurrency) declaredLicenseSlots=$($manifest.maxConcurrency) manifest='$($manifest.path)'"
+        throw "ITL_VANESSA_TESTCLIENT_CONCURRENCY_INSUFFICIENT: requiredTestClientSlots=$($requirements.maximumConcurrency) declaredTestClientCeiling=$($manifest.maxConcurrency) manifest='$($manifest.path)'"
     }
 
     return [pscustomobject][ordered]@{
         configured = $manifest.configured
         path = $manifest.path
-        declaredLicenseSlots = [int]$manifest.maxConcurrency
+        declaredTestClientCeiling = [int]$manifest.maxConcurrency
         profiles = @($manifest.profiles)
         requiredProfiles = @($requirements.requiredProfiles)
-        staticPerScenarioMaximum = [int]$requirements.maximumConcurrency
+        requiredTestClientSlots = [int]$requirements.maximumConcurrency
     }
 }
 
@@ -2551,7 +2551,7 @@ function New-VanessaParamsFile {
     $vanessaTextLogPath = Join-Path $RunDirectory "vanessa.log"
     $vanessaErrorsDirectory = Join-Path $RunDirectory "errors"
 
-    $configuredTestClientRun = ($null -ne $TestClientTopology -and [bool]$TestClientTopology.configured -and [int]$TestClientTopology.declaredLicenseSlots -gt 0)
+    $configuredTestClientRun = ($null -ne $TestClientTopology -and [bool]$TestClientTopology.configured -and [int]$TestClientTopology.requiredTestClientSlots -gt 0)
     $scenarioSettings = [ordered]@{}
     $scenarioSettings[(ConvertFrom-Utf8Base64 "0JLRi9C/0L7Qu9C90Y/RgtGM0KjQsNCz0LjQkNGB0YHQuNC90YXRgNC+0L3QvdC+")] = $false
     $scenarioSettings[(ConvertFrom-Utf8Base64 "0JjQvdGC0LXRgNCy0LDQu9CS0YvQv9C+0LvQvdC10L3QuNGP0KjQsNCz0LDQl9Cw0LTQsNC90L3Ri9C50J/QvtC70YzQt9C+0LLQsNGC0LXQu9C10Lw=")] = 0.1
@@ -2565,7 +2565,8 @@ function New-VanessaParamsFile {
         $TestClientTopology = [pscustomobject][ordered]@{
             configured = $false
             path = "<legacy-default>"
-            declaredLicenseSlots = 1
+            declaredTestClientCeiling = 1
+            requiredTestClientSlots = 1
             profiles = @([pscustomobject][ordered]@{
                 name = $(if ($user) { $user } else { "default" })
                 user = $user
@@ -2630,7 +2631,7 @@ function New-VanessaParamsFile {
     $params["stoponerror"] = $configuredTestClientRun
     $params["NumberOfAttemptsToExecuteTheScript"] = 1
     $params["updatetreewhenscenariostarts"] = $false
-    $params[(ConvertFrom-Utf8Base64 "0KDQsNC30YDQtdGI0LXQvdC+0JfQsNC/0YPRgdC60LDRgtGM0KLQvtC70YzQutC+0J7QtNC40L3QmtC70LjQtdC90YLQotC10YHRgtC40YDQvtCy0LDQvdC40Y8=")] = ([int]$TestClientTopology.declaredLicenseSlots -le 1)
+    $params[(ConvertFrom-Utf8Base64 "0KDQsNC30YDQtdGI0LXQvdC+0JfQsNC/0YPRgdC60LDRgtGM0KLQvtC70YzQutC+0J7QtNC40L3QmtC70LjQtdC90YLQotC10YHRgtC40YDQvtCy0LDQvdC40Y8=")] = ([int]$TestClientTopology.requiredTestClientSlots -le 1)
     $portRangeValues = @($assignedPorts)
     if ($portRangeValues.Count -eq 0 -and $TestPort -gt 0) { $portRangeValues = @($TestPort) }
     $portRangeStart = [int]($portRangeValues | Measure-Object -Minimum).Minimum
@@ -3096,7 +3097,6 @@ function Run-DevBranchTests {
         $testPortCount = [Math]::Max(1, @($testClientTopology.profiles).Count)
         $testPorts = @(Resolve-VanessaTestPorts -State $state -Count $testPortCount -LeaseToken $testPortLeaseToken)
         $testPort = [int]$testPorts[0]
-        Assert-VanessaTestClientCapacity -State $state -RequiredSlots ([int]$testClientTopology.declaredLicenseSlots) | Out-Null
     } catch {
         Set-RunFailureContext -Category "runner"
         throw
@@ -3135,7 +3135,7 @@ function Run-DevBranchTests {
     Write-Host "Vanessa features: $(Resolve-ProjectPath $featuresPath)"
     Write-Host "Vanessa report directory: $runDirectory"
     Write-Host "Vanessa params: $paramsPath"
-    Write-Host "Vanessa TestClient profiles: $(@($testClientTopology.profiles).Count); declared license preflight slots: $($testClientTopology.declaredLicenseSlots); static per-scenario maximum: $($testClientTopology.staticPerScenarioMaximum); ports: $($testPorts -join ',')"
+    Write-Host "Vanessa TestClient profiles: $(@($testClientTopology.profiles).Count); manifest ceiling: $($testClientTopology.declaredTestClientCeiling); required by selected scenarios: $($testClientTopology.requiredTestClientSlots); ports: $($testPorts -join ',')"
     if ($VanessaFilterTags) {
         Write-Host "Vanessa tag filter: $VanessaFilterTags"
     }
@@ -3162,7 +3162,7 @@ function Run-DevBranchTests {
             -InfoBaseKind $state.infoBaseKind `
             -EnterpriseArgs $enterpriseArgs `
             -TestClientPort $testPort `
-            -ExpectedSessionCount (1 + [int]$testClientTopology.declaredLicenseSlots) `
+            -ExpectedSessionCount (1 + [int]$testClientTopology.requiredTestClientSlots) `
             -TimeoutSeconds $timeoutSeconds `
             -CompletionProbe {
                 $probeStatus = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
@@ -3321,8 +3321,8 @@ function Run-DevBranchTests {
         lastVanessaTestPorts = @($testPorts)
         lastVanessaTestClientManifestPath = $testClientTopology.path
         lastVanessaTestClientProfileCount = @($testClientTopology.profiles).Count
-        lastVanessaTestClientDeclaredLicenseSlots = $testClientTopology.declaredLicenseSlots
-        lastVanessaTestClientStaticPerScenarioMaximum = $testClientTopology.staticPerScenarioMaximum
+        lastVanessaTestClientDeclaredCeiling = $testClientTopology.declaredTestClientCeiling
+        lastVanessaTestClientRequiredSlots = $testClientTopology.requiredTestClientSlots
         lastVanessaTagFilterExpectedScenarioCount = $expectedFilteredScenarioCount
         lastVanessaTagFilterActualScenarioCount = $(if ($null -ne $tagFilterEvidence) { $tagFilterEvidence.junitScenarioCount } else { 0 })
         lastVanessaTestPid = $script:LastProcessId
@@ -3417,50 +3417,6 @@ function Get-VanessaTestPortRange {
         start = $start
         end = $end
     }
-}
-
-function Get-VanessaTestClientLicenseCapacity {
-    $capacity = ConvertTo-IntOrDefault -Value (Get-EnvValue -Name "VANESSA_TESTCLIENT_LICENSE_CAPACITY" -Default 2) -Default 2
-    if ($capacity -le 0) {
-        throw "Invalid VANESSA_TESTCLIENT_LICENSE_CAPACITY '$capacity'. Use a positive number."
-    }
-    return $capacity
-}
-
-function Get-VanessaTestClientCapacitySnapshot {
-    param([object]$State)
-
-    $processes = @()
-    foreach ($processInfo in @(Get-OneCProcessInfo -RequireSuccess)) {
-        $commandLine = [string](Get-StateValue -State $processInfo -Name "commandLine" -Default "")
-        if ($commandLine -notmatch '(?i)(?:^|\s)/TESTCLIENT(?:\s|$)') { continue }
-        $port = Get-OneCCommandLineTestPort -CommandLine $commandLine
-        $processes += [pscustomobject][ordered]@{
-            pid = ConvertTo-IntOrDefault -Value (Get-StateValue -State $processInfo -Name "processId" -Default 0) -Default 0
-            scope = $(if (Test-OneCProcessBelongsToState -ProcessInfo $processInfo -State $State -TestPort $port) { "owned" } else { "foreign" })
-            infobase = Get-SafeOneCProcessInfoBase -CommandLine $commandLine
-            port = $port
-        }
-    }
-    return [pscustomobject][ordered]@{
-        capacity = Get-VanessaTestClientLicenseCapacity
-        active = @($processes).Count
-        available = [Math]::Max(0, (Get-VanessaTestClientLicenseCapacity) - @($processes).Count)
-        processes = @($processes)
-    }
-}
-
-function Assert-VanessaTestClientCapacity {
-    param(
-        [object]$State,
-        [int]$RequiredSlots = 1
-    )
-
-    if ($RequiredSlots -le 0) { return (Get-VanessaTestClientCapacitySnapshot -State $State) }
-    $snapshot = Get-VanessaTestClientCapacitySnapshot -State $State
-    if (($snapshot.active + $RequiredSlots) -le $snapshot.capacity) { return $snapshot }
-    $details = @($snapshot.processes | Select-Object pid, scope, infobase, port) | ConvertTo-Json -Compress -Depth 5
-    throw "ITL_VANESSA_LICENSE_LIMIT: capacity=$($snapshot.capacity) active=$($snapshot.active) required=$RequiredSlots processes=$details errorCategory=session-capacity requiredAction=finish-or-close-owned-sessions-before-retry retryAction=repeat-original-command-after-session-count-changes limitChange=developer-only"
 }
 
 function Test-OneCCommandLineOutputBelongsToRun {

@@ -99,8 +99,8 @@
                 $clientsKey = Get-EncodedVanessaKey "0JTQsNC90L3Ri9C10JrQu9C40LXQvdGC0L7QstCi0LXRgdGC0LjRgNC+0LLQsNC90LjRjw=="
 
                 @($topology.profiles).Count | Should -Be 0
-                $topology.declaredLicenseSlots | Should -Be 0
-                $topology.staticPerScenarioMaximum | Should -Be 0
+                $topology.declaredTestClientCeiling | Should -Be 0
+                $topology.requiredTestClientSlots | Should -Be 0
                 $params.stoponerror | Should -BeFalse
                 @($params.PSObject.Properties[$clientKey].Value.PSObject.Properties[$clientsKey].Value).Count | Should -Be 0
             }
@@ -139,8 +139,8 @@
                 $clientKey = Get-EncodedVanessaKey "0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP"
                 $closeAfterRunKey = Get-EncodedVanessaKey "0JfQsNC60YDRi9GC0YxUZXN0Q2xpZW500J/QvtGB0LvQtdCX0LDQv9GD0YHQutCw0KHRhtC10L3QsNGA0LjQtdCy"
 
-                $topology.declaredLicenseSlots | Should -Be 1
-                $topology.staticPerScenarioMaximum | Should -Be 1
+                $topology.declaredTestClientCeiling | Should -Be 1
+                $topology.requiredTestClientSlots | Should -Be 1
                 $params.PSObject.Properties[$onlyOneKey].Value | Should -BeTrue
                 $params.stoponerror | Should -BeTrue
                 $params.PSObject.Properties[$scenarioKey].Value.PSObject.Properties[$stopOnErrorKey].Value | Should -BeTrue
@@ -184,8 +184,8 @@
                 $records = @($clientSettings.PSObject.Properties[$clientsKey].Value)
                 $ports = @($records | ForEach-Object { [int]$_.PSObject.Properties[$portKey].Value })
 
-                $topology.declaredLicenseSlots | Should -Be 2
-                $topology.staticPerScenarioMaximum | Should -Be 2
+                $topology.declaredTestClientCeiling | Should -Be 2
+                $topology.requiredTestClientSlots | Should -Be 2
                 $topology.PSObject.Properties.Name | Should -Not -Contain "observedMaximumConcurrency"
                 $topology.PSObject.Properties.Name | Should -Not -Contain "maxConcurrency"
                 $records.Count | Should -Be 3
@@ -203,7 +203,38 @@
         }
     }
 
-    It "allocates a bounded unique port per declared profile and enforces license capacity" {
+    It "reserves only the TestClients required by the selected scenarios below the manifest ceiling" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-selected-capacity-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $fixture = New-VanessaRunnerFixture `
+                -Root $tempRoot `
+                -FeatureText "# language: ru`nФункционал: Выбранная конкурентность`n@Selected`nСценарий: Один клиент`n  Дано я подключаю профиль TestClient `"Alpha`"`nСценарий: Два клиента`n  Дано я подключаю профиль TestClient `"Alpha`"`n  И я подключаю профиль TestClient `"Beta`"" `
+                -ManifestText '{"schemaVersion":1,"maxConcurrency":2,"profiles":[{"name":"Alpha"},{"name":"Beta"}]}'
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath) -FilterTags "@Selected"
+                $paramsPath = New-VanessaParamsFile `
+                    -FeaturePath $fixture.featurePath `
+                    -RunDirectory $fixture.runDirectory `
+                    -StatusPath (Join-Path $fixture.runDirectory "status.json") `
+                    -State $fixture.state `
+                    -TestPort 48051 `
+                    -TestPorts @(48051, 48052) `
+                    -TestClientTopology $topology `
+                    -FilterTags "@Selected"
+                $params = Get-Content -Raw -Encoding UTF8 $paramsPath | ConvertFrom-Json
+                $onlyOneKey = Get-EncodedVanessaKey "0KDQsNC30YDQtdGI0LXQvdC+0JfQsNC/0YPRgdC60LDRgtGM0KLQvtC70YzQutC+0J7QtNC40L3QmtC70LjQtdC90YLQotC10YHRgtC40YDQvtCy0LDQvdC40Y8="
+
+                $topology.declaredTestClientCeiling | Should -Be 2
+                $topology.requiredTestClientSlots | Should -Be 1
+                $params.PSObject.Properties[$onlyOneKey].Value | Should -BeTrue
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "allocates a bounded unique port per declared profile without a separate machine-global session cap" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-ports-" + [guid]::NewGuid().ToString("N"))
         $oldRegistryHome = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", "Process")
         $oldPortRange = [Environment]::GetEnvironmentVariable("VANESSA_TEST_PORT_RANGE", "Process")
@@ -225,10 +256,6 @@
                 @($allocations.key | Sort-Object -Unique).Count | Should -Be 3
                 @($allocations.leaseToken | Where-Object { $_ } | Sort-Object -Unique).Count | Should -Be 1
 
-                function Get-VanessaTestClientCapacitySnapshot {
-                    return [pscustomobject]@{ capacity = 1; active = 0; available = 1; processes = @() }
-                }
-                { Assert-VanessaTestClientCapacity -State $state -RequiredSlots 2 } | Should -Throw "*ITL_VANESSA_LICENSE_LIMIT*"
             }
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", $oldRegistryHome, "Process")
@@ -271,7 +298,7 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
                 $topology.requiredProfiles | Should -Be @("Alpha", "Beta")
-                $topology.staticPerScenarioMaximum | Should -Be 1
+                $topology.requiredTestClientSlots | Should -Be 1
             }
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -290,7 +317,7 @@
                 $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
 
                 @($topology.requiredProfiles).Count | Should -Be 0
-                $topology.staticPerScenarioMaximum | Should -Be 2
+                $topology.requiredTestClientSlots | Should -Be 2
                 @($topology.profiles).Count | Should -Be 0
                 ($topology | ConvertTo-Json -Depth 5) | Should -Not -Match "inline-secret"
             }
@@ -311,7 +338,7 @@
                 $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
 
                 @($topology.requiredProfiles).Count | Should -Be 0
-                $topology.staticPerScenarioMaximum | Should -Be 2
+                $topology.requiredTestClientSlots | Should -Be 2
                 @($topology.profiles).Count | Should -Be 0
                 ($topology | ConvertTo-Json -Depth 5) | Should -Not -Match "table-secret"
             }
@@ -332,7 +359,7 @@
                 $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
 
                 $topology.requiredProfiles | Should -Be @("U1")
-                $topology.staticPerScenarioMaximum | Should -Be 2
+                $topology.requiredTestClientSlots | Should -Be 2
             }
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -389,6 +416,8 @@
             $runText | Should -Match 'Get-VanessaTestClientTopology -FeatureFiles \$applicationFeatureFiles'
             $runText | Should -Match 'Get-VanessaFilteredScenarioCount -FeatureFiles \$applicationFeatureFiles'
             $runText | Should -Match '(?s)New-VanessaParamsFile.*?-FeaturePath \$featuresPath'
+            $runText | Should -Match '-ExpectedSessionCount \(1 \+ \[int\]\$testClientTopology\.requiredTestClientSlots\)'
+            $runText | Should -Not -Match 'Assert-VanessaTestClientCapacity'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
