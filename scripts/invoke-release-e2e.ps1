@@ -1306,6 +1306,25 @@ function Save-E2ECapabilityCache {
     }
 }
 
+function Test-E2EStageInputsUnchanged {
+    param([string]$Name, [string]$QualifiedCommit)
+    $definition = $script:ReleaseE2EStageDefinitions[$Name]
+    if (-not $definition) { return $false }
+    $patterns = @($definition.paths) + @(
+        "scripts/release-e2e/$([string]$definition.moduleFile)",
+        "scripts/release-e2e/common.ps1"
+    )
+    foreach ($dependency in @($definition.dependsOn)) {
+        if (-not (Test-E2EStageInputsUnchanged -Name ([string]$dependency) -QualifiedCommit $QualifiedCommit)) { return $false }
+    }
+    foreach ($changedPath in @(Get-RepositoryGitPathList -RepositoryRoot $workflowRoot -Arguments @("diff", "--name-only", "-z", "$QualifiedCommit...$workflowCommit", "--"))) {
+        foreach ($pattern in $patterns) {
+            if (Test-WorkflowContinuationPattern -Path ([string]$changedPath) -Pattern ([string]$pattern)) { return $false }
+        }
+    }
+    return $true
+}
+
 function Find-E2ECompletedCapabilityCache {
     $preferredPath = if ($checkpoint.Contains("capabilityCache")) { [string]$checkpoint["capabilityCache"]["manifestPath"] } else { "" }
     $candidates = New-Object System.Collections.Generic.List[System.IO.FileInfo]
@@ -1332,7 +1351,9 @@ function Find-E2ECompletedCapabilityCache {
             foreach ($stageName in $capabilityStages) {
                 if (-not $cache["stages"].Contains($stageName)) { Write-Verbose "Completed capability cache is missing stage '$stageName': $($file.FullName)"; $compatible = $false; break }
                 $record = $cache["stages"][$stageName]
-                if ([string]$record["status"] -ne "passed" -or [string]$record["fingerprint"] -ne (Get-E2EStageFingerprint -Name $stageName -RunnerSha256 ([string]$identity["runnerSha256"]))) { Write-Verbose "Completed capability cache stage '$stageName' is not a compatible pass: $($file.FullName)"; $compatible = $false; break }
+                $fingerprintMatches = [string]$record["fingerprint"] -eq (Get-E2EStageFingerprint -Name $stageName -RunnerSha256 ([string]$identity["runnerSha256"]))
+                $inputsUnchanged = Test-E2EStageInputsUnchanged -Name $stageName -QualifiedCommit ([string]$identity["workflowCommit"])
+                if ([string]$record["status"] -ne "passed" -or (-not $fingerprintMatches -and -not $inputsUnchanged)) { Write-Verbose "Completed capability cache stage '$stageName' is not a compatible pass: $($file.FullName)"; $compatible = $false; break }
                 if ([string]$record["evidencePath"]) {
                     Assert-E2ECheckpointFile -Path ([string]$record["evidencePath"]) -Sha256 ([string]$record["evidenceSha256"]) -Label "$stageName completed cache evidence"
                 }
@@ -1384,8 +1405,9 @@ function Restore-E2EInterruptedCapabilityStage {
                 -not $cache["stages"].Contains($Name)) { continue }
             if (-not (Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit ([string]$identity["workflowCommit"]) -CurrentCommit $workflowCommit -CurrentTree $workflowTree)) { continue }
             $record = $cache["stages"][$Name]
-            if ([string]$record["status"] -ne "passed" -or
-                [string]$record["fingerprint"] -ne (Get-E2EStageFingerprint -Name $Name -RunnerSha256 ([string]$identity["runnerSha256"]))) { continue }
+            $fingerprintMatches = [string]$record["fingerprint"] -eq (Get-E2EStageFingerprint -Name $Name -RunnerSha256 ([string]$identity["runnerSha256"]))
+            $inputsUnchanged = Test-E2EStageInputsUnchanged -Name $Name -QualifiedCommit ([string]$identity["workflowCommit"])
+            if ([string]$record["status"] -ne "passed" -or (-not $fingerprintMatches -and -not $inputsUnchanged)) { continue }
             if ([string]$record["evidencePath"]) {
                 Assert-E2ECheckpointFile -Path ([string]$record["evidencePath"]) -Sha256 ([string]$record["evidenceSha256"]) -Label "$Name interrupted-stage evidence"
             }
@@ -1455,7 +1477,19 @@ function Import-E2ECapabilityCache {
     }
     $checkpoint["generatedCommits"] = @($cache["generatedCommits"])
     $checkpoint["expectedHead"] = (& git -C $worktreePath rev-parse HEAD).Trim()
-    foreach ($stageName in @($cache["stages"].Keys)) { $checkpoint["stages"][$stageName] = $cache["stages"][$stageName] }
+    foreach ($stageName in @($cache["stages"].Keys)) {
+        $checkpoint["stages"][$stageName] = $cache["stages"][$stageName]
+        if ([string]$checkpoint["stages"][$stageName]["status"] -eq "passed" -and
+            $script:ReleaseE2EStageDefinitions.Contains($stageName) -and
+            [string]$cache["identity"]["aiRulesCommit"] -eq $aiRulesCommit -and
+            [string]$cache["identity"]["aiRulesTree"] -eq $aiRulesTree -and
+            [string]$cache["identity"]["helperSha256"] -eq $helperSha256 -and
+            [string]$cache["identity"]["projectConfigSha256"] -eq $projectConfigSha256 -and
+            (Test-E2EStageInputsUnchanged -Name $stageName -QualifiedCommit ([string]$cache["identity"]["workflowCommit"]))) {
+            $checkpoint["stages"][$stageName]["fingerprint"] = Get-E2EStageFingerprint -Name $stageName
+            $checkpoint["stages"][$stageName]["legacyFingerprintRebound"] = $true
+        }
+    }
     if ($cache["snapshots"].Contains("postConfig")) { $checkpoint["snapshots"]["postConfig"] = $cache["snapshots"]["postConfig"] }
     if ($cache["stateFiles"].Contains("postConfig")) { $checkpoint["stateFiles"]["postConfig"] = $cache["stateFiles"]["postConfig"] }
     if ($cache["configEvidence"]) {

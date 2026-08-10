@@ -667,6 +667,9 @@ switch ($Action) {
             $checkpointAfterManagedAdvance.runId | Should -Not -Be $checkpointBeforeManagedAdvance.runId
             $checkpointAfterManagedAdvance.identity.workflowCommit | Should -Be (& git -C $workflowFixtureRoot rev-parse HEAD).Trim()
             Test-Path -LiteralPath ([string]$checkpointAfterManagedAdvance.capabilityCache.manifestPath) -PathType Leaf | Should -BeTrue
+            $legacyCache = Get-Content -LiteralPath ([string]$checkpointAfterManagedAdvance.capabilityCache.manifestPath) -Raw -Encoding UTF8 | ConvertFrom-Json
+            $legacyCache.stages.'seed-parallel'.fingerprint = "legacy-raw-checkout-fingerprint"
+            [IO.File]::WriteAllText(([string]$checkpointAfterManagedAdvance.capabilityCache.manifestPath), (($legacyCache | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
 
             # A harness-only repair after a completed release starts at fresh
             # verification/cleanup. It must not rerun any passed capability.
