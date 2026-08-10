@@ -666,6 +666,13 @@ function Get-E2ECanonicalTextSha256 {
     try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }
 }
 
+function Test-E2ETextSha256Compatible {
+    param([Parameter(Mandatory = $true)][string]$Path, [string]$ExpectedSha256)
+    if (-not $ExpectedSha256) { return $false }
+    return $ExpectedSha256 -eq (Get-E2ECanonicalTextSha256 -Path $Path) -or
+        $ExpectedSha256 -eq (Get-E2EFileSha256 -Path $Path)
+}
+
 function Invoke-E2EInfobaseSnapshot {
     param([string]$Path)
     $relative = $Path.Substring($worktreePath.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
@@ -1341,10 +1348,11 @@ function Find-E2ECompletedCapabilityCache {
         try {
             $cache = ConvertTo-E2EHashtable (Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
             $identity = $cache["identity"]
+            $helperIdentityMatches = Test-E2ETextSha256Compatible -Path $HelperPath -ExpectedSha256 ([string]$identity["helperSha256"])
             if ([int]$cache["schemaVersion"] -ne 1 -or [string]$identity["projectRoot"] -ne $ProjectRoot -or
                 [string]$identity["worktreePath"] -ne $worktreePath -or [string]$identity["branch"] -ne $branch -or
                 [string]$identity["aiRulesCommit"] -ne $aiRulesCommit -or [string]$identity["aiRulesTree"] -ne $aiRulesTree -or
-                [string]$identity["helperSha256"] -ne $helperSha256 -or [string]$identity["projectConfigSha256"] -ne $projectConfigSha256) { Write-Verbose "Completed capability cache identity mismatch: $($file.FullName)"; continue }
+                -not $helperIdentityMatches -or [string]$identity["projectConfigSha256"] -ne $projectConfigSha256) { Write-Verbose "Completed capability cache identity mismatch: $($file.FullName)"; continue }
             $cacheContinuation = Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit ([string]$identity["workflowCommit"]) -CurrentCommit $workflowCommit -CurrentTree $workflowTree
             if (-not $cacheContinuation) { Write-Verbose "Completed capability cache has no exact Targeted continuation: $($file.FullName)"; continue }
             $compatible = $true
@@ -1397,11 +1405,12 @@ function Restore-E2EInterruptedCapabilityStage {
         try {
             $cache = ConvertTo-E2EHashtable (Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
             $identity = $cache["identity"]
+            $helperIdentityMatches = Test-E2ETextSha256Compatible -Path $HelperPath -ExpectedSha256 ([string]$identity["helperSha256"])
             if ([int]$cache["schemaVersion"] -ne 1 -or [string]$identity["projectRoot"] -ne $ProjectRoot -or
                 [string]$identity["worktreePath"] -ne $worktreePath -or [string]$identity["branch"] -ne $branch -or
                 [string]$identity["initialHead"] -ne [string]$checkpoint["identity"]["initialHead"] -or
                 [string]$identity["aiRulesCommit"] -ne $aiRulesCommit -or [string]$identity["aiRulesTree"] -ne $aiRulesTree -or
-                [string]$identity["helperSha256"] -ne $helperSha256 -or [string]$identity["projectConfigSha256"] -ne $projectConfigSha256 -or
+                -not $helperIdentityMatches -or [string]$identity["projectConfigSha256"] -ne $projectConfigSha256 -or
                 -not $cache["stages"].Contains($Name)) { continue }
             if (-not (Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit ([string]$identity["workflowCommit"]) -CurrentCommit $workflowCommit -CurrentTree $workflowTree)) { continue }
             $record = $cache["stages"][$Name]
@@ -1483,7 +1492,7 @@ function Import-E2ECapabilityCache {
             $script:ReleaseE2EStageDefinitions.Contains($stageName) -and
             [string]$cache["identity"]["aiRulesCommit"] -eq $aiRulesCommit -and
             [string]$cache["identity"]["aiRulesTree"] -eq $aiRulesTree -and
-            [string]$cache["identity"]["helperSha256"] -eq $helperSha256 -and
+            (Test-E2ETextSha256Compatible -Path $HelperPath -ExpectedSha256 ([string]$cache["identity"]["helperSha256"])) -and
             [string]$cache["identity"]["projectConfigSha256"] -eq $projectConfigSha256 -and
             (Test-E2EStageInputsUnchanged -Name $stageName -QualifiedCommit ([string]$cache["identity"]["workflowCommit"]))) {
             $checkpoint["stages"][$stageName]["fingerprint"] = Get-E2EStageFingerprint -Name $stageName

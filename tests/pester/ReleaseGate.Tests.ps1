@@ -669,6 +669,8 @@ switch ($Action) {
             Test-Path -LiteralPath ([string]$checkpointAfterManagedAdvance.capabilityCache.manifestPath) -PathType Leaf | Should -BeTrue
             $legacyCache = Get-Content -LiteralPath ([string]$checkpointAfterManagedAdvance.capabilityCache.manifestPath) -Raw -Encoding UTF8 | ConvertFrom-Json
             $legacyCache.stages.'seed-parallel'.fingerprint = "legacy-raw-checkout-fingerprint"
+            $legacyCache.identity.helperSha256 = (Get-FileHash -LiteralPath $helperPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $legacyCache.identity.helperSha256 | Should -Not -Be $checkpointAfterManagedAdvance.identity.helperSha256
             [IO.File]::WriteAllText(([string]$checkpointAfterManagedAdvance.capabilityCache.manifestPath), (($legacyCache | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
 
             # A harness-only repair after a completed release starts at fresh
