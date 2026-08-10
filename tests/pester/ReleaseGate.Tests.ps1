@@ -309,7 +309,7 @@ Describe "Release E2E orchestration" {
             & git -C $mainRoot init *> $null
             & git -C $mainRoot config user.email "test@example.invalid"
             & git -C $mainRoot config user.name "ITL Test"
-            Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".agent-1c/dev-branches/`n.agent-1c/runs/`n.agent-1c/release-e2e-actions.log`n.agent-1c/release-e2e-partial-list.txt`n.agents/`nbuild/`n"
+            Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".agent-1c/dev-branches/`n.agent-1c/runs/`n.agent-1c/snapshots/`n.agent-1c/release-e2e-actions.log`n.agent-1c/release-e2e-partial-list.txt`n.agents/`nbuild/`n"
             Set-Content -LiteralPath (Join-Path $mainRoot "README.md") -Encoding ASCII -Value "fixture"
             New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot "src\cf\Ext"), (Join-Path $mainRoot ".agent-1c") | Out-Null
             $dependencyLock = [ordered]@{
@@ -320,6 +320,7 @@ Describe "Release E2E orchestration" {
                 }
             }
             Set-Content -LiteralPath (Join-Path $mainRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value ($dependencyLock | ConvertTo-Json -Depth 6)
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $mainRoot ".agent-1c\project.json")
             Set-Content -LiteralPath (Join-Path $mainRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value @'
 <?xml version="1.0" encoding="UTF-8"?>
 <MetaDataObject>
@@ -494,19 +495,31 @@ switch ($Action) {
             $previousPreference = $ErrorActionPreference
             $ErrorActionPreference = "Continue"
             try {
-                & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
-                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $failureSummaryPath *> $null
+                $failureOutput = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
+                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $failureSummaryPath 2>&1
                 $failureExitCode = $LASTEXITCODE
             } finally {
                 $ErrorActionPreference = $previousPreference
                 $env:ITL_TEST_FAIL_RELEASE_EXTENSION = $oldFailureFlag
             }
             $failureExitCode | Should -Not -Be 0
+            Test-Path -LiteralPath $failureSummaryPath -PathType Leaf | Should -BeTrue -Because ($failureOutput -join [Environment]::NewLine)
             $failureSummary = Get-Content -LiteralPath $failureSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $failureSummary.status | Should -Be "failed"
             $failureSummary.error | Should -Match "release-e2e-extension-smoke failed with exit code 1"
             @($failureSummary.executedStages) | Should -Contain "config-cadence"
             @($failureSummary.executedStages) | Should -Contain "config-roundtrip"
+
+            $staleResultRoot = Join-Path $worktreeRoot "build\result"
+            $staleSnapshotRoot = Join-Path $worktreeRoot ".agent-1c\snapshots"
+            $staleCacheRoot = Join-Path $worktreeRoot ".agent-1c\runs\release-e2e-capabilities\workflow-release-e2e\obsolete-cache"
+            New-Item -ItemType Directory -Force -Path $staleResultRoot, $staleSnapshotRoot, $staleCacheRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $staleResultRoot "obsolete.cf") -Encoding ASCII -Value "obsolete result"
+            Set-Content -LiteralPath (Join-Path $staleResultRoot "obsolete.cf.manifest.json") -Encoding ASCII -Value "obsolete manifest"
+            Set-Content -LiteralPath (Join-Path $staleSnapshotRoot "release-e2e-obsolete.dt") -Encoding ASCII -Value "obsolete release snapshot"
+            Set-Content -LiteralPath (Join-Path $staleSnapshotRoot "extension-init-obsolete.dt") -Encoding ASCII -Value "obsolete extension snapshot"
+            Set-Content -LiteralPath (Join-Path $staleSnapshotRoot "user-backup.dt") -Encoding ASCII -Value "unrelated snapshot"
+            Set-Content -LiteralPath (Join-Path $staleCacheRoot "orphan.bin") -Encoding ASCII -Value "obsolete cache"
 
             & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
                 -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $summaryPath -ResumeMode Auto
@@ -525,6 +538,16 @@ switch ($Action) {
             @($summary.stages.'config-cadence'.attempts).Count | Should -BeGreaterThan 0
             $summary.sourceSnapshotPath | Should -Be $sourceSnapshot
             $summary.artifactSha256 | Should -Not -BeNullOrEmpty
+            $summary.artifactRetention.status | Should -Be "passed"
+            $summary.artifactRetention.removedFiles | Should -Be 4
+            $summary.artifactRetention.removedDirectories | Should -Be 1
+            Test-Path -LiteralPath (Join-Path $staleResultRoot "obsolete.cf") | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $staleResultRoot "obsolete.cf.manifest.json") | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $staleSnapshotRoot "release-e2e-obsolete.dt") | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $staleSnapshotRoot "extension-init-obsolete.dt") | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $staleSnapshotRoot "user-backup.dt") | Should -BeTrue
+            Test-Path -LiteralPath ([string]$summary.artifactPath) -PathType Leaf | Should -BeTrue
+            Test-Path -LiteralPath ([string]$summary.resultManifestPath) -PathType Leaf | Should -BeTrue
             $summary.configLoadMode | Should -Be "partial"
             $summary.testOnlyCommit | Should -Not -BeNullOrEmpty
             $summary.vanessaJUnitTests | Should -Be 4

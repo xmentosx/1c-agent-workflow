@@ -113,6 +113,7 @@ New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 $startedAt = [DateTime]::UtcNow
 $failure = $null
 $cleanupFailures = @()
+$artifactRetention = [ordered]@{ status = "not-run"; removedFiles = 0; removedDirectories = 0; reclaimedBytes = 0 }
 $resultManifestPath = ""
 $artifactPath = ""
 $artifactSha256 = ""
@@ -1234,6 +1235,108 @@ function Copy-E2ECapabilityFile {
     return $Destination
 }
 
+function Resolve-E2ERetentionPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    $resolvedRoot = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+    $resolvedPath = [IO.Path]::GetFullPath($Path)
+    $rootPrefix = $resolvedRoot + [IO.Path]::DirectorySeparatorChar
+    if (-not $resolvedPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "RELEASE_E2E_ARTIFACT_RETENTION_UNSAFE: $Label is outside '$resolvedRoot': $resolvedPath"
+    }
+    return $resolvedPath
+}
+
+function Get-E2ERetentionItemBytes {
+    param([Parameter(Mandatory = $true)][object]$Item)
+
+    if (-not $Item.PSIsContainer) { return [int64]$Item.Length }
+    return [int64]((Get-ChildItem -LiteralPath $Item.FullName -Recurse -Force -File -ErrorAction Stop | Measure-Object Length -Sum).Sum)
+}
+
+function Remove-E2EObsoleteArtifacts {
+    param(
+        [Parameter(Mandatory = $true)][string]$CapabilityManifestPath,
+        [Parameter(Mandatory = $true)][string]$ResultArtifactPath,
+        [Parameter(Mandatory = $true)][string]$ResultManifestPath
+    )
+
+    $removedFiles = 0
+    $removedDirectories = 0
+    $reclaimedBytes = [int64]0
+
+    $resolvedCacheRoot = [IO.Path]::GetFullPath($capabilityCacheRoot).TrimEnd('\', '/')
+    $resolvedCapabilityManifest = Resolve-E2ERetentionPath -Root $resolvedCacheRoot -Path $CapabilityManifestPath -Label "current capability manifest"
+    $currentCapabilityDirectory = Split-Path -Parent $resolvedCapabilityManifest
+    $currentCapabilityParent = [IO.Path]::GetFullPath((Split-Path -Parent $currentCapabilityDirectory)).TrimEnd('\', '/')
+    if (-not $currentCapabilityParent.Equals($resolvedCacheRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "RELEASE_E2E_ARTIFACT_RETENTION_UNSAFE: current capability directory is not a direct child of '$resolvedCacheRoot': $currentCapabilityDirectory"
+    }
+    foreach ($directory in @(Get-ChildItem -LiteralPath $resolvedCacheRoot -Force -Directory -ErrorAction Stop)) {
+        if ($directory.FullName.Equals($currentCapabilityDirectory, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        $reclaimedBytes += Get-E2ERetentionItemBytes -Item $directory
+        Remove-Item -LiteralPath $directory.FullName -Recurse -Force -ErrorAction Stop
+        $removedDirectories++
+    }
+
+    $resolvedResultArtifact = Resolve-E2ERetentionPath -Root $worktreePath -Path $ResultArtifactPath -Label "current result artifact"
+    $resolvedResultManifest = Resolve-E2ERetentionPath -Root $worktreePath -Path $ResultManifestPath -Label "current result manifest"
+    $resultRoot = [IO.Path]::GetFullPath((Split-Path -Parent $resolvedResultArtifact)).TrimEnd('\', '/')
+    $manifestRoot = [IO.Path]::GetFullPath((Split-Path -Parent $resolvedResultManifest)).TrimEnd('\', '/')
+    if (-not $manifestRoot.Equals($resultRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "RELEASE_E2E_ARTIFACT_RETENTION_UNSAFE: result artifact and manifest are in different directories."
+    }
+    $projectConfigPath = Join-Path $worktreePath ".agent-1c\project.json"
+    $projectConfig = Get-Content -LiteralPath $projectConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $artifactsPathProperty = $projectConfig.PSObject.Properties["artifactsPath"]
+    $configuredArtifactsPath = if ($null -ne $artifactsPathProperty -and [string]$artifactsPathProperty.Value) {
+        [string]$artifactsPathProperty.Value
+    } else {
+        "build/result"
+    }
+    $expectedResultRoot = if ([IO.Path]::IsPathRooted($configuredArtifactsPath)) {
+        [IO.Path]::GetFullPath($configuredArtifactsPath).TrimEnd('\', '/')
+    } else {
+        [IO.Path]::GetFullPath((Join-Path $worktreePath $configuredArtifactsPath)).TrimEnd('\', '/')
+    }
+    if (-not $resultRoot.Equals($expectedResultRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "RELEASE_E2E_ARTIFACT_RETENTION_UNSAFE: result directory '$resultRoot' differs from configured artifactsPath '$expectedResultRoot'."
+    }
+    $retainedResultPaths = @($resolvedResultArtifact, $resolvedResultManifest)
+    foreach ($file in @(Get-ChildItem -LiteralPath $resultRoot -Force -File -ErrorAction Stop)) {
+        $isOwnedResult = $file.Extension -in @(".cf", ".cfe") -or $file.Name -match '\.(cf|cfe)\.manifest\.json$'
+        if (-not $isOwnedResult -or $retainedResultPaths -contains $file.FullName) { continue }
+        $reclaimedBytes += [int64]$file.Length
+        Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
+        $removedFiles++
+    }
+
+    $snapshotRoot = Join-Path $worktreePath ".agent-1c\snapshots"
+    if (Test-Path -LiteralPath $snapshotRoot -PathType Container) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $snapshotRoot -Force -File -Filter "*.dt" -ErrorAction Stop)) {
+            if ($file.Name -notmatch '^(release-e2e-|extension-init-).+\.dt$') { continue }
+            $reclaimedBytes += [int64]$file.Length
+            Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
+            $removedFiles++
+        }
+    }
+
+    return [ordered]@{
+        status = "passed"
+        removedFiles = $removedFiles
+        removedDirectories = $removedDirectories
+        reclaimedBytes = $reclaimedBytes
+        retainedCapabilityManifest = $resolvedCapabilityManifest
+        retainedResultArtifact = $resolvedResultArtifact
+        retainedResultManifest = $resolvedResultManifest
+        completedAt = [DateTime]::UtcNow.ToString("o")
+    }
+}
+
 function Save-E2ECapabilityCache {
     $cacheId = [string]$checkpoint["runId"]
     if (-not $cacheId) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: checkpoint has no run id for capability promotion." }
@@ -1267,7 +1370,12 @@ function Save-E2ECapabilityCache {
     New-Item -ItemType Directory -Force -Path $staging | Out-Null
     try {
         $cached = ConvertTo-E2EHashtable $checkpoint
-        foreach ($snapshotName in @("baseline", "postConfig")) {
+        # Cross-release reuse imports only the post-config rollback point. The
+        # baseline remains in the mutable current-run checkpoint for Restart;
+        # duplicating it in every immutable cache generation wastes one full DT.
+        [void]$cached["snapshots"].Remove("baseline")
+        [void]$cached["stateFiles"].Remove("baseline")
+        foreach ($snapshotName in @("postConfig")) {
             if (-not $cached["snapshots"].Contains($snapshotName)) { continue }
             $source = [string]$cached["snapshots"][$snapshotName]["path"]
             $destination = Join-Path $target ("snapshots\$snapshotName.dt")
@@ -2169,6 +2277,12 @@ try {
     Set-E2ECheckpointCapabilityEvidence -ManifestPath $sealedCapabilityPath
     $checkpoint["status"] = "passed"
     Write-E2ECheckpoint
+    $artifactRetention = Remove-E2EObsoleteArtifacts `
+        -CapabilityManifestPath $sealedCapabilityPath `
+        -ResultArtifactPath $artifactPath `
+        -ResultManifestPath $resultManifestPath
+    $checkpoint["artifactRetention"] = $artifactRetention
+    Write-E2ECheckpoint
 } catch {
     $failure = $_.Exception.Message
     if ($_.InvocationInfo.ScriptLineNumber) {
@@ -2234,6 +2348,7 @@ try {
         generatedCommits = $checkpoint["generatedCommits"]
         snapshots = $checkpoint["snapshots"]
         cleanup = $checkpoint["cleanup"]
+        artifactRetention = $artifactRetention
         workflowCommit = $workflowCommit
         workflowTree = $workflowTree
         runnerSha256 = $runnerSha256

@@ -202,6 +202,12 @@ leases and fails the release. Release evidence records the actually observed
 Checkpoint v3 separates mutable rollback state from immutable capability cache.
 Before a temporary source candidate can be removed, passed evidence is sealed
 under `.agent-1c/runs/release-e2e-capabilities/<branch>/<runId>/`.
+Only the post-config snapshot/state needed by cross-release import is copied to
+that immutable cache; the baseline stays in the current mutable checkpoint for
+`Restart`. After a successful run, retention keeps only the current capability
+generation and current CF/CFE plus its manifest, and removes older E2E exports
+and completed `release-e2e-*`/`extension-init-*` recovery snapshots. A failed or
+interrupted run retains its current rollback evidence for safe resume.
 `Auto` resumes the same candidate in place. For a new workflow candidate it
 SHA-checks and archives prior capability evidence, restores the prior baseline,
 creates a new baseline/initial HEAD, replays owned fixture commits, and imports
