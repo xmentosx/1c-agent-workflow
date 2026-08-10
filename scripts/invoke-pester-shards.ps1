@@ -183,6 +183,10 @@ function Save-ShardCache {
     if ([string]$result.status -ne "passed" -or [int]$result.failed -ne 0 -or -not (Test-Path -LiteralPath $JunitPath -PathType Leaf)) { return }
     $target = Join-Path $cacheRoot $Digest
     if (Test-Path -LiteralPath (Join-Path $target "result.json") -PathType Leaf) { return }
+    if (Test-Path -LiteralPath $target -PathType Container) {
+        if (@(Get-ChildItem -LiteralPath $target -Force).Count -gt 0) { throw "Incomplete Pester shard cache is not empty: $target" }
+        Remove-Item -LiteralPath $target -Force
+    }
     $staging = Join-Path $cacheRoot ("." + $Digest + "." + [guid]::NewGuid().ToString("N") + ".tmp")
     New-Item -ItemType Directory -Path $staging | Out-Null
     try {
