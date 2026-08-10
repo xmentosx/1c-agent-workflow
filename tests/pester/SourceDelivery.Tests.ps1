@@ -71,6 +71,8 @@ Describe "Source develop queue and delivery" {
         @($errors) | Should -BeNullOrEmpty
         $action = $ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq "Action" } | Select-Object -First 1
         @($action.Attributes | Where-Object TypeName -match ValidateSet | Select-Object -ExpandProperty PositionalArguments | ForEach-Object SafeGetValue) | Should -Be @("RegisterChange", "Status", "PublishDevelop", "ReleaseMaster")
+        $text = Get-Content -LiteralPath $DeliveryScript -Raw -Encoding UTF8
+        $text.IndexOf('$developQualificationRestored = Restore-DeliveryContinuationQualification') | Should -BeLessThan $text.IndexOf('(Import-DeliveryQualificationFromCleanWorktree -Tree $candidateTree)')
     }
     It "registers base and head atomically for a path with Cyrillic and spaces" {
         $fixture = $null; $parallelRoot = ""; try {

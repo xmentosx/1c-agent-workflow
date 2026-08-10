@@ -477,12 +477,12 @@ function Publish-AccumulatedDevelop {
         Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries
         $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
         $developQualificationRestored = Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree
-        if ($RequireRelease -and -not $developQualificationRestored -and (Import-DeliveryQualificationFromCleanWorktree -Tree $candidateTree)) {
-            $developQualificationRestored = Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree
-        }
         if ($RequireRelease -and -not $developQualificationRestored) {
             $candidateCommit = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
             $developQualificationRestored = Restore-DeliveryContinuationQualification -CandidateRoot $worktree.path -Commit $candidateCommit -Tree $candidateTree
+        }
+        if ($RequireRelease -and -not $developQualificationRestored -and (Import-DeliveryQualificationFromCleanWorktree -Tree $candidateTree)) {
+            $developQualificationRestored = Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree
         }
         if (-not ($RequireRelease -and $developQualificationRestored)) {
             Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path
