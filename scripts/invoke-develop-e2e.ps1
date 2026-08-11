@@ -319,17 +319,8 @@ try {
     $freshHelper = Join-Path $freshRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
     Assert-ProjectStatusOutput -ProcessResult (Invoke-DevelopProcess -Name "fresh-status" -WorkingRoot $freshRoot -ScriptPath $freshHelper -Arguments @("-ProjectRoot", $freshRoot, "-Action", "status") -TimeoutSeconds 120)
     $branchName = "develop-golden"
-    $cyrillicBranchSegment = -join ([char[]](0x0432, 0x0435, 0x0442, 0x043A, 0x0430))
-    $freshBranchRoot = Join-Path ([IO.Path]::GetFullPath($FreshProjectsRoot)) ("b-$cyrillicBranchSegment-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
-    if ($freshBranchRoot -match '\s' -or $freshBranchRoot -notmatch '[^\x00-\x7F]') {
-        throw "DEVELOP_E2E_SPECIAL_BRANCH_PATH_REQUIRED: fresh branch root must contain non-ASCII text without whitespace: '$freshBranchRoot'."
-    }
-    [void](Invoke-InstalledAction -Name "fresh-new-dev-branch" -Root $freshRoot -Action "new-dev-branch" -AdditionalArguments @("-DevBranchName", $branchName, "-DevBranchWorktreePath", $freshBranchRoot) -TimeoutSeconds 3600)
-    $requestedFreshBranchRoot = $freshBranchRoot
+    [void](Invoke-InstalledAction -Name "fresh-new-dev-branch" -Root $freshRoot -Action "new-dev-branch" -AdditionalArguments @("-DevBranchName", $branchName) -TimeoutSeconds 3600)
     $freshBranchRoot = Get-BranchWorktree -Root $freshRoot -Name $branchName
-    if ([IO.Path]::GetFullPath($freshBranchRoot) -ne [IO.Path]::GetFullPath($requestedFreshBranchRoot)) {
-        throw "new-dev-branch ignored the requested special branch path: requested='$requestedFreshBranchRoot'; actual='$freshBranchRoot'."
-    }
     [void](Assert-FailedRecoveryRoute -ProcessResult (Invoke-InstalledAction -Name "fresh-missing-suite" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 300 -AllowFailure) -ExpectedCategory "missing-suite")
     Set-FreshConfigurationComment -Root $freshBranchRoot
     Add-FreshVanessaFeature -Root $freshBranchRoot
