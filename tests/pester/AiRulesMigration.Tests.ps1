@@ -3,9 +3,9 @@
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
     $HelperPath = $context.HelperPath
-    $script:TargetAiRulesRef = "itl-main-410951e7-r24"
-    $script:TargetAiRulesCommit = "83e179469363c16497d9cc389a9a814537cc076b"
-    $script:TargetAiRulesRevision = 24
+    $script:TargetAiRulesRef = "itl-main-410951e7-r25"
+    $script:TargetAiRulesCommit = "0ff2e5401d04b1cc502ea1548787e7c336fd85a3"
+    $script:TargetAiRulesRevision = 25
 
     function New-AiRulesMigrationFixture {
         param(

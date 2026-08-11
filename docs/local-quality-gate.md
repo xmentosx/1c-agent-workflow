@@ -58,7 +58,7 @@ Develop proof закрывают reuse. Это продолжение по finge
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r24-qualification `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r25-qualification `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
@@ -119,7 +119,7 @@ from the immutable locked URL. Every source is accepted only after the lock
 SHA-256 matches; an invalid explicit environment path fails closed.
 
 ```powershell
-.\scripts\check.ps1 -Mode Full -AiRulesSource D:\Git\itl_ai_rules_1c-r24-qualification
+.\scripts\check.ps1 -Mode Full -AiRulesSource D:\Git\itl_ai_rules_1c-r25-qualification
 ```
 
 После успешного Full `scripts/promote-ai-rules-compatibility.ps1` сверяет exact
@@ -130,7 +130,7 @@ Release требуют `compatibilityStatus=passed`.
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action ReleaseMaster `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r24-qualification `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r25-qualification `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 

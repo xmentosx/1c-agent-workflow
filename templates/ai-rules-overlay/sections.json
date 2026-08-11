@@ -740,6 +740,33 @@
                               "resultSha256":  "118fcc9381d0ed9fd102029a85505781c7a8905f728ec9d0ea71b16eed975272"
                           },
                           {
+                              "path":  "content/rules/mcp-first-search.md",
+                              "requirementId":  "ITL-MCP-002",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-MCP-002 for r25 with reviewed delta-aware local and remote search routing.",
+                              "upstreamSha256":  "0af58a443fc9c69e997d4ed918f332b09865019dfb1d2e1916b9abdeea057a6d",
+                              "baselineSha256":  "0af58a443fc9c69e997d4ed918f332b09865019dfb1d2e1916b9abdeea057a6d",
+                              "resultSha256":  "5ee8bb5e73664147c7ef30fb1fb6729e6cd9d86ca9f55295a7377e644f034836"
+                          },
+                          {
+                              "path":  "content/rules/subagents.md",
+                              "requirementId":  "ITL-MCP-002",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-MCP-002 for r25 by passing relevant branch-delta authority to subagents.",
+                              "upstreamSha256":  "0027e5dfb442a99d28292bbcde55af22d1bbc394c8729b9771c9e1e8ad1428a6",
+                              "baselineSha256":  "0027e5dfb442a99d28292bbcde55af22d1bbc394c8729b9771c9e1e8ad1428a6",
+                              "resultSha256":  "b9b6a8ea314e3da12f4b8bc91c68b6957750a2f06595ecfdbe70efb8aab1cf68"
+                          },
+                          {
+                              "path":  "content/skills/mcp-1c-tools/SKILL.md",
+                              "requirementId":  "ITL-MCP-002",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-MCP-002 for r25 with bounded MCP-first fallback outside the branch delta.",
+                              "upstreamSha256":  "cad4ed64f038b368748e2292d76914fc9f2532c0cbf56a18e694a9730c62f691",
+                              "baselineSha256":  "cad4ed64f038b368748e2292d76914fc9f2532c0cbf56a18e694a9730c62f691",
+                              "resultSha256":  "3e0b05095c62527410edcebdb9e0244bfa4e2a423c12eb9d01f4c354ed00b9a7"
+                          },
+                          {
                               "path":  "content/rules/project-memory.md",
                               "requirementId":  "ITL-MEMORY-001",
                               "disposition":  "carry-forward",
@@ -939,12 +966,12 @@
                           },
                           {
                               "path":  "docs/DOWNSTREAM-PATCHES.md",
-                              "requirementId":  "ITL-INFRA-001",
+                              "requirementId":  "ITL-MCP-002",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-INFRA-001 for r25 with reviewed command naming and Caveman response-style behavior.",
+                              "reason":  "Resolve ITL-MCP-002 for r25 by recording delta-aware search ownership.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "bf06a8b85b2985fc9a8c5e09c701b0324901e52799bf113ce9dc325788f8b301",
-                              "resultSha256":  "e016aa2c7c419cc5ae9e65d3a9383e199f8fe6314301590c4b18fb82954cf963"
+                              "resultSha256":  "3774c1e9bb03f0b6e2059c871bab57705b3b80347b4251b15f6b3ac0c9a10631"
                           },
                           {
                               "path":  "docs/FORK-POLICY.md",
@@ -995,10 +1022,10 @@
                               "path":  "docs/releases/itl-main-410951e7-r25.md",
                               "requirementId":  "ITL-INFRA-001",
                               "disposition":  "downstream-only",
-                              "reason":  "Add the reviewed r25 implementation of ITL-INFRA-001.",
+                              "reason":  "Add the reviewed r25 release record for OpenSpec, Caveman, and delta-aware MCP routing.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "\u003cabsent\u003e",
-                              "resultSha256":  "c3d42ac13c388ac47cb828a4a6dd542a247be51b9282dd6da2deaade0546585b"
+                              "resultSha256":  "13ded5c3e6a353969b24d8ae02777214e949fa5c77c6a030141903947689e37e"
                           },
                           {
                               "path":  "docs/releases/itl-main-5ae333ed-r18.md",

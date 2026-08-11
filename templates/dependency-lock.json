@@ -10,24 +10,24 @@
       "updatedAt": ""
     },
     "itlOndemandMcp": {
-      "version": "0.4.6",
+      "version": "0.4.7",
       "assetName": "itl-ondemand-mcp-windows-amd64.exe",
-      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.6/itl-ondemand-mcp-windows-amd64.exe",
-      "sha256": "760b2651753bff1323656ed348fd0228d8ee91c323fad01351a3ad2c29f9f998",
+      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.7/itl-ondemand-mcp-windows-amd64.exe",
+      "sha256": "bfdfe62986cab26ded5ca573d067a7a283901287649cfabb38b6fc5534911b35",
       "os": "windows",
       "arch": "amd64",
       "source": "workflow release asset"
     },
     "aiRules1c": {
       "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
-      "ref": "itl-main-410951e7-r24",
-      "commit": "83e179469363c16497d9cc389a9a814537cc076b",
+      "ref": "itl-main-410951e7-r25",
+      "commit": "0ff2e5401d04b1cc502ea1548787e7c336fd85a3",
       "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
       "upstreamRef": "refs/heads/main",
       "upstreamCommit": "410951e74fd3e6b7a763cf49757935b9a34d3f31",
-      "downstreamRevision": 24,
-      "compatibilityStatus": "passed",
-      "compatibilityCheckedAt": "2026-08-04T19:47:19Z"
+      "downstreamRevision": 25,
+      "compatibilityStatus": "pending",
+      "compatibilityCheckedAt": ""
     },
     "agentBrowser": {
       "version": "0.33.1",

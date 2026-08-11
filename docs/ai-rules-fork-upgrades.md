@@ -2,9 +2,9 @@
 
 ## Current develop candidate
 
-The `develop` workflow is pinned to `itl-main-410951e7-r24` at fork commit `83e179469363c16497d9cc389a9a814537cc076b`. Its exact upstream provenance is `refs/heads/main@410951e74fd3e6b7a763cf49757935b9a34d3f31`. `templates/dependency-lock.json` is the single source of this tag, commit, upstream provenance, downstream revision `24`, and compatibility state; project templates, code, docs, and tests must agree with it. Compatibility starts as `pending` on `develop` and changes to `passed` only through a separate evidence-backed promotion.
+The `develop` workflow is pinned to `itl-main-410951e7-r25` at fork commit `0ff2e5401d04b1cc502ea1548787e7c336fd85a3`. Its exact upstream provenance is `refs/heads/main@410951e74fd3e6b7a763cf49757935b9a34d3f31`. `templates/dependency-lock.json` is the single source of this tag, commit, upstream provenance, downstream revision `25`, and compatibility state; project templates, code, docs, and tests must agree with it. Compatibility starts as `pending` on `develop` and changes to `passed` only through a separate evidence-backed promotion.
 
-Fork `main` mirrors upstream and is never consumed by installed projects. Downstream changes exist only on immutable release branches/tags; the current pair is `release/itl-main-410951e7-r24` / `itl-main-410951e7-r24`, which point to the same release commit. Older immutable releases remain published only for provenance. `r24` retains the qualified r23 behavior, repairs checkout-only LF/CRLF drift classification for strict UTF-8 text, and prunes obsolete clean `legacy` ownership outside the historical client-layout list.
+Fork `main` mirrors upstream and is never consumed by installed projects. Downstream changes exist only on immutable release branches/tags; the current pair is `release/itl-main-410951e7-r25` / `itl-main-410951e7-r25`, which point to the same release commit. Older immutable releases remain published only for provenance. `r25` adds explicit OpenSpec aliases, separates Caveman activation from compression level, and makes project-source discovery local-first for branch-delta paths while retaining bounded MCP-first routing for untouched baseline source.
 
 ## Intake discipline
 
