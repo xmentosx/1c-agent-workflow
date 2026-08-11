@@ -339,10 +339,21 @@ exit 0
         $productDocsSkillText | Should -Match "1c-code-metadata-mcp"
         $productDocsSkillText | Should -Match "1C-docs-mcp"
         $productDocsSkillText | Should -Match "Code/MCP evidence"
-        $productDocsSkillText | Should -Match "primary discovery path"
+        $productDocsSkillText | Should -Match "hard delta-aware routing contract"
+        $productDocsSkillText | Should -Match 'delta against local `master`'
+        $productDocsSkillText | Should -Match "committed, staged, unstaged, and untracked"
+        $productDocsSkillText | Should -Match "NUL-delimited Git output"
+        $productDocsSkillText | Should -Match "Do not fetch, calculate a fingerprint, persist new state"
+        $productDocsSkillText | Should -Match "branch-delta targets from the current worktree first"
+        $productDocsSkillText | Should -Match "do not ask a remote project index to establish their existence, absence, path, or current contents"
+        $productDocsSkillText | Should -Match "untouched baseline source"
+        $productDocsSkillText | Should -Match "single best-fitting"
+        $productDocsSkillText | Should -Match "at most one substantively changed retry for the same search intent"
+        $productDocsSkillText | Should -Match "an MCP miss is not proof"
+        $productDocsSkillText | Should -Match "without discovery, health, restart, or reindex loops"
         $productDocsSkillText | Should -Match "targeted read complements discovery and is not a second search"
         $productDocsSkillText | Should -Match 'Do not run `rg`'
-        $productDocsSkillText | Should -Match "bounded tuned MCP attempt is insufficient"
+        $productDocsSkillText | Should -Not -Match "primary discovery path"
         $productDocsSkillText | Should -Match "They are not mandatory for every explanation"
         $productDocsSkillText | Should -Not -Match ([regex]::Escape('verify the current behavior in code with `rg`, targeted file reads, tests, and available MCP tools'))
         foreach ($marker in @(
