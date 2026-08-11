@@ -122,7 +122,7 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         }
     }
 
-    It "keeps the project-owned Designer Agent host key outside Git status" {
+    It "keeps branch-local Designer Agent logs and base directory outside Git status" {
         (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('.agent-1c/runtime/'))
         $LifecycleText | Should -Match ([regex]::Escape('Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $script:ProjectRoot'))
         $result = & {
@@ -130,6 +130,46 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
             Test-IgnorableLocalGitStatusLine -Line '?? .agent-1c/runtime/'
         }
         $result | Should -BeTrue
+    }
+
+    It "scopes the project-owned host key under an ASCII user-local root instead of the project path" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $previousRoot = [Environment]::GetEnvironmentVariable("VANESSA_DESIGNER_AGENT_HOST_KEY_ROOT", "Process")
+            try {
+                $asciiRoot = "C:\itl-fixtures\designer-agent-host-keys"
+                [Environment]::SetEnvironmentVariable("VANESSA_DESIGNER_AGENT_HOST_KEY_ROOT", $asciiRoot, "Process")
+                $cyrillic = -join ([char[]](0x041F, 0x0440, 0x043E, 0x0435, 0x043A, 0x0442))
+                $projectRoot = "D:\$cyrillic with spaces"
+                $script:ProjectRoot = $projectRoot
+                $firstState = [pscustomobject]@{
+                    safeDevBranchName = "branch1"
+                    stateProjectRoot = $projectRoot
+                    worktreePath = $projectRoot
+                }
+                $secondState = [pscustomobject]@{
+                    safeDevBranchName = "branch2"
+                    stateProjectRoot = $projectRoot
+                    worktreePath = $projectRoot
+                }
+                [pscustomobject]@{
+                    first = Get-VanessaDesignerAgentHostKeyRoot -State $firstState
+                    repeat = Get-VanessaDesignerAgentHostKeyRoot -State $firstState
+                    second = Get-VanessaDesignerAgentHostKeyRoot -State $secondState
+                    projectRoot = $projectRoot
+                    asciiRoot = $asciiRoot
+                }
+            } finally {
+                [Environment]::SetEnvironmentVariable("VANESSA_DESIGNER_AGENT_HOST_KEY_ROOT", $previousRoot, "Process")
+            }
+        }
+
+        $result.first | Should -Be $result.repeat
+        $result.first.StartsWith($result.asciiRoot, [System.StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
+        $result.first.StartsWith($result.projectRoot, [System.StringComparison]::OrdinalIgnoreCase) | Should -BeFalse
+        $result.first | Should -Not -Match '[^\x00-\x7F]'
+        $result.second | Should -Not -Be $result.first
+        $VanessaText | Should -Match 'ITL_DESIGNER_AGENT_HOST_KEY_PATH_NON_ASCII'
     }
 
     It "builds canonical file infobase connection strings for native 1C arguments" {

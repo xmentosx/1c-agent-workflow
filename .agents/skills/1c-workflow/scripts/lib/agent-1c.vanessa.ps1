@@ -5892,13 +5892,37 @@ function Get-VanessaDesignerAgentRuntimeRoot {
     return (Resolve-ProjectPath (Join-Path ".agent-1c\runtime\designer-agent" (ConvertTo-SafeName $safeName)))
 }
 
+function Get-VanessaDesignerAgentHostKeyRoot {
+    param([object]$State)
+
+    $hostKeyHome = [string](Get-EnvValue -Name "VANESSA_DESIGNER_AGENT_HOST_KEY_ROOT" -Default "")
+    if ([string]::IsNullOrWhiteSpace($hostKeyHome)) {
+        $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
+        if ([string]::IsNullOrWhiteSpace($localAppData)) {
+            throw "ITL_DESIGNER_AGENT_HOST_KEY_HOME_MISSING: LocalApplicationData could not be resolved. Set VANESSA_DESIGNER_AGENT_HOST_KEY_ROOT to an ASCII-only writable directory."
+        }
+        $hostKeyHome = Join-Path (Join-Path (Join-Path $localAppData "ITL") "1c-agent-workflow") "designer-agent-host-keys"
+    } else {
+        $hostKeyHome = [Environment]::ExpandEnvironmentVariables($hostKeyHome)
+    }
+
+    $stateProjectRoot = [string](Get-StateValue -State $State -Name "stateProjectRoot" -Default $script:ProjectRoot)
+    $worktreePath = [string](Get-StateValue -State $State -Name "worktreePath" -Default $script:ProjectRoot)
+    $safeName = ConvertTo-SafeName ([string](Get-StateValue -State $State -Name "safeDevBranchName" -Default "dev-branch"))
+    $scopeHash = Get-ItlPortHashSegment "$stateProjectRoot|$worktreePath|$safeName|designer-agent-host-key"
+    return [System.IO.Path]::GetFullPath((Join-Path $hostKeyHome "$safeName-$scopeHash"))
+}
+
 function Ensure-VanessaDesignerAgentHostKey {
     param([object]$State)
 
-    $root = Get-VanessaDesignerAgentRuntimeRoot -State $State
-    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $root = Get-VanessaDesignerAgentHostKeyRoot -State $State
     $privateKeyPath = Join-Path $root "host_id"
     $publicKeyPath = "$privateKeyPath.pub"
+    if ($privateKeyPath -match '[^\x00-\x7F]') {
+        throw "ITL_DESIGNER_AGENT_HOST_KEY_PATH_NON_ASCII: 1C Designer Agent cannot install a host key from '$privateKeyPath'. Set VANESSA_DESIGNER_AGENT_HOST_KEY_ROOT to an ASCII-only writable directory."
+    }
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
     if ((Test-Path -LiteralPath $privateKeyPath -PathType Leaf) -and (Test-Path -LiteralPath $publicKeyPath -PathType Leaf)) {
         return [pscustomobject]@{ privateKeyPath = $privateKeyPath; publicKeyPath = $publicKeyPath }
     }
