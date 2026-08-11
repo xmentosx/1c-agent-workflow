@@ -2507,10 +2507,10 @@ function New-VanessaTestClientInfoBaseArg {
     )
 
     if ($InfoBaseKind -eq "file") {
-        return "/F $(Resolve-InfoBasePath $InfoBasePath)"
+        return (Join-NativeCommandLineArguments -Arguments @("/F", (Resolve-InfoBasePath $InfoBasePath)))
     }
     if ($InfoBaseKind -eq "server") {
-        return "/S $InfoBasePath"
+        return (Join-NativeCommandLineArguments -Arguments @("/S", $InfoBasePath))
     }
 
     throw "Unknown infobase kind: $InfoBaseKind"

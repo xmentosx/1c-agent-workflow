@@ -58,6 +58,20 @@
         (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Raw -Encoding UTF8) | Should -Not -Match "НРС-"
     }
 
+    It "quotes a TestClient infobase path containing whitespace and non-ASCII text" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $specialPath = "C:\ITL Project\База теста"
+            [pscustomobject]@{
+                file = New-VanessaTestClientInfoBaseArg -InfoBaseKind "file" -InfoBasePath $specialPath
+                server = New-VanessaTestClientInfoBaseArg -InfoBaseKind "server" -InfoBasePath "server host\test base"
+            }
+        }
+
+        $result.file | Should -Be '/F "C:\ITL Project\База теста"'
+        $result.server | Should -Be '/S "server host\test base"'
+    }
+
     It "routes unresolved profile placeholders through the test-fixture category" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-category-" + [guid]::NewGuid().ToString("N"))
         try {
