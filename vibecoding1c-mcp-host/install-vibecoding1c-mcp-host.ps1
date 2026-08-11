@@ -864,6 +864,15 @@ function Test-MantisTicketServer {
     return ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "mantis")
 }
 
+function Test-CodeCheckerServer {
+    param([object]$Server)
+    return ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "codechecker")
+}
+
+function Get-CodeCheckerSourceRoot {
+    return (Join-Path $PSScriptRoot "codechecker-overlay")
+}
+
 function Get-BookStackProductDocsSourceRoot {
     return (Join-Path $PSScriptRoot "bookstack-product-docs-mcp")
 }
@@ -877,6 +886,15 @@ function Ensure-ServerDockerImageAvailable {
         [object]$Server,
         [string]$Image
     )
+    if (Test-CodeCheckerServer -Server $Server) {
+        $sourceRoot = Get-CodeCheckerSourceRoot
+        if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot "Dockerfile") -PathType Leaf)) {
+            throw "Codechecker overlay Dockerfile was not found: $sourceRoot"
+        }
+        Write-Host "Building codechecker overlay image: $Image"
+        Invoke-DockerCommandChecked -Arguments @("build", "-t", $Image, $sourceRoot) -TimeoutSec 900 -Description "docker build codechecker overlay"
+        return
+    }
     if (Test-BookStackProductDocsServer -Server $Server) {
         $sourceRoot = Get-BookStackProductDocsSourceRoot
         if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot "Dockerfile") -PathType Leaf)) {

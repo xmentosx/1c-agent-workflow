@@ -94,6 +94,20 @@
         ($output -join [Environment]::NewLine) | Should -Match "Ran 15 tests"
     }
 
+    It "retries only transient codechecker network disconnects with bounded fresh sessions" {
+        $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-overlay\test_retry_policy.py"
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            $output = & python $testPath 2>&1
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+        ($output -join [Environment]::NewLine) | Should -Match "OK"
+    }
+
     It "keeps the Mantis MCP transport stateless" {
         $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\test_server.py"
         $previousErrorActionPreference = $ErrorActionPreference
@@ -854,6 +868,10 @@ services:
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\server.py") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\requirements.txt") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\test_server.py") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-overlay\Dockerfile") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-overlay\retry_policy.py") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-overlay\patch_mcp_server.py") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-overlay\test_retry_policy.py") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\Dockerfile") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\mcp-tools-list-proxy.js") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\mcp-tools-list-catalog.js") -PathType Leaf) | Should -Be $true
@@ -1000,6 +1018,7 @@ services:
         $McpHostText | Should -Match "Get-BookStackProductDocsServerDefinition"
         $McpHostText | Should -Match '(?s)Get-BookStackProductDocsServerDefinition.*embedding = \$true'
         $McpHostText | Should -Match "Ensure-ServerDockerImageAvailable"
+        $McpHostText | Should -Match "Building codechecker overlay image"
         $McpHostText | Should -Match "BOOKSTACK_BASE_URL"
         $McpHostText | Should -Match "BookStack-product-docs-mcp"
         $McpHostText | Should -Match "Get-MantisTicketServerDefinition"
