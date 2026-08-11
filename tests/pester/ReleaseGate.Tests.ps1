@@ -120,6 +120,44 @@ Describe "Release gate scripts" {
         }
     }
 
+    It "does not overwrite the Designer fingerprint invalidation after a release snapshot restore" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-restore-order-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $snapshotPath = Join-Path $tempRoot "snapshot.dt"
+            Set-Content -LiteralPath $snapshotPath -Value "fixture"
+
+            $tokens = $null
+            $errors = $null
+            $runnerAst = [System.Management.Automation.Language.Parser]::ParseFile(
+                (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1"),
+                [ref]$tokens,
+                [ref]$errors
+            )
+            @($errors) | Should -BeNullOrEmpty
+            $functionAst = $runnerAst.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq "Restore-E2EInfobaseSnapshot"
+            }, $true)
+            . ([scriptblock]::Create($functionAst.Extent.Text))
+
+            $script:worktreePath = $tempRoot
+            $calls = [System.Collections.Generic.List[string]]::new()
+            function Assert-E2ECheckpointFile { param($Path, $Sha256, $Label) }
+            function Restore-E2EStateFiles { param($Record) $calls.Add("state") }
+            function Invoke-E2EHelper { param($Action, $TimeoutSeconds, $AdditionalArguments) $calls.Add("helper:$Action") }
+
+            Restore-E2EInfobaseSnapshot `
+                -Snapshot ([pscustomobject]@{ path = $snapshotPath; sha256 = "fixture" }) `
+                -StateFiles ([pscustomobject]@{})
+
+            @($calls) | Should -Be @("state", "helper:release-e2e-restore")
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "sets the noninteractive unsafe-action mode only in a disposable seed worktree" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-seed-env-" + [guid]::NewGuid().ToString("N"))
         $envPath = Join-Path $tempRoot ".dev.env"

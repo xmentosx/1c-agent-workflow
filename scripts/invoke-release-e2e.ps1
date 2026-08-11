@@ -688,7 +688,6 @@ function Restore-E2EInfobaseSnapshot {
     $relative = ([string]$Snapshot.path).Substring($worktreePath.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
     Restore-E2EStateFiles -Record $StateFiles
     Invoke-E2EHelper -Action "release-e2e-restore" -TimeoutSeconds 7200 -AdditionalArguments @("-ReleaseSnapshotPath", $relative) | Out-Null
-    Restore-E2EStateFiles -Record $StateFiles
 }
 
 function Set-E2EStageStatus {
