@@ -107,8 +107,9 @@ notepad .\host.config.json
 - `pythonPath`: путь к реальному Python 3 executable для `norkins/metadata`; можно оставить `python`, если PATH точно указывает на рабочий Python.
 - `secrets.ONEC_AI_TOKEN`: локальный ключ 1C Напарника для `1CCodeChecker`; рабочий `host.config.json` не коммитится.
 - Для `codechecker` setup собирает локальный overlay поверх закреплённого upstream image digest. Overlay
-  добавляет только ограниченные повторы временных сетевых обрывов `check_1c_code` с новой сессией;
-  direct mode и `assistant_uuid` upstream-клиента не изменяются.
+  применяет общий ограниченный retry временных сетевых обрывов к безопасным prompt/direct операциям:
+  каждая обычная попытка использует новую сессию, а продолжение `ask_1c_ai` сохраняет reused session.
+  Direct mode, формат upstream-вызовов и `assistant_uuid` не изменяются; постоянные ошибки не повторяются.
 - `helpSearchServer.platformVersion`: версия платформы 1C для `HelpSearchServer`.
 - `helpSearchServer.platformBinPath`: локальный каталог `bin` платформы 1C для `HelpSearchServer`.
 - `sslSearchServer.bspVersion`: версия БСП для `SSLSearchServer`.

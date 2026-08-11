@@ -94,7 +94,7 @@
         ($output -join [Environment]::NewLine) | Should -Match "Ran 15 tests"
     }
 
-    It "retries only transient codechecker network disconnects with bounded fresh sessions" {
+    It "applies the shared codechecker transport retry contract" {
         $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-overlay\test_retry_policy.py"
         $previousErrorActionPreference = $ErrorActionPreference
         try {
