@@ -26,6 +26,9 @@ Describe "Local quality gate contract" {
         @($unknown.unknownPaths) | Should -Be @("unowned/новый файл.ps1")
         $retired = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("tests/pester/TriageContract.Tests.ps1")
         @($retired.tests) | Should -Be @("tests/pester/ParserDocsBudgets.Tests.ps1")
+        $sourceRules = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("AGENTS.md")
+        @($sourceRules.tests) | Should -Contain "tests/pester/ParserDocsBudgets.Tests.ps1"
+        @($sourceRules.tests) | Should -Contain "tests/pester/SourceDelivery.Tests.ps1"
         $roctupOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/lib/agent-1c.roctup-mcp.ps1")
         @($roctupOnly.contracts.id) | Should -Be @("roctup-port-lifecycle")
         @($roctupOnly.tests) | Should -Be @("tests/pester/RoctupPortLifecycle.Tests.ps1")

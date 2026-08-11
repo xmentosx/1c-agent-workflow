@@ -152,7 +152,7 @@
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/ParserDocsBudgets.Tests.ps1",
-      "paths": ["README.md", "LICENSE*", "docs/*", ".gitignore", ".gitattributes", ".agents/skills/*/SKILL.md", ".agents/skills/1c-workflow/references/*"],
+      "paths": ["AGENTS.md", "README.md", "LICENSE*", "docs/*", ".gitignore", ".gitattributes", ".agents/skills/*/SKILL.md", ".agents/skills/1c-workflow/references/*"],
       "tests": ["tests/pester/ParserDocsBudgets.Tests.ps1"]
     },
     {
