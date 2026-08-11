@@ -36,6 +36,8 @@ For an unknown interaction, optionally record the shortest action with `user_act
 
 `run_scenario` with `mode=reloadAndRunFromLine` and the real `lineNumber` can shorten diagnosis, but it may skip setup and cannot certify the scenario. Rerun the complete focused scenario before drawing a behavioral conclusion; `/itl-check` remains the gate.
 
+`run_scenario` progress is conditional. Vanessa emits `step N/M` notifications, and the facade forwards them only when the calling MCP client supplied a `progressToken`; the client must also expose those notifications to the user. Without that metadata, no intermediate message is promised. The Vanessa backend uses one UI session, so a concurrent `get_VanessaAutomation_state` can wait behind the active scenario and is not an independent liveness probe. Set the caller timeout from the expected scenario duration, do not classify silence alone as a hang, and use the facade evidence fields `progressTokenProvided` and `progressNotificationsForwarded` to distinguish missing client metadata, absent upstream notifications, and delivered progress after the call completes.
+
 ## Failure Handling
 
 If a call fails, report the structured facade error and its log path when present. Classify facade/backend/TestClient/path/unsafe-action failures as runner infrastructure and keep a previously passing feature unchanged. Treat syntax, unsupported-step, assertion, and product-behavior failures separately; do not relabel them as runner failures. Ignore stale or foreign-instance evidence. Then use static analysis only as an explicitly labelled diagnostic fallback: it cannot prove the missing runtime behavior.

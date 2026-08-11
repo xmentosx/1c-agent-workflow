@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -32,7 +33,7 @@ type runtime struct {
 	vanessaConnectWait time.Duration
 	logger             *slog.Logger
 	progressMu         sync.Mutex
-	progress           map[string]*mcp.ServerSession
+	progress           map[string]*progressRoute
 
 	backend           *backendInfo
 	session           *mcp.ClientSession
@@ -50,6 +51,11 @@ type runtime struct {
 	testClientPID     int
 	testClientPort    int
 	suppressEvidence  bool
+}
+
+type progressRoute struct {
+	session   *mcp.ServerSession
+	forwarded atomic.Uint64
 }
 
 const (
@@ -73,6 +79,7 @@ func (r *runtime) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.Call
 }
 
 func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolName string, arguments any) (*mcp.CallToolResult, error) {
+	progressTokenProvided := req.Params.GetProgressToken() != nil
 	tool := r.catalog.tool(toolName)
 	if tool == nil {
 		return toolError("ITL_ONDEMAND_TOOL_UNKNOWN", "tool is not present in the verified compatibility catalog", map[string]any{"name": toolName, "repair": "Call resolve_tool with an exact name or short operation description."}), nil
@@ -141,7 +148,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	}
 	if preflight := r.preflightVanessaTestClientLocked(ctx, toolName); preflight != nil {
 		r.attachVanessaTestClientMetaLocked(preflight)
-		r.writeEvidenceLocked(toolName, arguments, "failed", toolResultCode(preflight), resultEvidenceMessage(preflight, nil), r.instanceID, r.backend)
+		r.writeEvidenceLocked(toolName, arguments, "failed", toolResultCode(preflight), resultEvidenceMessage(preflight, nil), r.instanceID, r.backend, progressTokenProvided, 0)
 		r.completeCallLocked()
 		r.mu.Unlock()
 		return preflight, nil
@@ -154,9 +161,11 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 
 	params := &mcp.CallToolParams{Name: toolName, Arguments: arguments, Meta: req.Params.Meta}
 	progressKey := progressTokenKey(req.Params.GetProgressToken())
+	var route *progressRoute
 	if progressKey != "" {
+		route = &progressRoute{session: req.Session}
 		r.progressMu.Lock()
-		r.progress[progressKey] = req.Session
+		r.progress[progressKey] = route
 		r.progressMu.Unlock()
 		defer func() {
 			r.progressMu.Lock()
@@ -174,7 +183,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	if forwardedProtocolCode != "" {
 		resultCode = forwardedProtocolCode
 	}
-	r.writeEvidenceLocked(toolName, arguments, outcome, resultCode, resultEvidenceMessageForOutcome(outcome, result, err), callInstanceID, callBackend)
+	r.writeEvidenceLocked(toolName, arguments, outcome, resultCode, resultEvidenceMessageForOutcome(outcome, result, err), callInstanceID, callBackend, progressTokenProvided, progressForwardedCount(route))
 	if err != nil && isConnectionRefused(err) {
 		recovery, recoveryErr := r.recoverLocked(ctx, session, callInstanceID, callBackend)
 		if recoveryErr != nil {
@@ -190,7 +199,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		}
 		if preflight := r.preflightVanessaTestClientLocked(ctx, toolName); preflight != nil {
 			r.attachVanessaTestClientMetaLocked(preflight)
-			r.writeEvidenceLocked(toolName, arguments, "failed", toolResultCode(preflight), resultEvidenceMessage(preflight, nil), r.instanceID, r.backend)
+			r.writeEvidenceLocked(toolName, arguments, "failed", toolResultCode(preflight), resultEvidenceMessage(preflight, nil), r.instanceID, r.backend, progressTokenProvided, progressForwardedCount(route))
 			r.completeCallLocked()
 			r.mu.Unlock()
 			return preflight, nil
@@ -207,7 +216,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		r.applyVanessaTestClientResultLocked(toolName, retryResult)
 		r.attachVanessaTestClientMetaLocked(retryResult)
 		retryOutcome, retryCode := callOutcome(retryResult, retryErr)
-		r.writeEvidenceLocked(toolName, arguments, retryOutcome, retryCode, resultEvidenceMessageForOutcome(retryOutcome, retryResult, retryErr), retryInstanceID, retryBackend)
+		r.writeEvidenceLocked(toolName, arguments, retryOutcome, retryCode, resultEvidenceMessageForOutcome(retryOutcome, retryResult, retryErr), retryInstanceID, retryBackend, progressTokenProvided, progressForwardedCount(route))
 		r.completeCallLocked()
 		r.mu.Unlock()
 		if retryErr != nil {
@@ -683,16 +692,23 @@ func progressTokenKey(token any) string {
 	return string(raw)
 }
 
+func progressForwardedCount(route *progressRoute) uint64 {
+	if route == nil {
+		return 0
+	}
+	return route.forwarded.Load()
+}
+
 func (r *runtime) forwardProgress(ctx context.Context, params *mcp.ProgressNotificationParams) {
 	key := progressTokenKey(params.ProgressToken)
 	if key == "" {
 		return
 	}
 	r.progressMu.Lock()
-	session := r.progress[key]
+	route := r.progress[key]
 	r.progressMu.Unlock()
-	if session != nil {
-		_ = session.NotifyProgress(ctx, params)
+	if route != nil && route.session.NotifyProgress(ctx, params) == nil {
+		route.forwarded.Add(1)
 	}
 }
 
@@ -1190,7 +1206,7 @@ func (r *runtime) close(ctx context.Context) error {
 	return fmt.Errorf("cleanup owned backend after stdio EOF after 3 attempts: %w", lastErr)
 }
 
-func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, resultCode, resultMessage, instanceID string, backend *backendInfo) {
+func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, resultCode, resultMessage, instanceID string, backend *backendInfo, progressTokenProvided bool, progressNotificationsForwarded uint64) {
 	if r.suppressEvidence {
 		return
 	}
@@ -1210,12 +1226,13 @@ func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, r
 		logPath = backend.LogPath
 	}
 	entry := map[string]any{
-		"schemaVersion": 2, "family": r.family, "instanceId": instanceID,
+		"schemaVersion": 3, "family": r.family, "instanceId": instanceID,
 		"backendVersion": backend.BackendVersion, "catalogSha256": r.catalog.SHA256,
 		"tool": toolName, "outcome": outcome, "resultCode": resultCode,
 		"resultMessage": resultMessage, "logPath": logPath,
 		"argumentsSha256": fmt.Sprintf("%x", argumentsHash[:]),
 		"featurePath":     featurePath, "featureSha256": featureSHA, "scenarioLine": scenarioLine,
+		"progressTokenProvided": progressTokenProvided, "progressNotificationsForwarded": progressNotificationsForwarded,
 		"recordedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	raw, _ := json.Marshal(entry)

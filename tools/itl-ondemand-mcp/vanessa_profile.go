@@ -70,7 +70,7 @@ func runVanessaProfileStart(args []string) error {
 		projectRoot: root, family: "vanessa-ui", instanceID: *instanceID,
 		idle: time.Hour, catalogWait: 30 * time.Second,
 		logger:             slog.New(slog.NewJSONHandler(os.Stderr, nil)),
-		progress:           make(map[string]*mcp.ServerSession),
+		progress:           make(map[string]*progressRoute),
 		vanessaConnectWait: time.Minute,
 		suppressEvidence:   true,
 	}

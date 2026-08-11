@@ -80,7 +80,7 @@ func run(args []string) error {
 		catalog: catalog, broker: broker, projectRoot: root, family: *family,
 		instanceID: instanceID, idle: *idle, catalogWait: 30 * time.Second, logger: logger,
 		vanessaConnectWait: 60 * time.Second,
-		progress:           make(map[string]*mcp.ServerSession),
+		progress:           make(map[string]*progressRoute),
 	}
 	serverName := "itl-roctup-data"
 	if *family == "vanessa-ui" {

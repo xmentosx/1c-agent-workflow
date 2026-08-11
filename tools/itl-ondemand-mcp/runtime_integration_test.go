@@ -204,7 +204,7 @@ func newFacadeSessionForFamily(t *testing.T, family string, tools []*mcp.Tool, b
 	rt := &runtime{
 		catalog: &loadedCatalog{SHA256: "catalog", Data: catalogFile{SchemaVersion: 1, Family: family, Tools: tools}},
 		broker:  broker, projectRoot: t.TempDir(), family: family, instanceID: "0123456789abcdef0123456789abcdef",
-		idle: idle, logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), progress: make(map[string]*mcp.ServerSession),
+		idle: idle, logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), progress: make(map[string]*progressRoute),
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: serverName, Version: version}, nil)
 	for _, definition := range tools {
@@ -242,7 +242,7 @@ func newGatewayFacadeSession(t *testing.T, family string, tools []*mcp.Tool, bro
 	rt := &runtime{
 		catalog: &loadedCatalog{SHA256: "catalog", Data: catalogFile{SchemaVersion: 1, Family: family, Tools: tools}},
 		broker:  broker, projectRoot: t.TempDir(), family: family, instanceID: "0123456789abcdef0123456789abcdef",
-		idle: time.Minute, logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), progress: make(map[string]*mcp.ServerSession),
+		idle: time.Minute, logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), progress: make(map[string]*progressRoute),
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "itl-" + family, Version: version}, nil)
 	addGatewayTools(server, rt)
@@ -352,7 +352,7 @@ func TestRuntimeLazyHTTPPaginationCallAndProgress(t *testing.T) {
 	_, backend := newBackend(t, tools, true)
 	broker := &fakeBroker{info: &backendInfo{URL: backend.URL, BackendVersion: "test"}}
 	progress := make(chan *mcp.ProgressNotificationParams, 1)
-	_, session := newFacadeSession(t, tools, broker, time.Minute, progress)
+	rt, session := newFacadeSession(t, tools, broker, time.Minute, progress)
 
 	listed, err := session.ListTools(context.Background(), nil)
 	if err != nil {
@@ -385,6 +385,18 @@ func TestRuntimeLazyHTTPPaginationCallAndProgress(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("progress was not forwarded")
+	}
+	evidencePath := filepath.Join(rt.projectRoot, ".agent-1c", "mcp", "ondemand", "roctup", rt.instanceID+".evidence.jsonl")
+	raw, err := os.ReadFile(evidencePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(raw), &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence["schemaVersion"] != float64(3) || evidence["progressTokenProvided"] != true || evidence["progressNotificationsForwarded"] != float64(1) {
+		t.Fatalf("progress diagnostics were not persisted: %#v", evidence)
 	}
 }
 
@@ -1378,7 +1390,7 @@ func TestRuntimeVanessaSemanticFailureWritesBoundFailedEvidence(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(raw), &evidence); err != nil {
 		t.Fatal(err)
 	}
-	if evidence["schemaVersion"] != float64(2) || evidence["outcome"] != "failed" || evidence["resultCode"] != "ITL_VANESSA_TOOL_RESULT_FAILED" {
+	if evidence["schemaVersion"] != float64(3) || evidence["outcome"] != "failed" || evidence["resultCode"] != "ITL_VANESSA_TOOL_RESULT_FAILED" {
 		t.Fatalf("unexpected failure evidence: %#v", evidence)
 	}
 	if evidence["resultMessage"] != "Vanessa returned a runtime/editor failure" || evidence["logPath"] != "backend.log" {
@@ -1386,6 +1398,9 @@ func TestRuntimeVanessaSemanticFailureWritesBoundFailedEvidence(t *testing.T) {
 	}
 	if evidence["featurePath"] != "tests/features/demo.feature" || len(evidence["featureSha256"].(string)) != 64 || len(evidence["argumentsSha256"].(string)) != 64 {
 		t.Fatalf("failure evidence was not feature-bound: %#v", evidence)
+	}
+	if evidence["progressTokenProvided"] != false || evidence["progressNotificationsForwarded"] != float64(0) {
+		t.Fatalf("absent progress metadata was not diagnosed: %#v", evidence)
 	}
 }
 
