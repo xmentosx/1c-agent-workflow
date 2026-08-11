@@ -10,6 +10,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+$utf8 = [Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8
+[Console]::OutputEncoding = $utf8
+$OutputEncoding = $utf8
 $CandidateRoot = [IO.Path]::GetFullPath($CandidateRoot)
 $ProjectRoot = [IO.Path]::GetFullPath($ProjectRoot)
 $AiRulesSource = [IO.Path]::GetFullPath($AiRulesSource)
