@@ -132,8 +132,86 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
         $result | Should -BeTrue
     }
 
+    It "builds canonical file infobase connection strings for native 1C arguments" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $cyrillicBase = -join ([char[]](0x0411, 0x0430, 0x0437, 0x0430))
+            $cyrillicFolder = -join ([char[]](0x041A, 0x0430, 0x0442, 0x0430, 0x043B, 0x043E, 0x0433))
+            @(
+                New-FileInfoBaseConnectionString -Path "C:\base"
+                New-FileInfoBaseConnectionString -Path "C:\base with spaces"
+                New-FileInfoBaseConnectionString -Path "C:\$cyrillicBase"
+                New-FileInfoBaseConnectionString -Path "C:\$cyrillicFolder with spaces\$cyrillicBase"
+            )
+        }
+
+        $cyrillicBase = -join ([char[]](0x0411, 0x0430, 0x0437, 0x0430))
+        $cyrillicFolder = -join ([char[]](0x041A, 0x0430, 0x0442, 0x0430, 0x043B, 0x043E, 0x0433))
+        $result | Should -Be @(
+            'File="C:\base";'
+            'File="C:\base with spaces";'
+            "File=`"C:\$cyrillicBase`";"
+            "File=`"C:\$cyrillicFolder with spaces\$cyrillicBase`";"
+        )
+    }
+
+    It "preserves the connection-string quotes through the native process launcher" {
+        $cyrillicSuffix = -join ([char[]](0x041A, 0x0438, 0x0440, 0x0438, 0x043B, 0x043B, 0x0438, 0x0446, 0x0430))
+        $cyrillicBase = -join ([char[]](0x0431, 0x0430, 0x0437, 0x0430))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl native argv $cyrillicSuffix " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $probePath = Join-Path $tempRoot "capture-argument.ps1"
+            $capturedPath = Join-Path $tempRoot "captured.txt"
+            $probeText = @'
+param([string]$OutputPath, [string]$Value)
+[IO.File]::WriteAllText($OutputPath, $Value, (New-Object Text.UTF8Encoding $false))
+'@
+            [IO.File]::WriteAllText($probePath, $probeText, (New-Object Text.UTF8Encoding $false))
+
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $connectionString = New-FileInfoBaseConnectionString -Path (Join-Path $tempRoot "service $cyrillicBase")
+                $processResult = Invoke-NativeProcessAndWaitResult `
+                    -FilePath (Get-Command powershell.exe -ErrorAction Stop).Source `
+                    -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $probePath, $capturedPath, $connectionString) `
+                    -TimeoutSeconds 30
+                [pscustomobject]@{
+                    connectionString = $connectionString
+                    captured = [IO.File]::ReadAllText($capturedPath, [Text.Encoding]::UTF8)
+                    exitCode = $processResult.exitCode
+                    timedOut = $processResult.timedOut
+                }
+            }
+
+            $result.exitCode | Should -Be 0
+            $result.timedOut | Should -BeFalse
+            $result.captured | Should -Be $result.connectionString
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps CREATEINFOBASE connection quotes literal for the 1C raw command-line parser" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $cyrillicBase = -join ([char[]](0x0431, 0x0430, 0x0437, 0x0430))
+            $connectionString = New-FileInfoBaseConnectionString -Path "C:\service path\$cyrillicBase"
+            $arguments = @("CREATEINFOBASE", $connectionString, "/DisableStartupDialogs", "/Out", "C:\log path\create.log")
+            [pscustomobject]@{
+                standard = Join-NativeCommandLineArguments -Arguments $arguments
+                oneC = Join-OneCCreateInfoBaseCommandLineArguments -Arguments $arguments
+                expected = 'CREATEINFOBASE File="C:\service path\' + $cyrillicBase + '"; /DisableStartupDialogs /Out "C:\log path\create.log"'
+            }
+        }
+
+        $result.standard | Should -Match ([regex]::Escape('\"'))
+        $result.oneC | Should -Be $result.expected
+        $result.oneC | Should -Not -Match ([regex]::Escape('\"'))
+    }
+
     It "creates and restores one qualified branch-local service infobase through guarded 1C calls" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-service-base-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl Vanessa service " + [guid]::NewGuid().ToString("N"))
         try {
             $result = & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -153,6 +231,7 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
                 $script:capturedDesignerArgs = @()
                 $script:capturedDesignerUser = $null
                 $script:capturedPurpose = ""
+                $script:capturedCreateSyntax = $false
                 $script:updates = $null
                 function Get-PlatformPath { return "C:\fake\1cv8.exe" }
                 function Invoke-WithOneCSessionAdmissionContext {
@@ -161,9 +240,13 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
                     return (& $ScriptBlock)
                 }
                 function Invoke-NativeProcessAndWaitResult {
-                    param([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds)
+                    param([string]$FilePath, [string[]]$Arguments, [switch]$OneCCreateInfoBaseSyntax, [int]$TimeoutSeconds)
                     $script:capturedArguments = @($Arguments)
-                    $createdPath = [string]$Arguments[1].Substring(5)
+                    $script:capturedCreateSyntax = $OneCCreateInfoBaseSyntax.IsPresent
+                    if ([string]$Arguments[1] -notmatch '^File="(?<path>[^"]+)";$') {
+                        throw "Unexpected CREATEINFOBASE connection string: $($Arguments[1])"
+                    }
+                    $createdPath = [string]$Matches['path']
                     New-Item -ItemType Directory -Force -Path $createdPath | Out-Null
                     [IO.File]::WriteAllText((Join-Path $createdPath "1Cv8.1CD"), "fixture")
                     return [pscustomobject]@{ exitCode = 0; timedOut = $false }
@@ -180,7 +263,9 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
                     arguments = @($script:capturedArguments)
                     designerArgs = @($script:capturedDesignerArgs)
                     designerUser = $script:capturedDesignerUser
+                    lastLogPath = $script:LastLogPath
                     purpose = $script:capturedPurpose
+                    createSyntax = $script:capturedCreateSyntax
                     updates = $script:updates
                 }
             }
@@ -191,10 +276,11 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
             $result.service.user | Should -Be "itl_vanessa_service"
             (Split-Path -Leaf $result.service.path) | Should -Match '^vanessa-service-[a-f0-9]{32}$'
             $result.arguments[0] | Should -Be "CREATEINFOBASE"
-            $result.arguments | Should -Contain ('File=' + $result.service.path)
-            @($result.arguments | Where-Object { $_ -like 'File=*' })[0] | Should -Not -Match '"'
+            $result.arguments | Should -Contain ('File="' + $result.service.path + '";')
             $result.arguments | Should -Not -Contain "/AddInList"
+            $result.arguments[[Array]::IndexOf($result.arguments, "/Out") + 1] | Should -Be $result.lastLogPath
             $result.purpose | Should -Be "vanessa-service-infobase-create"
+            $result.createSyntax | Should -BeTrue
             $result.designerArgs[0] | Should -Be "/RestoreIB"
             (Split-Path -Leaf $result.designerArgs[1]) | Should -Be "service-infobase.dt"
             $result.designerUser | Should -Be ""
@@ -203,6 +289,89 @@ Describe "Vanessa Designer Agent safe-mode reconciliation" {
             $result.updates.vanessaServiceInfoBaseSchemaVersion | Should -Be 3
             $result.updates.vanessaServiceInfoBaseTemplateSha256 | Should -Be $result.service.templateSha256
             $result.updates.vanessaServiceInfoBaseUser | Should -Be "itl_vanessa_service"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "reuses a qualified service infobase without another native or Designer call" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl Vanessa reuse " + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:ProjectRoot = $tempRoot
+                $template = Get-VanessaServiceInfoBaseTemplate
+                $generation = "b" * 32
+                $servicePath = Join-Path $tempRoot ".agent-1c\infobases\vanessa-service-$generation"
+                New-Item -ItemType Directory -Force -Path $servicePath | Out-Null
+                [IO.File]::WriteAllText((Join-Path $servicePath "1Cv8.1CD"), "fixture")
+                $marker = [ordered]@{
+                    schemaVersion = 1
+                    generation = $generation
+                    templateSha256 = $template.sha256
+                    serviceUser = $template.user
+                }
+                Write-Utf8TextAtomic -Path (Join-Path $servicePath ".itl-service-template.json") -Value (($marker | ConvertTo-Json) + [Environment]::NewLine)
+                $state = [pscustomobject]@{
+                    devBranchName = "demo"
+                    vanessaServiceInfoBaseKind = "file"
+                    vanessaServiceInfoBasePath = $servicePath
+                    vanessaServiceInfoBaseGeneration = $generation
+                    vanessaServiceInfoBaseSchemaVersion = 3
+                    vanessaServiceInfoBaseTemplateSha256 = $template.sha256
+                    vanessaServiceInfoBaseUser = $template.user
+                }
+                function Invoke-NativeProcessAndWaitResult { throw "Native CREATEINFOBASE must not run for a qualified service infobase." }
+                function Invoke-Designer { throw "Designer restore must not run for a qualified service infobase." }
+                Ensure-VanessaServiceInfoBase -State $state
+            }
+
+            $result.created | Should -BeFalse
+            $result.restored | Should -BeFalse
+            $result.path | Should -Be (Join-Path $tempRoot ".agent-1c\infobases\vanessa-service-$('b' * 32)")
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "rejects a non-empty invalid owned service directory before starting 1C" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl Vanessa invalid " + [guid]::NewGuid().ToString("N"))
+        try {
+            $message = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:ProjectRoot = $tempRoot
+                $template = Get-VanessaServiceInfoBaseTemplate
+                $generation = "c" * 32
+                $servicePath = Join-Path $tempRoot ".agent-1c\infobases\vanessa-service-$generation"
+                New-Item -ItemType Directory -Force -Path $servicePath | Out-Null
+                $marker = [ordered]@{
+                    schemaVersion = 1
+                    generation = $generation
+                    templateSha256 = $template.sha256
+                    serviceUser = $template.user
+                }
+                Write-Utf8TextAtomic -Path (Join-Path $servicePath ".itl-service-template.json") -Value (($marker | ConvertTo-Json) + [Environment]::NewLine)
+                [IO.File]::WriteAllText((Join-Path $servicePath "unexpected.txt"), "do not delete")
+                $state = [pscustomobject]@{
+                    devBranchName = "demo"
+                    vanessaServiceInfoBaseKind = "file"
+                    vanessaServiceInfoBasePath = $servicePath
+                    vanessaServiceInfoBaseGeneration = $generation
+                    vanessaServiceInfoBaseSchemaVersion = 3
+                    vanessaServiceInfoBaseTemplateSha256 = $template.sha256
+                    vanessaServiceInfoBaseUser = $template.user
+                }
+                function Get-PlatformPath { throw "1C must not start for a non-empty invalid service directory." }
+                try {
+                    Ensure-VanessaServiceInfoBase -State $state | Out-Null
+                    "NO_ERROR"
+                } catch {
+                    $_.Exception.Message
+                }
+            }
+
+            $message | Should -Match '^ITL_VANESSA_SERVICE_INFOBASE_INVALID:'
+            Test-Path -LiteralPath (Join-Path $tempRoot ".agent-1c\infobases\vanessa-service-$('c' * 32)\unexpected.txt") | Should -BeTrue
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

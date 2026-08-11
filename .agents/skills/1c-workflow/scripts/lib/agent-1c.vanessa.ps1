@@ -2700,14 +2700,15 @@ function Ensure-VanessaServiceInfoBase {
         $logsPath = Resolve-ProjectPath (Get-ConfigValue -Path "logsPath" -Default "logs/1c")
         New-Item -ItemType Directory -Force -Path $logsPath | Out-Null
         $logPath = New-TimestampedFilePath -Directory $logsPath -Prefix "1c-vanessa-service-create-" -Extension ".log"
+        $script:LastLogPath = $logPath
         $arguments = @(
             "CREATEINFOBASE",
-            ('File=' + $path),
+            (New-FileInfoBaseConnectionString -Path $path),
             "/DisableStartupDialogs",
             "/Out", $logPath
         )
         Write-Host "Creating branch-local empty Vanessa service infobase: $path"
-        Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $arguments)"
+        Write-Host "1C command: $(ConvertTo-NativeCommandLineArgument $platformPath) $(Join-OneCCreateInfoBaseCommandLineArguments -Arguments $arguments)"
         $nativeArguments = @($arguments)
         $result = Invoke-WithOneCSessionAdmissionContext `
             -InfoBaseKind "file" `
@@ -2715,7 +2716,11 @@ function Ensure-VanessaServiceInfoBase {
             -RequiredSessions 1 `
             -Purpose "vanessa-service-infobase-create" `
             -ScriptBlock {
-                Invoke-NativeProcessAndWaitResult -FilePath $platformPath -Arguments $nativeArguments -TimeoutSeconds 300
+                Invoke-NativeProcessAndWaitResult `
+                    -FilePath $platformPath `
+                    -Arguments $nativeArguments `
+                    -OneCCreateInfoBaseSyntax `
+                    -TimeoutSeconds 300
             }
         if ($result.timedOut -or $result.exitCode -ne 0 -or
             -not (Test-Path -LiteralPath $databasePath -PathType Leaf -ErrorAction SilentlyContinue)) {

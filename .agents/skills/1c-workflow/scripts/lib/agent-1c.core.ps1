@@ -4677,6 +4677,17 @@ function Assert-InfoBaseAvailable {
     }
 }
 
+function New-FileInfoBaseConnectionString {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $resolvedPath = Resolve-InfoBasePath $Path
+    if ([string]::IsNullOrWhiteSpace($resolvedPath)) {
+        throw "File infobase path is empty."
+    }
+
+    return 'File="' + $resolvedPath + '";'
+}
+
 function New-InfobaseArgs {
     param(
         [string]$Kind,
@@ -4756,6 +4767,27 @@ function Join-NativeCommandLineArguments {
     }
 
     return ($quoted -join " ")
+}
+
+function Join-OneCCreateInfoBaseCommandLineArguments {
+    param([string[]]$Arguments)
+
+    if ($Arguments.Count -lt 2 -or $Arguments[0] -cne "CREATEINFOBASE") {
+        throw "CREATEINFOBASE native arguments must start with CREATEINFOBASE and a file connection string."
+    }
+    $connectionString = [string]$Arguments[1]
+    if ($connectionString -notmatch '^File="[^"\r\n]+";?$') {
+        throw "CREATEINFOBASE file connection string is invalid: $connectionString"
+    }
+
+    # 1C parses CREATEINFOBASE from the raw Windows command line rather than
+    # through the usual CommandLineToArgvW rules. Keep the connection-string
+    # quotes literal; backslash-escaping them makes 1C reject the connection.
+    $parts = @((ConvertTo-NativeCommandLineArgument $Arguments[0]), $connectionString)
+    for ($index = 2; $index -lt $Arguments.Count; $index++) {
+        $parts += ConvertTo-NativeCommandLineArgument $Arguments[$index]
+    }
+    return ($parts -join " ")
 }
 
 function Format-SafeCommandLine {
@@ -5424,6 +5456,7 @@ function Invoke-NativeProcessAndWaitResult {
     param(
         [string]$FilePath,
         [string[]]$Arguments,
+        [switch]$OneCCreateInfoBaseSyntax,
         [int]$TimeoutSeconds = 0,
         [scriptblock]$OnTimeout = $null,
         [scriptblock]$CompletionProbe = $null,
@@ -5433,7 +5466,11 @@ function Invoke-NativeProcessAndWaitResult {
     )
 
     $script:LastNativeProcessStarted = $false
-    $argumentLine = Join-NativeCommandLineArguments -Arguments $Arguments
+    $argumentLine = if ($OneCCreateInfoBaseSyntax) {
+        Join-OneCCreateInfoBaseCommandLineArguments -Arguments $Arguments
+    } else {
+        Join-NativeCommandLineArguments -Arguments $Arguments
+    }
     $process = Invoke-OneCSessionProcessStart -StartProcess {
         Start-Process `
             -FilePath $FilePath `

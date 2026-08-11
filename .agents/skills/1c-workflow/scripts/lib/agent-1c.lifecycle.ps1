@@ -4485,8 +4485,7 @@ function New-LauncherConnectString {
     )
 
     if ($InfoBaseKind -eq "file") {
-        $resolved = Resolve-InfoBasePath $InfoBasePath
-        return "File=`"$resolved`";"
+        return (New-FileInfoBaseConnectionString -Path $InfoBasePath)
     }
     if ($InfoBaseKind -eq "server") {
         return (Require-Value "development branch server infobase connection string" $InfoBasePath)
