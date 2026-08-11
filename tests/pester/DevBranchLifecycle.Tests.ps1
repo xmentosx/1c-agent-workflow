@@ -928,6 +928,76 @@
         $full.load.loadModeUsed | Should -Be "full"
     }
 
+    It "removes a stale ConfigDumpInfo cursor only for a restore-recovery full load" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-dump-info-reset-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $exportPath = Join-Path $tempRoot "src\cf"
+            New-Item -ItemType Directory -Force -Path $exportPath | Out-Null
+            $dumpInfoPath = Join-Path $exportPath "ConfigDumpInfo.xml"
+            Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "stale-cursor"
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:CursorExistedAtDesignerStart = $true
+                function Invoke-Designer {
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                    $script:CursorExistedAtDesignerStart = Test-Path -LiteralPath $dumpInfoPath -PathType Leaf
+                    Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "fresh-cursor"
+                    $script:LastLogPath = "C:\logs\full.log"
+                }
+                $load = Invoke-ConfigLoadWithFallback -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -AbsoluteExportPath $exportPath -ListFilePath "" -FileCount 1 -Mode Full -ResetConfigDumpInfo 6>$null
+                [pscustomobject]@{
+                    existedAtStart = $script:CursorExistedAtDesignerStart
+                    cursor = (Get-Content -LiteralPath $dumpInfoPath -Raw).Trim()
+                    load = $load
+                }
+            }
+
+            $result.existedAtStart | Should -BeFalse
+            $result.cursor | Should -Be "fresh-cursor"
+            $result.load.loadModeUsed | Should -Be "full"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "restores ConfigDumpInfo when a cursor-free recovery load fails" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-dump-info-reset-fail-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $exportPath = Join-Path $tempRoot "src\cf"
+            New-Item -ItemType Directory -Force -Path $exportPath | Out-Null
+            $dumpInfoPath = Join-Path $exportPath "ConfigDumpInfo.xml"
+            Set-Content -LiteralPath $dumpInfoPath -Encoding UTF8 -Value "stale-cursor"
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:CursorExistedAtDesignerStart = $true
+                function Invoke-Designer {
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                    $script:CursorExistedAtDesignerStart = Test-Path -LiteralPath $dumpInfoPath -PathType Leaf
+                    throw "simulated full-load failure"
+                }
+                $message = ""
+                try {
+                    Invoke-ConfigLoadWithFallback -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -AbsoluteExportPath $exportPath -ListFilePath "" -FileCount 1 -Mode Full -ResetConfigDumpInfo 6>$null | Out-Null
+                } catch {
+                    $message = $_.Exception.Message
+                }
+                [pscustomobject]@{
+                    existedAtStart = $script:CursorExistedAtDesignerStart
+                    cursor = (Get-Content -LiteralPath $dumpInfoPath -Raw).Trim()
+                    message = $message
+                }
+            }
+
+            $result.existedAtStart | Should -BeFalse
+            $result.cursor | Should -Be "stale-cursor"
+            $result.message | Should -Match "simulated full-load failure"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "rolls ConfigDumpInfo back between a failed partial load and its full fallback" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-dump-info-fallback-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -1172,6 +1242,61 @@
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It "forces a full load after Release E2E restore even without a Git change list" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:LoadCalls = 0
+            $script:LoadMode = ""
+            $script:LoadFileCount = 0
+            $script:ResetConfigDumpInfo = $false
+            function Get-ConfigSourceFingerprint {
+                [pscustomobject]@{ fingerprint = ("v2|git-tree-sha256|" + ("b" * 64)); fileCount = 7; absoluteExportPath = "C:\src" }
+            }
+            function Get-ConfigLoadChangeSet {
+                [pscustomobject]@{ files = @(); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" }
+            }
+            function Get-CurrentCommit { "head" }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
+            function Invoke-ConfigLoadWithFallback {
+                param([string]$Mode, [int]$FileCount, [switch]$ResetConfigDumpInfo)
+                $script:LoadCalls++
+                $script:LoadMode = $Mode
+                $script:LoadFileCount = $FileCount
+                $script:ResetConfigDumpInfo = [bool]$ResetConfigDumpInfo
+                [pscustomobject]@{
+                    lastLogPath = ""
+                    loadModeUsed = $Mode.ToLowerInvariant()
+                    partialLogPath = ""
+                    fullFallbackLogPath = ""
+                    configLoadStatus = "passed"
+                    partialError = ""
+                    fullFallbackError = ""
+                }
+            }
+
+            $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{
+                lastConfigDesignerFingerprint = ""
+                loadReason = "release-e2e-restore-invalidated"
+                enterpriseNormalizationStatus = "pending"
+            }) -ExportPath "src/cf" 6>$null
+            [pscustomobject]@{
+                load = $load
+                calls = $script:LoadCalls
+                mode = $script:LoadMode
+                fileCount = $script:LoadFileCount
+                resetConfigDumpInfo = $script:ResetConfigDumpInfo
+            }
+        }
+
+        $result.calls | Should -Be 1
+        $result.mode | Should -Be "Full"
+        $result.fileCount | Should -Be 1
+        $result.resetConfigDumpInfo | Should -BeTrue
+        $result.load.loaded | Should -BeTrue
+        $result.load.designerInvoked | Should -BeTrue
+        $result.load.loadReason | Should -Be "release-e2e-restore-full-load"
     }
 
     It "keeps the source fingerprint canonical without hashing every file" {
@@ -2036,7 +2161,7 @@
     It "seeds fingerprints only after a real branch copy and invalidates both kinds after restore" {
         $lifecycleText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
         $lifecycleText | Should -Match '(?s)if \(\$copyPerformed\)\s*\{.*?lastConfigDesignerFingerprint.*?loadReason"\] = "branch-copy-seed"'
-        $lifecycleText | Should -Match '(?s)function Restore-ReleaseE2EInfobaseSnapshot.*?lastConfigDesignerFingerprint = "".*?lastExtensionDesignerFingerprint = "".*?loadReason = "release-e2e-restore-invalidated"'
+        $lifecycleText | Should -Match '(?s)function Restore-ReleaseE2EInfobaseSnapshot.*?lastConfigDesignerFingerprint = "".*?lastExtensionDesignerFingerprint = "".*?loadReason = "release-e2e-restore-invalidated".*?vanessaMcpSafeModeProof = \$null'
         $lifecycleText | Should -Match '(?s)if \(\$currentStatus -eq "enterprise-normalization-pending"\).*?return.*?if \(\$copyPerformed\)'
     }
 

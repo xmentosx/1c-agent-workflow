@@ -703,11 +703,20 @@ function Invoke-ConfigLoadWithFallback {
         [int]$FileCount,
         [string]$ExtensionName = "",
         [ValidateSet("Auto", "Partial", "Full")]
-        [string]$Mode = "Auto"
+        [string]$Mode = "Auto",
+        [switch]$ResetConfigDumpInfo
     )
 
     $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath $AbsoluteExportPath
     try {
+        if ($ResetConfigDumpInfo -and $Mode -ne "Full") {
+            throw "ConfigDumpInfo reset is valid only for a full configuration load."
+        }
+        if ($ResetConfigDumpInfo -and $dumpInfoSnapshot.existed) {
+            Remove-Item -LiteralPath $dumpInfoSnapshot.path -Force -ErrorAction Stop
+            Write-Host "Removed the stale ConfigDumpInfo cursor before a restore-recovery full load."
+        }
+
         $baseArgs = @("/LoadConfigFromFiles", $AbsoluteExportPath)
         if ($ExtensionName) {
             $baseArgs += @("-Extension", $ExtensionName)
@@ -1368,7 +1377,12 @@ function Load-ConfigFromFiles {
     if ($null -eq $changeSet) {
         $changeSet = Get-ConfigLoadChangeSet -State $State -ExportPath $ExportPath -ContentKind $ContentKind
     }
-    if ($changeSet.files.Count -eq 0) {
+    $restoreInvalidated = ([string](Get-StateValue -State $State -Name "loadReason" -Default "")) -eq "release-e2e-restore-invalidated"
+    if ($restoreInvalidated) {
+        Write-Warning "Release E2E restore invalidated the Designer fingerprint. Running a cursor-free full load."
+        $Mode = "Full"
+        $changeSet.files = @("<release-e2e-restore-invalidated>")
+    } elseif ($changeSet.files.Count -eq 0) {
         if ($previousFingerprint) {
             Write-Warning "Source fingerprint changed but Git produced no partial list. Running a full load to preserve correctness."
             $Mode = "Full"
@@ -1431,7 +1445,8 @@ function Load-ConfigFromFiles {
         -ListFilePath $listFilePath `
         -FileCount $changeSet.files.Count `
         -ExtensionName $ExtensionName `
-        -Mode $Mode
+        -Mode $Mode `
+        -ResetConfigDumpInfo:$restoreInvalidated
     Set-RunStage -Stage "config-load.loaded" -Detail "Designer completed the $ContentKind source load."
 
     $loadedAt = (Get-Date).ToString("o")
@@ -1463,6 +1478,7 @@ function Load-ConfigFromFiles {
         loadReason = $(
             if ($missingPartialFilesFullLoad) { "partial-inventory-missing-files-full-load" }
             elseif ($Mode -eq "Full" -and $changeSet.files[0] -eq "<fingerprint-changed>") { "fingerprint-changed-full-load" }
+            elseif ($Mode -eq "Full" -and $changeSet.files[0] -eq "<release-e2e-restore-invalidated>") { "release-e2e-restore-full-load" }
             else { "source-fingerprint-changed" }
         )
         designerInvoked = $true
@@ -8737,6 +8753,7 @@ function Restore-ReleaseE2EInfobaseSnapshot {
         lastExtensionDesignerLoadedAt = ""
         sourceFingerprint = ""
         loadReason = "release-e2e-restore-invalidated"
+        vanessaMcpSafeModeProof = $null
         designerInvoked = $false
         enterpriseInvoked = $false
         enterpriseNormalizationStatus = "pending"
