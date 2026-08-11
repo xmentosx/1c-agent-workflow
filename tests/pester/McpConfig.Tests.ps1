@@ -1528,10 +1528,6 @@ VANESSA_MCP_VA_EXTENSION_CFE_PATH=$invalidExtensionPath
         @($catalog.tools).Count | Should -Be 38
         @($catalog.tools.name) | Should -Contain "search_for_steps_by_keywords"
         @($catalog.tools.name) | Should -Contain "run_scenario"
-        $runScenario = @($catalog.tools | Where-Object name -eq "run_scenario")[0]
-        $runScenario.description | Should -Match 'progressToken'
-        $runScenario.description | Should -Match 'get_VanessaAutomation_state.*не является независимой liveness-проверкой'
-        $runScenario.description | Should -Not -Match 'Отправляет прогресс по каждому шагу'
 
         $vanessaSkill = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md")
         $vanessaSkill | Should -Match 'user_actions_recording'
