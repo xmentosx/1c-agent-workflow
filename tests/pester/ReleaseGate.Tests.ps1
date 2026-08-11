@@ -22,7 +22,9 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match '"-VanessaFeaturePath", \$vanessaFixture\.path'
         $e2eText | Should -Match "\`$authoringOutcome -ne `"passed`""
         $e2eText | Should -Not -Match "runner-fallback-required"
-        $e2eText | Should -Match "open_feature_file:file.*check_syntax:file.*load_features:file"
+        $e2eText | Should -Match "run_scenario:cold.*get_VanessaAutomation_state:cold.*get_test_results:cold.*run_scenario:hot.*run_scenario:switch.*open_feature_file:secondary.*select_scenario:secondary.*run_scenario:selected"
+        $e2eText | Should -Match 'vanessa-secondary-feature'
+        (Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-e2e\ondemand-mcp.ps1") -Raw -Encoding UTF8) | Should -Match 'ondemand-mcp" -Version 3'
         $e2eText | Should -Not -Match "load_features:directory"
         $e2eText | Should -Match "clientMcpSafeMode"
         $e2eText | Should -Match "vaExtensionSafeMode"

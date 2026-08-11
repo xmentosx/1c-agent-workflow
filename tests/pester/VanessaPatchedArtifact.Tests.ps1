@@ -1,7 +1,7 @@
 Describe "Controlled Vanessa Automation patched artifact" {
     BeforeAll {
         $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-        $assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.28-itl-r6"
+        $assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.28-itl-r7"
         $manifestPath = Join-Path $assetRoot "manifest.json"
         $patchPath = Join-Path $assetRoot "file-operations.patch"
         $licensePath = Join-Path $assetRoot "LICENSE.upstream"
@@ -17,7 +17,7 @@ Describe "Controlled Vanessa Automation patched artifact" {
         $manifest.upstream.commit | Should -Be "f3a01778a14d29b38204685deea0131274d438ff"
         $manifest.upstream.sourceArchive.sha256 | Should -Be "3581a8d6bb675426b6555fd0b0f2e612c7c9ea0b704123129256a89f1f8f2f81"
         $manifest.compatibilityVersion | Should -Be "1.2.043.28"
-        $manifest.downstreamRevision | Should -Be "itl-r6"
+        $manifest.downstreamRevision | Should -Be "itl-r7"
         $manifest.build.platform.version | Should -Be "8.3.27.2130"
         $manifest.build.oneScript.version | Should -Be "1.9.4.16"
         $manifest.build.oneScript.packages.v8runner | Should -Be "1.8.2"
@@ -30,7 +30,7 @@ Describe "Controlled Vanessa Automation patched artifact" {
         $managedFormPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("VmFuZXNzYUF1dG9tYXRpb24vRm9ybXMv0KPQv9GA0LDQstC70Y/QtdC80LDRj9Ck0L7RgNC80LAvRXh0L0Zvcm0vTW9kdWxlLmJzbA=="))
         $manifest.patch.expectedChangedPaths[1] | Should -Be $managedFormPath
         @($manifest.patch.upstreamBackports) | Should -HaveCount 2
-        @($manifest.patch.retainedDownstreamFixes) | Should -HaveCount 2
+        @($manifest.patch.retainedDownstreamFixes) | Should -HaveCount 3
         @($manifest.patch.removedDownstreamWorkarounds) | Should -HaveCount 2
     }
 
@@ -53,6 +53,28 @@ Describe "Controlled Vanessa Automation patched artifact" {
         $patchText | Should -Match ("(?s)" + [regex]::Escape($mcpActiveGuard) + ".*?\+\s*" + [regex]::Escape($returnFalse))
     }
 
+    It "completes cold reloadAndRun without replacing callback context or weakening hot reload" {
+        $localLoadedFlag = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0KTQuNGH0LDQl9Cw0LPRgNGD0LbQtdC90LDQrdGC0LjQvNCS0YvQt9C+0LLQvtC8"))
+        $continuation = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0J/RgNC+0LTQvtC70LbQuNGC0YzQktGL0L/QvtC70L3QuNGC0YzQodGG0LXQvdCw0YDQuNC5Mg=="))
+        $callParameters = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JTQvtC/0J/QsNGA0LDQvNC10YLRgNGL0JLRi9C30L7QstCwTUNQKTs="))
+        $reloadCallback = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JfQsNCz0YDRg9C30LjRgtGM0KTQuNGH0LDQpNCw0LnQu9CY0JLRi9C/0L7Qu9C90LjRgtGM0KHRhtC10L3QsNGA0LjQuA=="))
+        $syntaxCheck = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0J/QvtC70YPRh9C40YLRjNCf0YDQvtCx0LvQtdC80YvQn9C+0KLQtdC60YPRidC10LnQpNC40YfQtQ=="))
+        $runAll = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JrQvtC80LDQvdC00LDQktGL0L/QvtC70L3QuNGC0YzQodGG0LXQvdCw0YDQuNC4"))
+        $falseValue = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JvQvtC20Yw="))
+        $trueValue = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JjRgdGC0LjQvdCw"))
+        $ifKeyword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JXRgdC70Lg="))
+        $elseKeyword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JjQvdCw0YfQtQ=="))
+        $newStructure = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0J3QvtCy0YvQuSDQodGC0YDRg9C60YLRg9GA0LA="))
+        $globalFlag = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0J3Rg9C20L3QvtCe0L/QvtCy0LXRgdGC0LjRgtGMTUNQ0KHQtdGA0LLQtdGA0J/QvtGB0LvQtdCX0LDQs9GA0YPQt9C60LjQpNC40YfQuA=="))
+        $undefinedValue = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0J3QtdC+0L/RgNC10LTQtdC70LXQvdC+"))
+
+        $patchText | Should -Match ("(?m)^\+.*" + [regex]::Escape($continuation) + ".*" + [regex]::Escape($localLoadedFlag) + " = " + [regex]::Escape($falseValue) + ".*$")
+        $patchText | Should -Match ("(?m)^\+.*" + [regex]::Escape($continuation) + ".*" + [regex]::Escape($trueValue) + ".*$")
+        $patchText | Should -Match ("(?s)\+\s*" + [regex]::Escape($ifKeyword + " " + $localLoadedFlag) + ".*?" + [regex]::Escape($syntaxCheck) + ".*?" + [regex]::Escape($runAll) + ".*?\+\s*" + [regex]::Escape($elseKeyword) + ".*?" + [regex]::Escape($reloadCallback))
+        $patchText | Should -Not -Match ("(?m)^\+\s*" + [regex]::Escape($callParameters.TrimEnd(';')) + "\s*=\s*" + [regex]::Escape($newStructure))
+        $patchText | Should -Not -Match ("(?m)^[+-].*" + [regex]::Escape($globalFlag) + "\s*=\s*" + [regex]::Escape($undefinedValue))
+    }
+
     It "removes safe-mode path substitutions and restores upstream reloadAndRunFromLine behavior" {
         foreach ($removedMarker in @(
             "PATH_INVALID",
@@ -72,13 +94,13 @@ Describe "Controlled Vanessa Automation patched artifact" {
         $buildScriptText | Should -Match ([regex]::Escape('"archive", "--format=tar"'))
         $buildScriptText | Should -Match ([regex]::Escape('"tools\onescript\Compile.os"'))
         $buildScriptText | Should -Match ([regex]::Escape('"tools\onescript\MakeVASingle.os"'))
-        $buildScriptText | Should -Match ([regex]::Escape('[ValidateSet("itl-r4", "itl-r5", "itl-r6")]'))
-        $buildScriptText | Should -Match ([regex]::Escape('$DownstreamRevision = "itl-r6"'))
+        $buildScriptText | Should -Match ([regex]::Escape('[ValidateSet("itl-r4", "itl-r5", "itl-r6", "itl-r7")]'))
+        $buildScriptText | Should -Match ([regex]::Escape('$DownstreamRevision = "itl-r7"'))
         $buildScriptText | Should -Match ([regex]::Escape("Enter-ScopedUnsafeActionProtectionBypass"))
         $buildScriptText | Should -Match ([regex]::Escape("Exit-ScopedUnsafeActionProtectionBypass"))
         $buildScriptText | Should -Not -Match "DisableUnsafeActionProtection=\.\*;"
         $buildScriptText | Should -Match ([regex]::Escape("New-DeterministicZip"))
-        $manifest.artifact.fileName | Should -Be "vanessa-automation-single.1.2.043.28-itl-r6.zip"
+        $manifest.artifact.fileName | Should -Be "vanessa-automation-single.1.2.043.28-itl-r7.zip"
     }
 
     It "retains the complete BSD 3-Clause binary redistribution notice" {

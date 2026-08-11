@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -61,6 +62,7 @@ func run() error {
 	verifyIdle := flag.Bool("verify-idle", false, "keep stdio open and prove idle cleanup")
 	vanessaSmoke := flag.Bool("vanessa-ui-smoke", false, "connect the managed TestClient and call UI/OS screenshot tools")
 	vanessaFeature := flag.String("vanessa-feature", "", "release feature file for Vanessa open/check authoring smoke")
+	vanessaSecondaryFeature := flag.String("vanessa-secondary-feature", "", "second release feature file for Vanessa cold reloadAndRun smoke")
 	flag.Parse()
 	if *exe == "" || *projectRoot == "" || *catalog == "" || *helper == "" || *tool == "" {
 		return fmt.Errorf("--exe, --project-root, --catalog, --helper, and --tool are required")
@@ -100,6 +102,7 @@ func run() error {
 	}
 	vanessaFileAuthoringOutcome := ""
 	var vanessaFileAuthoringCalls []string
+	vanessaScenarioEvidencePassed := false
 	defer func() {
 		for _, item := range connected {
 			_ = item.session.Close()
@@ -151,7 +154,7 @@ func run() error {
 			if *family != "vanessa-ui" {
 				return fmt.Errorf("--vanessa-ui-smoke requires --family vanessa-ui")
 			}
-			outcome, calls, err := runVanessaSmoke(ctx, item.session, item.state.TestClientPort, *vanessaFeature, func(delta int) {
+			outcome, calls, err := runVanessaSmoke(ctx, item.session, item.state.TestClientPort, *vanessaFeature, *vanessaSecondaryFeature, func(delta int) {
 				connectedTestClients += delta
 				observeConcurrency()
 			})
@@ -159,6 +162,11 @@ func run() error {
 				stopHeartbeat()
 				return err
 			}
+			if err := validateVanessaScenarioEvidence(*projectRoot, item.state.InstanceID, *vanessaFeature, *vanessaSecondaryFeature); err != nil {
+				stopHeartbeat()
+				return err
+			}
+			vanessaScenarioEvidencePassed = true
 			if vanessaFileAuthoringOutcome == "" {
 				vanessaFileAuthoringOutcome = outcome
 			}
@@ -235,6 +243,8 @@ func run() error {
 		evidence["vanessaFileAuthoringOutcome"] = vanessaFileAuthoringOutcome
 		evidence["vanessaFileAuthoringCalls"] = vanessaFileAuthoringCalls
 		evidence["vanessaFeature"] = *vanessaFeature
+		evidence["vanessaSecondaryFeature"] = *vanessaSecondaryFeature
+		evidence["vanessaScenarioEvidencePassed"] = vanessaScenarioEvidencePassed
 	}
 	raw, _ := json.MarshalIndent(evidence, "", "  ")
 	if *output != "" {
@@ -409,22 +419,37 @@ func distinctInstances(family string, states []runtimeState) error {
 	return nil
 }
 
-func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClientPort int, featurePath string, observeTestClient func(int)) (string, []string, error) {
-	if featurePath == "" {
-		return "", nil, fmt.Errorf("Vanessa authoring smoke requires --vanessa-feature")
+func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClientPort int, featurePath, secondaryFeaturePath string, observeTestClient func(int)) (string, []string, error) {
+	if featurePath == "" || secondaryFeaturePath == "" {
+		return "", nil, fmt.Errorf("Vanessa authoring smoke requires --vanessa-feature and --vanessa-secondary-feature")
 	}
-	if !filepath.IsAbs(featurePath) || !strings.Contains(featurePath, " ") || !containsCyrillic(featurePath) {
-		return "", nil, fmt.Errorf("Vanessa authoring smoke requires an absolute Windows path containing spaces and Cyrillic text: %q", featurePath)
+	for _, path := range []string{featurePath, secondaryFeaturePath} {
+		if !filepath.IsAbs(path) || !strings.Contains(path, " ") || !containsCyrillic(path) {
+			return "", nil, fmt.Errorf("Vanessa authoring smoke requires absolute Windows paths containing spaces and Cyrillic text: %q", path)
+		}
 	}
-	authoringCalls := make([]string, 0, 4)
+	authoringCalls := make([]string, 0, 16)
 	for _, call := range []struct {
 		name      string
 		arguments map[string]any
 		proof     string
 	}{
-		{name: "open_feature_file", arguments: map[string]any{"filePath": featurePath}, proof: "open_feature_file:file"},
-		{name: "check_syntax", arguments: map[string]any{"filePath": featurePath}, proof: "check_syntax:file"},
-		{name: "load_features", arguments: map[string]any{"path": featurePath}, proof: "load_features:file"},
+		{name: "run_scenario", arguments: map[string]any{"filePath": featurePath, "mode": "reloadAndRun"}, proof: "run_scenario:cold"},
+		{name: "get_VanessaAutomation_state", arguments: map[string]any{}, proof: "get_VanessaAutomation_state:cold"},
+		{name: "get_test_results", arguments: map[string]any{}, proof: "get_test_results:cold"},
+		{name: "run_scenario", arguments: map[string]any{"filePath": featurePath, "mode": "reloadAndRun"}, proof: "run_scenario:hot"},
+		{name: "get_VanessaAutomation_state", arguments: map[string]any{}, proof: "get_VanessaAutomation_state:hot"},
+		{name: "get_test_results", arguments: map[string]any{}, proof: "get_test_results:hot"},
+		{name: "run_scenario", arguments: map[string]any{"filePath": secondaryFeaturePath, "mode": "reloadAndRun"}, proof: "run_scenario:switch"},
+		{name: "get_VanessaAutomation_state", arguments: map[string]any{}, proof: "get_VanessaAutomation_state:switch"},
+		{name: "get_test_results", arguments: map[string]any{}, proof: "get_test_results:switch"},
+		{name: "open_feature_file", arguments: map[string]any{"filePath": secondaryFeaturePath}, proof: "open_feature_file:secondary"},
+		{name: "check_syntax", arguments: map[string]any{"filePath": secondaryFeaturePath}, proof: "check_syntax:secondary"},
+		{name: "load_features", arguments: map[string]any{"path": secondaryFeaturePath}, proof: "load_features:secondary"},
+		{name: "select_scenario", arguments: map[string]any{"name": "MCP cold B"}, proof: "select_scenario:secondary"},
+		{name: "run_scenario", arguments: map[string]any{"mode": "selected"}, proof: "run_scenario:selected"},
+		{name: "get_VanessaAutomation_state", arguments: map[string]any{}, proof: "get_VanessaAutomation_state:selected"},
+		{name: "get_test_results", arguments: map[string]any{}, proof: "get_test_results:selected"},
 	} {
 		result, err := callInnerTool(ctx, session, call.name, call.arguments)
 		if err != nil {
@@ -485,6 +510,54 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 		observeTestClient(-1)
 	}
 	return "passed", authoringCalls, nil
+}
+
+type vanessaScenarioEvidence struct {
+	Tool          string `json:"tool"`
+	Outcome       string `json:"outcome"`
+	ResultCode    string `json:"resultCode"`
+	FeaturePath   string `json:"featurePath"`
+	FeatureSHA256 string `json:"featureSha256"`
+}
+
+func validateVanessaScenarioEvidence(projectRoot, instanceID, featurePath, secondaryFeaturePath string) error {
+	evidencePath := filepath.Join(projectRoot, ".agent-1c", "mcp", "ondemand", "vanessa-ui", instanceID+".evidence.jsonl")
+	raw, err := os.ReadFile(evidencePath)
+	if err != nil {
+		return fmt.Errorf("read Vanessa scenario evidence: %w", err)
+	}
+	var actual []vanessaScenarioEvidence
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var entry vanessaScenarioEvidence
+		if strings.TrimSpace(line) == "" || json.Unmarshal([]byte(line), &entry) != nil {
+			continue
+		}
+		if entry.Tool == "run_scenario" || entry.Tool == "get_test_results" {
+			actual = append(actual, entry)
+		}
+	}
+	expectedPaths := []string{featurePath, featurePath, featurePath, featurePath, secondaryFeaturePath, secondaryFeaturePath, secondaryFeaturePath, secondaryFeaturePath}
+	expectedTools := []string{"run_scenario", "get_test_results", "run_scenario", "get_test_results", "run_scenario", "get_test_results", "run_scenario", "get_test_results"}
+	if len(actual) < len(expectedTools) {
+		return fmt.Errorf("Vanessa scenario evidence entries=%d, expected at least %d", len(actual), len(expectedTools))
+	}
+	actual = actual[len(actual)-len(expectedTools):]
+	for index, entry := range actual {
+		relative, err := filepath.Rel(projectRoot, expectedPaths[index])
+		if err != nil || strings.HasPrefix(relative, "..") {
+			return fmt.Errorf("Vanessa scenario feature is outside the release project: %q", expectedPaths[index])
+		}
+		featureRaw, err := os.ReadFile(expectedPaths[index])
+		if err != nil {
+			return fmt.Errorf("read Vanessa scenario feature: %w", err)
+		}
+		hash := sha256.Sum256(featureRaw)
+		expectedSHA := fmt.Sprintf("%x", hash[:])
+		if entry.Tool != expectedTools[index] || entry.Outcome != "passed" || entry.ResultCode != "ITL_OK" || entry.FeaturePath != filepath.ToSlash(relative) || entry.FeatureSHA256 != expectedSHA {
+			return fmt.Errorf("Vanessa scenario evidence %d does not prove the expected passed feature path/SHA: %#v", index, entry)
+		}
+	}
+	return nil
 }
 
 func containsString(values []string, value string) bool {

@@ -2049,9 +2049,13 @@ try {
         try {
             Invoke-E2EHelper -Action "release-e2e-prepare-ondemand" -TimeoutSeconds 1800 | Out-Null
             $vanessaSmokeDirectory = Join-Path $outputRoot "Vanessa путь с пробелами"
-            $vanessaSmokeFeature = Join-Path $vanessaSmokeDirectory "Проверка пути.feature"
+            $vanessaSmokeFeature = Join-Path $vanessaSmokeDirectory "Проверка холодного пути A.feature"
+            $vanessaSecondarySmokeFeature = Join-Path $vanessaSmokeDirectory "Проверка холодного пути B.feature"
             New-Item -ItemType Directory -Force -Path $vanessaSmokeDirectory | Out-Null
-            Copy-Item -LiteralPath $vanessaFixture.path -Destination $vanessaSmokeFeature -Force
+            $vanessaSmokeFeatureA = "#language: ru`n`nФункционал: Vanessa UI MCP cold path A`n`nСценарий: MCP cold A`n`tИ Пауза 0.1`n"
+            $vanessaSmokeFeatureB = "#language: ru`n`nФункционал: Vanessa UI MCP cold path B`n`nСценарий: MCP cold B`n`tИ Пауза 0.1`n"
+            [System.IO.File]::WriteAllText($vanessaSmokeFeature, $vanessaSmokeFeatureA, [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText($vanessaSecondarySmokeFeature, $vanessaSmokeFeatureB, [System.Text.UTF8Encoding]::new($false))
             $canonicalVanessaLock = (Get-Content -LiteralPath (Join-Path $workflowRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaAutomation
             if ($onDemandMcpTestFixture) {
                 $onDemandMcpEvidence = [ordered]@{
@@ -2060,7 +2064,7 @@ try {
                     testFixture = $true
                     families = [ordered]@{
                         roctup = [ordered]@{ publicToolCount = 2; catalogToolCount = 13; instances = @([ordered]@{ pid = 101; port = 6003 }); cleanupPassed = $true; idleCleanupPassed = $true; secondSurvivedFirstClose = $false; maxConcurrentSessions = 1; ownedProcessExitWaitMs = 80 }
-                        "vanessa-ui" = [ordered]@{ publicToolCount = 2; catalogToolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256; clientMcpSafeMode = $false; vaExtensionSafeMode = $false }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256; clientMcpSafeMode = $false; vaExtensionSafeMode = $false }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; vanessaFileAuthoringOutcome = "passed"; vanessaFileAuthoringCalls = @("open_feature_file:file", "check_syntax:file", "load_features:file"); vanessaFeature = $vanessaSmokeFeature; secondSurvivedFirstClose = $true; maxConcurrentSessions = 3; ownedProcessExitWaitMs = 120 }
+                        "vanessa-ui" = [ordered]@{ publicToolCount = 2; catalogToolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256; clientMcpSafeMode = $false; vaExtensionSafeMode = $false }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256; clientMcpSafeMode = $false; vaExtensionSafeMode = $false }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; vanessaFileAuthoringOutcome = "passed"; vanessaFileAuthoringCalls = @("run_scenario:cold", "get_VanessaAutomation_state:cold", "get_test_results:cold", "run_scenario:hot", "get_VanessaAutomation_state:hot", "get_test_results:hot", "run_scenario:switch", "get_VanessaAutomation_state:switch", "get_test_results:switch", "open_feature_file:secondary", "check_syntax:secondary", "load_features:secondary", "select_scenario:secondary", "run_scenario:selected", "get_VanessaAutomation_state:selected", "get_test_results:selected"); vanessaFeature = $vanessaSmokeFeature; vanessaSecondaryFeature = $vanessaSecondarySmokeFeature; vanessaScenarioEvidencePassed = $true; secondSurvivedFirstClose = $true; maxConcurrentSessions = 3; ownedProcessExitWaitMs = 120 }
                     }
                     capturedAt = [DateTime]::UtcNow.ToString("o")
                 }
@@ -2092,7 +2096,7 @@ try {
                             "-verify-idle",
                             "-output", $familyEvidencePath
                         )
-                        if ([bool]$spec.vanessaSmoke) { $probeArguments += @("-vanessa-ui-smoke", "-vanessa-feature", $vanessaSmokeFeature) }
+                        if ([bool]$spec.vanessaSmoke) { $probeArguments += @("-vanessa-ui-smoke", "-vanessa-feature", $vanessaSmokeFeature, "-vanessa-secondary-feature", $vanessaSecondarySmokeFeature) }
                         & go @probeArguments
                         if ($LASTEXITCODE -ne 0) { throw "On-demand MCP live probe failed for $($spec.family)." }
                     } finally {
@@ -2124,9 +2128,16 @@ try {
                             throw "Vanessa file authoring smoke did not target the release feature."
                         }
                         $actualAuthoringCalls = @($familyEvidence.vanessaFileAuthoringCalls)
-                        $expectedAuthoringCalls = @("open_feature_file:file", "check_syntax:file", "load_features:file")
+                        $expectedAuthoringCalls = @("run_scenario:cold", "get_VanessaAutomation_state:cold", "get_test_results:cold", "run_scenario:hot", "get_VanessaAutomation_state:hot", "get_test_results:hot", "run_scenario:switch", "get_VanessaAutomation_state:switch", "get_test_results:switch", "open_feature_file:secondary", "check_syntax:secondary", "load_features:secondary", "select_scenario:secondary", "run_scenario:selected", "get_VanessaAutomation_state:selected", "get_test_results:selected")
                         if (($actualAuthoringCalls -join ",") -cne ($expectedAuthoringCalls -join ",")) {
                             throw "Vanessa file authoring smoke did not prove ordinary file authoring and file loading in the expected order."
+                        }
+                        $reportedSecondaryFeature = [System.IO.Path]::GetFullPath([string]$familyEvidence.vanessaSecondaryFeature)
+                        if ($reportedSecondaryFeature -ne [System.IO.Path]::GetFullPath($vanessaSecondarySmokeFeature)) {
+                            throw "Vanessa cold-path smoke did not target the second release feature."
+                        }
+                        if (-not [bool]$familyEvidence.vanessaScenarioEvidencePassed) {
+                            throw "Vanessa cold-path smoke did not bind passed run_scenario/get_test_results evidence to the expected feature paths and SHA-256 values."
                         }
                         foreach ($instance in @($familyEvidence.instances)) {
                             if ([string]$instance.vanessaAutomationCompatibilityVersion -cne [string]$canonicalVanessaLock.compatibilityVersion -or

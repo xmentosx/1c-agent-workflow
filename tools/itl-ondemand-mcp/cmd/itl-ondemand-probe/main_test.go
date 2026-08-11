@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -93,7 +97,7 @@ func successfulProbeResult(name string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}
 }
 
-func TestRunVanessaSmokeCoversOrdinaryFileAndDirectoryWindowsPathsBeforeUI(t *testing.T) {
+func TestRunVanessaSmokeCoversColdHotAndSelectedScenarioPathsBeforeUI(t *testing.T) {
 	type recordedCall struct {
 		name      string
 		arguments map[string]any
@@ -105,9 +109,10 @@ func TestRunVanessaSmokeCoversOrdinaryFileAndDirectoryWindowsPathsBeforeUI(t *te
 	})
 
 	featurePath := `D:\Git\PM5 КОРП - work 1-perf1\tests\features\Проверка пути.feature`
+	secondaryFeaturePath := `D:\Git\PM5 КОРП - work 1-perf1\tests\features\Проверка второго пути.feature`
 	clientCount := 0
 	maxClientCount := 0
-	outcome, authoringCalls, err := runVanessaSmoke(context.Background(), session, 48151, featurePath, func(delta int) {
+	outcome, authoringCalls, err := runVanessaSmoke(context.Background(), session, 48151, featurePath, secondaryFeaturePath, func(delta int) {
 		clientCount += delta
 		if clientCount > maxClientCount {
 			maxClientCount = clientCount
@@ -119,36 +124,100 @@ func TestRunVanessaSmokeCoversOrdinaryFileAndDirectoryWindowsPathsBeforeUI(t *te
 	if clientCount != 0 || maxClientCount != 1 {
 		t.Fatalf("unexpected TestClient concurrency observation: current=%d max=%d", clientCount, maxClientCount)
 	}
-	if outcome != "passed" || strings.Join(authoringCalls, ",") != "open_feature_file:file,check_syntax:file,load_features:file" {
+	wantProofs := "run_scenario:cold,get_VanessaAutomation_state:cold,get_test_results:cold,run_scenario:hot,get_VanessaAutomation_state:hot,get_test_results:hot,run_scenario:switch,get_VanessaAutomation_state:switch,get_test_results:switch,open_feature_file:secondary,check_syntax:secondary,load_features:secondary,select_scenario:secondary,run_scenario:selected,get_VanessaAutomation_state:selected,get_test_results:selected"
+	if outcome != "passed" || strings.Join(authoringCalls, ",") != wantProofs {
 		t.Fatalf("outcome=%q authoringCalls=%#v", outcome, authoringCalls)
 	}
-	if len(calls) < 8 {
+	if len(calls) < 21 {
 		t.Fatalf("calls=%#v", calls)
 	}
 	want := []struct {
-		name string
-		key  string
+		name  string
+		key   string
+		value any
 	}{
-		{name: "open_feature_file", key: "filePath"},
-		{name: "check_syntax", key: "filePath"},
-		{name: "load_features", key: "path"},
+		{name: "run_scenario", key: "filePath", value: featurePath},
+		{name: "get_VanessaAutomation_state"},
+		{name: "get_test_results"},
+		{name: "run_scenario", key: "filePath", value: featurePath},
+		{name: "get_VanessaAutomation_state"},
+		{name: "get_test_results"},
+		{name: "run_scenario", key: "filePath", value: secondaryFeaturePath},
+		{name: "get_VanessaAutomation_state"},
+		{name: "get_test_results"},
+		{name: "open_feature_file", key: "filePath", value: secondaryFeaturePath},
+		{name: "check_syntax", key: "filePath", value: secondaryFeaturePath},
+		{name: "load_features", key: "path", value: secondaryFeaturePath},
+		{name: "select_scenario", key: "name", value: "MCP cold B"},
+		{name: "run_scenario", key: "mode", value: "selected"},
+		{name: "get_VanessaAutomation_state"},
+		{name: "get_test_results"},
 	}
 	for index, expected := range want {
 		call := calls[index]
-		if call.name != expected.name || len(call.arguments) != 1 {
-			t.Fatalf("call %d changed file smoke order or arguments: %#v", index, call)
+		if call.name != expected.name {
+			t.Fatalf("call %d changed scenario smoke order: %#v", index, call)
 		}
-		if call.arguments[expected.key] != featurePath {
-			t.Fatalf("call %d changed feature path: %#v", index, call)
+		if expected.key != "" && call.arguments[expected.key] != expected.value {
+			t.Fatalf("call %d changed scenario smoke arguments: %#v", index, call)
 		}
 	}
-	for index := 0; index < 3; index++ {
-		if strings.HasPrefix(calls[index].name, "get_") || calls[index].name == "connect_test_client" {
-			t.Fatalf("legacy/UI call ran before file probes completed: %#v", calls[index])
+	if calls[0].name != "run_scenario" || calls[0].arguments["mode"] != "reloadAndRun" {
+		t.Fatalf("cold run_scenario was not the first feature operation: %#v", calls[0])
+	}
+	for index := 0; index < len(want); index++ {
+		if calls[index].name == "connect_test_client" || strings.HasPrefix(calls[index].name, "get_window_") {
+			t.Fatalf("UI call ran before scenario probes completed: %#v", calls[index])
 		}
 	}
 	if calls[len(calls)-1].name != "close_test_client" {
 		t.Fatalf("Vanessa smoke did not release its TestClient before the next facade: %#v", calls)
+	}
+}
+
+func TestValidateVanessaScenarioEvidenceBindsPassedRunsAndResultsToFeatureSHA(t *testing.T) {
+	projectRoot := t.TempDir()
+	featureRoot := filepath.Join(projectRoot, "tests", "features")
+	if err := os.MkdirAll(featureRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	primary := filepath.Join(featureRoot, "cold-a.feature")
+	secondary := filepath.Join(featureRoot, "cold-b.feature")
+	if err := os.WriteFile(primary, []byte("Feature: A\nScenario: A\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secondary, []byte("Feature: B\nScenario: B\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	instanceID := "0123456789abcdef0123456789abcdef"
+	evidenceRoot := filepath.Join(projectRoot, ".agent-1c", "mcp", "ondemand", "vanessa-ui")
+	if err := os.MkdirAll(evidenceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{primary, primary, primary, primary, secondary, secondary, secondary, secondary}
+	tools := []string{"run_scenario", "get_test_results", "run_scenario", "get_test_results", "run_scenario", "get_test_results", "run_scenario", "get_test_results"}
+	var lines []string
+	for index, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hash := sha256.Sum256(raw)
+		relative, err := filepath.Rel(projectRoot, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry, err := json.Marshal(vanessaScenarioEvidence{Tool: tools[index], Outcome: "passed", ResultCode: "ITL_OK", FeaturePath: filepath.ToSlash(relative), FeatureSHA256: fmt.Sprintf("%x", hash[:])})
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines = append(lines, string(entry))
+	}
+	if err := os.WriteFile(filepath.Join(evidenceRoot, instanceID+".evidence.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateVanessaScenarioEvidence(projectRoot, instanceID, primary, secondary); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -160,7 +229,7 @@ func TestRunVanessaSmokeRequiresManagedTestClientClose(t *testing.T) {
 		return successfulProbeResult(name)
 	})
 
-	outcome, calls, err := runVanessaSmoke(context.Background(), session, 48151, `D:\Git\PM5 КОРП - work 1-perf1\tests\features\Проверка пути.feature`, nil)
+	outcome, calls, err := runVanessaSmoke(context.Background(), session, 48151, `D:\Git\PM5 КОРП - work 1-perf1\tests\features\Проверка пути.feature`, `D:\Git\PM5 КОРП - work 1-perf1\tests\features\Проверка второго пути.feature`, nil)
 	if err == nil || !strings.Contains(err.Error(), "close_test_client returned a tool error") {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -180,7 +249,7 @@ func TestRunVanessaSmokeRejectsFileAuthoringBackendFailure(t *testing.T) {
 		return successfulProbeResult(name)
 	})
 
-	outcome, calls, err := runVanessaSmoke(context.Background(), session, 48151, `D:\Git\PM5 КОРП\tests\features\Проверка пути.feature`, nil)
+	outcome, calls, err := runVanessaSmoke(context.Background(), session, 48151, `D:\Git\PM5 КОРП\tests\features\Проверка пути.feature`, `D:\Git\PM5 КОРП\tests\features\Проверка второго пути.feature`, nil)
 	if err == nil || !strings.Contains(err.Error(), "open_feature_file returned a tool error") {
 		t.Fatalf("unexpected error: %v", err)
 	}
