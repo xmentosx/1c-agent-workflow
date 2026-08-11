@@ -393,11 +393,6 @@ if ($Mode -eq "Release") {
             $devBranchName = [string]$standConfig.devBranchName
             $standWorktree = [System.IO.Path]::GetFullPath([string]$standConfig.worktreePath)
             $standRecord = [ordered]@{ projectRoot = $E2EProjectRoot; devBranchName = $devBranchName; worktreePath = $standWorktree; commit = ""; managedPackageSha256 = ""; unsafeActionProtectionConfirmed = $false }
-            if ($standWorktree -notmatch '\s' -or $standWorktree -notmatch '[^\x00-\x7F]') {
-                Add-ReadinessIssue -Code "RELEASE_STAND_PATH_COVERAGE_MISSING" -Category "STAND_STALE" `
-                    -Message "Configured E2E worktree path must contain both whitespace and non-ASCII text: '$standWorktree'." `
-                    -Recovery "Move or recreate the disposable Release worktree under a path containing spaces and Cyrillic text so the exact runtime path contract is exercised."
-            }
             Test-ManagedPackageAgreement -ExpectedInventory $managedInventory -TargetRoot $E2EProjectRoot -Label "E2E master"
             Test-ManagedPackageAgreement -ExpectedInventory $managedInventory -TargetRoot $standWorktree -Label "E2E branch"
             $standRecord.managedPackageSha256 = $managedInventorySha

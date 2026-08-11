@@ -215,7 +215,6 @@ Describe "Deterministic Release readiness" {
             $codes | Should -Contain "RELEASE_DEPENDENCY_LOCK_DRIFT"
             $codes | Should -Contain "RELEASE_STAND_WORKFLOW_COMMIT_DRIFT"
             $codes | Should -Contain "RELEASE_STAND_UNSAFE_ACTION_PROTECTION_UNCONFIRMED"
-            $codes | Should -Contain "RELEASE_STAND_PATH_COVERAGE_MISSING"
             $codes | Should -Not -Contain "RELEASE_STAND_MANAGED_PACKAGE_DRIFT"
             Test-Path -LiteralPath (Join-Path $worktreeRoot ".agent-1c\runs\release-e2e") | Should -BeFalse
         } finally {

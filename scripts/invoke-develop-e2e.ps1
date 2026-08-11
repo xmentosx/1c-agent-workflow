@@ -299,7 +299,12 @@ try {
     Assert-TrackedClean -Root $standBranchRoot -Label "Develop E2E branch after upgrade journey"
 
     New-Item -ItemType Directory -Force -Path $FreshProjectsRoot | Out-Null
-    $freshRoot = Join-Path ([IO.Path]::GetFullPath($FreshProjectsRoot)) ("d-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+    $cyrillicPathSegment = -join ([char[]](0x041F, 0x0440, 0x043E, 0x0435, 0x043A, 0x0442))
+    $specialProjectsRoot = Join-Path ([IO.Path]::GetFullPath($FreshProjectsRoot)) "path with spaces $cyrillicPathSegment"
+    $freshRoot = Join-Path $specialProjectsRoot ("d-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+    if ($freshRoot -notmatch '\s' -or $freshRoot -notmatch '[^\x00-\x7F]') {
+        throw "DEVELOP_E2E_SPECIAL_PATH_REQUIRED: fresh project root must contain both whitespace and non-ASCII text: '$freshRoot'."
+    }
     New-Item -ItemType Directory -Force -Path (Join-Path $freshRoot ".agent-1c") | Out-Null
     Copy-Item -LiteralPath (Join-Path $ProjectRoot ".agent-1c\project.json") -Destination (Join-Path $freshRoot ".agent-1c\project.json")
     $envLines = @([IO.File]::ReadAllLines((Join-Path $ProjectRoot ".dev.env"), [Text.Encoding]::UTF8) | Where-Object { $_ -notmatch '^(INFOBASE_PATH|INFOBASE_PUBLISH_URL|ITL_ACTIVE_|ROCTUP_MCP_|VANESSA_MCP_|VANESSA_TEST_PORT|SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE)=' })
