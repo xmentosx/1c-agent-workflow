@@ -628,6 +628,42 @@ Describe "Vanessa verification failure classification" {
         }
     }
 
+    It "keeps the JUnit product failure primary when stop-on-error leaves an incomplete scenario count" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-status-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $xml = @(
+                    '<testsuite name="suite" tests="2" failures="1" errors="0">'
+                    '  <testcase name="passed"/>'
+                    '  <testcase name="product assertion">'
+                    '    <failure message="Expected telemetry value">The form value differs from the fixture.</failure>'
+                    '  </testcase>'
+                    '</testsuite>'
+                ) -join [Environment]::NewLine
+                [IO.File]::WriteAllText((Join-Path $tempRoot "junit.xml"), $xml, (Get-Utf8Encoding))
+                $verification = Get-VanessaVerificationStatus -RunDirectory $tempRoot -StatusPath (Join-Path $tempRoot "status.json")
+                try {
+                    Assert-VanessaScenarioCountJunitEvidence -RunDirectory $tempRoot -ExpectedScenarioCount 6 | Out-Null
+                } catch {
+                    $verification = Merge-VanessaScenarioCountDiagnostic `
+                        -Verification $verification `
+                        -ScenarioCountReason $_.Exception.Message
+                }
+                $verification
+            }
+
+            $result.status | Should -Be "failed"
+            $result.failureCategory | Should -Be ""
+            $result.reason | Should -Match '^Vanessa JUnit report contains failures/errors:'
+            $result.reason | Should -Match 'Expected telemetry value'
+            $result.reason | Should -Match 'Secondary scenario-count diagnostic: ITL_VANESSA_SCENARIO_COUNT_MISMATCH'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "requires both connection failure and startup evidence for runner classification" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

@@ -3248,6 +3248,24 @@ function Assert-VanessaScenarioCountJunitEvidence {
     }
 }
 
+function Merge-VanessaScenarioCountDiagnostic {
+    param(
+        [Parameter(Mandatory = $true)][object]$Verification,
+        [Parameter(Mandatory = $true)][string]$ScenarioCountReason
+    )
+
+    if ([string](Get-StateValue -State $Verification -Name "status" -Default "") -eq "failed") {
+        $primaryReason = [string](Get-StateValue -State $Verification -Name "reason" -Default "")
+        $Verification.reason = "$primaryReason Secondary scenario-count diagnostic: $ScenarioCountReason"
+        return $Verification
+    }
+
+    return [pscustomobject]@{
+        status = "failed"
+        reason = $ScenarioCountReason
+    }
+}
+
 function Get-VanessaVerificationStatus {
     param(
         [string]$RunDirectory,
@@ -3787,10 +3805,9 @@ function Run-DevBranchTests {
             $tagFilterEvidence = $scenarioCountEvidence
         }
     } catch {
-        $verification = [pscustomobject]@{
-            status = "failed"
-            reason = $_.Exception.Message
-        }
+        $verification = Merge-VanessaScenarioCountDiagnostic `
+            -Verification $verification `
+            -ScenarioCountReason $_.Exception.Message
     }
     try {
         $cleanupStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
