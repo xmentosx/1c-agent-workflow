@@ -320,6 +320,7 @@ $script:ActiveVanessaRunEvidence = $null
 $script:Agent1cScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $script:Agent1cLibRoot = Join-Path $script:Agent1cScriptRoot "lib"
 $script:Agent1cModuleFiles = @(
+    "agent-1c.immutable-download.ps1",
     "agent-1c.core.ps1",
     "agent-1c.ports.ps1",
     "agent-1c.sessions.ps1",

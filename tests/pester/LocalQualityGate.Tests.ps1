@@ -118,7 +118,7 @@ Describe "Local quality gate contract" {
         $runner | Should -Match '\$result\.paths = @\(\$TestPath\)'
         $runner | Should -Match '\$priorResult\.paths = @\(\[string\]\$item\.path\)'
         $runner | Should -Match 'Initialize-VanessaSourceBuildArchiveForPester'; $runner | Should -Match 'worktree list --porcelain'
-        $runner | Should -Match 'itl\\dependencies\\vanessa-automation'; $runner | Should -Match 'Downloaded Vanessa source-build SHA256 differs from the dependency lock'
+        $runner | Should -Match 'itl\\dependencies\\vanessa-automation'; $runner | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$url -DestinationPath \$sharedArchive -ExpectedSha256 \$expected'
         $worker | Should -Match 'Invoke-Pester -Configuration'
     }
     It "reuses only a passed shard with the same owner inputs" {

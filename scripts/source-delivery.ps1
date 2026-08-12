@@ -25,6 +25,7 @@ $ProgressPreference = "SilentlyContinue"
 . (Join-Path $PSScriptRoot "release-qualification.ps1")
 
 $script:Root = [System.IO.Path]::GetFullPath($RepositoryRoot)
+. (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.immutable-download.ps1")
 $script:Remote = $Remote
 $script:GateScript = if ($GateScript) { [System.IO.Path]::GetFullPath($GateScript) } else { Join-Path $script:Root "scripts\check.ps1" }
 $script:ComponentFinalizerScript = if ($ComponentFinalizerScript) { [System.IO.Path]::GetFullPath($ComponentFinalizerScript) } else { "" }
@@ -792,31 +793,33 @@ function Get-DeliveryGitHubRepository {
 }
 
 function Get-DeliveryRemoteAssetState {
-    param([string]$Url, [string]$ExpectedSha256, [int]$Attempts = 1)
-    $lastMissing = $false
-    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+    param(
+        [string]$Url,
+        [string]$ExpectedSha256,
+        [ValidateRange(1, 3)][int]$NetworkAttempts = 3,
+        [ValidateRange(1, 6)][int]$AvailabilityAttempts = 1
+    )
+    for ($availabilityAttempt = 1; $availabilityAttempt -le $AvailabilityAttempts; $availabilityAttempt++) {
         $downloadPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-component-download-" + [guid]::NewGuid().ToString("N") + ".bin")
         try {
-            Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $downloadPath -TimeoutSec 300
-            $actual = (Get-FileHash -LiteralPath $downloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($actual -cne $ExpectedSha256) {
-                throw "Published Vanessa asset SHA256 mismatch. expected='$ExpectedSha256'; actual='$actual'; url='$Url'. Refusing to overwrite an immutable asset."
+            try {
+                $download = Invoke-ItlImmutableFileDownload -Uri $Url -DestinationPath $downloadPath -ExpectedSha256 $ExpectedSha256 `
+                    -Label "Published Vanessa asset" -MaxAttempts $NetworkAttempts -TimeoutSeconds 300
+                return [pscustomobject]@{ status = "matched"; sha256 = [string]$download.sha256 }
+            } catch {
+                if ($_.Exception -is [System.IO.InvalidDataException]) { throw }
+                if ((Get-ItlHttpFailureStatusCode -ErrorRecord $_) -ne 404) {
+                    throw "Unable to verify the immutable Vanessa asset without mutation: $($_.Exception.Message)"
+                }
+                if ($availabilityAttempt -ge $AvailabilityAttempts) {
+                    return [pscustomobject]@{ status = "missing"; sha256 = "" }
+                }
+                Start-Sleep -Seconds ([Math]::Min(2 * $availabilityAttempt, 10))
             }
-            return [pscustomobject]@{ status = "matched"; sha256 = $actual }
-        } catch {
-            if ($_.Exception.Message -like "Published Vanessa asset SHA256 mismatch.*") { throw }
-            $statusCode = 0
-            try { if ($_.Exception.Response) { $statusCode = [int]$_.Exception.Response.StatusCode } } catch {}
-            if ($statusCode -ne 404) {
-                throw "Unable to verify the immutable Vanessa asset without mutation: $($_.Exception.Message)"
-            }
-            $lastMissing = $true
-            if ($attempt -lt $Attempts) { Start-Sleep -Seconds ([Math]::Min(2 * $attempt, 10)) }
         } finally {
             Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
         }
     }
-    if ($lastMissing) { return [pscustomobject]@{ status = "missing"; sha256 = "" } }
     throw "Unable to determine the immutable Vanessa asset state: $Url"
 }
 
@@ -944,7 +947,7 @@ function Invoke-VanessaComponentPublicationFinalize {
                 $mutated = $true
             } finally { Remove-Item -LiteralPath $uploadRoot -Recurse -Force -ErrorAction SilentlyContinue }
         }
-        $remote = Get-DeliveryRemoteAssetState -Url ([string]$lock.url) -ExpectedSha256 $expectedSha -Attempts 6
+        $remote = Get-DeliveryRemoteAssetState -Url ([string]$lock.url) -ExpectedSha256 $expectedSha -AvailabilityAttempts 6
         if ($remote.status -ne "matched") { throw "The Vanessa component was finalized, but its immutable URL is still unavailable. The queue is preserved for a safe retry." }
     }
 

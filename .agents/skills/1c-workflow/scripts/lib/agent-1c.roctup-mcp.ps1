@@ -182,21 +182,17 @@ function Save-RoctupMcpArtifact {
     New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
     $targetPath = Join-Path $installRoot ([string]$AssetInfo.name)
     $source = [string]$AssetInfo.url
+    $expected = ([string](Get-ConfigValueFromObject -Object $AssetInfo -Path "expectedSha256" -Default "")).ToLowerInvariant()
 
     Write-Host "ROCTUP MCP artifact source: $source"
     $localSource = ConvertFrom-FileUri -Value $source
-    if (Test-Path -LiteralPath $localSource -PathType Leaf -ErrorAction SilentlyContinue) {
-        Copy-Item -LiteralPath $localSource -Destination $targetPath -Force
-    } else {
-        Invoke-WebRequest -Uri $source -UseBasicParsing -OutFile $targetPath
-    }
+    if ($expected -notmatch '^[a-f0-9]{64}$') { throw "ROCTUP MCP artifact has an invalid expected SHA256: '$expected'." }
+    [void](Invoke-ItlImmutableFileAcquire -Source $localSource -DestinationPath $targetPath -ExpectedSha256 $expected -Label "ROCTUP MCP artifact")
 
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $targetPath).Hash.ToLowerInvariant()
     Write-Host "ROCTUP MCP artifact SHA256: $hash"
 
-    $expected = [string](Get-ConfigValueFromObject -Object $AssetInfo -Path "expectedSha256" -Default "")
     if ($expected) {
-        $expected = $expected.ToLowerInvariant()
         if ($hash -eq $expected) {
             Write-Host "ROCTUP MCP artifact hash matches dependency lock."
         } elseif ((Get-DependencyMode) -eq "locked" -or (Test-DependencyLockRateLimitFallbackSource -Source ([string]$AssetInfo.source))) {

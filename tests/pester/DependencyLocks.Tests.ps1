@@ -39,6 +39,7 @@
 
     It "keeps required package files visible for Git packaging" {
         $requiredFiles = @(
+            ".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1",
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1",
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.data-mcp.ps1",

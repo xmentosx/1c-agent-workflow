@@ -201,21 +201,17 @@ function Save-VanessaAutomationArchive {
     New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
     $archivePath = Join-Path $cacheDir ("vanessa-automation-single-" + [guid]::NewGuid().ToString("N") + ".zip")
     $source = [string]$DownloadInfo.url
+    $expected = ([string](Get-ConfigValueFromObject -Object $DownloadInfo -Path "expectedSha256" -Default "")).ToLowerInvariant()
+    if ($expected -notmatch '^[a-f0-9]{64}$') {
+        throw "ITL_VANESSA_WORKFLOW_PIN_INCOMPLETE: expected archive SHA256 is empty or invalid."
+    }
 
     Write-Host "Vanessa Automation archive source: $source"
-    if (Test-Path -LiteralPath (ConvertFrom-FileUri -Value $source) -PathType Leaf -ErrorAction SilentlyContinue) {
-        Copy-Item -LiteralPath (ConvertFrom-FileUri -Value $source) -Destination $archivePath -Force
-    } else {
-        Invoke-WebRequest -Uri $source -UseBasicParsing -OutFile $archivePath
-    }
+    [void](Invoke-ItlImmutableFileAcquire -Source (ConvertFrom-FileUri -Value $source) -DestinationPath $archivePath -ExpectedSha256 $expected -Label "Vanessa Automation archive")
 
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
     Write-Host "Vanessa Automation archive SHA256: $hash"
 
-    $expected = ([string](Get-ConfigValueFromObject -Object $DownloadInfo -Path "expectedSha256" -Default "")).ToLowerInvariant()
-    if (-not $expected) {
-        throw "ITL_VANESSA_WORKFLOW_PIN_INCOMPLETE: expected archive SHA256 is empty."
-    }
     if ($hash -cne $expected) {
         throw "Vanessa Automation archive SHA256 mismatch. Expected $expected, got $hash."
     }
@@ -5707,40 +5703,18 @@ function Save-VanessaMcpArtifact {
     $installRoot = Get-VanessaMcpInstallRoot
     New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
     $targetPath = Join-Path $installRoot ([string]$AssetInfo.name)
-    $temporaryPath = "$targetPath.partial"
     $source = [string]$AssetInfo.url
+    $expected = ([string](Get-ConfigValueFromObject -Object $AssetInfo -Path "expectedSha256" -Default "")).ToLowerInvariant()
+    if ($expected -notmatch '^[a-f0-9]{64}$') {
+        throw "Vanessa UI MCP artifact has an invalid expected SHA256 for $($Definition.lockKey): '$expected'."
+    }
 
     Write-Host "Vanessa UI MCP artifact source: $source"
-    $localSource = ConvertFrom-FileUri -Value $source
-    if (Test-Path -LiteralPath $localSource -PathType Leaf -ErrorAction SilentlyContinue) {
-        Copy-Item -LiteralPath $localSource -Destination $targetPath -Force
-    } else {
-        $lastError = ""
-        for ($attempt = 1; $attempt -le 3; $attempt++) {
-            try {
-                Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
-                Invoke-WebRequest -Uri $source -UseBasicParsing -OutFile $temporaryPath
-                Move-Item -LiteralPath $temporaryPath -Destination $targetPath -Force
-                $lastError = ""
-                break
-            } catch {
-                $lastError = $_.Exception.Message
-                if ($attempt -lt 3) {
-                    Write-Warning "Could not download Vanessa UI MCP artifact (attempt $attempt of 3): $lastError"
-                    Start-Sleep -Seconds $attempt
-                }
-            }
-        }
-        if ($lastError) {
-            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
-            throw "Could not download Vanessa UI MCP artifact from $source after 3 attempts. $lastError"
-        }
-    }
+    [void](Invoke-ItlImmutableFileAcquire -Source (ConvertFrom-FileUri -Value $source) -DestinationPath $targetPath -ExpectedSha256 $expected -Label "Vanessa UI MCP artifact $($Definition.lockKey)")
 
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $targetPath).Hash.ToLowerInvariant()
     Write-Host "Vanessa UI MCP artifact SHA256: $hash"
-    $expected = [string](Get-ConfigValueFromObject -Object $AssetInfo -Path "expectedSha256" -Default "")
-    if ($expected -and $hash -ne $expected.ToLowerInvariant()) {
+    if ($hash -cne $expected) {
         throw "Vanessa UI MCP artifact SHA256 mismatch for $($Definition.lockKey). Expected $expected, got $hash."
     }
 

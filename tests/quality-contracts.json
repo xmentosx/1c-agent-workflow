@@ -58,10 +58,10 @@
     ],
     "routes": {
       "upgrade": {
-        "contracts": ["bootstrap-update", "dependency-lock", "lifecycle", "branch-refresh-result", "vanessa-verification", "mcp-hosts", "clients-rules"]
+        "contracts": ["immutable-download", "bootstrap-update", "dependency-lock", "lifecycle", "branch-refresh-result", "vanessa-verification", "mcp-hosts", "clients-rules"]
       },
       "fresh": {
-        "contracts": ["bootstrap-update", "dependency-lock", "lifecycle", "branch-refresh-result", "vanessa-verification", "mcp-hosts", "clients-rules"]
+        "contracts": ["immutable-download", "bootstrap-update", "dependency-lock", "lifecycle", "branch-refresh-result", "vanessa-verification", "mcp-hosts", "clients-rules"]
       }
     }
   },
@@ -78,6 +78,15 @@
     "tests/pester/VanessaTestGuide.Tests.ps1": "tests/pester/ParserDocsBudgets.Tests.ps1"
   },
   "contracts": [
+    {
+      "id": "immutable-download",
+      "owner": "bounded immutable dependency acquisition",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/ImmutableDownloadRetry.Tests.ps1",
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1"],
+      "tests": ["tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/DependencyLocks.Tests.ps1", "tests/pester/GitHubDependencyFallback.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/RoctupPortLifecycle.Tests.ps1", "tests/pester/SourceDelivery.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1"]
+    },
     {
       "id": "source-quality-gate",
       "owner": "source quality and qualification",

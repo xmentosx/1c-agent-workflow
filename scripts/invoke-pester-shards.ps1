@@ -33,6 +33,7 @@ $workerRoot = Join-Path $OutputRoot "pester-shards"
 New-Item -ItemType Directory -Force -Path $workerRoot | Out-Null
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
+. (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.immutable-download.ps1")
 $catalog = Get-QualityContractCatalog -RepositoryRoot $RepositoryRoot
 $trackedPaths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("ls-files", "-z"))
 $commonGitDir = Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot
@@ -108,20 +109,8 @@ function Initialize-VanessaSourceBuildArchiveForPester {
     $url = [string]$lock.url
     if (-not $url) { throw "Locked Vanessa source-build URL is missing and no exact shared candidate was found." }
     New-Item -ItemType Directory -Force -Path $sharedDirectory | Out-Null
-    $partial = Join-Path $sharedDirectory (".$expected." + [guid]::NewGuid().ToString("N") + ".partial")
-    try {
-        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $partial
-        $downloadedHash = (Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($downloadedHash -ne $expected) {
-            throw "Downloaded Vanessa source-build SHA256 differs from the dependency lock: expected=$expected actual=$downloadedHash"
-        }
-        if (-not (Test-Path -LiteralPath $sharedArchive -PathType Leaf)) {
-            Move-Item -LiteralPath $partial -Destination $sharedArchive
-        }
-        $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $sharedArchive
-    } finally {
-        if (Test-Path -LiteralPath $partial -PathType Leaf) { Remove-Item -LiteralPath $partial -Force }
-    }
+    [void](Invoke-ItlImmutableFileDownload -Uri $url -DestinationPath $sharedArchive -ExpectedSha256 $expected -Label "Pester Vanessa source-build archive")
+    $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $sharedArchive
 }
 
 function Get-ExternalInputIdentity {

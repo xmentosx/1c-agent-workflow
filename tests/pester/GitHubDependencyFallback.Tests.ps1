@@ -11,6 +11,7 @@ Describe "GitHub dependency rate-limit fallback" {
         $script:Config = [pscustomobject]@{ dependencyMode = "fresh" }
         $global:DependencyMode = "fresh"
 
+        . (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.immutable-download.ps1")
         . (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.core.ps1")
         . (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1")
         . (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.roctup-mcp.ps1")

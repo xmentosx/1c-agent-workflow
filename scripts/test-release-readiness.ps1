@@ -19,6 +19,7 @@ if (-not $RepositoryRoot) { $RepositoryRoot = Split-Path -Parent $PSScriptRoot }
 $RepositoryRoot = [System.IO.Path]::GetFullPath($RepositoryRoot)
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
 . (Join-Path $PSScriptRoot "release-qualification.ps1")
+. (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.immutable-download.ps1")
 if (-not $OutputPath) { $OutputPath = Join-Path $RepositoryRoot "build\test-results\local\release-context.json" }
 $OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 $startedAt = [DateTime]::UtcNow
@@ -206,12 +207,8 @@ function Resolve-VanessaArchive {
         return $null
     }
     try {
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $canonicalPath) | Out-Null
-        $partialPath = $canonicalPath + ".partial"
-        Invoke-WebRequest -UseBasicParsing -Uri ([string]$Lock.url) -OutFile $partialPath
-        $downloadedSha = Get-FileSha256 -Path $partialPath
-        if ($downloadedSha -cne $expectedSha.ToLowerInvariant()) { throw "downloaded SHA256 '$downloadedSha' differs from '$expectedSha'" }
-        Move-Item -LiteralPath $partialPath -Destination $canonicalPath -Force
+        $download = Invoke-ItlImmutableFileDownload -Uri ([string]$Lock.url) -DestinationPath $canonicalPath -ExpectedSha256 $expectedSha -Label "Release Vanessa Automation archive"
+        $downloadedSha = [string]$download.sha256
         return [ordered]@{ path = $canonicalPath; sha256 = $downloadedSha; source = "locked-url" }
     } catch {
         if ($invalidCandidates.Count -gt 0) {
