@@ -313,7 +313,7 @@ function Test-PowerShellEncoding {
     $paths = @($changed | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $RepositoryRoot ([string]$_).Replace('/', '\'))) })
     $decodedByPath = @{}
     try {
-        [IO.File]::WriteAllText($probeInputPath, ($paths | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($probeInputPath, (ConvertTo-Json -InputObject @($paths)), [Text.UTF8Encoding]::new($false))
         $parts = @(
             "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
             "-File", (ConvertTo-NativeArgument $probePath),
@@ -327,7 +327,8 @@ function Test-PowerShellEncoding {
             $stderr = if (Test-Path -LiteralPath $probeStderrPath -PathType Leaf) { Get-Content -LiteralPath $probeStderrPath -Raw } else { "" }
             throw "Windows PowerShell 5.1 batch decode probe failed with exit code $($process.ExitCode): $($stderr.Trim())"
         }
-        foreach ($result in @(Get-Content -LiteralPath $probeOutputPath -Raw -Encoding UTF8 | ConvertFrom-Json)) {
+        $decodedResults = Get-Content -LiteralPath $probeOutputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($result in $decodedResults) {
             $decodedByPath[[IO.Path]::GetFullPath([string]$result.path)] = [string]$result.decodedBase64
         }
     } catch {

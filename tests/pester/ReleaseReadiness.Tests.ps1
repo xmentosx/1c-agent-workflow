@@ -313,6 +313,9 @@ Describe "Deterministic Release readiness" {
             $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $context.status | Should -Be "failed"
             @($context.issues.code) | Should -Contain "RELEASE_POWERSHELL_ENCODING_INVALID"
+            $encodingIssue = @($context.issues | Where-Object code -eq "RELEASE_POWERSHELL_ENCODING_INVALID")[0]
+            $encodingIssue.message | Should -Match "utf8-without-bom.ps1"
+            $encodingIssue.message | Should -Not -Match "batch decode preflight failed"
             $context.encoding.contract | Should -Be "windows-powershell-5.1-default-decode-plus-strict-utf8-and-ast"
         } finally {
             if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
