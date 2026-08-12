@@ -66,6 +66,7 @@ function Get-CanonicalTextSha256 {
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "release-qualification.ps1")
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
+. (Join-Path $PSScriptRoot "develop-static-qualification.ps1")
 $qualityCatalog = Get-QualityContractCatalog -RepositoryRoot $repoRoot
 $budgetPrefix = $effectiveMode.Substring(0, 1).ToLowerInvariant() + $effectiveMode.Substring(1)
 $modeTargetBudgetSeconds = [int]$qualityCatalog.budgets.("${budgetPrefix}TargetSeconds")
@@ -352,6 +353,7 @@ function Get-WorkflowGateScriptPaths {
         (Join-Path $repoRoot "scripts\quality-contracts.ps1"),
         (Join-Path $repoRoot "scripts\resolve-targeted-tests.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery.ps1"),
+        (Join-Path $repoRoot "scripts\develop-static-qualification.ps1"),
         (Join-Path $repoRoot "scripts\invoke-develop-e2e.ps1"),
         (Join-Path $repoRoot "scripts\test-release-readiness.ps1"),
         (Join-Path $repoRoot "scripts\invoke-release-e2e.ps1"),
@@ -370,7 +372,7 @@ function Get-WorkflowGateScriptPaths {
 }
 
 function Test-WorkflowQualification {
-    param([string]$Path, [string]$Commit, [string]$Tree, [object]$ForkIdentity)
+    param([string]$Path, [string]$Commit, [string]$Tree, [object]$ForkIdentity, [switch]$AllowIndependentExactTree)
     if (-not (Test-Path $Path -PathType Leaf)) { return $null }
     try {
         $q = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -379,7 +381,20 @@ function Test-WorkflowQualification {
         if ([int]$q.schemaVersion -eq 3 -and -not (Test-RecordedWorkflowContinuation -Record $q.continuation -Commit ([string]$q.repository.commit) -Tree ([string]$q.repository.tree))) { return $null }
         $evidenceCommit = if ([int]$q.schemaVersion -ge 2 -and [string]$q.repository.evidenceCommit) { [string]$q.repository.evidenceCommit } else { [string]$q.repository.commit }
         $continuation = $null
-        $reuseKind = Get-WorkflowQualificationReuseKind -RepositoryRoot $repoRoot -SchemaVersion ([int]$q.schemaVersion) -QualifiedCommit ([string]$q.repository.commit) -EvidenceCommit $evidenceCommit -QualifiedTree ([string]$q.repository.tree) -CurrentCommit $Commit -CurrentTree $Tree
+        $reuseArguments = @{
+            RepositoryRoot = $repoRoot
+            SchemaVersion = [int]$q.schemaVersion
+            QualifiedCommit = [string]$q.repository.commit
+            EvidenceCommit = $evidenceCommit
+            QualifiedTree = [string]$q.repository.tree
+            CurrentCommit = $Commit
+            CurrentTree = $Tree
+        }
+        $reuseKind = if ($AllowIndependentExactTree) {
+            Get-CachedWorkflowQualificationReuseKind @reuseArguments
+        } else {
+            Get-WorkflowQualificationReuseKind @reuseArguments
+        }
         if (-not $reuseKind) {
             $continuation = Get-WorkflowContinuationProof -RepositoryRoot $repoRoot -QualifiedCommit ([string]$q.repository.commit) -CurrentCommit $Commit -CurrentTree $Tree
             if (-not $continuation) { return $null }
@@ -592,7 +607,8 @@ try {
             if ($Offline) { $readinessArguments += "-Offline" }
             $readinessRulesSource = if ($aiRulesRelease -and [string]$aiRulesRelease.sourceRoot) { [string]$aiRulesRelease.sourceRoot } elseif ($sourceIsLocal) { [System.IO.Path]::GetFullPath($resolvedAiRulesSource) } else { "" }
             if ($readinessRulesSource) { $readinessArguments += @("-AiRulesSource", $readinessRulesSource) }
-            if ($effectiveMode -eq "Release") { $readinessArguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot))) }
+            if ($effectiveMode -in @("Develop", "Release")) { $readinessArguments += @("-E2EProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot))) }
+            if ($effectiveMode -eq "Release") { $readinessArguments += @("-ResumeMode", $ReleaseResumeMode) }
             Invoke-PowerShellChild -ScriptPath $readinessScript -Arguments $readinessArguments -TimeoutSeconds 300 -LogName "release-readiness"
             if (-not (Test-Path -LiteralPath $releaseContextPath -PathType Leaf)) { throw "Release readiness context was not created." }
             $script:releaseContext = Get-Content -LiteralPath $releaseContextPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -605,7 +621,18 @@ try {
 
     $reuseQualification = $false
     if ($effectiveMode -in @("Full", "Develop", "Release") -and $aiRulesRelease) {
-        $qualificationMatch = Test-WorkflowQualification -Path $qualificationFullPath -Commit $commit -Tree $tree -ForkIdentity $aiRulesRelease
+        $qualificationMatch = if ($effectiveMode -eq "Develop") {
+            Get-DevelopStaticQualificationCacheMatch `
+                -RepositoryRoot $repoRoot `
+                -QualificationRoot (Split-Path -Parent $qualificationFullPath) `
+                -Tree $tree `
+                -Validate {
+                    param([bool]$AllowIndependentExactTree)
+                    Test-WorkflowQualification -Path $qualificationFullPath -Commit $commit -Tree $tree -ForkIdentity $aiRulesRelease -AllowIndependentExactTree:$AllowIndependentExactTree
+                }
+        } else {
+            Test-WorkflowQualification -Path $qualificationFullPath -Commit $commit -Tree $tree -ForkIdentity $aiRulesRelease
+        }
         if ($qualificationMatch) {
             $reuseQualification = $true
             $existingQualification = $qualificationMatch.qualification
@@ -741,6 +768,9 @@ try {
             } else {
                 $existingQualification = Write-WorkflowQualification -Commit $commit -Tree $tree -Result $staticResult -EvidenceCommit $commit -ReuseKind "executed" -SourceQualification $null
             }
+        }
+        if ($effectiveMode -eq "Develop" -and $existingQualification) {
+            [void](Save-DevelopStaticQualification -RepositoryRoot $repoRoot -QualificationRoot (Split-Path -Parent $qualificationFullPath) -Tree $tree)
         }
     }
 

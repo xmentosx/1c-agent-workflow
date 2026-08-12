@@ -3,9 +3,9 @@
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
     $HelperPath = $context.HelperPath
-    $script:TargetAiRulesRef = "itl-main-410951e7-r25"
-    $script:TargetAiRulesCommit = "0ff2e5401d04b1cc502ea1548787e7c336fd85a3"
-    $script:TargetAiRulesRevision = 25
+    $script:TargetAiRulesRef = "itl-main-410951e7-r26"
+    $script:TargetAiRulesCommit = "3a21d9741509ef7f168feaa8eea016ee84156f57"
+    $script:TargetAiRulesRevision = 26
 
     function New-AiRulesMigrationFixture {
         param(
@@ -495,7 +495,7 @@ Describe "ai_rules_1c migration planning" {
         }
     }
 
-    It "plans monotonic r11 through r23 to r24 migration for all ten clients" {
+    It "plans monotonic r11 through r25 to r26 migration for all ten clients" {
         $releases = @(
             [pscustomobject]@{ revision = 11; ref = "itl-main-b4d9875b-r11"; commit = "af82570afca06c40a9588c8a678bf3665bba4870"; upstream = "b4d9875b15c6d93f493035aee51f077126e72a21" },
             [pscustomobject]@{ revision = 12; ref = "itl-main-72665287-r12"; commit = "16e9e44318a79d9e82c12b19e6759cdf6492d9a4"; upstream = "72665287e77361aea3aaf866fef163d98f0fabcd" },

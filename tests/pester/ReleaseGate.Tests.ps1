@@ -1,4 +1,4 @@
-BeforeAll {
+﻿BeforeAll {
     . (Join-Path $PSScriptRoot "TestSupport.ps1")
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
@@ -74,6 +74,10 @@ Describe "Release gate scripts" {
         $lifecycleText | Should -Match 'snapshot cleanup failed.*Snapshot retained'
         $developE2eText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-develop-e2e.ps1") -Raw -Encoding UTF8
         $developE2eText | Should -Match '(?s)& git -C \$Root commit -m \$Message \| Out-Null\s+if \(\$LASTEXITCODE -ne 0\) \{\s+\$remaining = @\(& git -C \$Root status --porcelain --untracked-files=no\)\s+if \(\$remaining\.Count -ne 0\) \{ throw "Unable to commit \$Message\." \}'
+        $developE2eText | Should -Match 'DEVELOP_E2E_ISOLATED_STAND_REQUIRED'
+        $developE2eText | Should -Match 'developDevBranchName'
+        $developE2eText | Should -Match 'developWorktreePath'
+        $developE2eText | Should -Match 'Develop and Release worktree paths must differ'
     }
 
     It "requires the lock-pinned annotated fork tag and explicit E2E stand" {

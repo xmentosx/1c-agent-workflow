@@ -290,7 +290,23 @@ try {
     Assert-DevelopAiRulesRemoteReachable -StandRoot $ProjectRoot
     Assert-TrackedClean -Root $ProjectRoot -Label "Develop E2E master"
     $standConfig = Get-Content -LiteralPath (Join-Path $ProjectRoot ".agent-1c\release-e2e.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-    $standBranchRoot = [IO.Path]::GetFullPath([string]$standConfig.worktreePath)
+    $developBranchName = [string]$standConfig.developDevBranchName
+    $developWorktreeValue = [string]$standConfig.developWorktreePath
+    if (-not $developBranchName -or -not $developWorktreeValue) {
+        throw "DEVELOP_E2E_ISOLATED_STAND_REQUIRED: release-e2e.json must define developDevBranchName and developWorktreePath separately from the Release worktree."
+    }
+    $standBranchRoot = [IO.Path]::GetFullPath($developWorktreeValue)
+    $releaseBranchRoot = [IO.Path]::GetFullPath([string]$standConfig.worktreePath)
+    if ([string]::Equals($standBranchRoot.TrimEnd('\', '/'), $releaseBranchRoot.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) {
+        throw "DEVELOP_E2E_ISOLATED_STAND_REQUIRED: Develop and Release worktree paths must differ: $standBranchRoot"
+    }
+    if (-not (Test-Path -LiteralPath $standBranchRoot -PathType Container)) {
+        throw "DEVELOP_E2E_ISOLATED_STAND_REQUIRED: configured Develop worktree is missing: $standBranchRoot"
+    }
+    $actualDevelopBranch = (& git -C $standBranchRoot branch --show-current).Trim()
+    if ($LASTEXITCODE -ne 0 -or $actualDevelopBranch -cne "itldev/$developBranchName") {
+        throw "DEVELOP_E2E_ISOLATED_STAND_REQUIRED: Develop worktree branch is '$actualDevelopBranch'; expected 'itldev/$developBranchName'."
+    }
     Assert-TrackedClean -Root $standBranchRoot -Label "Develop E2E branch"
 
     [void](Invoke-InstalledAction -Name "upgrade-update-workflow" -Root $ProjectRoot -Action "update-workflow" -TimeoutSeconds 3600)

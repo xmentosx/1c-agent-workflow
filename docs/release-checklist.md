@@ -13,7 +13,10 @@
 4. Create a dedicated `itldev/workflow-release-e2e` worktree and database copy.
 5. Add and commit a deterministic fixture change plus its Vanessa scenario.
 6. Copy `templates/release-e2e.example.json` to the ignored local file
-   `.agent-1c/release-e2e.json` and record the actual worktree path.
+   `.agent-1c/release-e2e.json` and record separate `developWorktreePath` and
+   Release `worktreePath` values. They MUST name different disposable
+   `itldev/*` worktrees: Develop refreshes only its own branch, so it cannot
+   replace the generated fixture HEAD recorded by the Release checkpoint.
 7. Run `/itl-check` once manually to prove the stand itself is healthy.
 
 The fixture branch remains dedicated to workflow releases. Reset its disposable
@@ -27,7 +30,7 @@ First publish and qualify the exact accumulated development candidate:
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r25-qualification `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r26-context-safety `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
@@ -42,7 +45,7 @@ the transactional variant:
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop -RequireRelease `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r25-qualification `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r26-context-safety `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
@@ -55,7 +58,7 @@ When that remote development commit is ready for the stable channel, run:
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action ReleaseMaster `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r25-qualification `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r26-context-safety `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
@@ -129,6 +132,21 @@ from the pinned real ROCTUP and Vanessa backends, regenerate both catalogs with
 Windows amd64 EXE built by `scripts/Build-ItlOnDemandMcp.ps1`, then copy that
 exact asset SHA256 into `templates/dependency-lock.json`. A source-extracted
 candidate catalog is never release evidence.
+
+Component publication is a finalize operation over already qualified bytes.
+The candidate dependency lock MUST contain the final immutable tag, URL, and
+SHA256 values before Develop/Release. Qualification resolves those exact local
+bytes through the source-build override; publication uploads the same bytes and
+verifies the remote digest. Do not commit a `pending`/`published` transition
+after qualification: publication state is external release evidence, not an
+input in the qualified Git tree.
+
+`PublishDevelop` finalizes this contract after its required qualification and
+before pushing `develop`. A live URL with the locked SHA is read-only. A missing
+asset may be created only by `-RequireRelease` from the exact SHA-matching local
+candidate: the GitHub owner/repository, annotated tag, asset name, and candidate
+commit must all match. Existing tags and assets are never repointed or
+overwritten; any mismatch or failed remote verification preserves the queue.
 
 The public facade `tools/list` must contain exactly `resolve_tool` and
 `call_tool` for each family while the release probe still qualifies every tool

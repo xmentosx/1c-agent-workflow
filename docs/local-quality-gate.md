@@ -8,6 +8,12 @@
   -CoverageContract <existing-contract-id>
 ```
 
+For the first registration of a queue, `Targeted` uses `origin/develop` (or the
+explicit `-BaseRef`). A later registration under the same `QueueId` uses the
+previous queue head, so it verifies only the newly appended commits while the
+original queue base remains unchanged. A non-descendant replacement fails
+closed instead of silently retesting or rewriting another range.
+
 `-CoverageContract` не нужен, если диапазон уже содержит изменённый Pester-тест.
 Регистрация сама выполняет `Targeted` и только после успеха атомарно записывает
 `base/head` под `refs/itl/develop-queue/*`. Эти refs общие для worktree, но не
@@ -58,7 +64,7 @@ Develop proof закрывают reuse. Это продолжение по finge
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r25-qualification `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r26-context-safety `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
@@ -119,7 +125,7 @@ from the immutable locked URL. Every source is accepted only after the lock
 SHA-256 matches; an invalid explicit environment path fails closed.
 
 ```powershell
-.\scripts\check.ps1 -Mode Full -AiRulesSource D:\Git\itl_ai_rules_1c-r25-qualification
+.\scripts\check.ps1 -Mode Full -AiRulesSource D:\Git\itl_ai_rules_1c-r26-context-safety
 ```
 
 После успешного Full `scripts/promote-ai-rules-compatibility.ps1` сверяет exact
@@ -130,7 +136,7 @@ Release требуют `compatibilityStatus=passed`.
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action ReleaseMaster `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r25-qualification `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r26-context-safety `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
@@ -161,3 +167,12 @@ cleanup. Он требует существующий Develop proof и не по
 Git hooks автоматически не устанавливаются. GitHub Actions не являются
 каноническим источником локальной квалификации; доказательства создают команды
 выше и их SHA-проверяемые JSON/JUnit artifacts.
+
+## Develop retry cache
+
+`Develop` persists an exact-tree static qualification immediately after
+Full/Pester and tracked-state checks pass, before starting the live Develop
+journey. If that journey fails, a retry restores the SHA-verified Full and
+JUnit evidence from the common Git directory and reruns the live journey only.
+A different tree, environment/fork/input mismatch, missing JUnit, or corrupt
+cache disables reuse.

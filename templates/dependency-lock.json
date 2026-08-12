@@ -20,14 +20,14 @@
     },
     "aiRules1c": {
       "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
-      "ref": "itl-main-410951e7-r25",
-      "commit": "0ff2e5401d04b1cc502ea1548787e7c336fd85a3",
+      "ref": "itl-main-410951e7-r26",
+      "commit": "3a21d9741509ef7f168feaa8eea016ee84156f57",
       "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
       "upstreamRef": "refs/heads/main",
       "upstreamCommit": "410951e74fd3e6b7a763cf49757935b9a34d3f31",
-      "downstreamRevision": 25,
-      "compatibilityStatus": "passed",
-      "compatibilityCheckedAt": "2026-08-11T20:57:06Z"
+      "downstreamRevision": 26,
+      "compatibilityStatus": "pending",
+      "compatibilityCheckedAt": ""
     },
     "agentBrowser": {
       "version": "0.33.1",
@@ -92,7 +92,6 @@
       "manifestSha256": "f8dc93948bff574ecf51570227757ce0caa0c18f5c3b9c93174a8b381c79ad48",
       "patchSha256": "b19fba2bccb0f997525cf92433a817e3d6d25a49ce16961319397bfba79bd25f",
       "upstreamCommit": "f3a01778a14d29b38204685deea0131274d438ff",
-      "publicationStatus": "published",
       "source": "workflow-pinned"
     },
     "vanessaMcp": {

@@ -21,9 +21,9 @@
     "OnDemandMcp.Tests.ps1": 8.8,
     "OpenCodeWorkspace.Tests.ps1": 6.1,
     "ParserDocsBudgets.Tests.ps1": 7.9,
-    "ReleaseGate.Tests.ps1": 102.0,
+    "ReleaseGate.Tests.ps1": 181.0,
     "ReleaseReadiness.Tests.ps1": 8.0,
-    "SourceDelivery.Tests.ps1": 145.0,
+    "SourceDelivery.Tests.ps1": 560.0,
     "VanessaAuthoring.Tests.ps1": 8.7
   }
 }

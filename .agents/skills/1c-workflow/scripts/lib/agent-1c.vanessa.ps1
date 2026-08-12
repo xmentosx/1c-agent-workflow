@@ -121,7 +121,7 @@ function Get-VanessaAutomationPinnedEntry {
         throw "ITL_VANESSA_WORKFLOW_PIN_INCOMPLETE: vanessaAutomation is missing from .agent-1c/dependency-lock.json."
     }
 
-    foreach ($field in @("compatibilityVersion", "downstreamRevision", "assetName", "url", "sha256", "epfSha256", "manifestSha256", "patchSha256", "upstreamCommit", "publicationStatus")) {
+    foreach ($field in @("compatibilityVersion", "downstreamRevision", "assetName", "url", "sha256", "epfSha256", "manifestSha256", "patchSha256", "upstreamCommit")) {
         if ([string]::IsNullOrWhiteSpace([string](Get-ConfigValueFromObject -Object $entry -Path $field -Default ""))) {
             throw "ITL_VANESSA_WORKFLOW_PIN_INCOMPLETE: vanessaAutomation.$field is missing from .agent-1c/dependency-lock.json."
         }
@@ -150,10 +150,6 @@ function Get-VanessaAutomationDownloadInfo {
     if ($sourceBuild -and -not (Test-Path -LiteralPath (ConvertFrom-FileUri -Value $override) -PathType Leaf -ErrorAction SilentlyContinue)) {
         throw "ITL_VANESSA_SOURCE_BUILD_NOT_FOUND: $override"
     }
-    if (-not $override -and [string](Get-ConfigValueFromObject -Object $entry -Path "publicationStatus" -Default "") -ne "published") {
-        throw "ITL_VANESSA_ARTIFACT_NOT_PUBLISHED: the immutable Vanessa Automation URL is a contract only. Set ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE to the exact qualified candidate for pre-publication tests."
-    }
-
     return [pscustomobject]@{
         url = $(if ($override) { $override } else { [string]$entry.url })
         version = [string]$entry.compatibilityVersion

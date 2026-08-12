@@ -6,6 +6,8 @@ param(
     [string]$AiRulesSource = "",
     [string]$E2EProjectRoot = "",
     [string]$OutputPath = "",
+    [ValidateSet("Auto", "Restart")]
+    [string]$ResumeMode = "Auto",
     [switch]$Offline
 )
 
@@ -58,6 +60,25 @@ function Get-FileSha256 {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function ConvertTo-NativeArgument {
+    param([AllowNull()][string]$Value)
+    if ($null -eq $Value -or $Value.Length -eq 0) { return '""' }
+    if ($Value -notmatch '[\s"]') { return $Value }
+    $escaped = $Value -replace '(\\*)"', '$1$1\"'
+    $escaped = $escaped -replace '(\\+)$', '$1$1'
+    return '"' + $escaped + '"'
+}
+
+function Test-PathInsideRoot {
+    param([string]$Path, [string]$Root)
+    if (-not $Path -or -not $Root) { return $false }
+    try {
+        $fullPath = [IO.Path]::GetFullPath($Path)
+        $fullRoot = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+        return $fullPath.StartsWith($fullRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+    } catch { return $false }
+}
+
 function Get-ManagedTextOrBinarySha256 {
     param([string]$Path)
     $bytes = [System.IO.File]::ReadAllBytes($Path)
@@ -83,7 +104,7 @@ function Get-ManagedTextOrBinarySha256 {
 function Test-LockAgreement {
     param([object]$Expected, [object]$Actual, [string]$Label)
     if ($null -eq $Expected -or $null -eq $Actual) { return }
-    foreach ($field in @("version", "compatibilityVersion", "downstreamRevision", "assetName", "url", "sha256", "epfSha256", "manifestSha256", "patchSha256", "upstreamCommit", "publicationStatus")) {
+    foreach ($field in @("version", "compatibilityVersion", "downstreamRevision", "assetName", "url", "sha256", "epfSha256", "manifestSha256", "patchSha256", "upstreamCommit")) {
         $expectedProperty = $Expected.PSObject.Properties[$field]
         $actualProperty = $Actual.PSObject.Properties[$field]
         $expectedValue = if ($null -eq $expectedProperty) { "" } else { [string]$expectedProperty.Value }
@@ -281,7 +302,42 @@ function Test-VanessaArchiveContract {
 function Test-PowerShellEncoding {
     $baseCommit = Get-GitValue -Root $RepositoryRoot -Arguments @("merge-base", "HEAD", "origin/master")
     $changed = @()
-    if ($baseCommit) { $changed = @(& git -C $RepositoryRoot diff --name-only "$baseCommit...HEAD" -- "*.ps1") }
+    if ($baseCommit) { $changed = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("diff", "--name-only", "--diff-filter=ACMRT", "-z", "$baseCommit...HEAD", "--", "*.ps1")) }
+    if ($changed.Count -eq 0) { return @() }
+    $probePath = Join-Path $PSScriptRoot "release-e2e\test-powershell51-decoding.ps1"
+    $probeToken = [guid]::NewGuid().ToString("N")
+    $probeInputPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-ps51-decode-$probeToken.input.json")
+    $probeOutputPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-ps51-decode-$probeToken.output.json")
+    $probeStdoutPath = $probeOutputPath + ".stdout.log"
+    $probeStderrPath = $probeOutputPath + ".stderr.log"
+    $paths = @($changed | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $RepositoryRoot ([string]$_).Replace('/', '\'))) })
+    $decodedByPath = @{}
+    try {
+        [IO.File]::WriteAllText($probeInputPath, ($paths | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        $parts = @(
+            "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", (ConvertTo-NativeArgument $probePath),
+            "-InputPath", (ConvertTo-NativeArgument $probeInputPath),
+            "-OutputPath", (ConvertTo-NativeArgument $probeOutputPath)
+        )
+        $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($parts -join " ") -WindowStyle Hidden `
+            -RedirectStandardOutput $probeStdoutPath -RedirectStandardError $probeStderrPath -Wait -PassThru
+        $null = $process.Handle
+        if ([int]$process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $probeOutputPath -PathType Leaf)) {
+            $stderr = if (Test-Path -LiteralPath $probeStderrPath -PathType Leaf) { Get-Content -LiteralPath $probeStderrPath -Raw } else { "" }
+            throw "Windows PowerShell 5.1 batch decode probe failed with exit code $($process.ExitCode): $($stderr.Trim())"
+        }
+        foreach ($result in @(Get-Content -LiteralPath $probeOutputPath -Raw -Encoding UTF8 | ConvertFrom-Json)) {
+            $decodedByPath[[IO.Path]::GetFullPath([string]$result.path)] = [string]$result.decodedBase64
+        }
+    } catch {
+        Add-ReadinessIssue -Code "RELEASE_POWERSHELL_ENCODING_INVALID" -Category "SOURCE_DEFECT" `
+            -Message "Windows PowerShell 5.1 batch decode preflight failed: $($_.Exception.Message)" `
+            -Recovery "Make powershell.exe 5.1 available and keep the decode preflight executable before release."
+        return @($changed)
+    } finally {
+        Remove-Item -LiteralPath $probeInputPath, $probeOutputPath, $probeStdoutPath, $probeStderrPath -Force -ErrorAction SilentlyContinue
+    }
     foreach ($relativePath in @($changed)) {
         $path = Join-Path $RepositoryRoot ([string]$relativePath).Replace('/', '\')
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
@@ -289,18 +345,138 @@ function Test-PowerShellEncoding {
             $bytes = [System.IO.File]::ReadAllBytes($path)
             $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
             $text = $strictUtf8.GetString($bytes)
+            if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
             if ($text.IndexOf([char]0xFFFD) -ge 0) { throw "replacement character U+FFFD is present" }
             $tokens = $null
             $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
             if (@($errors).Count -gt 0) { throw "PowerShell AST errors: $(@($errors | ForEach-Object { $_.Message }) -join '; ')" }
+            $actualBase64 = [string]$decodedByPath[[IO.Path]::GetFullPath($path)]
+            $expectedBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($text))
+            if (-not $actualBase64 -or $actualBase64 -cne $expectedBase64) {
+                throw "Windows PowerShell 5.1 default decoding differs from strict UTF-8"
+            }
         } catch {
             Add-ReadinessIssue -Code "RELEASE_POWERSHELL_ENCODING_INVALID" -Category "SOURCE_DEFECT" `
-                -Message "Changed PowerShell file is not strict UTF-8/AST-clean: $relativePath; $($_.Exception.Message)" `
-                -Recovery "Store the script as valid UTF-8 and pass Cyrillic data through UTF-8 JSON/files or environment variables."
+                -Message "Changed PowerShell file is not strict UTF-8/AST-clean and Windows PowerShell 5.1-safe: $relativePath; $($_.Exception.Message)" `
+                -Recovery "Store non-ASCII Windows PowerShell source with a UTF-8 BOM, or keep the script ASCII-safe and pass Unicode through UTF-8 JSON/files, environment variables, or Base64."
         }
     }
     return @($changed)
+}
+
+function Test-ReleaseCheckpointPreflight {
+    param(
+        [string]$StandProjectRoot,
+        [string]$StandWorktree,
+        [string]$DevBranchName,
+        [string]$CandidateCommit,
+        [string]$CandidateTree,
+        [string]$AiRulesCommit
+    )
+
+    $safeRunName = ($DevBranchName -replace '[^A-Za-z0-9_.-]', '_')
+    $preferredPath = Join-Path $StandWorktree ".agent-1c\runs\release-e2e\$safeRunName\checkpoint.json"
+    $legacyPath = Join-Path $StandWorktree ".agent-1c\release-e2e-runs\$safeRunName\checkpoint.json"
+    $checkpointPath = if (Test-Path -LiteralPath $preferredPath -PathType Leaf) { $preferredPath } elseif (Test-Path -LiteralPath $legacyPath -PathType Leaf) { $legacyPath } else { "" }
+    $record = [ordered]@{
+        path = $checkpointPath
+        status = $(if ($checkpointPath) { "found" } else { "absent" })
+        expectedHead = ""
+        currentHead = Get-GitValue -Root $StandWorktree -Arguments @("rev-parse", "HEAD")
+        fixturePath = ""
+        verificationFresh = $null
+        exactIdentity = $false
+    }
+    if (-not $checkpointPath) { return $record }
+
+    $checkpoint = Get-JsonFile -Path $checkpointPath -Code "RELEASE_CHECKPOINT_INVALID" -Label "Release E2E checkpoint"
+    if ($null -eq $checkpoint) { $record.status = "invalid"; return $record }
+    $expectedHeadProperty = $checkpoint.PSObject.Properties["expectedHead"]
+    if ($null -ne $expectedHeadProperty) { $record.expectedHead = [string]$expectedHeadProperty.Value }
+    $identityProperty = $checkpoint.PSObject.Properties["identity"]
+    $identity = if ($null -eq $identityProperty) { $null } else { $identityProperty.Value }
+    $checkpointSchema = 0
+    $schemaProperty = $checkpoint.PSObject.Properties["schemaVersion"]
+    $schemaSupported = $null -ne $schemaProperty -and [int]::TryParse([string]$schemaProperty.Value, [ref]$checkpointSchema) -and $checkpointSchema -in @(1, 2, 3)
+    $scopeMatches = $schemaSupported -and $null -ne $identity -and
+        [string]$identity.projectRoot -eq $StandProjectRoot -and
+        [string]$identity.worktreePath -eq $StandWorktree -and
+        [string]$identity.branch -eq "itldev/$DevBranchName"
+    if (-not $scopeMatches) {
+        Add-ReadinessIssue -Code "RELEASE_CHECKPOINT_SCOPE_MISMATCH" -Category "STAND_STALE" `
+            -Message "Release checkpoint has unsupported schema or belongs to another project, worktree, or branch: schema=$checkpointSchema path=$checkpointPath" `
+            -Recovery "Use the checkpoint owned by this disposable Release stand, or perform the script-owned Restart on the owning stand."
+    }
+    if ($schemaSupported -and $checkpointSchema -lt 3 -and $ResumeMode -eq "Auto") {
+        Add-ReadinessIssue -Code "RELEASE_CHECKPOINT_UPGRADE_REQUIRED" -Category "STAND_STALE" `
+            -Message "Release checkpoint schema v$checkpointSchema requires one script-owned Restart migration." `
+            -Recovery "Run Release once with ResumeMode Restart."
+    }
+
+    $runnerPath = Join-Path $RepositoryRoot "scripts\invoke-release-e2e.ps1"
+    $helperPath = Join-Path $RepositoryRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+    $projectConfigPath = Join-Path $StandWorktree ".agent-1c\project.json"
+    $runnerSha256 = Get-ManagedTextOrBinarySha256 -Path $runnerPath
+    $helperSha256 = Get-ManagedTextOrBinarySha256 -Path $helperPath
+    $projectConfigSha256 = Get-FileSha256 -Path $projectConfigPath
+    $exactIdentity = $scopeMatches -and
+        [string]$identity.workflowCommit -eq $CandidateCommit -and
+        [string]$identity.workflowTree -eq $CandidateTree -and
+        [string]$identity.runnerSha256 -eq $runnerSha256 -and
+        [string]$identity.aiRulesCommit -eq $AiRulesCommit -and
+        [string]$identity.helperSha256 -eq $helperSha256 -and
+        [string]$identity.projectConfigSha256 -eq $projectConfigSha256
+    $record.exactIdentity = $exactIdentity
+
+    if ($ResumeMode -eq "Auto" -and $exactIdentity -and $record.currentHead -cne $record.expectedHead) {
+        Add-ReadinessIssue -Code "RELEASE_CHECKPOINT_HEAD_MISMATCH" -Category "STAND_STALE" `
+            -Message "Release checkpoint expected HEAD '$($record.expectedHead)', but the same-identity worktree is at '$($record.currentHead)'." `
+            -Recovery "Inspect the unexpected stand change, then use the script-owned Release Restart when rollback is intended."
+    }
+
+    $checkpointFixturePath = ""
+    $configEvidenceProperty = $checkpoint.PSObject.Properties["configEvidence"]
+    if ($null -ne $configEvidenceProperty -and $null -ne $configEvidenceProperty.Value) {
+        $featurePathProperty = $configEvidenceProperty.Value.PSObject.Properties["featurePath"]
+        if ($null -ne $featurePathProperty) { $checkpointFixturePath = [string]$featurePathProperty.Value }
+    }
+    if ($ResumeMode -eq "Auto" -and $checkpointFixturePath) {
+        $record.fixturePath = $checkpointFixturePath
+        if (-not (Test-PathInsideRoot -Path $checkpointFixturePath -Root $StandWorktree) -or -not (Test-Path -LiteralPath $checkpointFixturePath -PathType Leaf)) {
+            Add-ReadinessIssue -Code "RELEASE_CHECKPOINT_FIXTURE_INVALID" -Category "STAND_STALE" `
+                -Message "Checkpointed Vanessa fixture is missing or outside the canonical Release worktree: $checkpointFixturePath" `
+                -Recovery "Restart from a candidate that creates the feature below the disposable Release worktree."
+        }
+    }
+
+    $stagesProperty = $checkpoint.PSObject.Properties["stages"]
+    $refreshStage = if ($null -eq $stagesProperty -or $null -eq $stagesProperty.Value) { $null } else { $stagesProperty.Value.PSObject.Properties["verification-refresh"] }
+    if ($ResumeMode -eq "Auto" -and $exactIdentity -and $null -ne $refreshStage -and [string]$refreshStage.Value.status -eq "passed") {
+        $fresh = $false
+        $stateFilesProperty = $checkpoint.PSObject.Properties["stateFiles"]
+        $stateRecord = if ($null -eq $stateFilesProperty -or $null -eq $stateFilesProperty.Value) { $null } else { $stateFilesProperty.Value.PSObject.Properties["postConfig"] }
+        if ($null -ne $stateRecord) {
+            $stateCopyPath = [string]$stateRecord.Value.stateCopyPath
+            if (Test-Path -LiteralPath $stateCopyPath -PathType Leaf) {
+                try {
+                    $savedState = Get-Content -LiteralPath $stateCopyPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $verifiedAt = [DateTime]::Parse([string]$savedState.lastVerifiedAt).ToUniversalTime()
+                    $createdAtProperty = $checkpoint.PSObject.Properties["createdAt"]
+                    if ($null -eq $createdAtProperty) { throw "checkpoint createdAt is missing" }
+                    $checkpointFloor = [DateTime]::Parse([string]$createdAtProperty.Value).ToUniversalTime()
+                    $fresh = [string]$savedState.lastVerificationStatus -eq "passed" -and $verifiedAt -ge $checkpointFloor
+                } catch { $fresh = $false }
+            }
+        }
+        $record.verificationFresh = $fresh
+        if (-not $fresh) {
+            Add-ReadinessIssue -Code "RELEASE_CHECKPOINT_VERIFICATION_STALE" -Category "STAND_STALE" `
+                -Message "Checkpoint marks verification-refresh passed, but its saved post-config state has no fresh passed verification." `
+                -Recovery "Use the script-owned Restart so verification is refreshed before result/export."
+        }
+    }
+    return $record
 }
 
 $commit = Get-GitValue -Root $RepositoryRoot -Arguments @("rev-parse", "HEAD")
@@ -382,17 +558,59 @@ if ($AiRulesSource -and (Test-Path -LiteralPath $AiRulesSource -PathType Contain
 }
 
 $standRecord = $null
-if ($Mode -eq "Release") {
+if ($Mode -in @("Develop", "Release")) {
     if (-not $E2EProjectRoot) {
-        Add-ReadinessIssue -Code "RELEASE_STAND_CONFIG_MISSING" -Category "STAND_STALE" -Message "Release has no E2E project root." -Recovery "Pass the dedicated E2E project root."
+        Add-ReadinessIssue -Code "RELEASE_STAND_CONFIG_MISSING" -Category "STAND_STALE" -Message "$Mode has no E2E project root." -Recovery "Pass the dedicated E2E project root."
     } else {
         $E2EProjectRoot = [System.IO.Path]::GetFullPath($E2EProjectRoot)
         $standConfigPath = Join-Path $E2EProjectRoot ".agent-1c\release-e2e.json"
         $standConfig = Get-JsonFile -Path $standConfigPath -Code "RELEASE_STAND_CONFIG_INVALID" -Label "Release E2E configuration"
         if ($null -ne $standConfig) {
+            if ($Mode -eq "Develop") {
+                $developBranchName = [string]$standConfig.developDevBranchName
+                $developWorktreeValue = [string]$standConfig.developWorktreePath
+                $releaseWorktreeValue = [string]$standConfig.worktreePath
+                if (-not $developBranchName -or -not $developWorktreeValue -or -not $releaseWorktreeValue) {
+                    Add-ReadinessIssue -Code "DEVELOP_E2E_ISOLATED_STAND_REQUIRED" -Category "STAND_STALE" `
+                        -Message "release-e2e.json must define developDevBranchName and developWorktreePath separately from the Release worktree." `
+                        -Recovery "Provision and configure a dedicated disposable Develop E2E branch."
+                } else {
+                    $developWorktree = [IO.Path]::GetFullPath($developWorktreeValue)
+                    $releaseWorktree = [IO.Path]::GetFullPath($releaseWorktreeValue)
+                    $standRecord = [ordered]@{ projectRoot = $E2EProjectRoot; devBranchName = $developBranchName; worktreePath = $developWorktree; releaseWorktreePath = $releaseWorktree; commit = "" }
+                    if ([string]::Equals($developWorktree.TrimEnd('\', '/'), $releaseWorktree.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) {
+                        Add-ReadinessIssue -Code "DEVELOP_E2E_ISOLATED_STAND_REQUIRED" -Category "STAND_STALE" `
+                            -Message "Develop and Release worktree paths must differ: $developWorktree" `
+                            -Recovery "Provision a separate disposable Develop E2E worktree."
+                    } elseif (-not (Test-Path -LiteralPath $developWorktree -PathType Container)) {
+                        Add-ReadinessIssue -Code "DEVELOP_E2E_ISOLATED_STAND_REQUIRED" -Category "STAND_STALE" `
+                            -Message "Configured Develop worktree is missing: $developWorktree" `
+                            -Recovery "Provision the configured disposable Develop E2E worktree."
+                    } else {
+                        $developBranch = Get-GitValue -Root $developWorktree -Arguments @("branch", "--show-current")
+                        $standRecord.commit = Get-GitValue -Root $developWorktree -Arguments @("rev-parse", "HEAD")
+                        if ($developBranch -cne "itldev/$developBranchName") {
+                            Add-ReadinessIssue -Code "DEVELOP_E2E_ISOLATED_STAND_REQUIRED" -Category "STAND_STALE" `
+                                -Message "Develop worktree branch is '$developBranch'; expected 'itldev/$developBranchName'." `
+                                -Recovery "Point developWorktreePath at its configured disposable Develop branch."
+                        }
+                        try {
+                            $masterCommonGitDirectory = Get-RepositoryCommonGitDirectory -RepositoryRoot $E2EProjectRoot
+                            $developCommonGitDirectory = Get-RepositoryCommonGitDirectory -RepositoryRoot $developWorktree
+                            if (-not [string]::Equals($masterCommonGitDirectory.TrimEnd('\', '/'), $developCommonGitDirectory.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) {
+                                throw "common Git directories differ: master='$masterCommonGitDirectory'; develop='$developCommonGitDirectory'"
+                            }
+                        } catch {
+                            Add-ReadinessIssue -Code "DEVELOP_E2E_ISOLATED_STAND_REQUIRED" -Category "STAND_STALE" `
+                                -Message "Develop path is not a registered worktree of the configured E2E project: $($_.Exception.Message)" `
+                                -Recovery "Create the Develop branch with git worktree add from the E2E project repository."
+                        }
+                    }
+                }
+            } else {
             $devBranchName = [string]$standConfig.devBranchName
             $standWorktree = [System.IO.Path]::GetFullPath([string]$standConfig.worktreePath)
-            $standRecord = [ordered]@{ projectRoot = $E2EProjectRoot; devBranchName = $devBranchName; worktreePath = $standWorktree; commit = ""; managedPackageSha256 = ""; unsafeActionProtectionConfirmed = $false }
+            $standRecord = [ordered]@{ projectRoot = $E2EProjectRoot; devBranchName = $devBranchName; worktreePath = $standWorktree; commit = ""; managedPackageSha256 = ""; unsafeActionProtectionConfirmed = $false; checkpoint = $null }
             Test-ManagedPackageAgreement -ExpectedInventory $managedInventory -TargetRoot $E2EProjectRoot -Label "E2E master"
             Test-ManagedPackageAgreement -ExpectedInventory $managedInventory -TargetRoot $standWorktree -Label "E2E branch"
             $standRecord.managedPackageSha256 = $managedInventorySha
@@ -432,6 +650,9 @@ if ($Mode -eq "Release") {
                         -Recovery "Run the monitored configure-dev-branch-unsafe-action-protection action in the configured E2E worktree."
                 }
             }
+            $actualAiRulesCommit = if ($AiRulesSource -and (Test-Path -LiteralPath $AiRulesSource -PathType Container)) { Get-GitValue -Root $AiRulesSource -Arguments @("rev-parse", "HEAD") } else { "" }
+            $standRecord.checkpoint = Test-ReleaseCheckpointPreflight -StandProjectRoot $E2EProjectRoot -StandWorktree $standWorktree -DevBranchName $devBranchName -CandidateCommit $commit -CandidateTree $tree -AiRulesCommit $actualAiRulesCommit
+            }
         }
     }
 }
@@ -456,7 +677,7 @@ $context = [ordered]@{
         powershellEdition = [string]$PSVersionTable.PSEdition
         consoleOutputEncoding = [Console]::OutputEncoding.WebName
         changedPowerShellFiles = $changedPowerShell
-        contract = "strict-utf8-and-ast"
+        contract = "windows-powershell-5.1-default-decode-plus-strict-utf8-and-ast"
     }
     issues = $issueArray
 }

@@ -33,6 +33,8 @@
             $installDocText | Should -Match ([regex]::Escape($docsSkillPath))
             $initSetupText | Should -Match ([regex]::Escape($docsSkillPath))
         }
+        $installerText | Should -Match ([regex]::Escape('"templates\dependency-lock.json"'))
+        $lifecycleText | Should -Match ([regex]::Escape('Join-Path $packageRoot "templates\dependency-lock.json"'))
     }
 
     It "keeps required package files visible for Git packaging" {
@@ -145,17 +147,17 @@
         $lockTemplate.mode | Should -Be "fresh"
         $project = $projectTemplate | ConvertFrom-Json
         $project.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $project.aiRules.ref | Should -Be "itl-main-410951e7-r25"
+        $project.aiRules.ref | Should -Be "itl-main-410951e7-r26"
         @($project.aiRules.tools).Count | Should -Be 0
         $lockTemplate.dependencies.aiRules1c.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-410951e7-r25"
+        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-410951e7-r26"
         $lockTemplate.dependencies.workflowPackage.commit | Should -Be ""
         $lockTemplate.dependencies.workflowPackage.source | Should -Be "template default"
         $lockTemplate.dependencies.workflowPackage.updatedAt | Should -Be ""
-        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "0ff2e5401d04b1cc502ea1548787e7c336fd85a3"
+        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "3a21d9741509ef7f168feaa8eea016ee84156f57"
         $lockTemplate.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
         $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "410951e74fd3e6b7a763cf49757935b9a34d3f31"
-        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 25
+        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 26
         $lockTemplate.dependencies.aiRules1c.compatibilityStatus | Should -BeIn @("pending", "passed")
         if ($lockTemplate.dependencies.aiRules1c.compatibilityStatus -eq "pending") {
             $lockTemplate.dependencies.aiRules1c.compatibilityCheckedAt | Should -Be ""
@@ -191,7 +193,7 @@
         $lockTemplate.dependencies.vanessaAutomation.downstreamRevision | Should -Be "itl-r7"
         $lockTemplate.dependencies.vanessaAutomation.sha256 | Should -Be "d96ac6e48578ac8b2dc65d645b1748bc5f6183c58bcd22987122dc8e45e19c1e"
         $lockTemplate.dependencies.vanessaAutomation.epfSha256 | Should -Be "d17b20bca54861b025256652a84dec18cdcc2d20b4a08932c5141054d7dc7f9f"
-        $lockTemplate.dependencies.vanessaAutomation.publicationStatus | Should -Be "published"
+        $lockTemplate.dependencies.vanessaAutomation.PSObject.Properties.Name | Should -Not -Contain "publicationStatus"
         $lockTemplate.dependencies.vanessaAutomation.PSObject.Properties.Name | Should -Contain "sha256"
         $lockTemplate.dependencies.vanessaMcp.clientMcp.PSObject.Properties.Name | Should -Contain "sha256"
         $lockTemplate.dependencies.vanessaMcp.vaExtension.PSObject.Properties.Name | Should -Contain "sha256"
