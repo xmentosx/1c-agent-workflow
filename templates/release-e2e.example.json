@@ -1,5 +1,7 @@
 {
   "schemaVersion": 1,
+  "developDevBranchName": "workflow-develop-e2e",
+  "developWorktreePath": "D:\\Git\\itl-workflow-e2e-pm5-worktrees\\workflow-develop-e2e",
   "devBranchName": "workflow-release-e2e",
   "worktreePath": "D:\\Git\\itl-workflow-e2e-pm5-worktrees\\workflow-release-e2e"
 }

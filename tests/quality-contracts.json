@@ -22,6 +22,7 @@
       "scripts/check.ps1",
       "scripts/release-qualification.ps1",
       "scripts/source-delivery.ps1",
+      "scripts/develop-static-qualification.ps1",
       "scripts/git-path-list.ps1",
       "scripts/quality-contracts.ps1",
       "scripts/resolve-targeted-tests.ps1",
@@ -62,8 +63,8 @@
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/LocalQualityGate.Tests.ps1",
-      "paths": ["scripts/check.ps1", "scripts/quality-contracts.ps1", "scripts/resolve-targeted-tests.ps1", "scripts/invoke-pester-*.ps1", "scripts/run-pester-*.ps1", "scripts/pester-timings.json", "scripts/release-qualification.ps1", "scripts/test-release-readiness.ps1", "tests/quality-contracts.json"],
-      "tests": ["tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1"]
+      "paths": ["scripts/check.ps1", "scripts/quality-contracts.ps1", "scripts/resolve-targeted-tests.ps1", "scripts/invoke-pester-*.ps1", "scripts/run-pester-*.ps1", "scripts/pester-timings.json", "scripts/release-qualification.ps1", "scripts/develop-static-qualification.ps1", "scripts/test-release-readiness.ps1", "tests/quality-contracts.json"],
+      "tests": ["tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1"]
     },
     {
       "id": "source-delivery",
@@ -84,12 +85,21 @@
       "tests": ["tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseUnsafeActionProtection.Tests.ps1"]
     },
     {
+      "id": "dependency-lock",
+      "owner": "workflow dependency lock",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/DependencyLocks.Tests.ps1",
+      "paths": ["templates/dependency-lock.json"],
+      "tests": ["tests/pester/DependencyLocks.Tests.ps1", "tests/pester/GitHubDependencyFallback.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1"]
+    },
+    {
       "id": "bootstrap-update",
       "owner": "bootstrap and package update",
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/BootstrapUpdate.Tests.ps1",
-      "paths": ["AGENT-INSTALL.md", "install-agent-1c-workflow.ps1", "templates/*", ".agents/skills/1c-workflow/kilo-command-templates/*"],
+      "paths": ["AGENT-INSTALL.md", "install-agent-1c-workflow.ps1", "templates/AGENTS.append.md", "templates/dev.env.example", "templates/gitignore.append", "templates/project.json", "templates/release-e2e.example.json", "templates/tools.json", "templates/USER-RULES.append.md", ".agents/skills/1c-workflow/kilo-command-templates/*"],
       "tests": ["tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/DependencyLocks.Tests.ps1", "tests/pester/GitHubDependencyFallback.Tests.ps1"]
     },
     {

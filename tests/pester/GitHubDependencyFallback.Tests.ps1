@@ -65,10 +65,13 @@ Describe "GitHub dependency rate-limit fallback" {
         $extension.name | Should -Be "VAExtension.1.29.cfe"
     }
 
-    It "uses the published workflow-pinned Vanessa asset without querying releases latest" {
+    It "uses the immutable workflow-pinned Vanessa asset without a mutable publication flag or releases-latest query" {
         Mock Invoke-RestMethod { throw "must not query GitHub" }
         [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $null, "Process")
 
+        $lockPath = Join-Path $RepoRoot "templates\dependency-lock.json"
+        $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $lock.dependencies.vanessaAutomation.PSObject.Properties.Name | Should -Not -Contain "publicationStatus"
         $download = Get-VanessaAutomationDownloadInfo
         $download.source | Should -Be "workflow-pinned"
         $download.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r7/vanessa-automation-single.1.2.043.28-itl-r7.zip"

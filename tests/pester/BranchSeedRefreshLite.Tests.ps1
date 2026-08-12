@@ -1,4 +1,4 @@
-Describe "latest-only branch seed and two-level refresh" {
+﻿Describe "latest-only branch seed and two-level refresh" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext

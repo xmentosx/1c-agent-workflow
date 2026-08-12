@@ -1,4 +1,4 @@
-BeforeAll {
+﻿BeforeAll {
     . (Join-Path $PSScriptRoot "TestSupport.ps1")
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
@@ -74,6 +74,54 @@ Describe "Release gate scripts" {
         $lifecycleText | Should -Match 'snapshot cleanup failed.*Snapshot retained'
         $developE2eText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-develop-e2e.ps1") -Raw -Encoding UTF8
         $developE2eText | Should -Match '(?s)& git -C \$Root commit -m \$Message \| Out-Null\s+if \(\$LASTEXITCODE -ne 0\) \{\s+\$remaining = @\(& git -C \$Root status --porcelain --untracked-files=no\)\s+if \(\$remaining\.Count -ne 0\) \{ throw "Unable to commit \$Message\." \}'
+        $developE2eText | Should -Match 'DEVELOP_E2E_ISOLATED_STAND_REQUIRED'
+        $developE2eText | Should -Match 'developDevBranchName'
+        $developE2eText | Should -Match 'developWorktreePath'
+        $developE2eText | Should -Match 'Develop and Release worktree paths must differ'
+        $developE2eText | Should -Match '(?s)Invoke-InstalledAction -Name "upgrade-refresh-branch".*?Set-DevelopStandVanessaFeature -Root \$standBranchRoot.*?Invoke-InstalledAction -Name "upgrade-check"'
+    }
+
+    It "owns and idempotently commits the upgrade-journey Vanessa fixture" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-develop-feature-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.invalid"
+            & git -C $tempRoot config user.name "ITL Test"
+            Set-Content -LiteralPath (Join-Path $tempRoot "README.md") -Encoding ASCII -Value "fixture"
+            & git -C $tempRoot add README.md
+            & git -C $tempRoot commit -m "fixture" *> $null
+
+            $tokens = $null
+            $errors = $null
+            $runnerAst = [System.Management.Automation.Language.Parser]::ParseFile(
+                (Join-Path $RepoRoot "scripts\invoke-develop-e2e.ps1"),
+                [ref]$tokens,
+                [ref]$errors
+            )
+            @($errors) | Should -BeNullOrEmpty
+            foreach ($functionName in @("Add-FreshVanessaFeature", "Set-DevelopStandVanessaFeature")) {
+                $functionAst = $runnerAst.Find({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                    $node.Name -eq $functionName
+                }, $true)
+                . ([scriptblock]::Create($functionAst.Extent.Text))
+            }
+
+            Set-DevelopStandVanessaFeature -Root $tempRoot
+            $firstHead = (& git -C $tempRoot rev-parse HEAD).Trim()
+            & git -C $tempRoot ls-files --error-unmatch -- tests/features/ITLDevelopJourney.feature *> $null
+            $LASTEXITCODE | Should -Be 0
+            (& git -C $tempRoot log -1 --pretty=%s).Trim() | Should -Be "test: seed develop E2E Vanessa fixture"
+            @(& git -C $tempRoot status --porcelain).Count | Should -Be 0
+
+            Set-DevelopStandVanessaFeature -Root $tempRoot
+            (& git -C $tempRoot rev-parse HEAD).Trim() | Should -Be $firstHead
+            @(& git -C $tempRoot status --porcelain).Count | Should -Be 0
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "requires the lock-pinned annotated fork tag and explicit E2E stand" {

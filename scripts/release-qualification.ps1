@@ -16,6 +16,23 @@ function Get-WorkflowQualificationReuseKind {
     return "ancestor-same-tree"
 }
 
+function Get-CachedWorkflowQualificationReuseKind {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][int]$SchemaVersion,
+        [Parameter(Mandatory = $true)][string]$QualifiedCommit,
+        [Parameter(Mandatory = $true)][string]$EvidenceCommit,
+        [Parameter(Mandatory = $true)][string]$QualifiedTree,
+        [Parameter(Mandatory = $true)][string]$CurrentCommit,
+        [Parameter(Mandatory = $true)][string]$CurrentTree
+    )
+
+    $strict = Get-WorkflowQualificationReuseKind @PSBoundParameters
+    if ($strict) { return $strict }
+    if ($QualifiedTree -eq $CurrentTree) { return "independent-exact-tree" }
+    return ""
+}
+
 function Test-WorkflowContinuationPattern {
     param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Pattern)
 

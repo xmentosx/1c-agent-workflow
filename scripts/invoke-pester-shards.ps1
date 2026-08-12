@@ -247,7 +247,7 @@ $items = @($testFiles | ForEach-Object {
         weight = $(if ($weights.ContainsKey($_.Name)) { [double]$weights[$_.Name] } else { $defaultSeconds })
         serial = $serialTestNames -contains $_.Name
     }
-} | Sort-Object @{ Expression = "serial"; Descending = $false }, @{ Expression = "name"; Descending = $false })
+} | Sort-Object @{ Expression = "serial"; Descending = $false }, @{ Expression = "weight"; Descending = $true }, @{ Expression = "name"; Descending = $false })
 
 $workerScript = Join-Path $PSScriptRoot "run-pester-shard.ps1"
 $entries = New-Object System.Collections.Generic.List[object]

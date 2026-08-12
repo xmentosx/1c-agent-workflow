@@ -40,6 +40,7 @@
         Set-Content -LiteralPath $fakeGate -Encoding UTF8 -Value @'
 param([string]$Mode, [string]$BaseRef, [string[]]$CoverageContract, [string]$AiRulesSource, [string]$E2EProjectRoot, [string]$ReleaseResumeMode); $CoverageContract = @($CoverageContract -split ','); if ($CoverageContract -and @($CoverageContract).Count -ne 2) { exit 12 }
 Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-modes.log') -Encoding UTF8 -Value $Mode
+if ($Mode -eq 'Targeted') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-target-bases.log') -Encoding UTF8 -Value $BaseRef }
 if ($Mode -eq 'Release') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-release-resume.log') -Encoding UTF8 -Value $ReleaseResumeMode }
 if ($Mode -eq 'Develop') {
     $qualification = Join-Path (Get-Location) 'build\test-results\qualification'
@@ -51,10 +52,20 @@ if ($Mode -eq 'Develop') {
 if ($Mode -eq 'Release' -and $env:ITL_TEST_FAIL_DELIVERY_RELEASE -eq 'true') { exit 14 }
 exit 0
 '@
-        & git -C $root add fake-gate.ps1
+        $fakeFinalizer = Join-Path $root "fake-component-finalizer.ps1"
+        Set-Content -LiteralPath $fakeFinalizer -Encoding UTF8 -Value @'
+param([string]$RepositoryRoot, [string]$SourceRepositoryRoot, [string]$CandidateCommit, [string]$Remote, [switch]$ReleaseQualified)
+$remoteHead = ((& git -C $RepositoryRoot ls-remote $Remote refs/heads/develop) -split "`t")[0]
+$record = [ordered]@{ candidateCommit = $CandidateCommit; remoteHead = $remoteHead; releaseQualified = [bool]$ReleaseQualified }
+New-Item -ItemType Directory -Force -Path (Join-Path $SourceRepositoryRoot 'build') | Out-Null
+Add-Content -LiteralPath (Join-Path $SourceRepositoryRoot 'build\component-finalizer.log') -Encoding UTF8 -Value ($record | ConvertTo-Json -Compress)
+if ($env:ITL_TEST_FAIL_COMPONENT_FINALIZER -eq 'true') { [Console]::Error.WriteLine('fixture component finalizer failed'); exit 17 }
+exit 0
+'@
+        & git -C $root add fake-gate.ps1 fake-component-finalizer.ps1
         & git -C $root commit --quiet -m "test: add gate" *> $null
         & git -C $root push --quiet origin develop *> $null
-        return [pscustomobject]@{ root = $root; remote = $remote; gate = $fakeGate; modeLog = (Join-Path $root 'build\gate-modes.log'); releaseResumeLog = (Join-Path $root 'build\gate-release-resume.log'); base = (& git -C $root rev-parse HEAD).Trim() }
+        return [pscustomobject]@{ root = $root; remote = $remote; gate = $fakeGate; finalizer = $fakeFinalizer; finalizerLog = (Join-Path $root 'build\component-finalizer.log'); modeLog = (Join-Path $root 'build\gate-modes.log'); targetBaseLog = (Join-Path $root 'build\gate-target-bases.log'); releaseResumeLog = (Join-Path $root 'build\gate-release-resume.log'); base = (& git -C $root rev-parse HEAD).Trim() }
     }
     function Remove-DeliveryFixture {
         param([object]$Fixture)
@@ -104,6 +115,38 @@ Describe "Source develop queue and delivery" {
             Remove-DeliveryFixture -Fixture $fixture
         }
     }
+    It "targets only commits after the existing head of the same queue" {
+        $fixture = $null; try {
+            $fixture = New-DeliveryFixture
+            $tests = Join-Path $fixture.root "tests\pester"
+            New-Item -ItemType Directory -Force -Path $tests | Out-Null
+            Set-Content -LiteralPath (Join-Path $fixture.root "first.ps1") -Encoding UTF8 -Value "'first'"
+            Set-Content -LiteralPath (Join-Path $tests "First.Tests.ps1") -Encoding UTF8 -Value "Describe 'first' { It 'works' { `$true | Should -BeTrue } }"
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit -m "feat: first queued change" *> $null
+            $firstHead = (& git -C $fixture.root rev-parse HEAD).Trim()
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "same-queue") | Out-Null
+
+            $baseTree = (& git -C $fixture.root rev-parse "$($fixture.base)^{tree}").Trim()
+            $remoteHead = (& git -C $fixture.root commit-tree $baseTree -p $fixture.base -m "unrelated remote develop movement").Trim()
+            & git -C $fixture.root push --quiet origin "$remoteHead`:refs/heads/develop" *> $null
+            & git -C $fixture.root fetch --quiet origin develop *> $null
+            (& git -C $fixture.root rev-parse origin/develop).Trim() | Should -Be $remoteHead
+
+            Set-Content -LiteralPath (Join-Path $fixture.root "second.ps1") -Encoding UTF8 -Value "'second'"
+            Set-Content -LiteralPath (Join-Path $tests "Second.Tests.ps1") -Encoding UTF8 -Value "Describe 'second' { It 'works' { `$true | Should -BeTrue } }"
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit -m "feat: second queued change" *> $null
+            $secondHead = (& git -C $fixture.root rev-parse HEAD).Trim()
+            $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "same-queue")
+            $payload = $result.stdout | ConvertFrom-Json
+
+            @((Get-Content -LiteralPath $fixture.targetBaseLog -Encoding UTF8)) | Should -Be @($fixture.base, $firstHead)
+            @($payload.paths | Sort-Object) | Should -Be @("second.ps1", "tests/pester/Second.Tests.ps1")
+            (& git -C $fixture.root rev-parse refs/itl/develop-queue/same-queue/base).Trim() | Should -Be $fixture.base
+            (& git -C $fixture.root rev-parse refs/itl/develop-queue/same-queue/head).Trim() | Should -Be $secondHead
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
     It "refuses executable changes without tests or an explicit reused contract" {
         $fixture = $null; try {
             $fixture = New-DeliveryFixture
@@ -127,13 +170,43 @@ Describe "Source develop queue and delivery" {
             & git -C $fixture.root commit -m "feat: publish" *> $null
             $head = (& git -C $fixture.root rev-parse HEAD).Trim()
             Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "publish") | Out-Null
-            $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'))
+            $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'))
             ($result.stdout | ConvertFrom-Json).status | Should -Be "published"
+            $finalizerRecord = Get-Content -LiteralPath $fixture.finalizerLog -Encoding UTF8 | Select-Object -Last 1 | ConvertFrom-Json
+            $finalizerRecord.candidateCommit | Should -Be $head
+            $finalizerRecord.remoteHead | Should -Be $fixture.base
+            $finalizerRecord.releaseQualified | Should -BeFalse
             (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $head
             $tree = (& git -C $fixture.root rev-parse 'HEAD^{tree}').Trim()
             Test-Path -LiteralPath (Join-Path $fixture.root ".git\itl\qualifications\$tree\develop.json") | Should -BeTrue
             @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -BeNullOrEmpty
         } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
+    It "preserves the queue and develop branch when component finalization fails" {
+        $fixture = $null; $oldFailure = $env:ITL_TEST_FAIL_COMPONENT_FINALIZER
+        try {
+            $fixture = New-DeliveryFixture
+            New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
+            Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\ComponentFinalize.Tests.ps1") -Encoding UTF8 -Value "Describe 'component finalize' { It 'works' { `$true | Should -BeTrue } }"
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit -m "test: component finalizer failure" *> $null
+            $candidate = (& git -C $fixture.root rev-parse HEAD).Trim()
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "component-finalize") | Out-Null
+
+            $env:ITL_TEST_FAIL_COMPONENT_FINALIZER = "true"
+            $failed = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"')) -AllowFailure
+
+            $failed.exitCode | Should -Not -Be 0
+            $failed.stderr | Should -Match "Component publication finalizer failed"
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Targeted", "Develop")
+            (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $fixture.base
+            (& git -C $fixture.root rev-parse refs/itl/develop-queue/component-finalize/head).Trim() | Should -Be $candidate
+            $finalizerRecord = Get-Content -LiteralPath $fixture.finalizerLog -Encoding UTF8 | Select-Object -Last 1 | ConvertFrom-Json
+            $finalizerRecord.remoteHead | Should -Be $fixture.base
+        } finally {
+            $env:ITL_TEST_FAIL_COMPONENT_FINALIZER = $oldFailure
+            Remove-DeliveryFixture -Fixture $fixture
+        }
     }
     It "publishes develop only after the exact candidate passes Develop and required Release" {
         $fixture = $null; $oldFailure = $env:ITL_TEST_FAIL_DELIVERY_RELEASE
@@ -157,7 +230,7 @@ Describe "Source develop queue and delivery" {
             Remove-Item -LiteralPath $fixture.modeLog -Force
             Remove-Item -LiteralPath $fixture.releaseResumeLog -Force
             $env:ITL_TEST_FAIL_DELIVERY_RELEASE = "false"
-            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-ReleaseResumeMode", "Restart", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'))
+            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-ReleaseResumeMode", "Restart", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'))
             $payload = $published.stdout | ConvertFrom-Json
             $payload.releaseQualified | Should -BeTrue
             (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $candidate
@@ -185,7 +258,7 @@ Describe "Source develop queue and delivery" {
             [IO.File]::WriteAllText((Join-Path $qualification "develop.json"), (([ordered]@{status="passed";repository=[ordered]@{tree=$tree}} | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
             Set-Content -LiteralPath (Join-Path $qualification "develop-e2e-summary.json") -Encoding UTF8 -Value '{}'
 
-            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'))
+            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'))
             ($published.stdout | ConvertFrom-Json).releaseQualified | Should -BeTrue
             @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Release")
             Test-Path -LiteralPath (Join-Path $fixture.root ".git\itl\qualifications\$tree\develop.json") | Should -BeTrue
@@ -221,7 +294,7 @@ Describe "Source develop queue and delivery" {
             [IO.File]::WriteAllText((Join-Path $runRoot "fixture-targeted-continuation.json"), (($targeted | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
             Remove-Item -LiteralPath $fixture.modeLog -Force -ErrorAction SilentlyContinue
 
-            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'))
+            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'))
             ($published.stdout | ConvertFrom-Json).releaseQualified | Should -BeTrue
             @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Release")
         } finally { Remove-DeliveryFixture -Fixture $fixture }
@@ -241,7 +314,7 @@ Describe "Source develop queue and delivery" {
             $driftGate = Join-Path $fixture.root 'build\drift-gate.ps1'
             $driftBody = 'param([string]$Mode, [string]$BaseRef, [string[]]$CoverageContract, [string]$AiRulesSource, [string]$E2EProjectRoot); $q=Join-Path (Get-Location) ''build\test-results\qualification''; New-Item -ItemType Directory -Force -Path $q|Out-Null; foreach($n in @(''full.json'',''develop.json'',''develop-e2e-summary.json'')){Set-Content (Join-Path $q $n) ''{}''}; & git push origin ''__SHA__:refs/heads/develop'' *> $null; if($LASTEXITCODE -ne 0){exit 9}; exit 0'.Replace('__SHA__', $drift)
             Set-Content -LiteralPath $driftGate -Value $driftBody
-            $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $driftGate + '"')) -AllowFailure
+            $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $driftGate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"')) -AllowFailure
             $result.exitCode | Should -Not -Be 0
             @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -Not -BeNullOrEmpty
         } finally { Remove-DeliveryFixture -Fixture $fixture }
@@ -254,7 +327,7 @@ Describe "Source develop queue and delivery" {
             $status = (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "Status", "-RepositoryRoot", ('"' + $fixture.root + '"'))).stdout | ConvertFrom-Json; $status.activeOperation.status | Should -Be "running"; $status.activeOperation.gateAlive | Should -BeTrue; $duplicate = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure; $duplicate.exitCode | Should -Not -Be 0; $duplicate.stderr | Should -Match "already active"
             $summaryRoot = Join-Path $fixture.root "build\test-results\local"; New-Item -ItemType Directory -Force -Path $summaryRoot | Out-Null; $summaryStarted = [DateTime]::UtcNow.AddSeconds(-2); $summaryFinished = [DateTime]::UtcNow.AddSeconds(-1); $summary = [ordered]@{ mode="Targeted"; status="failed"; startedAt=$summaryStarted.ToString("o"); finishedAt=$summaryFinished.ToString("o"); error="fixture interrupted"; tests=[ordered]@{passed=0;failed=1;skipped=0}; stages=@() }; [IO.File]::WriteAllText((Join-Path $summaryRoot "check-summary.json"), (($summary | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
             $operation.gatePid = 999998; $operation.gateProcessStartedAt = [DateTime]::UtcNow.AddDays(-1).ToString("o"); $operation.workingRoot = $fixture.root; $operation.mode = "Targeted"; [IO.File]::WriteAllText((Join-Path $lockRoot "operation.json"), (($operation | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')); ($published.stdout | ConvertFrom-Json).status | Should -Be "published"; Test-Path -LiteralPath (Join-Path $fixture.root ".git\itl\operations\$($operation.id).json") | Should -BeTrue; $history = ((Invoke-DeliveryTestPowerShell -Arguments @("-Action", "Status", "-RepositoryRoot", ('"' + $fixture.root + '"'))).stdout | ConvertFrom-Json).runHistory; @($history.lastRuns | Where-Object { [string]$_.error -match "Recovered after the delivery wrapper" }).Count | Should -Be 1
+            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"')); ($published.stdout | ConvertFrom-Json).status | Should -Be "published"; Test-Path -LiteralPath (Join-Path $fixture.root ".git\itl\operations\$($operation.id).json") | Should -BeTrue; $history = ((Invoke-DeliveryTestPowerShell -Arguments @("-Action", "Status", "-RepositoryRoot", ('"' + $fixture.root + '"'))).stdout | ConvertFrom-Json).runHistory; @($history.lastRuns | Where-Object { [string]$_.error -match "Recovered after the delivery wrapper" }).Count | Should -Be 1
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
     It "never uses force push for develop or master" {

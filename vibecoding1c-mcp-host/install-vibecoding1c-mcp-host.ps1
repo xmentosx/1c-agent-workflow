@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "publish", "proxy", "reconcile", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "dump-config")]
     [string]$Action = "status",

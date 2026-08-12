@@ -1,4 +1,4 @@
-$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+﻿$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $RunnerPath = Join-Path $RepoRoot "scripts\test-release-readiness.ps1"
 
 Describe "Deterministic Release readiness" {
@@ -51,7 +51,6 @@ Describe "Deterministic Release readiness" {
                 manifestSha256 = $manifestSha
                 patchSha256 = $patchSha
                 upstreamCommit = $upstreamCommit
-                publicationStatus = "published"
                 source = "workflow-pinned"
             }
             $lock = [ordered]@{
@@ -81,6 +80,8 @@ Describe "Deterministic Release readiness" {
             Write-Utf8Json -Path (Join-Path $Root ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") -Value $compatibility
             New-Item -ItemType Directory -Force -Path (Join-Path $Root ".agents\skills\1c-workflow\scripts") | Out-Null
             [System.IO.File]::WriteAllText((Join-Path $Root ".agents\skills\1c-workflow\scripts\agent-1c.ps1"), "param()`n", [System.Text.UTF8Encoding]::new($false))
+            New-Item -ItemType Directory -Force -Path (Join-Path $Root "scripts") | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $Root "scripts\invoke-release-e2e.ps1"), "param()`n", [System.Text.UTF8Encoding]::new($false))
             [System.IO.File]::WriteAllText((Join-Path $Root "AGENT-INSTALL.md"), "fixture`n", [System.Text.UTF8Encoding]::new($false))
             [System.IO.File]::WriteAllText((Join-Path $Root "install-agent-1c-workflow.ps1"), "param()`n", [System.Text.UTF8Encoding]::new($false))
             & git -C $Root add -- .
@@ -120,6 +121,9 @@ Describe "Deterministic Release readiness" {
         $runner | Should -Match 'Get-WorkflowContinuationProof.*-QualifiedCommit \$installedWorkflowCommit'
         $runner | Should -Match 'standContinuation\.scopes.*-contains "develop"'
         $runner | Should -Match 'Test-ManagedPackageAgreement -ExpectedInventory \$managedInventory'
+        $encodingBody = [regex]::Match($runner, '(?s)function Test-PowerShellEncoding \{(?<body>.*?)\n\}').Groups['body'].Value
+        @([regex]::Matches($encodingBody, 'Start-Process -FilePath "powershell\.exe"')).Count | Should -Be 1
+        $encodingBody.IndexOf('Start-Process -FilePath "powershell.exe"') | Should -BeLessThan $encodingBody.IndexOf('foreach ($relativePath')
     }
 
     It "resolves the canonical immutable archive and writes a passed Full context" {
@@ -178,7 +182,7 @@ Describe "Deterministic Release readiness" {
         }
     }
 
-    It "rejects stale Release stand locks and unconfirmed protection before checkpoint creation" {
+    It "rejects stale Release stand state, checkpoint identity, fixture boundary, and verification before 1C" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-readiness-stand-" + [guid]::NewGuid().ToString("N"))
         try {
             $fixture = New-ReadinessFixture -Root (Join-Path $tempRoot "workflow")
@@ -202,11 +206,42 @@ Describe "Deterministic Release readiness" {
                 $staleLock.dependencies.workflowPackage.commit = ("0" * 40)
                 $staleLock.dependencies.vanessaAutomation.downstreamRevision = "itl-stale"
                 Write-Utf8Json -Path (Join-Path $root ".agent-1c\dependency-lock.json") -Value $staleLock
+                Write-Utf8Json -Path (Join-Path $root ".agent-1c\project.json") -Value ([ordered]@{ schemaVersion = 1; fixture = $true })
                 [System.IO.File]::WriteAllText((Join-Path $root ".gitignore"), ".agent-1c/dev-branches/`n.agent-1c/runs/`n", [System.Text.UTF8Encoding]::new($false))
                 & git -C $root add -- .
                 & git -C $root commit -m "stand" | Out-Null
             }
             Write-Utf8Json -Path (Join-Path $worktreeRoot ".agent-1c\dev-branches\release-test.json") -Value ([ordered]@{ unsafeActionProtectionConfirmed = $false })
+            $checkpointRoot = Join-Path $worktreeRoot ".agent-1c\runs\release-e2e\release-test"
+            $savedStatePath = Join-Path $checkpointRoot "state\post-config.json"
+            Write-Utf8Json -Path $savedStatePath -Value ([ordered]@{ lastVerificationStatus = "passed"; lastVerifiedAt = "2020-01-01T00:00:00Z" })
+            $candidateCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            $candidateTree = (& git -C $fixture.root rev-parse 'HEAD^{tree}').Trim()
+            $canonicalSha = {
+                param([string]$Path)
+                $text = [IO.File]::ReadAllText($Path, [Text.UTF8Encoding]::new($false)).Replace("`r`n", "`n").Replace("`r", "`n")
+                $sha = [Security.Cryptography.SHA256]::Create()
+                try { ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }
+            }
+            $outsideFixturePath = Join-Path $tempRoot "outside\ITLReleaseFourFlat.feature"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $outsideFixturePath) | Out-Null
+            [IO.File]::WriteAllText($outsideFixturePath, "fixture`n", [Text.UTF8Encoding]::new($false))
+            Write-Utf8Json -Path (Join-Path $checkpointRoot "checkpoint.json") -Value ([ordered]@{
+                schemaVersion = 3
+                createdAt = [DateTime]::UtcNow.ToString("o")
+                expectedHead = ("f" * 40)
+                identity = [ordered]@{
+                    projectRoot = $e2eRoot; worktreePath = $worktreeRoot; branch = "itldev/release-test"
+                    workflowCommit = $candidateCommit; workflowTree = $candidateTree
+                    runnerSha256 = (& $canonicalSha (Join-Path $fixture.root "scripts\invoke-release-e2e.ps1"))
+                    aiRulesCommit = ""
+                    helperSha256 = (& $canonicalSha (Join-Path $fixture.root ".agents\skills\1c-workflow\scripts\agent-1c.ps1"))
+                    projectConfigSha256 = (Get-FileHash -LiteralPath (Join-Path $worktreeRoot ".agent-1c\project.json") -Algorithm SHA256).Hash.ToLowerInvariant()
+                }
+                configEvidence = [ordered]@{ featurePath = $outsideFixturePath }
+                stages = [ordered]@{ "verification-refresh" = [ordered]@{ status = "passed" } }
+                stateFiles = [ordered]@{ postConfig = [ordered]@{ stateCopyPath = $savedStatePath } }
+            })
             $outputPath = Join-Path $tempRoot "release-context.json"
             Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode "Release" -E2EProjectRoot $e2eRoot | Out-Null
             $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -215,8 +250,30 @@ Describe "Deterministic Release readiness" {
             $codes | Should -Contain "RELEASE_DEPENDENCY_LOCK_DRIFT"
             $codes | Should -Contain "RELEASE_STAND_WORKFLOW_COMMIT_DRIFT"
             $codes | Should -Contain "RELEASE_STAND_UNSAFE_ACTION_PROTECTION_UNCONFIRMED"
+            $codes | Should -Contain "RELEASE_CHECKPOINT_HEAD_MISMATCH"
+            $codes | Should -Contain "RELEASE_CHECKPOINT_FIXTURE_INVALID"
+            $codes | Should -Contain "RELEASE_CHECKPOINT_VERIFICATION_STALE"
             $codes | Should -Not -Contain "RELEASE_STAND_MANAGED_PACKAGE_DRIFT"
-            Test-Path -LiteralPath (Join-Path $worktreeRoot ".agent-1c\runs\release-e2e") | Should -BeFalse
+            (Get-Content -LiteralPath (Join-Path $checkpointRoot "checkpoint.json") -Raw -Encoding UTF8 | ConvertFrom-Json).expectedHead | Should -Be ("f" * 40)
+
+            $checkpoint = Get-Content -LiteralPath (Join-Path $checkpointRoot "checkpoint.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $checkpoint.configEvidence.featurePath = Join-Path $worktreeRoot "tests\features\missing.feature"
+            Write-Utf8Json -Path (Join-Path $checkpointRoot "checkpoint.json") -Value $checkpoint
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode "Release" -E2EProjectRoot $e2eRoot | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($context.issues.code) | Should -Contain "RELEASE_CHECKPOINT_FIXTURE_INVALID"
+
+            $checkpoint.identity.runnerSha256 = ("0" * 64)
+            Write-Utf8Json -Path (Join-Path $checkpointRoot "checkpoint.json") -Value $checkpoint
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode "Release" -E2EProjectRoot $e2eRoot | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($context.issues.code) | Should -Not -Contain "RELEASE_CHECKPOINT_HEAD_MISMATCH"
+
+            $checkpoint.schemaVersion = 2
+            Write-Utf8Json -Path (Join-Path $checkpointRoot "checkpoint.json") -Value $checkpoint
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode "Release" -E2EProjectRoot $e2eRoot | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($context.issues.code) | Should -Contain "RELEASE_CHECKPOINT_UPGRADE_REQUIRED"
         } finally {
             if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
         }
@@ -236,6 +293,98 @@ Describe "Deterministic Release readiness" {
             $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $context.status | Should -Be "failed"
             @($context.issues.code) | Should -Contain "RELEASE_POWERSHELL_ENCODING_INVALID"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
+    It "uses the real Windows PowerShell 5.1 decoder and rejects UTF-8 without BOM mojibake" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-readiness-ps51-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $fixture = New-ReadinessFixture -Root (Join-Path $tempRoot "workflow")
+            $badPath = Join-Path $fixture.root "scripts\utf8-without-bom.ps1"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $badPath) | Out-Null
+            [System.IO.File]::WriteAllText($badPath, "`$value = 'Привет'`n", [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText((Join-Path $fixture.root "scripts\ascii-safe.ps1"), "`$value = 'hello'`n", [System.Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add -- scripts/utf8-without-bom.ps1 scripts/ascii-safe.ps1
+            & git -C $fixture.root commit -m "utf8 without bom" | Out-Null
+            $outputPath = Join-Path $tempRoot "release-context.json"
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $context.status | Should -Be "failed"
+            @($context.issues.code) | Should -Contain "RELEASE_POWERSHELL_ENCODING_INVALID"
+            $encodingIssue = @($context.issues | Where-Object code -eq "RELEASE_POWERSHELL_ENCODING_INVALID")[0]
+            $encodingIssue.message | Should -Match "utf8-without-bom.ps1"
+            $encodingIssue.message | Should -Not -Match "batch decode preflight failed"
+            $context.encoding.contract | Should -Be "windows-powershell-5.1-default-decode-plus-strict-utf8-and-ast"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
+    It "preflights a distinct existing Develop worktree and its configured branch" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-develop-readiness-stand-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $fixture = New-ReadinessFixture -Root (Join-Path $tempRoot "workflow")
+            $e2eRoot = Join-Path $tempRoot "e2e"
+            $developRoot = Join-Path $tempRoot "develop-worktree"
+            New-Item -ItemType Directory -Force -Path $e2eRoot | Out-Null
+            & git -C $e2eRoot init -b master | Out-Null
+            & git -C $e2eRoot config user.email "tests@example.invalid"
+            & git -C $e2eRoot config user.name "Release Tests"
+            [IO.File]::WriteAllText((Join-Path $e2eRoot "README.md"), "fixture`n", [Text.UTF8Encoding]::new($false))
+            & git -C $e2eRoot add -- .
+            & git -C $e2eRoot commit -m "e2e stand" | Out-Null
+            & git -C $e2eRoot worktree add -b "itldev/develop-test" $developRoot | Out-Null
+            $configPath = Join-Path $e2eRoot ".agent-1c\release-e2e.json"
+            $config = [ordered]@{
+                schemaVersion = 1
+                developDevBranchName = "develop-test"
+                developWorktreePath = $developRoot
+                devBranchName = "release-test"
+                worktreePath = Join-Path $tempRoot "release-worktree"
+            }
+            Write-Utf8Json -Path $configPath -Value $config
+            $outputPath = Join-Path $tempRoot "develop-context.json"
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode "Develop" -E2EProjectRoot $e2eRoot | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $context.status | Should -Be "passed"
+            $context.stand.devBranchName | Should -Be "develop-test"
+
+            $unrelatedRoot = Join-Path $tempRoot "unrelated-repository"
+            New-Item -ItemType Directory -Force -Path $unrelatedRoot | Out-Null
+            & git -C $unrelatedRoot init -b "itldev/develop-test" | Out-Null
+            & git -C $unrelatedRoot config user.email "tests@example.invalid"
+            & git -C $unrelatedRoot config user.name "Release Tests"
+            [IO.File]::WriteAllText((Join-Path $unrelatedRoot "README.md"), "fixture`n", [Text.UTF8Encoding]::new($false))
+            & git -C $unrelatedRoot add -- .
+            & git -C $unrelatedRoot commit -m "unrelated" | Out-Null
+            $config.developWorktreePath = $unrelatedRoot
+            Write-Utf8Json -Path $configPath -Value $config
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode "Develop" -E2EProjectRoot $e2eRoot | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($context.issues.code) | Should -Contain "DEVELOP_E2E_ISOLATED_STAND_REQUIRED"
+
+            $config.developWorktreePath = $developRoot
+            $config.worktreePath = $developRoot
+            Write-Utf8Json -Path $configPath -Value $config
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode "Develop" -E2EProjectRoot $e2eRoot | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($context.issues.code) | Should -Contain "DEVELOP_E2E_ISOLATED_STAND_REQUIRED"
+
+            $config.worktreePath = Join-Path $tempRoot "release-worktree"
+            $config.developWorktreePath = Join-Path $tempRoot "missing-develop-worktree"
+            Write-Utf8Json -Path $configPath -Value $config
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode "Develop" -E2EProjectRoot $e2eRoot | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($context.issues.code) | Should -Contain "DEVELOP_E2E_ISOLATED_STAND_REQUIRED"
+
+            $config.developWorktreePath = $developRoot
+            $config.developDevBranchName = "wrong-branch"
+            Write-Utf8Json -Path $configPath -Value $config
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode "Develop" -E2EProjectRoot $e2eRoot | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($context.issues.code) | Should -Contain "DEVELOP_E2E_ISOLATED_STAND_REQUIRED"
         } finally {
             if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
         }

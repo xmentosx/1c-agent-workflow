@@ -182,6 +182,15 @@
                               "resultSha256":  "ead4f7af2ff07edc6d1e35a901066b6c730ea90b73c7aa84a993886b86629632"
                           },
                           {
+                              "path":  "content/agents/error-fixer.md",
+                              "requirementId":  "ITL-MANAGED-FORM-CONTEXT-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-MANAGED-FORM-CONTEXT-001 for r26 by bounding equivalent runtime-defect fixes.",
+                              "upstreamSha256":  "95d70fb3c6d83b2dd8ec39bef1470f7b0d0e89e13729b7c038bb16b02f46a317",
+                              "baselineSha256":  "95d70fb3c6d83b2dd8ec39bef1470f7b0d0e89e13729b7c038bb16b02f46a317",
+                              "resultSha256":  "d19b1dce8299b03f000d8439ce87ec207a5a5f279229f5aa559334dd9e43a557"
+                          },
+                          {
                               "path":  "content/commands/caveman.md",
                               "requirementId":  "ITL-CAVEMAN-001",
                               "disposition":  "resolved",
@@ -705,12 +714,12 @@
                           },
                           {
                               "path":  "content/rules/dev-standards-architecture.md",
-                              "requirementId":  "ITL-UPSTREAM-ANCHORS-001",
-                              "disposition":  "take-upstream",
-                              "reason":  "Accept the exact audited upstream implementation of ITL-UPSTREAM-ANCHORS-001.",
+                              "requirementId":  "ITL-MANAGED-FORM-CONTEXT-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-MANAGED-FORM-CONTEXT-001 for r26 with an explicit cross-context boundary contract.",
                               "upstreamSha256":  "408846169abc871d3a1b8bd5cea3e6e8b88e14757e2285a146ef6b92d9f70ea3",
                               "baselineSha256":  "408846169abc871d3a1b8bd5cea3e6e8b88e14757e2285a146ef6b92d9f70ea3",
-                              "resultSha256":  "408846169abc871d3a1b8bd5cea3e6e8b88e14757e2285a146ef6b92d9f70ea3"
+                              "resultSha256":  "137b1c4bd720b1a1686899405de012be45bb8d801aa7d003fc5a7721e2717260"
                           },
                           {
                               "path":  "content/rules/dev-standards-env.md",
@@ -750,12 +759,21 @@
                           },
                           {
                               "path":  "content/rules/subagents.md",
-                              "requirementId":  "ITL-MCP-002",
+                              "requirementId":  "ITL-MANAGED-FORM-CONTEXT-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-MCP-002 for r25 by passing relevant branch-delta authority to subagents.",
+                              "reason":  "Resolve ITL-MANAGED-FORM-CONTEXT-001 for r26 with one mutating owner per confirmed defect class.",
                               "upstreamSha256":  "0027e5dfb442a99d28292bbcde55af22d1bbc394c8729b9771c9e1e8ad1428a6",
                               "baselineSha256":  "0027e5dfb442a99d28292bbcde55af22d1bbc394c8729b9771c9e1e8ad1428a6",
-                              "resultSha256":  "b9b6a8ea314e3da12f4b8bc91c68b6957750a2f06595ecfdbe70efb8aab1cf68"
+                              "resultSha256":  "f9721ad6e6e42814a8155c0bce18975288dfba93f9eae939ed53de4d4c7baa39"
+                          },
+                          {
+                              "path":  "content/rules/systematic-debugging.md",
+                              "requirementId":  "ITL-MANAGED-FORM-CONTEXT-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-MANAGED-FORM-CONTEXT-001 for r26 by stopping per-symptom patching after a repeated defect class is confirmed.",
+                              "upstreamSha256":  "e584093cfaf0247022243b3a9381e398c4b00071d7c35ba8fc6cf277be129250",
+                              "baselineSha256":  "e584093cfaf0247022243b3a9381e398c4b00071d7c35ba8fc6cf277be129250",
+                              "resultSha256":  "9d82ac74b83e9e4428c9edd1e68af1532a08e45ee9e916cc2484ef88bd3a1bb1"
                           },
                           {
                               "path":  "content/skills/mcp-1c-tools/SKILL.md",
@@ -1256,10 +1274,10 @@
                               "path":  "tests/LayoutAndManifest.Tests.ps1",
                               "requirementId":  "ITL-INFRA-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-INFRA-001 for r25 with reviewed command naming and Caveman response-style behavior.",
+                              "reason":  "Resolve ITL-INFRA-001 for r26 by accepting CRLF at the exact YAML line boundary.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "e16a2959f68a0d5647dac9adce9a109b9611b2cebcdc88fa466ffe21e8001848",
-                              "resultSha256":  "f4a33e1ad0a89d7c36c2a1585259d339003e51cd6d4278ff34554c074042fcdc"
+                              "resultSha256":  "f37bfecc87d4df813d558501f6d919d5b57fb515c35ae09faba7f40c9abe110e"
                           },
                           {
                               "path":  "tests/R8Policy.Tests.ps1",
@@ -1290,12 +1308,12 @@
                           },
                           {
                               "path":  "tests/WorkflowHardening.Tests.ps1",
-                              "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-INFRA-001.",
+                              "requirementId":  "ITL-MANAGED-FORM-CONTEXT-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-MANAGED-FORM-CONTEXT-001 for r26 with focused managed-form and defect-class regressions.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "57c3a59a5a563ab23a3212dec6f2d5691ad02f55062b6f3c8b059a5c4429256a",
-                              "resultSha256":  "57c3a59a5a563ab23a3212dec6f2d5691ad02f55062b6f3c8b059a5c4429256a"
+                              "resultSha256":  "5e4e55db55fbc2e98868cca2df9c7280db2fb125d0d21994c10e76ff997ce43c"
                           },
                           {
                               "path":  "tools/apply-openspec-downstream-overlay.ps1",
