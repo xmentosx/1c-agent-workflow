@@ -2047,12 +2047,13 @@ try {
         $e2eDependencyLockBytes = [IO.File]::ReadAllBytes($e2eDependencyLockPath)
         try {
             Invoke-E2EHelper -Action "release-e2e-prepare-ondemand" -TimeoutSeconds 1800 | Out-Null
-            $vanessaSmokeDirectory = Join-Path $outputRoot "Vanessa путь с пробелами"
-            $vanessaSmokeFeature = Join-Path $vanessaSmokeDirectory "Проверка холодного пути A.feature"
-            $vanessaSecondarySmokeFeature = Join-Path $vanessaSmokeDirectory "Проверка холодного пути B.feature"
+            $utf8 = [System.Text.Encoding]::UTF8
+            $vanessaSmokeDirectory = Join-Path $outputRoot $utf8.GetString([Convert]::FromBase64String("VmFuZXNzYSDQv9GD0YLRjCDRgSDQv9GA0L7QsdC10LvQsNC80Lg="))
+            $vanessaSmokeFeature = Join-Path $vanessaSmokeDirectory $utf8.GetString([Convert]::FromBase64String("0J/RgNC+0LLQtdGA0LrQsCDRhdC+0LvQvtC00L3QvtCz0L4g0L/Rg9GC0LggQS5mZWF0dXJl"))
+            $vanessaSecondarySmokeFeature = Join-Path $vanessaSmokeDirectory $utf8.GetString([Convert]::FromBase64String("0J/RgNC+0LLQtdGA0LrQsCDRhdC+0LvQvtC00L3QvtCz0L4g0L/Rg9GC0LggQi5mZWF0dXJl"))
             New-Item -ItemType Directory -Force -Path $vanessaSmokeDirectory | Out-Null
-            $vanessaSmokeFeatureA = "#language: ru`n`nФункционал: Vanessa UI MCP cold path A`n`nСценарий: MCP cold A`n`tИ Пауза 0.1`n"
-            $vanessaSmokeFeatureB = "#language: ru`n`nФункционал: Vanessa UI MCP cold path B`n`nСценарий: MCP cold B`n`tИ Пауза 0.1`n"
+            $vanessaSmokeFeatureA = $utf8.GetString([Convert]::FromBase64String("I2xhbmd1YWdlOiBydQoK0KTRg9C90LrRhtC40L7QvdCw0Ls6IFZhbmVzc2EgVUkgTUNQIGNvbGQgcGF0aCBBCgrQodGG0LXQvdCw0YDQuNC5OiBNQ1AgY29sZCBBCgnQmCDQn9Cw0YPQt9CwIDAuMQo="))
+            $vanessaSmokeFeatureB = $utf8.GetString([Convert]::FromBase64String("I2xhbmd1YWdlOiBydQoK0KTRg9C90LrRhtC40L7QvdCw0Ls6IFZhbmVzc2EgVUkgTUNQIGNvbGQgcGF0aCBCCgrQodGG0LXQvdCw0YDQuNC5OiBNQ1AgY29sZCBCCgnQmCDQn9Cw0YPQt9CwIDAuMQo="))
             [System.IO.File]::WriteAllText($vanessaSmokeFeature, $vanessaSmokeFeatureA, [System.Text.UTF8Encoding]::new($false))
             [System.IO.File]::WriteAllText($vanessaSecondarySmokeFeature, $vanessaSmokeFeatureB, [System.Text.UTF8Encoding]::new($false))
             $canonicalVanessaLock = (Get-Content -LiteralPath (Join-Path $workflowRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaAutomation
