@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
     [Parameter(Mandatory = $true)][string]$AiRulesSource,
     [string]$OutputPath = "",
-    [string]$FreshProjectsRoot = "C:\itlj"
+    [string]$FreshProjectsRoot = "C:\itlj",
+    [ValidateSet("upgrade", "fresh", "all")][string]$Journey = "all"
 )
 
 Set-StrictMode -Version Latest
@@ -27,6 +28,18 @@ New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 $startedAt = [DateTime]::UtcNow
 $steps = New-Object System.Collections.Generic.List[object]
 $failure = $null
+$activeJourney = ""
+$requestedJourneys = if ($Journey -eq "all") { @("upgrade", "fresh") } else { @($Journey) }
+$journeys = [ordered]@{}
+foreach ($requestedJourney in $requestedJourneys) {
+    $journeys[$requestedJourney] = [ordered]@{
+        name = $requestedJourney
+        status = "pending"
+        startedAt = ""
+        finishedAt = ""
+        error = $null
+    }
+}
 $freshRoot = ""
 $freshBranchRoot = ""
 $candidateCommit = (& git -C $CandidateRoot rev-parse HEAD).Trim()
@@ -304,37 +317,49 @@ try {
     $env:ITL_AI_RULES_SOURCE_PATH = $AiRulesSource
     Assert-DevelopAiRulesRemoteReachable -StandRoot $ProjectRoot
     Assert-TrackedClean -Root $ProjectRoot -Label "Develop E2E master"
-    $standConfig = Get-Content -LiteralPath (Join-Path $ProjectRoot ".agent-1c\release-e2e.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-    $developBranchName = [string]$standConfig.developDevBranchName
-    $developWorktreeValue = [string]$standConfig.developWorktreePath
-    if (-not $developBranchName -or -not $developWorktreeValue) {
-        throw "DEVELOP_E2E_ISOLATED_STAND_REQUIRED: release-e2e.json must define developDevBranchName and developWorktreePath separately from the Release worktree."
-    }
-    $standBranchRoot = [IO.Path]::GetFullPath($developWorktreeValue)
-    $releaseBranchRoot = [IO.Path]::GetFullPath([string]$standConfig.worktreePath)
-    if ([string]::Equals($standBranchRoot.TrimEnd('\', '/'), $releaseBranchRoot.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) {
-        throw "DEVELOP_E2E_ISOLATED_STAND_REQUIRED: Develop and Release worktree paths must differ: $standBranchRoot"
-    }
-    if (-not (Test-Path -LiteralPath $standBranchRoot -PathType Container)) {
-        throw "DEVELOP_E2E_ISOLATED_STAND_REQUIRED: configured Develop worktree is missing: $standBranchRoot"
-    }
-    $actualDevelopBranch = (& git -C $standBranchRoot branch --show-current).Trim()
-    if ($LASTEXITCODE -ne 0 -or $actualDevelopBranch -cne "itldev/$developBranchName") {
-        throw "DEVELOP_E2E_ISOLATED_STAND_REQUIRED: Develop worktree branch is '$actualDevelopBranch'; expected 'itldev/$developBranchName'."
-    }
-    Assert-TrackedClean -Root $standBranchRoot -Label "Develop E2E branch"
+    if ($requestedJourneys -contains "upgrade") {
+        $activeJourney = "upgrade"
+        $journeys.upgrade.status = "running"
+        $journeys.upgrade.startedAt = [DateTime]::UtcNow.ToString("o")
+        $standConfig = Get-Content -LiteralPath (Join-Path $ProjectRoot ".agent-1c\release-e2e.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        $developBranchName = [string]$standConfig.developDevBranchName
+        $developWorktreeValue = [string]$standConfig.developWorktreePath
+        if (-not $developBranchName -or -not $developWorktreeValue) {
+            throw "DEVELOP_E2E_ISOLATED_STAND_REQUIRED: release-e2e.json must define developDevBranchName and developWorktreePath separately from the Release worktree."
+        }
+        $standBranchRoot = [IO.Path]::GetFullPath($developWorktreeValue)
+        $releaseBranchRoot = [IO.Path]::GetFullPath([string]$standConfig.worktreePath)
+        if ([string]::Equals($standBranchRoot.TrimEnd('\', '/'), $releaseBranchRoot.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) {
+            throw "DEVELOP_E2E_ISOLATED_STAND_REQUIRED: Develop and Release worktree paths must differ: $standBranchRoot"
+        }
+        if (-not (Test-Path -LiteralPath $standBranchRoot -PathType Container)) {
+            throw "DEVELOP_E2E_ISOLATED_STAND_REQUIRED: configured Develop worktree is missing: $standBranchRoot"
+        }
+        $actualDevelopBranch = (& git -C $standBranchRoot branch --show-current).Trim()
+        if ($LASTEXITCODE -ne 0 -or $actualDevelopBranch -cne "itldev/$developBranchName") {
+            throw "DEVELOP_E2E_ISOLATED_STAND_REQUIRED: Develop worktree branch is '$actualDevelopBranch'; expected 'itldev/$developBranchName'."
+        }
+        Assert-TrackedClean -Root $standBranchRoot -Label "Develop E2E branch"
 
-    [void](Invoke-InstalledAction -Name "upgrade-update-workflow" -Root $ProjectRoot -Action "update-workflow" -TimeoutSeconds 3600)
-    if ((Get-WorkflowLockCommit -Root $ProjectRoot) -ne $candidateCommit) { throw "update-workflow did not install the exact develop candidate." }
-    [void](Commit-StandUpdate -Root $ProjectRoot -Message "test: install develop journey candidate")
-    [void](Invoke-InstalledAction -Name "upgrade-refresh-branch" -Root $standBranchRoot -Action "refresh-dev-branch" -TimeoutSeconds 5400)
-    Set-DevelopStandVanessaFeature -Root $standBranchRoot
-    [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-check" -Root $standBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
-    [void](Assert-ExportResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-export" -Root $standBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 3600))
-    if ((Get-WorkflowLockCommit -Root $standBranchRoot) -ne $candidateCommit) { throw "Refreshed branch did not receive the exact develop candidate." }
-    Assert-TrackedClean -Root $standBranchRoot -Label "Develop E2E branch after upgrade journey"
+        [void](Invoke-InstalledAction -Name "upgrade-update-workflow" -Root $ProjectRoot -Action "update-workflow" -TimeoutSeconds 3600)
+        if ((Get-WorkflowLockCommit -Root $ProjectRoot) -ne $candidateCommit) { throw "update-workflow did not install the exact develop candidate." }
+        [void](Commit-StandUpdate -Root $ProjectRoot -Message "test: install develop journey candidate")
+        [void](Invoke-InstalledAction -Name "upgrade-refresh-branch" -Root $standBranchRoot -Action "refresh-dev-branch" -TimeoutSeconds 5400)
+        Set-DevelopStandVanessaFeature -Root $standBranchRoot
+        [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-check" -Root $standBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
+        [void](Assert-ExportResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-export" -Root $standBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 3600))
+        if ((Get-WorkflowLockCommit -Root $standBranchRoot) -ne $candidateCommit) { throw "Refreshed branch did not receive the exact develop candidate." }
+        Assert-TrackedClean -Root $standBranchRoot -Label "Develop E2E branch after upgrade journey"
+        $journeys.upgrade.status = "passed"
+        $journeys.upgrade.finishedAt = [DateTime]::UtcNow.ToString("o")
+        $activeJourney = ""
+    }
 
-    New-Item -ItemType Directory -Force -Path $FreshProjectsRoot | Out-Null
+    if ($requestedJourneys -contains "fresh") {
+        $activeJourney = "fresh"
+        $journeys.fresh.status = "running"
+        $journeys.fresh.startedAt = [DateTime]::UtcNow.ToString("o")
+        New-Item -ItemType Directory -Force -Path $FreshProjectsRoot | Out-Null
     $cyrillicPathSegment = -join ([char[]](0x041F, 0x0440, 0x043E, 0x0435, 0x043A, 0x0442))
     $specialProjectsRoot = Join-Path ([IO.Path]::GetFullPath($FreshProjectsRoot)) "p $cyrillicPathSegment"
     $freshRoot = Join-Path $specialProjectsRoot ("d-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
@@ -375,17 +400,29 @@ try {
     [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-recheck" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
     [void](Invoke-InstalledAction -Name "fresh-close" -Root $freshBranchRoot -Action "close-dev-branch" -TimeoutSeconds 3600)
     Remove-DevelopE2EFreshProject -FreshProjectsRoot $FreshProjectsRoot -Path $freshRoot -BranchPath $freshBranchRoot
-    $freshBranchRoot = ""
-    $freshRoot = ""
+        $freshBranchRoot = ""
+        $freshRoot = ""
+        $journeys.fresh.status = "passed"
+        $journeys.fresh.finishedAt = [DateTime]::UtcNow.ToString("o")
+        $activeJourney = ""
+    }
 } catch {
     $failure = $_.Exception.Message
+    if ($activeJourney -and $journeys.Contains($activeJourney)) {
+        $journeys[$activeJourney].status = "failed"
+        $journeys[$activeJourney].finishedAt = [DateTime]::UtcNow.ToString("o")
+        $journeys[$activeJourney].error = $failure
+    }
 } finally {
     $env:ITL_WORKFLOW_SOURCE_PATH = $previousWorkflowSource
     $env:ITL_AI_RULES_SOURCE_PATH = $previousRulesSource
     $payload = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         kind = "itl-develop-e2e"
         status = $(if ($failure) { "failed" } else { "passed" })
+        requestedJourneys = @($requestedJourneys)
+        journeys = @($journeys.Values)
+        activeJourney = $activeJourney
         candidate = [ordered]@{ commit = $candidateCommit; tree = $candidateTree }
         projectRoot = $ProjectRoot
         freshProjectRoot = $freshRoot

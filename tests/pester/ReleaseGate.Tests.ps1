@@ -124,6 +124,44 @@ Describe "Release gate scripts" {
         }
     }
 
+    It "routes Develop E2E upgrade and fresh journeys independently and reports schema 2 state" {
+        $path = Join-Path $RepoRoot "scripts\invoke-develop-e2e.ps1"
+        $tokens = $null
+        $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $journeyParameter = $ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq "Journey" }
+        $journeyParameter | Should -Not -BeNullOrEmpty
+        $journeyParameter.DefaultValue.SafeGetValue() | Should -Be "all"
+        @($journeyParameter.Attributes | Where-Object TypeName -match "ValidateSet" | Select-Object -ExpandProperty PositionalArguments | ForEach-Object SafeGetValue) | Should -Be @("upgrade", "fresh", "all")
+
+        $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8
+        $text | Should -Match '\$requestedJourneys = if \(\$Journey -eq "all"\) \{ @\("upgrade", "fresh"\) \} else \{ @\(\$Journey\) \}'
+        $text | Should -Match 'if \(\$requestedJourneys -contains "upgrade"\)'
+        $text | Should -Match 'if \(\$requestedJourneys -contains "fresh"\)'
+        $text | Should -Match '(?s)if \(\$requestedJourneys -contains "upgrade"\).*?Invoke-InstalledAction -Name "upgrade-update-workflow".*?\$journeys\.upgrade\.status = "passed"'
+        $text | Should -Match '(?s)if \(\$requestedJourneys -contains "fresh"\).*?Invoke-DevelopProcess -Name "fresh-bootstrap-init-project".*?\$journeys\.fresh\.status = "passed"'
+        $text | Should -Match 'schemaVersion = 2'
+        foreach ($field in @("requestedJourneys", "journeys", "activeJourney", "steps", "error")) {
+            $text | Should -Match ([regex]::Escape($field + " ="))
+        }
+        $text | Should -Match '\$journeys\[\$activeJourney\]\.status = "failed"'
+        $text | Should -Match 'Remove-DevelopE2EFreshProject -FreshProjectsRoot \$FreshProjectsRoot -Path \$freshRoot -BranchPath \$freshBranchRoot'
+
+        $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
+        $check | Should -Match 'Resolve-DevelopE2EJourneyPlan -RepositoryRoot \$repoRoot -BaseRef \$BaseRef'
+        $check | Should -Match 'if \(-not \$BaseRef\) \{ throw "Develop E2E requires BaseRef'
+        $check | Should -Match 'Restore-DevelopE2EQualification .*?-Journey \$journey -IdentitySha256 \$developIdentitySha256'
+        $check | Should -Match 'Save-DevelopE2EQualification .*?-Journey \$journey -IdentitySha256 \$developIdentitySha256'
+        $check | Should -Match 'schemaVersion = 3'
+        $check | Should -Match 'execution = "continued"'
+        $check | Should -Match 'ExpectedIdentitySha256'
+        $check | Should -Match 'ExpectedStandStateSha256'
+        $check | Should -Match 'Get-DevelopE2EStandStateSha256 -ProjectRoot \$E2EProjectRoot'
+        $check | Should -Match 'Get-DevelopE2EIdentitySha256 -ReleaseContext \$releaseContext'
+        $check | Should -Match 'Resolve-DevelopE2EJourneyPlan -RepositoryRoot \$repoRoot -ChangedPath @\(\$continuation\.paths\)'
+    }
+
     It "requires the lock-pinned annotated fork tag and explicit E2E stand" {
         $text = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
         $text | Should -Match 'Pinned fork tag must exist locally and be annotated'
