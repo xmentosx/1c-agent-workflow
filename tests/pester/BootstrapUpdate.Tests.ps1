@@ -767,6 +767,30 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             (Get-FileHash -LiteralPath $qualifiedVanessaSourceBuild -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $qualifiedVanessaSourceBuildSha
             $qualifiedOnDemandSourceBuild.sha256 | Should -Be $qualifiedOnDemandSourceBuildSha
             New-Item -ItemType Directory -Force -Path $projectRoot | Out-Null
+            $artifactFixtureRoot = Join-Path $tempRoot "vanessa-mcp-fixtures"
+            New-Item -ItemType Directory -Force -Path $artifactFixtureRoot | Out-Null
+            $clientMcpFixture = Join-Path $artifactFixtureRoot "client_mcp.cfe"
+            $vaExtensionFixture = Join-Path $artifactFixtureRoot "VAExtension.1.29.cfe"
+            [System.IO.File]::WriteAllBytes($clientMcpFixture, [byte[]](1, 2, 3, 4, 5))
+            [System.IO.File]::WriteAllBytes($vaExtensionFixture, [byte[]](6, 7, 8, 9, 10))
+            $sourceRoot = Join-Path $tempRoot "workflow-source"
+            & git clone --quiet --shared $RepoRoot $sourceRoot
+            $LASTEXITCODE | Should -Be 0
+            & git -C $sourceRoot checkout --quiet --detach ((& git -C $RepoRoot rev-parse HEAD).Trim())
+            $LASTEXITCODE | Should -Be 0
+            & git -C $sourceRoot config user.email "test@example.com"
+            & git -C $sourceRoot config user.name "Test User"
+            $sourceLockPath = Join-Path $sourceRoot "templates\dependency-lock.json"
+            $sourceLock = Get-Content -LiteralPath $sourceLockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $sourceLock.dependencies.vanessaMcp.clientMcp.url = $clientMcpFixture
+            $sourceLock.dependencies.vanessaMcp.clientMcp.sha256 = (Get-FileHash -LiteralPath $clientMcpFixture -Algorithm SHA256).Hash.ToLowerInvariant()
+            $sourceLock.dependencies.vanessaMcp.vaExtension.url = $vaExtensionFixture
+            $sourceLock.dependencies.vanessaMcp.vaExtension.sha256 = (Get-FileHash -LiteralPath $vaExtensionFixture -Algorithm SHA256).Hash.ToLowerInvariant()
+            Set-Content -LiteralPath $sourceLockPath -Encoding UTF8 -Value (($sourceLock | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+            & git -C $sourceRoot add templates/dependency-lock.json
+            & git -C $sourceRoot commit --quiet -m "test: use local Vanessa MCP artifacts"
+            $LASTEXITCODE | Should -Be 0
+            $sourceCommit = ((& git -C $sourceRoot rev-parse HEAD).Trim())
             New-Item -ItemType Directory -Force -Path `
                 (Join-Path $projectRoot ".agents\skills\1c-workflow"),
                 (Join-Path $projectRoot ".agents\skills\1c-workflow-fast"),
@@ -837,7 +861,7 @@ local after
             } | ConvertTo-Json -Depth 8)
             $commitCountBefore = ((& git -C $projectRoot rev-list --count HEAD).Trim())
 
-            $env:ITL_WORKFLOW_SOURCE_PATH = $RepoRoot
+            $env:ITL_WORKFLOW_SOURCE_PATH = $sourceRoot
             $env:ITL_WORKFLOW_REPO = ""
             $env:ITL_WORKFLOW_REF = ""
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $qualifiedVanessaSourceBuild
@@ -912,9 +936,13 @@ local after
 
             $lock = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\dependency-lock.json") | ConvertFrom-Json
             $lock.dependencies.workflowPackage.source | Should -Be "path"
-            $lock.dependencies.workflowPackage.commit | Should -Be ((& git -C $RepoRoot rev-parse HEAD).Trim())
+            $lock.dependencies.workflowPackage.commit | Should -Be $sourceCommit
             $lock.dependencies.workflowPackage.ref | Should -Be "master"
             $lock.dependencies.workflowPackage.updatedAt | Should -Not -BeNullOrEmpty
+            $installedClientMcp = Join-Path $projectRoot ".agent-1c\tools\vanessa-mcp\client_mcp.cfe"
+            $installedVaExtension = Join-Path $projectRoot ".agent-1c\tools\vanessa-mcp\VAExtension.1.29.cfe"
+            (Get-FileHash -LiteralPath $installedClientMcp -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be (Get-FileHash -LiteralPath $clientMcpFixture -Algorithm SHA256).Hash.ToLowerInvariant()
+            (Get-FileHash -LiteralPath $installedVaExtension -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be (Get-FileHash -LiteralPath $vaExtensionFixture -Algorithm SHA256).Hash.ToLowerInvariant()
 
             $userRulesText = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "USER-RULES.md")
             $userRulesText | Should -Match "ITL-WORKFLOW-USER-RULES:START"
@@ -924,7 +952,7 @@ local after
             $userRulesText | Should -Match "local after"
 
             [int]((& git -C $projectRoot rev-list --count HEAD).Trim()) | Should -Be ([int]$commitCountBefore + 1)
-            ((& git -C $projectRoot log -1 --pretty=%s).Trim()) | Should -Be ("chore: update ITL workflow to master@" + ((& git -C $RepoRoot rev-parse --short=7 HEAD).Trim()))
+            ((& git -C $projectRoot log -1 --pretty=%s).Trim()) | Should -Be ("chore: update ITL workflow to master@" + $sourceCommit.Substring(0, 7))
             ((& git -C $projectRoot branch --show-current).Trim()) | Should -Be "master"
             @(& git -C $projectRoot status --short) | Should -Be @("?? scratch.local")
         } finally {
