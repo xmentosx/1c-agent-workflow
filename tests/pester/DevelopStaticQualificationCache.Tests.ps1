@@ -47,6 +47,21 @@ Describe "Develop static qualification cache" {
         (Get-FileHash -LiteralPath (Join-Path $qualificationRoot "pester.xml") -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be ([string]$restored.junit.sha256).ToLowerInvariant()
     }
 
+    It "resolves a linked common Git directory through the PS 5.1 UTF-8 boundary" {
+        $linkedRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl linked worktree путь " + [guid]::NewGuid().ToString("N"))
+        try {
+            & git -C $fixtureRoot worktree add --quiet -b cache-path-test $linkedRoot
+            $LASTEXITCODE | Should -Be 0
+            $linkedTree = (& git -C $linkedRoot rev-parse 'HEAD^{tree}').Trim()
+            $cachePath = Get-DevelopStaticQualificationCachePath -RepositoryRoot $linkedRoot -Tree $linkedTree
+            $expectedRoot = [IO.Path]::GetFullPath((Join-Path $fixtureRoot ".git\itl\develop-static-qualifications"))
+            $cachePath.StartsWith($expectedRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
+        } finally {
+            & git -C $fixtureRoot worktree remove --force $linkedRoot *> $null
+            if (Test-Path -LiteralPath $linkedRoot) { Remove-Item -LiteralPath $linkedRoot -Recurse -Force }
+        }
+    }
+
     It "fails closed for a different tree or modified cached evidence" {
         $otherTree = "0" * 40
         { Save-DevelopStaticQualification -RepositoryRoot $fixtureRoot -QualificationRoot $qualificationRoot -Tree $otherTree } | Should -Throw "*does not match candidate tree*"

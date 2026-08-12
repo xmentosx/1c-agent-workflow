@@ -1,5 +1,9 @@
 Set-StrictMode -Version Latest
 
+if (-not (Get-Command Get-RepositoryCommonGitDirectory -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot "git-path-list.ps1")
+}
+
 function Get-DevelopStaticQualificationCachePath {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -7,10 +11,7 @@ function Get-DevelopStaticQualificationCachePath {
     )
 
     if ($Tree -notmatch '^[a-f0-9]{40}$') { throw "Invalid Develop static qualification tree: $Tree" }
-    $commonDirectory = [string](& git -C $RepositoryRoot rev-parse --git-common-dir 2>$null)
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commonDirectory)) { throw "Cannot resolve the common Git directory for Develop static qualification." }
-    if (-not [IO.Path]::IsPathRooted($commonDirectory)) { $commonDirectory = Join-Path $RepositoryRoot $commonDirectory }
-    $commonDirectory = [IO.Path]::GetFullPath($commonDirectory)
+    $commonDirectory = Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot
     return Join-Path $commonDirectory ("itl\develop-static-qualifications\" + $Tree)
 }
 
