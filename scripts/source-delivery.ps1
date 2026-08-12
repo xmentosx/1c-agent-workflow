@@ -83,6 +83,339 @@ function Get-QueueEntries {
     return @($records.Values | Where-Object { $_.base -and $_.head } | Sort-Object id | ForEach-Object { [pscustomobject]$_ })
 }
 
+function Stop-DeliveryProcessTree {
+    param([AllowNull()][object]$Process)
+    if (-not $Process) { return }
+    try { if ($Process.HasExited) { return } } catch { return }
+
+    $processId = [int]$Process.Id
+    try {
+        if ($env:OS -eq "Windows_NT") {
+            # Use the .NET launcher instead of a PowerShell native-command
+            # pipeline: Ctrl+C stops that pipeline, while finally still needs
+            # to run taskkill for every descendant owned by the gate.
+            $taskkillPath = Join-Path $env:SystemRoot "System32\taskkill.exe"
+            $startInfo = [Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $taskkillPath
+            $startInfo.Arguments = "/PID $processId /T /F"
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+            $killer = [Diagnostics.Process]::Start($startInfo)
+            try {
+                $stdoutTask = $killer.StandardOutput.ReadToEndAsync()
+                $stderrTask = $killer.StandardError.ReadToEndAsync()
+                $killer.WaitForExit()
+                [void]$stdoutTask.GetAwaiter().GetResult()
+                [void]$stderrTask.GetAwaiter().GetResult()
+            } finally { $killer.Dispose() }
+        } else {
+            $Process.Kill()
+        }
+    } catch {
+        try { $Process.Kill() } catch {}
+    }
+    try { [void]$Process.WaitForExit(15000) } catch {}
+}
+
+function Start-DeliveryProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$ArgumentList,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string]$StandardOutputPath,
+        [Parameter(Mandatory = $true)][string]$StandardErrorPath
+    )
+    if ($env:OS -ne "Windows_NT") {
+        $process = Start-Process -FilePath "powershell.exe" -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -RedirectStandardOutput $StandardOutputPath -RedirectStandardError $StandardErrorPath -PassThru
+        $null = $process.Handle
+        return [pscustomobject]@{ process = $process; jobHandle = [IntPtr]::Zero }
+    }
+    if (-not ("ItlDeliveryProcessJob" -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class ItlDeliveryProcessJob
+{
+    private const UInt32 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    private const Int32 JobObjectExtendedLimitInformation = 9;
+    private const UInt32 EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
+    private const UInt32 CREATE_NO_WINDOW = 0x08000000;
+    private const UInt32 CREATE_SUSPENDED = 0x00000004;
+    private const UInt32 STARTF_USESTDHANDLES = 0x00000100;
+    private const UInt32 PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002;
+    private const UInt32 PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x0002000D;
+    private const UInt32 GENERIC_READ = 0x80000000;
+    private const UInt32 GENERIC_WRITE = 0x40000000;
+    private const UInt32 FILE_SHARE_READ = 0x00000001;
+    private const UInt32 FILE_SHARE_WRITE = 0x00000002;
+    private const UInt32 CREATE_ALWAYS = 2;
+    private const UInt32 OPEN_EXISTING = 3;
+    private const UInt32 FILE_ATTRIBUTE_NORMAL = 0x00000080;
+    private static readonly IntPtr INVALID_HANDLE_VALUE = new IntPtr(-1);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+    {
+        public Int64 PerProcessUserTimeLimit;
+        public Int64 PerJobUserTimeLimit;
+        public UInt32 LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public UInt32 ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public UInt32 PriorityClass;
+        public UInt32 SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IO_COUNTERS
+    {
+        public UInt64 ReadOperationCount;
+        public UInt64 WriteOperationCount;
+        public UInt64 OtherOperationCount;
+        public UInt64 ReadTransferCount;
+        public UInt64 WriteTransferCount;
+        public UInt64 OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    {
+        public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+        public IO_COUNTERS IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SECURITY_ATTRIBUTES
+    {
+        public Int32 nLength;
+        public IntPtr lpSecurityDescriptor;
+        [MarshalAs(UnmanagedType.Bool)] public bool bInheritHandle;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct STARTUPINFOEX
+    {
+        public Int32 cb;
+        public string lpReserved;
+        public string lpDesktop;
+        public string lpTitle;
+        public UInt32 dwX;
+        public UInt32 dwY;
+        public UInt32 dwXSize;
+        public UInt32 dwYSize;
+        public UInt32 dwXCountChars;
+        public UInt32 dwYCountChars;
+        public UInt32 dwFillAttribute;
+        public UInt32 dwFlags;
+        public UInt16 wShowWindow;
+        public UInt16 cbReserved2;
+        public IntPtr lpReserved2;
+        public IntPtr hStdInput;
+        public IntPtr hStdOutput;
+        public IntPtr hStdError;
+        public IntPtr lpAttributeList;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PROCESS_INFORMATION
+    {
+        public IntPtr hProcess;
+        public IntPtr hThread;
+        public UInt32 dwProcessId;
+        public UInt32 dwThreadId;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct RTL_OSVERSIONINFOEX
+    {
+        public UInt32 dwOSVersionInfoSize;
+        public UInt32 dwMajorVersion;
+        public UInt32 dwMinorVersion;
+        public UInt32 dwBuildNumber;
+        public UInt32 dwPlatformId;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string szCSDVersion;
+        public UInt16 wServicePackMajor;
+        public UInt16 wServicePackMinor;
+        public UInt16 wSuiteMask;
+        public Byte wProductType;
+        public Byte wReserved;
+    }
+
+    public sealed class StartedProcess
+    {
+        public Process Process;
+        public IntPtr JobHandle;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateJobObject(IntPtr jobAttributes, string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetInformationJobObject(IntPtr job, Int32 informationClass, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION information, UInt32 informationLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool InitializeProcThreadAttributeList(IntPtr attributeList, Int32 attributeCount, UInt32 flags, ref IntPtr size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool UpdateProcThreadAttribute(IntPtr attributeList, UInt32 flags, IntPtr attribute, IntPtr value, IntPtr size, IntPtr previousValue, IntPtr returnSize);
+
+    [DllImport("kernel32.dll")]
+    private static extern void DeleteProcThreadAttributeList(IntPtr attributeList);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateFile(string fileName, UInt32 desiredAccess, UInt32 shareMode, ref SECURITY_ATTRIBUTES securityAttributes, UInt32 creationDisposition, UInt32 flagsAndAttributes, IntPtr templateFile);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateProcess(string applicationName, StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, UInt32 creationFlags, IntPtr environment, string currentDirectory, ref STARTUPINFOEX startupInfo, out PROCESS_INFORMATION processInformation);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern UInt32 ResumeThread(IntPtr thread);
+
+    [DllImport("ntdll.dll", CharSet = CharSet.Unicode)]
+    private static extern Int32 RtlGetVersion(ref RTL_OSVERSIONINFOEX versionInformation);
+
+    private static void AssertAtomicJobListSupport()
+    {
+        RTL_OSVERSIONINFOEX version = new RTL_OSVERSIONINFOEX();
+        version.dwOSVersionInfoSize = (UInt32)Marshal.SizeOf(typeof(RTL_OSVERSIONINFOEX));
+        Int32 status = RtlGetVersion(ref version);
+        if (status != 0)
+            throw new PlatformNotSupportedException("Unable to verify Windows 10 or Windows Server 2016+ support required for atomic publication child process ownership (RtlGetVersion status " + status + ").");
+        if (version.dwMajorVersion < 10)
+            throw new PlatformNotSupportedException("Atomic publication child process ownership requires Windows 10 or Windows Server 2016+; detected Windows " + version.dwMajorVersion + "." + version.dwMinorVersion + " build " + version.dwBuildNumber + ".");
+    }
+
+    private static IntPtr CreateInheritedFile(string path, UInt32 access, UInt32 disposition)
+    {
+        SECURITY_ATTRIBUTES attributes = new SECURITY_ATTRIBUTES();
+        attributes.nLength = Marshal.SizeOf(typeof(SECURITY_ATTRIBUTES));
+        attributes.bInheritHandle = true;
+        IntPtr handle = CreateFile(path, access, FILE_SHARE_READ | FILE_SHARE_WRITE, ref attributes, disposition, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
+        if (handle == INVALID_HANDLE_VALUE) throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateFile failed for " + path + ".");
+        return handle;
+    }
+
+    public static StartedProcess Start(string executable, string arguments, string workingDirectory, string standardOutputPath, string standardErrorPath)
+    {
+        AssertAtomicJobListSupport();
+        IntPtr job = CreateJobObject(IntPtr.Zero, null);
+        if (job == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateJobObject failed.");
+        IntPtr attributeList = IntPtr.Zero;
+        IntPtr jobList = IntPtr.Zero;
+        IntPtr handleList = IntPtr.Zero;
+        IntPtr standardInput = IntPtr.Zero;
+        IntPtr standardOutput = IntPtr.Zero;
+        IntPtr standardError = IntPtr.Zero;
+        PROCESS_INFORMATION processInformation = new PROCESS_INFORMATION();
+        try
+        {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION information = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+            information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            UInt32 length = (UInt32)Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+            if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, ref information, length))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "SetInformationJobObject failed.");
+
+            IntPtr attributeSize = IntPtr.Zero;
+            InitializeProcThreadAttributeList(IntPtr.Zero, 2, 0, ref attributeSize);
+            attributeList = Marshal.AllocHGlobal(attributeSize);
+            if (!InitializeProcThreadAttributeList(attributeList, 2, 0, ref attributeSize))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "InitializeProcThreadAttributeList failed.");
+
+            jobList = Marshal.AllocHGlobal(IntPtr.Size);
+            Marshal.WriteIntPtr(jobList, job);
+            if (!UpdateProcThreadAttribute(attributeList, 0, new IntPtr(PROC_THREAD_ATTRIBUTE_JOB_LIST), jobList, new IntPtr(IntPtr.Size), IntPtr.Zero, IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "UpdateProcThreadAttribute for the delivery job failed.");
+
+            standardInput = CreateInheritedFile("NUL", GENERIC_READ, OPEN_EXISTING);
+            standardOutput = CreateInheritedFile(standardOutputPath, GENERIC_WRITE, CREATE_ALWAYS);
+            standardError = CreateInheritedFile(standardErrorPath, GENERIC_WRITE, CREATE_ALWAYS);
+            handleList = Marshal.AllocHGlobal(IntPtr.Size * 3);
+            Marshal.WriteIntPtr(handleList, 0, standardInput);
+            Marshal.WriteIntPtr(handleList, IntPtr.Size, standardOutput);
+            Marshal.WriteIntPtr(handleList, IntPtr.Size * 2, standardError);
+            if (!UpdateProcThreadAttribute(attributeList, 0, new IntPtr(PROC_THREAD_ATTRIBUTE_HANDLE_LIST), handleList, new IntPtr(IntPtr.Size * 3), IntPtr.Zero, IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "UpdateProcThreadAttribute for delivery standard handles failed.");
+
+            STARTUPINFOEX startupInfo = new STARTUPINFOEX();
+            startupInfo.cb = Marshal.SizeOf(typeof(STARTUPINFOEX));
+            startupInfo.dwFlags = STARTF_USESTDHANDLES;
+            startupInfo.hStdInput = standardInput;
+            startupInfo.hStdOutput = standardOutput;
+            startupInfo.hStdError = standardError;
+            startupInfo.lpAttributeList = attributeList;
+            StringBuilder commandLine = new StringBuilder("\"" + executable + "\" " + arguments);
+            if (!CreateProcess(executable, commandLine, IntPtr.Zero, IntPtr.Zero, true, EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_SUSPENDED, IntPtr.Zero, workingDirectory, ref startupInfo, out processInformation))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateProcess for the delivery child failed.");
+            StartedProcess started = new StartedProcess();
+            started.Process = Process.GetProcessById((Int32)processInformation.dwProcessId);
+            IntPtr ownedProcessHandle = started.Process.Handle;
+            started.JobHandle = job;
+            if (ResumeThread(processInformation.hThread) == UInt32.MaxValue)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "ResumeThread for the delivery child failed.");
+            job = IntPtr.Zero;
+            return started;
+        }
+        finally
+        {
+            if (processInformation.hThread != IntPtr.Zero) CloseHandle(processInformation.hThread);
+            if (processInformation.hProcess != IntPtr.Zero) CloseHandle(processInformation.hProcess);
+            if (standardInput != IntPtr.Zero && standardInput != INVALID_HANDLE_VALUE) CloseHandle(standardInput);
+            if (standardOutput != IntPtr.Zero && standardOutput != INVALID_HANDLE_VALUE) CloseHandle(standardOutput);
+            if (standardError != IntPtr.Zero && standardError != INVALID_HANDLE_VALUE) CloseHandle(standardError);
+            if (attributeList != IntPtr.Zero) { DeleteProcThreadAttributeList(attributeList); Marshal.FreeHGlobal(attributeList); }
+            if (jobList != IntPtr.Zero) Marshal.FreeHGlobal(jobList);
+            if (handleList != IntPtr.Zero) Marshal.FreeHGlobal(handleList);
+            if (job != IntPtr.Zero) CloseHandle(job);
+        }
+    }
+
+    public static void Close(IntPtr job)
+    {
+        if (job != IntPtr.Zero && !CloseHandle(job))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "CloseHandle for delivery process job failed.");
+    }
+}
+'@
+    }
+    $powershellPath = (Get-Command "powershell.exe" -ErrorAction Stop).Source
+    $started = [ItlDeliveryProcessJob]::Start($powershellPath, $ArgumentList, $WorkingDirectory, $StandardOutputPath, $StandardErrorPath)
+    try {
+        $process = $started.Process
+        $null = $process.Handle
+        return [pscustomobject]@{ process = $process; jobHandle = [IntPtr]$started.JobHandle }
+    } catch {
+        try { [ItlDeliveryProcessJob]::Close([IntPtr]$started.JobHandle) } catch {}
+        throw
+    }
+}
+
+function Close-DeliveryProcessJob {
+    param([IntPtr]$JobHandle, [AllowNull()][object]$Process, [string]$PriorErrorMessage = "")
+    if ($JobHandle -eq [IntPtr]::Zero -or $env:OS -ne "Windows_NT") { return }
+    try { [ItlDeliveryProcessJob]::Close($JobHandle) } catch {
+        $closeMessage = $_.Exception.Message
+        Stop-DeliveryProcessTree -Process $Process
+        if ($PriorErrorMessage) {
+            throw "Publication child failed: $PriorErrorMessage Additionally, its process job could not be closed: $closeMessage The owned process tree was stopped best-effort."
+        }
+        throw "Publication child process job could not be closed: $closeMessage The owned process tree was stopped best-effort; publication cannot continue."
+    }
+}
+
 function Invoke-SourceGate {
     param([string]$Mode, [string]$WorkingRoot, [string]$TargetBaseRef = "")
     $gate = if ($script:GateScript -eq (Join-Path $script:Root "scripts\check.ps1")) { Join-Path $WorkingRoot "scripts\check.ps1" } else { $script:GateScript }
@@ -103,10 +436,11 @@ function Invoke-SourceGate {
     $stdout = Join-Path $logRoot ("gate-$($Mode.ToLowerInvariant()).stdout.log")
     $stderr = Join-Path $logRoot ("gate-$($Mode.ToLowerInvariant()).stderr.log")
     $gateStartedAt = [DateTime]::UtcNow
-    $gateStatus = "failed"; $gateError = ""; $process = $null
+    $gateStatus = "failed"; $gateError = ""; $process = $null; $processJob = [IntPtr]::Zero
     try {
-        $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($quoted -join " ") -WorkingDirectory $WorkingRoot -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
-        $null = $process.Handle
+        $started = Start-DeliveryProcess -ArgumentList ($quoted -join " ") -WorkingDirectory $WorkingRoot -StandardOutputPath $stdout -StandardErrorPath $stderr
+        $process = $started.process
+        $processJob = [IntPtr]$started.jobHandle
         Update-DeliveryOperation -Values @{ mode = $Mode; workingRoot = $WorkingRoot; gatePid = [int]$process.Id; gateProcessStartedAt = $process.StartTime.ToUniversalTime().ToString("o"); gateStatus = "running" }
         $hardSeconds = switch ($Mode) { "Targeted" { 900 } "Smoke" { 120 } "Full" { 1200 } "Develop" { 5400 } "Release" { 7200 } default { 1200 } }
         $watch = [Diagnostics.Stopwatch]::StartNew(); $lastLength = -1L; $lastProgress = [DateTime]::UtcNow
@@ -115,7 +449,7 @@ function Invoke-SourceGate {
             foreach ($path in @($stdout, $stderr)) { if (Test-Path $path) { $length += (Get-Item $path).Length } }
             if ($length -ne $lastLength) { $lastLength = $length; $lastProgress = [DateTime]::UtcNow }
             if ($watch.Elapsed.TotalSeconds -ge $hardSeconds -or ([DateTime]::UtcNow - $lastProgress).TotalMinutes -ge 15) {
-                try { $process.Kill(); $process.WaitForExit() } catch {}
+                Stop-DeliveryProcessTree -Process $process
                 throw "$Mode source gate exceeded its hard/no-progress budget. See $stdout and $stderr"
             }
         }
@@ -129,12 +463,18 @@ function Invoke-SourceGate {
         }
         $gateStatus = "passed"
     } catch { $gateError = $_.Exception.Message; throw } finally {
+        $jobCloseError = $null
+        try { Close-DeliveryProcessJob -JobHandle $processJob -Process $process -PriorErrorMessage $gateError } catch { $jobCloseError = $_ }
+        Stop-DeliveryProcessTree -Process $process
         $finishedAt = [DateTime]::UtcNow
+        $historyError = $null
         try {
             $runRecordPath = Write-DeliveryRunRecord -Mode $Mode -Status $gateStatus -ErrorMessage $gateError -WorkingRoot $WorkingRoot -StartedAt $gateStartedAt -FinishedAt $finishedAt -ExitCode $(if ($process -and $process.HasExited) { [int]$process.ExitCode } else { -1 })
             Update-DeliveryOperation -Values @{ gatePid = 0; gateProcessStartedAt = ""; gateStatus = $gateStatus; gateFinishedAt = $finishedAt.ToString("o"); runRecordPath = $runRecordPath }
         }
-        catch { if ($gateStatus -eq "passed") { throw } else { Write-Warning "Unable to persist failed gate history: $($_.Exception.Message)" } }
+        catch { if ($gateStatus -eq "passed") { $historyError = $_ } else { Write-Warning "Unable to persist failed gate history: $($_.Exception.Message)" } }
+        if ($jobCloseError) { throw $jobCloseError }
+        if ($historyError) { throw $historyError }
     }
 }
 
@@ -630,11 +970,25 @@ function Invoke-ComponentPublicationFinalizer {
     $logRoot = Join-Path $CandidateRoot "build\test-results\delivery"
     New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
     $stdout = Join-Path $logRoot "component-finalizer.stdout.log"; $stderr = Join-Path $logRoot "component-finalizer.stderr.log"
-    $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($quoted -join " ") -WorkingDirectory $CandidateRoot -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -Wait -PassThru
-    $null = $process.Handle
-    if ([int]$process.ExitCode -ne 0) {
-        $detail = if (Test-Path -LiteralPath $stderr -PathType Leaf) { (Get-Content -LiteralPath $stderr -Raw -Encoding UTF8).Trim() } else { "" }
-        throw "Component publication finalizer failed with exit code $($process.ExitCode). $detail"
+    $process = $null; $processJob = [IntPtr]::Zero; $finalizerError = ""
+    try {
+        $started = Start-DeliveryProcess -ArgumentList ($quoted -join " ") -WorkingDirectory $CandidateRoot -StandardOutputPath $stdout -StandardErrorPath $stderr
+        $process = $started.process
+        $processJob = [IntPtr]$started.jobHandle
+        while (-not $process.WaitForExit(1000)) {}
+        $process.WaitForExit(); $process.Refresh()
+        if ([int]$process.ExitCode -ne 0) {
+            $detail = if (Test-Path -LiteralPath $stderr -PathType Leaf) { (Get-Content -LiteralPath $stderr -Raw -Encoding UTF8).Trim() } else { "" }
+            throw "Component publication finalizer failed with exit code $($process.ExitCode). $detail"
+        }
+    } catch {
+        $finalizerError = $_.Exception.Message
+        throw
+    } finally {
+        $jobCloseError = $null
+        try { Close-DeliveryProcessJob -JobHandle $processJob -Process $process -PriorErrorMessage $finalizerError } catch { $jobCloseError = $_ }
+        Stop-DeliveryProcessTree -Process $process
+        if ($jobCloseError) { throw $jobCloseError }
     }
     return [pscustomobject]@{ status = "passed"; component = "test-seam"; candidateCommit = $CandidateCommit }
 }
