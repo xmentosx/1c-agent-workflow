@@ -23,7 +23,10 @@
     "ParserDocsBudgets.Tests.ps1": 7.9,
     "ReleaseGate.Tests.ps1": 181.0,
     "ReleaseReadiness.Tests.ps1": 8.0,
-    "SourceDelivery.Tests.ps1": 560.0,
+    "SourceDeliveryComponentPublication.Tests.ps1": 45.4,
+    "SourceDeliveryProcessLifetime.Tests.ps1": 5.2,
+    "SourceDeliveryPublish.Tests.ps1": 430.4,
+    "SourceDeliveryQueue.Tests.ps1": 171.8,
     "VanessaAuthoring.Tests.ps1": 8.7
   }
 }
