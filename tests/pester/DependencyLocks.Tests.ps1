@@ -191,7 +191,7 @@
         $lockTemplate.dependencies.vanessaAutomation.downstreamRevision | Should -Be "itl-r7"
         $lockTemplate.dependencies.vanessaAutomation.sha256 | Should -Be "d96ac6e48578ac8b2dc65d645b1748bc5f6183c58bcd22987122dc8e45e19c1e"
         $lockTemplate.dependencies.vanessaAutomation.epfSha256 | Should -Be "d17b20bca54861b025256652a84dec18cdcc2d20b4a08932c5141054d7dc7f9f"
-        $lockTemplate.dependencies.vanessaAutomation.publicationStatus | Should -Be "pending"
+        $lockTemplate.dependencies.vanessaAutomation.publicationStatus | Should -Be "published"
         $lockTemplate.dependencies.vanessaAutomation.PSObject.Properties.Name | Should -Contain "sha256"
         $lockTemplate.dependencies.vanessaMcp.clientMcp.PSObject.Properties.Name | Should -Contain "sha256"
         $lockTemplate.dependencies.vanessaMcp.vaExtension.PSObject.Properties.Name | Should -Contain "sha256"
