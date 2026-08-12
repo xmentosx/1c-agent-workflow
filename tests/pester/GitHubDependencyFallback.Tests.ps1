@@ -65,14 +65,11 @@ Describe "GitHub dependency rate-limit fallback" {
         $extension.name | Should -Be "VAExtension.1.29.cfe"
     }
 
-    It "never resolves Vanessa Automation through releases latest even in fresh mode" {
+    It "fails closed on the pending Vanessa pin without querying releases latest" {
         Mock Invoke-RestMethod { throw "must not query GitHub" }
         [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $null, "Process")
 
-        $info = Get-VanessaAutomationDownloadInfo
-        $info.source | Should -Be "workflow-pinned"
-        $info.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r6/vanessa-automation-single.1.2.043.28-itl-r6.zip"
-        $info.expectedSha256 | Should -Be "4d38ee94a5324b2681eb292d725038b10a544e9c4396b1907fe3dc4c2dccccf8"
+        { Get-VanessaAutomationDownloadInfo } | Should -Throw "*ITL_VANESSA_ARTIFACT_NOT_PUBLISHED*"
         Assert-MockCalled Invoke-RestMethod -Times 0
     }
 
