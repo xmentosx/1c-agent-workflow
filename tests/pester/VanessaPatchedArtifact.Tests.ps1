@@ -60,6 +60,9 @@ Describe "Controlled Vanessa Automation patched artifact" {
         $reloadCallback = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JfQsNCz0YDRg9C30LjRgtGM0KTQuNGH0LDQpNCw0LnQu9CY0JLRi9C/0L7Qu9C90LjRgtGM0KHRhtC10L3QsNGA0LjQuA=="))
         $syntaxCheck = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0J/QvtC70YPRh9C40YLRjNCf0YDQvtCx0LvQtdC80YvQn9C+0KLQtdC60YPRidC10LnQpNC40YfQtQ=="))
         $runAll = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JrQvtC80LDQvdC00LDQktGL0L/QvtC70L3QuNGC0YzQodGG0LXQvdCw0YDQuNC4"))
+        $deferredRunner = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("TUNQ0JLRi9C/0L7Qu9C90LjRgtGM0KHRhtC10L3QsNGA0LjQuNCf0L7RgdC70LXQl9Cw0LPRgNGD0LfQutC4"))
+        $attachWaitHandler = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0J/QvtC00LrQu9GO0YfQuNGC0YzQntCx0YDQsNCx0L7RgtGH0LjQutCe0LbQuNC00LDQvdC40Y8="))
+        $scenarioWaitFlag = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("TUNQ0J7QttC40LTQsNC90LjQtdCS0YvQv9C+0LvQvdC10L3QuNGP0KHRhtC10L3QsNGA0LjRjw=="))
         $falseValue = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JvQvtC20Yw="))
         $trueValue = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JjRgdGC0LjQvdCw"))
         $ifKeyword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0JXRgdC70Lg="))
@@ -70,7 +73,8 @@ Describe "Controlled Vanessa Automation patched artifact" {
 
         $patchText | Should -Match ("(?m)^\+.*" + [regex]::Escape($continuation) + ".*" + [regex]::Escape($localLoadedFlag) + " = " + [regex]::Escape($falseValue) + ".*$")
         $patchText | Should -Match ("(?m)^\+.*" + [regex]::Escape($continuation) + ".*" + [regex]::Escape($trueValue) + ".*$")
-        $patchText | Should -Match ("(?s)\+\s*" + [regex]::Escape($ifKeyword + " " + $localLoadedFlag) + ".*?" + [regex]::Escape($syntaxCheck) + ".*?" + [regex]::Escape($runAll) + ".*?\+\s*" + [regex]::Escape($elseKeyword) + ".*?" + [regex]::Escape($reloadCallback))
+        $patchText | Should -Match ("(?s)\+\s*" + [regex]::Escape($ifKeyword + " " + $localLoadedFlag) + ".*?" + [regex]::Escape($attachWaitHandler) + ".*?" + [regex]::Escape($deferredRunner) + ".*?\+\s*" + [regex]::Escape($elseKeyword) + ".*?" + [regex]::Escape($reloadCallback))
+        $patchText | Should -Match ("(?s)\+.*?" + [regex]::Escape($deferredRunner) + ".*?" + [regex]::Escape($syntaxCheck) + ".*?" + [regex]::Escape($scenarioWaitFlag) + "\s*=\s*" + [regex]::Escape($falseValue) + ".*?" + [regex]::Escape($runAll))
         $patchText | Should -Not -Match ("(?m)^\+\s*" + [regex]::Escape($callParameters.TrimEnd(';')) + "\s*=\s*" + [regex]::Escape($newStructure))
         $patchText | Should -Not -Match ("(?m)^[+-].*" + [regex]::Escape($globalFlag) + "\s*=\s*" + [regex]::Escape($undefinedValue))
     }

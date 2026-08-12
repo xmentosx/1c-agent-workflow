@@ -18,8 +18,10 @@ bytes exercised by the live smoke; the candidate must not be rebuilt afterward.
 Revision `itl-r7` retains the reduced `itl-r6` patch and fixes the cold
 `run_scenario(filePath=..., mode=reloadAndRun)` callback path. The first feature
 load now passes a call-local `already loaded` marker into the continuation. Only
-that continuation skips the redundant second load, checks syntax, and starts all
-scenarios. An already active feature still follows the ordinary reload path.
+that continuation skips the redundant second load and schedules execution for
+the next wait-handler event, after the outer callback has completed its cleanup.
+The deferred handler checks syntax and starts all scenarios. An already active
+feature still follows the ordinary reload path.
 
 The original MCP parameter structure is preserved throughout, including task
 identifier, mode, and progress context. The managed form's global callback flag
