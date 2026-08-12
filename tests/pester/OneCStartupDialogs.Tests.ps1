@@ -9,23 +9,26 @@ Describe "Non-interactive 1C startup dialogs" {
         $McpHostDumpPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1"
     }
 
-    It "suppresses startup dialogs in every shared non-interactive launcher" {
+    It "suppresses startup dialogs except in interactive and TestClient launchers" {
         $tokens = $null
         $errors = $null
         $coreAst = [System.Management.Automation.Language.Parser]::ParseFile($CorePath, [ref]$tokens, [ref]$errors)
         @($errors) | Should -HaveCount 0
         $functions = @($coreAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
 
-        foreach ($name in @("Invoke-Designer", "Start-EnterpriseBackground", "Invoke-Enterprise")) {
+        foreach ($name in @("Invoke-Designer", "Invoke-Enterprise")) {
             $functionText = [string](($functions | Where-Object Name -eq $name).Extent.Text)
             $functionText | Should -Match ([regex]::Escape('"/DisableStartupMessages", "/DisableStartupDialogs"'))
         }
+
+        $backgroundEnterprise = [string](($functions | Where-Object Name -eq "Start-EnterpriseBackground").Extent.Text)
+        $backgroundEnterprise | Should -Match '(?s)if \(-not \$UseTestClient\)\s*\{\s*\$args \+= "/DisableStartupDialogs"\s*\}'
 
         $interactiveDesigner = [string](($functions | Where-Object Name -eq "Invoke-DesignerInteractive").Extent.Text)
         $interactiveDesigner | Should -Not -Match ([regex]::Escape('"/DisableStartupDialogs"'))
     }
 
-    It "passes startup suppression through Vanessa-created TestClients" {
+    It "does not prohibit license warning dialogs in Vanessa-created TestClients" {
         $tokens = $null
         $errors = $null
         $vanessaAst = [System.Management.Automation.Language.Parser]::ParseFile($VanessaPath, [ref]$tokens, [ref]$errors)
@@ -33,7 +36,8 @@ Describe "Non-interactive 1C startup dialogs" {
         $functions = @($vanessaAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
         $additionalParams = [string](($functions | Where-Object Name -eq "New-VanessaTestClientAdditionalParams").Extent.Text)
 
-        $additionalParams | Should -Match ([regex]::Escape('"/DisableStartupMessages", "/DisableStartupDialogs"'))
+        $additionalParams | Should -Match ([regex]::Escape('"/DisableStartupMessages"'))
+        $additionalParams | Should -Not -Match ([regex]::Escape('"/DisableStartupDialogs"'))
     }
 
     It "suppresses dialogs in direct qualification and standalone dump launches" {

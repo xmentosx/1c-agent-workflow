@@ -2474,6 +2474,7 @@
                 $clientsKey = Decode-TestUtf8 "0JTQsNC90L3Ri9C10JrQu9C40LXQvdGC0L7QstCi0LXRgdGC0LjRgNC+0LLQsNC90LjRjw=="
                 $portKey = Decode-TestUtf8 "0J/QvtGA0YLQl9Cw0L/Rg9GB0LrQsNCi0LXRgdGC0JrQu9C40LXQvdGC0LA="
                 $pathKey = Decode-TestUtf8 "0J/Rg9GC0YzQmtCY0L3RhNC+0LHQsNC30LU="
+                $additionalParamsKey = Decode-TestUtf8 "0JTQvtC/0J/QsNGA0LDQvNC10YLRgNGL"
                 $statusKey = Decode-TestUtf8 "0J/Rg9GC0YzQmtCk0LDQudC70YPQlNC70Y/QktGL0LPRgNGD0LfQutC40KHRgtCw0YLRg9GB0LDQktGL0L/QvtC70L3QtdC90LjRj9Ch0YbQtdC90LDRgNC40LXQsg=="
                 $windowTimeoutKey = Decode-TestUtf8 "0JrQvtC70LjRh9C10YHRgtCy0L7QodC10LrRg9C90LTQn9C+0LjRgdC60LDQntC60L3QsA=="
                 $stopOnErrorKey = Decode-TestUtf8 "0J7RgdGC0LDQvdC+0LLQutCw0J/RgNC40JLQvtC30L3QuNC60L3QvtCy0LXQvdC40LjQntGI0LjQsdC60Lg="
@@ -2509,6 +2510,8 @@
                 $clientRecord = @($clientSettings.PSObject.Properties[$clientsKey].Value)[0]
                 [int]$clientRecord.PSObject.Properties[$portKey].Value | Should -Be 48051
                 $clientRecord.PSObject.Properties[$pathKey].Value | Should -Match ([regex]::Escape($ibPath))
+                $clientRecord.PSObject.Properties[$additionalParamsKey].Value | Should -Match ([regex]::Escape("/DisableStartupMessages"))
+                $clientRecord.PSObject.Properties[$additionalParamsKey].Value | Should -Not -Match ([regex]::Escape("/DisableStartupDialogs"))
 
                 $command | Should -Be "StartFeaturePlayer;VAParams=$paramsPath"
                 $command | Should -Not -Match 'VAParams="'
@@ -2659,13 +2662,17 @@
             $result.starts[0].filePath | Should -Be $thinPath
             $result.starts[0].arguments | Should -Contain "/TESTCLIENT"
             $result.starts[0].arguments | Should -Not -Contain "/TESTMANAGER"
+            $result.starts[0].arguments | Should -Not -Contain "/DisableStartupDialogs"
             $result.starts[1].filePath | Should -Be $thickPath
             $result.starts[1].arguments | Should -Contain "/TESTMANAGER"
             $result.starts[1].arguments | Should -Not -Contain "/TESTCLIENT"
+            $result.starts[1].arguments | Should -Contain "/DisableStartupDialogs"
             $result.invokes[0].filePath | Should -Be $thinPath
             $result.invokes[0].arguments | Should -Contain "/TESTMANAGER"
+            $result.invokes[0].arguments | Should -Contain "/DisableStartupDialogs"
             $result.invokes[1].filePath | Should -Be $thickPath
             $result.invokes[1].arguments | Should -Not -Contain "/TESTMANAGER"
+            $result.invokes[1].arguments | Should -Contain "/DisableStartupDialogs"
             $result.thinResultPath | Should -Be $thinPath
             $result.thickResultPath | Should -Be $thickPath
         } finally {

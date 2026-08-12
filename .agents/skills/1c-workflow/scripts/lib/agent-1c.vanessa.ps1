@@ -2522,7 +2522,7 @@ function New-VanessaTestClientAdditionalParams {
     if (-not [string]::IsNullOrEmpty($Password)) {
         $args += @("/P", $Password)
     }
-    $args += @("/DisableStartupMessages", "/DisableStartupDialogs")
+    $args += "/DisableStartupMessages"
 
     return (Join-NativeCommandLineArguments -Arguments $args)
 }
