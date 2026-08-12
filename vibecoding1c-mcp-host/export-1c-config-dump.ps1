@@ -364,7 +364,7 @@ function Invoke-Designer {
     $user = [string](Get-ObjectValue -Object $Dump -Name "ibUser" -Default "")
     $password = [string](Get-ObjectValue -Object $Dump -Name "ibPassword" -Default "")
     $ibArgs = New-InfobaseArgs -Kind $kind -Path $infoBasePath -User $user -Password $password
-    $args = @("DESIGNER") + $ibArgs + @("/DisableStartupMessages", "/Out", $logPath) + $DesignerArgs
+    $args = @("DESIGNER") + $ibArgs + @("/DisableStartupMessages", "/DisableStartupDialogs", "/Out", $logPath) + $DesignerArgs
 
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"

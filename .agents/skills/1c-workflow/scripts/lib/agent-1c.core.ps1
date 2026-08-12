@@ -5796,7 +5796,7 @@ function Invoke-Designer {
     $script:LastLogPath = $logPath
 
     $ibArgs = New-InfobaseArgs -Kind $InfoBaseKind -Path $InfoBasePath -User $User -Password $Password
-    $args = @("DESIGNER") + $ibArgs + @("/DisableStartupMessages", "/Out", $logPath) + $DesignerArgs
+    $args = @("DESIGNER") + $ibArgs + @("/DisableStartupMessages", "/DisableStartupDialogs", "/Out", $logPath) + $DesignerArgs
 
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
@@ -6138,7 +6138,7 @@ function Start-EnterpriseBackground {
     if ($UseTestClient) {
         $args += @("/TESTCLIENT", "-TPort", [string]$TestClientPort)
     }
-    $args += $ibArgs + @("/DisableStartupMessages", "/Out", $logPath) + $EnterpriseArgs
+    $args += $ibArgs + @("/DisableStartupMessages", "/DisableStartupDialogs", "/Out", $logPath) + $EnterpriseArgs
 
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
@@ -6186,7 +6186,7 @@ function Invoke-Enterprise {
     $script:LastLogPath = $logPath
 
     $ibArgs = New-InfobaseArgs -Kind $InfoBaseKind -Path $InfoBasePath -User $User -Password $Password
-    $args = @("ENTERPRISE") + $ibArgs + @("/DisableStartupMessages")
+    $args = @("ENTERPRISE") + $ibArgs + @("/DisableStartupMessages", "/DisableStartupDialogs")
     $effectiveTestClientPort = 0
     if ($TestClientPort -gt 0) {
         $effectiveTestClientPort = $TestClientPort
