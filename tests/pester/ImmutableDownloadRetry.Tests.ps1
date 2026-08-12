@@ -293,7 +293,6 @@ Describe "Immutable asset download retry policy" {
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/ReleaseReadiness.Tests.ps1",
             "tests/pester/RoctupPortLifecycle.Tests.ps1",
-            "tests/pester/SourceDelivery.Tests.ps1",
             "tests/pester/VanessaArtifactIntegration.Tests.ps1"
         )) { @($selection.tests) | Should -Contain $testPath }
     }

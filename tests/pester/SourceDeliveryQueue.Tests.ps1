@@ -14,6 +14,14 @@ It "parses the orchestrator and exposes only the four delivery actions" {
         $text | Should -Match 'Invoke-SourceGate -Mode "Develop" -WorkingRoot \$worktree\.path -TargetBaseRef \$remoteDevelop'
     }
 
+It "resolves the repository root after parameter binding in Windows PowerShell 5.1" {
+        $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "Status")
+        $result.exitCode | Should -Be 0
+        $status = $result.stdout | ConvertFrom-Json
+        $status.status | Should -Be "ok"
+        @($status.PSObject.Properties.Name) | Should -Contain "queue"
+    }
+
 It "registers base and head atomically for a path with Cyrillic and spaces" {
         $fixture = $null; $parallelRoot = ""; try {
             $fixture = New-DeliveryFixture
