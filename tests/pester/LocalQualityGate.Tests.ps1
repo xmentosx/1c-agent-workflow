@@ -21,14 +21,16 @@ Describe "Local quality gate contract" {
         $ownedTests = @($catalog.contracts | ForEach-Object { @($_.tests) } | ForEach-Object { ([string]$_).Replace('\\','/') } | Sort-Object -Unique); @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot "tests\pester") -File -Filter "*.Tests.ps1" | ForEach-Object { "tests/pester/$($_.Name)" } | Where-Object { $_ -notin $ownedTests }) | Should -BeNullOrEmpty
         @(Get-PublicLifecycleActions -RepositoryRoot $RepoRoot).Count | Should -BeGreaterThan 50
         $known = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("docs/путь с пробелами/пример.md", "scripts/source-delivery.ps1"); @($known.unknownPaths) | Should -BeNullOrEmpty
-        @($known.tests) | Should -Contain "tests/pester/SourceDelivery.Tests.ps1"
+        @($known.tests) | Should -Contain "tests/pester/SourceDeliveryPublish.Tests.ps1"
         $unknown = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("unowned/новый файл.ps1")
         @($unknown.unknownPaths) | Should -Be @("unowned/новый файл.ps1")
         $retired = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("tests/pester/TriageContract.Tests.ps1")
         @($retired.tests) | Should -Be @("tests/pester/ParserDocsBudgets.Tests.ps1")
+        $retiredDelivery = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("tests/pester/SourceDelivery.Tests.ps1")
+        @($retiredDelivery.tests) | Should -Be @("tests/pester/SourceDeliveryPublish.Tests.ps1")
         $sourceRules = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("AGENTS.md")
         @($sourceRules.tests) | Should -Contain "tests/pester/ParserDocsBudgets.Tests.ps1"
-        @($sourceRules.tests) | Should -Contain "tests/pester/SourceDelivery.Tests.ps1"
+        @($sourceRules.tests) | Should -Contain "tests/pester/SourceDeliveryPublish.Tests.ps1"
         $roctupOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/lib/agent-1c.roctup-mcp.ps1")
         @($roctupOnly.contracts.id) | Should -Be @("roctup-port-lifecycle")
         @($roctupOnly.tests) | Should -Be @("tests/pester/RoctupPortLifecycle.Tests.ps1")
@@ -48,12 +50,34 @@ Describe "Local quality gate contract" {
         @($dependencyLockOnly.tests) | Should -Contain "tests/pester/GitHubDependencyFallback.Tests.ps1"
         @($dependencyLockOnly.tests) | Should -Contain "tests/pester/VanessaArtifactIntegration.Tests.ps1"
         @($dependencyLockOnly.tests) | Should -Not -Contain "tests/pester/BootstrapUpdate.Tests.ps1"
+        @($catalog.smokeTests) | Should -Contain "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1"
+        @($catalog.smokeTests) | Should -Not -Contain "tests/pester/SourceDeliveryPublish.Tests.ps1"
+        @($catalog.smokeTests) | Should -Not -Contain "tests/pester/SourceDeliveryQueue.Tests.ps1"
+        @($catalog.smokeTests) | Should -Not -Contain "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"
+        $processOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-process.ps1")
+        @($processOnly.contracts.id) | Should -Be @("source-delivery-process")
+        @($processOnly.tests) | Should -Contain "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1"
+        @($processOnly.tests) | Should -Contain "tests/pester/SourceDeliveryQueue.Tests.ps1"
+        @($processOnly.tests) | Should -Contain "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"
+        $queueOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-queue.ps1")
+        @($queueOnly.contracts.id) | Should -Be @("source-delivery-queue")
+        @($queueOnly.tests) | Should -Be @("tests/pester/SourceDeliveryQueue.Tests.ps1")
+        $componentOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-component.ps1")
+        @($componentOnly.contracts.id) | Should -Be @("source-delivery-component")
+        @($componentOnly.tests) | Should -Be @("tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1")
+        foreach ($gateLeaf in @("scripts/source-delivery-process.ps1", "scripts/source-delivery-queue.ps1", "scripts/source-delivery-component.ps1", "scripts/source-delivery-candidate.ps1")) {
+            @($catalog.continuationScopes.gate) | Should -Contain $gateLeaf
+        }
         @($catalog.contracts.paths | ForEach-Object { @($_) } | Where-Object { [string]$_ -in @("*", "**", "*/*") }) | Should -BeNullOrEmpty
         $catalog.PSObject.Properties["baseline"] | Should -BeNullOrEmpty
+        $shardRunner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
+        $shardRunner | Should -Match '\$serialTestNames = @\("CompactItlRunner\.Tests\.ps1", "DependencyLocks\.Tests\.ps1", "ReleaseGate\.Tests\.ps1"\)'
     }
     It "qualifies static and live candidate evidence without repeating Develop during Release" {
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8; $qualification = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-qualification.ps1") -Raw -Encoding UTF8
-        $promoter = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\promote-ai-rules-compatibility.ps1") -Raw -Encoding UTF8; $delivery = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\source-delivery.ps1") -Raw -Encoding UTF8; $developJourney = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-develop-e2e.ps1") -Raw -Encoding UTF8
+        $promoter = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\promote-ai-rules-compatibility.ps1") -Raw -Encoding UTF8
+        $delivery = @("source-delivery.ps1", "source-delivery-process.ps1", "source-delivery-queue.ps1", "source-delivery-component.ps1", "source-delivery-candidate.ps1" | ForEach-Object { Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\$_") -Raw -Encoding UTF8 }) -join [Environment]::NewLine
+        $developJourney = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-develop-e2e.ps1") -Raw -Encoding UTF8
         $check | Should -Match 'itl-workflow-full-qualification'
         $check | Should -Match 'itl-workflow-develop-qualification'
         $check | Should -Match 'Test-DevelopQualification'
@@ -70,6 +94,7 @@ Describe "Local quality gate contract" {
         $check | Should -Match '\$byteHash = \(Get-FileHash -LiteralPath \$path -Algorithm SHA256\)'
         $check | Should -Match '\$canonicalHash -ne \$expectedHash -and \$byteHash -ne \$expectedHash'
         $check | Should -Match 'static-tracked-state'; $check | Should -Match ([regex]::Escape("-split ','"))
+        foreach ($gateLeaf in @('source-delivery-process.ps1','source-delivery-queue.ps1','source-delivery-component.ps1','source-delivery-candidate.ps1')) { $check | Should -Match ([regex]::Escape($gateLeaf)) }
         $qualification | Should -Match 'merge-base --is-ancestor'
         $promoter | Should -Match 'qualificationSha256'
         $promoter | Should -Match 'compatibilityStatus'

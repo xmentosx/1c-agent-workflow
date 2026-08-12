@@ -22,6 +22,10 @@
       "scripts/check.ps1",
       "scripts/release-qualification.ps1",
       "scripts/source-delivery.ps1",
+      "scripts/source-delivery-process.ps1",
+      "scripts/source-delivery-queue.ps1",
+      "scripts/source-delivery-component.ps1",
+      "scripts/source-delivery-candidate.ps1",
       "scripts/develop-static-qualification.ps1",
       "scripts/git-path-list.ps1",
       "scripts/quality-contracts.ps1",
@@ -49,6 +53,7 @@
     "fullPaths": [
       "scripts/check.ps1",
       "scripts/source-delivery.ps1",
+      "scripts/source-delivery-candidate.ps1",
       "scripts/invoke-develop-e2e.ps1",
       "scripts/develop-e2e-cleanup.ps1",
       "scripts/develop-e2e-qualification.ps1",
@@ -67,13 +72,14 @@
   },
   "smokeTests": [
     "tests/pester/LocalQualityGate.Tests.ps1",
-    "tests/pester/SourceDelivery.Tests.ps1",
+    "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
     "tests/pester/LifecycleOperationLock.Tests.ps1",
     "tests/pester/DesignerMemoryGuard.Tests.ps1",
     "tests/pester/DesignerCompletion.Tests.ps1",
     "tests/pester/DependencyLocks.Tests.ps1"
   ],
   "retiredTests": {
+    "tests/pester/SourceDelivery.Tests.ps1": "tests/pester/SourceDeliveryPublish.Tests.ps1",
     "tests/pester/TriageContract.Tests.ps1": "tests/pester/ParserDocsBudgets.Tests.ps1",
     "tests/pester/VanessaTestGuide.Tests.ps1": "tests/pester/ParserDocsBudgets.Tests.ps1"
   },
@@ -85,7 +91,7 @@
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/ImmutableDownloadRetry.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1"],
-      "tests": ["tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/DependencyLocks.Tests.ps1", "tests/pester/GitHubDependencyFallback.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/RoctupPortLifecycle.Tests.ps1", "tests/pester/SourceDelivery.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1"]
+      "tests": ["tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/DependencyLocks.Tests.ps1", "tests/pester/GitHubDependencyFallback.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/RoctupPortLifecycle.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1"]
     },
     {
       "id": "source-quality-gate",
@@ -101,9 +107,36 @@
       "owner": "develop and master delivery",
       "gate": "targeted",
       "budgetSeconds": 900,
-      "primaryTest": "tests/pester/SourceDelivery.Tests.ps1",
-      "paths": ["scripts/source-delivery.ps1", "scripts/git-path-list.ps1", "AGENTS.md", "docs/local-quality-gate.md", "docs/release-checklist.md"],
-      "tests": ["tests/pester/SourceDelivery.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1"]
+      "primaryTest": "tests/pester/SourceDeliveryQueue.Tests.ps1",
+      "paths": ["scripts/source-delivery.ps1", "scripts/source-delivery-candidate.ps1", "scripts/git-path-list.ps1", "tests/pester/SourceDelivery.TestSupport.ps1", "AGENTS.md", "docs/local-quality-gate.md", "docs/release-checklist.md"],
+      "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1"]
+    },
+    {
+      "id": "source-delivery-process",
+      "owner": "delivery child lifetime and gate process",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
+      "paths": ["scripts/source-delivery-process.ps1"],
+      "tests": ["tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"]
+    },
+    {
+      "id": "source-delivery-queue",
+      "owner": "delivery queue registration",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/SourceDeliveryQueue.Tests.ps1",
+      "paths": ["scripts/source-delivery-queue.ps1"],
+      "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1"]
+    },
+    {
+      "id": "source-delivery-component",
+      "owner": "delivery component publication",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/SourceDeliveryComponentPublication.Tests.ps1",
+      "paths": ["scripts/source-delivery-component.ps1"],
+      "tests": ["tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/ImmutableDownloadRetry.Tests.ps1"]
     },
     {
       "id": "release-runtime",

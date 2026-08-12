@@ -233,7 +233,7 @@ Describe "Immutable asset download retry policy" {
     }
 
     It "keeps 404 availability polling bounded to the explicit post-upload call" {
-        $deliveryPath = Join-Path $script:RepoRoot "scripts\source-delivery.ps1"
+        $deliveryPath = Join-Path $script:RepoRoot "scripts\source-delivery-component.ps1"
         $tokens = $null
         $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile($deliveryPath, [ref]$tokens, [ref]$errors)
@@ -270,7 +270,7 @@ Describe "Immutable asset download retry policy" {
         $vanessa = Get-Content -LiteralPath (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
         $roctup = Get-Content -LiteralPath (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.roctup-mcp.ps1") -Raw -Encoding UTF8
         $readiness = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\test-release-readiness.ps1") -Raw -Encoding UTF8
-        $delivery = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\source-delivery.ps1") -Raw -Encoding UTF8
+        $delivery = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\source-delivery-component.ps1") -Raw -Encoding UTF8
         $shards = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
 
         @([regex]::Matches($vanessa, 'Invoke-ItlImmutableFileAcquire -Source')).Count | Should -Be 2
@@ -293,7 +293,6 @@ Describe "Immutable asset download retry policy" {
             "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/ReleaseReadiness.Tests.ps1",
             "tests/pester/RoctupPortLifecycle.Tests.ps1",
-            "tests/pester/SourceDelivery.Tests.ps1",
             "tests/pester/VanessaArtifactIntegration.Tests.ps1"
         )) { @($selection.tests) | Should -Contain $testPath }
     }

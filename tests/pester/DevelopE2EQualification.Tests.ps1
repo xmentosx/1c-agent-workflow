@@ -60,7 +60,11 @@ Describe "Develop E2E journey qualification router" {
         @($catalog.developJourneys.names) | Should -Be @('upgrade','fresh')
         @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/check.ps1'
         @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/source-delivery.ps1'
+        @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/source-delivery-candidate.ps1'
         @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/git-path-list.ps1'
+        foreach ($leaf in @('scripts/source-delivery-process.ps1','scripts/source-delivery-queue.ps1','scripts/source-delivery-component.ps1')) {
+            @($catalog.developJourneys.fullPaths) | Should -Not -Contain $leaf
+        }
 
         $invalid = $catalog | ConvertTo-Json -Depth 16 | ConvertFrom-Json
         $invalid.developJourneys.routes.upgrade.contracts = @('missing-owner')
@@ -80,6 +84,14 @@ Describe "Develop E2E journey qualification router" {
         $standalone.reason | Should -Be 'no-develop-journey-route'
         @($standalone.contracts) | Should -Be @('standalone-mcp-host')
         @($standalone.journeys) | Should -BeNullOrEmpty
+
+        foreach ($leaf in @('process','queue','component')) {
+            $path = "scripts/source-delivery-$leaf.ps1"
+            $plan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($path)
+            $plan.reason | Should -Be 'no-develop-journey-route'
+            @($plan.contracts) | Should -Be @("source-delivery-$leaf")
+            @($plan.journeys) | Should -BeNullOrEmpty
+        }
     }
 
     It "fails closed for unknown and orchestration paths but skips direct tests" {
@@ -93,6 +105,10 @@ Describe "Develop E2E journey qualification router" {
         $orchestration.reason | Should -Be 'develop-orchestration-full-path'
         @($orchestration.matchedFullPaths) | Should -Be @('scripts/source-delivery.ps1')
         @($orchestration.journeys) | Should -Be @('upgrade','fresh')
+        $candidate = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery-candidate.ps1')
+        $candidate.reason | Should -Be 'develop-orchestration-full-path'
+        @($candidate.matchedFullPaths) | Should -Be @('scripts/source-delivery-candidate.ps1')
+        @($candidate.journeys) | Should -Be @('upgrade','fresh')
         @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/git-path-list.ps1') | Select-Object -ExpandProperty journeys) | Should -Be @('upgrade','fresh')
 
         $direct = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('tests/pester/DependencyLocks.Tests.ps1')

@@ -224,7 +224,9 @@ if ($testFiles.Count -eq 0) { throw "No Pester test files were discovered." }
 if (@($testFiles | Where-Object Name -eq "BootstrapUpdate.Tests.ps1").Count -gt 0) {
     Initialize-VanessaSourceBuildArchiveForPester
 }
-$serialTestNames = @("DependencyLocks.Tests.ps1", "ReleaseGate.Tests.ps1")
+# CompactItlRunner sends a real console Ctrl+C to process-group zero, which
+# broadcasts within its attached console. Keep it out of the parallel set.
+$serialTestNames = @("CompactItlRunner.Tests.ps1", "DependencyLocks.Tests.ps1", "ReleaseGate.Tests.ps1")
 $weights = @{}
 foreach ($property in $timings.files.PSObject.Properties) { $weights[$property.Name] = [double]$property.Value }
 $defaultSeconds = [double]$timings.defaultSeconds
