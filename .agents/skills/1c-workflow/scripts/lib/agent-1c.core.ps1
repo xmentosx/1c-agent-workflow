@@ -6138,7 +6138,11 @@ function Start-EnterpriseBackground {
     if ($UseTestClient) {
         $args += @("/TESTCLIENT", "-TPort", [string]$TestClientPort)
     }
-    $args += $ibArgs + @("/DisableStartupMessages", "/DisableStartupDialogs", "/Out", $logPath) + $EnterpriseArgs
+    $args += $ibArgs + @("/DisableStartupMessages")
+    if (-not $UseTestClient) {
+        $args += "/DisableStartupDialogs"
+    }
+    $args += @("/Out", $logPath) + $EnterpriseArgs
 
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
