@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, TypeVar
+
+try:
+    from .observability import log_event
+except ImportError:  # pragma: no cover - supports direct local test execution
+    from observability import log_event
 
 
 LOGGER = logging.getLogger(__name__)
@@ -71,10 +77,25 @@ async def _run_with_transient_network_retry(
 ) -> _Result:
     delays = tuple(backoff_seconds)
     for attempt in range(len(delays) + 1):
+        started = time.perf_counter()
         try:
-            return await operation()
+            result = await operation()
         except Exception as error:
-            if not is_transient_network_error(error) or attempt == len(delays):
+            transient = is_transient_network_error(error)
+            exhausted = attempt == len(delays)
+            log_event(
+                "upstream_attempt_end",
+                stage="upstream_attempt",
+                operation=operation_name,
+                sessionPolicy=session_policy,
+                attempt=attempt + 1,
+                maxAttempts=len(delays) + 1,
+                outcome="transient_error" if transient else "error",
+                exhausted=exhausted,
+                elapsedMs=max(0, round((time.perf_counter() - started) * 1000)),
+                errorType=type(error).__name__,
+            )
+            if not transient or exhausted:
                 raise
             delay = delays[attempt]
             LOGGER.warning(
@@ -88,6 +109,19 @@ async def _run_with_transient_network_retry(
                 error,
             )
             await sleep(delay)
+        else:
+            log_event(
+                "upstream_attempt_end",
+                stage="upstream_attempt",
+                operation=operation_name,
+                sessionPolicy=session_policy,
+                attempt=attempt + 1,
+                maxAttempts=len(delays) + 1,
+                outcome="success",
+                exhausted=False,
+                elapsedMs=max(0, round((time.perf_counter() - started) * 1000)),
+            )
+            return result
     raise AssertionError("unreachable")
 
 

@@ -110,6 +110,9 @@ notepad .\host.config.json
   применяет общий ограниченный retry временных сетевых обрывов к безопасным prompt/direct операциям:
   каждая обычная попытка использует новую сессию, а продолжение `ask_1c_ai` сохраняет reused session.
   Direct mode, формат upstream-вызовов и `assistant_uuid` не изменяются; постоянные ошибки не повторяются.
+  Overlay пишет content-safe JSON-телеметрию `itl.codechecker.telemetry.v1`: начало и итог
+  `check_1c_code` / `review_1c_code`, direct/prompt этапы и каждую upstream-попытку. В лог не попадают
+  текст кода, prompt или ответ — только размеры, режим, outcome, attempt и `elapsedMs`.
 - `helpSearchServer.platformVersion`: версия платформы 1C для `HelpSearchServer`.
 - `helpSearchServer.platformBinPath`: локальный каталог `bin` платформы 1C для `HelpSearchServer`.
 - `sslSearchServer.bspVersion`: версия БСП для `SSLSearchServer`.
@@ -143,6 +146,22 @@ notepad .\host.config.json
   `restart=unless-stopped`; при `start` и `reconcile` она также назначается существующим
   отслеживаемым контейнерам.
 - `configurations`: список конфигураций 1C, для которых нужно поднять `code`/`graph`.
+
+### Диагностика задержек Code Checker
+
+На выделенной машине смотрите только структурированные записи нужного контейнера:
+
+```powershell
+docker logs --timestamps --since 2h itl-1c-codechecker 2>&1 |
+    Select-String 'itl.codechecker.telemetry.v1'
+```
+
+Один `requestId` связывает `tool_start`, `stage_start` / `stage_end`,
+`upstream_attempt_end` и `tool_end`. Поле `elapsedMs` в `tool_end` — полное время MCP-инструмента;
+в `stage_end` — время direct syntax или prompt-анализа; повторные `upstream_attempt_end` показывают,
+что задержка выросла из-за транспортного retry. `tool_start` без соответствующего `tool_end` позволяет
+увидеть ещё выполняющийся или отменённый запрос. Для корреляции с задачей агента сравнивайте Docker
+timestamp с `mcp_tool_call_end.duration` в локальном журнале Codex.
 - `mantisTicketServer.baseUrl`: URL Mantis, доступный выделенной машине.
 - `mantisTicketServer.attachmentCachePath`: локальный cache оригиналов вложений Mantis.
 - `mantisTicketServer.ocr`: включение OCR и языки, по умолчанию `rus` и `eng`.

@@ -869,6 +869,7 @@ services:
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\requirements.txt") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\test_server.py") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-overlay\Dockerfile") -PathType Leaf) | Should -Be $true
+        (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-overlay\observability.py") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-overlay\retry_policy.py") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-overlay\patch_mcp_server.py") -PathType Leaf) | Should -Be $true
         (Test-Path -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-overlay\test_retry_policy.py") -PathType Leaf) | Should -Be $true

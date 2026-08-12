@@ -13,15 +13,22 @@ IMPORT_LINES = '''from .retry_policy import (
     send_with_reused_session_retry,
     send_with_transient_network_retry,
 )
+from .observability import observe_stage, observe_tool
 '''
 
 SEND_PROMPT_FUNCTION = '''async def _send_prompt(question: str) -> str:
     """Отправить промпт в 1C.ai с общим transport-retry и вернуть очищенный ответ."""
     client = _get_client()
-    answer = await send_with_transient_network_retry(
-        client,
-        _truncate_input(question),
-    )
+    truncated_question = _truncate_input(question)
+    async with observe_stage(
+        "prompt",
+        operation="prompt request",
+        inputChars=len(truncated_question),
+    ):
+        answer = await send_with_transient_network_retry(
+            client,
+            truncated_question,
+        )
     cleaned = _sanitize_text(answer)
     if not cleaned:
         return "Ошибка: API вернул пустой ответ (возможно, только reasoning без итогового текста)"
@@ -36,11 +43,16 @@ CALL_DIRECT_TOOL_FUNCTION = '''async def _call_direct_tool(tool_name: str, argum
     client = _get_client()
 
     try:
-        result = await call_tool_with_transient_network_retry(
-            client,
-            tool_name,
-            arguments,
-        )
+        async with observe_stage(
+            "direct_tool",
+            operation="direct tool",
+            upstreamTool=tool_name,
+        ):
+            result = await call_tool_with_transient_network_retry(
+                client,
+                tool_name,
+                arguments,
+            )
         text = _sanitize_text(client._extract_best_text(result))
         if text:
             return text
@@ -107,6 +119,17 @@ UNEXPECTED_ERROR_RERAISE = '''    except Exception as e:
             raise
         return f"Произошла неожиданная ошибка: {str(e)}"'''
 
+TOOL_OBSERVABILITY = {
+    "check_1c_code": '''@observe_tool(
+    "check_1c_code",
+    mode_resolver=lambda: "direct" if _is_direct_mode() else "standard",
+)\n''',
+    "review_1c_code": '''@observe_tool(
+    "review_1c_code",
+    mode_resolver=lambda: "prompt",
+)\n''',
+}
+
 
 def _replace_once(text: str, old: str, new: str, description: str) -> str:
     count = text.count(old)
@@ -155,6 +178,13 @@ def patch_source(source: str) -> str:
     tools_start = patched.index("# MCP Tools")
     before_tools = patched[:tools_start]
     tools = patched[tools_start:]
+    for tool_name, decorator in TOOL_OBSERVABILITY.items():
+        tools = _replace_once(
+            tools,
+            f"async def {tool_name}(",
+            decorator + f"async def {tool_name}(",
+            f"{tool_name} observability decorator",
+        )
     tools = _replace_once(
         tools,
         ASK_ORIGINAL,

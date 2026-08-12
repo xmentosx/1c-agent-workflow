@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import unittest
 
+from observability import observe_stage, observe_tool
 from patch_mcp_server import patch_source
 from retry_policy import (
     call_tool_with_transient_network_retry,
@@ -98,6 +100,33 @@ class RetryPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([True, True], client.session_requests)
         self.assertEqual(["session-1", "session-2"], client.sent_sessions)
         self.assertEqual([0.25], delays)
+
+    async def test_retry_emits_attempt_outcomes_without_request_content(self) -> None:
+        secret_question = "Секретный текст проверяемого модуля"
+        client = FixtureClient(
+            send_outcomes=[
+                FixtureApiError("peer closed connection"),
+                "ok",
+            ]
+        )
+
+        with self.assertLogs(
+            "MCP_1copilot.codechecker_observability",
+            level="INFO",
+        ) as captured:
+            await send_with_transient_network_retry(
+                client,
+                secret_question,
+                backoff_seconds=(0,),
+            )
+
+        events = [json.loads(record.getMessage()) for record in captured.records]
+        self.assertEqual(
+            ["transient_error", "success"],
+            [event["outcome"] for event in events],
+        )
+        self.assertEqual([1, 2], [event["attempt"] for event in events])
+        self.assertNotIn(secret_question, "\n".join(captured.output))
 
     async def test_direct_retry_reads_diagnostic_and_uses_a_new_session(self) -> None:
         client = FixtureClient(
@@ -198,8 +227,17 @@ class RetryPolicyTests(unittest.IsolatedAsyncioTestCase):
         return _sanitize_text(answer)
 {tool_error_handlers}
 '''
+        named_tools = []
+        for tool_name in ("check_1c_code", "review_1c_code"):
+            named_tools.append(
+                f'''async def {tool_name}(code: str) -> str:
+    try:
+        return await _send_prompt(code)
+{tool_error_handlers}
+'''
+            )
         other_tools = []
-        for index in range(10):
+        for index in range(8):
             other_tools.append(
                 f'''async def tool_{index}(prompt: str) -> str:
     try:
@@ -226,6 +264,7 @@ async def _call_direct_tool(tool_name: str, arguments: dict, fallback_prompt: st
 # =============================================================================
 
 {ask}
+{''.join(named_tools)}
 {''.join(other_tools)}
 '''
 
@@ -234,6 +273,11 @@ async def _call_direct_tool(tool_name: str, arguments: dict, fallback_prompt: st
         self.assertIn("call_tool_with_transient_network_retry", patched)
         self.assertIn("send_with_transient_network_retry", patched)
         self.assertIn("send_with_reused_session_retry", patched)
+        self.assertIn("from .observability import observe_stage, observe_tool", patched)
+        self.assertIn('@observe_tool(\n    "check_1c_code"', patched)
+        self.assertIn('@observe_tool(\n    "review_1c_code"', patched)
+        self.assertIn('async with observe_stage(\n        "prompt"', patched)
+        self.assertIn('async with observe_stage(\n            "direct_tool"', patched)
         self.assertIn("if create_new_session:", patched)
         self.assertIn("except ApiError:\n        raise", patched)
         self.assertEqual(11, patched.count("except ApiError:\n        raise"))
@@ -243,6 +287,35 @@ async def _call_direct_tool(tool_name: str, arguments: dict, fallback_prompt: st
         )
         self.assertNotIn("MCP_TOOL_CALL_MODE", patched)
         self.assertNotIn("assistant_uuid", patched)
+
+
+class ObservabilityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tool_and_stage_logs_are_correlated_and_content_safe(self) -> None:
+        source = "Процедура СекретнаяПроцедура()\nКонецПроцедуры"
+
+        @observe_tool("check_1c_code", mode_resolver=lambda: "direct")
+        async def checked(code: str) -> str:
+            async with observe_stage("prompt", inputChars=len(code)):
+                return "ok"
+
+        with self.assertLogs(
+            "MCP_1copilot.codechecker_observability",
+            level="INFO",
+        ) as captured:
+            result = await checked(source)
+
+        self.assertEqual("ok", result)
+        events = [json.loads(record.getMessage()) for record in captured.records]
+        self.assertEqual(
+            ["tool_start", "stage_start", "stage_end", "tool_end"],
+            [event["event"] for event in events],
+        )
+        self.assertEqual(1, len({event["requestId"] for event in events}))
+        self.assertEqual("direct", events[0]["mode"])
+        self.assertEqual(len(source), events[0]["codeChars"])
+        self.assertEqual("success", events[-1]["outcome"])
+        self.assertEqual(2, events[-1]["resultChars"])
+        self.assertNotIn(source, "\n".join(captured.output))
 
 
 if __name__ == "__main__":
