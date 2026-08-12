@@ -2048,7 +2048,8 @@ try {
         try {
             Invoke-E2EHelper -Action "release-e2e-prepare-ondemand" -TimeoutSeconds 1800 | Out-Null
             $utf8 = [System.Text.Encoding]::UTF8
-            $vanessaSmokeDirectory = Join-Path $outputRoot $utf8.GetString([Convert]::FromBase64String("VmFuZXNzYSDQv9GD0YLRjCDRgSDQv9GA0L7QsdC10LvQsNC80Lg="))
+            $vanessaSmokeEvidenceRoot = Join-Path $worktreePath "build\test-results\release-e2e"
+            $vanessaSmokeDirectory = Join-Path $vanessaSmokeEvidenceRoot $utf8.GetString([Convert]::FromBase64String("VmFuZXNzYSDQv9GD0YLRjCDRgSDQv9GA0L7QsdC10LvQsNC80Lg="))
             $vanessaSmokeFeature = Join-Path $vanessaSmokeDirectory $utf8.GetString([Convert]::FromBase64String("0J/RgNC+0LLQtdGA0LrQsCDRhdC+0LvQvtC00L3QvtCz0L4g0L/Rg9GC0LggQS5mZWF0dXJl"))
             $vanessaSecondarySmokeFeature = Join-Path $vanessaSmokeDirectory $utf8.GetString([Convert]::FromBase64String("0J/RgNC+0LLQtdGA0LrQsCDRhdC+0LvQvtC00L3QvtCz0L4g0L/Rg9GC0LggQi5mZWF0dXJl"))
             New-Item -ItemType Directory -Force -Path $vanessaSmokeDirectory | Out-Null

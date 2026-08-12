@@ -32,6 +32,8 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match ([regex]::Escape('FromBase64String("VmFuZXNzYSDQv9GD0YLRjCDRgSDQv9GA0L7QsdC10LvQsNC80Lg=")'))
         $e2eText | Should -Match ([regex]::Escape('FromBase64String("I2xhbmd1YWdlOiBydQoK0KTRg9C90LrRhtC40L7QvdCw0Ls6IFZhbmVzc2EgVUkgTUNQIGNvbGQgcGF0aCBBCgrQodGG0LXQvdCw0YDQuNC5OiBNQ1AgY29sZCBBCgnQmCDQn9Cw0YPQt9CwIDAuMQo=")'))
         $e2eText | Should -Not -Match 'Функционал: Vanessa UI MCP cold path'
+        $e2eText | Should -Match '\$vanessaSmokeEvidenceRoot = Join-Path \$worktreePath "build\\test-results\\release-e2e"'
+        $e2eText | Should -Not -Match '\$vanessaSmokeDirectory = Join-Path \$outputRoot'
         ([regex]::Matches($e2eText, 'Invoke-E2EHelper -Action "check-dev-branch"')).Count | Should -Be 4
         $e2eText | Should -Not -Match 'release-e2e-approve-vanessa-fixture'
         $e2eText | Should -Match 'RELEASE_E2E_RESUME_STATE_MISMATCH'
