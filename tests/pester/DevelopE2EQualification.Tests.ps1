@@ -202,10 +202,14 @@ Describe "Develop E2E journey qualification router" {
         $postJourneyIdentity = $check.IndexOf('$developIdentitySha256 = Get-DevelopE2EIdentitySha256', $journeyInvocation, [StringComparison]::Ordinal)
         $routeReport = $check.IndexOf('$routeReport = New-DevelopE2ERouteReport', $journeyInvocation, [StringComparison]::Ordinal)
         $routeSave = $check.IndexOf('Save-DevelopE2EQualification', $journeyInvocation, [StringComparison]::Ordinal)
+        $postStageIdentity = $check.IndexOf('$developIdentitySha256 = Get-DevelopE2EIdentitySha256', $routeSave, [StringComparison]::Ordinal)
+        $routeValidation = $check.IndexOf('Test-DevelopE2ERouteReport -Path $routePath', $routeSave, [StringComparison]::Ordinal)
 
         $journeyInvocation | Should -BeGreaterThan -1
         $postJourneyIdentity | Should -BeGreaterThan $journeyInvocation
         $routeReport | Should -BeGreaterThan $postJourneyIdentity
         $routeSave | Should -BeGreaterThan $routeReport
+        $postStageIdentity | Should -BeGreaterThan $routeSave
+        $routeValidation | Should -BeGreaterThan $postStageIdentity
     }
 }
