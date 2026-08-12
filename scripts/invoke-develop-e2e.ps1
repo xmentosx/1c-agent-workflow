@@ -271,6 +271,21 @@ function Add-FreshVanessaFeature {
     [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($base64))
 }
 
+function Set-DevelopStandVanessaFeature {
+    param([string]$Root)
+    $path = Join-Path $Root "tests\features\ITLDevelopJourney.feature"
+    Add-FreshVanessaFeature -Root $Root
+    $relativePath = "tests/features/ITLDevelopJourney.feature"
+    & git -C $Root add -- $relativePath
+    if ($LASTEXITCODE -ne 0) { throw "Unable to stage the Develop E2E Vanessa fixture: $path" }
+    & git -C $Root diff --cached --quiet -- $relativePath
+    $diffExitCode = $LASTEXITCODE
+    if ($diffExitCode -eq 0) { return }
+    if ($diffExitCode -ne 1) { throw "Unable to inspect the staged Develop E2E Vanessa fixture: $path" }
+    & git -C $Root commit -m "test: seed develop E2E Vanessa fixture" -- $relativePath | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Unable to commit the Develop E2E Vanessa fixture: $path" }
+}
+
 function Get-BranchWorktree {
     param([string]$Root, [string]$Name)
     $lines = @(& git -C $Root worktree list --porcelain)
@@ -313,6 +328,7 @@ try {
     if ((Get-WorkflowLockCommit -Root $ProjectRoot) -ne $candidateCommit) { throw "update-workflow did not install the exact develop candidate." }
     [void](Commit-StandUpdate -Root $ProjectRoot -Message "test: install develop journey candidate")
     [void](Invoke-InstalledAction -Name "upgrade-refresh-branch" -Root $standBranchRoot -Action "refresh-dev-branch" -TimeoutSeconds 5400)
+    Set-DevelopStandVanessaFeature -Root $standBranchRoot
     [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-check" -Root $standBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
     [void](Assert-ExportResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-export" -Root $standBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 3600))
     if ((Get-WorkflowLockCommit -Root $standBranchRoot) -ne $candidateCommit) { throw "Refreshed branch did not receive the exact develop candidate." }
