@@ -49,6 +49,9 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'previousRunnerSha256'
         $e2eText | Should -Match 'continuationBoundaryStage'
         $e2eText | Should -Match 'exact Targeted continuation after completed release'
+        $e2eText | Should -Match '\$verificationRefreshPassed = Test-E2EStagePassed -Name "verification-refresh"'
+        $e2eText | Should -Match 'if \(\$executedStages -notcontains "config-cadence" -and \(\$crossReleaseReuse -or -not \$verificationRefreshPassed\)\)'
+        $e2eText | Should -Not -Match 'if \(\$crossReleaseReuse -and \$executedStages -notcontains "config-cadence"\)'
         $e2eText | Should -Match 'if \(\$checkpointWasResumed\) \{ \$resultPassed = \$false'
         $e2eText | Should -Match 'RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED'
         $e2eText | Should -Match 'RELEASE_E2E_CACHE_CORRUPT'
@@ -639,7 +642,7 @@ switch ($Action) {
             $actions | Should -Contain "release-e2e-extension-smoke"
             $actions | Should -Contain "release-e2e-prepare-ondemand"
             $actions | Should -Contain "stop-dev-branch-test-clients"
-            @($actions | Where-Object { $_ -eq "check-dev-branch" }).Count | Should -Be 3
+            @($actions | Where-Object { $_ -eq "check-dev-branch" }).Count | Should -Be 4
             $actions | Should -Not -Contain "release-e2e-approve-vanessa-fixture"
             @($actions | Where-Object { $_ -eq "release-e2e-config-roundtrip" }).Count | Should -Be 1
             @(& git -C $worktreeRoot status --porcelain).Count | Should -Be 0
@@ -662,7 +665,7 @@ switch ($Action) {
             $promotionState = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\dev-branches\workflow-release-e2e.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $promotionState.unsafeActionProtectionConfirmed | Should -BeTrue
             $promotedActions = Get-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\release-e2e-actions.log") -Encoding UTF8
-            @($promotedActions | Where-Object { $_ -eq "check-dev-branch" }).Count | Should -Be 3
+            @($promotedActions | Where-Object { $_ -eq "check-dev-branch" }).Count | Should -Be 4
             @($promotedActions | Where-Object { $_ -eq "release-e2e-config-roundtrip" }).Count | Should -Be 1
             $sealedCheckpoint = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
             [string]$sealedCheckpoint.stages.'config-roundtrip'.evidencePath | Should -Match ([regex]::Escape(".agent-1c\runs\release-e2e-capabilities\"))
@@ -734,6 +737,26 @@ switch ($Action) {
             $checkpointAfterManagedAdvance.runId | Should -Not -Be $checkpointBeforeManagedAdvance.runId
             $checkpointAfterManagedAdvance.identity.workflowCommit | Should -Be (& git -C $workflowFixtureRoot rev-parse HEAD).Trim()
             Test-Path -LiteralPath ([string]$checkpointAfterManagedAdvance.capabilityCache.manifestPath) -PathType Leaf | Should -BeTrue
+
+            # A cross-release attempt can fail after capability reuse but before
+            # verification-refresh. Its same-commit Auto retry must not lose the
+            # pending refresh merely because crossReleaseReuse is now false.
+            $checkpointAfterManagedAdvance.stages.PSObject.Properties.Remove("verification-refresh")
+            $checkpointAfterManagedAdvance.stages.'result-cleanup'.status = "failed"
+            $checkpointAfterManagedAdvance.status = "failed"
+            [IO.File]::WriteAllText($checkpointPath, (($checkpointAfterManagedAdvance | ConvertTo-Json -Depth 32) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $sameCommitResumeSummaryPath = Join-Path $tempRoot "same-commit-refresh-summary.json"
+            & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $workflowFixtureRoot "scripts\invoke-release-e2e.ps1") `
+                -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $sameCommitResumeSummaryPath -ResumeMode Auto
+            $LASTEXITCODE | Should -Be 0
+            $sameCommitResumeSummary = Get-Content -LiteralPath $sameCommitResumeSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $sameCommitResumeSummary.crossReleaseReuse | Should -BeFalse
+            @($sameCommitResumeSummary.executedStages) | Should -Contain "verification-refresh"
+            @($sameCommitResumeSummary.executedStages) | Should -Contain "result-cleanup"
+            foreach ($stageName in @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
+                @($sameCommitResumeSummary.executedStages) | Should -Not -Contain $stageName
+            }
+            $checkpointAfterManagedAdvance = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $legacyCache = Get-Content -LiteralPath ([string]$checkpointAfterManagedAdvance.capabilityCache.manifestPath) -Raw -Encoding UTF8 | ConvertFrom-Json
             $legacyCache.stages.'seed-parallel'.fingerprint = "legacy-raw-checkout-fingerprint"
             $legacyCache.identity.helperSha256 = (Get-FileHash -LiteralPath $helperPath -Algorithm SHA256).Hash.ToLowerInvariant()

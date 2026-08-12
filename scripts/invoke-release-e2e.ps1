@@ -2184,7 +2184,8 @@ try {
         [int64]$onDemandMcpEvidence.families.'vanessa-ui'.ownedProcessExitWaitMs
     ) | Measure-Object -Maximum).Maximum)
 
-    if ($crossReleaseReuse -and $executedStages -notcontains "config-cadence") {
+    $verificationRefreshPassed = Test-E2EStagePassed -Name "verification-refresh"
+    if ($executedStages -notcontains "config-cadence" -and ($crossReleaseReuse -or -not $verificationRefreshPassed)) {
         Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
         Set-E2EStageStatus -Name "verification-refresh" -Status "running"
         $executedStages += "verification-refresh"
@@ -2194,7 +2195,7 @@ try {
             ) | Out-Null
             $refreshState = (Get-E2EState).value
             if ([string]$refreshState.lastVerificationStatus -ne "passed" -or -not [string]$refreshState.lastVerifiedAt) {
-                throw "Cross-release verification refresh did not produce a passed verification."
+                throw "Release verification refresh did not produce a passed verification."
             }
             # Result/export deliberately restores post-config state. Promote the
             # freshly verified state and infobase into that checkpoint first so
