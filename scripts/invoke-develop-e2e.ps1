@@ -37,6 +37,7 @@ foreach ($requestedJourney in $requestedJourneys) {
         status = "pending"
         startedAt = ""
         finishedAt = ""
+        operationTimings = New-Object System.Collections.Generic.List[object]
         error = $null
     }
 }
@@ -99,6 +100,39 @@ function Stop-DevelopProcessTree {
     $processId = [int]$Process.Id
     if ($env:OS -eq "Windows_NT") { & taskkill.exe /PID $processId /T /F *> $null } else { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue }
     try { $Process.WaitForExit() } catch {}
+}
+
+function Invoke-DevelopTimedOperation {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$Timings,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][scriptblock]$Operation
+    )
+
+    $started = [DateTime]::UtcNow
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $record = [ordered]@{
+        name = $Name
+        status = "running"
+        startedAt = $started.ToString("o")
+        finishedAt = ""
+        durationMs = 0L
+        error = $null
+    }
+    try {
+        $result = & $Operation
+        $record.status = "passed"
+        return $result
+    } catch {
+        $record.status = "failed"
+        $record.error = $_.Exception.Message
+        throw
+    } finally {
+        $watch.Stop()
+        $record.finishedAt = [DateTime]::UtcNow.ToString("o")
+        $record.durationMs = [int64]$watch.ElapsedMilliseconds
+        $Timings.Add($record) | Out-Null
+    }
 }
 
 function Invoke-DevelopProcess {
@@ -359,47 +393,78 @@ try {
         $activeJourney = "fresh"
         $journeys.fresh.status = "running"
         $journeys.fresh.startedAt = [DateTime]::UtcNow.ToString("o")
-        New-Item -ItemType Directory -Force -Path $FreshProjectsRoot | Out-Null
-    $cyrillicPathSegment = -join ([char[]](0x041F, 0x0440, 0x043E, 0x0435, 0x043A, 0x0442))
-    $specialProjectsRoot = Join-Path ([IO.Path]::GetFullPath($FreshProjectsRoot)) "p $cyrillicPathSegment"
-    $freshRoot = Join-Path $specialProjectsRoot ("d-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
-    if ($freshRoot -notmatch '\s' -or $freshRoot -notmatch '[^\x00-\x7F]') {
-        throw "DEVELOP_E2E_SPECIAL_PATH_REQUIRED: fresh project root must contain both whitespace and non-ASCII text: '$freshRoot'."
-    }
-    New-Item -ItemType Directory -Force -Path (Join-Path $freshRoot ".agent-1c") | Out-Null
-    Copy-Item -LiteralPath (Join-Path $ProjectRoot ".agent-1c\project.json") -Destination (Join-Path $freshRoot ".agent-1c\project.json")
-    $envLines = @([IO.File]::ReadAllLines((Join-Path $ProjectRoot ".dev.env"), [Text.Encoding]::UTF8) | Where-Object { $_ -notmatch '^(INFOBASE_PATH|INFOBASE_PUBLISH_URL|ITL_ACTIVE_|ROCTUP_MCP_|VANESSA_MCP_|VANESSA_TEST_PORT|SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE)=' })
-    $envLines += "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE=confirmed"
-    [IO.File]::WriteAllText((Join-Path $freshRoot ".dev.env"), (($envLines -join [Environment]::NewLine) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-    [void](Invoke-DevelopProcess -Name "fresh-bootstrap-init-project" -WorkingRoot $freshRoot -ScriptPath (Join-Path $CandidateRoot "install-agent-1c-workflow.ps1") -Arguments @("-ProjectRoot", $freshRoot, "-SourceRoot", $CandidateRoot, "-InitMode", "configured", "-AgentTarget", "kilocode", "-SkipWorkflowSourceFreshnessCheck") -TimeoutSeconds 5400)
-    Assert-InitializedProject -Root $freshRoot
-    $freshHelper = Join-Path $freshRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
-    Assert-ProjectStatusOutput -ProcessResult (Invoke-DevelopProcess -Name "fresh-status" -WorkingRoot $freshRoot -ScriptPath $freshHelper -Arguments @("-ProjectRoot", $freshRoot, "-Action", "status") -TimeoutSeconds 120)
-    $branchName = "develop-golden"
-    [void](Invoke-InstalledAction -Name "fresh-new-dev-branch" -Root $freshRoot -Action "new-dev-branch" -AdditionalArguments @("-DevBranchName", $branchName) -TimeoutSeconds 3600)
-    $freshBranchRoot = Get-BranchWorktree -Root $freshRoot -Name $branchName
-    [void](Assert-FailedRecoveryRoute -ProcessResult (Invoke-InstalledAction -Name "fresh-missing-suite" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 300 -AllowFailure) -ExpectedCategory "missing-suite")
-    Set-FreshConfigurationComment -Root $freshBranchRoot
-    Add-FreshVanessaFeature -Root $freshBranchRoot
-    & git -C $freshBranchRoot add -- src/cf/Configuration.xml tests/features/ITLDevelopJourney.feature
-    & git -C $freshBranchRoot commit -m "test: add develop golden change" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Unable to commit the fresh develop journey change." }
-    [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-check" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
-    [IO.File]::AppendAllText((Join-Path $freshBranchRoot "tests\features\ITLDevelopJourney.feature"), "`n# stale verification boundary`n", [Text.UTF8Encoding]::new($false))
-    & git -C $freshBranchRoot add -- tests/features/ITLDevelopJourney.feature
-    & git -C $freshBranchRoot commit -m "test: make verification stale" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Unable to commit the stale-verification boundary." }
-    [void](Assert-FailedRecoveryRoute -ProcessResult (Invoke-InstalledAction -Name "fresh-stale-export" -Root $freshBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 300 -AllowFailure))
-    [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-recovery-check" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
-    [void](Assert-ExportResult -ProcessResult (Invoke-InstalledAction -Name "fresh-export" -Root $freshBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 3600))
-    [IO.File]::WriteAllText((Join-Path $freshRoot "develop-journey.txt"), "refresh boundary" + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
-    & git -C $freshRoot add develop-journey.txt
-    & git -C $freshRoot commit -m "test: advance develop journey master" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Unable to advance fresh journey master." }
-    [void](Invoke-InstalledAction -Name "fresh-refresh-lite" -Root $freshBranchRoot -Action "refresh-dev-branch-lite" -TimeoutSeconds 5400)
-    [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-recheck" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
-    [void](Invoke-InstalledAction -Name "fresh-close" -Root $freshBranchRoot -Action "close-dev-branch" -TimeoutSeconds 3600)
-    Remove-DevelopE2EFreshProject -FreshProjectsRoot $FreshProjectsRoot -Path $freshRoot -BranchPath $freshBranchRoot
+        $freshTimings = $journeys.fresh.operationTimings
+        $cyrillicPathSegment = -join ([char[]](0x041F, 0x0440, 0x043E, 0x0435, 0x043A, 0x0442))
+        $specialProjectsRoot = Join-Path ([IO.Path]::GetFullPath($FreshProjectsRoot)) "p $cyrillicPathSegment"
+        $freshRoot = Join-Path $specialProjectsRoot ("d-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "provision-project" -Operation {
+            New-Item -ItemType Directory -Force -Path $FreshProjectsRoot | Out-Null
+            if ($freshRoot -notmatch '\s' -or $freshRoot -notmatch '[^\x00-\x7F]') {
+                throw "DEVELOP_E2E_SPECIAL_PATH_REQUIRED: fresh project root must contain both whitespace and non-ASCII text: '$freshRoot'."
+            }
+            New-Item -ItemType Directory -Force -Path (Join-Path $freshRoot ".agent-1c") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $ProjectRoot ".agent-1c\project.json") -Destination (Join-Path $freshRoot ".agent-1c\project.json")
+            $envLines = @([IO.File]::ReadAllLines((Join-Path $ProjectRoot ".dev.env"), [Text.Encoding]::UTF8) | Where-Object { $_ -notmatch '^(INFOBASE_PATH|INFOBASE_PUBLISH_URL|ITL_ACTIVE_|ROCTUP_MCP_|VANESSA_MCP_|VANESSA_TEST_PORT|SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE)=' })
+            $envLines += "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE=confirmed"
+            [IO.File]::WriteAllText((Join-Path $freshRoot ".dev.env"), (($envLines -join [Environment]::NewLine) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+        })
+        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "bootstrap-init-project" -Operation {
+            [void](Invoke-DevelopProcess -Name "fresh-bootstrap-init-project" -WorkingRoot $freshRoot -ScriptPath (Join-Path $CandidateRoot "install-agent-1c-workflow.ps1") -Arguments @("-ProjectRoot", $freshRoot, "-SourceRoot", $CandidateRoot, "-InitMode", "configured", "-AgentTarget", "kilocode", "-SkipWorkflowSourceFreshnessCheck") -TimeoutSeconds 5400)
+            Assert-InitializedProject -Root $freshRoot
+        })
+        $freshHelper = Join-Path $freshRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "status" -Operation {
+            Assert-ProjectStatusOutput -ProcessResult (Invoke-DevelopProcess -Name "fresh-status" -WorkingRoot $freshRoot -ScriptPath $freshHelper -Arguments @("-ProjectRoot", $freshRoot, "-Action", "status") -TimeoutSeconds 120)
+        })
+        $branchName = "develop-golden"
+        $freshBranchRoot = Invoke-DevelopTimedOperation -Timings $freshTimings -Name "create-dev-branch" -Operation {
+            [void](Invoke-InstalledAction -Name "fresh-new-dev-branch" -Root $freshRoot -Action "new-dev-branch" -AdditionalArguments @("-DevBranchName", $branchName) -TimeoutSeconds 3600)
+            Get-BranchWorktree -Root $freshRoot -Name $branchName
+        }
+        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "missing-suite-recovery" -Operation {
+            [void](Assert-FailedRecoveryRoute -ProcessResult (Invoke-InstalledAction -Name "fresh-missing-suite" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 300 -AllowFailure) -ExpectedCategory "missing-suite")
+        })
+        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "commit-golden-change" -Operation {
+            Set-FreshConfigurationComment -Root $freshBranchRoot
+            Add-FreshVanessaFeature -Root $freshBranchRoot
+            & git -C $freshBranchRoot add -- src/cf/Configuration.xml tests/features/ITLDevelopJourney.feature
+            & git -C $freshBranchRoot commit -m "test: add develop golden change" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Unable to commit the fresh develop journey change." }
+        })
+        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "verify-golden-change" -Operation {
+            [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-check" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
+        })
+        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "commit-stale-boundary" -Operation {
+            [IO.File]::AppendAllText((Join-Path $freshBranchRoot "tests\features\ITLDevelopJourney.feature"), "`n# stale verification boundary`n", [Text.UTF8Encoding]::new($false))
+            & git -C $freshBranchRoot add -- tests/features/ITLDevelopJourney.feature
+            & git -C $freshBranchRoot commit -m "test: make verification stale" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Unable to commit the stale-verification boundary." }
+        })
+        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "stale-export-recovery" -Operation {
+            [void](Assert-FailedRecoveryRoute -ProcessResult (Invoke-InstalledAction -Name "fresh-stale-export" -Root $freshBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 300 -AllowFailure))
+        })
+        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "recovery-check" -Operation {
+            [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-recovery-check" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
+        })
+        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "export-result" -Operation {
+            [void](Assert-ExportResult -ProcessResult (Invoke-InstalledAction -Name "fresh-export" -Root $freshBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 3600))
+        })
+        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "advance-master" -Operation {
+            [IO.File]::WriteAllText((Join-Path $freshRoot "develop-journey.txt"), "refresh boundary" + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+            & git -C $freshRoot add develop-journey.txt
+            & git -C $freshRoot commit -m "test: advance develop journey master" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Unable to advance fresh journey master." }
+        })
+        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "refresh-lite" -Operation {
+            [void](Invoke-InstalledAction -Name "fresh-refresh-lite" -Root $freshBranchRoot -Action "refresh-dev-branch-lite" -TimeoutSeconds 5400)
+        })
+        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "verify-after-refresh" -Operation {
+            [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-recheck" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
+        })
+        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "close-and-cleanup" -Operation {
+            [void](Invoke-InstalledAction -Name "fresh-close" -Root $freshBranchRoot -Action "close-dev-branch" -TimeoutSeconds 3600)
+            Remove-DevelopE2EFreshProject -FreshProjectsRoot $FreshProjectsRoot -Path $freshRoot -BranchPath $freshBranchRoot
+        })
         $freshBranchRoot = ""
         $freshRoot = ""
         $journeys.fresh.status = "passed"

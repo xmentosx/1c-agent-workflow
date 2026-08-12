@@ -142,7 +142,7 @@ Describe "Release gate scripts" {
         $text | Should -Match '(?s)if \(\$requestedJourneys -contains "upgrade"\).*?Invoke-InstalledAction -Name "upgrade-update-workflow".*?\$journeys\.upgrade\.status = "passed"'
         $text | Should -Match '(?s)if \(\$requestedJourneys -contains "fresh"\).*?Invoke-DevelopProcess -Name "fresh-bootstrap-init-project".*?\$journeys\.fresh\.status = "passed"'
         $text | Should -Match 'schemaVersion = 2'
-        foreach ($field in @("requestedJourneys", "journeys", "activeJourney", "steps", "error")) {
+        foreach ($field in @("requestedJourneys", "journeys", "activeJourney", "steps", "operationTimings", "error")) {
             $text | Should -Match ([regex]::Escape($field + " ="))
         }
         $text | Should -Match '\$journeys\[\$activeJourney\]\.status = "failed"'
@@ -160,6 +160,39 @@ Describe "Release gate scripts" {
         $check | Should -Match 'Get-DevelopE2EStandStateSha256 -ProjectRoot \$E2EProjectRoot'
         $check | Should -Match 'Get-DevelopE2EIdentitySha256 -ReleaseContext \$releaseContext'
         $check | Should -Match 'Resolve-DevelopE2EJourneyPlan -RepositoryRoot \$repoRoot -ChangedPath @\(\$continuation\.paths\)'
+    }
+
+    It "records backward-compatible structured timings for fresh journey operations" {
+        $path = Join-Path $RepoRoot "scripts\invoke-develop-e2e.ps1"
+        $tokens = $null
+        $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $functionAst = $ast.Find({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Invoke-DevelopTimedOperation"
+        }, $true)
+        $functionAst | Should -Not -BeNullOrEmpty
+        . ([scriptblock]::Create($functionAst.Extent.Text))
+
+        $timings = New-Object System.Collections.Generic.List[object]
+        (Invoke-DevelopTimedOperation -Timings $timings -Name "fixture-pass" -Operation { "result" }) | Should -Be "result"
+        $timings.Count | Should -Be 1
+        $timings[0].name | Should -Be "fixture-pass"
+        $timings[0].status | Should -Be "passed"
+        $timings[0].startedAt | Should -Not -BeNullOrEmpty
+        $timings[0].finishedAt | Should -Not -BeNullOrEmpty
+        [int64]$timings[0].durationMs | Should -BeGreaterOrEqual 0
+        $timings[0].error | Should -BeNullOrEmpty
+
+        { Invoke-DevelopTimedOperation -Timings $timings -Name "fixture-fail" -Operation { throw "timed failure" } } | Should -Throw "*timed failure*"
+        $timings.Count | Should -Be 2
+        $timings[1].status | Should -Be "failed"
+        $timings[1].error | Should -Be "timed failure"
+
+        $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8
+        $text | Should -Match 'schemaVersion = 2'
+        $text | Should -Match '(?s)if \(\$requestedJourneys -contains "fresh"\).*?\$freshTimings = \$journeys\.fresh\.operationTimings.*?Invoke-DevelopTimedOperation -Timings \$freshTimings -Name "provision-project".*?Invoke-DevelopTimedOperation -Timings \$freshTimings -Name "close-and-cleanup"'
     }
 
     It "requires the lock-pinned annotated fork tag and explicit E2E stand" {
