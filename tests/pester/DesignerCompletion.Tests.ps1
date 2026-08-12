@@ -779,7 +779,7 @@ Describe "1C Designer completion evidence" {
                 )
                 $outIndex = [Array]::IndexOf($Arguments, "/Out")
                 $logPath = [string]$Arguments[$outIndex + 1]
-                $operationCandidates = @($Arguments | Where-Object { $_ -like "/*" -and $_ -notin @("/F", "/Out", "/DisableStartupMessages", "/UpdateDBCfg") } | Select-Object -Last 1)
+                $operationCandidates = @($Arguments | Where-Object { $_ -like "/*" -and $_ -notin @("/F", "/Out", "/DisableStartupMessages", "/DisableStartupDialogs", "/UpdateDBCfg") } | Select-Object -Last 1)
                 $operation = if ($operationCandidates.Count -gt 0) { [string]$operationCandidates[0] } else { "unknown" }
                 $targetPath = ""
                 foreach ($command in @("/DumpCfg", "/DumpIB")) {

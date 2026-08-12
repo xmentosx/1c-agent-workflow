@@ -350,6 +350,7 @@ try {
     $createBaseArguments = @(
         "CREATEINFOBASE",
         "File=`"$qualificationBase`"",
+        "/DisableStartupDialogs",
         "/Out",
         "`"$createBaseLog`""
     )
