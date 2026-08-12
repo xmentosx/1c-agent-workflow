@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 import unittest
 
-from observability import observe_stage, observe_tool
+from observability import LOGGER, log_event, observe_stage, observe_tool
 from patch_mcp_server import patch_source
 from retry_policy import (
     call_tool_with_transient_network_retry,
@@ -290,6 +291,26 @@ async def _call_direct_tool(tool_name: str, arguments: dict, fallback_prompt: st
 
 
 class ObservabilityTests(unittest.IsolatedAsyncioTestCase):
+    def test_default_handler_writes_json_without_root_logging(self) -> None:
+        handler = next(
+            handler
+            for handler in LOGGER.handlers
+            if getattr(handler, "_itl_codechecker_telemetry", False)
+        )
+        stream = io.StringIO()
+        original_stream = handler.stream
+        handler.setStream(stream)
+        try:
+            log_event("probe", codeChars=17)
+        finally:
+            handler.setStream(original_stream)
+
+        payload = json.loads(stream.getvalue())
+        self.assertEqual("itl.codechecker.telemetry.v1", payload["schema"])
+        self.assertEqual("probe", payload["event"])
+        self.assertEqual(17, payload["codeChars"])
+        self.assertFalse(LOGGER.propagate)
+
     async def test_tool_and_stage_logs_are_correlated_and_content_safe(self) -> None:
         source = "Процедура СекретнаяПроцедура()\nКонецПроцедуры"
 

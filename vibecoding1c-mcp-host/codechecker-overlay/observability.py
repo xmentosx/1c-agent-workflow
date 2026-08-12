@@ -16,6 +16,16 @@ from typing import Any
 
 LOGGER = logging.getLogger("MCP_1copilot.codechecker_observability")
 LOGGER.setLevel(logging.INFO)
+if not any(
+    getattr(handler, "_itl_codechecker_telemetry", False)
+    for handler in LOGGER.handlers
+):
+    _handler = logging.StreamHandler()
+    _handler.setLevel(logging.INFO)
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    _handler._itl_codechecker_telemetry = True
+    LOGGER.addHandler(_handler)
+LOGGER.propagate = False
 SCHEMA = "itl.codechecker.telemetry.v1"
 
 _REQUEST_CONTEXT: contextvars.ContextVar[dict[str, Any] | None] = (
