@@ -86,9 +86,10 @@ PowerShell, обязан использовать `Invoke-TestPowerShellFile` и
 меняется, когда worker сам запущен с перенаправленным выводом.
 
 Оркестратор получает свежий `origin/develop`, строит временного кандидата из
-локального `develop` и только зарегистрированных диапазонов, запускает один
-`Develop`, выполняет обычный fast-forward push без force и сверяет удалённый
-SHA/tree. Конфликт, сдвиг remote или ошибка gate сохраняют очередь.
+локального `develop` и только зарегистрированных диапазонов, передаёт исходный
+remote HEAD как границу `Develop`, выполняет обычный fast-forward push без force
+и сверяет удалённый SHA/tree. Конфликт, сдвиг remote или ошибка gate сохраняют
+очередь.
 
 Если `develop` должен получить только release-qualified кандидат, к той же
 команде добавляется `-RequireRelease`. Оркестратор последовательно выполняет
@@ -99,7 +100,8 @@ qualification cache, поэтому после ошибки `Release` он не 
 Успешный `Develop` уже включает exact-tree Full/static proof: отдельный `Full`
 для того же дерева не запускается.
 
-Develop journey используют публичные поверхности workflow:
+Develop состоит из двух независимо квалифицируемых journey через публичные
+поверхности workflow:
 
 - обновление установленного N-1 стенда через `update-workflow`;
 - refresh активной ветки, реальный `/itl-check`/Vanessa и экспорт результата;
@@ -110,8 +112,20 @@ Develop journey используют публичные поверхности w
   повторный check и close.
 
 Qualification `develop.json` связывает точный tree с SHA статического Full и
-live-отчёта. Повторное использование допускается только для exact/ancestor
-same-tree доказательства с тем же inventory.
+live-отчётов. Каталог владельцев сопоставляет диапазон `origin/develop...HEAD`
+с `upgrade` и `fresh`; изменение самой оркестрации, неизвестный путь или
+повреждённое доказательство всегда включает обе journey. Изменения, не входящие
+в установленный lifecycle (например standalone MCP host), могут продолжить
+незатронутые доказательства базового `develop` только при совпадении полного
+input identity. Отсутствующая или несовместимая baseline qualification также
+закрыто переключает выполнение на обе journey.
+
+В текущем каталоге все владельцы установленного package участвуют в обеих
+journey: upgrade и fresh пересекают одни и те же bootstrap/lifecycle/runtime
+границы. Поэтому owner selection сейчас прежде всего исключает live 1C E2E для
+source-only и standalone-host изменений; независимые checkpoint уже не дают
+повторять прошедшую journey после сбоя второй. Разделять эти owner-наборы можно
+только вместе с фактическим устранением общей runtime-границы из одной journey.
 
 ## Controlled fork и Full
 
@@ -171,8 +185,10 @@ Git hooks автоматически не устанавливаются. GitHub
 ## Develop retry cache
 
 `Develop` persists an exact-tree static qualification immediately after
-Full/Pester and tracked-state checks pass, before starting the live Develop
-journey. If that journey fails, a retry restores the SHA-verified Full and
-JUnit evidence from the common Git directory and reruns the live journey only.
-A different tree, environment/fork/input mismatch, missing JUnit, or corrupt
-cache disables reuse.
+Full/Pester and tracked-state checks pass, before starting live journeys. Each
+successful `upgrade` or `fresh` journey is then saved atomically as a separate
+SHA-verified exact-tree checkpoint, including the clean post-journey HEAD of the
+master and dedicated Develop stand worktrees. If a later journey fails, the retry restores
+both the static proof and every completed journey, then resumes with the first
+missing journey. A different tree, environment/fork/stand/package identity,
+missing evidence, or corrupt cache disables reuse for that evidence.

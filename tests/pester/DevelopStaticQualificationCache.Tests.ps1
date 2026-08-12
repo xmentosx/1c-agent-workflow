@@ -149,7 +149,7 @@ Describe "Develop static qualification cache" {
         $restoreIndex = $check.IndexOf('Get-DevelopStaticQualificationCacheMatch', [StringComparison]::Ordinal)
         $validationIndex = $check.IndexOf('-AllowIndependentExactTree:$AllowIndependentExactTree', [StringComparison]::Ordinal)
         $saveIndex = $check.IndexOf('Save-DevelopStaticQualification', [StringComparison]::Ordinal)
-        $e2eIndex = $check.IndexOf('Invoke-GateStage -Name "develop-e2e"', [StringComparison]::Ordinal)
+        $e2eIndex = $check.IndexOf('Invoke-GateStage -Name "develop-e2e-$journey"', [StringComparison]::Ordinal)
         $restoreIndex | Should -BeGreaterThan -1
         $validationIndex | Should -BeGreaterThan $restoreIndex
         $saveIndex | Should -BeGreaterThan $validationIndex

@@ -804,7 +804,10 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             Set-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Encoding UTF8 -Value '{"tools":["kilocode"],"files":{}}'
             Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\tools.json") -Encoding UTF8 -Value '{"custom":"keep-tools"}'
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Destination (Join-Path $projectRoot ".agent-1c\dependency-lock.json")
-            Set-Content -LiteralPath (Join-Path $projectRoot ".dev.env") -Encoding UTF8 -Value "SECRET=keep"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".dev.env") -Encoding UTF8 -Value @"
+SECRET=keep
+ROCTUP_MCP_ENABLED=false
+"@
             Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\mcp\state.json") -Encoding UTF8 -Value '{"state":"keep"}'
             Set-Content -LiteralPath (Join-Path $projectRoot ".codex\config.toml") -Encoding UTF8 -Value '[mcp_servers.custom]'
             Set-Content -LiteralPath (Join-Path $projectRoot ".kilo\kilo.json") -Encoding UTF8 -Value '{"custom":"keep"}'
@@ -848,6 +851,7 @@ local after
             $stdout | Should -Match "Workflow обновлён"
             $stdout | Should -Match "Новый коммит создан: да"
             $stdout | Should -Match "Активных веток разработки нет"
+            $stdout | Should -Match "ROCTUP MCP update skipped because ROCTUP_MCP_ENABLED=false"
             $stdout | Should -Match "Removed obsolete workflow-managed file: VANESSA-TESTS-GUIDE.ru.md"
             $operationState = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json") | ConvertFrom-Json
             $operationState.action | Should -Be "update-workflow"
@@ -894,7 +898,9 @@ local after
             }
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "AGENTS.md")) | Should -Be $installedAgentsText
 
-            (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".dev.env")) | Should -Match "SECRET=keep"
+            $preservedDevEnv = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".dev.env")
+            $preservedDevEnv | Should -Match "SECRET=keep"
+            $preservedDevEnv | Should -Match "ROCTUP_MCP_ENABLED=false"
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\project.json")) | Should -Match "keep-project"
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\tools.json")) | Should -Match "keep-tools"
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\mcp\state.json")) | Should -Match "keep"

@@ -45,9 +45,18 @@ if ($Mode -eq 'Release') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'bu
 if ($Mode -eq 'Develop') {
     $qualification = Join-Path (Get-Location) 'build\test-results\qualification'
     New-Item -ItemType Directory -Force -Path $qualification | Out-Null
+    Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-develop-bases.log') -Encoding UTF8 -Value $BaseRef
+    $routeInput = [ordered]@{}
+    foreach ($name in @('develop-e2e-upgrade.json', 'develop-e2e-fresh.json')) {
+        $path = Join-Path $qualification $name
+        if (Test-Path -LiteralPath $path -PathType Leaf) { $routeInput[$name] = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json }
+    }
+    Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-develop-route-input.log') -Encoding UTF8 -Value ($routeInput | ConvertTo-Json -Compress -Depth 6)
     Set-Content -LiteralPath (Join-Path $qualification 'full.json') -Encoding UTF8 -Value '{}'
     Set-Content -LiteralPath (Join-Path $qualification 'develop.json') -Encoding UTF8 -Value '{}'
     Set-Content -LiteralPath (Join-Path $qualification 'develop-e2e-summary.json') -Encoding UTF8 -Value '{}'
+    Set-Content -LiteralPath (Join-Path $qualification 'develop-e2e-upgrade.json') -Encoding UTF8 -Value '{"source":"candidate-upgrade"}'
+    Set-Content -LiteralPath (Join-Path $qualification 'develop-e2e-fresh.json') -Encoding UTF8 -Value '{"source":"candidate-fresh"}'
 }
 if ($Mode -eq 'Release' -and $env:ITL_TEST_FAIL_DELIVERY_RELEASE -eq 'true') { exit 14 }
 exit 0
@@ -65,7 +74,7 @@ exit 0
         & git -C $root add fake-gate.ps1 fake-component-finalizer.ps1
         & git -C $root commit --quiet -m "test: add gate" *> $null
         & git -C $root push --quiet origin develop *> $null
-        return [pscustomobject]@{ root = $root; remote = $remote; gate = $fakeGate; finalizer = $fakeFinalizer; finalizerLog = (Join-Path $root 'build\component-finalizer.log'); modeLog = (Join-Path $root 'build\gate-modes.log'); targetBaseLog = (Join-Path $root 'build\gate-target-bases.log'); releaseResumeLog = (Join-Path $root 'build\gate-release-resume.log'); base = (& git -C $root rev-parse HEAD).Trim() }
+        return [pscustomobject]@{ root = $root; remote = $remote; gate = $fakeGate; finalizer = $fakeFinalizer; finalizerLog = (Join-Path $root 'build\component-finalizer.log'); modeLog = (Join-Path $root 'build\gate-modes.log'); targetBaseLog = (Join-Path $root 'build\gate-target-bases.log'); developBaseLog = (Join-Path $root 'build\gate-develop-bases.log'); developRouteInputLog = (Join-Path $root 'build\gate-develop-route-input.log'); releaseResumeLog = (Join-Path $root 'build\gate-release-resume.log'); base = (& git -C $root rev-parse HEAD).Trim() }
     }
     function Remove-DeliveryFixture {
         param([object]$Fixture)
@@ -83,7 +92,9 @@ Describe "Source develop queue and delivery" {
         $action = $ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq "Action" } | Select-Object -First 1
         @($action.Attributes | Where-Object TypeName -match ValidateSet | Select-Object -ExpandProperty PositionalArguments | ForEach-Object SafeGetValue) | Should -Be @("RegisterChange", "Status", "PublishDevelop", "ReleaseMaster")
         $text = Get-Content -LiteralPath $DeliveryScript -Raw -Encoding UTF8
-        $text.IndexOf('$developQualificationRestored = Restore-DeliveryContinuationQualification') | Should -BeLessThan $text.IndexOf('(Import-DeliveryQualificationFromCleanWorktree -Tree $candidateTree)')
+        $text | Should -Not -Match 'Restore-DeliveryContinuationQualification'
+        $text | Should -Match 'Always enter Develop, even when exact proof was restored'
+        $text | Should -Match 'Invoke-SourceGate -Mode "Develop" -WorkingRoot \$worktree\.path -TargetBaseRef \$remoteDevelop'
     }
     It "registers base and head atomically for a path with Cyrillic and spaces" {
         $fixture = $null; $parallelRoot = ""; try {
@@ -182,6 +193,58 @@ Describe "Source develop queue and delivery" {
             @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -BeNullOrEmpty
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
+    It "passes origin develop as the Develop base and restores its route reports before the gate" {
+        $fixture = $null; try {
+            $fixture = New-DeliveryFixture
+            $baseTree = (& git -C $fixture.root rev-parse "$($fixture.base)^{tree}").Trim()
+            $baselineCache = Join-Path $fixture.root ".git\itl\qualifications\$baseTree"
+            New-Item -ItemType Directory -Force -Path $baselineCache | Out-Null
+            foreach ($name in @("full.json", "develop.json", "develop-e2e-summary.json")) {
+                Set-Content -LiteralPath (Join-Path $baselineCache $name) -Encoding UTF8 -Value '{}'
+            }
+            Set-Content -LiteralPath (Join-Path $baselineCache "develop-e2e-upgrade.json") -Encoding UTF8 -Value '{"source":"baseline-upgrade"}'
+            Set-Content -LiteralPath (Join-Path $baselineCache "develop-e2e-fresh.json") -Encoding UTF8 -Value '{"source":"baseline-fresh"}'
+
+            New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
+            Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\Routing.Tests.ps1") -Encoding UTF8 -Value "Describe 'routing' { It 'works' { `$true | Should -BeTrue } }"
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit -m "test: route from develop baseline" *> $null
+            $candidateTree = (& git -C $fixture.root rev-parse 'HEAD^{tree}').Trim()
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "develop-route") | Out-Null
+
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"')) | Out-Null
+
+            @((Get-Content -LiteralPath $fixture.developBaseLog -Encoding UTF8)) | Should -Be @($fixture.base)
+            $routeInput = Get-Content -LiteralPath $fixture.developRouteInputLog -Encoding UTF8 | Select-Object -Last 1 | ConvertFrom-Json
+            $routeInput.'develop-e2e-upgrade.json'.source | Should -Be "baseline-upgrade"
+            $routeInput.'develop-e2e-fresh.json'.source | Should -Be "baseline-fresh"
+            $candidateCache = Join-Path $fixture.root ".git\itl\qualifications\$candidateTree"
+            (Get-Content -LiteralPath (Join-Path $candidateCache "develop-e2e-upgrade.json") -Raw -Encoding UTF8 | ConvertFrom-Json).source | Should -Be "candidate-upgrade"
+            (Get-Content -LiteralPath (Join-Path $candidateCache "develop-e2e-fresh.json") -Raw -Encoding UTF8 | ConvertFrom-Json).source | Should -Be "candidate-fresh"
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
+    It "enriches a legacy exact-tree qualification cache with optional Develop route reports" {
+        $fixture = $null; try {
+            $fixture = New-DeliveryFixture
+            New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
+            Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\LegacyCache.Tests.ps1") -Encoding UTF8 -Value "Describe 'legacy cache' { It 'works' { `$true | Should -BeTrue } }"
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit -m "test: legacy candidate cache" *> $null
+            $candidateTree = (& git -C $fixture.root rev-parse 'HEAD^{tree}').Trim()
+            $candidateCache = Join-Path $fixture.root ".git\itl\qualifications\$candidateTree"
+            New-Item -ItemType Directory -Force -Path $candidateCache | Out-Null
+            foreach ($name in @("full.json", "develop.json", "develop-e2e-summary.json")) {
+                Set-Content -LiteralPath (Join-Path $candidateCache $name) -Encoding UTF8 -Value '{}'
+            }
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "legacy-cache") | Out-Null
+
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"')) | Out-Null
+
+            @((Get-Content -LiteralPath $fixture.developBaseLog -Encoding UTF8)) | Should -Be @($fixture.base)
+            (Get-Content -LiteralPath (Join-Path $candidateCache "develop-e2e-upgrade.json") -Raw -Encoding UTF8 | ConvertFrom-Json).source | Should -Be "candidate-upgrade"
+            (Get-Content -LiteralPath (Join-Path $candidateCache "develop-e2e-fresh.json") -Raw -Encoding UTF8 | ConvertFrom-Json).source | Should -Be "candidate-fresh"
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
     It "preserves the queue and develop branch when component finalization fails" {
         $fixture = $null; $oldFailure = $env:ITL_TEST_FAIL_COMPONENT_FINALIZER
         try {
@@ -234,14 +297,14 @@ Describe "Source develop queue and delivery" {
             $payload = $published.stdout | ConvertFrom-Json
             $payload.releaseQualified | Should -BeTrue
             (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $candidate
-            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Release")
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Develop", "Release")
             @((Get-Content -LiteralPath $fixture.releaseResumeLog -Encoding UTF8)) | Should -Be @("Restart")
         } finally {
             $env:ITL_TEST_FAIL_DELIVERY_RELEASE = $oldFailure
             Remove-DeliveryFixture -Fixture $fixture
         }
     }
-    It "imports an exact-tree continuation qualification from a clean worktree and resumes at Release" {
+    It "imports an exact-tree qualification and revalidates Develop before Release" {
         $fixture = $null
         try {
             $fixture = New-DeliveryFixture
@@ -260,11 +323,11 @@ Describe "Source develop queue and delivery" {
 
             $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'))
             ($published.stdout | ConvertFrom-Json).releaseQualified | Should -BeTrue
-            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Release")
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Develop", "Release")
             Test-Path -LiteralPath (Join-Path $fixture.root ".git\itl\qualifications\$tree\develop.json") | Should -BeTrue
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
-    It "imports an ancestor qualification after exact Targeted harness tests and resumes at Release" {
+    It "imports an ancestor qualification and revalidates Develop before Release" {
         $fixture = $null
         try {
             $fixture = New-DeliveryFixture
@@ -296,7 +359,7 @@ Describe "Source develop queue and delivery" {
 
             $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'))
             ($published.stdout | ConvertFrom-Json).releaseQualified | Should -BeTrue
-            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Release")
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Develop", "Release")
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
     It "preserves the queue when origin develop moves during qualification" {

@@ -332,6 +332,11 @@ function Install-RoctupMcp {
 function Update-RoctupMcp {
     Write-Section "Update ROCTUP MCP Toolkit"
 
+    if (-not (Get-RoctupMcpEnabled)) {
+        Write-Host "ROCTUP MCP update skipped because ROCTUP_MCP_ENABLED=false."
+        return
+    }
+
     $artifact = Install-RoctupMcpArtifact -ForceDownload
     Write-Host "ROCTUP MCP EPF: $($artifact.path)"
     if ($artifact.version) {

@@ -292,10 +292,27 @@ function Save-DeliveryQualification {
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
     $staging = Join-Path $parent ("." + $Tree + "." + [guid]::NewGuid().ToString("N") + ".tmp")
     New-Item -ItemType Directory -Path $staging | Out-Null
+    $routeReports = @("develop-e2e-upgrade.json", "develop-e2e-fresh.json")
     try {
         Copy-Item -LiteralPath (Join-Path $source "full.json"), (Join-Path $source "develop.json"), (Join-Path $source "develop-e2e-summary.json") -Destination $staging -Force
         if (Test-Path -LiteralPath (Join-Path $source "pester.xml") -PathType Leaf) { Copy-Item -LiteralPath (Join-Path $source "pester.xml") -Destination $staging -Force }
+        foreach ($name in $routeReports) {
+            if (Test-Path -LiteralPath (Join-Path $source $name) -PathType Leaf) { Copy-Item -LiteralPath (Join-Path $source $name) -Destination $staging -Force }
+        }
         if (-not (Test-Path -LiteralPath $target)) { Move-Item -LiteralPath $staging -Destination $target }
+        else {
+            # Older exact-tree cache entries remain valid without route reports.
+            # When a later Develop run produces route-aware schema 3 evidence,
+            # refresh the complete proof set together instead of mixing new
+            # route reports with an older develop.json for the same tree.
+            $availableRoutes = @($routeReports | Where-Object { Test-Path -LiteralPath (Join-Path $staging $_) -PathType Leaf })
+            if ($availableRoutes.Count -gt 0) {
+                $backup = Join-Path $parent ("." + $Tree + "." + [guid]::NewGuid().ToString("N") + ".old")
+                Move-Item -LiteralPath $target -Destination $backup
+                try { Move-Item -LiteralPath $staging -Destination $target } catch { Move-Item -LiteralPath $backup -Destination $target; throw }
+                Remove-Item -LiteralPath $backup -Recurse -Force
+            }
+        }
     } finally {
         if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
     }
@@ -312,66 +329,6 @@ function Restore-DeliveryQualification {
     New-Item -ItemType Directory -Force -Path $target | Out-Null
     Get-ChildItem -LiteralPath $source -File | Copy-Item -Destination $target -Force
     return $true
-}
-
-function Restore-DeliveryContinuationQualification {
-    param(
-        [Parameter(Mandatory = $true)][string]$CandidateRoot,
-        [Parameter(Mandatory = $true)][string]$Commit,
-        [Parameter(Mandatory = $true)][string]$Tree
-    )
-    $cacheRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\qualifications"
-    if (-not (Test-Path -LiteralPath $cacheRoot -PathType Container)) { return $false }
-    foreach ($directory in @(Get-ChildItem -LiteralPath $cacheRoot -Directory | Sort-Object LastWriteTimeUtc -Descending)) {
-        $fullPath = Join-Path $directory.FullName "full.json"
-        $developPath = Join-Path $directory.FullName "develop.json"
-        $reportPath = Join-Path $directory.FullName "develop-e2e-summary.json"
-        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf) -or
-            -not (Test-Path -LiteralPath $developPath -PathType Leaf) -or
-            -not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { continue }
-        try {
-            $full = Get-Content -LiteralPath $fullPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            $develop = Get-Content -LiteralPath $developPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ([string]$full.status -ne "passed" -or [string]$develop.status -ne "passed") { continue }
-            $fullContinuation = Get-WorkflowContinuationProof -RepositoryRoot $CandidateRoot -QualifiedCommit ([string]$full.repository.commit) -CurrentCommit $Commit -CurrentTree $Tree
-            $developContinuation = Get-WorkflowContinuationProof -RepositoryRoot $CandidateRoot -QualifiedCommit ([string]$develop.repository.commit) -CurrentCommit $Commit -CurrentTree $Tree
-            if (-not $fullContinuation -or -not $developContinuation -or @($developContinuation.scopes) -contains "develop") { continue }
-            $target = Join-Path $CandidateRoot "build\test-results\qualification"
-            New-Item -ItemType Directory -Force -Path $target | Out-Null
-            Get-ChildItem -LiteralPath $directory.FullName -File | Copy-Item -Destination $target -Force
-            return $true
-        } catch { continue }
-    }
-    return $false
-}
-
-function Import-DeliveryQualificationFromCleanWorktree {
-    param([Parameter(Mandatory = $true)][string]$Tree)
-
-    $worktreeRoots = [System.Collections.Generic.List[string]]::new()
-    $worktreeRoots.Add($script:Root)
-    foreach ($line in @(& git -C $script:Root worktree list --porcelain)) {
-        if ($line -like "worktree *") { $worktreeRoots.Add($line.Substring(9)) }
-    }
-    foreach ($candidateRoot in @($worktreeRoots | Select-Object -Unique)) {
-        $candidateTree = (Invoke-WorktreeGit -Root $candidateRoot -Arguments @("rev-parse", "HEAD^{tree}") -AllowFailure)
-        if ($candidateTree.exitCode -ne 0 -or $candidateTree.stdout.Trim() -ne $Tree) { continue }
-        if (@(Get-RepositoryGitPathList -RepositoryRoot $candidateRoot -Arguments @("status", "--porcelain=v1", "-z", "--untracked-files=all")).Count -gt 0) { continue }
-        $qualificationRoot = Join-Path $candidateRoot "build\test-results\qualification"
-        $fullPath = Join-Path $qualificationRoot "full.json"
-        $developPath = Join-Path $qualificationRoot "develop.json"
-        $reportPath = Join-Path $qualificationRoot "develop-e2e-summary.json"
-        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf) -or -not (Test-Path -LiteralPath $developPath -PathType Leaf) -or -not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { continue }
-        try {
-            $full = Get-Content -LiteralPath $fullPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            $develop = Get-Content -LiteralPath $developPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        } catch { continue }
-        if ([string]$full.status -ne "passed" -or [string]$full.repository.tree -ne $Tree -or
-            [string]$develop.status -ne "passed" -or [string]$develop.repository.tree -ne $Tree) { continue }
-        [void](Save-DeliveryQualification -CandidateRoot $candidateRoot -Tree $Tree)
-        return $true
-    }
-    return $false
 }
 
 function Archive-StaleDeliveryOperation {
@@ -695,18 +652,16 @@ function Publish-AccumulatedDevelop {
         $worktree = New-DeliveryWorktree -StartPoint "$script:Remote/develop" -Purpose "publish-develop"
         Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries
         $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
-        $developQualificationRestored = Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree
-        if ($RequireRelease -and -not $developQualificationRestored) {
-            $candidateCommit = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
-            $developQualificationRestored = Restore-DeliveryContinuationQualification -CandidateRoot $worktree.path -Commit $candidateCommit -Tree $candidateTree
+        $exactDevelopQualificationRestored = Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree
+        if (-not $exactDevelopQualificationRestored) {
+            $baselineTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "$remoteBefore^{tree}")).stdout.Trim()
+            [void](Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $baselineTree)
         }
-        if ($RequireRelease -and -not $developQualificationRestored -and (Import-DeliveryQualificationFromCleanWorktree -Tree $candidateTree)) {
-            $developQualificationRestored = Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree
-        }
-        if (-not ($RequireRelease -and $developQualificationRestored)) {
-            Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path
-            [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
-        }
+        # Always enter Develop, even when exact proof was restored. Its static
+        # and journey checkpoints make this a cheap resume while readiness
+        # recomputes the mutable stand/runtime identity before optional Release.
+        Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteBefore
+        [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
         if ($RequireRelease) {
             Invoke-SourceGate -Mode "Release" -WorkingRoot $worktree.path
             [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
@@ -772,10 +727,9 @@ function Release-DevelopToMaster {
             }
         }
         $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
-        if (-not (Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)) {
-            Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path
-            [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
-        }
+        [void](Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
+        Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteDevelop
+        [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
         Invoke-SourceGate -Mode "Release" -WorkingRoot $worktree.path
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         foreach ($oldHead in @($remoteDevelop, $remoteMaster)) {

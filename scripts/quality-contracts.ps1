@@ -43,6 +43,23 @@ function Test-QualityContractCatalog {
         }
     }
 
+    $expectedDevelopJourneys = @("upgrade", "fresh")
+    $actualDevelopJourneys = @($Catalog.developJourneys.names | ForEach-Object { [string]$_ })
+    if (@($actualDevelopJourneys | Sort-Object -Unique).Count -ne $expectedDevelopJourneys.Count -or ($actualDevelopJourneys -join "`n") -ne ($expectedDevelopJourneys -join "`n")) {
+        throw "Quality contract developJourneys.names must define exactly: $($expectedDevelopJourneys -join ', ')."
+    }
+    $fullPaths = @($Catalog.developJourneys.fullPaths | ForEach-Object { ([string]$_).Replace('\', '/') })
+    if ($fullPaths.Count -eq 0 -or @($fullPaths | Sort-Object -Unique).Count -ne $fullPaths.Count -or
+        @($fullPaths | Where-Object { -not $_ -or [IO.Path]::IsPathRooted($_) -or $_ -match '[*?\[]' -or $_ -match '(^|/)\.\.(/|$)' }).Count -gt 0) {
+        throw "Quality contract developJourneys.fullPaths must contain unique exact repository-relative paths."
+    }
+    $missingFullPaths = @($fullPaths | Where-Object { -not (Test-Path -LiteralPath (Join-Path $RepositoryRoot $_.Replace('/', '\')) -PathType Leaf) })
+    if ($missingFullPaths.Count -gt 0) { throw "Quality contract developJourneys.fullPaths references missing paths: $($missingFullPaths -join ', ')." }
+    $routeNames = @($Catalog.developJourneys.routes.PSObject.Properties | ForEach-Object { [string]$_.Name })
+    if (($routeNames -join "`n") -ne ($expectedDevelopJourneys -join "`n")) {
+        throw "Quality contract developJourneys.routes must define exactly: $($expectedDevelopJourneys -join ', ')."
+    }
+
     $ids = @($Catalog.contracts | ForEach-Object { [string]$_.id })
     if ($ids.Count -eq 0 -or @($ids | Sort-Object -Unique).Count -ne $ids.Count) { throw "Quality contracts must have unique non-empty ids." }
     foreach ($contract in @($Catalog.contracts)) {
@@ -53,6 +70,16 @@ function Test-QualityContractCatalog {
         foreach ($test in @($contract.tests)) {
             $testPath = Join-Path $RepositoryRoot ([string]$test).Replace('/', '\')
             if (-not (Test-Path -LiteralPath $testPath -PathType Leaf)) { throw "Quality contract '$($contract.id)' references missing test '$test'." }
+        }
+    }
+    foreach ($journeyName in $expectedDevelopJourneys) {
+        $contractIds = @($Catalog.developJourneys.routes.$journeyName.contracts | ForEach-Object { [string]$_ })
+        if ($contractIds.Count -eq 0 -or @($contractIds | Sort-Object -Unique).Count -ne $contractIds.Count) {
+            throw "Develop E2E journey '$journeyName' must declare unique non-empty contract ids."
+        }
+        $unknownContractIds = @($contractIds | Where-Object { $_ -notin $ids })
+        if ($unknownContractIds.Count -gt 0) {
+            throw "Develop E2E journey '$journeyName' references unknown quality contracts: $($unknownContractIds -join ', ')."
         }
     }
     foreach ($property in @($Catalog.retiredTests.PSObject.Properties)) {
