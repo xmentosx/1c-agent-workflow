@@ -881,6 +881,7 @@ try {
         }
         foreach ($journey in $plannedJourneys) {
             $routePath = Join-Path $qualificationRoot ("develop-e2e-$journey.json")
+            $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot
             $developStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
             if (Restore-DevelopE2EQualification -RepositoryRoot $repoRoot -OutputPath $routePath -Tree $tree -Journey $journey -IdentitySha256 $developIdentitySha256 -StandStateSha256 $developStandStateSha256) {
                 Add-ReusedStage -Name "develop-e2e-$journey" -Reason "exact-tree SHA-verified journey checkpoint" -Detail $routePath
@@ -895,6 +896,7 @@ try {
                         [string]$raw.candidate.tree -ne $tree -or @($raw.requestedJourneys).Count -ne 1 -or [string]$raw.requestedJourneys[0] -ne $journey -or [string]$result.status -ne "passed") {
                         throw "Develop E2E $journey did not qualify the exact candidate tree: $([string]$raw.error)"
                     }
+                    $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot
                     $developStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
                     $routeReport = New-DevelopE2ERouteReport -RepositoryRoot $repoRoot -Plan $effectivePlan -Journey $journey -IdentitySha256 $developIdentitySha256 -StandStateSha256 $developStandStateSha256 -JourneyResult $result
                     [IO.File]::WriteAllText($routePath, (($routeReport | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))

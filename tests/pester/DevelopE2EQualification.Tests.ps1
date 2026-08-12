@@ -195,4 +195,17 @@ Describe "Develop E2E journey qualification router" {
             if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
         }
     }
+
+    It "recomputes mutable stand identity after a journey before checkpointing it" {
+        $check = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\check.ps1') -Raw -Encoding UTF8
+        $journeyInvocation = $check.IndexOf('Invoke-PowerShellChild -ScriptPath $developScript', [StringComparison]::Ordinal)
+        $postJourneyIdentity = $check.IndexOf('$developIdentitySha256 = Get-DevelopE2EIdentitySha256', $journeyInvocation, [StringComparison]::Ordinal)
+        $routeReport = $check.IndexOf('$routeReport = New-DevelopE2ERouteReport', $journeyInvocation, [StringComparison]::Ordinal)
+        $routeSave = $check.IndexOf('Save-DevelopE2EQualification', $journeyInvocation, [StringComparison]::Ordinal)
+
+        $journeyInvocation | Should -BeGreaterThan -1
+        $postJourneyIdentity | Should -BeGreaterThan $journeyInvocation
+        $routeReport | Should -BeGreaterThan $postJourneyIdentity
+        $routeSave | Should -BeGreaterThan $routeReport
+    }
 }
