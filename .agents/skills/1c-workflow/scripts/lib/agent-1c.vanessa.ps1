@@ -946,6 +946,98 @@ function Get-VanessaApplicationFeatureFiles {
     })
 }
 
+function Throw-VanessaFeatureByteSafetyError {
+    param(
+        [string]$Path,
+        [string]$Reason,
+        [long]$ByteOffset,
+        [string]$Detail = ""
+    )
+
+    $relativePath = ConvertTo-ProjectRelativePath -Path $Path
+    $detailSuffix = $(if ($Detail) { " $Detail" } else { "" })
+    Set-RunFailureContext -Category "test-fixture" -RequiredAction "/itl-verify-fix"
+    throw "ITL_VANESSA_TEST_FIXTURE_INVALID_FEATURE_BYTES: reason=$Reason path='$relativePath' byteOffset=$ByteOffset$detailSuffix"
+}
+
+function Get-VanessaInvalidUtf8ByteOffset {
+    param([byte[]]$Bytes, [int]$Offset)
+
+    for ($index = $Offset; $index -lt $Bytes.Length; ) {
+        $first = [int]$Bytes[$index]
+        if ($first -le 0x7F) {
+            $index++
+            continue
+        }
+
+        $length = 0
+        $secondMinimum = 0x80
+        $secondMaximum = 0xBF
+        if ($first -ge 0xC2 -and $first -le 0xDF) {
+            $length = 2
+        } elseif ($first -eq 0xE0) {
+            $length = 3
+            $secondMinimum = 0xA0
+        } elseif (($first -ge 0xE1 -and $first -le 0xEC) -or ($first -ge 0xEE -and $first -le 0xEF)) {
+            $length = 3
+        } elseif ($first -eq 0xED) {
+            $length = 3
+            $secondMaximum = 0x9F
+        } elseif ($first -eq 0xF0) {
+            $length = 4
+            $secondMinimum = 0x90
+        } elseif ($first -ge 0xF1 -and $first -le 0xF3) {
+            $length = 4
+        } elseif ($first -eq 0xF4) {
+            $length = 4
+            $secondMaximum = 0x8F
+        } else {
+            return $index
+        }
+
+        if ($index + $length -gt $Bytes.Length) { return $index }
+        $second = [int]$Bytes[$index + 1]
+        if ($second -lt $secondMinimum -or $second -gt $secondMaximum) { return $index }
+        for ($continuation = 2; $continuation -lt $length; $continuation++) {
+            $value = [int]$Bytes[$index + $continuation]
+            if ($value -lt 0x80 -or $value -gt 0xBF) { return $index }
+        }
+        $index += $length
+    }
+    return -1
+}
+
+function Assert-VanessaFeatureByteSafety {
+    param([Parameter(Mandatory = $true)][string[]]$FeatureFiles)
+
+    $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
+    foreach ($featureFile in @($FeatureFiles | Sort-Object)) {
+        [byte[]]$bytes = [System.IO.File]::ReadAllBytes($featureFile)
+        $contentOffset = $(if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { 3 } else { 0 })
+        try {
+            $null = $strictUtf8.GetString($bytes, $contentOffset, $bytes.Length - $contentOffset)
+        } catch {
+            $invalidOffset = Get-VanessaInvalidUtf8ByteOffset -Bytes $bytes -Offset $contentOffset
+            if ($invalidOffset -lt 0) { $invalidOffset = $contentOffset }
+            Throw-VanessaFeatureByteSafetyError -Path $featureFile -Reason "invalid-utf8" -ByteOffset $invalidOffset
+        }
+
+        for ($index = $contentOffset; $index -lt $bytes.Length; $index++) {
+            $value = [int]$bytes[$index]
+            if ($value -eq 0) {
+                Throw-VanessaFeatureByteSafetyError -Path $featureFile -Reason "nul" -ByteOffset $index
+            }
+            $isDisallowedC0 = (($value -ge 1 -and $value -le 0x1F) -or $value -eq 0x7F) -and $value -notin @(0x09, 0x0A, 0x0D)
+            if ($isDisallowedC0) {
+                Throw-VanessaFeatureByteSafetyError -Path $featureFile -Reason "control-character" -ByteOffset $index -Detail ("codePoint=U+{0:X4}" -f $value)
+            }
+            if ($value -eq 0xC2 -and $index + 1 -lt $bytes.Length -and $bytes[$index + 1] -ge 0x80 -and $bytes[$index + 1] -le 0x9F) {
+                Throw-VanessaFeatureByteSafetyError -Path $featureFile -Reason "control-character" -ByteOffset $index -Detail ("codePoint=U+{0:X4}" -f [int]$bytes[$index + 1])
+            }
+        }
+    }
+}
+
 function ConvertTo-ProjectRelativePath {
     param([string]$Path)
 
@@ -1285,6 +1377,9 @@ function Assert-VanessaVerificationPreflight {
         Set-RunFailureContext -Category "missing-suite" -RequiredAction "/itl-verify-fix"
         throw "missing-suite: Vanessa testsPath was not found: $resolved"
     }
+
+    $featureFiles = @(Get-VanessaFeatureFiles -FeaturePath $featuresPath)
+    Assert-VanessaFeatureByteSafety -FeatureFiles $featureFiles
 
     $applicationFeatures = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath)
     if ($applicationFeatures.Count -eq 0) {
