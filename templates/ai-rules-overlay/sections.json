@@ -741,12 +741,12 @@
                           },
                           {
                               "path":  "content/rules/forms-add.md",
-                              "requirementId":  "ITL-UPSTREAM-ANCHORS-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-UPSTREAM-ANCHORS-001.",
+                              "requirementId":  "ITL-MANAGED-FORM-ROW-GUARD-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-MANAGED-FORM-ROW-GUARD-001 for r28 with explicit standard row-set and row-order decisions.",
                               "upstreamSha256":  "d21f82448517238daba33aa935feaa3b4aa64d0b026b2a3a29b7a67d22e7ff5b",
                               "baselineSha256":  "118fcc9381d0ed9fd102029a85505781c7a8905f728ec9d0ea71b16eed975272",
-                              "resultSha256":  "118fcc9381d0ed9fd102029a85505781c7a8905f728ec9d0ea71b16eed975272"
+                              "resultSha256":  "9045103f45f8ccce07c9fb7db3e307ee7165a90fe8332b2a00708038eea013b3"
                           },
                           {
                               "path":  "content/rules/mcp-first-search.md",
@@ -819,6 +819,24 @@
                               "upstreamSha256":  "215486fb93eb571d90d6271f7650c1f89eb30320c889d96698acedca775eb6eb",
                               "baselineSha256":  "8dea5f61c230f11e515a4c2d5cdd5483d92f072ffcfbcaa5d0e7167351d15933",
                               "resultSha256":  "8dea5f61c230f11e515a4c2d5cdd5483d92f072ffcfbcaa5d0e7167351d15933"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/form-compile-dsl.md",
+                              "requirementId":  "ITL-MANAGED-FORM-ROW-GUARD-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-MANAGED-FORM-ROW-GUARD-001 for r28 by documenting explicit row-change booleans.",
+                              "upstreamSha256":  "1cd31fa980f5ceaa6fb0cc4fa40162d2c8a440e6ffbf1f88b0ad017dba77c519",
+                              "baselineSha256":  "1cd31fa980f5ceaa6fb0cc4fa40162d2c8a440e6ffbf1f88b0ad017dba77c519",
+                              "resultSha256":  "dd1fa1b78385afcbd09583bc84bd180af6b227e94dde0a94f42bcf0c4e7a7e28"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/form-manage.md",
+                              "requirementId":  "ITL-MANAGED-FORM-ROW-GUARD-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-MANAGED-FORM-ROW-GUARD-001 for r28 by documenting explicit row-change booleans.",
+                              "upstreamSha256":  "f54a0230948e5a5c45d2fa172c5db528d886481828d535895745a3094b49b3ef",
+                              "baselineSha256":  "f54a0230948e5a5c45d2fa172c5db528d886481828d535895745a3094b49b3ef",
+                              "resultSha256":  "1a0d4ac2fbeb720cf67d2b48b1f72c8b3a6d726c352d84f6e3480238e46c942a"
                           },
                           {
                               "path":  "content/skills/1c-metadata-manage/SKILL.md",
@@ -936,6 +954,15 @@
                               "upstreamSha256":  "624c47d16a7da73be3b99960bbf4eacd56f479d58612c62be9b02f32ecea9aed",
                               "baselineSha256":  "b821879f5f77575ec1868871803e3270117a7556dc6faf083cf6ca471dbd8a9d",
                               "resultSha256":  "b821879f5f77575ec1868871803e3270117a7556dc6faf083cf6ca471dbd8a9d"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-form-edit/scripts/form-edit.ps1",
+                              "requirementId":  "ITL-MANAGED-FORM-ROW-GUARD-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-MANAGED-FORM-ROW-GUARD-001 for r28 by preserving explicit false row-change values.",
+                              "upstreamSha256":  "f5cd3caed89354eb2edb5e8c84b3221637d2330fa68fca016eb830c3e23326a1",
+                              "baselineSha256":  "f5cd3caed89354eb2edb5e8c84b3221637d2330fa68fca016eb830c3e23326a1",
+                              "resultSha256":  "837aecca93a0c1e5efce3cd3573a6754a85e933baaf365705bcb2358450a82f7"
                           },
                           {
                               "path":  "content/skills/1c-metadata-manage/tools/1c-template-manage/scripts/add-template.ps1",
@@ -1281,12 +1308,12 @@
                           },
                           {
                               "path":  "tests/R8Policy.Tests.ps1",
-                              "requirementId":  "ITL-INFRA-001",
+                              "requirementId":  "ITL-MANAGED-FORM-ROW-GUARD-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-INFRA-001 for r25 with reviewed command naming and Caveman response-style behavior.",
+                              "reason":  "Resolve ITL-MANAGED-FORM-ROW-GUARD-001 for r28 with false, true, and absent-key regressions.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "9c64e70c476fb2733e44aa87e9165ccec07607f41acd3768d1c8c0c8ad87b92d",
-                              "resultSha256":  "40b81a4696a20e2489b17aab23aa82b7923e7d727bd1bbf6c3f48f41c856ec7f"
+                              "resultSha256":  "ad62269e07cb5a50f4892119e059f6c670347d6f4168870edb6252cd3573e636"
                           },
                           {
                               "path":  "tests/ReleaseTooling.Tests.ps1",
