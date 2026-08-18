@@ -128,6 +128,11 @@ TOOL_OBSERVABILITY = {
     "review_1c_code",
     mode_resolver=lambda: "prompt",
 )\n''',
+    "fetch_its": '''@observe_tool(
+    "fetch_its",
+    mode_resolver=lambda: "direct" if _is_direct_mode() else "standard",
+    snapshot_argument=None,
+)\n''',
 }
 
 

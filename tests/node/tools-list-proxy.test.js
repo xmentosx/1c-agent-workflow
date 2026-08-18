@@ -286,7 +286,7 @@ async function runIntegration() {
         return;
       }
       if (body && body.method === 'tools/call') {
-        calls.push({ body, sessionId });
+        calls.push({ body, sessionId, proxyMarker: request.headers['x-itl-mcp-proxy'] });
         if (body.params && body.params.name === 'disconnect') {
           request.socket.destroy();
           return;
@@ -348,6 +348,7 @@ async function runIntegration() {
     assert.deepStrictEqual(calls, [{
       body: { jsonrpc: '2.0', id: 11, method: 'tools/call', params: { name: 'check', arguments: { code: 'x' } } },
       sessionId: clientSession,
+      proxyMarker: 'tools-list-proxy',
     }]);
 
     const retriedList = await fetch(`${proxyUrl}/mcp`, {
