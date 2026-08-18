@@ -5446,6 +5446,68 @@ function Commit-BaselineDumpIfNeeded {
     throw "No Git changes to commit for: $($pathSpec -join ', '). Expected files from the 1C configuration dump. Git status for this path: $status"
 }
 
+function Assert-GitAuthoritativeExportPathHasNoCaseCollisions {
+    param([string]$ExportPath)
+
+    $trackedPaths = @(Get-GitPathList -Arguments @("ls-files", "-z", "--", $ExportPath))
+    $firstPathByCaseInsensitiveKey = [System.Collections.Generic.Dictionary[string,string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    $collidingPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+
+    foreach ($trackedPath in $trackedPaths) {
+        [string]$firstPath = ""
+        if ($firstPathByCaseInsensitiveKey.TryGetValue($trackedPath, [ref]$firstPath)) {
+            if ($firstPath -cne $trackedPath) {
+                $collidingPaths.Add($firstPath) | Out-Null
+                $collidingPaths.Add($trackedPath) | Out-Null
+            }
+            continue
+        }
+        $firstPathByCaseInsensitiveKey.Add($trackedPath, $trackedPath)
+    }
+
+    if ($collidingPaths.Count -gt 0) {
+        $sortedCollisions = @($collidingPaths)
+        [System.Array]::Sort($sortedCollisions, [System.StringComparer]::Ordinal)
+        throw @"
+GIT_CASE_COLLISION_IN_AUTHORITATIVE_DUMP: the rebuilt Git index contains tracked paths that are equal under OrdinalIgnoreCase.
+ExportPath: $ExportPath
+Colliding tracked paths:
+$(@($sortedCollisions | ForEach-Object { "- $_" }) -join [Environment]::NewLine)
+"@
+    }
+}
+
+function Commit-AuthoritativeExportPathIfChanged {
+    param(
+        [string]$Message,
+        [string]$ExportPath
+    )
+
+    $absoluteExportPath = Assert-ExportPathInsideProject -ExportPath $ExportPath
+    $projectRoot = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd("\", "/")
+    if ([string]::Equals($absoluteExportPath, $projectRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        -not (Test-Path -LiteralPath $absoluteExportPath -PathType Container)) {
+        throw "Authoritative export path must be an existing project subdirectory: $absoluteExportPath"
+    }
+    $repoExportPath = $absoluteExportPath.Substring($projectRoot.Length).TrimStart("\", "/").Replace("\", "/")
+
+    Invoke-Git @("rm", "-r", "--cached", "--ignore-unmatch", "--quiet", "--", $repoExportPath)
+    Invoke-Git @("add", "--all", "--force", "--", $repoExportPath)
+    Assert-GitAuthoritativeExportPathHasNoCaseCollisions -ExportPath $repoExportPath
+
+    if (Test-GitHasStagedChanges -PathSpec @($repoExportPath)) {
+        # A commit pathspec re-reads case-insensitive worktree aliases instead of committing this rebuilt index.
+        Invoke-Git @("commit", "--quiet", "-m", $Message)
+        Write-Host "Committed: $Message"
+        return $true
+    }
+
+    Write-Host "No Git changes to commit for: $repoExportPath"
+    return $false
+}
+
 function Assert-InitGitClean {
     $status = & git -C $script:ProjectRoot status --porcelain
     if ($LASTEXITCODE -ne 0) {
@@ -5757,7 +5819,7 @@ function Sync-Master {
             -ConfigurationFileCount $configSource.fileCount
     }
     $dumpMessage = if ($sourceUsesRepository) { "sync: refresh 1C configuration from repository" } else { "sync: refresh 1C configuration from source infobase" }
-    Commit-IfChanged -Message $dumpMessage -PathSpec @($dumpResult.exportPath) -ForceAdd | Out-Null
+    Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath | Out-Null
     Sync-KiloItlCommandSurface
     Write-Host "Branch seed: $($seed.artifactPath)"
     Write-Host "Branch seed sync ID: $($seed.syncId)"
