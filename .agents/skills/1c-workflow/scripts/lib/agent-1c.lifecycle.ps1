@@ -1333,9 +1333,11 @@ function Load-ConfigFromFiles {
     $loadedAtField = Get-DesignerLoadedAtFieldName -ContentKind $ContentKind
     $previousFingerprint = [string](Get-StateValue -State $State -Name $fingerprintField -Default "")
     $normalizationStatus = [string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "")
+    $configLoadStatus = [string](Get-StateValue -State $State -Name "configLoadStatus" -Default "")
     $currentCommit = Get-CurrentCommit
     $changeSet = $null
     $legacyFingerprintMigrated = $false
+    $loadProofInvalidated = (-not $previousFingerprint -and $configLoadStatus -and $configLoadStatus -notin @("passed", "fallback-succeeded"))
 
     if ($previousFingerprint -and $previousFingerprint -ne $source.fingerprint -and (Test-LegacyConfigSourceFingerprint -Fingerprint $previousFingerprint)) {
         Write-Host "Confirming the legacy $ContentKind source fingerprint once before migration."
@@ -1383,10 +1385,11 @@ function Load-ConfigFromFiles {
         $Mode = "Full"
         $changeSet.files = @("<release-e2e-restore-invalidated>")
     } elseif ($changeSet.files.Count -eq 0) {
-        if ($previousFingerprint) {
-            Write-Warning "Source fingerprint changed but Git produced no partial list. Running a full load to preserve correctness."
+        if ($previousFingerprint -or $loadProofInvalidated) {
+            $fullLoadReason = if ($loadProofInvalidated) { "The previous Designer load proof is invalid" } else { "Source fingerprint changed" }
+            Write-Warning "$fullLoadReason but Git produced no partial list. Running a full load to preserve correctness."
             $Mode = "Full"
-            $changeSet.files = @("<fingerprint-changed>")
+            $changeSet.files = @($(if ($loadProofInvalidated) { "<designer-proof-invalidated>" } else { "<fingerprint-changed>" }))
         } else {
             Write-Host "No changed config files under $ExportPath since $($changeSet.baseCommit)."
             Write-Host "Legacy state fingerprint initialized without reloading the matching branch infobase."
@@ -1437,10 +1440,23 @@ function Load-ConfigFromFiles {
     }
     Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason "$ContentKind source load" -InfoBasePath $InfoBasePath
     Set-RunStage -Stage "config-load.designer" -Detail "Loading $ContentKind source through Designer in $Mode mode."
+    $statePath = if ($State) { [string](Get-StateValue -State $State -Name "statePath" -Default "") } else { "" }
+    $canPersistLoadProof = $statePath -and (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue)
+    $loadState = $State
+    if ($canPersistLoadProof) {
+        $loadStateHash = ConvertTo-Agent1cHashtable -Object $State
+        $loadStateHash[$fingerprintField] = ""
+        $loadStateHash["configLoadStatus"] = "pending"
+        $loadState = [pscustomobject]$loadStateHash
+        Update-DevBranchState -State $loadState -Updates @{
+            $fingerprintField = ""
+            configLoadStatus = "pending"
+        }
+    }
     $orchestration = Invoke-ConfigLoadWithFallback `
         -InfoBasePath $InfoBasePath `
         -InfoBaseKind $InfoBaseKind `
-        -State $State `
+        -State $loadState `
         -AbsoluteExportPath $changeSet.absoluteExportPath `
         -ListFilePath $listFilePath `
         -FileCount $changeSet.files.Count `
@@ -1450,11 +1466,12 @@ function Load-ConfigFromFiles {
     Set-RunStage -Stage "config-load.loaded" -Detail "Designer completed the $ContentKind source load."
 
     $loadedAt = (Get-Date).ToString("o")
-    $statePath = if ($State) { [string](Get-StateValue -State $State -Name "statePath" -Default "") } else { "" }
-    if ($statePath -and (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue)) {
-        Update-DevBranchState -State $State -Updates @{
+    if ($canPersistLoadProof) {
+        Update-DevBranchState -State $loadState -Updates @{
             $fingerprintField = $source.fingerprint
             $loadedAtField = $loadedAt
+            configLoadStatus = $orchestration.configLoadStatus
+            lastConfigLoadMode = $orchestration.loadModeUsed
             enterpriseNormalizationStatus = "pending"
             enterpriseNormalizationReason = "config-load"
             enterpriseNormalizationError = ""
@@ -1478,6 +1495,7 @@ function Load-ConfigFromFiles {
         loadReason = $(
             if ($missingPartialFilesFullLoad) { "partial-inventory-missing-files-full-load" }
             elseif ($Mode -eq "Full" -and $changeSet.files[0] -eq "<fingerprint-changed>") { "fingerprint-changed-full-load" }
+            elseif ($Mode -eq "Full" -and $changeSet.files[0] -eq "<designer-proof-invalidated>") { "designer-proof-invalidated-full-load" }
             elseif ($Mode -eq "Full" -and $changeSet.files[0] -eq "<release-e2e-restore-invalidated>") { "release-e2e-restore-full-load" }
             else { "source-fingerprint-changed" }
         )
@@ -3660,7 +3678,7 @@ function Save-DevBranchState {
     $devBranchesDir = Join-Path $ProjectRootOverride ".agent-1c\dev-branches"
     New-Item -ItemType Directory -Force -Path $devBranchesDir | Out-Null
     $path = Join-Path $devBranchesDir ($SafeDevBranchName + ".json")
-    Write-Utf8Text -Path $path -Value (($State | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    Write-Utf8TextAtomic -Path $path -Value (($State | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
     return $path
 }
 
