@@ -9,6 +9,20 @@ It "fails fast below Windows 10 or Windows Server 2016 before using atomic job-l
         $startDefinition.Extent.Text | Should -Not -Match 'PlatformNotSupportedException[\s\S]+Start-Process'
     }
 
+It "lets a Windows PowerShell delivery child rebuild its native module path when launched from PowerShell Core" {
+        $startDefinition = Get-DeliveryFunctionDefinitions -Names @('Start-DeliveryProcess') | Select-Object -First 1
+        $text = $startDefinition.Extent.Text
+        $resetOffset = $text.IndexOf('environment = CreateEnvironmentWithout("PSModulePath")', [StringComparison]::Ordinal)
+        $launchOffset = $text.IndexOf('[ItlDeliveryProcessJob]::Start(', [StringComparison]::Ordinal)
+
+        $text | Should -Match '\$resetModulePathForWindowsPowerShell = \[string\]\$PSVersionTable\.PSEdition -eq "Core"'
+        $resetOffset | Should -BeGreaterThan -1
+        $resetOffset | Should -BeLessThan $launchOffset
+        $text | Should -Match 'CREATE_UNICODE_ENVIRONMENT'
+        $text | Should -Match 'Marshal\.FreeHGlobal\(environment\)'
+        $text | Should -Match '\[ItlDeliveryProcessJob\]::Start\([^\r\n]+\$resetModulePathForWindowsPowerShell\)'
+    }
+
 It "owns the publication gate tree across forced wrapper termination" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl delivery cancel путь " + [guid]::NewGuid().ToString("N"))
         $wrapper = $null; $gatePid = 0; $childPid = 0

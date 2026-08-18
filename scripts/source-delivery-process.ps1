@@ -51,6 +51,8 @@ function Start-DeliveryProcess {
     if (-not ("ItlDeliveryProcessJob" -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -63,6 +65,7 @@ public static class ItlDeliveryProcessJob
     private const UInt32 EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const UInt32 CREATE_NO_WINDOW = 0x08000000;
     private const UInt32 CREATE_SUSPENDED = 0x00000004;
+    private const UInt32 CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const UInt32 STARTF_USESTDHANDLES = 0x00000100;
     private const UInt32 PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002;
     private const UInt32 PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x0002000D;
@@ -226,7 +229,23 @@ public static class ItlDeliveryProcessJob
         return handle;
     }
 
-    public static StartedProcess Start(string executable, string arguments, string workingDirectory, string standardOutputPath, string standardErrorPath)
+    private static IntPtr CreateEnvironmentWithout(string excludedName)
+    {
+        SortedDictionary<string, string> variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            string name = Convert.ToString(entry.Key);
+            if (!String.Equals(name, excludedName, StringComparison.OrdinalIgnoreCase))
+                variables[name] = Convert.ToString(entry.Value);
+        }
+        StringBuilder block = new StringBuilder();
+        foreach (KeyValuePair<string, string> variable in variables)
+            block.Append(variable.Key).Append('=').Append(variable.Value).Append('\0');
+        block.Append('\0');
+        return Marshal.StringToHGlobalUni(block.ToString());
+    }
+
+    public static StartedProcess Start(string executable, string arguments, string workingDirectory, string standardOutputPath, string standardErrorPath, bool resetPowerShellModulePath)
     {
         AssertAtomicJobListSupport();
         IntPtr job = CreateJobObject(IntPtr.Zero, null);
@@ -237,6 +256,7 @@ public static class ItlDeliveryProcessJob
         IntPtr standardInput = IntPtr.Zero;
         IntPtr standardOutput = IntPtr.Zero;
         IntPtr standardError = IntPtr.Zero;
+        IntPtr environment = IntPtr.Zero;
         PROCESS_INFORMATION processInformation = new PROCESS_INFORMATION();
         try
         {
@@ -275,7 +295,13 @@ public static class ItlDeliveryProcessJob
             startupInfo.hStdError = standardError;
             startupInfo.lpAttributeList = attributeList;
             StringBuilder commandLine = new StringBuilder("\"" + executable + "\" " + arguments);
-            if (!CreateProcess(executable, commandLine, IntPtr.Zero, IntPtr.Zero, true, EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_SUSPENDED, IntPtr.Zero, workingDirectory, ref startupInfo, out processInformation))
+            UInt32 creationFlags = EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_SUSPENDED;
+            if (resetPowerShellModulePath)
+            {
+                environment = CreateEnvironmentWithout("PSModulePath");
+                creationFlags |= CREATE_UNICODE_ENVIRONMENT;
+            }
+            if (!CreateProcess(executable, commandLine, IntPtr.Zero, IntPtr.Zero, true, creationFlags, environment, workingDirectory, ref startupInfo, out processInformation))
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateProcess for the delivery child failed.");
             StartedProcess started = new StartedProcess();
             started.Process = Process.GetProcessById((Int32)processInformation.dwProcessId);
@@ -293,6 +319,7 @@ public static class ItlDeliveryProcessJob
             if (standardInput != IntPtr.Zero && standardInput != INVALID_HANDLE_VALUE) CloseHandle(standardInput);
             if (standardOutput != IntPtr.Zero && standardOutput != INVALID_HANDLE_VALUE) CloseHandle(standardOutput);
             if (standardError != IntPtr.Zero && standardError != INVALID_HANDLE_VALUE) CloseHandle(standardError);
+            if (environment != IntPtr.Zero) Marshal.FreeHGlobal(environment);
             if (attributeList != IntPtr.Zero) { DeleteProcThreadAttributeList(attributeList); Marshal.FreeHGlobal(attributeList); }
             if (jobList != IntPtr.Zero) Marshal.FreeHGlobal(jobList);
             if (handleList != IntPtr.Zero) Marshal.FreeHGlobal(handleList);
@@ -309,7 +336,10 @@ public static class ItlDeliveryProcessJob
 '@
     }
     $powershellPath = (Get-Command "powershell.exe" -ErrorAction Stop).Source
-    $started = [ItlDeliveryProcessJob]::Start($powershellPath, $ArgumentList, $WorkingDirectory, $StandardOutputPath, $StandardErrorPath)
+    # Native CreateProcess would pass PowerShell Core's PSModulePath through
+    # unchanged. Omit it so Windows PowerShell rebuilds its own module roots.
+    $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core"
+    $started = [ItlDeliveryProcessJob]::Start($powershellPath, $ArgumentList, $WorkingDirectory, $StandardOutputPath, $StandardErrorPath, $resetModulePathForWindowsPowerShell)
     try {
         $process = $started.Process
         $null = $process.Handle
