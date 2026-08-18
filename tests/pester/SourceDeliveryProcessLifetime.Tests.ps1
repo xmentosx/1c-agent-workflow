@@ -1,6 +1,24 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
 
 Describe "Source develop queue and delivery" {
+It "converts typed and round-trip delivery timestamps without current-culture stringification" {
+        $definition = Get-DeliveryFunctionDefinitions -Names @('ConvertTo-DeliveryUtcDateTime') | Select-Object -First 1
+        Invoke-Expression $definition.Extent.Text
+        $priorCulture = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('ru-RU')
+            $expected = '2026-08-18T12:38:51.2815040Z'
+            $typedDateTime = [DateTime]::new(2026, 8, 18, 12, 38, 51, [DateTimeKind]::Utc).AddTicks(2815040)
+            $typedOffset = [DateTimeOffset]::new($typedDateTime)
+
+            (ConvertTo-DeliveryUtcDateTime -Value $typedDateTime).ToString('o') | Should -Be $expected
+            (ConvertTo-DeliveryUtcDateTime -Value $typedOffset).ToString('o') | Should -Be $expected
+            (ConvertTo-DeliveryUtcDateTime -Value $expected).ToString('o') | Should -Be $expected
+        } finally {
+            [Globalization.CultureInfo]::CurrentCulture = $priorCulture
+        }
+    }
+
 It "fails fast below Windows 10 or Windows Server 2016 before using atomic job-list launch" {
         $startDefinition = Get-DeliveryFunctionDefinitions -Names @('Start-DeliveryProcess') | Select-Object -First 1
         $startDefinition.Extent.Text | Should -Match 'AssertAtomicJobListSupport\(\);\s*IntPtr job = CreateJobObject'
