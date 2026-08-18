@@ -80,6 +80,7 @@ Minimal structure:
 Rules:
 
 - Store application scenarios in `tests/features`.
+- Store `.feature` files as strict UTF-8. One leading UTF-8 BOM is accepted for compatibility with existing Windows text writers; invalid UTF-8, NUL, and C0/C1 controls other than TAB/CR/LF fail the preflight at a zero-based byte offset. This byte check does not infer Gherkin semantics; the existing parser/application-scenario preflight remains their owner.
 - Name scenarios by checked behavior, not by internal task number.
 - Keep independent acceptance scenarios flat so each produces its own JUnit verdict. Do not use `@tree` to group them; reserve it for deliberately aggregated non-acceptance output.
 - Add the Vanessa-canonical, case-sensitive `@ExportScenarios` only to library feature files that are actually reused.
