@@ -73,24 +73,36 @@ Describe "Local quality gate contract" {
         $shardRunner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
         $shardRunner | Should -Match '\$serialTestNames = @\("CompactItlRunner\.Tests\.ps1", "DependencyLocks\.Tests\.ps1", "ReleaseGate\.Tests\.ps1"\)'
     }
-    It "imports the Utility hash command before shard archive and cache fingerprints" {
-        $runner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
-        $import = 'Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop'
-        $importIndex = $runner.IndexOf($import, [StringComparison]::Ordinal)
-        $importIndex | Should -BeGreaterThan -1
-        $runner.IndexOf('function Initialize-VanessaSourceBuildArchiveForPester', [StringComparison]::Ordinal) | Should -BeGreaterThan $importIndex
-        $runner.IndexOf('function Get-ShardInputDigest', [StringComparison]::Ordinal) | Should -BeGreaterThan $importIndex
-        $runner.IndexOf('Get-FileHash', [StringComparison]::Ordinal) | Should -BeGreaterThan $importIndex
+    It "owns shard archive and cache hashing without Get-FileHash" {
+        $runnerPath = Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1"
+        $runner = Get-Content -LiteralPath $runnerPath -Raw -Encoding UTF8
+        $runner | Should -Not -Match '\bGet-FileHash\b'
 
-        $probePath = Join-Path $TestDrive "utility-module-autoload-disabled.ps1"
+        $tokens = $null
+        $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile($runnerPath, [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Get-PesterShardFileSha256" }, $true)
+        $definition | Should -Not -BeNullOrEmpty
+        $definition.Extent.StartOffset | Should -BeLessThan $runner.IndexOf('function Initialize-VanessaSourceBuildArchiveForPester', [StringComparison]::Ordinal)
+        $definition.Extent.StartOffset | Should -BeLessThan $runner.IndexOf('function Get-ShardInputDigest', [StringComparison]::Ordinal)
+
+        $payloadPath = Join-Path $TestDrive "hash probe data.bin"
+        $payload = [byte[]](0, 1, 2, 3, 10, 13, 127, 128, 255)
+        [IO.File]::WriteAllBytes($payloadPath, $payload)
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try { $expected = ([BitConverter]::ToString($sha256.ComputeHash($payload))).Replace("-", "").ToLowerInvariant() } finally { $sha256.Dispose() }
+
+        $probePath = Join-Path $TestDrive "local-shard-hash.ps1"
         [IO.File]::WriteAllText($probePath, @"
-`$PSModuleAutoLoadingPreference = "None"
-$import
-(Get-Command Get-FileHash -ErrorAction Stop).Name
+param([string]`$Path)
+function Get-FileHash { throw "Get-FileHash must not be used" }
+$($definition.Extent.Text)
+Get-PesterShardFileSha256 -Path `$Path
 "@, [Text.UTF8Encoding]::new($false))
-        $probe = Invoke-TestPowerShellFile -FilePath $probePath
+        $probe = Invoke-TestPowerShellFile -FilePath $probePath -Arguments @("-Path", $payloadPath)
         $probe.exitCode | Should -Be 0
-        $probe.combinedText | Should -Match 'Get-FileHash'
+        $probe.stdout[-1] | Should -Be $expected
     }
     It "qualifies static and live candidate evidence without repeating Develop during Release" {
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8; $qualification = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-qualification.ps1") -Raw -Encoding UTF8
