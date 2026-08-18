@@ -4,6 +4,37 @@
         $context = Initialize-WorkflowPesterContext
         $RepoRoot = $context.RepoRoot
         $HelperPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+
+        function Invoke-VanessaFeatureBytePreflightFixture {
+            param([byte[]]$FeatureBytes, [string]$WorkflowHelperPath)
+
+            $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-feature-bytes-" + [guid]::NewGuid().ToString("N"))
+            try {
+                $featureRoot = Join-Path $tempRoot "tests\features"
+                New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), $featureRoot | Out-Null
+                $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+                [IO.File]::WriteAllText((Join-Path $tempRoot ".agent-1c\project.json"), '{"schemaVersion":1,"baseConfigurationVersion":"PM5","testsPath":"tests/features"}', $utf8NoBom)
+                $featurePath = Join-Path $featureRoot "input.feature"
+                [IO.File]::WriteAllBytes($featurePath, $FeatureBytes)
+                $beforeBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($featurePath))
+
+                $result = & {
+                    . $WorkflowHelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    $script:RunErrorCategory = ""
+                    $script:RunRequiredAction = ""
+                    try {
+                        Assert-VanessaVerificationPreflight -Trigger command
+                        [pscustomobject]@{ message = "passed"; category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+                    } catch {
+                        [pscustomobject]@{ message = $_.Exception.Message; category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+                    }
+                }
+                $result | Add-Member -NotePropertyName bytesUnchanged -NotePropertyValue ([Convert]::ToBase64String([IO.File]::ReadAllBytes($featurePath)) -eq $beforeBytes)
+                return $result
+            } finally {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     It "uses one verification preflight without a mandatory authoring action or state" {
@@ -108,6 +139,50 @@
         }
         $result.mcp | Should -BeFalse
         $result.runner | Should -BeTrue
+    }
+
+    It "accepts canonical Russian UTF-8 with optional leading BOM: <withBom>" -TestCases @(
+        @{ withBom = $false }
+        @{ withBom = $true }
+    ) {
+        param([bool]$withBom)
+
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false, $true)
+        [byte[]]$content = $utf8NoBom.GetBytes("#language: ru`r`nФункционал: Проверка`r`n`tСценарий: Работает`r`n")
+        if ($withBom) {
+            [byte[]]$content = @([byte[]](0xEF, 0xBB, 0xBF) + $content)
+        }
+
+        $result = Invoke-VanessaFeatureBytePreflightFixture -FeatureBytes $content -WorkflowHelperPath $HelperPath
+        $result.message | Should -Be "passed"
+        $result.category | Should -Be ""
+        $result.bytesUnchanged | Should -BeTrue
+    }
+
+    It "rejects invalid UTF-8 with a stable fixture code and byte offset" {
+        [byte[]]$prefix = [Text.Encoding]::ASCII.GetBytes("Feature: invalid`n")
+        [byte[]]$content = @($prefix + [byte[]](0xC3, 0x28))
+
+        $result = Invoke-VanessaFeatureBytePreflightFixture -FeatureBytes $content -WorkflowHelperPath $HelperPath
+        $result.message | Should -Be "ITL_VANESSA_TEST_FIXTURE_INVALID_FEATURE_BYTES: reason=invalid-utf8 path='tests/features/input.feature' byteOffset=$($prefix.Length)"
+        $result.category | Should -Be "test-fixture"
+        $result.requiredAction | Should -Be "/itl-verify-fix"
+    }
+
+    It "rejects NUL and disallowed C0/C1 controls: <name>" -TestCases @(
+        @{ name = "nul"; suffix = [byte[]](0x00); reason = "nul"; detail = "" }
+        @{ name = "c0"; suffix = [byte[]](0x01); reason = "control-character"; detail = " codePoint=U+0001" }
+        @{ name = "c1"; suffix = [byte[]](0xC2, 0x85); reason = "control-character"; detail = " codePoint=U+0085" }
+    ) {
+        param([string]$name, [byte[]]$suffix, [string]$reason, [string]$detail)
+
+        [byte[]]$prefix = [Text.Encoding]::ASCII.GetBytes("Feature: control`n")
+        [byte[]]$content = @($prefix + $suffix)
+        $result = Invoke-VanessaFeatureBytePreflightFixture -FeatureBytes $content -WorkflowHelperPath $HelperPath
+
+        $result.message | Should -Be "ITL_VANESSA_TEST_FIXTURE_INVALID_FEATURE_BYTES: reason=$reason path='tests/features/input.feature' byteOffset=$($prefix.Length)$detail"
+        $result.category | Should -Be "test-fixture"
+        $result.requiredAction | Should -Be "/itl-verify-fix"
     }
 
     It "installs only Core and the selected edition while preserving Product" {
