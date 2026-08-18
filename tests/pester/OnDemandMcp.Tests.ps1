@@ -466,6 +466,12 @@ Describe "ITL on-demand MCP facade" {
         foreach ($action in @("install-roctup-mcp", "update-roctup-mcp", "start-roctup-mcp", "stop-roctup-mcp", "roctup-mcp-status", "install-vanessa-mcp", "start-vanessa-mcp", "stop-vanessa-mcp", "vanessa-mcp-status")) {
             $entrypoint | Should -Not -Match ('"' + [regex]::Escape($action) + '"')
         }
+        $vanessa = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
+        foreach ($functionName in @("Start-VanessaMcp", "Stop-VanessaMcp", "Show-VanessaMcpStatus", "Resolve-VanessaMcpPort")) {
+            $vanessa | Should -Not -Match ("function " + [regex]::Escape($functionName) + "\s*\{")
+        }
+        $vanessa | Should -Match 'function Get-VanessaMcpRuntimeInfo\s*\{'
+        $vanessa | Should -Match 'function Stop-VanessaMcpForState\s*\{'
     }
 
     It "does not reacquire the runtime lock from nested facade broker operations" {

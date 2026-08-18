@@ -719,16 +719,15 @@ Describe "Branch-safe Vanessa runtime cleanup" {
         $roctupText = Get-Content -LiteralPath $roctupPath -Raw -Encoding UTF8
         $lockFunction = [regex]::Match($coreText, 'function Test-Agent1cActionRequiresLifecycleLock[\s\S]*?^}', [Text.RegularExpressions.RegexOptions]::Multiline).Value
         $stopFunction = [regex]::Match($vanessaText, 'function Stop-VanessaMcpForState[\s\S]*?^}', [Text.RegularExpressions.RegexOptions]::Multiline).Value
-        $startFunction = [regex]::Match($vanessaText, 'function Start-VanessaMcp[\s\S]*?^}', [Text.RegularExpressions.RegexOptions]::Multiline).Value
 
         $lockFunction | Should -Not -Match '"run-dev-branch-tests"'
         $lockFunction | Should -Not -Match '"check-dev-branch"'
         $lockFunction | Should -Not -Match '"verify-dev-branch"'
         $stopFunction | Should -Not -Match 'RequireOwnership'
         $stopFunction | Should -Match 'Test-VanessaMcpProcessBelongsToState'
-        foreach ($field in @('vanessaMcpProcessStartTime', 'vanessaMcpExecutablePath', 'vanessaMcpCommandLineIdentity', 'vanessaMcpInfoBasePath')) {
-            $startFunction | Should -Match $field
-        }
+        $vanessaText | Should -Not -Match 'function Start-VanessaMcp\s*\{'
+        $vanessaText | Should -Not -Match 'function Stop-VanessaMcp\s*\{'
+        $vanessaText | Should -Not -Match 'function Show-VanessaMcpStatus\s*\{'
         $roctupText | Should -Match 'Test-CommandLineContainsMcpPort'
     }
 }

@@ -2187,15 +2187,14 @@ enabled = true
         }
     }
 
-    It "allocates Vanessa MCP ports per development branch state" {
+    It "allocates on-demand Vanessa MCP ports per client instance" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-port-test-" + [guid]::NewGuid().ToString("N"))
         $oldRange = [Environment]::GetEnvironmentVariable("VANESSA_MCP_PORT_RANGE", "Process")
         $oldRegistryHome = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", "Process")
         $oldRegistryScope = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", "Process")
-        $listener = $null
 
         try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches") | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             & git -C $tempRoot init *> $null
             [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", (Join-Path $tempRoot "port-registry"), "Process")
             [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", $null, "Process")
@@ -2221,56 +2220,27 @@ enabled = true
             $basePort | Should -BeGreaterThan 0
 
             [Environment]::SetEnvironmentVariable("VANESSA_MCP_PORT_RANGE", "$basePort..$($basePort + 1)", "Process")
-
-            $otherState = @{
-                devBranchName = "Other Branch"
-                safeDevBranchName = "other-branch"
-                devBranch = "itldev/other-branch"
-                vanessaMcpPort = $basePort
-            } | ConvertTo-Json
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dev-branches\other-branch.json") -Value $otherState -Encoding UTF8
-
-            & {
+            $ports = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $state = [pscustomobject]@{
                     devBranchName = "Current Branch"
                     safeDevBranchName = "current-branch"
                     devBranch = "itldev/current-branch"
+                    stateProjectRoot = $tempRoot
+                    worktreePath = $tempRoot
                 }
-                Resolve-VanessaMcpPort -State $state
-            } | Should -Be ($basePort + 1)
-
-            Remove-Item -LiteralPath (Join-Path $tempRoot ".agent-1c\dev-branches\other-branch.json") -Force
-            $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Parse("127.0.0.1"), $basePort)
-            $listener.Start()
-
-            & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $state = [pscustomobject]@{
-                    devBranchName = "Current Branch"
-                    safeDevBranchName = "current-branch"
-                    devBranch = "itldev/current-branch"
+                $family = Get-ItlOnDemandPortFamily -Family "vanessa-ui"
+                $range = Get-VanessaMcpPortRange
+                $firstKey = Get-ItlOnDemandPortKey -Family "vanessa-ui" -State $state -InstanceId ("a" * 32)
+                $secondKey = Get-ItlOnDemandPortKey -Family "vanessa-ui" -State $state -InstanceId ("b" * 32)
+                [pscustomobject]@{
+                    first = Resolve-ItlManagedPort -Family $family -Key $firstKey -Start $range.start -End $range.end -State $state -Subject "Vanessa on-demand MCP port"
+                    second = Resolve-ItlManagedPort -Family $family -Key $secondKey -Start $range.start -End $range.end -State $state -Subject "Vanessa on-demand MCP port"
                 }
-                Resolve-VanessaMcpPort -State $state
-            } | Should -Be ($basePort + 1)
-
-            $listener.Stop()
-            $listener = $null
-
-            & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $state = [pscustomobject]@{
-                    devBranchName = "Saved Branch"
-                    safeDevBranchName = "saved-branch"
-                    devBranch = "itldev/saved-branch"
-                    vanessaMcpPort = $basePort
-                }
-                Resolve-VanessaMcpPort -State $state
-            } | Should -Be $basePort
-        } finally {
-            if ($null -ne $listener) {
-                $listener.Stop()
             }
+            $ports.first | Should -Be $basePort
+            $ports.second | Should -Be ($basePort + 1)
+        } finally {
             [Environment]::SetEnvironmentVariable("VANESSA_MCP_PORT_RANGE", $oldRange, "Process")
             [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", $oldRegistryHome, "Process")
             [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", $oldRegistryScope, "Process")
@@ -2285,7 +2255,6 @@ enabled = true
         $oldRegistryHome = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", "Process")
         $oldRegistryScope = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", "Process")
         $oldVanessaTestRange = [Environment]::GetEnvironmentVariable("VANESSA_TEST_PORT_RANGE", "Process")
-        $oldVanessaMcpRange = [Environment]::GetEnvironmentVariable("VANESSA_MCP_PORT_RANGE", "Process")
         $oldRoctupRange = [Environment]::GetEnvironmentVariable("ROCTUP_MCP_PORT_RANGE", "Process")
 
         try {
@@ -2322,7 +2291,6 @@ enabled = true
             [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", (Join-Path $tempRoot "port-registry"), "Process")
             [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", $null, "Process")
             [Environment]::SetEnvironmentVariable("VANESSA_TEST_PORT_RANGE", "$basePort..$($basePort + 1)", "Process")
-            [Environment]::SetEnvironmentVariable("VANESSA_MCP_PORT_RANGE", "$($basePort + 2)..$($basePort + 3)", "Process")
             [Environment]::SetEnvironmentVariable("ROCTUP_MCP_PORT_RANGE", "$($basePort + 4)..$($basePort + 5)", "Process")
 
             $vanessaTestA = & {
@@ -2336,18 +2304,6 @@ enabled = true
                 Resolve-VanessaTestPort -State $state
             }
             $vanessaTestA | Should -Not -Be $vanessaTestB
-
-            $vanessaMcpA = & {
-                . $HelperPath -ProjectRoot $projectA -Action help *> $null
-                $state = [pscustomobject]@{ devBranchName = "Feature"; safeDevBranchName = "feature"; devBranch = "itldev/feature"; stateProjectRoot = $projectA; worktreePath = $projectA }
-                Resolve-VanessaMcpPort -State $state
-            }
-            $vanessaMcpB = & {
-                . $HelperPath -ProjectRoot $projectB -Action help *> $null
-                $state = [pscustomobject]@{ devBranchName = "Feature"; safeDevBranchName = "feature"; devBranch = "itldev/feature"; stateProjectRoot = $projectB; worktreePath = $projectB }
-                Resolve-VanessaMcpPort -State $state
-            }
-            $vanessaMcpA | Should -Not -Be $vanessaMcpB
 
             $roctupA = & {
                 . $HelperPath -ProjectRoot $projectA -Action help *> $null
@@ -2382,7 +2338,6 @@ enabled = true
             [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", $oldRegistryHome, "Process")
             [Environment]::SetEnvironmentVariable("ITL_PORT_REGISTRY_SCOPE", $oldRegistryScope, "Process")
             [Environment]::SetEnvironmentVariable("VANESSA_TEST_PORT_RANGE", $oldVanessaTestRange, "Process")
-            [Environment]::SetEnvironmentVariable("VANESSA_MCP_PORT_RANGE", $oldVanessaMcpRange, "Process")
             [Environment]::SetEnvironmentVariable("ROCTUP_MCP_PORT_RANGE", $oldRoctupRange, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

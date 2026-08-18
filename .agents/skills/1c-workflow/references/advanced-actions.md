@@ -8,7 +8,7 @@ Run supported agent-facing executable actions from the project root through the 
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action <compact-action>
 ```
 
-Use direct `agent-1c.ps1` only for actions that the compact runner intentionally does not expose, including short read-only actions and explicitly documented internal diagnostics such as diagnostic-only `run-dev-branch-tests`.
+Use direct `agent-1c.ps1` only for actions that the compact runner intentionally does not expose, including short read-only actions and explicitly documented internal diagnostics.
 
 Mutating actions are serialized per worktree through the ignored lifecycle operation lock. Concurrent ordinary operations in separate development worktrees are allowed; actions that also mutate master acquire both scopes. On `LIFECYCLE_OPERATION_CONFLICT`, use `status`, `doctor`, or `help` and wait for or diagnose the recorded PID/phase. Do not delete lock files or edit operation JSON. Status remains observable during active work and removes proven-stale on-demand leases only when it can immediately take lifecycle then runtime locks without disturbing the active operation record.
 
@@ -63,7 +63,6 @@ set-dev-branch-extension
 dump-dev-branch-extension
 activate-dev-branch-context
 update-dev-branch-base
-run-dev-branch-tests
 cleanup-interrupted-vanessa-run
 stop-dev-branch-test-clients
 start-vanessa-profile
@@ -95,6 +94,8 @@ Extension helper actions are advanced/helper commands. `new-extension-dev-branch
 `stop-dev-branch-test-clients` stops only the Vanessa `TESTMANAGER` in the current worktree's service infobase and `TESTCLIENT` processes in its development infobase, then fails if any remain. Successful Vanessa verification performs the same cleanup automatically. It never stops foreign worktree test processes.
 
 `cleanup-interrupted-vanessa-run` is private to the monitored `run-itl-command.ps1` parent after its exact child helper exits without terminal status. It requires matching lifecycle-owned infobase, `VAParams.json`, and TestClient ports, never falls back to branch-wide cleanup, and must not be invoked manually.
+
+`Run-DevBranchTests` is a private phase of `check-dev-branch`, not a helper action. Automated performance profiling repeats canonical `check-dev-branch` with `VanessaFeaturePath` and/or `VanessaFilterTags`; filtered runs remain diagnostic-only and do not create full proof. When configuration sources are unchanged, the fingerprint preflight skips Designer, but canonical ownership, cleanup, event-log, and evidence preflight still add overhead. Finish with an unfiltered canonical check.
 
 Manual profiling uses a separate interactive lifecycle:
 

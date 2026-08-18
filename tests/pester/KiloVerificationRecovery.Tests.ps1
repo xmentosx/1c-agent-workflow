@@ -94,7 +94,7 @@ Describe "Kilo verification recovery command" {
         $fastSkill | Should -Match 'run-itl-command\.ps1 -- -Action <action>'
         $fastSkill | Should -Not -Match 'scripts\\agent-1c\.ps1 -Action <action>'
         $fastSkill | Should -Match 'post-change check: `check-dev-branch`'
-        $fastSkill | Should -Match 'compatibility verification: `verify-dev-branch`'
+        $fastSkill | Should -Match 'exact compatibility alias for the normal check: `verify-dev-branch`'
         $fastSkill | Should -Match 'requiredAction=/itl-verify-fix'
         $fastSkill | Should -Match 'expected skill contract/SHA'
         $fastSkill | Should -Match 'run `status`'
