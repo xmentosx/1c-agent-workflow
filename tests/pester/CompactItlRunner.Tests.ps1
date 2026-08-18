@@ -41,6 +41,56 @@ exit 0
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "routes update-workflow from a Cyrillic development worktree to master without switching the caller branch" {
+        $cyrillicName = -join ([char[]](0x043C, 0x0430, 0x0440, 0x0448, 0x0440, 0x0443, 0x0442))
+        $devBranch = "itldev/$cyrillicName"
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl update $cyrillicName " + [guid]::NewGuid().ToString("N"))
+        $mainRoot = Join-Path $tempRoot "main project"
+        $devRoot = Join-Path $tempRoot "dev branch"
+        try {
+            $scriptRoot = Join-Path $mainRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$branch = (& git -C $ProjectRoot branch --show-current).Trim()
+$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; projectRoot=$ProjectRoot; branch=$branch; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport='master updated; refresh the dev branch' }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+            & git -C $mainRoot init *> $null
+            & git -C $mainRoot config user.email "test@example.com"
+            & git -C $mainRoot config user.name "Test User"
+            & git -C $mainRoot add .
+            & git -C $mainRoot commit -m init *> $null
+            & git -C $mainRoot branch -M master
+            & git -C $mainRoot worktree add -b $devBranch $devRoot *> $null
+            $LASTEXITCODE | Should -Be 0
+
+            Push-Location $devRoot
+            try {
+                $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $devRoot ".agents\skills\1c-workflow\scripts\run-itl-command.ps1") -Arguments @("--", "-Action", "update-workflow")
+            } finally {
+                Pop-Location
+            }
+
+            $processResult.exitCode | Should -Be 0
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $status.projectRoot | Should -Be ([IO.Path]::GetFullPath($mainRoot))
+            $status.branch | Should -Be "master"
+            $utf8 = New-Object System.Text.UTF8Encoding $false
+            $gitDirText = [IO.File]::ReadAllText((Join-Path $devRoot ".git"), $utf8).Trim()
+            $gitDirValue = $gitDirText.Substring("gitdir: ".Length)
+            $devGitDir = if ([IO.Path]::IsPathRooted($gitDirValue)) { $gitDirValue } else { Join-Path $devRoot $gitDirValue }
+            [IO.File]::ReadAllText((Join-Path $devGitDir "HEAD"), $utf8).Trim() | Should -Be "ref: refs/heads/$devBranch"
+            [IO.File]::ReadAllText((Join-Path $mainRoot ".git\HEAD"), $utf8).Trim() | Should -Be "ref: refs/heads/master"
+            ($processResult.stderr -join "`n") | Should -Match "ITL update-workflow target: branch=itldev/"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "resolves the ITL Caveman mode and level matrix from project env with safe defaults" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-response-style-" + [guid]::NewGuid().ToString("N"))
         $previousMode = [Environment]::GetEnvironmentVariable("CAVEMAN", "Process")

@@ -5047,10 +5047,9 @@ if (`$?) { exit 0 } else { exit 1 }
             $kiloConfig.permission.bash | Should -Be "ask"
             $kiloConfig.PSObject.Properties.Name | Should -Not -Contain "plugin"
             $branchKiloCommands = @(Get-ChildItem -LiteralPath (Join-Path $worktreePath ".kilo\commands") -File -Filter "itl*.md" | Select-Object -ExpandProperty Name | Sort-Object)
-            $branchKiloCommands | Should -Be @("itl.md", "itl-check.md", "itl-litemode.md", "itl-refresh.md", "itl-refresh-lite.md", "itl-result.md", "itl-status.md", "itl-sync-master.md", "itl-verify-fix.md")
+            $branchKiloCommands | Should -Be @("itl.md", "itl-check.md", "itl-litemode.md", "itl-refresh.md", "itl-refresh-lite.md", "itl-result.md", "itl-status.md", "itl-sync-master.md", "itl-update-workflow.md", "itl-verify-fix.md")
             $branchKiloCommands | Should -Not -Contain "itl-new-config-branch.md"
             $branchKiloCommands | Should -Not -Contain "itl-new-extension-branch.md"
-            $branchKiloCommands | Should -Not -Contain "itl-update-workflow.md"
             $launcherText = Get-Content -Encoding UTF8 -Raw (Join-Path $env:APPDATA "1C\1CEStart\ibases.v8i")
             $launcherText | Should -Match ("(?m)^\[{0}\]\r?$" -f [regex]::Escape($expectedLauncherName))
             $launcherText | Should -Match ("(?m)^Folder={0}\r?$" -f [regex]::Escape($expectedLauncherFolder))
@@ -5532,7 +5531,7 @@ if (`$?) { exit 0 } else { exit 1 }
                 . $HelperPath -ProjectRoot $worktreeRoot -Action help *> $null
                 @(Get-KiloInheritedPrimaryItlCommands)
             }
-            $result | Should -Be @("/itl-update-workflow")
+            $result | Should -BeNullOrEmpty
 
             $helpResult = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
                 "-ProjectRoot", $worktreeRoot,
@@ -5540,7 +5539,6 @@ if (`$?) { exit 0 } else { exit 1 }
             )
             $helpResult.exitCode | Should -Be 0
             $helpResult.combinedText | Should -Match "Команды ITL в этом контексте"
-            $helpResult.combinedText | Should -Match "Унаследовано Kilo из основного checkout, но недоступно в этом контексте"
             $helpResult.combinedText | Should -Match "/itl-update-workflow"
         } finally {
             $previousPreference = $ErrorActionPreference

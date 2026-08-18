@@ -123,6 +123,56 @@ function Resolve-ItlResponseStyle {
     }
 }
 
+function Resolve-UpdateWorkflowProjectRoot {
+    param(
+        [string]$InvocationRoot,
+        [string]$Action
+    )
+
+    if ($Action -ne "update-workflow") { return $InvocationRoot }
+
+    $branchOutput = @(& git -C $InvocationRoot branch --show-current 2>&1)
+    if ($LASTEXITCODE -ne 0) { return $InvocationRoot }
+    $currentBranch = ([string]($branchOutput -join "")).Trim()
+    if ($currentBranch -notlike "itldev/*") { return $InvocationRoot }
+
+    $worktreeOutput = @(& git -c core.quotepath=false -C $InvocationRoot worktree list --porcelain 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cannot resolve the master worktree for update-workflow from development branch '$currentBranch'."
+    }
+
+    $masterWorktrees = [System.Collections.Generic.List[string]]::new()
+    $currentPath = ""
+    $currentWorktreeBranch = ""
+    foreach ($lineValue in @($worktreeOutput) + @("")) {
+        $line = [string]$lineValue
+        if (-not $line) {
+            if ($currentPath -and $currentWorktreeBranch -eq "master") {
+                $masterWorktrees.Add($currentPath)
+            }
+            $currentPath = ""
+            $currentWorktreeBranch = ""
+            continue
+        }
+        if ($line.StartsWith("worktree ", [System.StringComparison]::Ordinal)) {
+            $currentPath = $line.Substring("worktree ".Length)
+        } elseif ($line.StartsWith("branch refs/heads/", [System.StringComparison]::Ordinal)) {
+            $currentWorktreeBranch = $line.Substring("branch refs/heads/".Length)
+        }
+    }
+
+    if ($masterWorktrees.Count -ne 1) {
+        throw "update-workflow from development branch '$currentBranch' requires exactly one checked-out master worktree; found $($masterWorktrees.Count)."
+    }
+    $masterRoot = Resolve-NormalizedPath -Path $masterWorktrees[0]
+    if (-not (Test-Path -LiteralPath (Join-Path $masterRoot ".git") -ErrorAction SilentlyContinue)) {
+        throw "Resolved master worktree is not an initialized Git worktree: $masterRoot"
+    }
+
+    [Console]::Error.WriteLine("ITL update-workflow target: branch=$currentBranch; masterWorktree=$masterRoot")
+    return $masterRoot
+}
+
 function Set-ObjectValue {
     param(
         [object]$Object,
@@ -263,9 +313,10 @@ if ($windowed -ne ($action -in $branchActions)) {
     throw "Branch creation actions require -Windowed; other compact ITL actions must not use it."
 }
 
-$projectRoot = [System.IO.Path]::GetFullPath((Get-Location).Path)
-$responseStyle = Resolve-ItlResponseStyle -ProjectRoot $projectRoot
+$invocationRoot = [System.IO.Path]::GetFullPath((Get-Location).Path)
+$responseStyle = Resolve-ItlResponseStyle -ProjectRoot $invocationRoot
 [Console]::Error.WriteLine("ITL response-style: mode=$($responseStyle.mode); level=$($responseStyle.level); active=$(([string]$responseStyle.active).ToLowerInvariant()); profile=$($responseStyle.profile); task=execution")
+$projectRoot = Resolve-UpdateWorkflowProjectRoot -InvocationRoot $invocationRoot -Action $action
 $runsRoot = Join-Path $projectRoot ".agent-1c\runs"
 New-Item -ItemType Directory -Force -Path $runsRoot | Out-Null
 $startedAt = Get-Date
