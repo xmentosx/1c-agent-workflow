@@ -379,7 +379,7 @@ function Set-RunFailureContextFromMessage {
         return
     }
 
-    $verificationActions = @("check-dev-branch", "verify-dev-branch", "run-dev-branch-tests", "deploy-and-test")
+    $verificationActions = @("check-dev-branch", "verify-dev-branch", "deploy-and-test")
     if ($PSBoundParameters.ContainsKey("RequestedAction") -and $RequestedAction -notin $verificationActions) {
         Set-RunFailureContext -Category $category
         return

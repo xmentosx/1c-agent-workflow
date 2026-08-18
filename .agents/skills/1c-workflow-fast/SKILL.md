@@ -23,7 +23,7 @@ For a mapped routine, use at most one short sentence before the command and make
 - resume pending extension setup internally: `init-dev-branch-extension`
 - post-change check: `check-dev-branch`
 - explicitly requested base load without tests: `update-dev-branch-base`
-- compatibility verification: `verify-dev-branch`
+- exact compatibility alias for the normal check: `verify-dev-branch`
 - refresh from source: `refresh-dev-branch`
 - synchronize master and rebuild the latest-only seed: `sync-master`
 - refresh only from the current master without source/seed access: `refresh-dev-branch-lite`

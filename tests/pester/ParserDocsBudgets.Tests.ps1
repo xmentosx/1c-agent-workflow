@@ -734,6 +734,15 @@
         $HelperText | Should -Match "function Check-DevBranch"
         $HelperText | Should -Match "function Invoke-DevBranchCheck"
         $HelperText | Should -Match "function Verify-DevBranch"
+        $HelperText | Should -Match "function Run-DevBranchTests"
+        $HelperText | Should -Not -Match '"run-dev-branch-tests"'
+        $HelperText | Should -Match '\[string\]\$VanessaFeaturePath'
+        $HelperText | Should -Match '\[string\]\$VanessaFilterTags'
+
+        $advancedText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
+        $advancedText | Should -Match 'Automated performance profiling repeats canonical `check-dev-branch`'
+        $advancedText | Should -Match 'fingerprint preflight skips Designer'
+        $advancedText | Should -Match 'canonical ownership, cleanup, event-log, and evidence preflight still add overhead'
 
         $wrapperPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md.template"
         (Test-Path -LiteralPath $wrapperPath -PathType Leaf) | Should -Be $true

@@ -1,5 +1,20 @@
 # Owned publication child processes and source-gate execution.
 
+function ConvertTo-DeliveryUtcDateTime {
+    param([Parameter(Mandatory = $true)][AllowNull()][object]$Value)
+
+    if ($Value -is [DateTimeOffset]) { return ([DateTimeOffset]$Value).UtcDateTime }
+    if ($Value -is [DateTime]) { return ([DateTime]$Value).ToUniversalTime() }
+    if ($Value -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$Value)) {
+        throw "Delivery timestamp must be a DateTime, DateTimeOffset, or round-trip string."
+    }
+    return [DateTimeOffset]::Parse(
+        [string]$Value,
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::RoundtripKind
+    ).UtcDateTime
+}
+
 function Stop-DeliveryProcessTree {
     param([AllowNull()][object]$Process)
     if (-not $Process) { return }
@@ -51,6 +66,8 @@ function Start-DeliveryProcess {
     if (-not ("ItlDeliveryProcessJob" -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -63,6 +80,7 @@ public static class ItlDeliveryProcessJob
     private const UInt32 EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const UInt32 CREATE_NO_WINDOW = 0x08000000;
     private const UInt32 CREATE_SUSPENDED = 0x00000004;
+    private const UInt32 CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const UInt32 STARTF_USESTDHANDLES = 0x00000100;
     private const UInt32 PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002;
     private const UInt32 PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x0002000D;
@@ -226,7 +244,23 @@ public static class ItlDeliveryProcessJob
         return handle;
     }
 
-    public static StartedProcess Start(string executable, string arguments, string workingDirectory, string standardOutputPath, string standardErrorPath)
+    private static IntPtr CreateEnvironmentWithout(string excludedName)
+    {
+        SortedDictionary<string, string> variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            string name = Convert.ToString(entry.Key);
+            if (!String.Equals(name, excludedName, StringComparison.OrdinalIgnoreCase))
+                variables[name] = Convert.ToString(entry.Value);
+        }
+        StringBuilder block = new StringBuilder();
+        foreach (KeyValuePair<string, string> variable in variables)
+            block.Append(variable.Key).Append('=').Append(variable.Value).Append('\0');
+        block.Append('\0');
+        return Marshal.StringToHGlobalUni(block.ToString());
+    }
+
+    public static StartedProcess Start(string executable, string arguments, string workingDirectory, string standardOutputPath, string standardErrorPath, bool resetPowerShellModulePath)
     {
         AssertAtomicJobListSupport();
         IntPtr job = CreateJobObject(IntPtr.Zero, null);
@@ -237,6 +271,7 @@ public static class ItlDeliveryProcessJob
         IntPtr standardInput = IntPtr.Zero;
         IntPtr standardOutput = IntPtr.Zero;
         IntPtr standardError = IntPtr.Zero;
+        IntPtr environment = IntPtr.Zero;
         PROCESS_INFORMATION processInformation = new PROCESS_INFORMATION();
         try
         {
@@ -275,7 +310,13 @@ public static class ItlDeliveryProcessJob
             startupInfo.hStdError = standardError;
             startupInfo.lpAttributeList = attributeList;
             StringBuilder commandLine = new StringBuilder("\"" + executable + "\" " + arguments);
-            if (!CreateProcess(executable, commandLine, IntPtr.Zero, IntPtr.Zero, true, EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_SUSPENDED, IntPtr.Zero, workingDirectory, ref startupInfo, out processInformation))
+            UInt32 creationFlags = EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_SUSPENDED;
+            if (resetPowerShellModulePath)
+            {
+                environment = CreateEnvironmentWithout("PSModulePath");
+                creationFlags |= CREATE_UNICODE_ENVIRONMENT;
+            }
+            if (!CreateProcess(executable, commandLine, IntPtr.Zero, IntPtr.Zero, true, creationFlags, environment, workingDirectory, ref startupInfo, out processInformation))
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateProcess for the delivery child failed.");
             StartedProcess started = new StartedProcess();
             started.Process = Process.GetProcessById((Int32)processInformation.dwProcessId);
@@ -293,6 +334,7 @@ public static class ItlDeliveryProcessJob
             if (standardInput != IntPtr.Zero && standardInput != INVALID_HANDLE_VALUE) CloseHandle(standardInput);
             if (standardOutput != IntPtr.Zero && standardOutput != INVALID_HANDLE_VALUE) CloseHandle(standardOutput);
             if (standardError != IntPtr.Zero && standardError != INVALID_HANDLE_VALUE) CloseHandle(standardError);
+            if (environment != IntPtr.Zero) Marshal.FreeHGlobal(environment);
             if (attributeList != IntPtr.Zero) { DeleteProcThreadAttributeList(attributeList); Marshal.FreeHGlobal(attributeList); }
             if (jobList != IntPtr.Zero) Marshal.FreeHGlobal(jobList);
             if (handleList != IntPtr.Zero) Marshal.FreeHGlobal(handleList);
@@ -309,7 +351,10 @@ public static class ItlDeliveryProcessJob
 '@
     }
     $powershellPath = (Get-Command "powershell.exe" -ErrorAction Stop).Source
-    $started = [ItlDeliveryProcessJob]::Start($powershellPath, $ArgumentList, $WorkingDirectory, $StandardOutputPath, $StandardErrorPath)
+    # Native CreateProcess would pass PowerShell Core's PSModulePath through
+    # unchanged. Omit it so Windows PowerShell rebuilds its own module roots.
+    $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core"
+    $started = [ItlDeliveryProcessJob]::Start($powershellPath, $ArgumentList, $WorkingDirectory, $StandardOutputPath, $StandardErrorPath, $resetModulePathForWindowsPowerShell)
     try {
         $process = $started.Process
         $null = $process.Handle
@@ -376,7 +421,7 @@ function Invoke-SourceGate {
             $summaryPath = Join-Path $WorkingRoot "build\test-results\local\check-summary.json"
             if (-not (Test-Path -LiteralPath $summaryPath -PathType Leaf)) { throw "$Mode source gate returned without an authoritative check summary." }
             $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ([string]$summary.mode -ne $Mode -or [string]$summary.status -ne "passed" -or [DateTime]::Parse([string]$summary.finishedAt).ToUniversalTime() -lt $gateStartedAt.AddSeconds(-2)) { throw "$Mode source gate did not produce a fresh passed summary. See $summaryPath" }
+            if ([string]$summary.mode -ne $Mode -or [string]$summary.status -ne "passed" -or (ConvertTo-DeliveryUtcDateTime -Value $summary.finishedAt) -lt $gateStartedAt.AddSeconds(-2)) { throw "$Mode source gate did not produce a fresh passed summary. See $summaryPath" }
         }
         $gateStatus = "passed"
     } catch { $gateError = $_.Exception.Message; throw } finally {
@@ -400,12 +445,12 @@ function Get-DeliveryOperationLockPath {
 }
 
 function Test-DeliveryProcessIdentity {
-    param([int]$ProcessId, [string]$StartedAt)
+    param([int]$ProcessId, [AllowNull()][object]$StartedAt)
     if ($ProcessId -le 0 -or -not $StartedAt) { return $false }
     $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
     if (-not $process) { return $false }
     try {
-        $expected = [DateTime]::Parse($StartedAt).ToUniversalTime()
+        $expected = ConvertTo-DeliveryUtcDateTime -Value $StartedAt
         return [Math]::Abs(($process.StartTime.ToUniversalTime() - $expected).TotalSeconds) -lt 2
     } catch { return $false }
 }
@@ -428,8 +473,8 @@ function Write-DeliveryOperation {
 function Get-DeliveryOperationStatus {
     $operation = Read-DeliveryOperation
     if (-not $operation) { return $null }
-    $ownerAlive = Test-DeliveryProcessIdentity -ProcessId ([int]$operation.ownerPid) -StartedAt ([string]$operation.ownerProcessStartedAt)
-    $gateAlive = Test-DeliveryProcessIdentity -ProcessId ([int]$operation.gatePid) -StartedAt ([string]$operation.gateProcessStartedAt)
+    $ownerAlive = Test-DeliveryProcessIdentity -ProcessId ([int]$operation.ownerPid) -StartedAt $operation.ownerProcessStartedAt
+    $gateAlive = Test-DeliveryProcessIdentity -ProcessId ([int]$operation.gatePid) -StartedAt $operation.gateProcessStartedAt
     return [pscustomobject]@{
         id = [string]$operation.id; action = [string]$operation.action; startedAt = [string]$operation.startedAt
         ownerPid = [int]$operation.ownerPid; ownerAlive = $ownerAlive; gatePid = [int]$operation.gatePid; gateAlive = $gateAlive
@@ -444,7 +489,7 @@ function Write-DeliveryRunRecord {
     if (Test-Path -LiteralPath $summaryPath -PathType Leaf) {
         try {
             $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            if (-not $summary.PSObject.Properties["startedAt"] -or [DateTime]::Parse([string]$summary.startedAt).ToUniversalTime() -lt $StartedAt.AddSeconds(-2)) { $summary = $null }
+            if (-not $summary.PSObject.Properties["startedAt"] -or (ConvertTo-DeliveryUtcDateTime -Value $summary.startedAt) -lt $StartedAt.AddSeconds(-2)) { $summary = $null }
         } catch { $summary = $null }
     }
     $record = [ordered]@{ schemaVersion = 1; id = [guid]::NewGuid().ToString("N"); mode = $Mode; status = $Status; exitCode = $ExitCode; startedAt = $StartedAt.ToString("o"); finishedAt = $FinishedAt.ToString("o"); durationMs = [int64]($FinishedAt - $StartedAt).TotalMilliseconds; commit = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim(); tree = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim(); error = $ErrorMessage; tests = $(if ($summary) { $summary.tests } else { $null }); stages = $(if ($summary) { @($summary.stages | Sort-Object durationMs -Descending | Select-Object -First 10) } else { @() }) }
@@ -524,7 +569,7 @@ function Archive-StaleDeliveryOperation {
         }
     }
     if ($summary -and -not [string]$Operation.runRecordPath -and (Test-Path -LiteralPath $workingRoot -PathType Container)) {
-        $startedAt = [DateTime]::Parse([string]$summary.startedAt).ToUniversalTime(); $finishedAt = [DateTime]::Parse([string]$summary.finishedAt).ToUniversalTime()
+        $startedAt = ConvertTo-DeliveryUtcDateTime -Value $summary.startedAt; $finishedAt = ConvertTo-DeliveryUtcDateTime -Value $summary.finishedAt
         $status = if ([string]$summary.status -eq "passed") { "passed" } else { "failed" }
         $error = if ($status -eq "passed") { "" } else { "Recovered after the delivery wrapper ended before recording the completed gate: $([string]$summary.error)" }
         $Operation.runRecordPath = Write-DeliveryRunRecord -Mode ([string]$summary.mode) -Status $status -ErrorMessage $error -WorkingRoot $workingRoot -StartedAt $startedAt -FinishedAt $finishedAt -ExitCode $(if ($status -eq "passed") { 0 } else { 1 })

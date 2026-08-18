@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import unittest
+from unittest.mock import patch
 
-from observability import LOGGER, log_event, observe_stage, observe_tool
+from observability import (
+    LOGGER,
+    _correlation_from_context,
+    classify_error,
+    log_event,
+    observe_stage,
+    observe_tool,
+)
 from patch_mcp_server import patch_source
 from retry_policy import (
     call_tool_with_transient_network_retry,
@@ -21,9 +30,19 @@ class FixtureApiError(Exception):
 
 
 class FixtureDirectToolError(Exception):
-    def __init__(self, diagnostic: str) -> None:
-        super().__init__("direct tool failed")
+    def __init__(
+        self,
+        diagnostic: str,
+        *,
+        expected_tool: str = "mcp__syntax-checker__validate",
+        actual_tool: str = "",
+        phase: str = "match",
+    ) -> None:
+        super().__init__(diagnostic)
         self._diagnostic = diagnostic
+        self.expected_tool = expected_tool
+        self.actual_tool = actual_tool
+        self.phase = phase
 
     def diagnostic_summary(self) -> str:
         return self._diagnostic
@@ -126,6 +145,7 @@ class RetryPolicyTests(unittest.IsolatedAsyncioTestCase):
             ["transient_error", "success"],
             [event["outcome"] for event in events],
         )
+        self.assertEqual("transient_network", events[0]["errorClass"])
         self.assertEqual([1, 2], [event["attempt"] for event in events])
         self.assertNotIn(secret_question, "\n".join(captured.output))
 
@@ -150,6 +170,51 @@ class RetryPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({"content": "ok"}, result)
         self.assertEqual([True, True], client.session_requests)
         self.assertEqual(["session-1", "session-2"], client.direct_sessions)
+
+    async def test_missing_assistant_uuid_retries_once_with_a_fresh_session(self) -> None:
+        failure = FixtureDirectToolError(
+            "Upstream не вернул assistant_uuid",
+        )
+        client = FixtureClient(direct_outcomes=[failure, {"content": "ok"}])
+
+        with self.assertLogs(
+            "MCP_1copilot.codechecker_observability",
+            level="INFO",
+        ) as captured:
+            result = await call_tool_with_transient_network_retry(
+                client,
+                "mcp__syntax-checker__validate",
+                {"code": "Секретный код"},
+                backoff_seconds=(0, 0),
+            )
+
+        self.assertEqual({"content": "ok"}, result)
+        self.assertEqual([True, True], client.session_requests)
+        events = [json.loads(record.getMessage()) for record in captured.records]
+        self.assertEqual(
+            ["retryable_direct_error", "success"],
+            [event["outcome"] for event in events],
+        )
+        self.assertEqual(
+            "direct_missing_assistant_uuid",
+            events[0]["errorClass"],
+        )
+        self.assertNotIn("Секретный код", "\n".join(captured.output))
+
+    async def test_other_direct_match_errors_keep_existing_fallback_boundary(self) -> None:
+        failure = FixtureDirectToolError("Upstream не вернул tool_calls")
+        client = FixtureClient(direct_outcomes=[failure, {"content": "unused"}])
+
+        with self.assertRaises(FixtureDirectToolError) as raised:
+            await call_tool_with_transient_network_retry(
+                client,
+                "mcp__syntax-checker__validate",
+                {"code": "x"},
+                backoff_seconds=(0, 0),
+            )
+
+        self.assertIs(failure, raised.exception)
+        self.assertEqual([True], client.session_requests)
 
     async def test_ask_continuation_retries_the_reused_session(self) -> None:
         client = FixtureClient(
@@ -237,8 +302,14 @@ class RetryPolicyTests(unittest.IsolatedAsyncioTestCase):
 {tool_error_handlers}
 '''
             )
-        other_tools = []
-        for index in range(8):
+        other_tools = [
+            f'''async def fetch_its(id: str = "root") -> str:
+    try:
+        return await _send_prompt(id)
+{tool_error_handlers}
+'''
+        ]
+        for index in range(7):
             other_tools.append(
                 f'''async def tool_{index}(prompt: str) -> str:
     try:
@@ -277,6 +348,8 @@ async def _call_direct_tool(tool_name: str, arguments: dict, fallback_prompt: st
         self.assertIn("from .observability import observe_stage, observe_tool", patched)
         self.assertIn('@observe_tool(\n    "check_1c_code"', patched)
         self.assertIn('@observe_tool(\n    "review_1c_code"', patched)
+        self.assertIn('@observe_tool(\n    "fetch_its"', patched)
+        self.assertIn("snapshot_argument=None", patched)
         self.assertIn('async with observe_stage(\n        "prompt"', patched)
         self.assertIn('async with observe_stage(\n            "direct_tool"', patched)
         self.assertIn("if create_new_session:", patched)
@@ -291,6 +364,58 @@ async def _call_direct_tool(tool_name: str, arguments: dict, fallback_prompt: st
 
 
 class ObservabilityTests(unittest.IsolatedAsyncioTestCase):
+    def test_transport_correlation_hashes_only_real_available_identifiers(self) -> None:
+        class FixtureContext:
+            request_context = object()
+            request_id = "request-secret"
+            session_id = "session-secret"
+            client_id = "client-secret"
+            task_id = None
+            transport = "streamable-http"
+
+        correlation = _correlation_from_context(
+            FixtureContext(),
+            {
+                "user-agent": "codex-secret-agent",
+                "x-itl-mcp-proxy": "tools-list-proxy",
+            },
+        )
+
+        self.assertEqual(
+            hashlib.sha256(b"request-secret").hexdigest(),
+            correlation["mcpRequestSha256"],
+        )
+        self.assertEqual(
+            hashlib.sha256(b"session-secret").hexdigest(),
+            correlation["mcpSessionSha256"],
+        )
+        self.assertEqual(
+            hashlib.sha256(b"client-secret").hexdigest(),
+            correlation["mcpClientSha256"],
+        )
+        self.assertNotIn("mcpTaskSha256", correlation)
+        self.assertEqual("tools-list-proxy", correlation["transportPath"])
+        self.assertNotIn("secret", json.dumps(correlation))
+
+    def test_direct_error_classification_is_stable_and_content_safe(self) -> None:
+        self.assertEqual(
+            "direct_missing_assistant_uuid",
+            classify_error(FixtureDirectToolError("Не вернул assistant_uuid")),
+        )
+        self.assertEqual(
+            "direct_missing_tool_calls",
+            classify_error(FixtureDirectToolError("Не вернул tool_calls")),
+        )
+        self.assertEqual(
+            "direct_wrong_tool",
+            classify_error(
+                FixtureDirectToolError(
+                    "wrong tool",
+                    actual_tool="mcp__other__tool",
+                )
+            ),
+        )
+
     def test_default_handler_writes_json_without_root_logging(self) -> None:
         handler = next(
             handler
@@ -319,11 +444,16 @@ class ObservabilityTests(unittest.IsolatedAsyncioTestCase):
             async with observe_stage("prompt", inputChars=len(code)):
                 return "ok"
 
-        with self.assertLogs(
-            "MCP_1copilot.codechecker_observability",
-            level="INFO",
-        ) as captured:
-            result = await checked(source)
+        correlation = {
+            "mcpSessionSha256": hashlib.sha256(b"session-42").hexdigest(),
+            "transportPath": "tools-list-proxy",
+        }
+        with patch("observability._transport_correlation", return_value=correlation):
+            with self.assertLogs(
+                "MCP_1copilot.codechecker_observability",
+                level="INFO",
+            ) as captured:
+                result = await checked(source)
 
         self.assertEqual("ok", result)
         events = [json.loads(record.getMessage()) for record in captured.records]
@@ -334,9 +464,35 @@ class ObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, len({event["requestId"] for event in events}))
         self.assertEqual("direct", events[0]["mode"])
         self.assertEqual(len(source), events[0]["codeChars"])
+        self.assertEqual(
+            hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            events[0]["snapshotSha256"],
+        )
+        self.assertEqual(correlation["mcpSessionSha256"], events[0]["mcpSessionSha256"])
+        self.assertEqual("tools-list-proxy", events[0]["transportPath"])
         self.assertEqual("success", events[-1]["outcome"])
         self.assertEqual(2, events[-1]["resultChars"])
         self.assertNotIn(source, "\n".join(captured.output))
+
+    async def test_fetch_its_parent_context_covers_direct_stage(self) -> None:
+        @observe_tool("fetch_its", snapshot_argument=None)
+        async def fetched(item_id: str) -> str:
+            async with observe_stage(
+                "direct_tool",
+                upstreamTool="mcp__knowledge-hub__Fetch_ITS",
+            ):
+                return item_id
+
+        with self.assertLogs(
+            "MCP_1copilot.codechecker_observability",
+            level="INFO",
+        ) as captured:
+            await fetched("its-secret-id")
+
+        events = [json.loads(record.getMessage()) for record in captured.records]
+        self.assertEqual(1, len({event["requestId"] for event in events}))
+        self.assertNotIn("snapshotSha256", events[0])
+        self.assertNotIn("its-secret-id", "\n".join(captured.output))
 
 
 if __name__ == "__main__":

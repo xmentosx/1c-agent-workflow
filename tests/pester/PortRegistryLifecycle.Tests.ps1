@@ -27,7 +27,7 @@ Describe "Branch managed port registry lifecycle" {
         }
     }
 
-    It "does not reserve Vanessa TestClient or MCP ports from closed branch states" {
+    It "does not reserve Vanessa TestClient ports from closed branch states" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-closed-port-state-" + [guid]::NewGuid().ToString("N"))
         try {
             $stateDir = Join-Path $tempRoot ".agent-1c\dev-branches"
@@ -53,14 +53,10 @@ Describe "Branch managed port registry lifecycle" {
                     stateProjectRoot = $tempRoot
                     worktreePath = $tempRoot
                 }
-                [pscustomobject]@{
-                    testPortCount = (Get-VanessaTestReservedPorts -CurrentState $current).Keys.Count
-                    mcpPortCount = (Get-VanessaMcpReservedPorts -CurrentState $current).Keys.Count
-                }
+                [pscustomobject]@{ testPortCount = (Get-VanessaTestReservedPorts -CurrentState $current).Keys.Count }
             }
 
             $result.testPortCount | Should -Be 0
-            $result.mcpPortCount | Should -Be 0
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

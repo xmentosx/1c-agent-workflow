@@ -261,13 +261,52 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $VerificationTrigger = 'repair'
                 Start-ItlVerificationRepairSession *> $null
+                $record = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
+                $missingIdError = try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
+                $RepairSessionId = 'wrong-session'
+                $mismatchError = try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
+                $RepairSessionId = [string]$record.sessionId
                 Use-ItlVerificationRepairAttempt *> $null
                 Use-ItlVerificationRepairAttempt *> $null
                 Use-ItlVerificationRepairAttempt *> $null
-                try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
+                [pscustomobject]@{
+                    missingIdError = $missingIdError
+                    mismatchError = $mismatchError
+                    exhaustedError = try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
+                }
             }
-            $result | Should -Match 'exhausted its three full verification runs'
+            $result.missingIdError | Should -Match 'requires RepairSessionId'
+            $result.mismatchError | Should -Match 'Repair session mismatch'
+            $result.exhaustedError | Should -Match 'exhausted its three full verification runs'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "keeps direct and filtered Vanessa runs diagnostic-only" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $directUpdates = @{}
+            Add-VanessaVerificationEvidenceUpdates -Updates $directUpdates -Status 'passed' -Reason 'focused scenario passed' -Commit 'abc' -Fingerprint 'fingerprint' -ReportPath 'report' -LogPath 'log'
+            $fullUpdates = @{}
+            Add-VanessaVerificationEvidenceUpdates -Updates $fullUpdates -Status 'passed' -Reason 'full suite passed' -Commit 'abc' -Fingerprint 'fingerprint' -ReportPath 'report' -LogPath 'log' -RecordFullVerificationEvidence
+            $VanessaFilterTags = '@focused'
+            $filteredEligible = Test-ItlFullVerificationProofEligible -Trigger command
+            $VanessaFilterTags = ''
+            $VanessaFeaturePath = 'tests/features/focused.feature'
+            [pscustomobject]@{
+                direct = [pscustomobject]$directUpdates
+                full = [pscustomobject]$fullUpdates
+                filteredEligible = $filteredEligible
+                featureEligible = Test-ItlFullVerificationProofEligible -Trigger command
+            }
+        }
+
+        $result.direct.lastVerificationStatus | Should -Be 'partial'
+        $result.direct.lastVerificationEvidenceKind | Should -Be 'diagnostic'
+        $result.direct.lastVerifiedFingerprint | Should -Be ''
+        $result.full.lastVerificationStatus | Should -Be 'passed'
+        $result.full.lastVerifiedFingerprint | Should -Be 'fingerprint'
+        $result.filteredEligible | Should -BeFalse
+        $result.featureEligible | Should -BeFalse
     }
 
     It "bypasses missing suite when Vanessa mode is off" {

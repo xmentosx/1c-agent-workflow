@@ -44,7 +44,7 @@ Describe "1C workflow lifecycle operation lock" {
             Initialize-LifecycleLockTestRepository -Path $tempRoot
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                Enter-Agent1cLifecycleOperation -RequestedAction "run-dev-branch-tests"
+                Enter-Agent1cLifecycleOperation -RequestedAction "check-dev-branch"
                 try {
                     Update-Agent1cLifecycleOperationStage -Stage "config-load.designer" -Detail "Loading configuration."
                     $script:LastProcessId = 43210
@@ -75,16 +75,16 @@ Describe "1C workflow lifecycle operation lock" {
             Initialize-LifecycleLockTestRepository -Path $tempRoot
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                Enter-Agent1cLifecycleOperation -RequestedAction "run-dev-branch-tests"
+                Enter-Agent1cLifecycleOperation -RequestedAction "check-dev-branch"
                 try {
                     $conflict = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
                         "-ProjectRoot", $tempRoot,
-                        "-Action", "run-dev-branch-tests"
+                        "-Action", "check-dev-branch"
                     )
                     $conflict.exitCode | Should -Be 1
                     $conflict.combinedText | Should -Match "LIFECYCLE_OPERATION_CONFLICT"
-                    $conflict.combinedText | Should -Match "requestedAction='run-dev-branch-tests'"
-                    $conflict.combinedText | Should -Match "activeAction='run-dev-branch-tests'"
+                    $conflict.combinedText | Should -Match "requestedAction='check-dev-branch'"
+                    $conflict.combinedText | Should -Match "activeAction='check-dev-branch'"
                     $conflict.combinedText | Should -Match ([regex]::Escape($tempRoot))
 
                     $help = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "help")
@@ -92,7 +92,7 @@ Describe "1C workflow lifecycle operation lock" {
                     $status = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "status")
                     $status.exitCode | Should -Be 0
                     $status.combinedText | Should -Match "Lifecycle operation: running"
-                    $status.combinedText | Should -Match "action=run-dev-branch-tests"
+                    $status.combinedText | Should -Match "action=check-dev-branch"
                 } finally {
                     Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
                     Exit-Agent1cLifecycleOperation
@@ -122,16 +122,16 @@ Describe "1C workflow lifecycle operation lock" {
 
             & {
                 . $HelperPath -ProjectRoot $branchOne -Action help *> $null
-                Enter-Agent1cLifecycleOperation -RequestedAction "run-dev-branch-tests"
+                Enter-Agent1cLifecycleOperation -RequestedAction "check-dev-branch"
                 try {
                     $otherBranch = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
                         "-ProjectRoot", $branchTwo,
-                        "-Action", "run-dev-branch-tests"
+                        "-Action", "check-dev-branch"
                     )
                     $otherBranch.exitCode | Should -Be 1
                     $otherBranch.combinedText | Should -Not -Match "LIFECYCLE_OPERATION_CONFLICT"
                     $otherState = Get-Content -Encoding UTF8 -Raw -LiteralPath (Join-Path $branchTwo ".agent-1c\locks\lifecycle-operation.json") | ConvertFrom-Json
-                    $otherState.action | Should -Be "run-dev-branch-tests"
+                    $otherState.action | Should -Be "check-dev-branch"
                     $otherState.status | Should -Be "failed"
                 } finally {
                     Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
@@ -173,7 +173,7 @@ Describe "1C workflow lifecycle operation lock" {
                     Exit-Agent1cLifecycleOperation
                 }
 
-                Enter-Agent1cLifecycleOperation -RequestedAction "run-dev-branch-tests"
+                Enter-Agent1cLifecycleOperation -RequestedAction "check-dev-branch"
                 try {
                     $masterStatus = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
                         "-ProjectRoot", $mainRoot,
@@ -181,7 +181,7 @@ Describe "1C workflow lifecycle operation lock" {
                     )
                     $masterStatus.exitCode | Should -Be 0
                     $masterStatus.combinedText | Should -Match "action=refresh-dev-branch"
-                    $masterStatus.combinedText | Should -Not -Match "action=run-dev-branch-tests"
+                    $masterStatus.combinedText | Should -Not -Match "action=check-dev-branch"
                 } finally {
                     Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
                     Exit-Agent1cLifecycleOperation
@@ -199,7 +199,7 @@ Describe "1C workflow lifecycle operation lock" {
             Initialize-LifecycleLockTestRepository -Path $tempRoot
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                Enter-Agent1cLifecycleOperation -RequestedAction "run-dev-branch-tests"
+                Enter-Agent1cLifecycleOperation -RequestedAction "check-dev-branch"
                 $operationId = $script:LifecycleOperationId
                 try {
                     $script:LastProcessId = 54321
@@ -209,7 +209,7 @@ Describe "1C workflow lifecycle operation lock" {
                     Publish-Agent1cLifecycleOperationProcessEvidence
                     $continued = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
                         "-ProjectRoot", $tempRoot,
-                        "-Action", "run-dev-branch-tests",
+                        "-Action", "check-dev-branch",
                         "-OperationId", $operationId,
                         "-OperationOwnerPid", ([string]$PID),
                         "-OperationContinuation"
@@ -265,7 +265,7 @@ param(
     [string]$LogPath
 )
 . $HelperPath -ProjectRoot $ProjectRoot -Action help *> $null
-$Action = "run-dev-branch-tests"
+$Action = "check-dev-branch"
 $RunStatusPath = $StatusPath
 $RunLogPath = $LogPath
 $script:RunStartedAt = Get-Date
@@ -384,7 +384,7 @@ try {
                 schemaVersion = 1
                 status = "running"
                 operationId = $staleOperationId
-                action = "run-dev-branch-tests"
+                action = "check-dev-branch"
                 projectRoot = $tempRoot
                 worktreePath = $tempRoot
                 branch = "master"
@@ -401,7 +401,7 @@ try {
 
             $forged = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @(
                 "-ProjectRoot", $tempRoot,
-                "-Action", "run-dev-branch-tests",
+                "-Action", "check-dev-branch",
                 "-OperationId", "wrong-operation",
                 "-OperationOwnerPid", "999999",
                 "-OperationContinuation"
@@ -409,7 +409,7 @@ try {
             $forged.exitCode | Should -Be 1
             $forged.combinedText | Should -Match "LIFECYCLE_OPERATION_CONTINUATION_INVALID"
 
-            $normal = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "run-dev-branch-tests")
+            $normal = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "check-dev-branch")
             $normal.exitCode | Should -Be 1
             $normal.combinedText | Should -Not -Match "LIFECYCLE_OPERATION_CONFLICT"
             $record = Get-Content -Encoding UTF8 -Raw -LiteralPath $statePath | ConvertFrom-Json

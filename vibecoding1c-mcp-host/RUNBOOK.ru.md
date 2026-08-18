@@ -112,7 +112,9 @@ notepad .\host.config.json
   Direct mode, формат upstream-вызовов и `assistant_uuid` не изменяются; постоянные ошибки не повторяются.
   Overlay пишет content-safe JSON-телеметрию `itl.codechecker.telemetry.v1`: начало и итог
   `check_1c_code` / `review_1c_code`, direct/prompt этапы и каждую upstream-попытку. В лог не попадают
-  текст кода, prompt или ответ — только размеры, режим, outcome, attempt и `elapsedMs`.
+  текст кода, prompt или ответ — только размеры, SHA-256 точного UTF-8 snapshot, режим,
+  outcome, attempt и `elapsedMs`. Hash позволяет увидеть повторную проверку неизменившегося
+  кода, но не раскрывает его содержимое.
 - `helpSearchServer.platformVersion`: версия платформы 1C для `HelpSearchServer`.
 - `helpSearchServer.platformBinPath`: локальный каталог `bin` платформы 1C для `HelpSearchServer`.
 - `sslSearchServer.bspVersion`: версия БСП для `SSLSearchServer`.
@@ -162,6 +164,20 @@ docker logs --timestamps --since 2h itl-1c-codechecker 2>&1 |
 что задержка выросла из-за транспортного retry. `tool_start` без соответствующего `tool_end` позволяет
 увидеть ещё выполняющийся или отменённый запрос. Для корреляции с задачей агента сравнивайте Docker
 timestamp с `mcp_tool_call_end.duration` в локальном журнале Codex.
+
+`snapshotSha256` связывает проверки точного неизменившегося кода. Доступные FastMCP request/session/
+client/task значения и `user-agent` записываются только как SHA-256; поля отсутствуют, если транспорт
+их не предоставил. `mcpTaskSha256` означает MCP background task, а не задачу или thread Codex:
+Codex task/thread id текущий MCP transport не передаёт. Proxy добавляет фиксированный безопасный
+маркер `x-itl-mcp-proxy`, поэтому `transportPath=tools-list-proxy` доказан; значение
+`direct-or-unmarked` не исключает другой немаркированный proxy. Top-level `fetch_its` создаёт
+context-local `requestId`, связывающий его `mcp__knowledge-hub__Fetch_ITS` stage без global mutable
+state. Автономные upstream-вызовы внутри 1C.ai за границей процесса этим способом не наблюдаются.
+
+`errorClass` классифицирует direct-сбои без текста диагностики. Единственный специальный recovery —
+одна повторная попытка с новой upstream-сессией для подтверждённого временного
+`direct_missing_assistant_uuid`; после неё сохраняется прежний fallback. Остальные protocol/match
+ошибки не получают нового retry и не меняют direct/standard mode.
 - `mantisTicketServer.baseUrl`: URL Mantis, доступный выделенной машине.
 - `mantisTicketServer.attachmentCachePath`: локальный cache оригиналов вложений Mantis.
 - `mantisTicketServer.ocr`: включение OCR и языки, по умолчанию `rus` и `eng`.

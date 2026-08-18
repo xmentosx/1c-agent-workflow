@@ -14,7 +14,7 @@ The compact result exposes `errorCategory` and `requiredAction`. Categories are 
 
 Long Designer work publishes a 30-second stderr heartbeat plus structured status evidence: current stage, elapsed time, liveness, seconds without CPU/log/process progress, timeout remaining, exact owned PIDs, CPU/log deltas, and working set. `stalled-suspected` begins after `DESIGNER_STALL_WARNING_SECONDS` (default 300). At `DESIGNER_STALL_TIMEOUT_SECONDS` (default 600) the helper fails and stops only exact owned Designer PIDs. The independent memory guard and overall hard operation timeout remain fail-closed. Never kill 1C manually from a stale-looking heartbeat.
 
-Do not run a separate base update first. `/deploy-and-test` is a published compatibility bridge to `check-dev-branch`, not an independent loader. Do not replace executable evidence with MCP or a headless EPF. `verify-dev-branch` is the repair-trigger compatibility alias.
+Do not run a separate base update first. `/deploy-and-test` and `verify-dev-branch` are compatibility aliases to the same canonical `check-dev-branch` path, not independent loaders. `Run-DevBranchTests` is its private Vanessa phase. A canonical check may select one feature or tag filter for repeated performance profiling, but any `VanessaFeaturePath` or `VanessaFilterTags` keeps that run diagnostic-only. Only an unfiltered full canonical check after its owned update-base may authorize export or complete a repair session. Do not replace executable evidence with MCP or a headless EPF.
 
 ## ITL Modes
 

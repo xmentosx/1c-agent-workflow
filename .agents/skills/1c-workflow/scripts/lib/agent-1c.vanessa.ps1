@@ -3663,11 +3663,54 @@ function Confirm-UnverifiedProceed {
     throw "$Operation stopped because fresh passed Vanessa verification is missing. Run verify-dev-branch or rerun with explicit unverified override."
 }
 
+function Add-VanessaVerificationEvidenceUpdates {
+    param(
+        [hashtable]$Updates,
+        [string]$Status,
+        [string]$Reason,
+        [string]$Commit,
+        [string]$Fingerprint,
+        [string]$ReportPath,
+        [string]$LogPath,
+        [switch]$RecordFullVerificationEvidence
+    )
+
+    if ($RecordFullVerificationEvidence) {
+        $Updates["lastVerificationStatus"] = $Status
+        $Updates["lastVerifiedCommit"] = $Commit
+        $Updates["lastVerifiedFingerprint"] = $Fingerprint
+        $Updates["lastVerifiedAt"] = (Get-Date).ToString("o")
+        $Updates["lastVerifiedReportPath"] = $ReportPath
+        $Updates["lastVerificationLogPath"] = $LogPath
+        $Updates["lastVerificationReason"] = $Reason
+        return
+    }
+
+    $Updates["lastVerificationStatus"] = "partial"
+    $Updates["lastVerificationEvidenceKind"] = "diagnostic"
+    $Updates["lastVerificationTrigger"] = "diagnostic"
+    $Updates["lastVerificationSkippedComponents"] = @("full-suite")
+    $Updates["lastVerificationReason"] = "Diagnostic Vanessa run status=$Status; it does not create full verification proof. $Reason"
+    $Updates["lastVerifiedCommit"] = ""
+    $Updates["lastVerifiedFingerprint"] = ""
+    $Updates["lastVerifiedAt"] = (Get-Date).ToString("o")
+    $Updates["lastVerifiedReportPath"] = ""
+    $Updates["lastVerificationLogPath"] = ""
+}
+
 function Run-DevBranchTests {
+    param([switch]$RecordFullVerificationEvidence)
+
+    if ($VerificationTrigger -eq "repair") {
+        Get-ItlMatchingVerificationRepairSession | Out-Null
+    }
+    if ($VanessaFeaturePath -or $VanessaFilterTags) {
+        $RecordFullVerificationEvidence = $false
+    }
     Set-RunStage -Stage "vanessa.prepare" -Detail "Preparing Vanessa Automation verification."
     $state = Read-DevBranchState -Name $DevBranchName
-    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "run-dev-branch-tests"
-    Assert-DevBranchExtensionInitialized -State $state -Operation "run-dev-branch-tests"
+    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "check-dev-branch"
+    Assert-DevBranchExtensionInitialized -State $state -Operation "check-dev-branch"
     $state = Ensure-DevBranchEnterpriseNormalized -State $state -Reason "legacy-preflight"
     Sync-DevBranchContextToDotEnv -State $state
     $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $state
@@ -3759,6 +3802,9 @@ function Run-DevBranchTests {
     Write-Host "Vanessa TestClient profiles: $(@($testClientTopology.profiles).Count); manifest ceiling: $($testClientTopology.declaredTestClientCeiling); required by selected scenarios: $($testClientTopology.requiredTestClientSlots); ports: $($testPorts -join ',')"
     if ($VanessaFilterTags) {
         Write-Host "Vanessa tag filter: $VanessaFilterTags"
+    }
+    if (-not $RecordFullVerificationEvidence) {
+        Write-Host "[WARN] Diagnostic-only Vanessa run: it does not create fresh full verification proof and cannot authorize result export or complete a repair session."
     }
     Write-Host "Dev branch tests use TESTMANAGER -> TESTCLIENT and do not load configuration files. Use check-dev-branch for the normal post-change update plus test cycle."
 
@@ -3852,14 +3898,8 @@ function Run-DevBranchTests {
             lastVanessaTestPid = $script:LastProcessId
             lastVanessaTimedOut = $script:LastProcessTimedOut
             lastVanessaTimeoutSeconds = $timeoutSeconds
-            lastVerificationStatus = "failed"
-            lastVerifiedCommit = $currentCommit
-            lastVerifiedFingerprint = $currentFingerprint
-            lastVerifiedAt = (Get-Date).ToString("o")
-            lastVerifiedReportPath = $runDirectory
-            lastVerificationLogPath = $logPath
-            lastVerificationReason = $failureReason
         }
+        Add-VanessaVerificationEvidenceUpdates -Updates $updates -Status "failed" -Reason $failureReason -Commit $currentCommit -Fingerprint $currentFingerprint -ReportPath $runDirectory -LogPath $logPath -RecordFullVerificationEvidence:$RecordFullVerificationEvidence
         if ($null -ne $eventLogVerification) {
             $updates["lastVanessaEventLogReader"] = $eventLogVerification.reader
             $updates["lastVanessaEventLogBaselinePath"] = $eventLogVerification.baselinePath
@@ -3945,7 +3985,7 @@ function Run-DevBranchTests {
             reason = "$($verification.reason) Event log: $($eventLogVerification.reason)"
         }
     }
-    Update-DevBranchState -State $state -Updates @{
+    $updates = @{
         lastVanessaTestAt = (Get-Date).ToString("o")
         lastVanessaStartedAt = $runStartedAt.ToString("o")
         lastVanessaFinishedAt = $runFinishedAt.ToString("o")
@@ -3977,14 +4017,9 @@ function Run-DevBranchTests {
         lastVanessaCleanupDurationMs = $cleanupDurationMs
         lastVanessaEventLogDurationMs = $eventLogDurationMs
         lastVanessaPostProcessDurationMs = [int64]$postProcessStopwatch.ElapsedMilliseconds
-        lastVerificationStatus = $verification.status
-        lastVerifiedCommit = $currentCommit
-        lastVerifiedFingerprint = $currentFingerprint
-        lastVerifiedAt = (Get-Date).ToString("o")
-        lastVerifiedReportPath = $runDirectory
-        lastVerificationLogPath = $logPath
-        lastVerificationReason = $verification.reason
     }
+    Add-VanessaVerificationEvidenceUpdates -Updates $updates -Status $verification.status -Reason $verification.reason -Commit $currentCommit -Fingerprint $currentFingerprint -ReportPath $runDirectory -LogPath $logPath -RecordFullVerificationEvidence:$RecordFullVerificationEvidence
+    Update-DevBranchState -State $state -Updates $updates
 
     Write-Host "Vanessa tests finished."
     Write-Host "Verification status: $($verification.status)"
@@ -4855,61 +4890,6 @@ function Test-VanessaMcpProcessBelongsToState {
         $commandLine -match '(?i)(?:^|/C|;)runMcp(?=;|\s|"|$)' -and
         (Test-CommandLineContainsMcpPort -CommandLine $commandLine -Port $expectedPort)
     )
-}
-
-function Get-VanessaMcpReservedPorts {
-    param([object]$CurrentState)
-
-    $ports = @{}
-    foreach ($file in Get-DevBranchStateFiles) {
-        try {
-            $state = Read-DevBranchStateFile -Path $file.FullName
-            if (Test-VanessaStateIdentityMatch -First $state -Second $CurrentState) {
-                continue
-            }
-            if (Get-StateValue -State $state -Name "closedAt" -Default "") {
-                continue
-            }
-
-            $port = ConvertTo-IntOrDefault -Value (Get-StateValue -State $state -Name "vanessaMcpPort" -Default 0)
-            if ($port -gt 0) {
-                $ports[$port] = $true
-            }
-        } catch {
-        }
-    }
-
-    return $ports
-}
-
-function Resolve-VanessaMcpPortLease {
-    param(
-        [object]$State,
-        [string]$LeaseToken = ""
-    )
-
-    $reserved = Get-VanessaMcpReservedPorts -CurrentState $State
-    $savedPort = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaMcpPort" -Default 0)
-    $range = Get-VanessaMcpPortRange
-    return (Resolve-ItlManagedPortLease `
-        -Family "vanessa-mcp" `
-        -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $State) `
-        -Start $range.start `
-        -End $range.end `
-        -PreferredPort $savedPort `
-        -ExplicitPort $VanessaMcpPort `
-        -ReservedPorts $reserved `
-        -State $State `
-        -Subject "Vanessa UI MCP port" `
-        -LeaseToken $LeaseToken)
-}
-
-function Resolve-VanessaMcpPort {
-    param([object]$State)
-
-    $leaseToken = [string](Get-StateValue -State $State -Name "vanessaMcpPortLeaseToken" -Default "")
-    $lease = Resolve-VanessaMcpPortLease -State $State -LeaseToken $leaseToken
-    return [int]$lease.port
 }
 
 function Get-OwnVanessaTestProcesses {
@@ -5913,19 +5893,6 @@ function Update-VanessaMcpArtifacts {
     }
 }
 
-function Save-VanessaMcpSettingsToDotEnv {
-    param(
-        [int]$Port,
-        [string]$Url
-    )
-
-    Set-DotEnvValues -Values @{
-        VANESSA_MCP_PORT = $(if ($Port -gt 0) { [string]$Port } else { "" })
-        VANESSA_MCP_URL = $Url
-    }
-    Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
-}
-
 function Install-VanessaMcpExtensionCfe {
     param(
         [object]$State,
@@ -6503,39 +6470,6 @@ function Wait-VanessaMcpPort {
     return $false
 }
 
-function Write-VanessaMcpClientSnippets {
-    param([object]$State)
-
-    $safeName = Get-StateValue -State $State -Name "safeDevBranchName" -Default (ConvertTo-SafeName (Get-StateValue -State $State -Name "devBranchName" -Default "dev-branch"))
-    $port = ConvertTo-IntOrDefault -Value (Get-StateValue -State $State -Name "vanessaMcpPort" -Default 0)
-    $url = Get-StateValue -State $State -Name "vanessaMcpUrl" -Default $(if ($port -gt 0) { Get-VanessaMcpUrl -Port $port } else { "" })
-    if (-not $url) {
-        return
-    }
-
-    $serverName = "VanessaUi-$safeName"
-    Write-Host "MCP server name: $serverName"
-    Write-Host "MCP streamable-http URL: $url"
-    Write-Host "MCP client snippets:"
-    Write-Host @"
-YAML:
-mcpServers:
-  - name: $serverName
-    type: streamable-http
-    url: $url
-
-JSON:
-{
-  "mcpServers": {
-    "$serverName": {
-      "type": "streamable-http",
-      "url": "$url"
-    }
-  }
-}
-"@
-}
-
 function Write-VanessaMcpKiloConfig {
     param([object]$State)
 
@@ -6697,131 +6631,4 @@ function Stop-VanessaMcpForState {
         Write-Host "Vanessa UI MCP is not running for this branch."
     }
     return $false
-}
-
-function Start-VanessaMcp {
-    Write-Section "Start Vanessa UI MCP"
-
-    $state = Read-CurrentDevBranchStateForVanessaMcp -Operation "start-vanessa-mcp"
-    $state = Ensure-DevBranchEnterpriseNormalized -State $state -Reason "legacy-preflight"
-    $runtime = Get-VanessaMcpRuntimeInfo -State $state
-    if ($runtime.processAlive) {
-        Save-VanessaMcpSettingsToDotEnv -Port $runtime.port -Url $runtime.url
-        Update-DevBranchState -State $state -Updates @{
-            vanessaMcpStatus = "running"
-            vanessaMcpError = ""
-            vanessaMcpUpdatedAt = (Get-Date).ToString("o")
-        }
-        $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
-        Write-VanessaMcpClientConfig -State $state
-        Write-Host "Vanessa UI MCP process is already running for this branch."
-        Write-VanessaMcpStatusLines -State $state
-        Write-VanessaMcpClientSnippets -State $state
-        return
-    }
-
-    try {
-        $state = Ensure-VanessaMcpInstalled -State $state
-    } catch {
-        $message = $_.Exception.Message
-        Update-DevBranchState -State $state -Updates @{
-            vanessaMcpStatus = "failed"
-            vanessaMcpError = $message
-            vanessaMcpUpdatedAt = (Get-Date).ToString("o")
-        }
-        throw $message
-    }
-    $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $state
-    $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
-    $vanessa = Get-VanessaAutomationState
-    if (-not $vanessa.ready) {
-        throw "Vanessa Automation verification runtime is not installed. Run install-vanessa-automation first."
-    }
-
-    $mcpPortLeaseToken = [string](Get-StateValue -State $state -Name "vanessaMcpPortLeaseToken" -Default "")
-    if ([string]::IsNullOrWhiteSpace($mcpPortLeaseToken)) {
-        $mcpPortLeaseToken = New-ItlManagedPortLeaseToken
-        Update-DevBranchState -State $state -Updates @{ vanessaMcpPortLeaseToken = $mcpPortLeaseToken }
-        $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
-    }
-    $mcpPortLease = Resolve-VanessaMcpPortLease -State $state -LeaseToken $mcpPortLeaseToken
-    $port = [int]$mcpPortLease.port
-    $url = Get-VanessaMcpUrl -Port $port
-    Save-VanessaMcpSettingsToDotEnv -Port $port -Url $url
-    Update-DevBranchState -State $state -Updates @{
-        vanessaMcpPort = $port
-        vanessaMcpPortLeaseToken = $mcpPortLeaseToken
-        vanessaMcpUrl = $url
-        vanessaMcpStatus = "starting"
-        vanessaMcpError = ""
-        vanessaMcpUpdatedAt = (Get-Date).ToString("o")
-    }
-    $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
-
-    $command = "runMcp;mcpPort=$port"
-    $result = Start-EnterpriseBackground `
-        -InfoBasePath $serviceInfoBase.path `
-        -InfoBaseKind $serviceInfoBase.kind `
-        -UseTestManager `
-        -User $serviceInfoBase.user `
-        -Password $serviceInfoBase.password `
-        -EnterpriseArgs @("/Execute", $vanessa.epfPath, "/C$command")
-
-    $processStartTime = $result.process.StartTime.ToUniversalTime().ToString("o")
-    $resolvedInfoBasePath = Resolve-Agent1cFullPath -Path $serviceInfoBase.path
-
-    Update-DevBranchState -State $state -Updates @{
-        vanessaMcpPort = $port
-        vanessaMcpPortLeaseToken = $mcpPortLeaseToken
-        vanessaMcpUrl = $url
-        vanessaMcpPid = $result.process.Id
-        vanessaMcpProcessStartTime = $processStartTime
-        vanessaMcpExecutablePath = [string]$result.executablePath
-        vanessaMcpCommandLineIdentity = $command
-        vanessaMcpInfoBasePath = $resolvedInfoBasePath
-        vanessaMcpStartedAt = (Get-Date).ToString("o")
-        vanessaMcpLogPath = $result.logPath
-        vanessaMcpStatus = "starting"
-        vanessaMcpError = ""
-        vanessaMcpUpdatedAt = (Get-Date).ToString("o")
-    }
-    Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $state) -Status "running" -ProcessId $result.process.Id -LeaseToken $mcpPortLeaseToken
-    $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
-
-    if (-not (Wait-VanessaMcpPort -Port $port -TimeoutSeconds 30)) {
-        $message = "Vanessa UI MCP process was started, but port $port did not become reachable within 30 seconds. PID: $($result.process.Id). Log: $($result.logPath)"
-        Set-ItlManagedPortAllocationStatus -Family "vanessa-mcp" -Key (Get-ItlBranchManagedPortKey -Family "vanessa-mcp" -State $state) -Status "failed" -ProcessId $result.process.Id -LeaseToken $mcpPortLeaseToken
-        Update-DevBranchState -State $state -Updates @{
-            vanessaMcpStatus = "failed"
-            vanessaMcpError = $message
-            vanessaMcpUpdatedAt = (Get-Date).ToString("o")
-        }
-        throw $message
-    }
-    Update-DevBranchState -State $state -Updates @{
-        vanessaMcpStatus = "running"
-        vanessaMcpError = ""
-        vanessaMcpUpdatedAt = (Get-Date).ToString("o")
-    }
-    $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
-
-    Write-Host "Vanessa UI MCP started."
-    Write-VanessaMcpClientConfig -State $state
-    Write-VanessaMcpStatusLines -State $state
-    Write-VanessaMcpClientSnippets -State $state
-}
-
-function Stop-VanessaMcp {
-    Write-Section "Stop Vanessa UI MCP"
-
-    $state = Read-CurrentDevBranchStateForVanessaMcp -Operation "stop-vanessa-mcp"
-    Stop-VanessaMcpForState -State $state | Out-Null
-}
-
-function Show-VanessaMcpStatus {
-    Write-Section "Vanessa UI MCP status"
-
-    $state = Read-CurrentDevBranchStateForVanessaMcp -Operation "vanessa-mcp-status"
-    Write-VanessaMcpStatusLines -State $state
-    Write-VanessaMcpClientSnippets -State $state
 }

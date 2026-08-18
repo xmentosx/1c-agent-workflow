@@ -428,7 +428,7 @@ param([string]$OutputPath, [string]$Value)
         (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Raw -Encoding UTF8) |
             Should -Match '!\.agents/skills/1c-workflow/assets/vanessa-service/service-infobase\.dt'
 
-        foreach ($functionName in @("Run-DevBranchTests", "Install-VanessaMcp", "Start-VanessaMcp")) {
+        foreach ($functionName in @("Run-DevBranchTests", "Install-VanessaMcp")) {
             $functionText = [regex]::Match(
                 $VanessaText,
                 ("function " + [regex]::Escape($functionName) + "\s*\{[\s\S]*?^}"),

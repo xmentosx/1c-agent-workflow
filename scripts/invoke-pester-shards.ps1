@@ -18,6 +18,22 @@ function ConvertTo-NativeArgument {
     return '"' + $Value.Replace('"', '\"') + '"'
 }
 
+function Get-PesterShardFileSha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = $null
+    $sha256 = $null
+    try {
+        $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        $hashBytes = $sha256.ComputeHash($stream)
+        return ([System.BitConverter]::ToString($hashBytes)).Replace("-", "").ToLowerInvariant()
+    } finally {
+        if ($null -ne $sha256) { $sha256.Dispose() }
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+}
+
 function Get-TextSha256 {
     param([string[]]$Lines)
     $bytes = [Text.Encoding]::UTF8.GetBytes((@($Lines) -join "`n")); $sha = [Security.Cryptography.SHA256]::Create()
@@ -61,7 +77,7 @@ function Initialize-VanessaSourceBuildArchiveForPester {
         if (-not (Test-Path -LiteralPath $configured -PathType Leaf)) {
             throw "Configured Vanessa source-build archive is missing: $configured"
         }
-        $actual = (Get-FileHash -LiteralPath $configured -Algorithm SHA256).Hash.ToLowerInvariant()
+        $actual = Get-PesterShardFileSha256 -Path $configured
         if ($actual -ne $expected) {
             throw "Configured Vanessa source-build SHA256 differs from the dependency lock: expected=$expected actual=$actual path=$configured"
         }
@@ -89,7 +105,7 @@ function Initialize-VanessaSourceBuildArchiveForPester {
     foreach ($root in @($candidateRoots | Select-Object -Unique)) {
         $candidate = Join-Path $root ("build\third-party\vanessa-automation\$folderName\$assetName")
         if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
-        if ((Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant() -eq $expected) {
+        if ((Get-PesterShardFileSha256 -Path $candidate) -eq $expected) {
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = [IO.Path]::GetFullPath($candidate)
             return
         }
@@ -98,7 +114,7 @@ function Initialize-VanessaSourceBuildArchiveForPester {
     $sharedDirectory = Join-Path $commonGitDir "itl\dependencies\vanessa-automation\$folderName"
     $sharedArchive = Join-Path $sharedDirectory ("$expected-$assetName")
     if (Test-Path -LiteralPath $sharedArchive -PathType Leaf) {
-        $sharedHash = (Get-FileHash -LiteralPath $sharedArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+        $sharedHash = Get-PesterShardFileSha256 -Path $sharedArchive
         if ($sharedHash -ne $expected) {
             throw "Shared Vanessa source-build cache entry has an impossible SHA-address mismatch: expected=$expected actual=$sharedHash path=$sharedArchive"
         }
@@ -118,7 +134,7 @@ function Get-ExternalInputIdentity {
     $value = [Environment]::GetEnvironmentVariable($Name, "Process")
     if (-not $value) { return "env:$Name=<unset>" }
     $identity = "env:$Name=$value"
-    if (Test-Path -LiteralPath $value -PathType Leaf) { return "$identity|sha256=$((Get-FileHash -LiteralPath $value -Algorithm SHA256).Hash.ToLowerInvariant())" }
+    if (Test-Path -LiteralPath $value -PathType Leaf) { return "$identity|sha256=$(Get-PesterShardFileSha256 -Path $value)" }
     if (Test-Path -LiteralPath $value -PathType Container) {
         $head = (& git -C $value rev-parse HEAD 2>$null); $tree = (& git -C $value rev-parse 'HEAD^{tree}' 2>$null)
         if ($LASTEXITCODE -eq 0) { return "$identity|commit=$($head.Trim())|tree=$($tree.Trim())" }
@@ -140,7 +156,7 @@ function Get-ShardInputDigest {
     foreach ($name in @("ITL_AI_RULES_SOURCE_PATH", "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE")) { $lines.Add((Get-ExternalInputIdentity -Name $name)) }
     foreach ($path in $inputs) {
         $absolute=Join-Path $RepositoryRoot $path.Replace('/','\')
-        if(Test-Path -LiteralPath $absolute -PathType Leaf){$lines.Add("$path=$((Get-FileHash -LiteralPath $absolute -Algorithm SHA256).Hash.ToLowerInvariant())")}
+        if(Test-Path -LiteralPath $absolute -PathType Leaf){$lines.Add("$path=$(Get-PesterShardFileSha256 -Path $absolute)")}
         else{$lines.Add("$path=<missing>")}
     }
     return Get-TextSha256 -Lines $lines
@@ -161,8 +177,8 @@ function Get-ShardCacheEntryRoot {
         try {
             $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ([int]$manifest.schemaVersion -eq 1 -and [string]$manifest.digest -eq $Digest -and
-                [string]$manifest.resultSha256 -eq (Get-FileHash -LiteralPath $cachedResult -Algorithm SHA256).Hash.ToLowerInvariant() -and
-                [string]$manifest.junitSha256 -eq (Get-FileHash -LiteralPath $cachedJunit -Algorithm SHA256).Hash.ToLowerInvariant()) { return $entryRoot }
+                [string]$manifest.resultSha256 -eq (Get-PesterShardFileSha256 -Path $cachedResult) -and
+                [string]$manifest.junitSha256 -eq (Get-PesterShardFileSha256 -Path $cachedJunit)) { return $entryRoot }
         } catch {}
     }
     return ""
@@ -203,7 +219,7 @@ function Save-ShardCache {
     try {
         Copy-Item -LiteralPath $ResultPath -Destination (Join-Path $staging "result.json")
         Copy-Item -LiteralPath $JunitPath -Destination (Join-Path $staging "pester.xml")
-        $manifest = [ordered]@{ schemaVersion = 1; digest = $Digest; resultSha256 = (Get-FileHash -LiteralPath (Join-Path $staging "result.json") -Algorithm SHA256).Hash.ToLowerInvariant(); junitSha256 = (Get-FileHash -LiteralPath (Join-Path $staging "pester.xml") -Algorithm SHA256).Hash.ToLowerInvariant() }
+        $manifest = [ordered]@{ schemaVersion = 1; digest = $Digest; resultSha256 = (Get-PesterShardFileSha256 -Path (Join-Path $staging "result.json")); junitSha256 = (Get-PesterShardFileSha256 -Path (Join-Path $staging "pester.xml")) }
         [IO.File]::WriteAllText((Join-Path $staging "manifest.json"), (($manifest | ConvertTo-Json) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
         try { Move-Item -LiteralPath $staging -Destination $target -ErrorAction Stop } catch { if (-not (Test-Path -LiteralPath $target)) { throw } }
     } finally { if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force } }

@@ -190,6 +190,23 @@ Describe "Immutable asset download retry policy" {
         (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $before
     }
 
+    It "hashes and publishes exact bytes without Get-FileHash autoload" {
+        $directory = Join-Path $TestDrive (([char]0x041A).ToString() + " catalog with spaces")
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        $source = Join-Path $directory (([char]0x0418).ToString() + " source file.bin")
+        $destination = Join-Path $directory (([char]0x041E).ToString() + " published file.bin")
+        [IO.File]::WriteAllBytes($source, $script:Payload)
+        Mock Get-FileHash { throw "Get-FileHash must not be used" }
+
+        $result = Invoke-ItlImmutableFileAcquire -Source $source -DestinationPath $destination -ExpectedSha256 $script:PayloadSha256
+
+        $result.sha256 | Should -Be $script:PayloadSha256
+        $result.published | Should -BeTrue
+        (Get-ItlImmutableFileSha256 -Path $destination) | Should -Be $script:PayloadSha256
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($destination)) | Should -Be ([Convert]::ToBase64String($script:Payload))
+        Assert-MockCalled Get-FileHash -Times 0
+    }
+
     It "accepts concurrent same-SHA publishers without exposing a partial target" {
         $source = Join-Path $TestDrive "race-source.bin"
         $destination = Join-Path $TestDrive "race-target.bin"

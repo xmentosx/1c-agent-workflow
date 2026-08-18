@@ -70,7 +70,7 @@ ITL не включает и не выключает Browser Automation и не 
 | `/itl-litemode full` или `off` | `auto` | `auto` |
 | `/itl-litemode status` | без изменения | без изменения |
 
-`auto` разрешает компонент для implicit completion, `/itl-check`, repair и прямого запроса. `manual` — для команды, repair или прямого запроса. `off` запускается только при явном запросе именно этого компонента. Пропуск дает partial evidence и не считается fresh pass.
+Обычные agent-facing маршруты используют `command` для `/itl-check` и `repair` для `/itl-verify-fix`, поэтому в них `auto` и `manual` запускают компонент одинаково. `implicit` зарезервирован для script-owned completion и сейчас не имеет production-caller. `off` запускается только при отдельном advanced-запросе именно этого компонента; обычные `/itl-check` и `/itl-verify-fix` его не переопределяют. Поэтому `standard` и `full` сейчас эквивалентны для обычного `/itl-check`. Пропуск дает partial evidence и не считается fresh pass; при `VERIFICATION_POLICY=block` после `lite` потребуется явная полная проверка до result/close.
 
 ## `/economymode` и модели
 

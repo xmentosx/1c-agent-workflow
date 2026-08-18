@@ -68,6 +68,10 @@ Describe "Kilo verification recovery command" {
             $checkText | Should -Match ([regex]::Escape($marker))
         }
 
+        $recoveryText | Should -Match ([regex]::Escape("run-itl-command.ps1 -- -Action begin-verification-repair"))
+        $recoveryText | Should -Match ([regex]::Escape("run-itl-command.ps1 -- -Action check-dev-branch -VerificationTrigger repair -RepairSessionId <session-id>"))
+        $recoveryText | Should -Not -Match 'scripts\\agent-1c\.ps1 -Action (begin-verification-repair|check-dev-branch)'
+
         foreach ($marker in @(
             "current agent-made configuration/extension change",
             "reuse it unchanged",
@@ -90,7 +94,7 @@ Describe "Kilo verification recovery command" {
         $fastSkill | Should -Match 'run-itl-command\.ps1 -- -Action <action>'
         $fastSkill | Should -Not -Match 'scripts\\agent-1c\.ps1 -Action <action>'
         $fastSkill | Should -Match 'post-change check: `check-dev-branch`'
-        $fastSkill | Should -Match 'compatibility verification: `verify-dev-branch`'
+        $fastSkill | Should -Match 'exact compatibility alias for the normal check: `verify-dev-branch`'
         $fastSkill | Should -Match 'requiredAction=/itl-verify-fix'
         $fastSkill | Should -Match 'expected skill contract/SHA'
         $fastSkill | Should -Match 'run `status`'
@@ -107,7 +111,7 @@ Describe "Kilo verification recovery command" {
         )) {
             $fastSkill | Should -Match ([regex]::Escape($marker))
         }
-        foreach ($action in @('init-dev-branch-extension', 'update-dev-branch-base', 'check-dev-branch', 'verify-dev-branch')) {
+        foreach ($action in @('begin-verification-repair', 'init-dev-branch-extension', 'update-dev-branch-base', 'check-dev-branch', 'verify-dev-branch')) {
             $compactRunner | Should -Match ([regex]::Escape('"' + $action + '"'))
         }
         $compactRunner | Should -Not -Match 'confirm-client-reload'
@@ -165,5 +169,16 @@ Describe "Kilo verification recovery command" {
         $fastSkill | Should -Match ([regex]::Escape('installed `USER-RULES.md` runner/fixture/product ownership'))
         $fastSkill | Should -Match 'unchanged-rerun.*unrelated-dirty-change guards'
         $rulesText | Should -Not -Match '(?i)before every edit|after one experiment|obtain user confirmation.*topolog'
+    }
+
+    It "routes verification compatibility aliases through the canonical check path" {
+        $helper = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1") -Raw -Encoding UTF8
+        $lifecycle = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
+        $bridges = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.legacy-bridges.ps1") -Raw -Encoding UTF8
+
+        $helper | Should -Match '"verify-dev-branch" \{ Verify-DevBranch \}'
+        $helper | Should -Match '"deploy-and-test" \{ Invoke-ItlDeployAndTestBridge \}'
+        $lifecycle | Should -Match '(?s)function Verify-DevBranch \{\s*Check-DevBranch\s*\}'
+        $bridges | Should -Match '(?s)function Invoke-ItlDeployAndTestBridge \{.*?Check-DevBranch\s*\}'
     }
 }

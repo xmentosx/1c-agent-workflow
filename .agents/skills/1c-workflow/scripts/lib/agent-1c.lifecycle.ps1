@@ -8782,11 +8782,22 @@ function Invoke-DevBranchCheck {
     try {
     Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "check-dev-branch preflight" | Out-Null
     Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $explicit
-    Use-ItlVerificationRepairAttempt
+    $fullProofEligible = Test-ItlFullVerificationProofEligible -Trigger $trigger -ExplicitComponents $explicit
+    if ($trigger -eq "repair") {
+        Get-ItlMatchingVerificationRepairSession | Out-Null
+        if ($fullProofEligible) { Use-ItlVerificationRepairAttempt }
+    }
     Update-DevBranchBase
     Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
     Invoke-ItlVerificationCycle -Trigger $trigger -ExplicitComponents $explicit
-    Complete-ItlVerificationRepairSession
+    if ($trigger -eq "repair" -and $fullProofEligible) {
+        $verifiedState = Read-DevBranchState -Name $DevBranchName
+        $verification = Get-VerificationState -State $verifiedState
+        $evidenceKind = [string](Get-StateValue -State $verifiedState -Name "lastVerificationEvidenceKind" -Default "")
+        if ($verification.status -eq "passed" -and $evidenceKind -eq "full") {
+            Complete-ItlVerificationRepairSession
+        }
+    }
     } finally {
         try { Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot } finally { Remove-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot }
     }
@@ -8844,16 +8855,7 @@ function Restore-ReleaseE2EInfobaseSnapshot {
 }
 
 function Verify-DevBranch {
-    $state = Read-DevBranchState -Name $DevBranchName
-    Assert-DevBranchExtensionInitialized -State $state -Operation "verify-dev-branch"
-    Assert-SingleManagedExtensionArtifact -State $state
-    $savedTrigger = $VerificationTrigger
-    try {
-        if (-not $VerificationTrigger) { $script:VerificationTrigger = "repair" }
-        Invoke-DevBranchCheck
-    } finally {
-        $script:VerificationTrigger = $savedTrigger
-    }
+    Check-DevBranch
 }
 
 function Export-DevBranchResult {
