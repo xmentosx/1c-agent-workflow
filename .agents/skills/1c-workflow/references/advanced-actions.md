@@ -2,11 +2,13 @@
 
 This reference is for diagnostics, recovery, and automation. Do not show this full list as the beginner command surface.
 
-Run helper actions from the project root:
+Run supported agent-facing executable actions from the project root through the compact runner; this includes both `/itl-verify-fix` repair calls:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action <action>
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action <compact-action>
 ```
+
+Use direct `agent-1c.ps1` only for actions that the compact runner intentionally does not expose, including short read-only actions and explicitly documented internal diagnostics such as diagnostic-only `run-dev-branch-tests`.
 
 Mutating actions are serialized per worktree through the ignored lifecycle operation lock. Concurrent ordinary operations in separate development worktrees are allowed; actions that also mutate master acquire both scopes. On `LIFECYCLE_OPERATION_CONFLICT`, use `status`, `doctor`, or `help` and wait for or diagnose the recorded PID/phase. Do not delete lock files or edit operation JSON. Status remains observable during active work and removes proven-stale on-demand leases only when it can immediately take lifecycle then runtime locks without disturbing the active operation record.
 

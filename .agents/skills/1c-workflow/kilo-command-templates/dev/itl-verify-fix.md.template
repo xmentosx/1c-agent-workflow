@@ -8,16 +8,18 @@ Use this recovery command only from an active `itldev/*` development branch work
 Begin one helper-owned repair session and retain the printed session id. It permits at most three full verification runs:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action begin-verification-repair
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action begin-verification-repair
 ```
+
+Retain the session id from the compact result `userReport`.
 
 1. Identify the current agent-made configuration/extension change from the user request, Git status/diff, and configured `exportPath`/`extensionsPath`. A Git-only refresh or merge from `master` is not an agent-made behavior change by itself.
 2. Search configured `testsPath` for scenarios that exercise the changed observable behavior. Name the matching scenarios. If coverage is relevant and sufficient, reuse it unchanged: do not add or edit a test merely because this command was invoked.
 3. Only when relevant coverage is missing, read `.agents/skills/1c-workflow/references/vanessa-tests.md` and add the smallest reliable scenario. A quick-fix normally needs one focused scenario; add another only for a separate meaningful boundary. Use `itl-vanessa-ui` only as needed for step search, syntax/runtime investigation, UI inspection, or focused debugging; MCP results are diagnostic and do not create a separate pass.
-4. Run the existing helper directly from the current project directory with `timeout_ms >= 3900000` by default when supported; if the configured Designer timeout is higher than 3600 seconds, raise the outer timeout too. Do not use `120000 ms` or another short default because the helper may launch 1C Designer/Enterprise operations:
+4. Run the compact helper from the current project directory with `timeout_ms >= 3900000` by default when supported; if the configured Designer timeout is higher than 3600 seconds, raise the outer timeout too. Do not use `120000 ms` or another short default because the helper may launch 1C Designer/Enterprise operations:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action check-dev-branch -VerificationTrigger repair -RepairSessionId <session-id>
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action check-dev-branch -VerificationTrigger repair -RepairSessionId <session-id>
 ```
 
 The helper owns the branch infobase update, Vanessa Automation `TESTMANAGER -> TESTCLIENT` run, JUnit/status/log evidence, and event-log baseline check. Do not run a separate base update first.

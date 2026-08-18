@@ -2403,7 +2403,50 @@ function Confirm-UnverifiedProceed {
     throw "$Operation stopped because fresh passed Vanessa verification is missing. Run verify-dev-branch or rerun with explicit unverified override."
 }
 
+function Add-VanessaVerificationEvidenceUpdates {
+    param(
+        [hashtable]$Updates,
+        [string]$Status,
+        [string]$Reason,
+        [string]$Commit,
+        [string]$Fingerprint,
+        [string]$ReportPath,
+        [string]$LogPath,
+        [switch]$RecordFullVerificationEvidence
+    )
+
+    if ($RecordFullVerificationEvidence) {
+        $Updates["lastVerificationStatus"] = $Status
+        $Updates["lastVerifiedCommit"] = $Commit
+        $Updates["lastVerifiedFingerprint"] = $Fingerprint
+        $Updates["lastVerifiedAt"] = (Get-Date).ToString("o")
+        $Updates["lastVerifiedReportPath"] = $ReportPath
+        $Updates["lastVerificationLogPath"] = $LogPath
+        $Updates["lastVerificationReason"] = $Reason
+        return
+    }
+
+    $Updates["lastVerificationStatus"] = "partial"
+    $Updates["lastVerificationEvidenceKind"] = "diagnostic"
+    $Updates["lastVerificationTrigger"] = "diagnostic"
+    $Updates["lastVerificationSkippedComponents"] = @("full-suite")
+    $Updates["lastVerificationReason"] = "Diagnostic Vanessa run status=$Status; it does not create full verification proof. $Reason"
+    $Updates["lastVerifiedCommit"] = ""
+    $Updates["lastVerifiedFingerprint"] = ""
+    $Updates["lastVerifiedAt"] = (Get-Date).ToString("o")
+    $Updates["lastVerifiedReportPath"] = ""
+    $Updates["lastVerificationLogPath"] = ""
+}
+
 function Run-DevBranchTests {
+    param([switch]$RecordFullVerificationEvidence)
+
+    if ($VerificationTrigger -eq "repair") {
+        Get-ItlMatchingVerificationRepairSession | Out-Null
+    }
+    if ($VanessaFeaturePath -or $VanessaFilterTags) {
+        $RecordFullVerificationEvidence = $false
+    }
     Set-RunStage -Stage "vanessa.prepare" -Detail "Preparing Vanessa Automation verification."
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "run-dev-branch-tests"
@@ -2453,6 +2496,9 @@ function Run-DevBranchTests {
     Write-Host "Vanessa TestClient port: $testPort"
     if ($VanessaFilterTags) {
         Write-Host "Vanessa tag filter: $VanessaFilterTags"
+    }
+    if (-not $RecordFullVerificationEvidence) {
+        Write-Host "[WARN] Diagnostic-only Vanessa run: it does not create fresh full verification proof and cannot authorize result export or complete a repair session."
     }
     Write-Host "Dev branch tests use TESTMANAGER -> TESTCLIENT and do not load configuration files. Use check-dev-branch for the normal post-change update plus test cycle."
 
@@ -2528,14 +2574,8 @@ function Run-DevBranchTests {
             lastVanessaTestPid = $script:LastProcessId
             lastVanessaTimedOut = $script:LastProcessTimedOut
             lastVanessaTimeoutSeconds = $timeoutSeconds
-            lastVerificationStatus = "failed"
-            lastVerifiedCommit = $currentCommit
-            lastVerifiedFingerprint = $currentFingerprint
-            lastVerifiedAt = (Get-Date).ToString("o")
-            lastVerifiedReportPath = $runDirectory
-            lastVerificationLogPath = $logPath
-            lastVerificationReason = $failureReason
         }
+        Add-VanessaVerificationEvidenceUpdates -Updates $updates -Status "failed" -Reason $failureReason -Commit $currentCommit -Fingerprint $currentFingerprint -ReportPath $runDirectory -LogPath $logPath -RecordFullVerificationEvidence:$RecordFullVerificationEvidence
         if ($null -ne $eventLogVerification) {
             $updates["lastVanessaEventLogReader"] = $eventLogVerification.reader
             $updates["lastVanessaEventLogBaselinePath"] = $eventLogVerification.baselinePath
@@ -2607,7 +2647,7 @@ function Run-DevBranchTests {
             reason = "$($verification.reason) Event log: $($eventLogVerification.reason)"
         }
     }
-    Update-DevBranchState -State $state -Updates @{
+    $updates = @{
         lastVanessaTestAt = (Get-Date).ToString("o")
         lastVanessaStartedAt = $runStartedAt.ToString("o")
         lastVanessaFinishedAt = $runFinishedAt.ToString("o")
@@ -2632,14 +2672,9 @@ function Run-DevBranchTests {
         lastVanessaCleanupDurationMs = $cleanupDurationMs
         lastVanessaEventLogDurationMs = $eventLogDurationMs
         lastVanessaPostProcessDurationMs = [int64]$postProcessStopwatch.ElapsedMilliseconds
-        lastVerificationStatus = $verification.status
-        lastVerifiedCommit = $currentCommit
-        lastVerifiedFingerprint = $currentFingerprint
-        lastVerifiedAt = (Get-Date).ToString("o")
-        lastVerifiedReportPath = $runDirectory
-        lastVerificationLogPath = $logPath
-        lastVerificationReason = $verification.reason
     }
+    Add-VanessaVerificationEvidenceUpdates -Updates $updates -Status $verification.status -Reason $verification.reason -Commit $currentCommit -Fingerprint $currentFingerprint -ReportPath $runDirectory -LogPath $logPath -RecordFullVerificationEvidence:$RecordFullVerificationEvidence
+    Update-DevBranchState -State $state -Updates $updates
 
     Write-Host "Vanessa tests finished."
     Write-Host "Verification status: $($verification.status)"

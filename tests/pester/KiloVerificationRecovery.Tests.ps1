@@ -62,6 +62,10 @@ Describe "Kilo verification recovery command" {
         $checkText | Should -Not -Match "Search configured"
         $checkText | Should -Not -Match "three failed runs"
 
+        $recoveryText | Should -Match ([regex]::Escape("run-itl-command.ps1 -- -Action begin-verification-repair"))
+        $recoveryText | Should -Match ([regex]::Escape("run-itl-command.ps1 -- -Action check-dev-branch -VerificationTrigger repair -RepairSessionId <session-id>"))
+        $recoveryText | Should -Not -Match 'scripts\\agent-1c\.ps1 -Action (begin-verification-repair|check-dev-branch)'
+
         foreach ($marker in @(
             "current agent-made configuration/extension change",
             "reuse it unchanged",
@@ -97,8 +101,19 @@ Describe "Kilo verification recovery command" {
         )) {
             $fastSkill | Should -Match ([regex]::Escape($marker))
         }
-        foreach ($action in @('init-dev-branch-extension', 'update-dev-branch-base', 'check-dev-branch', 'verify-dev-branch')) {
+        foreach ($action in @('begin-verification-repair', 'init-dev-branch-extension', 'update-dev-branch-base', 'check-dev-branch', 'verify-dev-branch')) {
             $compactRunner | Should -Match ([regex]::Escape('"' + $action + '"'))
         }
+    }
+
+    It "routes verification compatibility aliases through the canonical check path" {
+        $helper = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1") -Raw -Encoding UTF8
+        $lifecycle = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
+        $bridges = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.legacy-bridges.ps1") -Raw -Encoding UTF8
+
+        $helper | Should -Match '"verify-dev-branch" \{ Verify-DevBranch \}'
+        $helper | Should -Match '"deploy-and-test" \{ Invoke-ItlDeployAndTestBridge \}'
+        $lifecycle | Should -Match '(?s)function Verify-DevBranch \{\s*Check-DevBranch\s*\}'
+        $bridges | Should -Match '(?s)function Invoke-ItlDeployAndTestBridge \{.*?Check-DevBranch\s*\}'
     }
 }

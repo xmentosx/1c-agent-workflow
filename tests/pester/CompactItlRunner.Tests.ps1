@@ -34,6 +34,26 @@ exit 0
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "runs repair-session creation through the compact boundary and returns its session id" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-repair-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport='Repair session: abc123. Repair attempts: 0/3.' }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $scriptRoot "run-itl-command.ps1") -- -Action begin-verification-repair
+            $LASTEXITCODE | Should -Be 0
+            $summary = ($output -join "`n") | ConvertFrom-Json
+            $summary.action | Should -Be "begin-verification-repair"
+            $summary.userReport | Should -Be "Repair session: abc123. Repair attempts: 0/3."
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "returns absolute result paths and artifacts in the successful export summary" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-result-" + [guid]::NewGuid().ToString("N"))
         try {
