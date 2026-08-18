@@ -171,7 +171,7 @@
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/DevBranchLifecycle.Tests.ps1",
-      "paths": [".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/run-*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.bootstrap.ps1"],
+      "paths": [".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/run-*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.bootstrap.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ui-tools.ps1"],
       "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/PortRegistryLifecycle.Tests.ps1", "tests/pester/OneCSessionLimit.Tests.ps1", "tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1", "tests/pester/CompactItlRunner.Tests.ps1", "tests/pester/DesignerCompletion.Tests.ps1", "tests/pester/DesignerMemoryGuard.Tests.ps1", "tests/pester/FormElementContext.Tests.ps1", "tests/pester/UiTools.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1"]
     },
     {
@@ -225,7 +225,7 @@
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/AiRulesClients.Tests.ps1",
-      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.client*.ps1", ".agents/skills/1c-workflow/opencode-plugin-templates/*", ".agents/skills/1c-workflow-fast/*", ".agents/skills/product-docs/*", ".agents/skills/itl-roctup-1c-data/*", "templates/ai-rules-*", "scripts/build-ai-rules-release.ps1", "scripts/test-ai-rules-compatibility.ps1", "scripts/promote-ai-rules-compatibility.ps1"],
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.client*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.context-diagnostics.ps1", ".agents/skills/1c-workflow/opencode-plugin-templates/*", ".agents/skills/1c-workflow-fast/*", ".agents/skills/product-docs/*", ".agents/skills/itl-roctup-1c-data/*", "templates/ai-rules-*", "scripts/build-ai-rules-release.ps1", "scripts/test-ai-rules-compatibility.ps1", "scripts/promote-ai-rules-compatibility.ps1"],
       "tests": ["tests/pester/AiRulesClients.Tests.ps1", "tests/pester/ClientAdaptersAndModes.Tests.ps1", "tests/pester/AiRulesMigration.Tests.ps1", "tests/pester/AiRulesOverlay.Tests.ps1", "tests/pester/KiloContextDiagnostics.Tests.ps1", "tests/pester/KiloVerificationRecovery.Tests.ps1", "tests/pester/OpenCodeWorkspace.Tests.ps1"]
     },
     {
