@@ -150,21 +150,48 @@ function Start-ItlVerificationRepairSession {
     Write-Utf8Text -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
     Write-Host "Repair session: $($record.sessionId)"
     Write-Host "Repair attempts: 0/3"
+    Set-RunUserReport -Report "Repair session: $($record.sessionId). Repair attempts: 0/3."
 }
 
-function Use-ItlVerificationRepairAttempt {
-    if ($VerificationTrigger -ne "repair") { return }
+function Get-ItlMatchingVerificationRepairSession {
+    if ([string]::IsNullOrWhiteSpace([string]$RepairSessionId)) {
+        throw "VerificationTrigger=repair requires RepairSessionId from begin-verification-repair."
+    }
     $path = Get-ItlVerificationRepairStatePath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
-        Start-ItlVerificationRepairSession
+        throw "Verification repair session is missing. Run begin-verification-repair first and pass its RepairSessionId."
     }
     $record = Read-Utf8Text -Path $path | ConvertFrom-Json
-    if ($RepairSessionId -and [string]$record.sessionId -ne $RepairSessionId) {
+    if ([string]$record.sessionId -ne $RepairSessionId) {
         throw "Repair session mismatch. Active: $($record.sessionId); requested: $RepairSessionId."
     }
     if ([string]$record.branch -ne (Get-CurrentBranch) -or (Get-FullPathNormalized ([string]$record.projectRoot)) -ne (Get-FullPathNormalized $script:ProjectRoot)) {
         throw "Repair session belongs to another branch or worktree. Begin a new /itl-verify-fix invocation."
     }
+    if ([string]$record.status -ne "active") {
+        throw "Repair session $($record.sessionId) is not active (status=$($record.status)). Begin a new /itl-verify-fix invocation."
+    }
+    return $record
+}
+
+function Test-ItlFullVerificationProofEligible {
+    param(
+        [ValidateSet("implicit", "command", "repair", "explicit")][string]$Trigger,
+        [string[]]$ExplicitComponents = @()
+    )
+
+    if ($VanessaFeaturePath -or $VanessaFilterTags) { return $false }
+    $decisions = @(
+        Get-ItlVerificationExecutionDecision -Component "vanessa" -Trigger $Trigger -ExplicitComponents $ExplicitComponents
+        Get-ItlVerificationExecutionDecision -Component "event-log" -Trigger $Trigger -ExplicitComponents $ExplicitComponents
+    )
+    return @($decisions | Where-Object { -not $_.run }).Count -eq 0
+}
+
+function Use-ItlVerificationRepairAttempt {
+    if ($VerificationTrigger -ne "repair") { return }
+    $record = Get-ItlMatchingVerificationRepairSession
+    $path = Get-ItlVerificationRepairStatePath
     if ([int]$record.attempts -ge 3) {
         Set-RunFailureContext -Category "runner" -RequiredAction "report-blocker"
         throw "Repair session $($record.sessionId) exhausted its three full verification runs. Return blocker diagnostics; a fourth run is forbidden."
@@ -179,8 +206,7 @@ function Use-ItlVerificationRepairAttempt {
 function Complete-ItlVerificationRepairSession {
     if ($VerificationTrigger -ne "repair") { return }
     $path = Get-ItlVerificationRepairStatePath
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) { return }
-    $record = Read-Utf8Text -Path $path | ConvertFrom-Json
+    $record = Get-ItlMatchingVerificationRepairSession
     $record.status = "passed"
     $record.updatedAt = (Get-Date).ToString("o")
     Write-Utf8Text -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
@@ -200,7 +226,8 @@ function Invoke-ItlVerificationCycle {
 
     if ($vanessa.run) {
         $script:ItlSkipEventLogForVerification = -not $eventLog.run
-        try { Run-DevBranchTests } finally { $script:ItlSkipEventLogForVerification = $false }
+        $recordFullProof = Test-ItlFullVerificationProofEligible -Trigger $Trigger -ExplicitComponents $ExplicitComponents
+        try { Run-DevBranchTests -RecordFullVerificationEvidence:$recordFullProof } finally { $script:ItlSkipEventLogForVerification = $false }
     } elseif ($eventLog.run) {
         Test-ItlEventLogCurrent -State $state
     }
