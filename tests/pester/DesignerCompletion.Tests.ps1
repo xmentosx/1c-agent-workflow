@@ -301,6 +301,59 @@ Describe "1C Designer completion evidence" {
         @($result.stopped) | Should -Be @(8250, 8251)
     }
 
+    It "requires full infobase release by default and bypasses it only when explicitly allowed" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:InfoBaseReleaseChecks = 0
+            function Get-DesignerInvocationProcessState {
+                return [pscustomobject]@{
+                    querySucceeded = $true; active = $false; processIds = @()
+                    cpuSampleAvailable = $true; cpuTime100ns = [int64]0
+                    workingSetSampleAvailable = $true; workingSetMb = 0; detail = ""
+                }
+            }
+            function Test-DesignerInfoBaseReleased {
+                $script:InfoBaseReleaseChecks++
+                return $false
+            }
+
+            $context = [pscustomobject]@{
+                launcherExited = $true; observedAtUtc = [DateTime]::UtcNow
+                timeoutRemainingSeconds = 3600; postExitElapsedSeconds = 1; processId = 8270
+            }
+            $defaultState = New-DesignerInvocationProbeState -LauncherProcessId 8270
+            $defaultState.processesReleaseConfirmed = $true
+            $defaultResult = Test-DesignerInvocationReleased `
+                -ProbeState $defaultState `
+                -ProbeContext $context `
+                -LogPath (Join-Path $TestDrive "default-release.log") `
+                -InfoBaseKind file `
+                -InfoBasePath (Join-Path $TestDrive "base") `
+                -OperationKind "designer-command" 6>$null
+
+            $compatibleState = New-DesignerInvocationProbeState -LauncherProcessId 8271
+            $compatibleState.processesReleaseConfirmed = $true
+            $compatibleResult = Test-DesignerInvocationReleased `
+                -ProbeState $compatibleState `
+                -ProbeContext $context `
+                -LogPath (Join-Path $TestDrive "compatible-release.log") `
+                -InfoBaseKind file `
+                -InfoBasePath (Join-Path $TestDrive "base") `
+                -OperationKind "dump-config-to-files" `
+                -RequireInfoBaseRelease:$false 6>$null
+
+            [pscustomobject]@{
+                defaultResult = $defaultResult
+                compatibleResult = $compatibleResult
+                infoBaseReleaseChecks = $script:InfoBaseReleaseChecks
+            }
+        }
+
+        $result.defaultResult | Should -BeFalse
+        $result.compatibleResult | Should -BeTrue
+        $result.infoBaseReleaseChecks | Should -Be 1
+    }
+
     It "returns a stable Designer stall error after owned cleanup" {
         $fixtureRoot = Join-Path $TestDrive "designer-stall-call"
         $basePath = Join-Path $fixtureRoot "base"
@@ -857,6 +910,11 @@ Describe "1C Designer completion evidence" {
             $script:DumpArtifactReady = $false
             $script:DumpArtifactCalls = 0
             $script:DumpArtifactWrittenAtTicks = 0
+            $script:InfoBaseReleaseChecks = 0
+            function Test-DesignerInfoBaseReleased {
+                $script:InfoBaseReleaseChecks++
+                return $false
+            }
             function Get-DesignerDumpArtifactState {
                 param([string]$Path)
                 $script:DumpArtifactCalls++
@@ -928,6 +986,7 @@ Describe "1C Designer completion evidence" {
                 stableExitedResult = $script:StableExitedResult
                 finalArtifactCalls = $script:DumpArtifactCalls
                 postExitProbeSeconds = $script:CapturedDumpPostExitProbeSeconds
+                infoBaseReleaseChecks = $script:InfoBaseReleaseChecks
             }
         }
 
@@ -938,6 +997,7 @@ Describe "1C Designer completion evidence" {
         $result.stableExitedResult | Should -BeTrue
         $result.finalArtifactCalls | Should -Be 2
         $result.postExitProbeSeconds | Should -Be 30
+        $result.infoBaseReleaseChecks | Should -Be 0
     }
 
     It "ignores error words embedded in Designer metadata identifiers" {

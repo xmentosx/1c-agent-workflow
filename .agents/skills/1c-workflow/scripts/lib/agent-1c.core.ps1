@@ -5305,7 +5305,8 @@ function Test-DesignerInvocationReleased {
         [string]$LogPath,
         [string]$InfoBaseKind,
         [string]$InfoBasePath,
-        [string]$OperationKind
+        [string]$OperationKind,
+        [bool]$RequireInfoBaseRelease = $true
     )
 
     if ($null -eq $ProbeContext) {
@@ -5323,7 +5324,11 @@ function Test-DesignerInvocationReleased {
             $ProbeState.processesReleaseConfirmed = $true
         }
     }
-    $infoBaseReleased = Test-DesignerInfoBaseReleased -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+    $infoBaseReleased = if ($RequireInfoBaseRelease) {
+        Test-DesignerInfoBaseReleased -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
+    } else {
+        $true
+    }
     $elapsed = ConvertTo-IntOrDefault -Value (Get-StateValue -State $ProbeContext -Name "postExitElapsedSeconds" -Default 0) -Default 0
     $launcherExited = [bool](Get-StateValue -State $ProbeContext -Name "launcherExited" -Default $false)
     $waitingDetail = if (-not $launcherExited) {
@@ -5868,7 +5873,8 @@ function Invoke-Designer {
                 -LogPath $logPath `
                 -InfoBaseKind $InfoBaseKind `
                 -InfoBasePath $InfoBasePath `
-                -OperationKind $operationKind)) {
+                -OperationKind $operationKind `
+                -RequireInfoBaseRelease:$false)) {
                 return $false
             }
             $observedAtUtc = [DateTime]::UtcNow
