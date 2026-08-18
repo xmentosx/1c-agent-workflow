@@ -1974,6 +1974,146 @@
         $delegateIndex | Should -BeGreaterThan $reexecIndex
     }
 
+    It "routes the authoritative Sync-Master export through the specialized index rebuild" {
+        $match = [regex]::Match($HelperText, "(?s)function\s+Sync-Master\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
+        $match.Success | Should -BeTrue
+        $body = $match.Groups["body"].Value
+
+        ([regex]::Matches($body, "Commit-AuthoritativeExportPathIfChanged")).Count | Should -Be 1
+        $body | Should -Match ([regex]::Escape('-ExportPath $dumpResult.exportPath'))
+        $body | Should -Not -Match 'Commit-IfChanged[^\r\n]+\$dumpResult\.exportPath'
+    }
+
+    It "rebuilds the authoritative export index for case-only renames in both directions" {
+        $renameCases = @(
+            [pscustomobject]@{ oldName = "удалить_Тест"; newName = "Удалить_Тест" },
+            [pscustomobject]@{ oldName = "Удалить_Тест"; newName = "удалить_Тест" }
+        )
+
+        foreach ($renameCase in $renameCases) {
+            $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-authoritative-case-" + [guid]::NewGuid().ToString("N"))
+            try {
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                & git -C $tempRoot init --quiet
+                & git -C $tempRoot config user.email "itl-tests@example.invalid"
+                & git -C $tempRoot config user.name "ITL Tests"
+                & git -C $tempRoot config core.ignorecase true
+                & git -C $tempRoot config core.fsmonitor true
+
+                $oldFile = "src/cf/Плановые задания/$($renameCase.oldName).xml"
+                $oldNestedFile = "src/cf/Плановые задания/$($renameCase.oldName)/Ext/Расписание.xml"
+                $newFile = "src/cf/Плановые задания/$($renameCase.newName).xml"
+                $newNestedFile = "src/cf/Плановые задания/$($renameCase.newName)/Ext/Расписание.xml"
+                $oldFilePath = Join-Path $tempRoot ($oldFile.Replace("/", "\"))
+                $oldNestedFilePath = Join-Path $tempRoot ($oldNestedFile.Replace("/", "\"))
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $oldNestedFilePath) | Out-Null
+                [System.IO.File]::WriteAllText($oldFilePath, "old", [System.Text.UTF8Encoding]::new($false))
+                [System.IO.File]::WriteAllText($oldNestedFilePath, "old nested", [System.Text.UTF8Encoding]::new($false))
+                & git -C $tempRoot add --all --force -- src/cf
+                & git -C $tempRoot commit --quiet -m "baseline"
+                & git -C $tempRoot status --short | Out-Null
+
+                $stagedExportPath = Join-Path $tempRoot (".tx-stage-" + [guid]::NewGuid().ToString("N") + "\cf")
+                $newFilePath = Join-Path $stagedExportPath ($newFile.Substring("src/cf/".Length).Replace("/", "\"))
+                $newNestedFilePath = Join-Path $stagedExportPath ($newNestedFile.Substring("src/cf/".Length).Replace("/", "\"))
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $newNestedFilePath) | Out-Null
+                [System.IO.File]::WriteAllText($newFilePath, "new", [System.Text.UTF8Encoding]::new($false))
+                [System.IO.File]::WriteAllText($newNestedFilePath, "new nested", [System.Text.UTF8Encoding]::new($false))
+                Move-Item -LiteralPath (Join-Path $tempRoot "src\cf") -Destination (Join-Path $tempRoot (".tx-backup-" + [guid]::NewGuid().ToString("N")))
+                Move-Item -LiteralPath $stagedExportPath -Destination (Join-Path $tempRoot "src\cf")
+
+                $result = & {
+                    . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    $firstCommitted = Commit-AuthoritativeExportPathIfChanged -Message "sync: authoritative case rename" -ExportPath "src/cf"
+                    $treePaths = @(Get-GitPathList -Arguments @("ls-tree", "-r", "--name-only", "-z", "HEAD", "--", "src/cf"))
+                    $indexPaths = @(Get-GitPathList -Arguments @("ls-files", "-z", "--", "src/cf"))
+                    $secondCommitted = Commit-AuthoritativeExportPathIfChanged -Message "sync: idempotent repeat" -ExportPath "src/cf"
+                    [pscustomobject]@{
+                        firstCommitted = $firstCommitted
+                        secondCommitted = $secondCommitted
+                        treePaths = $treePaths
+                        indexPaths = $indexPaths
+                        commitCount = [int](Get-GitOutput @("rev-list", "--count", "HEAD"))
+                    }
+                }
+
+                $result.firstCommitted | Should -BeTrue
+                $result.secondCommitted | Should -BeFalse
+                $result.commitCount | Should -Be 2
+                @($result.treePaths) | Should -HaveCount 2
+                @($result.indexPaths) | Should -HaveCount 2
+                @($result.treePaths | Where-Object { $_ -ceq $oldFile -or $_ -ceq $oldNestedFile }) | Should -HaveCount 0
+                @($result.treePaths | Where-Object { $_ -ceq $newFile -or $_ -ceq $newNestedFile }) | Should -HaveCount 2
+                $caseInsensitivePaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                foreach ($trackedPath in @($result.treePaths)) {
+                    $caseInsensitivePaths.Add($trackedPath) | Should -BeTrue
+                }
+            } finally {
+                if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                    & git -C $tempRoot fsmonitor--daemon stop *> $null
+                    Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    }
+
+    It "rejects a real authoritative index collision before a commit" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-authoritative-collision-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & git -C $tempRoot init --quiet
+            & git -C $tempRoot config user.email "itl-tests@example.invalid"
+            & git -C $tempRoot config user.name "ITL Tests"
+            & git -C $tempRoot config core.ignorecase true
+
+            $lowerPath = "src/cf/Плановые задания/объект.xml"
+            $upperPath = "src/cf/Плановые задания/Объект.xml"
+            $physicalPath = Join-Path $tempRoot ($lowerPath.Replace("/", "\"))
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $physicalPath) | Out-Null
+            [System.IO.File]::WriteAllText($physicalPath, "lower", [System.Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot add --all --force -- src/cf
+            & git -C $tempRoot commit --quiet -m "baseline"
+
+            $intermediatePath = "$physicalPath.case-rename"
+            $upperPhysicalPath = Join-Path $tempRoot ($upperPath.Replace("/", "\"))
+            [System.IO.File]::Move($physicalPath, $intermediatePath)
+            [System.IO.File]::Move($intermediatePath, $upperPhysicalPath)
+            [System.IO.File]::WriteAllText($upperPhysicalPath, "upper", [System.Text.UTF8Encoding]::new($false))
+            $upperBlob = ((& git -C $tempRoot hash-object -w -- $upperPhysicalPath) -join "").Trim()
+            & git -C $tempRoot update-index --add --cacheinfo "100644,$upperBlob,$upperPath"
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $pathsBefore = @(Get-GitPathList -Arguments @("ls-files", "-z", "--", "src/cf"))
+                $threw = $false
+                $message = ""
+                try {
+                    Assert-GitAuthoritativeExportPathHasNoCaseCollisions -ExportPath "src/cf"
+                } catch {
+                    $threw = $true
+                    $message = $_.Exception.Message
+                }
+                [pscustomobject]@{
+                    pathsBefore = $pathsBefore
+                    threw = $threw
+                    message = $message
+                    commitCount = [int](Get-GitOutput @("rev-list", "--count", "HEAD"))
+                }
+            }
+
+            @($result.pathsBefore) | Should -HaveCount 2
+            $result.threw | Should -BeTrue
+            $result.message | Should -Match "GIT_CASE_COLLISION_IN_AUTHORITATIVE_DUMP"
+            $result.message | Should -Match ([regex]::Escape($lowerPath))
+            $result.message | Should -Match ([regex]::Escape($upperPath))
+            $result.commitCount | Should -Be 1
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "preserves helper arguments needed for automatic reexec" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-reexec-args-test-" + [guid]::NewGuid().ToString("N"))
         $statusPath = Join-Path $tempRoot "status.json"
