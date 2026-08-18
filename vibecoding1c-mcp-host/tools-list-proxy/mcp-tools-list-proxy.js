@@ -299,6 +299,7 @@ async function startProxy(args, expected) {
     const transport = upstream.protocol === 'https:' ? https : http;
     const headers = filteredHeaders(incoming.headers);
     headers.host = upstream.host;
+    headers['x-itl-mcp-proxy'] = 'tools-list-proxy';
     if (body.length) headers['content-length'] = body.length;
     const upstreamRequest = transport.request({
       protocol: upstream.protocol, hostname: upstream.hostname, port: upstream.port || undefined,

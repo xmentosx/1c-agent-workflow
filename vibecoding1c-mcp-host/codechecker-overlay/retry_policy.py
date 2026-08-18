@@ -9,9 +9,9 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, TypeVar
 
 try:
-    from .observability import log_event
+    from .observability import classify_error, log_event
 except ImportError:  # pragma: no cover - supports direct local test execution
-    from observability import log_event
+    from observability import classify_error, log_event
 
 
 LOGGER = logging.getLogger(__name__)
@@ -74,6 +74,7 @@ async def _run_with_transient_network_retry(
     session_policy: str,
     backoff_seconds: Sequence[float] = DEFAULT_BACKOFF_SECONDS,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    retry_missing_assistant_uuid_once: bool = False,
 ) -> _Result:
     delays = tuple(backoff_seconds)
     for attempt in range(len(delays) + 1):
@@ -82,7 +83,18 @@ async def _run_with_transient_network_retry(
             result = await operation()
         except Exception as error:
             transient = is_transient_network_error(error)
-            exhausted = attempt == len(delays)
+            error_class = (
+                "transient_network" if transient else classify_error(error)
+            )
+            recoverable_direct_match = (
+                retry_missing_assistant_uuid_once
+                and error_class == "direct_missing_assistant_uuid"
+            )
+            can_retry = (
+                (transient and attempt < len(delays))
+                or (recoverable_direct_match and attempt == 0 and bool(delays))
+            )
+            exhausted = (transient or recoverable_direct_match) and not can_retry
             log_event(
                 "upstream_attempt_end",
                 stage="upstream_attempt",
@@ -90,17 +102,25 @@ async def _run_with_transient_network_retry(
                 sessionPolicy=session_policy,
                 attempt=attempt + 1,
                 maxAttempts=len(delays) + 1,
-                outcome="transient_error" if transient else "error",
+                outcome=(
+                    "transient_error"
+                    if transient
+                    else "retryable_direct_error"
+                    if can_retry
+                    else "error"
+                ),
                 exhausted=exhausted,
                 elapsedMs=max(0, round((time.perf_counter() - started) * 1000)),
                 errorType=type(error).__name__,
+                errorClass=error_class,
             )
-            if not transient or exhausted:
+            if not can_retry:
                 raise
             delay = delays[attempt]
             LOGGER.warning(
-                "Transient 1C.ai network disconnect; retrying %s with %s "
+                "Retryable 1C.ai failure (%s); retrying %s with %s "
                 "in %.2fs (attempt %d/%d): %s",
+                error_class,
                 operation_name,
                 session_policy,
                 delay,
@@ -191,4 +211,5 @@ async def call_tool_with_transient_network_retry(
         session_policy="a fresh session",
         backoff_seconds=backoff_seconds,
         sleep=sleep,
+        retry_missing_assistant_uuid_once=True,
     )
