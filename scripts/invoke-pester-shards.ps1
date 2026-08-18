@@ -11,6 +11,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 
 function ConvertTo-NativeArgument {
     param([string]$Value)

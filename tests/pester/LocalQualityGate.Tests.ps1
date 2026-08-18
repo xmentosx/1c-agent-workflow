@@ -73,6 +73,25 @@ Describe "Local quality gate contract" {
         $shardRunner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
         $shardRunner | Should -Match '\$serialTestNames = @\("CompactItlRunner\.Tests\.ps1", "DependencyLocks\.Tests\.ps1", "ReleaseGate\.Tests\.ps1"\)'
     }
+    It "imports the Utility hash command before shard archive and cache fingerprints" {
+        $runner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
+        $import = 'Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop'
+        $importIndex = $runner.IndexOf($import, [StringComparison]::Ordinal)
+        $importIndex | Should -BeGreaterThan -1
+        $runner.IndexOf('function Initialize-VanessaSourceBuildArchiveForPester', [StringComparison]::Ordinal) | Should -BeGreaterThan $importIndex
+        $runner.IndexOf('function Get-ShardInputDigest', [StringComparison]::Ordinal) | Should -BeGreaterThan $importIndex
+        $runner.IndexOf('Get-FileHash', [StringComparison]::Ordinal) | Should -BeGreaterThan $importIndex
+
+        $probePath = Join-Path $TestDrive "utility-module-autoload-disabled.ps1"
+        [IO.File]::WriteAllText($probePath, @"
+`$PSModuleAutoLoadingPreference = "None"
+$import
+(Get-Command Get-FileHash -ErrorAction Stop).Name
+"@, [Text.UTF8Encoding]::new($false))
+        $probe = Invoke-TestPowerShellFile -FilePath $probePath
+        $probe.exitCode | Should -Be 0
+        $probe.combinedText | Should -Match 'Get-FileHash'
+    }
     It "qualifies static and live candidate evidence without repeating Develop during Release" {
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8; $qualification = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-qualification.ps1") -Raw -Encoding UTF8
         $promoter = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\promote-ai-rules-compatibility.ps1") -Raw -Encoding UTF8
