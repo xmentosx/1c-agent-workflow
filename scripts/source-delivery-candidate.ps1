@@ -26,10 +26,30 @@ function Add-QueuedRangesToCandidate {
     foreach ($entry in @($Entries)) {
         $already = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("merge-base", "--is-ancestor", [string]$entry.head, "HEAD") -AllowFailure
         if ($already.exitCode -eq 0) { continue }
-        $result = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("merge", "--no-edit", [string]$entry.head) -AllowFailure
+        $message = "Merge registered develop queue '$([string]$entry.id)' at $([string]$entry.head)"
+        $result = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("merge", "--no-commit", "-m", $message, [string]$entry.head) -AllowFailure
         if ($result.exitCode -ne 0) {
             [void](Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("merge", "--abort") -AllowFailure)
             throw "Queued range '$($entry.id)' conflicts with the develop candidate at $($entry.head). Resolve it in its source task and register again."
+        }
+
+        $mergeHead = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("rev-parse", "--verify", "MERGE_HEAD") -AllowFailure
+        if ($mergeHead.exitCode -ne 0) { continue }
+
+        $commitDate = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("show", "-s", "--format=%cI", [string]$entry.head)).stdout.Trim()
+        $previousAuthorDate = [Environment]::GetEnvironmentVariable("GIT_AUTHOR_DATE", "Process")
+        $previousCommitterDate = [Environment]::GetEnvironmentVariable("GIT_COMMITTER_DATE", "Process")
+        try {
+            $env:GIT_AUTHOR_DATE = $commitDate
+            $env:GIT_COMMITTER_DATE = $commitDate
+            $commit = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("commit", "--no-edit") -AllowFailure
+        } finally {
+            if ($null -eq $previousAuthorDate) { Remove-Item Env:GIT_AUTHOR_DATE -ErrorAction SilentlyContinue } else { $env:GIT_AUTHOR_DATE = $previousAuthorDate }
+            if ($null -eq $previousCommitterDate) { Remove-Item Env:GIT_COMMITTER_DATE -ErrorAction SilentlyContinue } else { $env:GIT_COMMITTER_DATE = $previousCommitterDate }
+        }
+        if ($commit.exitCode -ne 0) {
+            [void](Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("merge", "--abort") -AllowFailure)
+            throw "Queued range '$($entry.id)' could not be committed into the deterministic develop candidate at $($entry.head)."
         }
     }
 }

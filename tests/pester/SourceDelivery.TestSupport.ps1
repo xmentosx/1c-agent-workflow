@@ -61,6 +61,7 @@
         Set-Content -LiteralPath $fakeGate -Encoding UTF8 -Value @'
 param([string]$Mode, [string]$BaseRef, [string[]]$CoverageContract, [string]$AiRulesSource, [string]$E2EProjectRoot, [string]$ReleaseResumeMode); $CoverageContract = @($CoverageContract -split ','); if ($CoverageContract -and @($CoverageContract).Count -ne 2) { exit 12 }
 Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-modes.log') -Encoding UTF8 -Value $Mode
+Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-candidates.log') -Encoding UTF8 -Value ("$Mode " + (& git rev-parse HEAD).Trim())
 if ($Mode -eq 'Targeted') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-target-bases.log') -Encoding UTF8 -Value $BaseRef }
 if ($Mode -eq 'Release') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-release-resume.log') -Encoding UTF8 -Value $ReleaseResumeMode }
 if ($Mode -eq 'Develop') {
@@ -95,7 +96,7 @@ exit 0
         & git -C $root add fake-gate.ps1 fake-component-finalizer.ps1
         & git -C $root commit --quiet -m "test: add gate" *> $null
         & git -C $root push --quiet origin develop *> $null
-        return [pscustomobject]@{ root = $root; remote = $remote; gate = $fakeGate; finalizer = $fakeFinalizer; finalizerLog = (Join-Path $root 'build\component-finalizer.log'); modeLog = (Join-Path $root 'build\gate-modes.log'); targetBaseLog = (Join-Path $root 'build\gate-target-bases.log'); developBaseLog = (Join-Path $root 'build\gate-develop-bases.log'); developRouteInputLog = (Join-Path $root 'build\gate-develop-route-input.log'); releaseResumeLog = (Join-Path $root 'build\gate-release-resume.log'); base = (& git -C $root rev-parse HEAD).Trim() }
+        return [pscustomobject]@{ root = $root; remote = $remote; gate = $fakeGate; finalizer = $fakeFinalizer; finalizerLog = (Join-Path $root 'build\component-finalizer.log'); modeLog = (Join-Path $root 'build\gate-modes.log'); candidateLog = (Join-Path $root 'build\gate-candidates.log'); targetBaseLog = (Join-Path $root 'build\gate-target-bases.log'); developBaseLog = (Join-Path $root 'build\gate-develop-bases.log'); developRouteInputLog = (Join-Path $root 'build\gate-develop-route-input.log'); releaseResumeLog = (Join-Path $root 'build\gate-release-resume.log'); base = (& git -C $root rev-parse HEAD).Trim() }
     }
     function Remove-DeliveryFixture {
         param([object]$Fixture)

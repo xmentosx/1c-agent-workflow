@@ -113,6 +113,43 @@ It "publishes develop only after the exact candidate passes Develop and required
         }
     }
 
+It "rebuilds the same merge candidate after a failed release" {
+        $fixture = $null; $oldFailure = $env:ITL_TEST_FAIL_DELIVERY_RELEASE
+        try {
+            $fixture = New-DeliveryFixture
+            $base = $fixture.base
+            New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
+
+            & git -C $fixture.root switch --quiet -c task-z $base *> $null
+            Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\ZChange.Tests.ps1") -Encoding UTF8 -Value "Describe 'z change' { It 'works' { `$true | Should -BeTrue } }"
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit --quiet -m "test: add z change" *> $null
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "z-change") | Out-Null
+
+            & git -C $fixture.root switch --quiet -c task-a $base *> $null
+            New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
+            Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\AChange.Tests.ps1") -Encoding UTF8 -Value "Describe 'a change' { It 'works' { `$true | Should -BeTrue } }"
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit --quiet -m "test: add a change" *> $null
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "a-change") | Out-Null
+
+            $env:ITL_TEST_FAIL_DELIVERY_RELEASE = "true"
+            $failed = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure
+            $failed.exitCode | Should -Not -Be 0
+            $failedCandidate = ((Get-Content -LiteralPath $fixture.candidateLog -Encoding UTF8 | Where-Object { $_ -like 'Release *' } | Select-Object -Last 1) -split ' ', 2)[1]
+            $failedCandidate | Should -Match '^[0-9a-f]{40}$'
+
+            $env:ITL_TEST_FAIL_DELIVERY_RELEASE = "false"
+            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'))
+            $payload = $published.stdout | ConvertFrom-Json
+            $payload.commit | Should -Be $failedCandidate
+            (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $failedCandidate
+        } finally {
+            $env:ITL_TEST_FAIL_DELIVERY_RELEASE = $oldFailure
+            Remove-DeliveryFixture -Fixture $fixture
+        }
+    }
+
 It "imports an exact-tree qualification and revalidates Develop before Release" {
         $fixture = $null
         try {

@@ -35,7 +35,8 @@ function Get-QueueEntries {
         if (-not $records.ContainsKey($id)) { $records[$id] = [ordered]@{ id = $id; base = ""; head = "" } }
         $records[$id][$kind] = $sha
     }
-    return @($records.Values | Where-Object { $_.base -and $_.head } | Sort-Object id | ForEach-Object { [pscustomobject]$_ })
+    $entries = @($records.Values | Where-Object { $_.base -and $_.head } | ForEach-Object { [pscustomobject]$_ })
+    return @($entries | Sort-Object -Property id)
 }
 
 function Clear-PublishedQueueEntries {
