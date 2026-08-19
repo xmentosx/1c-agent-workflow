@@ -420,12 +420,27 @@ function Save-E2EConfigDumpInfoCursorCommit {
 
 function New-E2EVanessaFixtureCommit {
     $featurePath = Join-Path $worktreePath "tests\features\ITLReleaseFourFlat.feature"
+    $markerFeaturePath = Join-Path $worktreePath "tests\features\workflow-release-e2e.feature"
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $featurePath) | Out-Null
     # Keep the PowerShell 5.1 script source ASCII-safe; otherwise Cyrillic literals in a
     # UTF-8-without-BOM .ps1 are decoded through the active ANSI code page before writing.
     $featureBase64 = 'I2xhbmd1YWdlOiBydQoKQGl0bF9yZWxlYXNlX2ZsYXQK0KTRg9C90LrRhtC40L7QvdCw0Ls6INCn0LXRgtGL0YDQtSDQvdC10LfQsNCy0LjRgdC40LzRi9GFIHJlbGVhc2Ut0YHRhtC10L3QsNGA0LjRjwoK0JrQvtC90YLQtdC60YHRgjoKCdCU0LDQvdC+INCvINC30LDQv9GD0YHQutCw0Y4g0YHRhtC10L3QsNGA0LjQuSDQvtGC0LrRgNGL0YLQuNGPIFRlc3RDbGllbnQg0LjQu9C4INC/0L7QtNC60LvRjtGH0LDRjiDRg9C20LUg0YHRg9GJ0LXRgdGC0LLRg9GO0YnQuNC5CgrQodGG0LXQvdCw0YDQuNC5OiBSZWxlYXNlIHNjZW5hcmlvIG9uZQoJ0Jgg0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwINC90LAg0YHQtdGA0LLQtdGA0LUKCSIiImJzbAoJCdCV0YHQu9C4INCb0L7QttGMINCi0L7Qs9C00LAg0JLRi9C30LLQsNGC0YzQmNGB0LrQu9GO0YfQtdC90LjQtSAib25lIjsg0JrQvtC90LXRhtCV0YHQu9C4OwoJIiIiCgrQodGG0LXQvdCw0YDQuNC5OiBSZWxlYXNlIHNjZW5hcmlvIHR3bwoJ0Jgg0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwINC90LAg0YHQtdGA0LLQtdGA0LUKCSIiImJzbAoJCdCV0YHQu9C4INCb0L7QttGMINCi0L7Qs9C00LAg0JLRi9C30LLQsNGC0YzQmNGB0LrQu9GO0YfQtdC90LjQtSAidHdvIjsg0JrQvtC90LXRhtCV0YHQu9C4OwoJIiIiCgrQodGG0LXQvdCw0YDQuNC5OiBSZWxlYXNlIHNjZW5hcmlvIHRocmVlCgnQmCDRjyDQstGL0L/QvtC70L3Rj9GOINC60L7QtCDQstGB0YLRgNC+0LXQvdC90L7Qs9C+INGP0LfRi9C60LAg0L3QsCDRgdC10YDQstC10YDQtQoJIiIiYnNsCgkJ0JXRgdC70Lgg0JvQvtC20Ywg0KLQvtCz0LTQsCDQktGL0LfQstCw0YLRjNCY0YHQutC70Y7Rh9C10L3QuNC1ICJ0aHJlZSI7INCa0L7QvdC10YbQldGB0LvQuDsKCSIiIgoK0KHRhtC10L3QsNGA0LjQuTogUmVsZWFzZSBzY2VuYXJpbyBmb3VyCgnQmCDRjyDQstGL0L/QvtC70L3Rj9GOINC60L7QtCDQstGB0YLRgNC+0LXQvdC90L7Qs9C+INGP0LfRi9C60LAg0L3QsCDRgdC10YDQstC10YDQtQoJIiIiYnNsCgkJ0JXRgdC70Lgg0JvQvtC20Ywg0KLQvtCz0LTQsCDQktGL0LfQstCw0YLRjNCY0YHQutC70Y7Rh9C10L3QuNC1ICJmb3VyIjsg0JrQvtC90LXRhtCV0YHQu9C4OwoJIiIi'
     [System.IO.File]::WriteAllBytes($featurePath, [System.Convert]::FromBase64String($featureBase64))
-    & git -C $worktreePath add -- tests/features/ITLReleaseFourFlat.feature | Out-Null
+    if (-not (Test-Path -LiteralPath $markerFeaturePath -PathType Leaf)) {
+        throw "Release E2E target-infobase marker fixture is missing: $markerFeaturePath"
+    }
+    $oldMarkerStep = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0Jgg0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwINC90LAg0YHQtdGA0LLQtdGA0LU='))
+    $targetMarkerStep = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0Jgg0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwINC90LAg0YHQtdGA0LLQtdGA0LUgKNCg0LDRgdGI0LjRgNC10L3QuNC1KQ=='))
+    $markerFeatureText = [IO.File]::ReadAllText($markerFeaturePath, [Text.Encoding]::UTF8)
+    if (-not $markerFeatureText.Contains($targetMarkerStep)) {
+        $oldStepCount = ([regex]::Matches($markerFeatureText, [regex]::Escape($oldMarkerStep))).Count
+        if ($oldStepCount -ne 1) {
+            throw "Release E2E target-infobase marker fixture has an unexpected server-step contract: $markerFeaturePath"
+        }
+        $markerFeatureText = $markerFeatureText.Replace($oldMarkerStep, $targetMarkerStep)
+        [IO.File]::WriteAllText($markerFeaturePath, $markerFeatureText, [Text.UTF8Encoding]::new($false))
+    }
+    & git -C $worktreePath add -- tests/features/ITLReleaseFourFlat.feature tests/features/workflow-release-e2e.feature | Out-Null
     & git -C $worktreePath commit -m "test: add four flat Vanessa release scenarios" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Unable to commit the four-scenario Vanessa release fixture." }
     $commit = (& git -C $worktreePath rev-parse HEAD).Trim()

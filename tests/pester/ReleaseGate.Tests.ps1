@@ -478,7 +478,7 @@ Describe "Release E2E orchestration" {
             & git -C $mainRoot config user.name "ITL Test"
             Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".agent-1c/dev-branches/`n.agent-1c/runs/`n.agent-1c/snapshots/`n.agent-1c/release-e2e-actions.log`n.agent-1c/release-e2e-partial-list.txt`n.agents/`nbuild/`n"
             Set-Content -LiteralPath (Join-Path $mainRoot "README.md") -Encoding ASCII -Value "fixture"
-            New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot "src\cf\Ext"), (Join-Path $mainRoot ".agent-1c") | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot "src\cf\Ext"), (Join-Path $mainRoot ".agent-1c"), (Join-Path $mainRoot "tests\features") | Out-Null
             $dependencyLock = [ordered]@{
                 schemaVersion = 1
                 mode = "fresh"
@@ -498,6 +498,10 @@ Describe "Release E2E orchestration" {
 '@
             Set-Content -LiteralPath (Join-Path $mainRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "<ConfigDumpInfo>fixture</ConfigDumpInfo>"
             Set-Content -LiteralPath (Join-Path $mainRoot "src\cf\Ext\ParentConfigurations.bin") -Encoding Byte -Value ([byte[]](1, 2, 3, 4))
+            [IO.File]::WriteAllBytes(
+                (Join-Path $mainRoot "tests\features\workflow-release-e2e.feature"),
+                [Convert]::FromBase64String('I2xhbmd1YWdlOiBydQoK0Jgg0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwINC90LAg0YHQtdGA0LLQtdGA0LUK')
+            )
             & git -C $mainRoot add .
             & git -C $mainRoot commit -m "fixture" *> $null
             & git -C $mainRoot branch -M master
@@ -679,6 +683,8 @@ switch ($Action) {
             $failureSummary.error | Should -Match "release-e2e-extension-smoke failed with exit code 1"
             @($failureSummary.executedStages) | Should -Contain "config-cadence"
             @($failureSummary.executedStages) | Should -Contain "config-roundtrip"
+            $targetMarkerStep = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0Jgg0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwINC90LAg0YHQtdGA0LLQtdGA0LUgKNCg0LDRgdGI0LjRgNC10L3QuNC1KQ=='))
+            [IO.File]::ReadAllText((Join-Path $worktreeRoot "tests\features\workflow-release-e2e.feature"), [Text.Encoding]::UTF8) | Should -Match ([regex]::Escape($targetMarkerStep))
 
             $staleResultRoot = Join-Path $worktreeRoot "build\result"
             $staleSnapshotRoot = Join-Path $worktreeRoot ".agent-1c\snapshots"
