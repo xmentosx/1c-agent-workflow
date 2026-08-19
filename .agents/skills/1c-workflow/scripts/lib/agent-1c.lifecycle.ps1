@@ -1538,7 +1538,7 @@ function Load-ConfigFromFiles {
         -FileCount $changeSet.files.Count `
         -ExtensionName $ExtensionName `
         -Mode $Mode `
-        -ResetConfigDumpInfo:$restoreInvalidated
+        -ResetConfigDumpInfo:($restoreInvalidated -or $Mode -eq "Full")
     Set-RunStage -Stage "config-load.loaded" -Detail "Designer completed the $ContentKind source load."
 
     $loadedAt = (Get-Date).ToString("o")

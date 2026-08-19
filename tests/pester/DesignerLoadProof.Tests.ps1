@@ -283,8 +283,9 @@ Describe "1C Designer load proof invalidation" {
                 function Get-CurrentCommit { "head" }
                 function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
                 function Invoke-ConfigLoadWithFallback {
-                    param([string]$Mode)
+                    param([string]$Mode, [switch]$ResetConfigDumpInfo)
                     $script:LoadCalls++
+                    $script:ResetConfigDumpInfo = [bool]$ResetConfigDumpInfo
                     [pscustomobject]@{
                         lastLogPath = "C:\full.log"; loadModeUsed = $Mode.ToLowerInvariant(); partialLogPath = ""
                         fullFallbackLogPath = ""; configLoadStatus = "passed"; partialError = ""; fullFallbackError = ""
@@ -297,13 +298,14 @@ Describe "1C Designer load proof invalidation" {
                     enterpriseNormalizationStatus = "passed"
                 }
                 $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State $state -ExportPath "src/cf" -Mode Full 6>$null
-                [pscustomobject]@{ load = $load; calls = $script:LoadCalls }
+                [pscustomobject]@{ load = $load; calls = $script:LoadCalls; resetConfigDumpInfo = $script:ResetConfigDumpInfo }
             }
 
             $result.calls | Should -Be 1
             $result.load.designerInvoked | Should -BeTrue
             $result.load.loadModeUsed | Should -Be "full"
             $result.load.loadReason | Should -Be "explicit-full-load"
+            $result.resetConfigDumpInfo | Should -BeTrue
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
