@@ -3711,7 +3711,7 @@ function Run-DevBranchTests {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "check-dev-branch"
     Assert-DevBranchExtensionInitialized -State $state -Operation "check-dev-branch"
-    $state = Ensure-DevBranchEnterpriseNormalized -State $state -Reason "legacy-preflight"
+    $state = Assert-DevBranchApplicationReady -State $state -Operation "Vanessa verification"
     Sync-DevBranchContextToDotEnv -State $state
     $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $state
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
@@ -3842,6 +3842,12 @@ function Run-DevBranchTests {
                 expectedChildRole = "test-client"
                 purpose = "vanessa-test-clients"
             }) `
+            -SessionLimitRecovery {
+                Stop-OneCInfoBaseSessionProcesses `
+                    -InfoBaseKind $state.infoBaseKind `
+                    -InfoBasePath $state.devBranchInfoBasePath `
+                    -Reason "managed Vanessa verification admission" | Out-Null
+            } `
             -TimeoutSeconds $timeoutSeconds `
             -CompletionProbe {
                 $probeStatus = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath

@@ -114,6 +114,9 @@ function Test-OneCCommandLineInfoBasePath {
     if ([string]::IsNullOrWhiteSpace($CommandLine) -or [string]::IsNullOrWhiteSpace($InfoBasePath)) {
         return $false
     }
+    if ([string]::IsNullOrWhiteSpace((Get-SafeOneCProcessInfoBase -CommandLine $CommandLine))) {
+        return $false
+    }
 
     $kinds = if ($InfoBaseKind) { @($InfoBaseKind) } else { @("file", "server") }
     foreach ($kind in $kinds) {
@@ -341,6 +344,71 @@ function Invoke-OneCSessionAdmission {
         -StartProcess $StartProcess)
 }
 
+function Stop-OneCInfoBaseSessionProcesses {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet("file", "server")][string]$InfoBaseKind,
+        [Parameter(Mandatory = $true)][string]$InfoBasePath,
+        [string]$Reason = "managed infobase exclusive operation"
+    )
+
+    $candidates = @(Get-OneCProcessInfo -RequireSuccess | Where-Object {
+        Test-OneCCommandLineInfoBasePath `
+            -CommandLine ([string](Get-StateValue -State $_ -Name "commandLine" -Default "")) `
+            -InfoBasePath $InfoBasePath `
+            -InfoBaseKind $InfoBaseKind
+    })
+    $stopped = [System.Collections.Generic.List[int]]::new()
+    foreach ($candidate in $candidates) {
+        $processId = [int](Get-StateValue -State $candidate -Name "processId" -Default 0)
+        $expectedStart = [string](Get-StateValue -State $candidate -Name "processStartTime" -Default "")
+        $expectedExecutable = [string](Get-StateValue -State $candidate -Name "executablePath" -Default "")
+        $current = @(Get-OneCProcessInfo -RequireSuccess | Where-Object { [int]$_.processId -eq $processId } | Select-Object -First 1)
+        if ($current.Count -eq 0) { continue }
+
+        $currentStart = [string](Get-StateValue -State $current[0] -Name "processStartTime" -Default "")
+        $currentExecutable = [string](Get-StateValue -State $current[0] -Name "executablePath" -Default "")
+        $currentCommandLine = [string](Get-StateValue -State $current[0] -Name "commandLine" -Default "")
+        if (-not $expectedStart -or -not $currentStart -or $expectedStart -cne $currentStart) {
+            throw "ITL_ONEC_SESSION_IDENTITY_MISMATCH: failedPredicate=processStartTime pid=$processId reason='$Reason'."
+        }
+        if (-not $expectedExecutable -or -not $currentExecutable -or -not [string]::Equals($expectedExecutable, $currentExecutable, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "ITL_ONEC_SESSION_IDENTITY_MISMATCH: failedPredicate=executablePath pid=$processId reason='$Reason'."
+        }
+        if (-not (Test-OneCCommandLineInfoBasePath -CommandLine $currentCommandLine -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind)) {
+            throw "ITL_ONEC_SESSION_IDENTITY_MISMATCH: failedPredicate=infoBasePath pid=$processId reason='$Reason'."
+        }
+
+        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        if ($null -eq $process) { continue }
+        $expectedStartTime = [DateTimeOffset]::MinValue
+        if (-not [DateTimeOffset]::TryParse($expectedStart, [ref]$expectedStartTime)) {
+            throw "ITL_ONEC_SESSION_IDENTITY_MISMATCH: failedPredicate=processStartTimeFormat pid=$processId reason='$Reason'."
+        }
+        try {
+            $actualProcessStart = $process.StartTime.ToUniversalTime()
+        } catch {
+            throw "ITL_ONEC_SESSION_IDENTITY_MISMATCH: failedPredicate=processStartTimeInspection pid=$processId reason='$Reason'."
+        }
+        if ([Math]::Abs(($actualProcessStart - $expectedStartTime.UtcDateTime).TotalSeconds) -ge 2) {
+            throw "ITL_ONEC_SESSION_IDENTITY_MISMATCH: failedPredicate=processStartTime pid=$processId reason='$Reason'."
+        }
+        $cleanup = Stop-NativeProcessForSafety -Process $process
+        if (-not [bool]$cleanup.confirmed) {
+            throw "ITL_ONEC_SESSION_STOP_FAILED: pid=$processId reason='$Reason' detail='$([string]$cleanup.error)'."
+        }
+        $stopped.Add($processId) | Out-Null
+    }
+
+    $remaining = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath)
+    if ($remaining.Count -gt 0) {
+        throw "ITL_ONEC_SESSION_STOP_FAILED: exact dev infobase still has local sessions after '$Reason': $(@($remaining.pid) -join ',')."
+    }
+    return [pscustomobject][ordered]@{
+        stopped = $stopped.Count
+        processIds = @($stopped)
+    }
+}
+
 function Invoke-OneCSessionAdmissionSet {
     param(
         [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][object[]]$Admissions,
@@ -455,7 +523,17 @@ function Invoke-OneCSessionProcessStart {
         throw "ITL_ONEC_SESSION_ADMISSION_REUSED: one admission context cannot launch more than one process."
     }
     $context.consumed = $true
-    return (Invoke-OneCSessionAdmissionSet -Admissions @($context.admissions) -StartProcess $StartProcess)
+    try {
+        return (Invoke-OneCSessionAdmissionSet -Admissions @($context.admissions) -StartProcess $StartProcess)
+    } catch {
+        $isCapacityFailure = $_.Exception.Message -match '^ITL_ONEC_SESSION_LIMIT:'
+        if (-not $isCapacityFailure -or $null -eq $context.sessionLimitRecovery -or [bool]$context.recoveryAttempted) {
+            throw
+        }
+        $context.recoveryAttempted = $true
+        & $context.sessionLimitRecovery
+        return (Invoke-OneCSessionAdmissionSet -Admissions @($context.admissions) -StartProcess $StartProcess)
+    }
 }
 
 function Invoke-WithOneCSessionAdmissionContext {
@@ -466,6 +544,7 @@ function Invoke-WithOneCSessionAdmissionContext {
         [ValidateSet("", "test-client")][string]$ExpectedChildRole = "",
         [string]$Purpose = "1c-process",
         [object[]]$AdditionalAdmissions = @(),
+        [scriptblock]$SessionLimitRecovery = $null,
         [switch]$KeepReservation,
         [Parameter(Mandatory = $true)][scriptblock]$ScriptBlock
     )
@@ -487,6 +566,8 @@ function Invoke-WithOneCSessionAdmissionContext {
         admissions = @($admissions)
         consumed = $false
         reservationIds = @()
+        sessionLimitRecovery = $SessionLimitRecovery
+        recoveryAttempted = $false
         keepReservation = [bool]$KeepReservation
     }
     try {
@@ -511,6 +592,7 @@ function Start-OneCProcessBackground {
         [ValidateRange(1, 64)][int]$RequiredSessions = 1,
         [ValidateSet("", "test-client")][string]$ExpectedChildRole = "",
         [string]$Purpose = "project-1c-process",
+        [scriptblock]$SessionLimitRecovery = $null,
         [switch]$Visible
     )
 
@@ -520,6 +602,7 @@ function Start-OneCProcessBackground {
         -RequiredSessions $RequiredSessions `
         -ExpectedChildRole $ExpectedChildRole `
         -Purpose $Purpose `
+        -SessionLimitRecovery $SessionLimitRecovery `
         -KeepReservation `
         -ScriptBlock {
             Start-NativeProcessBackground -FilePath $FilePath -Arguments $Arguments -Visible:$Visible

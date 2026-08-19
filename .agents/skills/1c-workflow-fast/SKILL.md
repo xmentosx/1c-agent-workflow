@@ -63,11 +63,12 @@ Read `status`, exit code, `errorCategory`, `requiredAction`, and `nextAction`.
 
 - If Kilo behavior disagrees with the Intent Map, run `status`, compare the reported expected skill contract/SHA, and ask for `/reload` before treating it as a source defect. ITL cannot inspect or clear Kilo's internal cache/worktrees.
 - `status=failed` means failed. Never relabel it as skipped; never call it ready, verified, or done.
+- For `ITL_INFOBASE_APPLICATION_NOT_READY`, run `update-dev-branch-base`; retry the original once.
 - Report the action, concise error, and artifact paths. Read 80 console-log tail lines only for unclassified `runner` failure.
 - Follow `requiredAction` or `nextAction` exactly. Ask only for a value that the helper explicitly identifies as missing.
 - Before recovery edits, apply the installed `USER-RULES.md` runner/fixture/product ownership, unchanged-rerun, and unrelated-dirty-change guards.
 - For an agent-made change with `requiredAction=/itl-verify-fix`, continue through the active client's explicit `itl-verify-fix` wrapper. If that surface is unavailable, activate full `1c-workflow` and its one matching recovery reference. Do not return completion to the user. Standalone diagnostics only report failure.
-- Development completion still requires fresh passed evidence after the last edit; partial/skipped is insufficient.
+- Development completion requires fresh passed evidence after the last edit; partial/skipped is insufficient.
 - Use full `1c-workflow` for helper-directed recovery without an explicit wrapper, unusual topology, initialization, or detailed explanation.
 
 For first-time project bootstrap, follow `AGENT-INSTALL.md`. This fast skill is optimized for regular branch operations after installation.

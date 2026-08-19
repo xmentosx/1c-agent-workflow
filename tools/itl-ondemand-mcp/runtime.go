@@ -157,6 +157,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	callInstanceID := r.instanceID
 	callBackend := r.backend
 	r.active++
+	r.writeEvidenceLocked(toolName, arguments, "started", "ITL_ONDEMAND_CALL_STARTED", "upstream tool call started", callInstanceID, callBackend, progressTokenProvided, 0)
 	r.mu.Unlock()
 
 	params := &mcp.CallToolParams{Name: toolName, Arguments: arguments, Meta: req.Params.Meta}

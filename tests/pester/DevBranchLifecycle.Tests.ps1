@@ -408,6 +408,99 @@
         $errorText | Should -Match "target is the source infobase"
     }
 
+    It "blocks managed application startup when current sources are not loaded" {
+        $message = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-ExportPath { "src/cf" }
+            function Get-DevBranchKind { "configuration" }
+            function Get-ConfigSourceFingerprint {
+                [pscustomobject]@{ fingerprint = "fingerprint-b"; treeObjectId = ("b" * 40) }
+            }
+            function Ensure-DevBranchEnterpriseNormalized { throw "normalization must not run for mismatched sources" }
+            $state = [pscustomobject]@{
+                lastConfigDesignerFingerprint = "fingerprint-a"
+                lastConfigDesignerTreeObjectId = ("a" * 40)
+                configLoadStatus = "passed"
+                enterpriseNormalizationStatus = "passed"
+            }
+            try { Assert-DevBranchApplicationReady -State $state -Operation "ROCTUP" | Out-Null; "" } catch { $_.Exception.Message }
+        }
+
+        $message | Should -Match '^ITL_INFOBASE_APPLICATION_NOT_READY:'
+        $message | Should -Match 'configuration-fingerprint-mismatch'
+        $message | Should -Match 'requiredAction=update-dev-branch-base'
+    }
+
+    It "classifies application readiness failures with the existing lifecycle recovery" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:RunErrorCategory = ""
+            $script:RunRequiredAction = ""
+            Set-RunFailureContextFromMessage `
+                -Message "ITL_INFOBASE_APPLICATION_NOT_READY: reasons='configuration-fingerprint-mismatch'" `
+                -RequestedAction "status"
+            [pscustomobject]@{ category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+        }
+
+        $result.category | Should -Be "infobase-readiness"
+        $result.requiredAction | Should -Be "update-dev-branch-base"
+    }
+
+    It "does not use the Designer tree cursor as application readiness evidence" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-ExportPath { "src/cf" }
+            function Get-DevBranchKind { "configuration" }
+            function Get-ConfigSourceFingerprint {
+                # A ConfigDumpInfo-only edit may change the raw Git tree while leaving
+                # the effective configuration fingerprint unchanged.
+                [pscustomobject]@{ fingerprint = "fingerprint-a"; treeObjectId = ("b" * 40) }
+            }
+            $state = [pscustomobject]@{
+                lastConfigDesignerFingerprint = "fingerprint-a"
+                lastConfigDesignerTreeObjectId = ("a" * 40)
+                configLoadStatus = "passed"
+                enterpriseNormalizationStatus = "passed"
+            }
+            Assert-DevBranchApplicationReady -State $state -Operation "ROCTUP"
+        }
+
+        $result.enterpriseNormalizationStatus | Should -Be "passed"
+    }
+
+    It "retries only pending Enterprise normalization when Designer proof matches" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:NormalizeCalls = 0
+            function Get-ExportPath { "src/cf" }
+            function Get-DevBranchKind { "configuration" }
+            function Get-ConfigSourceFingerprint {
+                [pscustomobject]@{ fingerprint = "fingerprint-a"; treeObjectId = ("a" * 40) }
+            }
+            function Ensure-DevBranchEnterpriseNormalized {
+                param([object]$State)
+                $script:NormalizeCalls++
+                [pscustomobject]@{
+                    lastConfigDesignerFingerprint = $State.lastConfigDesignerFingerprint
+                    lastConfigDesignerTreeObjectId = $State.lastConfigDesignerTreeObjectId
+                    configLoadStatus = "passed"
+                    enterpriseNormalizationStatus = "passed"
+                }
+            }
+            $state = [pscustomobject]@{
+                lastConfigDesignerFingerprint = "fingerprint-a"
+                lastConfigDesignerTreeObjectId = ("a" * 40)
+                configLoadStatus = "passed"
+                enterpriseNormalizationStatus = "pending"
+            }
+            $ready = Assert-DevBranchApplicationReady -State $state -Operation "TestClient"
+            [pscustomobject]@{ calls = $script:NormalizeCalls; status = $ready.enterpriseNormalizationStatus }
+        }
+
+        $result.calls | Should -Be 1
+        $result.status | Should -Be "passed"
+    }
+
     It "keeps Enterprise normalization as the final resumable branch initialization step" {
         $initStart = $HelperText.IndexOf('function Initialize-DevBranchRuntime')
         $initBlock = $HelperText.Substring($initStart, $HelperText.IndexOf('function Get-DevWorkspacePlan', $initStart) - $initStart)
@@ -450,6 +543,7 @@
             & git -C $tempRoot add src/cf/Configuration.xml
             & git -C $tempRoot commit -m "base config" *> $null
             $baseCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+            $baseTree = ((& git -C $tempRoot rev-parse "${baseCommit}:src/cf") -join "").Trim()
 
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Value "<Configuration changed=`"true`" />" -Encoding UTF8
             $trackedEnumName = "СѓРїРѕ_РџРѕРІРµРґРµРЅРёРµРџСЂРёР—Р°РіСЂСѓР·РєРµРќРµСЂР°СЃСЃС‡РёС‚Р°РЅРЅРѕР№Р’РµСЂСЃРёРё.xml"
@@ -462,7 +556,7 @@
 
             $changeSet = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                Get-ConfigLoadChangeSet -State ([pscustomobject]@{ createdFromCommit = $baseCommit }) -ExportPath "src/cf"
+                Get-ConfigLoadChangeSet -State ([pscustomobject]@{ lastConfigDesignerTreeObjectId = $baseTree }) -ExportPath "src/cf"
             }
 
             $expectedFiles = @(
@@ -471,8 +565,9 @@
                 (Join-Path "Enums" $trackedEnumName),
                 (Join-Path "Enums" $untrackedEnumName)
             )
+            $normalizedFiles = @($changeSet.files | ForEach-Object { ([string]$_).Replace('/', '\') })
             foreach ($expectedFile in $expectedFiles) {
-                $changeSet.files | Should -Contain $expectedFile
+                $normalizedFiles | Should -Contain $expectedFile
             }
 
             foreach ($file in $changeSet.files) {
@@ -511,15 +606,18 @@
             & git -C $tempRoot add -- src/cf
             & git -C $tempRoot commit -m "base config" *> $null
             $baseCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+            $baseTree = ((& git -C $tempRoot rev-parse "${baseCommit}:src/cf") -join "").Trim()
             Remove-Item -LiteralPath $missingAbsolutePath -Force
 
             $changeSet = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                Get-ConfigLoadChangeSet -State ([pscustomobject]@{ createdFromCommit = $baseCommit }) -ExportPath "src/cf"
+                Get-ConfigLoadChangeSet -State ([pscustomobject]@{ lastConfigDesignerTreeObjectId = $baseTree }) -ExportPath "src/cf"
             }
 
-            $changeSet.files | Should -Contain $missingRelativePath
-            $changeSet.missingFiles | Should -Be @($missingRelativePath)
+            @($changeSet.files | ForEach-Object { ([string]$_).Replace('/', '\') }) | Should -Contain $missingRelativePath
+            @($changeSet.missingFiles | ForEach-Object { ([string]$_).Replace('/', '\') }) | Should -Be @($missingRelativePath)
+            $changeSet.requiresFullLoad | Should -BeTrue
+            $changeSet.fullLoadReason | Should -Be "designer-tree-deletion-detected"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -1124,33 +1222,33 @@
         $full.mode | Should -Be "full"
     }
 
-    It "does not invoke Designer or full fallback for no-op or list preparation errors" {
+    It "full-loads a legacy no-op proof and avoids Designer on list preparation errors" {
         $noOpCalls = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:DesignerCallCount = 0
             $script:DrainCallCount = 0
             function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-f"; fileCount = 1; absoluteExportPath = "C:\src" } }
-            function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @(); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" } }
+            function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @(); baseCommit = ""; currentCommit = "head"; absoluteExportPath = "C:\src"; requiresFullLoad = $true; fullLoadReason = "designer-tree-proof-missing" } }
             function Invoke-Designer { $script:DesignerCallCount++ }
             function Stop-DevBranchRuntimeBeforeInfobaseMutation { $script:DrainCallCount++ }
             $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -ExportPath "src/cf" 6>$null
             [pscustomobject]@{ calls = $script:DesignerCallCount; drains = $script:DrainCallCount; loaded = $load.loaded }
         }
-        $noOpCalls.calls | Should -Be 0
-        $noOpCalls.drains | Should -Be 0
-        $noOpCalls.loaded | Should -BeFalse
+        $noOpCalls.calls | Should -Be 1
+        $noOpCalls.drains | Should -Be 1
+        $noOpCalls.loaded | Should -BeTrue
 
         $prep = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:DesignerCallCount = 0
             $script:DrainCallCount = 0
-            function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-g"; fileCount = 1; absoluteExportPath = "C:\src" } }
-            function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" } }
+            function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-g"; treeObjectId = ("b" * 40); fileCount = 1; absoluteExportPath = "C:\src" } }
+            function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = ("a" * 40); currentCommit = "head"; absoluteExportPath = "C:\src"; requiresFullLoad = $false } }
             function New-ConfigLoadListFile { throw "list preparation failed" }
             function Invoke-Designer { $script:DesignerCallCount++ }
             function Stop-DevBranchRuntimeBeforeInfobaseMutation { $script:DrainCallCount++ }
             $message = ""
-            try { Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -ExportPath "src/cf" 6>$null | Out-Null } catch { $message = $_.Exception.Message }
+            try { Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{ lastConfigDesignerTreeObjectId = ("a" * 40) }) -ExportPath "src/cf" 6>$null | Out-Null } catch { $message = $_.Exception.Message }
             [pscustomobject]@{ calls = $script:DesignerCallCount; drains = $script:DrainCallCount; message = $message }
         }
         $prep.calls | Should -Be 0
@@ -1392,33 +1490,34 @@
         }
     }
 
-    It "migrates a legacy source fingerprint only when the scoped source is unchanged" {
+    It "migrates a legacy source proof with one safe full load" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-            $script:ChangedFiles = @()
             $script:ChangeSetCalls = 0
             $script:LoadCalls = 0
-            $script:LegacyFingerprint = ("a" * 64)
-            $script:LegacyFingerprintCalls = 0
             function Get-ConfigSourceFingerprint {
-                [pscustomobject]@{ fingerprint = ("v2|git-tree-sha256|" + ("b" * 64)); fileCount = 7; absoluteExportPath = "C:\src" }
-            }
-            function Get-LegacyConfigSourceFingerprint {
-                $script:LegacyFingerprintCalls++
-                return $script:LegacyFingerprint
+                [pscustomobject]@{ fingerprint = ("v2|git-tree-sha256|" + ("b" * 64)); treeObjectId = ("b" * 40); fileCount = 7; absoluteExportPath = "C:\src" }
             }
             function Get-ConfigLoadChangeSet {
                 $script:ChangeSetCalls++
-                [pscustomobject]@{ files = @($script:ChangedFiles); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" }
+                [pscustomobject]@{
+                    files = @()
+                    baseCommit = ""
+                    currentCommit = "head"
+                    absoluteExportPath = "C:\src"
+                    requiresFullLoad = $true
+                    fullLoadReason = "designer-tree-proof-missing"
+                }
             }
             function Get-CurrentCommit { "head" }
             function New-ConfigLoadListFile { "C:\list.txt" }
             function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
             function Invoke-ConfigLoadWithFallback {
+                param([string]$Mode)
                 $script:LoadCalls++
                 [pscustomobject]@{
                     lastLogPath = ""
-                    loadModeUsed = "partial"
+                    loadModeUsed = $Mode.ToLowerInvariant()
                     partialLogPath = ""
                     fullFallbackLogPath = ""
                     configLoadStatus = "passed"
@@ -1431,34 +1530,20 @@
                 lastConfigDesignerFingerprint = ("a" * 64)
                 enterpriseNormalizationStatus = "passed"
             }
-            $unchanged = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State $state -ExportPath "src/cf" 6>$null
-            $script:LegacyFingerprint = ("c" * 64)
-            $ignoredChanged = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State $state -ExportPath "src/cf" 6>$null
-            $script:ChangedFiles = @("Configuration.xml")
-            $changed = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State $state -ExportPath "src/cf" 6>$null
+            $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State $state -ExportPath "src/cf" 6>$null
             [pscustomobject]@{
-                unchanged = $unchanged
-                ignoredChanged = $ignoredChanged
-                changed = $changed
+                load = $load
                 changeSetCalls = $script:ChangeSetCalls
                 loadCalls = $script:LoadCalls
-                legacyFingerprintCalls = $script:LegacyFingerprintCalls
             }
         }
 
-        $result.unchanged.loaded | Should -BeFalse
-        $result.unchanged.designerInvoked | Should -BeFalse
-        $result.unchanged.loadReason | Should -Be "legacy-source-fingerprint-migrated"
-        $result.unchanged.sourceFingerprint | Should -Match '^v2\|git-tree-sha256\|'
-        $result.ignoredChanged.loaded | Should -BeTrue
-        $result.ignoredChanged.designerInvoked | Should -BeTrue
-        $result.ignoredChanged.loadReason | Should -Be "fingerprint-changed-full-load"
-        $result.changed.loaded | Should -BeTrue
-        $result.changed.designerInvoked | Should -BeTrue
-        $result.changed.loadReason | Should -Be "source-fingerprint-changed"
-        $result.changeSetCalls | Should -Be 2
-        $result.loadCalls | Should -Be 2
-        $result.legacyFingerprintCalls | Should -Be 3
+        $result.load.loaded | Should -BeTrue
+        $result.load.designerInvoked | Should -BeTrue
+        $result.load.loadModeUsed | Should -Be "full"
+        $result.load.loadReason | Should -Be "designer-tree-proof-missing-full-load"
+        $result.changeSetCalls | Should -Be 1
+        $result.loadCalls | Should -Be 1
     }
 
     It "keeps the canonical verification fingerprint stable across staging and commit" {
@@ -3172,6 +3257,10 @@
                 }
 
                 function Install-RoctupMcp {
+                }
+
+                function Ensure-VanessaAutomationForInit {
+                    param([object]$Answers)
                 }
 
                 function Update-BaseFromRepository {

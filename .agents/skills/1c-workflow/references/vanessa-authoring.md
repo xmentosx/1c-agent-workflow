@@ -6,7 +6,7 @@ Read this together with `vanessa-tests.md` only while creating, editing, or diag
 
 There is no separate Vanessa authoring gate. Use the pre-registered `itl-vanessa-ui` facade only when it shortens test development or resolves a concrete runtime question. Static code, metadata, local libraries, and existing scenarios come first.
 
-Before a runtime MCP call, make the copied branch infobase current when configuration or extension sources changed. `update-dev-branch-base` compares the source fingerprint and skips Designer/Enterprise when the infobase is already current. A `.feature`-only edit does not require an infobase update.
+Before a runtime MCP call, make the copied branch infobase current when configuration or extension sources changed. `update-dev-branch-base` compares the source fingerprint and skips Designer/Enterprise when the infobase is already current. A `.feature`-only edit does not require an infobase update. On `ITL_INFOBASE_APPLICATION_NOT_READY`, run that helper once and repeat the original MCP call once; do not add a `run_scenario` retry.
 
 Known inner tools may be passed directly to `call_tool`: `search_for_steps_by_keywords`, `open_feature_file`, `check_syntax`, `get_info_about_line_scenario`, `run_scenario`, `get_test_results`, `user_actions_recording`, `execute_form_actions`, `get_window_list_os`, and `get_window_screenshot_os`. Use only the calls needed for the current question. A scenario run is optional diagnostic feedback, not a persisted verdict or completion condition. There is no required ordered evidence chain and no MCP result can replace `/itl-check`.
 

@@ -391,9 +391,19 @@ func TestRuntimeLazyHTTPPaginationCallAndProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var evidence map[string]any
-	if err := json.Unmarshal(bytes.TrimSpace(raw), &evidence); err != nil {
+	lines := bytes.Split(bytes.TrimSpace(raw), []byte{'\n'})
+	if len(lines) != 2 {
+		t.Fatalf("expected started and final evidence entries, got %d", len(lines))
+	}
+	var started, evidence map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(lines[0]), &started); err != nil {
 		t.Fatal(err)
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(lines[1]), &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if started["outcome"] != "started" {
+		t.Fatalf("started evidence was not persisted before forwarding: %#v", started)
 	}
 	if evidence["schemaVersion"] != float64(3) || evidence["progressTokenProvided"] != true || evidence["progressNotificationsForwarded"] != float64(1) {
 		t.Fatalf("progress diagnostics were not persisted: %#v", evidence)
@@ -1386,9 +1396,19 @@ func TestRuntimeVanessaSemanticFailureWritesBoundFailedEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var evidence map[string]any
-	if err := json.Unmarshal(bytes.TrimSpace(raw), &evidence); err != nil {
+	lines := bytes.Split(bytes.TrimSpace(raw), []byte{'\n'})
+	if len(lines) != 2 {
+		t.Fatalf("expected started and final evidence entries, got %d", len(lines))
+	}
+	var started, evidence map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(lines[0]), &started); err != nil {
 		t.Fatal(err)
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(lines[1]), &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if started["outcome"] != "started" {
+		t.Fatalf("started evidence was not persisted before forwarding: %#v", started)
 	}
 	if evidence["schemaVersion"] != float64(3) || evidence["outcome"] != "failed" || evidence["resultCode"] != "ITL_VANESSA_TOOL_RESULT_FAILED" {
 		t.Fatalf("unexpected failure evidence: %#v", evidence)

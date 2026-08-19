@@ -306,7 +306,7 @@ function Test-DevBranchHasCheckableChanges {
 
     try {
         $configChangeSet = Get-ConfigLoadChangeSet -State $State -ExportPath (Get-ExportPath) -ContentKind "configuration"
-        if (@($configChangeSet.files).Count -gt 0) {
+        if ([bool](Get-StateValue -State $configChangeSet -Name "requiresFullLoad" -Default $false) -or @($configChangeSet.files).Count -gt 0) {
             return $true
         }
     } catch {
@@ -316,7 +316,7 @@ function Test-DevBranchHasCheckableChanges {
         try {
             $extensionExportPath = Get-DevBranchExtensionExportPath -State $State
             $extensionChangeSet = Get-ConfigLoadChangeSet -State $State -ExportPath $extensionExportPath -ContentKind "extension"
-            if (@($extensionChangeSet.files).Count -gt 0) {
+            if ([bool](Get-StateValue -State $extensionChangeSet -Name "requiresFullLoad" -Default $false) -or @($extensionChangeSet.files).Count -gt 0) {
                 return $true
             }
         } catch {
@@ -478,36 +478,62 @@ function Get-ConfigLoadChangeSet {
         [object]$State,
         [string]$ExportPath = (Get-ExportPath),
         [ValidateSet("configuration", "extension")]
-        [string]$ContentKind = "configuration"
+        [string]$ContentKind = "configuration",
+        [object]$CurrentSource = $null
     )
 
     $absoluteExportPath = Assert-ExportPathInsideProject $ExportPath
-    $baseCommit = Get-DevBranchLoadBaseCommit -State $State -ContentKind $ContentKind
-
-    $tracked = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", $baseCommit, "--", $ExportPath))
-    $untracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard", "--", $ExportPath))
-
+    $source = if ($null -ne $CurrentSource) { $CurrentSource } else { Get-ConfigSourceFingerprint -ExportPath $ExportPath }
+    $treeField = Get-DesignerTreeObjectIdFieldName -ContentKind $ContentKind
+    $previousTree = [string](Get-StateValue -State $State -Name $treeField -Default "")
+    $currentTree = [string](Get-StateValue -State $source -Name "treeObjectId" -Default "")
+    $requiresFullLoad = $false
+    $fullLoadReason = ""
     $files = @()
-    foreach ($path in @($tracked) + @($untracked)) {
-        $relative = ConvertTo-ConfigLoadRelativePath -RepoPath $path -ExportPath $ExportPath
-        if ($relative) {
-            $files += $relative
+
+    if ($previousTree -notmatch '^[0-9a-f]{40,64}$') {
+        $requiresFullLoad = $true
+        $fullLoadReason = "designer-tree-proof-missing"
+    } elseif ($currentTree -notmatch '^[0-9a-f]{40,64}$') {
+        $requiresFullLoad = $true
+        $fullLoadReason = "current-source-tree-missing"
+    } else {
+        & git -C $script:ProjectRoot cat-file -e "$previousTree^{tree}" *> $null
+        if ($LASTEXITCODE -ne 0) {
+            $requiresFullLoad = $true
+            $fullLoadReason = "designer-tree-object-unavailable"
+        } else {
+            try {
+                $files = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", $previousTree, $currentTree))
+            } catch {
+                $requiresFullLoad = $true
+                $fullLoadReason = "designer-tree-diff-unavailable"
+                $files = @()
+            }
         }
     }
 
-    $files = @($files | Sort-Object -Unique)
+    $files = @($files | Where-Object { $_ -and ([System.IO.Path]::GetFileName([string]$_) -ine "ConfigDumpInfo.xml") } | Sort-Object -Unique)
     $missingFiles = @(
         $files |
             Where-Object {
                 -not (Test-Path -LiteralPath (Join-Path $absoluteExportPath $_) -PathType Leaf)
             }
     )
+    if ($missingFiles.Count -gt 0) {
+        $requiresFullLoad = $true
+        $fullLoadReason = "designer-tree-deletion-detected"
+    }
     return [pscustomobject]@{
         files = $files
         missingFiles = $missingFiles
-        baseCommit = $baseCommit
+        baseCommit = $previousTree
         currentCommit = Get-CurrentCommit
         absoluteExportPath = $absoluteExportPath
+        previousTreeObjectId = $previousTree
+        currentTreeObjectId = $currentTree
+        requiresFullLoad = $requiresFullLoad
+        fullLoadReason = $fullLoadReason
     }
 }
 
@@ -606,6 +632,12 @@ function Get-DesignerFingerprintFieldName {
     param([ValidateSet("configuration", "extension")][string]$ContentKind)
     if ($ContentKind -eq "extension") { return "lastExtensionDesignerFingerprint" }
     return "lastConfigDesignerFingerprint"
+}
+
+function Get-DesignerTreeObjectIdFieldName {
+    param([ValidateSet("configuration", "extension")][string]$ContentKind)
+    if ($ContentKind -eq "extension") { return "lastExtensionDesignerTreeObjectId" }
+    return "lastConfigDesignerTreeObjectId"
 }
 
 function Get-DesignerLoadedAtFieldName {
@@ -875,6 +907,9 @@ function New-LoadStateUpdates {
             $updates[(Get-DesignerLoadedAtFieldName -ContentKind $ContentKind)] = $now
         }
     }
+    if ($LoadResult.PSObject.Properties.Match("sourceTreeObjectId").Count -gt 0 -and $LoadResult.sourceTreeObjectId) {
+        $updates[(Get-DesignerTreeObjectIdFieldName -ContentKind $ContentKind)] = $LoadResult.sourceTreeObjectId
+    }
 
     return $updates
 }
@@ -1035,6 +1070,7 @@ function Ensure-DevBranchEnterpriseNormalized {
 
     Set-RunStage -Stage "enterprise.normalize" -Detail "Running Enterprise normalization for reason '$Reason'."
     Assert-EnterpriseNormalizationTargetsBranchCopy -State $State
+    Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason "Enterprise normalization ($Reason)"
     $statePath = [string](Get-StateValue -State $State -Name "statePath" -Default "")
     $canPersistImmediately = $statePath -and (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue)
     $pending = @{
@@ -1080,6 +1116,44 @@ function Ensure-DevBranchEnterpriseNormalized {
         return $State
     }
     return (Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default ""))
+}
+
+function Assert-DevBranchApplicationReady {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [string]$Operation = "managed 1C application start"
+    )
+    $problems = [System.Collections.Generic.List[string]]::new()
+    foreach ($content in @(
+        [pscustomobject]@{ kind = "configuration"; path = (Get-ExportPath) }
+        $(if ((Get-DevBranchKind -State $State) -eq "extension") {
+            [pscustomobject]@{ kind = "extension"; path = (Get-DevBranchExtensionExportPath -State $State) }
+        })
+    )) {
+        if ($null -eq $content) { continue }
+        $source = Get-ConfigSourceFingerprint -ExportPath $content.path
+        $fingerprintField = Get-DesignerFingerprintFieldName -ContentKind $content.kind
+        $loadedFingerprint = [string](Get-StateValue -State $State -Name $fingerprintField -Default "")
+        if (-not $loadedFingerprint -or $loadedFingerprint -cne [string]$source.fingerprint) {
+            $problems.Add("$($content.kind)-fingerprint-mismatch") | Out-Null
+        }
+    }
+
+    $configLoadStatus = [string](Get-StateValue -State $State -Name "configLoadStatus" -Default "")
+    if ($configLoadStatus -notin @("passed", "fallback-succeeded")) {
+        $problems.Add("config-load-status-$configLoadStatus") | Out-Null
+    }
+    if ($problems.Count -gt 0) {
+        throw "ITL_INFOBASE_APPLICATION_NOT_READY: operation='$Operation' reasons='$($problems -join ',')' requiredAction=update-dev-branch-base retryAction=repeat-original-operation-once."
+    }
+
+    if ([string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "") -ne "passed") {
+        $State = Ensure-DevBranchEnterpriseNormalized -State $State -Reason "legacy-preflight"
+    }
+    if ([string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "") -ne "passed") {
+        throw "ITL_INFOBASE_APPLICATION_NOT_READY: operation='$Operation' reasons='enterprise-normalization-not-passed' requiredAction=update-dev-branch-base retryAction=repeat-original-operation-once."
+    }
+    return $State
 }
 
 function Dump-ConfigToFilesFromInfoBase {
@@ -1255,28 +1329,52 @@ function Stop-DevBranchRuntimeBeforeInfobaseMutation {
         throw "ITL_INFOBASE_RUNTIME_DRAIN_FAILED: development branch infobase path is missing."
     }
 
-    Set-RunStage -Stage "config-load.stop-runtime" -Detail "Stopping workflow-owned 1C runtime before $Reason."
+    $infoBaseKind = [string](Get-StateValue -State $State -Name "infoBaseKind" -Default "file")
+    Set-RunStage -Stage "config-load.stop-runtime" -Detail "Stopping 1C sessions for the exact development branch infobase before $Reason."
+    $ownedCleanupError = ""
     try {
         Invoke-DevBranchVanessaRuntimeRelease -State $State -Reason $Reason | Out-Null
         Stop-ItlOnDemandBackends -Family "roctup" -InfoBasePath $infoBasePath -Strict
-
         $roctupRuntime = Get-RoctupMcpRuntimeInfo -State $State
         if ($roctupRuntime.processAlive) {
             Stop-RoctupMcpForState -State $State -Quiet -RequireOwnership -SkipClientConfig | Out-Null
         }
+    } catch {
+        $ownedCleanupError = $_.Exception.Message
+        Write-Warning "Workflow-owned cleanup could not prove ownership before exact-infobase cleanup: $ownedCleanupError"
+    }
 
+    try {
+        $sessionCleanup = Stop-OneCInfoBaseSessionProcesses `
+            -InfoBaseKind $infoBaseKind `
+            -InfoBasePath $infoBasePath `
+            -Reason $Reason
+
+        if ($ownedCleanupError) {
+            # Exact-infobase cleanup can recover from an ownership mismatch. In
+            # that case re-run the regular owners only to release stale state.
+            Invoke-DevBranchVanessaRuntimeRelease -State $State -Reason $Reason | Out-Null
+            Stop-ItlOnDemandBackends -InfoBasePath $infoBasePath -Strict
+            $roctupRuntime = Get-RoctupMcpRuntimeInfo -State $State
+            if ($roctupRuntime.processAlive) {
+                Stop-RoctupMcpForState -State $State -Quiet -RequireOwnership -SkipClientConfig | Out-Null
+            }
+        }
+
+        $remainingSessions = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $infoBaseKind -InfoBasePath $infoBasePath)
         $remainingTests = @(Get-OwnVanessaTestProcesses -State $State -RequireInspection)
         $remainingOnDemand = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
             Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $infoBasePath
         })
-        if ($remainingTests.Count -gt 0 -or $remainingOnDemand.Count -gt 0) {
-            throw "workflow-owned processes remain after cleanup (tests=$($remainingTests.Count), ondemand=$($remainingOnDemand.Count))."
+        if ($remainingSessions.Count -gt 0 -or $remainingTests.Count -gt 0 -or $remainingOnDemand.Count -gt 0) {
+            throw "processes remain after cleanup (sessions=$($remainingSessions.Count), tests=$($remainingTests.Count), ondemand=$($remainingOnDemand.Count))."
         }
     } catch {
-        throw "ITL_INFOBASE_RUNTIME_DRAIN_FAILED reason='$Reason' infoBasePath='$infoBasePath' detail='$($_.Exception.Message)'"
+        $ownedDetail = if ($ownedCleanupError) { " initialOwnedCleanup='$ownedCleanupError'" } else { "" }
+        throw "ITL_INFOBASE_RUNTIME_DRAIN_FAILED reason='$Reason' infoBasePath='$infoBasePath' detail='$($_.Exception.Message)'$ownedDetail"
     }
 
-    Write-Host "Workflow-owned 1C runtime stopped before $Reason."
+    Write-Host "Exact development branch infobase sessions stopped before $Reason. Stopped local sessions: $($sessionCleanup.stopped)."
 }
 
 function Restore-DevBranchInfobaseFromSnapshot {
@@ -1329,32 +1427,22 @@ function Load-ConfigFromFiles {
 
     Set-RunStage -Stage "config-load.fingerprint" -Detail "Calculating the $ContentKind source fingerprint."
     $source = Get-ConfigSourceFingerprint -ExportPath $ExportPath
+    $sourceTreeObjectId = [string](Get-StateValue -State $source -Name "treeObjectId" -Default "")
     $fingerprintField = Get-DesignerFingerprintFieldName -ContentKind $ContentKind
+    $treeObjectIdField = Get-DesignerTreeObjectIdFieldName -ContentKind $ContentKind
     $loadedAtField = Get-DesignerLoadedAtFieldName -ContentKind $ContentKind
     $previousFingerprint = [string](Get-StateValue -State $State -Name $fingerprintField -Default "")
     $normalizationStatus = [string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "")
     $configLoadStatus = [string](Get-StateValue -State $State -Name "configLoadStatus" -Default "")
     $currentCommit = Get-CurrentCommit
     $changeSet = $null
-    $legacyFingerprintMigrated = $false
     $loadProofInvalidated = (-not $previousFingerprint -and $configLoadStatus -and $configLoadStatus -notin @("passed", "fallback-succeeded"))
 
-    if ($previousFingerprint -and $previousFingerprint -ne $source.fingerprint -and (Test-LegacyConfigSourceFingerprint -Fingerprint $previousFingerprint)) {
-        Write-Host "Confirming the legacy $ContentKind source fingerprint once before migration."
-        $legacyFingerprintMigrated = ($previousFingerprint -ceq (Get-LegacyConfigSourceFingerprint -ExportPath $ExportPath))
-    }
-
-    if ($previousFingerprint -and ($previousFingerprint -eq $source.fingerprint -or $legacyFingerprintMigrated)) {
+    if ($Mode -ne "Full" -and $previousFingerprint -and $previousFingerprint -eq $source.fingerprint) {
         $normalizationRequired = $normalizationStatus -ne "passed"
-        if ($legacyFingerprintMigrated) {
-            $reason = if ($normalizationRequired) { "legacy-source-fingerprint-migrated-normalization-required" } else { "legacy-source-fingerprint-migrated" }
-            Write-Host "Legacy config source fingerprint migrated for $ContentKind without a Designer load."
-            Set-RunStage -Stage "config-load.skipped" -Detail "The unchanged $ContentKind source was migrated to the Git-tree fingerprint; Designer was skipped."
-        } else {
-            $reason = if ($normalizationRequired) { "source-fingerprint-match-normalization-required" } else { "source-fingerprint-match" }
-            Write-Host "Config source fingerprint unchanged for $ContentKind. Designer skipped."
-            Set-RunStage -Stage "config-load.skipped" -Detail "The $ContentKind fingerprint is unchanged; Designer was skipped."
-        }
+        $reason = if ($normalizationRequired) { "source-fingerprint-match-normalization-required" } else { "source-fingerprint-match" }
+        Write-Host "Config source fingerprint unchanged for $ContentKind. Designer skipped."
+        Set-RunStage -Stage "config-load.skipped" -Detail "The $ContentKind fingerprint is unchanged; Designer was skipped."
         if ($normalizationRequired) { Write-Host "Enterprise normalization remains $normalizationStatus and will be retried without Designer." }
         return [pscustomobject]@{
             loaded = $false
@@ -1377,41 +1465,26 @@ function Load-ConfigFromFiles {
     }
 
     if ($null -eq $changeSet) {
-        $changeSet = Get-ConfigLoadChangeSet -State $State -ExportPath $ExportPath -ContentKind $ContentKind
+        $changeSet = Get-ConfigLoadChangeSet -State $State -ExportPath $ExportPath -ContentKind $ContentKind -CurrentSource $source
     }
     $restoreInvalidated = ([string](Get-StateValue -State $State -Name "loadReason" -Default "")) -eq "release-e2e-restore-invalidated"
     if ($restoreInvalidated) {
         Write-Warning "Release E2E restore invalidated the Designer fingerprint. Running a cursor-free full load."
         $Mode = "Full"
         $changeSet.files = @("<release-e2e-restore-invalidated>")
+    } elseif ($Mode -eq "Full") {
+        $changeSet.files = @("<explicit-full-load>")
+    } elseif ([bool](Get-StateValue -State $changeSet -Name "requiresFullLoad" -Default $false)) {
+        $fullLoadReason = [string](Get-StateValue -State $changeSet -Name "fullLoadReason" -Default "designer-tree-proof-unavailable")
+        Write-Warning "Partial config load proof is unavailable ($fullLoadReason). Running a full load."
+        $Mode = "Full"
+        $changeSet.files = @("<$fullLoadReason>")
     } elseif ($changeSet.files.Count -eq 0) {
         if ($previousFingerprint -or $loadProofInvalidated) {
             $fullLoadReason = if ($loadProofInvalidated) { "The previous Designer load proof is invalid" } else { "Source fingerprint changed" }
             Write-Warning "$fullLoadReason but Git produced no partial list. Running a full load to preserve correctness."
             $Mode = "Full"
             $changeSet.files = @($(if ($loadProofInvalidated) { "<designer-proof-invalidated>" } else { "<fingerprint-changed>" }))
-        } else {
-            Write-Host "No changed config files under $ExportPath since $($changeSet.baseCommit)."
-            Write-Host "Legacy state fingerprint initialized without reloading the matching branch infobase."
-            Set-RunStage -Stage "config-load.seeded" -Detail "Initialized the legacy $ContentKind fingerprint without Designer."
-            return [pscustomobject]@{
-                loaded = $false
-                normalizationRequired = ($normalizationStatus -ne "passed")
-                fileCount = $source.fileCount
-                listFile = ""
-                currentCommit = $changeSet.currentCommit
-                lastLogPath = $script:LastLogPath
-                loadModeUsed = ""
-                partialLogPath = ""
-                fullFallbackLogPath = ""
-                configLoadStatus = "passed"
-                partialError = ""
-                fullFallbackError = ""
-                sourceFingerprint = $source.fingerprint
-                loadReason = "legacy-fingerprint-seed"
-                designerInvoked = $false
-                enterpriseInvoked = $false
-            }
         }
     }
 
@@ -1469,6 +1542,7 @@ function Load-ConfigFromFiles {
     if ($canPersistLoadProof) {
         Update-DevBranchState -State $loadState -Updates @{
             $fingerprintField = $source.fingerprint
+            $treeObjectIdField = $sourceTreeObjectId
             $loadedAtField = $loadedAt
             configLoadStatus = $orchestration.configLoadStatus
             lastConfigLoadMode = $orchestration.loadModeUsed
@@ -1492,11 +1566,14 @@ function Load-ConfigFromFiles {
         fullFallbackError = $orchestration.fullFallbackError
         normalizationRequired = $true
         sourceFingerprint = $source.fingerprint
+        sourceTreeObjectId = $sourceTreeObjectId
         loadReason = $(
             if ($missingPartialFilesFullLoad) { "partial-inventory-missing-files-full-load" }
             elseif ($Mode -eq "Full" -and $changeSet.files[0] -eq "<fingerprint-changed>") { "fingerprint-changed-full-load" }
             elseif ($Mode -eq "Full" -and $changeSet.files[0] -eq "<designer-proof-invalidated>") { "designer-proof-invalidated-full-load" }
             elseif ($Mode -eq "Full" -and $changeSet.files[0] -eq "<release-e2e-restore-invalidated>") { "release-e2e-restore-full-load" }
+            elseif ($Mode -eq "Full" -and $changeSet.files[0] -eq "<explicit-full-load>") { "explicit-full-load" }
+            elseif ($Mode -eq "Full" -and $changeSet.files[0] -match '^<designer-tree-') { $changeSet.files[0].Trim('<', '>') + "-full-load" }
             else { "source-fingerprint-changed" }
         )
         designerInvoked = $true
@@ -6563,8 +6640,10 @@ function Initialize-DevBranchRuntime {
         @{ name = "lastDesignerMemoryGuardError"; value = "" },
         @{ name = "lastDesignerMemoryGuardFailedAt"; value = "" },
         @{ name = "lastConfigDesignerFingerprint"; value = "" },
+        @{ name = "lastConfigDesignerTreeObjectId"; value = "" },
         @{ name = "lastConfigDesignerLoadedAt"; value = "" },
         @{ name = "lastExtensionDesignerFingerprint"; value = "" },
+        @{ name = "lastExtensionDesignerTreeObjectId"; value = "" },
         @{ name = "lastExtensionDesignerLoadedAt"; value = "" },
         @{ name = "extensionInitializationStatus"; value = $(if ($DevBranchKind -eq "extension") { "pending" } else { "not-required" }) },
         @{ name = "extensionInitializationError"; value = "" },
@@ -6652,7 +6731,9 @@ function Initialize-DevBranchRuntime {
             if (Test-Path -LiteralPath $absoluteConfigExportPath -PathType Container) {
                 $configSource = Get-ConfigSourceFingerprint -ExportPath $configExportPath
                 $stateHash["lastConfigDesignerFingerprint"] = $configSource.fingerprint
+                $stateHash["lastConfigDesignerTreeObjectId"] = $configSource.treeObjectId
                 $stateHash["lastConfigDesignerLoadedAt"] = $now
+                $stateHash["configLoadStatus"] = "passed"
                 $stateHash["sourceFingerprint"] = $configSource.fingerprint
                 $stateHash["loadReason"] = "branch-copy-seed"
             } else {
@@ -7602,6 +7683,7 @@ function Init-DevBranchExtension {
             lastExtensionBaseUpdateAt = $now
             lastExtensionBaseUpdatedCommit = Get-CurrentCommit
             lastExtensionDesignerFingerprint = $extensionSource.fingerprint
+            lastExtensionDesignerTreeObjectId = $extensionSource.treeObjectId
             lastExtensionDesignerLoadedAt = $now
             sourceFingerprint = $extensionSource.fingerprint
             loadReason = "extension-init-seed"
@@ -7640,8 +7722,10 @@ function Init-DevBranchExtension {
                 Restore-DevBranchInfobaseFromSnapshot -State $state -SnapshotPath $snapshotPath -Reason "extension initialization rollback"
                 Update-DevBranchState -State $state -Updates @{
                     lastConfigDesignerFingerprint = ""
+                    lastConfigDesignerTreeObjectId = ""
                     lastConfigDesignerLoadedAt = ""
                     lastExtensionDesignerFingerprint = ""
+                    lastExtensionDesignerTreeObjectId = ""
                     lastExtensionDesignerLoadedAt = ""
                     sourceFingerprint = ""
                     loadReason = "restore-invalidated"
@@ -7769,6 +7853,7 @@ function Set-DevBranchExtension {
         extensionRecoveryStatus = $recoveryStatus
         extensionRecoveryReason = $recoveryReason
         lastExtensionDesignerFingerprint = ""
+        lastExtensionDesignerTreeObjectId = ""
         lastExtensionDesignerLoadedAt = ""
     }
     Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Extension settings changed." -Force
@@ -8093,6 +8178,7 @@ function Dump-DevBranchExtension {
         lastExtensionDumpAt = $now
         lastExtensionDumpPath = $dumpResult.exportPath
         lastExtensionDesignerFingerprint = $source.fingerprint
+        lastExtensionDesignerTreeObjectId = $source.treeObjectId
         lastExtensionDesignerLoadedAt = $now
         sourceFingerprint = $source.fingerprint
         loadReason = "extension-dump-seed"
@@ -8501,6 +8587,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
         $extensionUpdates = New-LoadStateUpdates -LoadResult $extensionLoadResult -ContentKind "extension"
         Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $emptyState -LoadResult $extensionLoadResult -Updates $extensionUpdates
         $extensionUpdates["lastExtensionDesignerFingerprint"] = $extensionSource.fingerprint
+        $extensionUpdates["lastExtensionDesignerTreeObjectId"] = $extensionSource.treeObjectId
         Update-DevBranchState -State $emptyState -Updates $extensionUpdates
 
         # This feature is intentionally decoded at runtime so Windows PowerShell 5.1
@@ -8838,8 +8925,10 @@ function Restore-ReleaseE2EInfobaseSnapshot {
     Restore-DevBranchInfobaseFromSnapshot -State $state -SnapshotPath $snapshotPath -Reason "Release E2E checkpoint restore"
     Update-DevBranchState -State $state -Updates @{
         lastConfigDesignerFingerprint = ""
+        lastConfigDesignerTreeObjectId = ""
         lastConfigDesignerLoadedAt = ""
         lastExtensionDesignerFingerprint = ""
+        lastExtensionDesignerTreeObjectId = ""
         lastExtensionDesignerLoadedAt = ""
         sourceFingerprint = ""
         loadReason = "release-e2e-restore-invalidated"

@@ -233,6 +233,47 @@ Describe "1C Designer load proof invalidation" {
         }
     }
 
+    It "always invokes Designer for an explicit Full load even when the fingerprint matches" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-explicit-full-load-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:LoadCalls = 0
+                function Get-ConfigSourceFingerprint {
+                    [pscustomobject]@{ fingerprint = "fingerprint-a"; treeObjectId = ("a" * 40); fileCount = 1; absoluteExportPath = "C:\src" }
+                }
+                function Get-ConfigLoadChangeSet {
+                    [pscustomobject]@{ files = @(); currentCommit = "head"; absoluteExportPath = "C:\src"; requiresFullLoad = $false }
+                }
+                function Get-CurrentCommit { "head" }
+                function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
+                function Invoke-ConfigLoadWithFallback {
+                    param([string]$Mode)
+                    $script:LoadCalls++
+                    [pscustomobject]@{
+                        lastLogPath = "C:\full.log"; loadModeUsed = $Mode.ToLowerInvariant(); partialLogPath = ""
+                        fullFallbackLogPath = ""; configLoadStatus = "passed"; partialError = ""; fullFallbackError = ""
+                    }
+                }
+                $state = [pscustomobject]@{
+                    lastConfigDesignerFingerprint = "fingerprint-a"
+                    lastConfigDesignerTreeObjectId = ("a" * 40)
+                    configLoadStatus = "passed"
+                    enterpriseNormalizationStatus = "passed"
+                }
+                $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State $state -ExportPath "src/cf" -Mode Full 6>$null
+                [pscustomobject]@{ load = $load; calls = $script:LoadCalls }
+            }
+
+            $result.calls | Should -Be 1
+            $result.load.designerInvoked | Should -BeTrue
+            $result.load.loadModeUsed | Should -Be "full"
+            $result.load.loadReason | Should -Be "explicit-full-load"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "preserves the canonical Git-tree fingerprint without mutating the user index" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-load-proof-fingerprint-" + [guid]::NewGuid().ToString("N"))
         try {

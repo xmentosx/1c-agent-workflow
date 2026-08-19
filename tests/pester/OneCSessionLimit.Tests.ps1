@@ -359,6 +359,89 @@ Describe "Per-infobase 1C session admission" {
         @($result.released) | Should -Be @("sync")
     }
 
+    It "runs exact-dev-infobase cleanup once and retries one failed admission once" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:AdmissionCalls = 0
+            $script:RecoveryCalls = 0
+            function Invoke-OneCSessionAdmissionSet {
+                param([object[]]$Admissions, [scriptblock]$StartProcess)
+                $script:AdmissionCalls++
+                if ($script:AdmissionCalls -eq 1) { throw "ITL_ONEC_SESSION_LIMIT: fixture" }
+                return (& $StartProcess)
+            }
+            $started = Invoke-WithOneCSessionAdmissionContext `
+                -InfoBaseKind file `
+                -InfoBasePath "C:\dev base" `
+                -SessionLimitRecovery { $script:RecoveryCalls++ } `
+                -ScriptBlock {
+                    Invoke-OneCSessionProcessStart -StartProcess { [pscustomobject]@{ Id = 551 } }
+                }
+            [pscustomobject]@{ pid = $started.Id; admissionCalls = $script:AdmissionCalls; recoveryCalls = $script:RecoveryCalls }
+        }
+
+        $result.pid | Should -Be 551
+        $result.admissionCalls | Should -Be 2
+        $result.recoveryCalls | Should -Be 1
+    }
+
+    It "stops only an exact Cyrillic dev infobase session after rechecking PID identity" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $target = "C:\Базы с пробелом\Ветка 1"
+            $other = "C:\Базы с пробелом\Ветка 2"
+            $script:Infos = @(
+                [pscustomobject]@{ processId = 701; processStartTime = "2026-08-19T08:00:00.0000000Z"; executablePath = "C:\1C\1cv8c.exe"; commandLine = "1cv8c.exe ENTERPRISE /F `"$target`"" },
+                [pscustomobject]@{ processId = 702; processStartTime = "2026-08-19T08:01:00.0000000Z"; executablePath = "C:\1C\1cv8c.exe"; commandLine = "1cv8c.exe ENTERPRISE /F `"$other`"" }
+            )
+            $script:Stopped = @()
+            function Get-OneCProcessInfo { return @($script:Infos) }
+            function Get-Process { param([int]$Id); return [pscustomobject]@{ Id = $Id; StartTime = [datetime]"2026-08-19T08:00:00Z" } }
+            function Stop-NativeProcessForSafety {
+                param([object]$Process)
+                $script:Stopped += $Process.Id
+                $script:Infos = @($script:Infos | Where-Object processId -ne $Process.Id)
+                [pscustomobject]@{ confirmed = $true; error = "" }
+            }
+            $cleanup = Stop-OneCInfoBaseSessionProcesses -InfoBaseKind file -InfoBasePath $target
+            [pscustomobject]@{ cleanup = $cleanup; stopped = @($script:Stopped); remaining = @($script:Infos.processId) }
+        }
+
+        $result.cleanup.stopped | Should -Be 1
+        $result.stopped | Should -Be @(701)
+        $result.remaining | Should -Be @(702)
+    }
+
+    It "fails closed on PID reuse before stopping a process" {
+        $message = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $target = "C:\Базы с пробелом\Ветка 1"
+            $script:Inspection = 0
+            function Get-OneCProcessInfo {
+                $script:Inspection++
+                $start = if ($script:Inspection -eq 1) { "2026-08-19T08:00:00.0000000Z" } else { "2026-08-19T09:00:00.0000000Z" }
+                @([pscustomobject]@{ processId = 703; processStartTime = $start; executablePath = "C:\1C\1cv8c.exe"; commandLine = "1cv8c.exe ENTERPRISE /F `"$target`"" })
+            }
+            function Get-Process { throw "must not stop a reused PID" }
+            try { Stop-OneCInfoBaseSessionProcesses -InfoBaseKind file -InfoBasePath $target | Out-Null; "" } catch { $_.Exception.Message }
+        }
+
+        $message | Should -Match '^ITL_ONEC_SESSION_IDENTITY_MISMATCH: failedPredicate=processStartTime pid=703'
+    }
+
+    It "does not match an ambiguous command line containing both file and server infobases" {
+        $matched = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $target = "C:\Базы с пробелом\Ветка 1"
+            Test-OneCCommandLineInfoBasePath `
+                -CommandLine "1cv8c.exe ENTERPRISE /F `"$target`" /S `"server\branch`"" `
+                -InfoBaseKind file `
+                -InfoBasePath $target
+        }
+
+        $matched | Should -BeFalse
+    }
+
     It "atomically reserves the service TestManager and target TestClients per infobase" {
         $result = & {
             $saved = $env:ONEC_MAX_CONCURRENT_SESSIONS

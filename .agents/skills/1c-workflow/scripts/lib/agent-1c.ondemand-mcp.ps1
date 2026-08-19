@@ -454,26 +454,40 @@ function Write-ItlOnDemandRuntimeState {
     return $path
 }
 
-function Test-ItlOnDemandOwnedProcess {
+function Get-ItlOnDemandProcessOwnershipProof {
     param([object]$RuntimeState)
     $processId = ConvertTo-IntOrDefault -Value $RuntimeState.pid -Default 0
-    if ($processId -le 0) { return $false }
+    if ($processId -le 0) { return [pscustomobject]@{ owned = $false; failedPredicate = "pid"; expected = ">0"; actual = $processId } }
     $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-    if ($null -eq $process) { return $false }
+    if ($null -eq $process) { return [pscustomobject]@{ owned = $false; failedPredicate = "process-present"; expected = "running"; actual = "missing" } }
     try {
         $expected = [DateTimeOffset]::Parse([string]$RuntimeState.processStartTime).UtcDateTime
-        if ([Math]::Abs(($process.StartTime.ToUniversalTime() - $expected).TotalSeconds) -ge 2) { return $false }
+        $actualStart = $process.StartTime.ToUniversalTime()
+        if ([Math]::Abs(($actualStart - $expected).TotalSeconds) -ge 2) {
+            return [pscustomobject]@{ owned = $false; failedPredicate = "processStartTime"; expected = $expected.ToString("o"); actual = $actualStart.ToString("o") }
+        }
         $native = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$processId" -ErrorAction Stop
         $expectedExecutable = [string](Get-ConfigValueFromObject -Object $RuntimeState -Path "executablePath" -Default "")
-        if (-not $expectedExecutable -or -not [string]::Equals([string]$native.ExecutablePath, $expectedExecutable, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+        if (-not $expectedExecutable) { return [pscustomobject]@{ owned = $false; failedPredicate = "executablePath-recorded"; expected = "non-empty"; actual = "missing" } }
+        if (-not [string]::Equals([string]$native.ExecutablePath, $expectedExecutable, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return [pscustomobject]@{ owned = $false; failedPredicate = "executablePath"; expected = $expectedExecutable; actual = [string]$native.ExecutablePath }
+        }
         $commandLine = [string]$native.CommandLine
         foreach ($marker in @($RuntimeState.ownershipMarkers)) {
-            if (-not $marker -or $commandLine.IndexOf([string]$marker, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { return $false }
+            if (-not $marker) { return [pscustomobject]@{ owned = $false; failedPredicate = "ownershipMarker-recorded"; expected = "non-empty"; actual = "missing" } }
+            if ($commandLine.IndexOf([string]$marker, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+                return [pscustomobject]@{ owned = $false; failedPredicate = "ownershipMarker"; expected = [string]$marker; actual = "absent" }
+            }
         }
-        return $true
+        return [pscustomobject]@{ owned = $true; failedPredicate = ""; expected = ""; actual = "" }
     } catch {
-        return $false
+        return [pscustomobject]@{ owned = $false; failedPredicate = "process-inspection"; expected = "available"; actual = $_.Exception.Message }
     }
+}
+
+function Test-ItlOnDemandOwnedProcess {
+    param([object]$RuntimeState)
+    return [bool](Get-ItlOnDemandProcessOwnershipProof -RuntimeState $RuntimeState).owned
 }
 
 function Test-ItlOnDemandPortOwnedByProcess {
@@ -586,12 +600,13 @@ function Stop-ItlOnDemandBackendInstance {
         $managerProcess = $(if ($managerPid -gt 0) { Get-Process -Id $managerPid -ErrorAction SilentlyContinue } else { $null })
         $testClientPid = ConvertTo-IntOrDefault -Value (Get-ConfigValueFromObject -Object $runtimeState -Path "testClientPid" -Default 0) -Default 0
         $testClientProcess = $(if ($testClientPid -gt 0) { Get-Process -Id $testClientPid -ErrorAction SilentlyContinue } else { $null })
-        $ownedManager = Test-ItlOnDemandOwnedProcess -RuntimeState $runtimeState
+        $managerOwnership = Get-ItlOnDemandProcessOwnershipProof -RuntimeState $runtimeState
+        $ownedManager = [bool]$managerOwnership.owned
         if ($null -ne $managerProcess -and -not $ownedManager) {
-            throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: refusing to stop unverified backend PID $managerPid for $Family/$InstanceId."
+            throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: failedPredicate=$($managerOwnership.failedPredicate) expected='$($managerOwnership.expected)' actual='$($managerOwnership.actual)' pid=$managerPid family=$Family instanceId=$InstanceId."
         }
         if ($null -ne $testClientProcess -and $ownedChildren.Count -eq 0) {
-            throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: refusing to stop unverified TestClient PID $testClientPid for $Family/$InstanceId."
+            throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: failedPredicate=testClientOwnership expected='registered exact child' actual='unverified' pid=$testClientPid family=$Family instanceId=$InstanceId."
         }
         foreach ($child in $ownedChildren) {
             Stop-Process -Id $child.process.Id -Force -ErrorAction SilentlyContinue
@@ -721,8 +736,9 @@ function Confirm-ItlOnDemandBackendRunning {
     if ([int]$runtimeState.pid -ne $ExpectedPid -or [int]$runtimeState.port -ne $ExpectedPort -or [string]$runtimeState.catalogSha256 -ne $CatalogSha256) {
         throw "ITL_ONDEMAND_READINESS_IDENTITY_CHANGED: registered PID/port/catalog no longer match $Family/$InstanceId."
     }
-    if (-not (Test-ItlOnDemandOwnedProcess -RuntimeState $runtimeState)) {
-        throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: backend PID $ExpectedPid is not strictly owned by $Family/$InstanceId; state and leases were retained."
+    $ownership = Get-ItlOnDemandProcessOwnershipProof -RuntimeState $runtimeState
+    if (-not [bool]$ownership.owned) {
+        throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: failedPredicate=$($ownership.failedPredicate) expected='$($ownership.expected)' actual='$($ownership.actual)' pid=$ExpectedPid family=$Family instanceId=$InstanceId; state and leases were retained."
     }
     if (-not (Test-ItlOnDemandPortOwnedByProcess -Port $ExpectedPort -ProcessId $ExpectedPid)) {
         throw "ITL_ONDEMAND_READINESS_IDENTITY_UNVERIFIED: port $ExpectedPort is not proven to be owned by backend PID $ExpectedPid; state and leases were retained."
@@ -772,11 +788,16 @@ function Ensure-ItlOnDemandVanessaTestClient {
     if ($null -eq $runtimeState) {
         throw "ITL_ONDEMAND_RUNTIME_STATE_MISSING: no registered runtime for vanessa-ui/$InstanceId."
     }
-    if (-not (Test-ItlOnDemandOwnedProcess -RuntimeState $runtimeState) -or -not (Test-TcpPortOpen -Port ([int]$runtimeState.port))) {
-        throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: Vanessa manager ownership/port is not proven for vanessa-ui/$InstanceId."
+    $managerOwnership = Get-ItlOnDemandProcessOwnershipProof -RuntimeState $runtimeState
+    if (-not [bool]$managerOwnership.owned) {
+        throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: failedPredicate=$($managerOwnership.failedPredicate) expected='$($managerOwnership.expected)' actual='$($managerOwnership.actual)' pid=$($runtimeState.pid) family=vanessa-ui instanceId=$InstanceId."
+    }
+    if (-not (Test-TcpPortOpen -Port ([int]$runtimeState.port))) {
+        throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: failedPredicate=backendPort expected='open' actual='closed' pid=$($runtimeState.pid) family=vanessa-ui instanceId=$InstanceId."
     }
 
     $state = Read-CurrentDevBranchStateForRoctupMcp -Operation "ITL on-demand Vanessa TestClient"
+    $state = Assert-DevBranchApplicationReady -State $state -Operation "ITL on-demand Vanessa TestClient start"
     $testClientPort = ConvertTo-IntOrDefault -Value (Get-ConfigValueFromObject -Object $runtimeState -Path "testClientPort" -Default 0) -Default 0
     $recordedPid = ConvertTo-IntOrDefault -Value (Get-ConfigValueFromObject -Object $runtimeState -Path "testClientPid" -Default 0) -Default 0
     $previousPid = 0
@@ -789,7 +810,7 @@ function Ensure-ItlOnDemandVanessaTestClient {
         $recordedProcess = Get-Process -Id $recordedPid -ErrorAction SilentlyContinue
         $owned = @(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $runtimeState)
         if ($null -ne $recordedProcess -and $owned.Count -eq 0) {
-            throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: refusing to reuse or stop unverified TestClient PID $recordedPid for vanessa-ui/$InstanceId."
+            throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: failedPredicate=testClientOwnership expected='registered exact child' actual='unverified' pid=$recordedPid family=vanessa-ui instanceId=$InstanceId."
         }
         if ($owned.Count -eq 1 -and (Test-TcpPortOpen -Port $testClientPort)) {
             $runtimeState = Set-ItlOnDemandRuntimeStateValues -RuntimeState $runtimeState -Values @{
@@ -826,7 +847,7 @@ function Ensure-ItlOnDemandVanessaTestClient {
     $managerPid = ConvertTo-IntOrDefault -Value (Get-ConfigValueFromObject -Object $runtimeState -Path "pid" -Default 0) -Default 0
     if ((Test-VanessaTestPortOwnedByState -State $state -Port $testClientPort -ExcludeProcessId $managerPid) -or
         (Test-VanessaTestPortUsedByForeignProcess -State $state -Port $testClientPort -ExcludeProcessId $managerPid)) {
-        throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: TestClient port $testClientPort is used by an unregistered process; it was not claimed or stopped."
+        throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: failedPredicate=testClientPortOwnership expected='free or registered exact child' actual='unregistered owner' port=$testClientPort family=vanessa-ui instanceId=$InstanceId."
     }
     $testClientResult = $null
     try {
@@ -835,6 +856,12 @@ function Ensure-ItlOnDemandVanessaTestClient {
             -InfoBaseKind $state.infoBaseKind `
             -UseTestClient `
             -TestClientPort $testClientPort `
+            -SessionLimitRecovery {
+                Stop-OneCInfoBaseSessionProcesses `
+                    -InfoBaseKind $state.infoBaseKind `
+                    -InfoBasePath $state.devBranchInfoBasePath `
+                    -Reason "managed TestClient session admission" | Out-Null
+            } `
             -EnterpriseArgs @()
         $process = Get-Process -Id $testClientResult.process.Id -ErrorAction Stop
         $platformPath = Resolve-Agent1cFullPath -Path $testClientResult.executablePath
@@ -884,6 +911,8 @@ function Ensure-ItlOnDemandVanessaTestClient {
 function Start-ItlOnDemandBackendInstance {
     param([string]$Family, [string]$InstanceId, [string]$CatalogSha256)
 
+    $state = Read-CurrentDevBranchStateForRoctupMcp -Operation "ITL on-demand MCP"
+    $state = Assert-DevBranchApplicationReady -State $state -Operation "ITL on-demand $Family backend start"
     $existing = Read-ItlOnDemandRuntimeState -Family $Family -InstanceId $InstanceId
     if ($null -ne $existing -and (Test-ItlOnDemandOwnedProcess -RuntimeState $existing) -and (Test-TcpPortOpen -Port ([int]$existing.port))) {
         if (-not (Test-ItlOnDemandPortOwnedByProcess -Port ([int]$existing.port) -ProcessId ([int]$existing.pid))) {
@@ -901,8 +930,6 @@ function Start-ItlOnDemandBackendInstance {
         return $existing
     }
     if ($null -ne $existing) { Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership | Out-Null }
-    $state = Read-CurrentDevBranchStateForRoctupMcp -Operation "ITL on-demand MCP"
-    $state = Ensure-DevBranchEnterpriseNormalized -State $state -Reason "legacy-preflight"
     $portFamily = Get-ItlOnDemandPortFamily -Family $Family
     $key = Get-ItlOnDemandPortKey -Family $Family -State $state -InstanceId $InstanceId
     $port = 0
@@ -983,13 +1010,28 @@ function Start-ItlOnDemandBackendInstance {
         Write-ItlOnDemandRuntimeState -RuntimeState $runtimeState | Out-Null
         $runtimeStatePersisted = $true
         if ($Family -eq "roctup") {
-            $result = Start-EnterpriseBackground -InfoBasePath $state.devBranchInfoBasePath -InfoBaseKind $state.infoBaseKind -EnterpriseArgs @("/Execute", $artifact.path, "/Cstartup;mode=embedded;port=$port")
+            $result = Start-EnterpriseBackground `
+                -InfoBasePath $state.devBranchInfoBasePath `
+                -InfoBaseKind $state.infoBaseKind `
+                -SessionLimitRecovery {
+                    Stop-OneCInfoBaseSessionProcesses `
+                        -InfoBaseKind $state.infoBaseKind `
+                        -InfoBasePath $state.devBranchInfoBasePath `
+                        -Reason "managed ROCTUP session admission" | Out-Null
+                } `
+                -EnterpriseArgs @("/Execute", $artifact.path, "/Cstartup;mode=embedded;port=$port")
         } else {
             $result = Start-EnterpriseBackground `
                 -InfoBasePath $serviceInfoBase.path `
                 -InfoBaseKind $serviceInfoBase.kind `
                 -UseTestManager `
                 -TestClientPort $testClientPort `
+                -SessionLimitRecovery {
+                    Stop-OneCInfoBaseSessionProcesses `
+                        -InfoBaseKind $state.infoBaseKind `
+                        -InfoBasePath $state.devBranchInfoBasePath `
+                        -Reason "managed Vanessa session admission" | Out-Null
+                } `
                 -User $serviceInfoBase.user `
                 -Password $serviceInfoBase.password `
                 -EnterpriseArgs @("/Execute", $vanessa.epfPath, "/C$command")

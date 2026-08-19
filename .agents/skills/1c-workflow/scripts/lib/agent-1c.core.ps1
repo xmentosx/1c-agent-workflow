@@ -352,7 +352,7 @@ function Set-RunResultArtifacts {
 
 function Set-RunFailureContext {
     param(
-        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "ai-rules-migration-blocked", "merge-conflict")]
+        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "infobase-readiness", "ai-rules-migration-blocked", "merge-conflict")]
         [string]$Category = "",
         [string]$RequiredAction = ""
     )
@@ -376,6 +376,10 @@ function Set-RunFailureContextFromMessage {
     }
     if ($Message -match '^(?i:ITL_(?:ONEC_SESSION_LIMIT|VANESSA_LICENSE_LIMIT))\b') {
         Set-RunFailureContext -Category "session-capacity" -RequiredAction "finish-or-close-owned-sessions-before-retry"
+        return
+    }
+    if ($Message -match '^(?i:ITL_INFOBASE_APPLICATION_NOT_READY)\b') {
+        Set-RunFailureContext -Category "infobase-readiness" -RequiredAction "update-dev-branch-base"
         return
     }
 
@@ -6113,6 +6117,7 @@ function Start-EnterpriseBackground {
         [switch]$UseTestManager,
         [switch]$UseTestClient,
         [int]$TestClientPort = 0,
+        [scriptblock]$SessionLimitRecovery = $null,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
     )
@@ -6159,7 +6164,8 @@ function Start-EnterpriseBackground {
         -InfoBaseKind $InfoBaseKind `
         -InfoBasePath $InfoBasePath `
         -RequiredSessions 1 `
-        -Purpose $(if ($UseTestManager) { "test-manager" } elseif ($UseTestClient) { "test-client" } else { "enterprise-background" })
+        -Purpose $(if ($UseTestManager) { "test-manager" } elseif ($UseTestClient) { "test-client" } else { "enterprise-background" }) `
+        -SessionLimitRecovery $SessionLimitRecovery
     return [pscustomobject]@{
         process = $process
         logPath = $logPath
@@ -6182,6 +6188,7 @@ function Invoke-Enterprise {
         [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10,
         [ValidateRange(0, 64)][int]$ExpectedSessionCount = 0,
         [object[]]$AdditionalSessionAdmissions = @(),
+        [scriptblock]$SessionLimitRecovery = $null,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
     )
@@ -6227,6 +6234,7 @@ function Invoke-Enterprise {
         -ExpectedChildRole $(if ($effectiveTestClientPort -gt 0) { "test-client" } else { "" }) `
         -Purpose $(if ($effectiveTestClientPort -gt 0) { "test-manager-run" } else { "enterprise-run" }) `
         -AdditionalAdmissions $AdditionalSessionAdmissions `
+        -SessionLimitRecovery $SessionLimitRecovery `
         -ScriptBlock {
             Invoke-NativeProcessAndWaitResult `
                 -FilePath $platformPath `

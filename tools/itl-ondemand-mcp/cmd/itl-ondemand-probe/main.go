@@ -440,9 +440,9 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 		{name: "run_scenario", arguments: map[string]any{"filePath": featurePath, "mode": "reloadAndRun"}, proof: "run_scenario:hot"},
 		{name: "get_VanessaAutomation_state", arguments: map[string]any{}, proof: "get_VanessaAutomation_state:hot"},
 		{name: "get_test_results", arguments: map[string]any{}, proof: "get_test_results:hot"},
-		{name: "run_scenario", arguments: map[string]any{"filePath": secondaryFeaturePath, "mode": "reloadAndRun"}, proof: "run_scenario:switch"},
-		{name: "get_VanessaAutomation_state", arguments: map[string]any{}, proof: "get_VanessaAutomation_state:switch"},
-		{name: "get_test_results", arguments: map[string]any{}, proof: "get_test_results:switch"},
+		{name: "run_scenario", arguments: map[string]any{"filePath": secondaryFeaturePath, "mode": "reloadAndRunFromLine", "lineNumber": 5}, proof: "run_scenario:from-line-cold"},
+		{name: "get_VanessaAutomation_state", arguments: map[string]any{}, proof: "get_VanessaAutomation_state:from-line-cold"},
+		{name: "get_test_results", arguments: map[string]any{}, proof: "get_test_results:from-line-cold"},
 		{name: "open_feature_file", arguments: map[string]any{"filePath": secondaryFeaturePath}, proof: "open_feature_file:secondary"},
 		{name: "check_syntax", arguments: map[string]any{"filePath": secondaryFeaturePath}, proof: "check_syntax:secondary"},
 		{name: "load_features", arguments: map[string]any{"path": secondaryFeaturePath}, proof: "load_features:secondary"},
@@ -518,6 +518,7 @@ type vanessaScenarioEvidence struct {
 	ResultCode    string `json:"resultCode"`
 	FeaturePath   string `json:"featurePath"`
 	FeatureSHA256 string `json:"featureSha256"`
+	ScenarioLine  int    `json:"scenarioLine"`
 }
 
 func validateVanessaScenarioEvidence(projectRoot, instanceID, featurePath, secondaryFeaturePath string) error {
@@ -532,12 +533,13 @@ func validateVanessaScenarioEvidence(projectRoot, instanceID, featurePath, secon
 		if strings.TrimSpace(line) == "" || json.Unmarshal([]byte(line), &entry) != nil {
 			continue
 		}
-		if entry.Tool == "run_scenario" || entry.Tool == "get_test_results" {
+		if (entry.Tool == "run_scenario" || entry.Tool == "get_test_results") && entry.Outcome == "passed" {
 			actual = append(actual, entry)
 		}
 	}
 	expectedPaths := []string{featurePath, featurePath, featurePath, featurePath, secondaryFeaturePath, secondaryFeaturePath, secondaryFeaturePath, secondaryFeaturePath}
 	expectedTools := []string{"run_scenario", "get_test_results", "run_scenario", "get_test_results", "run_scenario", "get_test_results", "run_scenario", "get_test_results"}
+	expectedLines := []int{0, 0, 0, 0, 5, 5, 5, 5}
 	if len(actual) < len(expectedTools) {
 		return fmt.Errorf("Vanessa scenario evidence entries=%d, expected at least %d", len(actual), len(expectedTools))
 	}
@@ -553,7 +555,7 @@ func validateVanessaScenarioEvidence(projectRoot, instanceID, featurePath, secon
 		}
 		hash := sha256.Sum256(featureRaw)
 		expectedSHA := fmt.Sprintf("%x", hash[:])
-		if entry.Tool != expectedTools[index] || entry.Outcome != "passed" || entry.ResultCode != "ITL_OK" || entry.FeaturePath != filepath.ToSlash(relative) || entry.FeatureSHA256 != expectedSHA {
+		if entry.Tool != expectedTools[index] || entry.Outcome != "passed" || entry.ResultCode != "ITL_OK" || entry.FeaturePath != filepath.ToSlash(relative) || entry.FeatureSHA256 != expectedSHA || entry.ScenarioLine != expectedLines[index] {
 			return fmt.Errorf("Vanessa scenario evidence %d does not prove the expected passed feature path/SHA: %#v", index, entry)
 		}
 	}

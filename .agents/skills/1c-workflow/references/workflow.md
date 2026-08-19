@@ -78,7 +78,7 @@ Do not call the wizard helper directly, run `Test-Path` preflight, use backgroun
 - Use `/itl-check` or `check-dev-branch` for executable verification. Effective ITL modes decide which components run; a skipped component produces partial evidence, never a fresh pass. `/deploy-and-test` is a bridge to the same helper.
 - Read `references/vanessa-tests.md` and `vanessa-authoring.md` only before creating, editing, or diagnosing Vanessa feature files.
 - `ONEC_MAX_CONCURRENT_SESSIONS` limits workflow-owned 1C launches per exact infobase. Default `3`; `0` disables it. Admission counts external processes, serializes count-and-start, and reserves promised TestClient slots.
-- `errorCategory=session-capacity` is a scheduling block, not a product/test failure. Do not rerun unchanged or alter the limit. Finish current work, close only proven owned unused sessions, then retry. Report foreign/manual PIDs to their owner; never kill them.
+- `errorCategory=session-capacity` is a scheduling block, not a product/test failure. The helper may once close local sessions whose exact `/F` or `/S` targets the current dev-branch infobase, regardless of launcher, then retry admission once. Source, other-branch, ambiguous, and PID-reused processes remain fail-closed; do not add retries or alter the limit.
 - External `Start-Process 1cv8.exe` cannot be intercepted. Project automation must dot-source `agent-1c.ps1 -Action help`, then call `Start-OneCProcessBackground` with the exact base, whole topology, `ExpectedChildRole=test-client` when applicable, purpose, and `-Visible` when needed. Direct 1C launch is forbidden.
 - For other native Windows executables, and inside the guarded 1C launcher implementation, pass `Start-Process -ArgumentList` as one joined and correctly quoted command-line string, never as a PowerShell array.
 - Do not search or load ignored runtime folders such as `.agent-1c/runs/`, `.agent-1c/mcp/`, `.agent-1c/infobases/`, `build/test-results/`, or `logs/` unless diagnosing a specific helper run or artifact.
@@ -86,5 +86,7 @@ Do not call the wizard helper directly, run `Test-Path` preflight, use backgroun
 ## Failure Rules
 
 Stop immediately when required parameters are missing, Git state is unexpectedly dirty, branch targets already exist, the source infobase cannot be opened, repository credentials are missing for required storage sync, 1C Designer returns non-zero, CF/CFE export fails, or `verificationPolicy=block` forbids an unverified result.
+
+On `ITL_INFOBASE_APPLICATION_NOT_READY`, run `update-dev-branch-base`, then retry the original MCP/test action once; never move this mutation into MCP.
 
 For recovery, open only the relevant topic reference above.

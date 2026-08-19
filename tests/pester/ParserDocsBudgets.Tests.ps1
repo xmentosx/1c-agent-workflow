@@ -589,6 +589,10 @@
             & git -C $tempRoot branch -M master
             $baseCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
             & git -C $tempRoot checkout -q -b itldev/branch3
+            $sourceProof = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Get-ConfigSourceFingerprint -ExportPath "src/cf"
+            }
 
             $stateDir = Join-Path $tempRoot ".agent-1c\dev-branches"
             New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
@@ -602,6 +606,10 @@
                 mainWorktreePath = $tempRoot
                 worktreePath = $tempRoot
                 createdFromCommit = $baseCommit
+                lastConfigDesignerFingerprint = $sourceProof.fingerprint
+                lastConfigDesignerTreeObjectId = $sourceProof.treeObjectId
+                configLoadStatus = "passed"
+                enterpriseNormalizationStatus = "passed"
             }
             Set-Content -LiteralPath (Join-Path $stateDir "branch3.json") -Encoding UTF8 -Value (($state | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
 

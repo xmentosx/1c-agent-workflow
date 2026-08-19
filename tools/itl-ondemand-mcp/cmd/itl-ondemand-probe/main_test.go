@@ -124,7 +124,7 @@ func TestRunVanessaSmokeCoversColdHotAndSelectedScenarioPathsBeforeUI(t *testing
 	if clientCount != 0 || maxClientCount != 1 {
 		t.Fatalf("unexpected TestClient concurrency observation: current=%d max=%d", clientCount, maxClientCount)
 	}
-	wantProofs := "run_scenario:cold,get_VanessaAutomation_state:cold,get_test_results:cold,run_scenario:hot,get_VanessaAutomation_state:hot,get_test_results:hot,run_scenario:switch,get_VanessaAutomation_state:switch,get_test_results:switch,open_feature_file:secondary,check_syntax:secondary,load_features:secondary,select_scenario:secondary,run_scenario:selected,get_VanessaAutomation_state:selected,get_test_results:selected"
+	wantProofs := "run_scenario:cold,get_VanessaAutomation_state:cold,get_test_results:cold,run_scenario:hot,get_VanessaAutomation_state:hot,get_test_results:hot,run_scenario:from-line-cold,get_VanessaAutomation_state:from-line-cold,get_test_results:from-line-cold,open_feature_file:secondary,check_syntax:secondary,load_features:secondary,select_scenario:secondary,run_scenario:selected,get_VanessaAutomation_state:selected,get_test_results:selected"
 	if outcome != "passed" || strings.Join(authoringCalls, ",") != wantProofs {
 		t.Fatalf("outcome=%q authoringCalls=%#v", outcome, authoringCalls)
 	}
@@ -164,6 +164,9 @@ func TestRunVanessaSmokeCoversColdHotAndSelectedScenarioPathsBeforeUI(t *testing
 	}
 	if calls[0].name != "run_scenario" || calls[0].arguments["mode"] != "reloadAndRun" {
 		t.Fatalf("cold run_scenario was not the first feature operation: %#v", calls[0])
+	}
+	if calls[6].arguments["mode"] != "reloadAndRunFromLine" || calls[6].arguments["lineNumber"] != float64(5) {
+		t.Fatalf("secondary feature was not first opened by cold reloadAndRunFromLine: %#v", calls[6])
 	}
 	for index := 0; index < len(want); index++ {
 		if calls[index].name == "connect_test_client" || strings.HasPrefix(calls[index].name, "get_window_") {
@@ -207,7 +210,11 @@ func TestValidateVanessaScenarioEvidenceBindsPassedRunsAndResultsToFeatureSHA(t 
 		if err != nil {
 			t.Fatal(err)
 		}
-		entry, err := json.Marshal(vanessaScenarioEvidence{Tool: tools[index], Outcome: "passed", ResultCode: "ITL_OK", FeaturePath: filepath.ToSlash(relative), FeatureSHA256: fmt.Sprintf("%x", hash[:])})
+		scenarioLine := 0
+		if index >= 4 {
+			scenarioLine = 5
+		}
+		entry, err := json.Marshal(vanessaScenarioEvidence{Tool: tools[index], Outcome: "passed", ResultCode: "ITL_OK", FeaturePath: filepath.ToSlash(relative), FeatureSHA256: fmt.Sprintf("%x", hash[:]), ScenarioLine: scenarioLine})
 		if err != nil {
 			t.Fatal(err)
 		}

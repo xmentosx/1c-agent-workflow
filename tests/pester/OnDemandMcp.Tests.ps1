@@ -18,11 +18,11 @@ Describe "ITL on-demand MCP facade" {
 
     It "pins compatible catalogs and uses main-worktree endpoint assets" {
         $manifest = Get-Content -LiteralPath (Join-Path $AssetRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.facadeVersion | Should -Be "0.4.7"
-        $manifest.minimumFacadeVersion | Should -Be "0.4.7"
+        $manifest.facadeVersion | Should -Be "0.4.8"
+        $manifest.minimumFacadeVersion | Should -Be "0.4.8"
         $mainSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\main.go") -Raw -Encoding UTF8
         $gatewaySource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\gateway.go") -Raw -Encoding UTF8
-        $mainSource | Should -Match 'const version = "0\.4\.7"'
+        $mainSource | Should -Match 'const version = "0\.4\.8"'
         $mainSource | Should -Match '"gateway"'
         $gatewaySource | Should -Match 'gatewayResolveTool\s*=\s*"resolve_tool"'
         $gatewaySource | Should -Match 'gatewayCallTool\s*=\s*"call_tool"'
@@ -32,18 +32,18 @@ Describe "ITL on-demand MCP facade" {
         $manifest.families.'vanessa-ui'.backendVersions.clientMcp | Should -Be "v0.6.5"
         $manifest.families.'vanessa-ui'.backendVersions.vaExtension | Should -Be "1.2.043.28"
         $manifest.families.'vanessa-ui'.backendVersions.vanessaAutomation | Should -Be "1.2.043.28"
-        $manifest.families.'vanessa-ui'.backendRevisions.vanessaAutomation | Should -Be "itl-r7"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.archiveSha256 | Should -Be "d96ac6e48578ac8b2dc65d645b1748bc5f6183c58bcd22987122dc8e45e19c1e"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.epfSha256 | Should -Be "d17b20bca54861b025256652a84dec18cdcc2d20b4a08932c5141054d7dc7f9f"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.manifestSha256 | Should -Be "f8dc93948bff574ecf51570227757ce0caa0c18f5c3b9c93174a8b381c79ad48"
-        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.patchSha256 | Should -Be "b19fba2bccb0f997525cf92433a817e3d6d25a49ce16961319397bfba79bd25f"
+        $manifest.families.'vanessa-ui'.backendRevisions.vanessaAutomation | Should -Be "itl-r8"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.archiveSha256 | Should -Be "28364081cb02c6d53f674b7c8b111dae1701622935f6c51ddb8cbf29cce1e246"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.epfSha256 | Should -Be "09c999f88b2ee4a76e7ac2cdd9f1056ba1e1539e8697d24f195810aa4d692e05"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.manifestSha256 | Should -Be "23034f9dd365feda2197b56aeb51794f40c2bef067978aba8a3009433192ac89"
+        $manifest.families.'vanessa-ui'.vanessaAutomationArtifact.patchSha256 | Should -Be "47da40aeb11f035e6bb0c436c856b67d3ad9e32bff14f9d5493c220c4d73b930"
         $manifest.families.'vanessa-ui'.backendVersions.vanessaExt | Should -Be "1.3.9.131"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.version | Should -Be "1.3.9.131"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.sha256 | Should -Match '^[0-9a-f]{64}$'
         $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.7"
-        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.7/itl-ondemand-mcp-windows-amd64.exe"
-        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "bfdfe62986cab26ded5ca573d067a7a283901287649cfabb38b6fc5534911b35"
+        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.8"
+        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.8/itl-ondemand-mcp-windows-amd64.exe"
+        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "05c391c7ea34bb027d380cd9d7a9debf37090cf624cb711a3afa8568b4e4317c"
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Not -Be "45debfd236dcb1b1b00dcfbf5343e236be05884cba0f00e42eb94ae72d1cfb13"
         foreach ($family in @("roctup", "vanessa-ui")) {
             $definition = $manifest.families.$family
@@ -214,13 +214,13 @@ Describe "ITL on-demand MCP facade" {
             }
             $mismatch | Should -Match "ITL_ONDEMAND_FACADE_LOCK_MISMATCH"
 
-            $lock.dependencies.itlOndemandMcp.version = "0.4.7"
+            $lock.dependencies.itlOndemandMcp.version = "0.4.8"
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value ($lock | ConvertTo-Json -Depth 20)
             $resolved = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlOnDemandMcpExecutablePath -AllowMissing
             }
-            $resolved | Should -Be (Join-Path $installRoot "0.4.7\itl-ondemand-mcp-windows-amd64.exe")
+            $resolved | Should -Be (Join-Path $installRoot "0.4.8\itl-ondemand-mcp-windows-amd64.exe")
             $resolved | Should -Not -Match ([regex]::Escape("\0.4.2\"))
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $oldInstallRoot, "Process")
@@ -242,7 +242,7 @@ Describe "ITL on-demand MCP facade" {
                 $installRoot = Join-Path $tempRoot "localapp\ondemand"
                 function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
 
-                $version = "0.4.7"
+                $version = "0.4.8"
                 $assetName = "itl-ondemand-mcp-windows-amd64.exe"
                 $targetDirectory = Join-Path $installRoot $version
                 $targetPath = Join-Path $targetDirectory $assetName
@@ -262,7 +262,7 @@ Describe "ITL on-demand MCP facade" {
                 Install-ItlOnDemandMcp
             }
 
-            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.7\itl-ondemand-mcp-windows-amd64.exe")
+            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.8\itl-ondemand-mcp-windows-amd64.exe")
             $result.sha256 | Should -Match '^[a-f0-9]{64}$'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -293,13 +293,13 @@ Describe "ITL on-demand MCP facade" {
                 function Get-DependencyLockEntry {
                     param([string]$Name)
                     return [pscustomobject]@{
-                        version = "0.4.7"
+                        version = "0.4.8"
                         assetName = "itl-ondemand-mcp-windows-amd64.exe"
                         url = "https://example.invalid/itl-ondemand-mcp.exe"
                         sha256 = $cachedSha256
                     }
                 }
-                $targetPath = Join-Path $installRoot "0.4.7\itl-ondemand-mcp-windows-amd64.exe"
+                $targetPath = Join-Path $installRoot "0.4.8\itl-ondemand-mcp-windows-amd64.exe"
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
                 [IO.File]::WriteAllBytes($targetPath, $cachedBytes)
                 Install-ItlOnDemandMcp
@@ -334,7 +334,7 @@ Describe "ITL on-demand MCP facade" {
                 function Get-DependencyLockEntry {
                     param([string]$Name)
                     return [pscustomobject]@{
-                        version = "0.4.7"
+                        version = "0.4.8"
                         assetName = "itl-ondemand-mcp-windows-amd64.exe"
                         url = "https://example.invalid/itl-ondemand-mcp.exe"
                         sha256 = $sourceSha256
@@ -588,7 +588,7 @@ Describe "ITL on-demand MCP facade" {
             function Read-CurrentDevBranchStateForRoctupMcp {
                 return [pscustomobject]@{ devBranchInfoBasePath = "D:\owned\base"; infoBaseKind = "file" }
             }
-            function Ensure-DevBranchEnterpriseNormalized { param([object]$State) return $State }
+            function Assert-DevBranchApplicationReady { param([object]$State) return $State }
             function Get-ItlOnDemandPortFamily { return "roctup-mcp" }
             function Get-ItlOnDemandPortKey { return "roctup-key" }
             function Install-RoctupMcpArtifact { return [pscustomobject]@{ path = "D:\tools\roctup.epf"; version = "1.0" } }
@@ -630,7 +630,7 @@ Describe "ITL on-demand MCP facade" {
             $script:releaseCalls = 0
             function Read-ItlOnDemandRuntimeState { return $null }
             function Read-CurrentDevBranchStateForRoctupMcp { return [pscustomobject]@{ devBranchInfoBasePath = "D:\owned\base"; infoBaseKind = "file" } }
-            function Ensure-DevBranchEnterpriseNormalized { param([object]$State) return $State }
+            function Assert-DevBranchApplicationReady { param([object]$State) return $State }
             function Get-ItlOnDemandPortFamily { return "roctup-mcp" }
             function Get-ItlOnDemandPortKey { return "roctup-key" }
             function Install-RoctupMcpArtifact { return [pscustomobject]@{ path = "D:\tools\roctup.epf"; version = "1.0" } }
@@ -670,7 +670,7 @@ Describe "ITL on-demand MCP facade" {
                 pid = 76003; port = 48003; catalogSha256 = ("b" * 64); portFamily = "roctup-mcp"; portKey = "roctup-key"; portLeaseToken = "backend-token"
             }
             function Read-ItlOnDemandRuntimeState { return $runtime }
-            function Test-ItlOnDemandOwnedProcess { return $true }
+            function Get-ItlOnDemandProcessOwnershipProof { [pscustomobject]@{ owned = $true; failedPredicate = ""; expected = ""; actual = "" } }
             function Test-ItlOnDemandPortOwnedByProcess { return $true }
             function Write-ItlOnDemandRuntimeState { param([object]$RuntimeState); $script:confirmationEvents += "runtime"; $script:written = $RuntimeState; return "runtime.json" }
             function Set-ItlOnDemandManagedPortLeaseStatus { param($Family, $Key, $LeaseToken, $Status, $ProcessId); $script:confirmationEvents += "lease"; $script:allocationStatus = "$LeaseToken/$Status" }
@@ -720,9 +720,10 @@ Describe "ITL on-demand MCP facade" {
                 testClientPid = 72002; testClientPort = 48151; testClientState = "port-ready"
             }
             function Read-ItlOnDemandRuntimeState { return $runtime }
-            function Test-ItlOnDemandOwnedProcess { return $true }
+            function Get-ItlOnDemandProcessOwnershipProof { [pscustomobject]@{ owned = $true; failedPredicate = ""; expected = ""; actual = "" } }
             function Test-TcpPortOpen { return $true }
             function Read-CurrentDevBranchStateForRoctupMcp { return [pscustomobject]@{ devBranchInfoBasePath = "D:\owned\base" } }
+            function Assert-DevBranchApplicationReady { param([object]$State) return $State }
             function Get-Process { return [pscustomobject]@{ Id = 72002 } }
             function Get-ItlOnDemandOwnedTestClientProcesses { return @([pscustomobject]@{ process = [pscustomobject]@{ Id = 72002 } }) }
             function Start-EnterpriseBackground { $script:testClientStarts++ }
@@ -744,9 +745,10 @@ Describe "ITL on-demand MCP facade" {
                 testClientPid = 73002; testClientPort = 48151; testClientState = "port-ready"
             }
             function Read-ItlOnDemandRuntimeState { return $runtime }
-            function Test-ItlOnDemandOwnedProcess { return $true }
+            function Get-ItlOnDemandProcessOwnershipProof { [pscustomobject]@{ owned = $true; failedPredicate = ""; expected = ""; actual = "" } }
             function Test-TcpPortOpen { return $true }
             function Read-CurrentDevBranchStateForRoctupMcp { return [pscustomobject]@{ devBranchInfoBasePath = "D:\owned\base" } }
+            function Assert-DevBranchApplicationReady { param([object]$State) return $State }
             function Get-Process { return [pscustomobject]@{ Id = 73002 } }
             function Get-ItlOnDemandOwnedTestClientProcesses { return @() }
             function Stop-Process { $script:stops++ }
@@ -758,7 +760,7 @@ Describe "ITL on-demand MCP facade" {
             }
             [pscustomobject]@{ message = $message; stops = $script:stops }
         }
-        $result.message | Should -Match '^ITL_ONDEMAND_OWNERSHIP_MISMATCH: refusing to reuse or stop unverified TestClient PID 73002'
+        $result.message | Should -Match '^ITL_ONDEMAND_OWNERSHIP_MISMATCH: failedPredicate=testClientOwnership.*pid=73002'
         $result.stops | Should -Be 0
     }
 
@@ -772,11 +774,12 @@ Describe "ITL on-demand MCP facade" {
             }
             $script:WrittenRuntime = $null
             function Read-ItlOnDemandRuntimeState { return $runtime }
-            function Test-ItlOnDemandOwnedProcess { return $true }
+            function Get-ItlOnDemandProcessOwnershipProof { [pscustomobject]@{ owned = $true; failedPredicate = ""; expected = ""; actual = "" } }
             function Test-TcpPortOpen { return $true }
             function Read-CurrentDevBranchStateForRoctupMcp {
                 return [pscustomobject]@{ devBranchInfoBasePath = "D:\owned\base"; infoBaseKind = "file" }
             }
+            function Assert-DevBranchApplicationReady { param([object]$State) return $State }
             function Test-VanessaTestPortOwnedByState { return $false }
             function Test-VanessaTestPortUsedByForeignProcess { return $false }
             function Start-EnterpriseBackground {
@@ -815,7 +818,7 @@ Describe "ITL on-demand MCP facade" {
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
-            $owned = & {
+            $proof = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $native = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$PID"
                 $state = [pscustomobject]@{
@@ -824,9 +827,11 @@ Describe "ITL on-demand MCP facade" {
                     executablePath = [string]$native.ExecutablePath
                     ownershipMarkers = @('itl-marker-that-is-not-in-the-command-line')
                 }
-                Test-ItlOnDemandOwnedProcess -RuntimeState $state
+                Get-ItlOnDemandProcessOwnershipProof -RuntimeState $state
             }
-            $owned | Should -BeFalse
+            $proof.owned | Should -BeFalse
+            $proof.failedPredicate | Should -Be "ownershipMarker"
+            $proof.expected | Should -Match "itl-marker-that-is-not-in-the-command-line"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 

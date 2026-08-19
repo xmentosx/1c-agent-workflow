@@ -748,7 +748,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $previousVanessaSourceBuild = $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE
         $previousOnDemandSourceBuild = $env:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE
         $qualifiedVanessaSourceBuild = if ([string]::IsNullOrWhiteSpace($previousVanessaSourceBuild)) {
-            Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.28-itl-r7\vanessa-automation-single.1.2.043.28-itl-r7.zip"
+            Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.28-itl-r8\vanessa-automation-single.1.2.043.28-itl-r8.zip"
         } else {
             [System.IO.Path]::GetFullPath($previousVanessaSourceBuild)
         }
@@ -781,14 +781,22 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             & git -C $sourceRoot config user.email "test@example.com"
             & git -C $sourceRoot config user.name "Test User"
             $sourceLockPath = Join-Path $sourceRoot "templates\dependency-lock.json"
+            # The source clone intentionally starts at HEAD, while dependency candidates may be
+            # qualified from the current source change before it is committed. Keep the fixture's
+            # canonical lock aligned with that candidate instead of silently exercising the old pin.
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Destination $sourceLockPath -Force
+            Copy-Item `
+                -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") `
+                -Destination (Join-Path $sourceRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") `
+                -Force
             $sourceLock = Get-Content -LiteralPath $sourceLockPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $sourceLock.dependencies.vanessaMcp.clientMcp.url = $clientMcpFixture
             $sourceLock.dependencies.vanessaMcp.clientMcp.sha256 = (Get-FileHash -LiteralPath $clientMcpFixture -Algorithm SHA256).Hash.ToLowerInvariant()
             $sourceLock.dependencies.vanessaMcp.vaExtension.url = $vaExtensionFixture
             $sourceLock.dependencies.vanessaMcp.vaExtension.sha256 = (Get-FileHash -LiteralPath $vaExtensionFixture -Algorithm SHA256).Hash.ToLowerInvariant()
             Set-Content -LiteralPath $sourceLockPath -Encoding UTF8 -Value (($sourceLock | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
-            & git -C $sourceRoot add templates/dependency-lock.json
-            & git -C $sourceRoot commit --quiet -m "test: use local Vanessa MCP artifacts"
+            & git -C $sourceRoot add templates/dependency-lock.json .agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json
+            & git -C $sourceRoot commit --quiet -m "test: use current local dependency candidates"
             $LASTEXITCODE | Should -Be 0
             $sourceCommit = ((& git -C $sourceRoot rev-parse HEAD).Trim())
             New-Item -ItemType Directory -Force -Path `

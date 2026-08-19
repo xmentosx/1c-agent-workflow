@@ -28,9 +28,10 @@ Rules:
 2. Every client process gets its own backend instance and port. Ports come from `ROCTUP_MCP_PORT_RANGE` and are reserved through the shared ITL port registry with family, project, worktree, branch, and instance identity.
 3. The facade stops only its owned instance after ten idle minutes or stdio EOF. Lifecycle mutations wait for active calls and stop all owned branch instances before changing the infobase.
 4. Use ROCTUP only for a concrete data exploration operation; do not call its private Streamable HTTP URL directly.
-5. Pass known inner names directly to `call_tool` with only intended arguments; use `resolve_tool` only for an unknown name or schema. Start with filtered `get_metadata`, then bounded `execute_query`. Do not invoke `execute_code`, `restart_1c_session`, or `close_1c_session` without explicit user request.
-6. Do not load full ROCTUP references eagerly. Cached upstream ROCTUP skills are read only on demand from ignored `.agent-1c/tools/roctup-mcp-toolkit/skills`.
-7. `fresh` selects the newest ROCTUP version present in the workflow compatibility manifest, never an unverified upstream latest. A catalog mismatch returns `ITL_ONDEMAND_CATALOG_MISMATCH` and stops the backend.
+5. Pass known inner names directly to `call_tool` with only intended arguments; use `resolve_tool` only for an unknown name or schema. Start with filtered `get_metadata`, then bounded `execute_query`. Do not invoke `execute_code` or `restart_1c_session` without explicit user request. `close_1c_session` may release the current managed dev-branch session during lifecycle recovery without separate confirmation; source and other-branch infobases remain protected.
+6. `ITL_INFOBASE_APPLICATION_NOT_READY` means the source snapshot is not proven in the dev infobase. Run `update-dev-branch-base` once, then repeat the original MCP call once; never make the MCP broker perform the lifecycle mutation itself.
+7. Do not load full ROCTUP references eagerly. Cached upstream ROCTUP skills are read only on demand from ignored `.agent-1c/tools/roctup-mcp-toolkit/skills`.
+8. `fresh` selects the newest ROCTUP version present in the workflow compatibility manifest, never an unverified upstream latest. A catalog mismatch returns `ITL_ONDEMAND_CATALOG_MISMATCH` and stops the backend.
 
 ## vibecoding1c MCP
 
