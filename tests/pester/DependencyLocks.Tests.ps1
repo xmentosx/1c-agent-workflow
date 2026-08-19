@@ -49,7 +49,7 @@
             ".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules-migration.ps1",
             ".agents/skills/1c-workflow/kilo-command-templates/common/itl.md.template",
             ".agents/skills/1c-workflow/kilo-command-templates/master/itl-new-config-branch.md.template",
-            ".agents/skills/1c-workflow/kilo-command-templates/master/itl-update-workflow.md.template",
+            ".agents/skills/1c-workflow/kilo-command-templates/common/itl-update-workflow.md.template",
             ".agents/skills/1c-workflow/kilo-command-templates/dev/itl-result.md.template",
             "install-agent-1c-workflow.ps1",
             "scripts/test.ps1",

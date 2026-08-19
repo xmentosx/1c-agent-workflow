@@ -3268,9 +3268,10 @@ function Get-KiloInheritedPrimaryItlCommands {
         $localNames = @(Get-ChildItem -LiteralPath $localDir -File -Filter "itl*.md" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
     }
 
+    $devValidInheritedNames = @("itl-update-workflow.md")
     return @(
         Get-ChildItem -LiteralPath $primaryDir -File -Filter "itl*.md" -ErrorAction SilentlyContinue |
-            Where-Object { $localNames -notcontains $_.Name } |
+            Where-Object { $localNames -notcontains $_.Name -and $devValidInheritedNames -notcontains $_.Name } |
             ForEach-Object { "/$([System.IO.Path]::GetFileNameWithoutExtension($_.Name))" } |
             Sort-Object -Unique
     )
@@ -3481,7 +3482,7 @@ function Write-WorkflowUpdateFollowUp {
         $reportLines.Add("- Перезапустите или перезагрузите активный AI-клиент, чтобы он перечитал правила, навыки и команды.")
     }
     $reportLines.Add("- Push из проекта не выполнялся: созданный коммит остаётся в локальном `master`.")
-    $reportLines.Add("- Активные `itldev/*` обновляются отдельно через `/itl-refresh`.")
+    $reportLines.Add("- Workflow обновлён только в локальном `master`; каждую активную `itldev/*` обновите отдельно через `/itl-refresh` или `/itl-refresh-lite`.")
     if ($states.Count -gt 0) {
         $reportLines.Add("- Найдены активные ветки разработки:")
         foreach ($state in ($states | Sort-Object @{ Expression = { Get-StateValue -State $_ -Name "devBranchName" -Default "" } })) {
@@ -9587,6 +9588,7 @@ function Show-Help {
         Write-ItlActiveClientCommandText "  /itl-refresh"
         Write-ItlActiveClientCommandText "  /itl-refresh-lite"
         Write-ItlActiveClientCommandText "  /itl-result"
+        Write-ItlActiveClientCommandText "  /itl-update-workflow"
         Write-ItlActiveClientCommandText "  /itl-litemode <mode>"
         $inheritedPrimaryCommands = @()
         try {

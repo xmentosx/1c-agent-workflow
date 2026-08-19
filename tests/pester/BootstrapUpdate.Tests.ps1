@@ -882,6 +882,7 @@ local after
             $stdout | Should -Match "ITL workflow package post-copy processing completed"
             $stdout | Should -Match "Workflow обновлён"
             $stdout | Should -Match "Новый коммит создан: да"
+            $stdout | Should -Match ([regex]::Escape('через /itl-refresh или /itl-refresh-lite'))
             $stdout | Should -Match "Активных веток разработки нет"
             $stdout | Should -Match "ROCTUP MCP update skipped because ROCTUP_MCP_ENABLED=false"
             $stdout | Should -Match "Removed obsolete workflow-managed file: VANESSA-TESTS-GUIDE.ru.md"
@@ -1629,7 +1630,7 @@ exit 0
             ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template",
-            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-update-workflow.md.template"
+            ".agents\skills\1c-workflow\kilo-command-templates\common\itl-update-workflow.md.template"
         ) | ForEach-Object { Join-Path $RepoRoot $_ }
 
         foreach ($path in $longTemplatePaths) {

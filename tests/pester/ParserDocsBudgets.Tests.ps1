@@ -363,8 +363,8 @@
     It "has context-specific Kilo command templates for the public surface" {
         $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates"
         $expected = @{
-            common = @("itl.md.template", "itl-litemode.md.template", "itl-status.md.template", "itl-sync-master.md.template")
-            master = @("itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-switch-client.md.template", "itl-update-workflow.md.template")
+            common = @("itl.md.template", "itl-litemode.md.template", "itl-status.md.template", "itl-sync-master.md.template", "itl-update-workflow.md.template")
+            master = @("itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-switch-client.md.template")
             dev = @("itl-check.md.template", "itl-refresh.md.template", "itl-refresh-lite.md.template", "itl-result.md.template", "itl-verify-fix.md.template")
         }
 
@@ -409,10 +409,10 @@
 
         $itl = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "common\itl.md.template")
         $result = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "dev\itl-result.md.template")
-        $update = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "master\itl-update-workflow.md.template")
+        $update = Get-Content -Encoding UTF8 -Raw (Join-Path $templateRoot "common\itl-update-workflow.md.template")
         $itl | Should -Match "Run the helper panel from the current project directory"
         $result | Should -Match "Use this command only from an active"
-        $update | Should -Match 'Use this command only from the `master` worktree'
+        $update | Should -Match 'from either the `master` worktree or an active `itldev/\*` worktree'
     }
 
     It "guards context-specific lifecycle actions in the helper" {
