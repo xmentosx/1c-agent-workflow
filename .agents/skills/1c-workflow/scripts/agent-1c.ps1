@@ -80,6 +80,7 @@ param(
     [switch]$InstallVanessaIfMissing,
     [switch]$AllowUnverifiedResult,
     [switch]$AllowUnverifiedClose,
+    [switch]$PreserveReleaseSnapshotApplicationProof,
     [switch]$UseCurrentWorktree,
     [switch]$OfferOpenAgent,
     [switch]$ConfirmTokenSpend,

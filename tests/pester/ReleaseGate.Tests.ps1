@@ -528,7 +528,7 @@ Describe "Release E2E orchestration" {
             Set-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\dev-branches\workflow-release-e2e.json") -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 6)
             Set-Content -LiteralPath $helperPath -Encoding UTF8 -Value @'
 [CmdletBinding()]
-param([string]$ProjectRoot, [string]$Action, [string]$DevBranchName, [string]$ExtensionName, [string]$ReleaseAiRulesSource, [string]$VanessaFeaturePath, [string]$VanessaFilterTags, [string]$ReleaseSnapshotPath, [ValidateSet("Auto", "Partial", "Full")][string]$ConfigLoadMode = "Auto", [string]$InternalOnDemandOperation, [string]$InternalOnDemandFamily)
+param([string]$ProjectRoot, [string]$Action, [string]$DevBranchName, [string]$ExtensionName, [string]$ReleaseAiRulesSource, [string]$VanessaFeaturePath, [string]$VanessaFilterTags, [string]$ReleaseSnapshotPath, [switch]$PreserveReleaseSnapshotApplicationProof, [ValidateSet("Auto", "Partial", "Full")][string]$ConfigLoadMode = "Auto", [string]$InternalOnDemandOperation, [string]$InternalOnDemandFamily)
 $actionLogPath = Join-Path $ProjectRoot ".agent-1c\release-e2e-actions.log"
 Add-Content -LiteralPath $actionLogPath -Encoding UTF8 -Value $Action
 if ($InternalOnDemandOperation -eq "stop-all") {
@@ -578,6 +578,7 @@ switch ($Action) {
         Set-Content -LiteralPath $snapshotPath -Encoding ASCII -Value "mock infobase snapshot"
     }
     "release-e2e-restore" {
+        if (-not $PreserveReleaseSnapshotApplicationProof) { throw "Release E2E must preserve the immutable snapshot/state application proof." }
         $snapshotPath = Join-Path $ProjectRoot $ReleaseSnapshotPath
         if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { throw "mock snapshot is missing" }
     }

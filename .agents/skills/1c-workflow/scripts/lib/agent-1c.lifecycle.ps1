@@ -8926,7 +8926,7 @@ function Restore-ReleaseE2EInfobaseSnapshot {
     $snapshotPath = Assert-ExportPathInsideProject -ExportPath $ReleaseSnapshotPath
     if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { throw "Release E2E snapshot is missing: $snapshotPath" }
     Restore-DevBranchInfobaseFromSnapshot -State $state -SnapshotPath $snapshotPath -Reason "Release E2E checkpoint restore"
-    Update-DevBranchState -State $state -Updates @{
+    $restoreUpdates = @{
         lastConfigDesignerFingerprint = ""
         lastConfigDesignerTreeObjectId = ""
         lastConfigDesignerLoadedAt = ""
@@ -8942,6 +8942,26 @@ function Restore-ReleaseE2EInfobaseSnapshot {
         enterpriseNormalizationReason = "release-e2e-restore"
         enterpriseNormalizationError = ""
     }
+    if ($PreserveReleaseSnapshotApplicationProof) {
+        foreach ($field in @(
+            "lastConfigDesignerFingerprint",
+            "lastConfigDesignerTreeObjectId",
+            "lastConfigDesignerLoadedAt",
+            "lastExtensionDesignerFingerprint",
+            "lastExtensionDesignerTreeObjectId",
+            "lastExtensionDesignerLoadedAt",
+            "sourceFingerprint",
+            "configLoadStatus",
+            "loadReason",
+            "enterpriseNormalizationStatus",
+            "enterpriseNormalizedAt",
+            "enterpriseNormalizationReason",
+            "enterpriseNormalizationError"
+        )) {
+            $restoreUpdates[$field] = Get-StateValue -State $state -Name $field -Default ""
+        }
+    }
+    Update-DevBranchState -State $state -Updates $restoreUpdates
     Sync-DevBranchContextToDotEnv -State (Read-DevBranchState -Name $DevBranchName) -AllowIncompleteExtension
     Write-Host "Release E2E snapshot restored: $snapshotPath"
 }

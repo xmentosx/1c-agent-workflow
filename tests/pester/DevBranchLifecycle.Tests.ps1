@@ -2390,6 +2390,58 @@
         $lifecycleText | Should -Match '(?s)if \(\$currentStatus -eq "enterprise-normalization-pending"\).*?return.*?if \(\$copyPerformed\)'
     }
 
+    It "preserves paired application proof only for an immutable Release snapshot restore" {
+        $snapshotPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-release-restore-" + [guid]::NewGuid().ToString("N") + ".dt")
+        try {
+            [IO.File]::WriteAllBytes($snapshotPath, [byte[]](1, 2, 3))
+            $updates = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help -ReleaseSnapshotPath $snapshotPath -PreserveReleaseSnapshotApplicationProof *> $null
+                $script:CapturedRestoreUpdates = $null
+                $state = [pscustomobject]@{
+                    devBranchName = "release"
+                    devBranchKind = "configuration"
+                    devBranchInfoBasePath = "C:\base"
+                    infoBaseKind = "file"
+                    lastConfigDesignerFingerprint = "config-proof"
+                    lastConfigDesignerTreeObjectId = ("a" * 40)
+                    lastConfigDesignerLoadedAt = "2026-08-19T00:00:00Z"
+                    lastExtensionDesignerFingerprint = "extension-proof"
+                    lastExtensionDesignerTreeObjectId = ("b" * 40)
+                    lastExtensionDesignerLoadedAt = "2026-08-19T00:01:00Z"
+                    sourceFingerprint = "config-proof"
+                    configLoadStatus = "passed"
+                    loadReason = "source-fingerprint-changed"
+                    enterpriseNormalizationStatus = "passed"
+                    enterpriseNormalizedAt = "2026-08-19T00:02:00Z"
+                    enterpriseNormalizationReason = "config-load"
+                    enterpriseNormalizationError = ""
+                }
+                function Read-DevBranchState { $state }
+                function Assert-DevelopmentBranchWorktreeContext {}
+                function Assert-DevBranchKind {}
+                function Require-Value {}
+                function Assert-ExportPathInsideProject { $snapshotPath }
+                function Restore-DevBranchInfobaseFromSnapshot {}
+                function Update-DevBranchState { param([object]$State, [hashtable]$Updates); $script:CapturedRestoreUpdates = $Updates }
+                function Sync-DevBranchContextToDotEnv {}
+
+                Restore-ReleaseE2EInfobaseSnapshot *> $null
+                $script:CapturedRestoreUpdates
+            }
+
+            $updates.lastConfigDesignerFingerprint | Should -Be "config-proof"
+            $updates.lastConfigDesignerTreeObjectId | Should -Be ("a" * 40)
+            $updates.lastExtensionDesignerFingerprint | Should -Be "extension-proof"
+            $updates.configLoadStatus | Should -Be "passed"
+            $updates.enterpriseNormalizationStatus | Should -Be "passed"
+            $updates.vanessaMcpSafeModeProof | Should -BeNullOrEmpty
+            $updates.designerInvoked | Should -BeFalse
+            $updates.enterpriseInvoked | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $snapshotPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "wires Vanessa verify through TestManager and TestClient" {
         $HelperText | Should -Match "Resolve-VanessaTestPort"
         $HelperText | Should -Match "VANESSA_TEST_PORT_RANGE"
