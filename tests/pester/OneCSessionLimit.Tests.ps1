@@ -388,8 +388,8 @@ Describe "Per-infobase 1C session admission" {
     It "stops only an exact Cyrillic dev infobase session after rechecking PID identity" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-            $target = "C:\Базы с пробелом\Ветка 1"
-            $other = "C:\Базы с пробелом\Ветка 2"
+            $target = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("Qzpc0JHQsNC30Ysg0YEg0L/RgNC+0LHQtdC70L7QvFzQktC10YLQutCwIDE="))
+            $other = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("Qzpc0JHQsNC30Ysg0YEg0L/RgNC+0LHQtdC70L7QvFzQktC10YLQutCwIDI="))
             $script:Infos = @(
                 [pscustomobject]@{ processId = 701; processStartTime = "2026-08-19T08:00:00.0000000Z"; executablePath = "C:\1C\1cv8c.exe"; commandLine = "1cv8c.exe ENTERPRISE /F `"$target`"" },
                 [pscustomobject]@{ processId = 702; processStartTime = "2026-08-19T08:01:00.0000000Z"; executablePath = "C:\1C\1cv8c.exe"; commandLine = "1cv8c.exe ENTERPRISE /F `"$other`"" }
@@ -415,7 +415,7 @@ Describe "Per-infobase 1C session admission" {
     It "fails closed on PID reuse before stopping a process" {
         $message = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-            $target = "C:\Базы с пробелом\Ветка 1"
+            $target = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("Qzpc0JHQsNC30Ysg0YEg0L/RgNC+0LHQtdC70L7QvFzQktC10YLQutCwIDE="))
             $script:Inspection = 0
             function Get-OneCProcessInfo {
                 $script:Inspection++
@@ -432,7 +432,7 @@ Describe "Per-infobase 1C session admission" {
     It "does not match an ambiguous command line containing both file and server infobases" {
         $matched = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-            $target = "C:\Базы с пробелом\Ветка 1"
+            $target = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("Qzpc0JHQsNC30Ysg0YEg0L/RgNC+0LHQtdC70L7QvFzQktC10YLQutCwIDE="))
             Test-OneCCommandLineInfoBasePath `
                 -CommandLine "1cv8c.exe ENTERPRISE /F `"$target`" /S `"server\branch`"" `
                 -InfoBaseKind file `
