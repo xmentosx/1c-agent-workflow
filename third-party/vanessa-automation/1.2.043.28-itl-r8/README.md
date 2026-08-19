@@ -19,9 +19,10 @@ Revision `itl-r8` retains the reduced `itl-r7` patch and fixes the cold
 `run_scenario(filePath=..., mode=reloadAndRunFromLine, lineNumber=...)` callback
 path. The first feature load carries the original call-local mode and line into
 the existing load-completion callback. That callback selects the requested
-scenario step directly, so no redundant second asynchronous feature load can
-erase the cold selection. An already active feature keeps the upstream reload
-semantics.
+scenario step directly and registers the original completion callback before
+the asynchronous load, so no redundant second feature load can erase the cold
+selection and a completed scenario cannot leave the MCP call pending. An
+already active feature keeps the upstream reload semantics.
 
 The original MCP parameter structure is preserved throughout, including task
 identifier, mode, line, and progress context. No facade retry is added, so a

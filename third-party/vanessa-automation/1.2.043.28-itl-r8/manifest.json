@@ -15,7 +15,7 @@
   },
   "patch": {
     "path": "file-operations.patch",
-    "sha256": "47da40aeb11f035e6bb0c436c856b67d3ad9e32bff14f9d5493c220c4d73b930",
+    "sha256": "b12426595cd0fa603698d9682d48bcb00b403ffce747ffdf02e00fd9f7ad5943",
     "expectedChangedPaths": [
       "VanessaAutomation/Forms/MCPVA/Ext/Form/Module.bsl",
       "VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl"
@@ -35,7 +35,7 @@
     "retainedDownstreamFixes": [
       "run_scenario preserves callback parameters and returns after opening the feature",
       "cold reloadAndRun defers execution until the outer load callback completes while preserving hot reload semantics",
-      "cold reloadAndRunFromLine selects from its first completed feature load without a redundant reload",
+      "cold reloadAndRunFromLine selects from its first completed feature load and retains its completion callback without a redundant reload",
       "the on-demand facade remains the sole owner of MCP TestClient startup"
     ],
     "removedDownstreamWorkarounds": [

@@ -836,8 +836,15 @@ switch ($Action) {
             $standMasterHead = (& git -C $mainRoot rev-parse HEAD).Trim()
             $checkpointExpectedHead = [string](Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json).expectedHead
             & git -C $worktreeRoot merge --no-edit master *> $null
-            $managedRefreshParents = @((& git -C $worktreeRoot rev-list --parents -n 1 HEAD).Trim() -split '\s+')
-            $managedRefreshParents | Should -Be @((& git -C $worktreeRoot rev-parse HEAD).Trim(), $checkpointExpectedHead, $standMasterHead)
+            $managedRefreshMergeHead = (& git -C $worktreeRoot rev-parse HEAD).Trim()
+            $managedRefreshParents = @((& git -C $worktreeRoot rev-list --parents -n 1 $managedRefreshMergeHead).Trim() -split '\s+')
+            $managedRefreshParents | Should -Be @($managedRefreshMergeHead, $checkpointExpectedHead, $standMasterHead)
+            Set-Content -LiteralPath (Join-Path $worktreeRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "<ConfigDumpInfo>managed-refresh-cursor</ConfigDumpInfo>"
+            & git -C $worktreeRoot add -- "src/cf/ConfigDumpInfo.xml"
+            & git -C $worktreeRoot commit -m "chore: persist branch configuration synchronization cursor" *> $null
+            $LASTEXITCODE | Should -Be 0
+            $managedRefreshCursorParents = @((& git -C $worktreeRoot rev-list --parents -n 1 HEAD).Trim() -split '\s+')
+            $managedRefreshCursorParents | Should -Be @((& git -C $worktreeRoot rev-parse HEAD).Trim(), $managedRefreshMergeHead)
             $checkpointBeforeManagedAdvance = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $managedAdvanceSummaryPath = Join-Path $tempRoot "managed-advance-summary.json"
             & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $workflowFixtureRoot "scripts\invoke-release-e2e.ps1") `

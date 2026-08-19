@@ -93,9 +93,10 @@ Describe "Controlled Vanessa Automation patched artifact" {
         $modeName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0KDQtdC20LjQvA=='))
         $postLoadMode = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0KDQtdC20LjQvNCf0L7RgdC70LXQl9Cw0LPRgNGD0LfQutC4'))
         $openFeature = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('TUNQT3BlbkZlYXR1cmVGaWxl0JLQoNC10LTQsNC60YLQvtGA0LU='))
+        $completionCallback = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0KPRgdGC0LDQvdC+0LLQuNGC0YzQpNC70LDQs9Ce0L/QvtCy0LXRgdGC0LjRgtGMTUNQ0KHQtdGA0LLQtdGA0J/QvtGB0LvQtdCS0YvQv9C+0LvQvdC10L3QuNGP0KHRhtC10L3QsNGA0LjQtdCy'))
         $patchText | Should -Match ([regex]::Escape($callParameters) + '\.' + [regex]::Escape($modeName) + ' = "reloadAndRunFromLine"')
         $patchText | Should -Match ([regex]::Escape($postLoadMode) + '.*reloadAndRunFromLine')
-        $patchText | Should -Match ('(?s)' + [regex]::Escape($postLoadMode) + '.*reloadAndRunFromLine.*' + [regex]::Escape($openFeature))
+        $patchText | Should -Match ('(?s)' + [regex]::Escape($postLoadMode) + '.*reloadAndRunFromLine.*' + [regex]::Escape($completionCallback) + '.*' + [regex]::Escape($openFeature))
         $patchText | Should -Not -Match 'step_definitions'
     }
 

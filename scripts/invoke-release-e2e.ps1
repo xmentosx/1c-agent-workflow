@@ -1178,6 +1178,47 @@ $helperSha256 = Get-E2ECanonicalTextSha256 -Path $HelperPath
 $projectConfigSha256 = Get-E2EFileSha256 -Path (Join-Path $worktreePath ".agent-1c\project.json")
 $stageModuleRoot = Join-Path $PSScriptRoot "release-e2e"
 . (Join-Path $stageModuleRoot "common.ps1")
+
+function Test-E2EManagedRefreshHead {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$CurrentHead,
+        [Parameter(Mandatory = $true)][string]$ExpectedHead,
+        [Parameter(Mandatory = $true)][string]$MasterHead,
+        [Parameter(Mandatory = $true)][string]$ExportPath
+    )
+
+    $currentRecord = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("rev-list", "--parents", "-n", "1", $CurrentHead)).stdout.Trim()
+    $currentParts = @($currentRecord -split '\s+' | Where-Object { $_ })
+    if ($currentParts.Count -eq 3 -and $currentParts[1] -eq $ExpectedHead -and $currentParts[2] -eq $MasterHead) {
+        return $true
+    }
+    if ($currentParts.Count -ne 2) { return $false }
+
+    $mergeHead = [string]$currentParts[1]
+    $mergeRecord = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("rev-list", "--parents", "-n", "1", $mergeHead)).stdout.Trim()
+    $mergeParts = @($mergeRecord -split '\s+' | Where-Object { $_ })
+    if ($mergeParts.Count -ne 3 -or $mergeParts[1] -ne $ExpectedHead -or $mergeParts[2] -ne $MasterHead) {
+        return $false
+    }
+
+    $subject = (Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("show", "-s", "--format=%s", $CurrentHead)).stdout.Trim()
+    $normalizedExportPath = (($ExportPath -replace "\\", "/").Trim("/"))
+    $cursorPath = "$normalizedExportPath/ConfigDumpInfo.xml"
+    $changedPaths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @(
+        "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", $CurrentHead, "--"
+    ) | ForEach-Object { ([string]$_ -replace "\\", "/") })
+    if ($changedPaths.Count -eq 0) { return $false }
+
+    if ($subject -ceq "chore: persist branch configuration synchronization cursor") {
+        return $changedPaths.Count -eq 1 -and $changedPaths[0] -ceq $cursorPath
+    }
+    if ($subject -ceq "chore: persist branch refresh state") {
+        $allowedPaths = @($cursorPath, ".kilo/kilo.json")
+        return $changedPaths -ccontains ".kilo/kilo.json" -and @($changedPaths | Where-Object { $allowedPaths -cnotcontains $_ }).Count -eq 0
+    }
+    return $false
+}
 foreach ($stageModule in @("seed-parallel.ps1", "config-cadence.ps1", "config-roundtrip.ps1", "extension-smoke.ps1", "ondemand-mcp.ps1", "result-cleanup.ps1")) {
     . (Join-Path $stageModuleRoot $stageModule)
 }
@@ -1681,7 +1722,13 @@ if ($checkpoint) {
         if ($crossReleaseReuse -and $worktreeCleanForRefresh) {
             $parents = @((& git -C $worktreePath rev-list --parents -n 1 $currentHead).Trim() -split '\s+')
             $standMasterHead = (& git -C $ProjectRoot rev-parse HEAD).Trim()
-            $managedRefreshMerge = $parents.Count -eq 3 -and $parents[1] -eq [string]$checkpoint["expectedHead"] -and $parents[2] -eq $standMasterHead
+            $refreshProjectConfig = Get-Content -LiteralPath (Join-Path $worktreePath ".agent-1c\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $managedRefreshMerge = Test-E2EManagedRefreshHead `
+                -RepositoryRoot $worktreePath `
+                -CurrentHead $currentHead `
+                -ExpectedHead ([string]$checkpoint["expectedHead"]) `
+                -MasterHead $standMasterHead `
+                -ExportPath ([string]$refreshProjectConfig.exportPath)
         }
         if (-not $managedRefreshMerge) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: current HEAD '$currentHead' differs from checkpoint HEAD '$($checkpoint['expectedHead'])'. crossRelease=$crossReleaseReuse continuation=$([bool]$releaseContinuationProof) clean=$worktreeCleanForRefresh parents='$($parents -join ',')' master='$standMasterHead'." }
     }
