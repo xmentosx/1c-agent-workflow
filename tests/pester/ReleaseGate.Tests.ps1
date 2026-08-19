@@ -50,7 +50,7 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'continuationBoundaryStage'
         $e2eText | Should -Match 'exact Targeted continuation after completed release'
         $e2eText | Should -Match '\$verificationRefreshPassed = Test-E2EStagePassed -Name "verification-refresh"'
-        $e2eText | Should -Match 'if \(\$executedStages -notcontains "config-cadence" -and \(\$crossReleaseReuse -or -not \$verificationRefreshPassed\)\)'
+        $e2eText | Should -Match 'if \(\(\$executedStages -contains "config-cadence"\) -or \$crossReleaseReuse -or -not \$verificationRefreshPassed\)'
         $e2eText | Should -Not -Match 'if \(\$crossReleaseReuse -and \$executedStages -notcontains "config-cadence"\)'
         $e2eText | Should -Match 'if \(\$checkpointWasResumed\) \{ \$resultPassed = \$false'
         $e2eText | Should -Match 'RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED'
@@ -545,7 +545,8 @@ switch ($Action) {
         $isStopOnErrorProbe = ($releaseCheckCount -eq 2)
         if ($firstRun -and $ConfigLoadMode -ne "Partial") { throw "first release E2E check must request Partial" }
         if (($releaseCheckCount -lt 3 -and $VanessaFilterTags -ne "@itl_release_flat") -or ($releaseCheckCount -eq 3 -and $VanessaFilterTags)) { throw "release E2E must leave only the final canonical recovery run unfiltered" }
-        if ([System.IO.Path]::GetFileName($VanessaFeaturePath) -ne "ITLReleaseFourFlat.feature") { throw "release E2E must run the dedicated four-scenario feature file" }
+        if ($releaseCheckCount -le 3 -and [System.IO.Path]::GetFileName($VanessaFeaturePath) -ne "ITLReleaseFourFlat.feature") { throw "release E2E capability checks must run the dedicated four-scenario feature file" }
+        if ($releaseCheckCount -gt 3 -and $VanessaFeaturePath) { throw "release E2E verification refresh must be unfiltered" }
         $listPath = Join-Path $ProjectRoot ".agent-1c\release-e2e-partial-list.txt"
         Set-Content -LiteralPath $listPath -Encoding UTF8 -Value "Configuration.xml"
         $reportPath = Join-Path $ProjectRoot "build\test-results\vanessa\mock"
@@ -563,7 +564,7 @@ switch ($Action) {
         $state | Add-Member -NotePropertyName lastVanessaReportPath -NotePropertyValue $reportPath -Force
         $state | Add-Member -NotePropertyName lastVanessaPostProcessDurationMs -NotePropertyValue 25 -Force
         $state | Add-Member -NotePropertyName releaseCheckCount -NotePropertyValue $releaseCheckCount -Force
-        $state | Add-Member -NotePropertyName lastVerificationStatus -NotePropertyValue "passed" -Force
+        $state | Add-Member -NotePropertyName lastVerificationStatus -NotePropertyValue $(if ($VanessaFeaturePath) { "partial" } else { "passed" }) -Force
         $state | Add-Member -NotePropertyName lastVerifiedAt -NotePropertyValue ([DateTime]::UtcNow.ToString("o")) -Force
         $state | Add-Member -NotePropertyName lastVerifiedCommit -NotePropertyValue ((& git -C $ProjectRoot rev-parse HEAD).Trim()) -Force
         Set-Content -LiteralPath $statePath -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 8)
@@ -1003,8 +1004,8 @@ switch ($Action) {
             $incrementalSummary = Get-Content -LiteralPath $incrementalSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $incrementalSummary.crossReleaseReuse | Should -BeTrue
             @($incrementalSummary.invalidatedStages) | Should -Contain "config-cadence"
-            $incrementalSummary.stages.'verification-refresh'.execution | Should -Be "reused"
-            $incrementalSummary.stages.'verification-refresh'.reuseReason | Should -Match "current config-cadence"
+            $incrementalSummary.stages.'verification-refresh'.execution | Should -Be "executed"
+            @($incrementalSummary.executedStages) | Should -Contain "verification-refresh"
             @($incrementalSummary.executedStages) | Should -Contain "result-cleanup"
 
             # Restart is the explicit destructive rollback path. It must accept

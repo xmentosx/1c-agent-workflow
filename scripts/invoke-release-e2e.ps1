@@ -2235,14 +2235,12 @@ try {
     ) | Measure-Object -Maximum).Maximum)
 
     $verificationRefreshPassed = Test-E2EStagePassed -Name "verification-refresh"
-    if ($executedStages -notcontains "config-cadence" -and ($crossReleaseReuse -or -not $verificationRefreshPassed)) {
+    if (($executedStages -contains "config-cadence") -or $crossReleaseReuse -or -not $verificationRefreshPassed) {
         Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
         Set-E2EStageStatus -Name "verification-refresh" -Status "running"
         $executedStages += "verification-refresh"
         try {
-            Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @(
-                "-VanessaFeaturePath", $vanessaFixture.path, "-VanessaFilterTags", "@itl_release_flat"
-            ) | Out-Null
+            Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 | Out-Null
             $refreshState = (Get-E2EState).value
             if ([string]$refreshState.lastVerificationStatus -ne "passed" -or -not [string]$refreshState.lastVerifiedAt) {
                 throw "Release verification refresh did not produce a passed verification."
@@ -2258,12 +2256,6 @@ try {
             Set-E2EStageStatus -Name "verification-refresh" -Status "failed" -ErrorText $_.Exception.Message
             throw
         }
-    } elseif ($executedStages -contains "config-cadence") {
-        if (-not $checkpoint["stages"].Contains("verification-refresh")) { $checkpoint["stages"]["verification-refresh"] = [ordered]@{} }
-        $refreshRecord = $checkpoint["stages"]["verification-refresh"]
-        $refreshRecord["status"] = "passed"; $refreshRecord["execution"] = "reused"; $refreshRecord["reuseReason"] = "current config-cadence final passing check"
-        $refreshRecord["fingerprint"] = Get-E2EStageFingerprint -Name "verification-refresh"; $refreshRecord["currentRunDurationMs"] = 0; $refreshRecord["updatedAt"] = [DateTime]::UtcNow.ToString("o")
-        Write-E2ECheckpoint
     }
 
     $resultPassed = Test-E2EStagePassed -Name "result-cleanup"
