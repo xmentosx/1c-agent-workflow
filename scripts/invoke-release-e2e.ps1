@@ -2240,7 +2240,9 @@ try {
         Set-E2EStageStatus -Name "verification-refresh" -Status "running"
         $executedStages += "verification-refresh"
         try {
-            Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 | Out-Null
+            Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @(
+                "-ConfigLoadMode", "Full"
+            ) | Out-Null
             $refreshState = (Get-E2EState).value
             if ([string]$refreshState.lastVerificationStatus -ne "passed" -or -not [string]$refreshState.lastVerifiedAt) {
                 throw "Release verification refresh did not produce a passed verification."
