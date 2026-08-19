@@ -27,10 +27,10 @@
         "vanessaAutomation": "itl-r8"
       },
       "vanessaAutomationArtifact": {
-        "archiveSha256": "28364081cb02c6d53f674b7c8b111dae1701622935f6c51ddb8cbf29cce1e246",
-        "epfSha256": "09c999f88b2ee4a76e7ac2cdd9f1056ba1e1539e8697d24f195810aa4d692e05",
-        "manifestSha256": "23034f9dd365feda2197b56aeb51794f40c2bef067978aba8a3009433192ac89",
-        "patchSha256": "47da40aeb11f035e6bb0c436c856b67d3ad9e32bff14f9d5493c220c4d73b930",
+        "archiveSha256": "0a5eab8fbc93bf6db053ebcbf99b511c440c737a6f5f6d68840002ac9743bb50",
+        "epfSha256": "178995192dd02a701fb6301a497c50028cac1b40c40e703de544647c2f84ad5b",
+        "manifestSha256": "43366ce71aa2657b4d20e46fff6e9a2d6848df0d02d6d63ca8718c6e4a7da781",
+        "patchSha256": "b12426595cd0fa603698d9682d48bcb00b403ffce747ffdf02e00fd9f7ad5943",
         "upstreamCommit": "f3a01778a14d29b38204685deea0131274d438ff"
       },
       "lockKeys": [
