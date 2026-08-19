@@ -888,8 +888,10 @@ function New-LoadStateUpdates {
     if ($LoadResult.lastLogPath) {
         $updates["lastLogPath"] = $LoadResult.lastLogPath
     }
-    if ($LoadResult.loaded) {
+    if ($LoadResult.PSObject.Properties.Match("configLoadStatus").Count -gt 0 -and $LoadResult.configLoadStatus) {
         $updates["configLoadStatus"] = $LoadResult.configLoadStatus
+    }
+    if ($LoadResult.loaded) {
         $updates["lastConfigLoadMode"] = $LoadResult.loadModeUsed
         $updates["lastConfigPartialLogPath"] = $LoadResult.partialLogPath
         $updates["lastConfigFullFallbackLogPath"] = $LoadResult.fullFallbackLogPath
@@ -1458,6 +1460,7 @@ function Load-ConfigFromFiles {
             partialError = ""
             fullFallbackError = ""
             sourceFingerprint = $source.fingerprint
+            sourceTreeObjectId = $sourceTreeObjectId
             loadReason = $reason
             designerInvoked = $false
             enterpriseInvoked = $false

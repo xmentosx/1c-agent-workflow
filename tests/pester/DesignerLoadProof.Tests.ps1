@@ -233,6 +233,41 @@ Describe "1C Designer load proof invalidation" {
         }
     }
 
+    It "backfills application readiness and tree proof for an unchanged N-1 state" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-unchanged-load-proof-upgrade-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $statePath = Save-DevBranchState -SafeDevBranchName "unchanged-proof-upgrade" -State @{
+                    safeDevBranchName = "unchanged-proof-upgrade"
+                    devBranchName = "unchanged-proof-upgrade"
+                    lastConfigDesignerFingerprint = "fingerprint-a"
+                    enterpriseNormalizationStatus = "passed"
+                }
+                function Get-ConfigSourceFingerprint {
+                    [pscustomobject]@{ fingerprint = "fingerprint-a"; treeObjectId = ("a" * 40); fileCount = 1; absoluteExportPath = "C:\src" }
+                }
+                function Get-CurrentCommit { "head" }
+                function Get-ConfigLoadChangeSet { throw "Git diff must not run for an unchanged proof" }
+                function Stop-DevBranchRuntimeBeforeInfobaseMutation { throw "runtime drain must not run for an unchanged proof" }
+                function Invoke-ConfigLoadWithFallback { throw "Designer must not run for an unchanged proof" }
+
+                $state = Read-DevBranchStateFile -Path $statePath
+                $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State $state -ExportPath "src/cf" 6>$null
+                $updates = New-LoadStateUpdates -LoadResult $load -ContentKind configuration
+                Update-DevBranchState -State $state -Updates $updates
+                [pscustomobject]@{ load = $load; state = (Read-DevBranchStateFile -Path $statePath) }
+            }
+
+            $result.load.loaded | Should -BeFalse
+            $result.load.designerInvoked | Should -BeFalse
+            $result.state.configLoadStatus | Should -Be "passed"
+            $result.state.lastConfigDesignerTreeObjectId | Should -Be ("a" * 40)
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "always invokes Designer for an explicit Full load even when the fingerprint matches" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-explicit-full-load-" + [guid]::NewGuid().ToString("N"))
         try {
