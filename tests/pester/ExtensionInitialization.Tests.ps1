@@ -75,7 +75,7 @@
                     function Add-VerificationStaleIfNeeded {}
                     function Sync-DevBranchContextToDotEnv {}
                     function Get-CurrentCommit { return "head" }
-                    function Get-ConfigSourceFingerprint { return [pscustomobject]@{ fingerprint = "source" } }
+                    function Get-ConfigSourceFingerprint { return [pscustomobject]@{ fingerprint = "source"; treeObjectId = "fixture-tree" } }
                     function Update-DevBranchState {
                         param([object]$State, [hashtable]$Updates)
                         if ($null -eq $script:extensionInitUpdatesCaptured) { $script:extensionInitUpdatesCaptured = @{} }
@@ -151,6 +151,7 @@
         $result.updates.extensionInitMode | Should -Be "Empty"
         $result.updates.extensionDumpPath | Should -Be "src/cfe/ShipModel"
         $result.updates.extensionExportPath | Should -Be "src/cfe/ShipModel"
+        $result.updates.lastExtensionDesignerTreeObjectId | Should -Be "fixture-tree"
         $result.updates.extensionInitializedAt | Should -Not -BeNullOrEmpty
         $result.updates.extensionInitializationStatus | Should -Be "ready"
         $result.snapshotFiles | Should -BeNullOrEmpty
