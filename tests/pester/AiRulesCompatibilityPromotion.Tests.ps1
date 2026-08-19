@@ -19,6 +19,32 @@ Describe "ai_rules compatibility promotion" {
         $text | Should -Match 'compatibilityCheckedAt cannot precede'
     }
 
+    It "converts typed and round-trip timestamps without current-culture stringification" {
+        $tokens = $null
+        $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile($PromoterPath, [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $definition = @($ast.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'ConvertTo-PromotionUtcDateTime'
+        }, $true)) | Select-Object -First 1
+        Invoke-Expression $definition.Extent.Text
+
+        $priorCulture = [Globalization.CultureInfo]::CurrentCulture
+        try {
+            [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('ru-RU')
+            $expected = '2026-08-19T10:38:28.0000000Z'
+            $typedDateTime = [DateTime]::new(2026, 8, 19, 10, 38, 28, [DateTimeKind]::Utc)
+            $typedOffset = [DateTimeOffset]::new($typedDateTime)
+
+            (ConvertTo-PromotionUtcDateTime -Value $typedDateTime).ToString('o') | Should -Be $expected
+            (ConvertTo-PromotionUtcDateTime -Value $typedOffset).ToString('o') | Should -Be $expected
+            (ConvertTo-PromotionUtcDateTime -Value $expected).ToString('o') | Should -Be $expected
+        } finally {
+            [Globalization.CultureInfo]::CurrentCulture = $priorCulture
+        }
+    }
+
     It "promotes only the two aiRules1c lock fields without reformatting the file" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-promotion-" + [guid]::NewGuid().ToString('N'))
         try {

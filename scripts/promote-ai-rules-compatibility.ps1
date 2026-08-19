@@ -9,6 +9,22 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $utf8 = New-Object System.Text.UTF8Encoding $false
+
+function ConvertTo-PromotionUtcDateTime {
+    param([Parameter(Mandatory = $true)][AllowNull()][object]$Value)
+
+    if ($Value -is [DateTimeOffset]) { return ([DateTimeOffset]$Value).UtcDateTime }
+    if ($Value -is [DateTime]) { return ([DateTime]$Value).ToUniversalTime() }
+    if ($Value -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$Value)) {
+        throw "Compatibility timestamp must be a DateTime, DateTimeOffset, or round-trip string."
+    }
+    return [DateTimeOffset]::Parse(
+        [string]$Value,
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::RoundtripKind
+    ).UtcDateTime
+}
+
 if (-not $RepositoryRoot) { $RepositoryRoot = Split-Path -Parent $PSScriptRoot }
 $RepositoryRoot = [IO.Path]::GetFullPath($RepositoryRoot)
 if (-not [IO.Path]::IsPathRooted($QualificationPath)) { $QualificationPath = Join-Path $RepositoryRoot $QualificationPath }
@@ -55,8 +71,8 @@ if ($forkQualificationHash -ne ([string]$qualification.fork.qualificationSha256)
     throw "Fork qualification hash differs from workflow Full evidence."
 }
 
-$checkedAtValue = if ($CheckedAt) { [DateTimeOffset]::Parse($CheckedAt).ToUniversalTime() } else { [DateTimeOffset]::UtcNow }
-$finishedAt = [DateTimeOffset]::Parse([string]$qualification.finishedAt).ToUniversalTime()
+$checkedAtValue = if ($CheckedAt) { ConvertTo-PromotionUtcDateTime -Value $CheckedAt } else { [DateTime]::UtcNow }
+$finishedAt = ConvertTo-PromotionUtcDateTime -Value $qualification.finishedAt
 if ($checkedAtValue -lt $finishedAt) { throw "compatibilityCheckedAt cannot precede the successful Full qualification." }
 $timestamp = $checkedAtValue.ToString("yyyy-MM-ddTHH:mm:ssZ")
 $pattern = '(?s)(?<prefix>"aiRules1c"\s*:\s*\{.*?"compatibilityStatus"\s*:\s*")pending(?<middle>".*?"compatibilityCheckedAt"\s*:\s*")(?<old>[^"]*)(?<suffix>")'
