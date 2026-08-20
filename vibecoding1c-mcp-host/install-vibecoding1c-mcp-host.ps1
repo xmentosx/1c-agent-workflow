@@ -2373,13 +2373,29 @@ function Test-HostTcpPortOpen {
 function Test-ToolsListProxyReady {
     param(
         [int]$Port,
+        [string]$ExpectedServerId = "",
+        [string]$ExpectedUpstreamUrl = "",
         [int]$TimeoutSec = 35
     )
 
     if ($Port -le 0) { return $false }
     try {
         $response = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/ready" -Method Get -TimeoutSec $TimeoutSec -ErrorAction Stop
-        return ([string](Get-ObjectValue -Object $response -Name "status" -Default "") -eq "ready")
+        if ([string](Get-ObjectValue -Object $response -Name "status" -Default "") -ne "ready") { return $false }
+        if ($ExpectedServerId -and [string](Get-ObjectValue -Object $response -Name "serverId" -Default "") -cne $ExpectedServerId) { return $false }
+        if ($ExpectedUpstreamUrl) {
+            $actualUpstreamUrl = [string](Get-ObjectValue -Object $response -Name "upstream" -Default "")
+            if (-not $actualUpstreamUrl) { return $false }
+            $expectedUri = [Uri]$ExpectedUpstreamUrl
+            $actualUri = [Uri]$actualUpstreamUrl
+            if ($expectedUri.Scheme -cne $actualUri.Scheme -or
+                $expectedUri.Host -cne $actualUri.Host -or
+                $expectedUri.Port -ne $actualUri.Port -or
+                $expectedUri.AbsolutePath.TrimEnd("/") -cne $actualUri.AbsolutePath.TrimEnd("/")) {
+                return $false
+            }
+        }
+        return $true
     } catch {
         return $false
     }
@@ -2388,16 +2404,23 @@ function Test-ToolsListProxyReady {
 function Wait-ToolsListProxyReady {
     param(
         [int]$Port,
-        [int]$Attempts = 18,
+        [string]$ExpectedServerId = "",
+        [string]$ExpectedUpstreamUrl = "",
+        [int]$Attempts = 60,
         [int]$DelaySeconds = 1,
-        [int]$ProbeTimeoutSec = 5
+        [int]$ProbeTimeoutSec = 5,
+        [int]$StableSuccesses = 2
     )
 
-    if ($Port -le 0 -or $Attempts -le 0) { return $false }
+    if ($Port -le 0 -or $Attempts -le 0 -or $StableSuccesses -le 0) { return $false }
+    $consecutiveSuccesses = 0
     for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
         if ((Test-HostTcpPortOpen -Port $Port -TimeoutMilliseconds 500) -and
-            (Test-ToolsListProxyReady -Port $Port -TimeoutSec $ProbeTimeoutSec)) {
-            return $true
+            (Test-ToolsListProxyReady -Port $Port -ExpectedServerId $ExpectedServerId -ExpectedUpstreamUrl $ExpectedUpstreamUrl -TimeoutSec $ProbeTimeoutSec)) {
+            $consecutiveSuccesses++
+            if ($consecutiveSuccesses -ge $StableSuccesses) { return $true }
+        } else {
+            $consecutiveSuccesses = 0
         }
         if ($attempt -lt ($Attempts - 1)) {
             Start-Sleep -Seconds $DelaySeconds
@@ -2481,7 +2504,7 @@ function Enable-ToolsListProxyForRuntime {
             "--listen-port", "8080", "--upstream-url", $upstreamUrl,
             "--server-id", $id, "--contract-path", "/app/tools-contract.json"
         ) -TimeoutSec 180 -Description "docker run $proxyContainerName"
-        $ready = Wait-ToolsListProxyReady -Port $proxyPort
+        $ready = Wait-ToolsListProxyReady -Port $proxyPort -ExpectedServerId $id -ExpectedUpstreamUrl $upstreamUrl
         if (-not $ready) {
             $logs = @(Invoke-DockerCommandCapture -Arguments @("logs", "--tail", "40", $proxyContainerName) -TimeoutSec 60 -Description "docker logs $proxyContainerName")
             throw "proxy did not become ready. $($logs -join ' ')"
@@ -2505,7 +2528,10 @@ function Update-ToolsListProxyPublishEndpoint {
     if (-not $directUrl -or -not $proxyUrl) { return $hash }
     $proxyContainer = [string](Get-ObjectValue -Object $hash -Name "proxyContainerName" -Default "")
     $proxyPort = [int](Get-ObjectValue -Object $hash -Name "proxyPort" -Default 0)
-    $qualified = (Get-HostContainerPublishState -ContainerName $proxyContainer) -eq "running" -and (Test-ToolsListProxyReady -Port $proxyPort)
+    $id = [string](Get-ObjectValue -Object $hash -Name "id" -Default "")
+    $hostPort = [int](Get-ObjectValue -Object $hash -Name "hostPort" -Default 0)
+    $expectedUpstreamUrl = $(if ($hostPort -gt 0) { "http://host.docker.internal:$hostPort/mcp" } else { "" })
+    $qualified = (Get-HostContainerPublishState -ContainerName $proxyContainer) -eq "running" -and (Test-ToolsListProxyReady -Port $proxyPort -ExpectedServerId $id -ExpectedUpstreamUrl $expectedUpstreamUrl)
     $hash["url"] = $(if ($qualified) { $proxyUrl } else { $directUrl })
     $hash["toolsContractStatus"] = $(if ($qualified) { "qualified" } else { "fallback-direct" })
     return $hash
@@ -2681,7 +2707,7 @@ function Enable-TrackedToolsListProxiesAndPublish {
                 "--listen-port", "8080", "--upstream-url", $upstreamUrl,
                 "--server-id", $id, "--contract-path", "/app/tools-contract.json"
             ) -TimeoutSec 180 -Description "docker run $proxyContainerName"
-            $ready = Wait-ToolsListProxyReady -Port $proxyPort
+            $ready = Wait-ToolsListProxyReady -Port $proxyPort -ExpectedServerId $id -ExpectedUpstreamUrl $upstreamUrl
             if (-not $ready) {
                 $logs = @(Invoke-DockerCommandCapture -Arguments @("logs", "--tail", "40", $proxyContainerName) -TimeoutSec 60 -Description "docker logs $proxyContainerName")
                 throw "Proxy for '$id' did not qualify. $($logs -join ' ')"
@@ -2803,7 +2829,8 @@ function Repair-TrackedMcpHostAndPublish {
                 Invoke-DockerCommandChecked -Arguments @("start", $proxyContainerName) -TimeoutSec 120 -Description "docker start $proxyContainerName"
             }
         }
-        if ($proxyState -eq "missing" -or $proxyState -eq "unknown" -or -not (Test-ToolsListProxyReady -Port $proxyPort)) {
+        $expectedUpstreamUrl = "http://host.docker.internal:$hostPort/mcp"
+        if ($proxyState -eq "missing" -or $proxyState -eq "unknown" -or -not (Test-ToolsListProxyReady -Port $proxyPort -ExpectedServerId $id -ExpectedUpstreamUrl $expectedUpstreamUrl)) {
             if (-not $repairIds.Contains($id)) { [void]$repairIds.Add($id) }
         }
     }
@@ -3047,18 +3074,28 @@ function Invoke-McpHostWatchdogRunCore {
             $reason = [string](Get-ObjectValue -Object $_ -Name "functionalMessage" -Default "functional qualification failed")
             "$name ($reason)"
         })
-        $degradedMessage = $(if ($degradedServers.Count -gt 0) { " Degraded MCP: $($degradedServers -join '; ')." } else { "" })
-        $message = "Tracked MCP runtimes, proxies, and registry reconciled. Docker availability: $dockerRecovery.$graphRepairMessage$degradedMessage"
+        if ($degradedServers.Count -gt 0) {
+            throw "Tracked MCP reconcile left degraded endpoints: $($degradedServers -join '; ')."
+        }
+        $message = "Tracked MCP runtimes, proxies, and registry reconciled. Docker availability: $dockerRecovery.$graphRepairMessage"
         Write-McpHostWatchdogRunState -Config $Config -StartedAt $startedAt -Status "succeeded" -Message $message
         Write-Host "MCP host watchdog reconcile completed."
     } catch {
         $message = $_.Exception.Message
-        if ($dockerRecoveryAttemptActive -or (Test-DockerDaemonUnavailableFailure -Message $message)) {
+        $dockerUnavailable = $dockerRecoveryAttemptActive -or (Test-DockerDaemonUnavailableFailure -Message $message)
+        if ($dockerUnavailable) {
             try {
                 Set-TrackedHostRuntimeStatus -Config $Config -Status "unavailable"
                 Publish-Registry -Config $Config -SkipRuntimeRefresh
             } catch {
                 Write-Warning "Could not publish unavailable MCP host state after Docker recovery failure: $($_.Exception.Message)"
+            }
+        } else {
+            try {
+                Update-HostStateForPublish -Config $Config
+                Publish-Registry -Config $Config -SkipRuntimeRefresh
+            } catch {
+                Write-Warning "Could not publish reconciled MCP host state after watchdog failure: $($_.Exception.Message)"
             }
         }
         try {
@@ -3856,8 +3893,11 @@ function Get-HostServerPublishStatus {
             return "stopped"
         }
         $proxyPort = [int](Get-ObjectValue -Object $Server -Name "proxyPort" -Default 0)
+        $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
+        $hostPort = [int](Get-ObjectValue -Object $Server -Name "hostPort" -Default 0)
+        $expectedUpstreamUrl = $(if ($hostPort -gt 0) { "http://host.docker.internal:$hostPort/mcp" } else { "" })
         $toolsContractStatus = [string](Get-ObjectValue -Object $Server -Name "toolsContractStatus" -Default "")
-        if ($toolsContractStatus -eq "qualified" -and (Test-ToolsListProxyReady -Port $proxyPort)) {
+        if ($toolsContractStatus -eq "qualified" -and (Test-ToolsListProxyReady -Port $proxyPort -ExpectedServerId $id -ExpectedUpstreamUrl $expectedUpstreamUrl)) {
             return "running"
         }
         return "unreachable"

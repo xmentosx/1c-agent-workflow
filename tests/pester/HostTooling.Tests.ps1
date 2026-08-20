@@ -136,10 +136,10 @@
                 (Test-ToolsListProxyTarget -Config $hostConfig -ServerId "graph") | Should -BeFalse
                 function Get-HostContainerPublishState { param([string]$ContainerName); return "running" }
                 function Test-HostTcpPortOpen { param([int]$Port, [int]$TimeoutMilliseconds = 500); return ($script:ProxyReady -and $Port -eq 22100) }
-                function Test-ToolsListProxyReady { param([int]$Port, [int]$TimeoutSec = 35); return ($script:ProxyReady -and $Port -eq 22100) }
+                function Test-ToolsListProxyReady { param([int]$Port, [string]$ExpectedServerId = "", [string]$ExpectedUpstreamUrl = "", [int]$TimeoutSec = 35); return ($script:ProxyReady -and $Port -eq 22100) }
                 $server = [ordered]@{
                     id = "code"; url = "http://host:22100/mcp"; directUrl = "http://host:18100/mcp"; proxyUrl = "http://host:22100/mcp"
-                    proxyPort = 22100; proxyContainerName = "itl-code-tools-list-proxy"; toolsContractStatus = "qualified"
+                    hostPort = 18100; proxyPort = 22100; proxyContainerName = "itl-code-tools-list-proxy"; toolsContractStatus = "qualified"
                 }
                 $script:ProxyReady = $true
                 $qualified = Update-ToolsListProxyPublishEndpoint -Server $server
@@ -165,11 +165,20 @@
                 function Invoke-RestMethod {
                     param($Uri, $Method, $TimeoutSec, $ErrorAction)
                     if ($script:ReadinessResult -eq "throw") { throw "fixture upstream failure" }
-                    return [pscustomobject]@{ status = $script:ReadinessResult }
+                    return [pscustomobject]@{ status = $script:ReadinessResult; serverId = $script:ReadinessServerId; upstream = $script:ReadinessUpstream }
                 }
 
+                $script:ReadinessServerId = "bookstack"
+                $script:ReadinessUpstream = "http://host.docker.internal:18005/mcp/"
                 $script:ReadinessResult = "ready"
-                (Test-ToolsListProxyReady -Port 22005) | Should -BeTrue
+                (Test-ToolsListProxyReady -Port 22005 -ExpectedServerId "bookstack" -ExpectedUpstreamUrl "http://host.docker.internal:18005/mcp") | Should -BeTrue
+                $script:ReadinessServerId = "graph"
+                (Test-ToolsListProxyReady -Port 22005 -ExpectedServerId "bookstack" -ExpectedUpstreamUrl "http://host.docker.internal:18005/mcp") | Should -BeFalse
+                (Test-ToolsListProxyReady -Port 22006 -ExpectedServerId "mantis" -ExpectedUpstreamUrl "http://host.docker.internal:18006/mcp") | Should -BeFalse
+                $script:ReadinessServerId = "bookstack"
+                $script:ReadinessUpstream = "http://host.docker.internal:18201/mcp/"
+                (Test-ToolsListProxyReady -Port 22005 -ExpectedServerId "bookstack" -ExpectedUpstreamUrl "http://host.docker.internal:18005/mcp") | Should -BeFalse
+                $script:ReadinessUpstream = "http://host.docker.internal:18005/mcp/"
                 $script:ReadinessResult = "unready"
                 (Test-ToolsListProxyReady -Port 22005) | Should -BeFalse
                 $script:ReadinessResult = "throw"
@@ -179,15 +188,16 @@
                 $script:ReadinessAttempts = 0
                 function Test-HostTcpPortOpen { param([int]$Port, [int]$TimeoutMilliseconds = 500); return $true }
                 function Test-ToolsListProxyReady {
-                    param([int]$Port, [int]$TimeoutSec = 35)
+                    param([int]$Port, [string]$ExpectedServerId = "", [string]$ExpectedUpstreamUrl = "", [int]$TimeoutSec = 35)
                     $script:ReadinessAttempts++
                     return ($script:ReadinessAttempts -ge 3)
                 }
                 function Start-Sleep { param([int]$Seconds) }
                 (Wait-ToolsListProxyReady -Port 22005 -Attempts 4 -DelaySeconds 0 -ProbeTimeoutSec 1) | Should -BeTrue
-                $script:ReadinessAttempts | Should -Be 3
+                $script:ReadinessAttempts | Should -Be 4
                 Remove-Variable -Scope Script -Name ReadinessResult -ErrorAction SilentlyContinue
                 Remove-Variable -Scope Script -Name ReadinessAttempts -ErrorAction SilentlyContinue
+                Remove-Variable -Scope Script -Name ReadinessServerId,ReadinessUpstream -ErrorAction SilentlyContinue
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
@@ -681,8 +691,10 @@ services:
                 function Repair-DockerDesktopAvailability { param([object]$Settings); return "already-available" }
                 function Repair-TrackedGraphHealthchecks { param([object]$Config); return 0 }
                 function Repair-TrackedMcpHostAndPublish { param([object]$Config); if ($script:WatchdogFailure) { throw "fixture failure" } }
+                function Update-HostStateForPublish { param([object]$Config); $script:WatchdogStateRefreshes++ }
+                function Publish-Registry { param([object]$Config, [switch]$SkipUnchangedHost, [switch]$SkipRuntimeRefresh); $script:WatchdogStatePublishes++ }
 
-                $script:WatchdogFailure = $false
+                $script:WatchdogFailure = $false; $script:WatchdogStateRefreshes = 0; $script:WatchdogStatePublishes = 0
                 Invoke-McpHostWatchdogRun -Config $hostConfig *> $null
                 $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $hostConfig)
                 $state.status | Should -Be "succeeded"
@@ -692,12 +704,26 @@ services:
                 $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $hostConfig)
                 $state.status | Should -Be "failed"
                 $state.message | Should -Be "fixture failure"
+                $script:WatchdogStateRefreshes | Should -Be 1
+                $script:WatchdogStatePublishes | Should -Be 1
+
+                $script:WatchdogFailure = $false
+                Write-JsonFile -Path (Get-HostStatePath -Config $hostConfig) -Value ([ordered]@{
+                    schemaVersion = 1
+                    servers = @([ordered]@{ id = "mantis"; name = "itl-mantis-ticket-mcp"; health = "degraded"; functionalMessage = "Unknown tool: health" })
+                })
+                { Invoke-McpHostWatchdogRun -Config $hostConfig *> $null } | Should -Throw "*left degraded endpoints*itl-mantis-ticket-mcp*"
+                $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $hostConfig)
+                $state.status | Should -Be "failed"
+                $state.message | Should -Match "Unknown tool: health"
+                $script:WatchdogStateRefreshes | Should -Be 2
+                $script:WatchdogStatePublishes | Should -Be 2
 
                 $hostConfig.watchdog.enabled = $false
                 Invoke-McpHostWatchdogRun -Config $hostConfig *> $null
                 $state = Read-JsonFile -Path (Get-McpHostWatchdogStatePath -Config $hostConfig)
                 $state.status | Should -Be "disabled"
-                Remove-Variable -Scope Script -Name WatchdogFailure -ErrorAction SilentlyContinue
+                Remove-Variable -Scope Script -Name WatchdogFailure,WatchdogStateRefreshes,WatchdogStatePublishes -ErrorAction SilentlyContinue
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
@@ -826,7 +852,7 @@ services:
                     param([int]$Port, [int]$TimeoutMilliseconds = 500)
                     return ($Port -in @(18100, 22100))
                 }
-                function Wait-ToolsListProxyReady { param([int]$Port); return $false }
+                function Wait-ToolsListProxyReady { param([int]$Port, [string]$ExpectedServerId = "", [string]$ExpectedUpstreamUrl = ""); return $false }
                 function Invoke-DockerCommand {
                     param([string[]]$Arguments, [switch]$Quiet, [int]$TimeoutSec = 300)
                     $script:ProxyRollbackDockerCalls.Add(($Arguments -join " "))
@@ -1127,7 +1153,7 @@ services:
                     return $script:ProxyPublishContainerState
                 }
                 function Test-ToolsListProxyReady {
-                    param([int]$Port, [int]$TimeoutSec = 35)
+                    param([int]$Port, [string]$ExpectedServerId = "", [string]$ExpectedUpstreamUrl = "", [int]$TimeoutSec = 35)
                     return $script:ProxyPublishReady
                 }
                 $server = [ordered]@{
