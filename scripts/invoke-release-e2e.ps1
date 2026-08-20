@@ -2282,9 +2282,7 @@ try {
         Set-E2EStageStatus -Name "result-cleanup" -Status "running"
         $executedStages += "result-cleanup"
         try {
-            $statusResult = Invoke-E2EHelper -Action "status" -TimeoutSeconds 120 -AdditionalArguments @(
-                "-VanessaFeaturePath", $vanessaFixture.path
-            )
+            $statusResult = Invoke-E2EHelper -Action "status" -TimeoutSeconds 120
             $statusText = Get-Content -LiteralPath $statusResult.stdoutPath -Raw -Encoding UTF8
             if ($statusText -notmatch '(?im)^Verification fresh passed:\s*True\s*$') {
                 throw "E2E /itl-check did not produce fresh passed verification."
@@ -2302,9 +2300,7 @@ try {
                 throw "E2E verification is not fresh for the checkpointed Release run."
             }
 
-            Invoke-E2EHelper -Action "export-dev-branch-result" -TimeoutSeconds 7200 -AdditionalArguments @(
-                "-VanessaFeaturePath", $vanessaFixture.path
-            ) | Out-Null
+            Invoke-E2EHelper -Action "export-dev-branch-result" -TimeoutSeconds 7200 | Out-Null
             $stateRecord = Get-E2EState
             $state = $stateRecord.value
             $artifactPath = [string]$state.lastResultPath

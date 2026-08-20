@@ -42,6 +42,8 @@
         $check = [regex]::Match($lifecycle, '(?s)function Invoke-DevBranchCheck \{(?<body>.*?)\n\}')
         $check.Success | Should -BeTrue
         $check.Groups['body'].Value.IndexOf('Assert-VanessaVerificationPreflight') | Should -BeLessThan $check.Groups['body'].Value.IndexOf('Update-DevBranchBase')
+        $check.Groups['body'].Value.IndexOf('Ensure-DevBranchEventLogPendingCursor') | Should -BeLessThan $check.Groups['body'].Value.IndexOf('Update-DevBranchBase')
+        $check.Groups['body'].Value | Should -Match '(?s)Invoke-ItlVerificationCycle.+EventLogCursorPath'
         $check.Groups['body'].Value | Should -Match 'Invoke-DevBranchVanessaRuntimeRelease'
         $check.Groups['body'].Value | Should -Not -Match 'Authoring'
 

@@ -96,9 +96,9 @@ Describe "Deterministic Release readiness" {
         }
 
         function Invoke-ReadinessFixture {
-            param([string]$Root, [string]$OutputPath, [string]$Mode = "Full", [string]$E2EProjectRoot = "")
+            param([string]$Root, [string]$OutputPath, [string]$Mode = "Full", [string]$E2EProjectRoot = "", [string]$ResumeMode = "Auto")
             $quote = { param([string]$Value) '"' + $Value.Replace('"', '\"') + '"' }
-            $arguments = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (& $quote $script:ReadinessRunnerPath), "-Mode", (& $quote $Mode), "-RepositoryRoot", (& $quote $Root), "-OutputPath", (& $quote $OutputPath), "-Offline")
+            $arguments = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (& $quote $script:ReadinessRunnerPath), "-Mode", (& $quote $Mode), "-RepositoryRoot", (& $quote $Root), "-OutputPath", (& $quote $OutputPath), "-ResumeMode", (& $quote $ResumeMode), "-Offline")
             if ($E2EProjectRoot) { $arguments += @("-E2EProjectRoot", (& $quote $E2EProjectRoot)) }
             $stdoutPath = $OutputPath + ".stdout.log"
             $stderrPath = $OutputPath + ".stderr.log"
@@ -274,6 +274,26 @@ Describe "Deterministic Release readiness" {
             Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode "Release" -E2EProjectRoot $e2eRoot | Out-Null
             $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
             @($context.issues.code) | Should -Contain "RELEASE_CHECKPOINT_UPGRADE_REQUIRED"
+
+            $candidateCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            $masterLock = $fixture.lock | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+            $masterLock.dependencies.workflowPackage.commit = $candidateCommit
+            Write-Utf8Json -Path (Join-Path $e2eRoot ".agent-1c\dependency-lock.json") -Value $masterLock
+            [IO.File]::WriteAllText((Join-Path $worktreeRoot "AGENT-INSTALL.md"), "stale release branch`n", [Text.UTF8Encoding]::new($false))
+            & git -C $worktreeRoot add -- AGENT-INSTALL.md
+            & git -C $worktreeRoot commit -m "make release branch stale" | Out-Null
+
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode "Release" -E2EProjectRoot $e2eRoot | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($context.issues.code) | Should -Contain "RELEASE_STAND_MANAGED_PACKAGE_DRIFT"
+            @($context.issues.code) | Should -Contain "RELEASE_DEPENDENCY_LOCK_DRIFT"
+            @($context.issues.code) | Should -Contain "RELEASE_STAND_WORKFLOW_COMMIT_DRIFT"
+
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode "Release" -E2EProjectRoot $e2eRoot -ResumeMode "Restart" | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($context.issues.code) | Should -Not -Contain "RELEASE_STAND_MANAGED_PACKAGE_DRIFT"
+            @($context.issues.code) | Should -Not -Contain "RELEASE_DEPENDENCY_LOCK_DRIFT"
+            @($context.issues.code) | Should -Not -Contain "RELEASE_STAND_WORKFLOW_COMMIT_DRIFT"
         } finally {
             if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
         }

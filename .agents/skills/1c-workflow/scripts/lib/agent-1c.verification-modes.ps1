@@ -102,28 +102,55 @@ function Set-ItlPartialVerificationEvidence {
 }
 
 function Test-ItlEventLogCurrent {
-    param([object]$State)
+    param(
+        [object]$State,
+        [string]$CursorPath = "",
+        [Nullable[datetime]]$BoundaryAt = $null,
+        [string]$CursorScope = "lifecycle-pending",
+        [ValidateSet("implicit", "command", "repair", "explicit")][string]$Trigger = "command"
+    )
 
     $stateWithBaseline = Ensure-DevBranchEventLogBaseline -State $State
-    $baselinePath = Get-StateValue -State $stateWithBaseline -Name "eventLogBaselinePath" -Default (Get-DevBranchEventLogBaselinePath -State $stateWithBaseline)
-    $baseline = Read-Utf8Text -Path $baselinePath | ConvertFrom-Json
-    $known = @{}
-    foreach ($signature in @($baseline.signatures)) { if ($signature) { $known[[string]$signature] = $true } }
-    $read = Read-DevBranchEventLogErrors -State $stateWithBaseline
-    $newErrors = @($read.events | Where-Object { -not $known.ContainsKey([string]$_.signature) })
-    $status = $(if ($newErrors.Count -eq 0) { "passed" } else { "failed" })
-    $reason = $(if ($newErrors.Count -eq 0) { "1C event log contains no signatures outside the branch baseline." } else { "1C event log contains $($newErrors.Count) signature(s) outside the branch baseline." })
-    Update-DevBranchState -State $stateWithBaseline -Updates @{
-        lastEventLogOnlyStatus = $status
-        lastEventLogOnlyCheckedAt = (Get-Date).ToString("o")
-        lastEventLogOnlyReader = $read.reader
-        lastEventLogOnlyReason = $reason
-        lastEventLogOnlyNewErrorCount = $newErrors.Count
+    if (-not $CursorPath) {
+        $pending = Ensure-DevBranchEventLogPendingCursor -State $stateWithBaseline -Reason "event-log-only"
+        $CursorPath = $pending.path
+        $BoundaryAt = $pending.capturedAt
     }
-    Write-Host "Event-log verification: $status. $reason"
-    if ($status -ne "passed") {
+    $now = Get-Date
+    $stateProjectRoot = [string](Get-StateValue -State $stateWithBaseline -Name "stateProjectRoot" -Default $script:ProjectRoot)
+    $runDirectory = Join-Path $stateProjectRoot (".agent-1c\event-log-checks\run-" + $now.ToString("yyyyMMdd-HHmmss-fff"))
+    New-Item -ItemType Directory -Force -Path $runDirectory | Out-Null
+    $verification = Test-DevBranchEventLogAfterVanessa `
+        -State $stateWithBaseline `
+        -RunStartedAt $now `
+        -RunFinishedAt $now `
+        -RunDirectory $runDirectory `
+        -CursorPath $CursorPath `
+        -BoundaryStartedAt $BoundaryAt `
+        -CursorScope $CursorScope
+    $fingerprint = Get-VerificationFingerprint
+    $debt = Resolve-DevBranchEventLogDebt -State $stateWithBaseline -Verification $verification -Fingerprint $fingerprint -Trigger $Trigger
+    $verification = $debt.verification
+    $updates = @{
+        lastEventLogOnlyStatus = $verification.status
+        lastEventLogOnlyCheckedAt = (Get-Date).ToString("o")
+        lastEventLogOnlyReader = $verification.reader
+        lastEventLogOnlyReason = $verification.reason
+        lastEventLogOnlyNewErrorCount = $verification.newErrorCount
+        lastEventLogOnlyReportPath = $verification.reportPath
+        lastEventLogOnlyCursorScope = $CursorScope
+        lastEventLogOnlyCursorSourceKey = [string](Get-StateValue -State $verification -Name "cursorSourceKey" -Default "")
+    }
+    foreach ($key in $debt.updates.Keys) { $updates[$key] = $debt.updates[$key] }
+    if ($CursorScope -eq "lifecycle-pending" -and $verification.scanMode -notin @("failed", "skipped")) {
+        $boundaryUpdates = Complete-DevBranchEventLogObservation -State $stateWithBaseline -Status $verification.status -Fingerprint $fingerprint -ReportPath $verification.reportPath
+        foreach ($key in $boundaryUpdates.Keys) { $updates[$key] = $boundaryUpdates[$key] }
+    }
+    Update-DevBranchState -State $stateWithBaseline -Updates $updates
+    Write-Host "Event-log verification: $($verification.status). $($verification.reason)"
+    if ($verification.status -ne "passed") {
         Set-RunFailureContext -Category "event-log" -RequiredAction "/itl-verify-fix"
-        throw $reason
+        throw $verification.reason
     }
 }
 
@@ -215,7 +242,10 @@ function Complete-ItlVerificationRepairSession {
 function Invoke-ItlVerificationCycle {
     param(
         [ValidateSet("implicit", "command", "repair", "explicit")][string]$Trigger = "command",
-        [string[]]$ExplicitComponents = @()
+        [string[]]$ExplicitComponents = @(),
+        [string]$EventLogCursorPath = "",
+        [Nullable[datetime]]$EventLogBoundaryAt = $null,
+        [string]$EventLogCursorScope = "vanessa-only"
     )
 
     $state = Read-DevBranchState -Name $DevBranchName
@@ -227,9 +257,15 @@ function Invoke-ItlVerificationCycle {
     if ($vanessa.run) {
         $script:ItlSkipEventLogForVerification = -not $eventLog.run
         $recordFullProof = Test-ItlFullVerificationProofEligible -Trigger $Trigger -ExplicitComponents $ExplicitComponents
-        try { Run-DevBranchTests -RecordFullVerificationEvidence:$recordFullProof } finally { $script:ItlSkipEventLogForVerification = $false }
+        try {
+            Run-DevBranchTests `
+                -RecordFullVerificationEvidence:$recordFullProof `
+                -EventLogCursorPath $EventLogCursorPath `
+                -EventLogBoundaryAt $EventLogBoundaryAt `
+                -EventLogCursorScope $EventLogCursorScope
+        } finally { $script:ItlSkipEventLogForVerification = $false }
     } elseif ($eventLog.run) {
-        Test-ItlEventLogCurrent -State $state
+        Test-ItlEventLogCurrent -State $state -CursorPath $EventLogCursorPath -BoundaryAt $EventLogBoundaryAt -CursorScope $EventLogCursorScope -Trigger $Trigger
     }
     $state = Read-DevBranchState -Name $DevBranchName
     $skipped = @($decisions | Where-Object { -not $_.run })
