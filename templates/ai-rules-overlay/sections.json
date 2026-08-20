@@ -165,12 +165,12 @@
                           },
                           {
                               "path":  "AGENT-INSTALL.md",
-                              "requirementId":  "ITL-INSTALL-001",
+                              "requirementId":  "ITL-GRILLING-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-INSTALL-001 for r24 with reviewed managed-file EOL and legacy migration behavior.",
+                              "reason":  "Resolve ITL-GRILLING-001 for r29 by documenting the complete required skill family while preserving prior installer behavior.",
                               "upstreamSha256":  "6bc99be2ab1690469dd3c5782d9be115a5c8ffac6e1833be89bf7cd6496df01a",
                               "baselineSha256":  "6e0c4a749ad1bebc6aeeab913a7cadb8d1595d9985e14a1951066bea1c6e1872",
-                              "resultSha256":  "91584ac66829e1354d4d1e21dd623f69ab01d0547796cca8a02a026b4327ddd4"
+                              "resultSha256":  "5bdfdf15269e3faff5c39fadba8e19982360b98456ca76d1689a007b031ab616"
                           },
                           {
                               "path":  "AGENTS.md",
@@ -1010,13 +1010,103 @@
                               "resultSha256":  "1acd1606db5d497cfabf9bc8179802487da599e5ebf210f888d61d4242ed0cf3"
                           },
                           {
+                              "path":  "content/skills/domain-modeling/ADR-FORMAT.md",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the reviewed r29 implementation of ITL-GRILLING-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "4b23a04a0dbc0ffd2a48cbf7304fdc12bf4395de32586022c42fee37f0378b9b"
+                          },
+                          {
+                              "path":  "content/skills/domain-modeling/CONTEXT-FORMAT.md",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the reviewed r29 implementation of ITL-GRILLING-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "af2bc28c77437ba8b1e21783522fa6e979777dca28ed77a1b212e41a332a9a26"
+                          },
+                          {
+                              "path":  "content/skills/domain-modeling/SKILL.md",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the reviewed r29 implementation of ITL-GRILLING-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "2c21405a5467e189e342daf2187eff862b403d01e1d2d6124a432299137ba8df"
+                          },
+                          {
+                              "path":  "content/skills/domain-modeling/agents/openai.yaml",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the reviewed r29 implementation of ITL-GRILLING-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "f6bf2aa996c6e6f53fdd0708e18a0d16a56aed8322cca59fedbe3c0d2c75f06b"
+                          },
+                          {
+                              "path":  "content/skills/grill-me/SKILL.md",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the reviewed r29 implementation of ITL-GRILLING-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "3267f3bd91606f98ae65701a736977c1779e735adb27adf82bf35a36905248dc"
+                          },
+                          {
+                              "path":  "content/skills/grill-me/agents/openai.yaml",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the reviewed r29 implementation of ITL-GRILLING-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "d178ddaa0fad971a7391ad61bff2c0cb6b1dfdf719b6eaf113c698c0bf4a3895"
+                          },
+                          {
+                              "path":  "content/skills/grill-with-docs/SKILL.md",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the reviewed r29 implementation of ITL-GRILLING-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "f0b5bcf5672f3deeff63fa4a1a74b3cb23790e6dd6eee9e40078fb6b3263f1b4"
+                          },
+                          {
+                              "path":  "content/skills/grill-with-docs/agents/openai.yaml",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the reviewed r29 implementation of ITL-GRILLING-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "89f174f9670719eaaa5c960072d31985386327d0ac16490f8ddfda3496b94f54"
+                          },
+                          {
+                              "path":  "content/skills/grilling/SKILL.md",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the reviewed r29 implementation of ITL-GRILLING-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "1e0c9ff2ac2a49ccab5cb76c044eb7e2792337da59f52d303715ffc375970ce2"
+                          },
+                          {
+                              "path":  "content/skills/grilling/agents/openai.yaml",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the reviewed r29 implementation of ITL-GRILLING-001.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "1411d7df7d99b7e621a1ff8283c8133cc2464be63d064e52d8ce169c6800ee9b"
+                          },
+                          {
                               "path":  "docs/DOWNSTREAM-PATCHES.md",
-                              "requirementId":  "ITL-MCP-002",
+                              "requirementId":  "ITL-GRILLING-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-MCP-002 for r25 by recording delta-aware search ownership.",
+                              "reason":  "Resolve ITL-GRILLING-001 for r29 by recording the grilling skill family while preserving prior patch ownership.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "bf06a8b85b2985fc9a8c5e09c701b0324901e52799bf113ce9dc325788f8b301",
-                              "resultSha256":  "3774c1e9bb03f0b6e2059c871bab57705b3b80347b4251b15f6b3ac0c9a10631"
+                              "resultSha256":  "d9d107f7febee55f4ca075dcd3b402e5413ed36f82347a0c15a05bef27a3b949"
                           },
                           {
                               "path":  "docs/FORK-POLICY.md",
@@ -1236,12 +1326,12 @@
                           },
                           {
                               "path":  "README.md",
-                              "requirementId":  "ITL-CODECHECKER-LATENCY-001",
+                              "requirementId":  "ITL-GRILLING-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-GRILLING-001 for r29 by documenting the new skill family while preserving prior release guidance.",
                               "upstreamSha256":  "f9c6a2c905f87cc5d690e929e4cff5504934b246e566502d532f6f80ccb06da5",
                               "baselineSha256":  "ab70e48f31059d3203bfa05f8beb40a9b4cee73154024fc81cfcf8e1ad36b23a",
-                              "resultSha256":  "23ae5e64a36d9190a3e1733fceecfb6d2c8f45408e6e9edd6646e49aa0eb73c9"
+                              "resultSha256":  "a4c3cbe62188c2423ae2bf626c4c67b802d2092beddd406063ae449432477b6d"
                           },
                           {
                               "path":  "scripts/check.ps1",
@@ -1298,13 +1388,22 @@
                               "resultSha256":  "ede1f5bbe69b8a7fbeca07c7e3bc45603d474b954e354e5289904cba2dc03e24"
                           },
                           {
+                              "path":  "tests/GrillingSkills.Tests.ps1",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the focused r29 regression for portable aliases, frontier rounds, evidence routing, and domain-doc ownership.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "4b5eee8160e5d4a7f400163b35a5527ce0104d48981ed9544448f8d0bac2b7e9"
+                          },
+                          {
                               "path":  "tests/LayoutAndManifest.Tests.ps1",
-                              "requirementId":  "ITL-INFRA-001",
+                              "requirementId":  "ITL-GRILLING-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-INFRA-001 for r26 by accepting CRLF at the exact YAML line boundary.",
+                              "reason":  "Resolve ITL-GRILLING-001 for r29 by proving the full skill family installs for every supported client.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "e16a2959f68a0d5647dac9adce9a109b9611b2cebcdc88fa466ffe21e8001848",
-                              "resultSha256":  "f37bfecc87d4df813d558501f6d919d5b57fb515c35ae09faba7f40c9abe110e"
+                              "resultSha256":  "e14f4620d12cbed51f1ca05736e9839de1fea000c7ac458d26ccbb56e4b83b29"
                           },
                           {
                               "path":  "tests/R8Policy.Tests.ps1",
