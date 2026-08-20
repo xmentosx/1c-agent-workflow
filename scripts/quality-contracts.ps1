@@ -31,7 +31,7 @@ function Test-QualityContractCatalog {
         [Parameter(Mandatory = $true)][object]$Catalog
     )
 
-    $expectedContinuationScopes = @("develop", "gate", "release", "static")
+    $expectedContinuationScopes = @("deliveryPostGate", "develop", "gate", "release", "static") | Sort-Object
     $actualContinuationScopes = @($Catalog.continuationScopes.PSObject.Properties | ForEach-Object { [string]$_.Name } | Sort-Object -Unique)
     if (($actualContinuationScopes -join "`n") -ne ($expectedContinuationScopes -join "`n")) {
         throw "Quality contract continuationScopes must define exactly: $($expectedContinuationScopes -join ', ')."

@@ -100,6 +100,13 @@ qualification cache, поэтому после ошибки `Release` он не 
 Успешный `Develop` уже включает exact-tree Full/static proof: отдельный `Full`
 для того же дерева не запускается.
 
+`PublishDevelop` атомарно хранит цепочку `candidate-built -> develop-qualified ->
+release-qualified -> component-finalized -> remote-pushed`. Retry начинает с
+первой незавершённой фазы; сбой finalizer/push не повторяет gate. Новая identity
+кандидата/gate создаёт новую цепочку. После 60 минут новый этап не стартует. Два
+одинаковых сбоя блокируют третий; повтор после диагностики требует
+`-RetryBlockedStage`. Scope `deliveryPostGate` сохраняет broad proof.
+
 Develop состоит из двух независимо квалифицируемых journey через публичные
 поверхности workflow:
 

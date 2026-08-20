@@ -65,9 +65,11 @@ Describe "Local quality gate contract" {
         $componentOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-component.ps1")
         @($componentOnly.contracts.id) | Should -Be @("source-delivery-component")
         @($componentOnly.tests) | Should -Be @("tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1")
-        foreach ($gateLeaf in @("scripts/source-delivery-process.ps1", "scripts/source-delivery-queue.ps1", "scripts/source-delivery-component.ps1", "scripts/source-delivery-candidate.ps1")) {
+        foreach ($gateLeaf in @("scripts/source-delivery-process.ps1", "scripts/source-delivery-queue.ps1", "scripts/source-delivery-candidate.ps1")) {
             @($catalog.continuationScopes.gate) | Should -Contain $gateLeaf
         }
+        @($catalog.continuationScopes.deliveryPostGate) | Should -Be @("scripts/source-delivery-component.ps1")
+        @($catalog.continuationScopes.gate) | Should -Not -Contain "scripts/source-delivery-component.ps1"
         @($catalog.contracts.paths | ForEach-Object { @($_) } | Where-Object { [string]$_ -in @("*", "**", "*/*") }) | Should -BeNullOrEmpty
         $catalog.PSObject.Properties["baseline"] | Should -BeNullOrEmpty
         $shardRunner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8

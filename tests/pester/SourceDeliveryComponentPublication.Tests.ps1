@@ -22,6 +22,13 @@ It "preserves the queue and develop branch when component finalization fails" {
             (& git -C $fixture.root rev-parse refs/itl/develop-queue/component-finalize/head).Trim() | Should -Be $candidate
             $finalizerRecord = Get-Content -LiteralPath $fixture.finalizerLog -Encoding UTF8 | Select-Object -Last 1 | ConvertFrom-Json
             $finalizerRecord.remoteHead | Should -Be $fixture.base
+
+            $env:ITL_TEST_FAIL_COMPONENT_FINALIZER = "false"
+            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'))
+            ($published.stdout | ConvertFrom-Json).status | Should -Be "published"
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Targeted", "Develop")
+            @((Get-Content -LiteralPath $fixture.finalizerLog -Encoding UTF8)).Count | Should -Be 2
+            (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $candidate
         } finally {
             $env:ITL_TEST_FAIL_COMPONENT_FINALIZER = $oldFailure
             Remove-DeliveryFixture -Fixture $fixture

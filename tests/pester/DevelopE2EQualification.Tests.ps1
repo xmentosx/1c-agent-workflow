@@ -32,7 +32,7 @@ BeforeAll {
         [IO.File]::WriteAllText((Join-Path $Root "scripts\check.ps1"), "param()`n", [Text.UTF8Encoding]::new($false))
         $catalog = [ordered]@{
             schemaVersion = 1
-            continuationScopes = [ordered]@{ static=@('tests/pester/*'); gate=@('scripts/*'); develop=@('develop/*'); release=@('release/*') }
+            continuationScopes = [ordered]@{ static=@('tests/pester/*'); deliveryPostGate=@('post-gate/*'); gate=@('scripts/*'); develop=@('develop/*'); release=@('release/*') }
             developJourneys = [ordered]@{
                 names = @('upgrade','fresh')
                 fullPaths = @('scripts/check.ps1')

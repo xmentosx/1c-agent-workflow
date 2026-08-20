@@ -10,7 +10,11 @@ It "parses the orchestrator and exposes only the four delivery actions" {
         @($action.Attributes | Where-Object TypeName -match ValidateSet | Select-Object -ExpandProperty PositionalArguments | ForEach-Object SafeGetValue) | Should -Be @("RegisterChange", "Status", "PublishDevelop", "ReleaseMaster")
         $text = $DeliverySourceText
         $text | Should -Not -Match 'Restore-DeliveryContinuationQualification'
-        $text | Should -Match 'Always enter Develop, even when exact proof was restored'
+        $text | Should -Match 'publication-attempts\\develop\.json'
+        $text | Should -Match 'develop-qualified'
+        $text | Should -Match 'component-finalized'
+        $text | Should -Match 'same failure twice'
+        $text | Should -Match 'Restore-PriorDevelopPublicationQualification'
         $text | Should -Match 'Invoke-SourceGate -Mode "Develop" -WorkingRoot \$worktree\.path -TargetBaseRef \$remoteDevelop'
     }
 

@@ -15,6 +15,7 @@ param(
     [string]$Version = "",
     [ValidateSet("Auto", "Restart")]
     [string]$ReleaseResumeMode = "Auto",
+    [switch]$RetryBlockedStage,
     [switch]$RequireRelease
 )
 
@@ -66,6 +67,9 @@ function Get-DeliveryCommonGitDirectory {
 [void](Invoke-DeliveryGit -Arguments @("rev-parse", "--git-dir"))
 if ($RequireRelease -and $Action -ne "PublishDevelop") {
     throw "-RequireRelease is valid only with -Action PublishDevelop."
+}
+if ($RetryBlockedStage -and $Action -ne "PublishDevelop") {
+    throw "-RetryBlockedStage is valid only with -Action PublishDevelop."
 }
 $script:ActiveOperation = $null
 try {

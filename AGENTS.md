@@ -41,13 +41,13 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 
 - Read-only source maintenance does not run `Targeted`, `Smoke`, `Full`, `Develop`, or `Release`; use focused non-mutating evidence only.
 - During edits run only the directly owned tests. Do not run a broad gate merely because a chat is ending. `Fast` is a deprecated alias for `Smoke` and is never the normal source-development step.
-- Publish accumulated `develop` with `scripts/source-delivery.ps1 -Action PublishDevelop` and the exact fork/E2E stand. It integrates registered ranges, runs `Develop`, and fast-forward pushes; add `-RequireRelease` when that candidate must pass `Release` first.
+- Publish accumulated `develop` with `scripts/source-delivery.ps1 -Action PublishDevelop` and the exact fork/E2E stand. It integrates registered ranges, runs `Develop`, and fast-forward pushes; add `-RequireRelease` when that candidate must pass `Release` first. Resume its durable exact-candidate checkpoint instead of repeating passed stages.
 - Passed `Develop` already contains exact-tree Full/static proof. Never run separate `Full` for that tree.
 - Reuse a passed Targeted/Full Pester shard only when owner inputs, inventory, locks, checker/runtime versions, controlled-fork identity, and Vanessa build identity match; unknown ownership disables reuse.
 - Follow delivery timeout/recovery and UTF-8 rules in `docs/local-quality-gate.md`; never bypass locks.
 - Release `develop` to `master` only via `scripts/source-delivery.ps1 -Action ReleaseMaster`. The queue must be empty and local `develop` must equal `origin/develop`; it reconciles `master`, reuses exact Develop proof, runs release-only evidence, advances both branches, and creates a tag/Release with `-Version`.
 - Do not tag or publish an `itl-ondemand-mcp` component build from Targeted proof. Its exact source commit and executable SHA must pass the real `ondemand-mcp` Release E2E stage for both backend families; fixture evidence and unrelated prior runs are not release qualification.
-- Do not ask which gate to run unless the user explicitly overrides this model. A failure, conflict, remote movement, timeout, or no-progress stop leaves the queue intact and forbids publication.
+- Do not ask which gate to run unless the user overrides this model. Failure, conflict, remote movement, timeout, or no-progress preserves the queue/checkpoint and forbids publication. The same stage failure twice requires diagnosis before an explicit `-RetryBlockedStage`.
 - Do not weaken the Vanessa completion gate, fresh passed `/itl-check`, snapshot rollback, or artifact SHA checks.
 - Tests must leave tracked state unchanged. A passing gate with a dirty worktree is not a release qualification.
 

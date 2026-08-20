@@ -105,8 +105,34 @@ It "publishes develop only after the exact candidate passes Develop and required
             $payload = $published.stdout | ConvertFrom-Json
             $payload.releaseQualified | Should -BeTrue
             (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $candidate
-            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Develop", "Release")
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Release")
             @((Get-Content -LiteralPath $fixture.releaseResumeLog -Encoding UTF8)) | Should -Be @("Restart")
+        } finally {
+            $env:ITL_TEST_FAIL_DELIVERY_RELEASE = $oldFailure
+            Remove-DeliveryFixture -Fixture $fixture
+        }
+    }
+
+    It "blocks a third identical failed stage run without repeating passed broad gates" {
+        $fixture = $null; $oldFailure = $env:ITL_TEST_FAIL_DELIVERY_RELEASE
+        try {
+            $fixture = New-DeliveryFixture
+            New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
+            Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\CircuitBreaker.Tests.ps1") -Encoding UTF8 -Value "Describe 'publication circuit breaker' { It 'works' { `$true | Should -BeTrue } }"
+            & git -C $fixture.root add --all; & git -C $fixture.root commit -m "test: publication circuit breaker" *> $null
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) | Out-Null
+            Remove-Item -LiteralPath $fixture.modeLog -Force -ErrorAction SilentlyContinue
+            $env:ITL_TEST_FAIL_DELIVERY_RELEASE = "true"
+
+            (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure).exitCode | Should -Not -Be 0
+            (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure).exitCode | Should -Not -Be 0
+            $beforeBlockedRetry = @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8))
+            $blocked = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure
+
+            $blocked.exitCode | Should -Not -Be 0
+            $blocked.stderr | Should -Match "same failure twice"
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be $beforeBlockedRetry
+            $beforeBlockedRetry | Should -Be @("Develop", "Release", "Release")
         } finally {
             $env:ITL_TEST_FAIL_DELIVERY_RELEASE = $oldFailure
             Remove-DeliveryFixture -Fixture $fixture
