@@ -972,6 +972,11 @@
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($baselinePath))
         $HelperText | Should -Match ([regex]::Escape($baselinePath))
 
+        $cursorPath = ".agent-1c/event-log-cursors/"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($cursorPath))
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($cursorPath))
+        $HelperText | Should -Match ([regex]::Escape($cursorPath))
+
         $cachePath = ".agent-1c/event-log-signature-cache/"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($cachePath))
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($cachePath))

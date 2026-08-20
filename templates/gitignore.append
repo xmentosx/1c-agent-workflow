@@ -11,6 +11,7 @@ logs/
 .tx/
 .agent-1c/dev-branches/
 .agent-1c/event-log-baselines/
+.agent-1c/event-log-cursors/
 .agent-1c/event-log-signature-cache/
 .agent-1c/runs/
 .agent-1c/source-infobase-unsafe-action-protection.json

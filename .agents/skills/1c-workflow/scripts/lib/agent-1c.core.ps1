@@ -2120,6 +2120,7 @@ function Ensure-GitIgnore {
         ".tx/",
         ".agent-1c/dev-branches/",
         ".agent-1c/event-log-baselines/",
+        ".agent-1c/event-log-cursors/",
         ".agent-1c/runs/",
         ".agent-1c/vanessa-authoring/",
         ".agent-1c/verification-repair/",
