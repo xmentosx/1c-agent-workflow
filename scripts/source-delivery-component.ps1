@@ -22,7 +22,7 @@ function Get-DeliveryRemoteAssetState {
         [string]$Url,
         [string]$ExpectedSha256,
         [ValidateRange(1, 3)][int]$NetworkAttempts = 3,
-        [ValidateRange(1, 6)][int]$AvailabilityAttempts = 1
+        [ValidateRange(1, 12)][int]$AvailabilityAttempts = 1
     )
     for ($availabilityAttempt = 1; $availabilityAttempt -le $AvailabilityAttempts; $availabilityAttempt++) {
         $downloadPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-component-download-" + [guid]::NewGuid().ToString("N") + ".bin")
@@ -172,7 +172,7 @@ function Invoke-VanessaComponentPublicationFinalize {
                 $mutated = $true
             } finally { Remove-Item -LiteralPath $uploadRoot -Recurse -Force -ErrorAction SilentlyContinue }
         }
-        $remote = Get-DeliveryRemoteAssetState -Url ([string]$lock.url) -ExpectedSha256 $expectedSha -AvailabilityAttempts 6
+        $remote = Get-DeliveryRemoteAssetState -Url ([string]$lock.url) -ExpectedSha256 $expectedSha -AvailabilityAttempts 12
         if ($remote.status -ne "matched") { throw "The Vanessa component was finalized, but its immutable URL is still unavailable. The queue is preserved for a safe retry." }
     }
 
