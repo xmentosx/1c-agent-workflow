@@ -142,6 +142,25 @@ function Get-ExternalInputIdentity {
     return "$identity|unresolved"
 }
 
+function Get-ShardTrackedFileIdentity {
+    param([Parameter(Mandatory = $true)][string]$RelativePath, [Parameter(Mandatory = $true)][string]$AbsolutePath)
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & git -C $RepositoryRoot diff --quiet -- $RelativePath 2>$null
+        $diffExitCode = $LASTEXITCODE
+        $blob = @()
+        if ($diffExitCode -eq 0) { $blob = @(& git -C $RepositoryRoot rev-parse --verify (":" + $RelativePath) 2>$null) }
+        $blobExitCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previousPreference }
+    if ($diffExitCode -eq 0) {
+        if ($blobExitCode -eq 0 -and $blob.Count -eq 1 -and $blob[0].Trim() -match '^[a-f0-9]{40,64}$') {
+            return "git-blob:$($blob[0].Trim())"
+        }
+    }
+    return "worktree-sha256:$(Get-PesterShardFileSha256 -Path $AbsolutePath)"
+}
+
 function Get-ShardInputDigest {
     param([string[]]$Paths)
     $relativeTests = @($Paths | ForEach-Object { [IO.Path]::GetFullPath($_).Substring($RepositoryRoot.TrimEnd('\').Length).TrimStart('\').Replace('\','/') })
@@ -156,7 +175,7 @@ function Get-ShardInputDigest {
     foreach ($name in @("ITL_AI_RULES_SOURCE_PATH", "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE")) { $lines.Add((Get-ExternalInputIdentity -Name $name)) }
     foreach ($path in $inputs) {
         $absolute=Join-Path $RepositoryRoot $path.Replace('/','\')
-        if(Test-Path -LiteralPath $absolute -PathType Leaf){$lines.Add("$path=$(Get-PesterShardFileSha256 -Path $absolute)")}
+        if(Test-Path -LiteralPath $absolute -PathType Leaf){$lines.Add("$path=$(Get-ShardTrackedFileIdentity -RelativePath $path -AbsolutePath $absolute)")}
         else{$lines.Add("$path=<missing>")}
     }
     return Get-TextSha256 -Lines $lines
