@@ -1,4 +1,5 @@
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot "git-path-list.ps1")
 
 function Get-DevelopE2ELauncherListPath {
     $appData = $env:APPDATA
@@ -191,4 +192,103 @@ function Remove-DevelopE2EFreshProject {
         }
     }
     if (Test-Path -LiteralPath $resolved -PathType Container) { Remove-Item -LiteralPath $resolved -Recurse -Force }
+}
+
+function Remove-DevelopE2EExportArtifacts {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][object]$Summary
+    )
+
+    $resolvedRoot = [IO.Path]::GetFullPath($Root)
+    $resultRoot = [IO.Path]::GetFullPath((Join-Path $resolvedRoot "build\result"))
+    $resultPrefix = $resultRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    $manifestPath = [IO.Path]::GetFullPath([string]$Summary.resultManifestPath)
+    if (-not $manifestPath.StartsWith($resultPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+        (Split-Path -Leaf $manifestPath) -notlike "*.cf.manifest.json" -or
+        -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "Refusing to clean an unexpected Develop E2E result manifest: $manifestPath"
+    }
+
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $artifactPath = [IO.Path]::GetFullPath([string]$manifest.artifact.path)
+    if (-not $artifactPath.StartsWith($resultPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+        [IO.Path]::GetExtension($artifactPath) -cne ".cf" -or
+        -not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
+        throw "Refusing to clean an unexpected Develop E2E result artifact: $artifactPath"
+    }
+    $expectedSha256 = ([string]$manifest.artifact.sha256).ToLowerInvariant()
+    $actualSha256 = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($expectedSha256 -notmatch '^[a-f0-9]{64}$' -or $actualSha256 -cne $expectedSha256) {
+        throw "Develop E2E result artifact SHA256 does not match its manifest: $artifactPath"
+    }
+
+    $artifacts = @(Get-ChildItem -LiteralPath $resultRoot -File -Force -ErrorAction SilentlyContinue | Where-Object {
+        $_.Name -like "*.cf" -or $_.Name -like "*.cf.manifest.json"
+    })
+    $removedBytes = [int64](($artifacts | Measure-Object -Property Length -Sum).Sum)
+    foreach ($artifact in $artifacts) {
+        Remove-Item -LiteralPath $artifact.FullName -Force
+    }
+    return [pscustomobject]@{
+        resultRoot = $resultRoot
+        removedFiles = $artifacts.Count
+        removedBytes = $removedBytes
+    }
+}
+
+function Get-DevelopE2ERegisteredWorktrees {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+
+    $tokens = @(Get-RepositoryGitPathList -RepositoryRoot $ProjectRoot -Arguments @("worktree", "list", "--porcelain", "-z"))
+    $records = New-Object System.Collections.Generic.List[object]
+    $current = $null
+    foreach ($token in $tokens) {
+        if ($token -like "worktree *") {
+            if ($null -ne $current) { $records.Add([pscustomobject]$current) | Out-Null }
+            $current = [ordered]@{ path = [IO.Path]::GetFullPath($token.Substring(9)); branch = "" }
+            continue
+        }
+        if ($null -ne $current -and $token -like "branch *") {
+            $current.branch = $token.Substring(7)
+        }
+    }
+    if ($null -ne $current) { $records.Add([pscustomobject]$current) | Out-Null }
+    return @($records | ForEach-Object { $_ })
+}
+
+function Remove-DevelopE2EStaleStandWorktrees {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+
+    $resolvedProjectRoot = [IO.Path]::GetFullPath($ProjectRoot)
+    $configPath = Join-Path $resolvedProjectRoot ".agent-1c\release-e2e.json"
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+        throw "Develop E2E stand config is missing: $configPath"
+    }
+    $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $preservedPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    [void]$preservedPaths.Add($resolvedProjectRoot.TrimEnd('\', '/'))
+    foreach ($propertyName in @("worktreePath", "developWorktreePath")) {
+        if ($config.PSObject.Properties[$propertyName] -and [string]$config.$propertyName) {
+            [void]$preservedPaths.Add(([IO.Path]::GetFullPath([string]$config.$propertyName)).TrimEnd('\', '/'))
+        }
+    }
+
+    $removed = New-Object System.Collections.Generic.List[object]
+    foreach ($worktree in @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $resolvedProjectRoot)) {
+        $path = ([IO.Path]::GetFullPath([string]$worktree.path)).TrimEnd('\', '/')
+        $branch = [string]$worktree.branch
+        if ($preservedPaths.Contains($path) -or $branch -notmatch '^refs/heads/itldev/workflow-release-e2e(?:-[A-Za-z0-9._-]+)?$') { continue }
+        if (Test-Path -LiteralPath $path -PathType Container) {
+            $status = Invoke-RepositoryGit -RepositoryRoot $path -Arguments @("status", "--porcelain", "--untracked-files=no")
+            if ($status.stdout) { throw "Refusing to remove a stale Develop E2E worktree with tracked changes: $path" }
+        }
+        $remove = Invoke-RepositoryGit -RepositoryRoot $resolvedProjectRoot -Arguments @("worktree", "remove", "--force", "--force", "--", $path) -AllowFailure
+        if ($remove.exitCode -ne 0) { throw "Unable to remove stale Develop E2E worktree '$path': $($remove.stderr.Trim())" }
+        $shortBranch = $branch.Substring("refs/heads/".Length)
+        $delete = Invoke-RepositoryGit -RepositoryRoot $resolvedProjectRoot -Arguments @("branch", "-D", "--", $shortBranch) -AllowFailure
+        if ($delete.exitCode -ne 0) { throw "Removed stale Develop E2E worktree '$path', but could not delete branch '$shortBranch': $($delete.stderr.Trim())" }
+        $removed.Add([pscustomobject]@{ path = $path; branch = $shortBranch }) | Out-Null
+    }
+    return [pscustomobject]@{ removedWorktrees = $removed.Count; entries = @($removed | ForEach-Object { $_ }) }
 }

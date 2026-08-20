@@ -38,11 +38,13 @@ foreach ($requestedJourney in $requestedJourneys) {
         startedAt = ""
         finishedAt = ""
         operationTimings = New-Object System.Collections.Generic.List[object]
+        artifactCleanup = $null
         error = $null
     }
 }
 $freshRoot = ""
 $freshBranchRoot = ""
+$staleStandCleanup = $null
 $candidateCommit = (& git -C $CandidateRoot rev-parse HEAD).Trim()
 $candidateTree = (& git -C $CandidateRoot rev-parse 'HEAD^{tree}').Trim()
 $onDemandSourceBuild = & (Join-Path $CandidateRoot "scripts\Build-ItlOnDemandMcp.ps1") -SkipTests
@@ -381,9 +383,10 @@ try {
         [void](Invoke-InstalledAction -Name "upgrade-refresh-branch" -Root $standBranchRoot -Action "refresh-dev-branch" -TimeoutSeconds 5400)
         Set-DevelopStandVanessaFeature -Root $standBranchRoot
         [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-check" -Root $standBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
-        [void](Assert-ExportResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-export" -Root $standBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 3600))
+        $exportSummary = Assert-ExportResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-export" -Root $standBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 3600)
         if ((Get-WorkflowLockCommit -Root $standBranchRoot) -ne $candidateCommit) { throw "Refreshed branch did not receive the exact develop candidate." }
         Assert-TrackedClean -Root $standBranchRoot -Label "Develop E2E branch after upgrade journey"
+        $journeys.upgrade.artifactCleanup = Remove-DevelopE2EExportArtifacts -Root $standBranchRoot -Summary $exportSummary
         $journeys.upgrade.status = "passed"
         $journeys.upgrade.finishedAt = [DateTime]::UtcNow.ToString("o")
         $activeJourney = ""
@@ -471,6 +474,7 @@ try {
         $journeys.fresh.finishedAt = [DateTime]::UtcNow.ToString("o")
         $activeJourney = ""
     }
+    $staleStandCleanup = Remove-DevelopE2EStaleStandWorktrees -ProjectRoot $ProjectRoot
 } catch {
     $failure = $_.Exception.Message
     if ($activeJourney -and $journeys.Contains($activeJourney)) {
@@ -492,6 +496,7 @@ try {
         projectRoot = $ProjectRoot
         freshProjectRoot = $freshRoot
         freshBranchRoot = $freshBranchRoot
+        staleStandCleanup = $staleStandCleanup
         startedAt = $startedAt.ToString("o")
         finishedAt = [DateTime]::UtcNow.ToString("o")
         steps = @($steps | ForEach-Object { $_ })
