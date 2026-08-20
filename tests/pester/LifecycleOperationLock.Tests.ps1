@@ -106,6 +106,7 @@ Describe "1C workflow lifecycle operation lock" {
             $excludeText = Get-Content -LiteralPath (Join-Path $commonGitDirectory "info\exclude") -Raw -Encoding UTF8
             $excludeText | Should -Match ([regex]::Escape(".agent-1c/locks/"))
             $excludeText | Should -Match ([regex]::Escape(".agent-1c/runtime/"))
+            $excludeText | Should -Match ([regex]::Escape(".agent-1c/event-log-cursors/"))
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

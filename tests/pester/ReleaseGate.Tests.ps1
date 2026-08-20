@@ -52,6 +52,10 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match '\$verificationRefreshPassed = Test-E2EStagePassed -Name "verification-refresh"'
         $e2eText | Should -Match 'if \(\(\$executedStages -contains "config-cadence"\) -or \$crossReleaseReuse -or -not \$verificationRefreshPassed\)'
         $e2eText | Should -Match '(?s)Set-E2EStageStatus -Name "verification-refresh" -Status "running".*?Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @\(\s*"-ConfigLoadMode", "Full"'
+        $resultCleanupBlock = [regex]::Match($e2eText, '(?s)\$resultPassed = Test-E2EStagePassed -Name "result-cleanup".*?\n\s*\$sealedCapabilityPath =').Value
+        $resultCleanupBlock | Should -Match 'Invoke-E2EHelper -Action "status" -TimeoutSeconds 120\s*\r?\n'
+        $resultCleanupBlock | Should -Match 'Invoke-E2EHelper -Action "export-dev-branch-result" -TimeoutSeconds 7200\s*\| Out-Null'
+        $resultCleanupBlock | Should -Not -Match 'VanessaFeaturePath'
         $e2eText | Should -Not -Match 'if \(\$crossReleaseReuse -and \$executedStages -notcontains "config-cadence"\)'
         $e2eText | Should -Match 'if \(\$checkpointWasResumed\) \{ \$resultPassed = \$false'
         $e2eText | Should -Match 'RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED'
@@ -637,11 +641,11 @@ switch ($Action) {
         Set-Content -LiteralPath $evidencePath -Encoding UTF8 -Value ($evidence | ConvertTo-Json -Depth 5)
     }
     "status" {
-        if ([System.IO.Path]::GetFileName($VanessaFeaturePath) -ne "ITLReleaseFourFlat.feature") { throw "release E2E status must use the verified feature scope" }
+        if ($VanessaFeaturePath) { throw "release E2E status must preserve the fresh full verification scope" }
         Write-Host "Verification fresh passed: True"
     }
     "export-dev-branch-result" {
-        if ([System.IO.Path]::GetFileName($VanessaFeaturePath) -ne "ITLReleaseFourFlat.feature") { throw "release E2E export must use the verified feature scope" }
+        if ($VanessaFeaturePath) { throw "release E2E export must preserve the fresh full verification scope" }
         $resultRoot = Join-Path $ProjectRoot "build\result"
         New-Item -ItemType Directory -Force -Path $resultRoot | Out-Null
         $artifact = Join-Path $resultRoot "fixture.cf"

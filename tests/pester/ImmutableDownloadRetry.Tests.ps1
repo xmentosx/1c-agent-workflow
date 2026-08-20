@@ -260,17 +260,17 @@ Describe "Immutable asset download retry policy" {
 
         Mock Invoke-ItlImmutableFileDownload {
             $script:RequestCount++
-            if ($script:RequestCount -le 2) {
+            if ($script:RequestCount -le 7) {
                 $failure = [Exception]::new("not yet visible")
                 $failure.Data["StatusCode"] = 404
                 throw $failure
             }
             return [pscustomobject]@{ sha256 = $script:PayloadSha256 }
         }
-        $result = Get-DeliveryRemoteAssetState -Url "https://example.invalid/asset.bin" -ExpectedSha256 $script:PayloadSha256 -AvailabilityAttempts 6
+        $result = Get-DeliveryRemoteAssetState -Url "https://example.invalid/asset.bin" -ExpectedSha256 $script:PayloadSha256 -AvailabilityAttempts 12
         $result.status | Should -Be "matched"
-        $script:RequestCount | Should -Be 3
-        $script:SleepDelays.ToArray() | Should -Be @(2, 4)
+        $script:RequestCount | Should -Be 8
+        $script:SleepDelays.ToArray() | Should -Be @(2, 4, 6, 8, 10, 10, 10)
 
         $script:RequestCount = 0
         Mock Invoke-ItlImmutableFileDownload {
@@ -278,7 +278,7 @@ Describe "Immutable asset download retry policy" {
             throw [IO.InvalidDataException]::new("identity mismatch")
         }
         {
-            Get-DeliveryRemoteAssetState -Url "https://example.invalid/asset.bin" -ExpectedSha256 $script:PayloadSha256 -AvailabilityAttempts 6
+            Get-DeliveryRemoteAssetState -Url "https://example.invalid/asset.bin" -ExpectedSha256 $script:PayloadSha256 -AvailabilityAttempts 12
         } | Should -Throw "*identity mismatch*"
         $script:RequestCount | Should -Be 1
     }
@@ -294,7 +294,7 @@ Describe "Immutable asset download retry policy" {
         @([regex]::Matches($roctup, 'Invoke-ItlImmutableFileAcquire -Source')).Count | Should -Be 1
         $readiness | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \(\[string\]\$Lock\.url\)'
         $delivery | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$Url'
-        $delivery | Should -Match 'Get-DeliveryRemoteAssetState.*-AvailabilityAttempts 6'
+        $delivery | Should -Match 'Get-DeliveryRemoteAssetState.*-AvailabilityAttempts 12'
         $shards | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$url.*-ExpectedSha256 \$expected'
     }
 

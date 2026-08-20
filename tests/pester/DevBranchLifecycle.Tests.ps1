@@ -1683,7 +1683,7 @@
             }
             function Confirm-UnverifiedProceed { $false }
             function New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{} }; function Restore-ConfigDumpInfoLoadSnapshot { $script:DumpInfoDirty = $false; $script:DumpInfoRestored = $true }; function Remove-ConfigDumpInfoLoadSnapshot {}
-            function Invoke-DevBranchVanessaRuntimeRelease {}; function Assert-VanessaVerificationPreflight {}; function Use-ItlVerificationRepairAttempt {}; function Update-DevBranchBase { $script:DumpInfoDirty = $true }; function Invoke-ItlVerificationCycle { $script:VerificationSawDirtyDumpInfo = $script:DumpInfoDirty }; function Complete-ItlVerificationRepairSession {}
+            function Invoke-DevBranchVanessaRuntimeRelease {}; function Assert-VanessaVerificationPreflight {}; function Use-ItlVerificationRepairAttempt {}; function Ensure-DevBranchEventLogBaseline { param([object]$State) $State }; function Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{ path = "cursor.json"; capturedAt = [datetime]"2026-07-28T00:00:00Z" } }; function Update-DevBranchBase { $script:DumpInfoDirty = $true }; function Invoke-ItlVerificationCycle { param([string]$Trigger, [string[]]$ExplicitComponents, [string]$EventLogCursorPath, [Nullable[datetime]]$EventLogBoundaryAt, [string]$EventLogCursorScope) $script:VerificationSawDirtyDumpInfo = $script:DumpInfoDirty }; function Complete-ItlVerificationRepairSession {}
             function Load-ConfigFromFiles {
                 [pscustomobject]@{
                     currentCommit = "base-commit"
@@ -2555,6 +2555,7 @@
                 $cursorPath = Join-Path $runDir "event-log-cursor.json"
                 New-DevBranchEventLogCursor -State $state -Path $cursorPath | Out-Null
                 Add-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{2}"
+                Add-Content -LiteralPath $active -Encoding UTF8 -Value '{20260703115959,E,"_$PerformError$_","Catalog.Items","New","After cursor with earlier clock"}'
                 Add-Content -LiteralPath $active -Encoding UTF8 -Value '{20260703120500,E,"_$PerformError$_","Catalog.Items","New","After cursor"}'
                 $newSegment = Join-Path $logDir "20260704.lgp"
                 Set-Content -LiteralPath $newSegment -Encoding UTF8 -Value '{20260704120500,E,"_$PerformError$_","Catalog.Items","New","Rotated"}'
@@ -2564,7 +2565,8 @@
                     -EndTime ([datetime]"2026-07-04T12:30:00") `
                     -CursorPath $cursorPath
                 $read.scanMode | Should -Be "cursor"
-                $read.errorCount | Should -Be 2
+                $read.errorCount | Should -Be 3
+                @($read.events.comment) | Should -Contain "After cursor with earlier clock"
                 @($read.events.comment) | Should -Contain "After cursor"
                 @($read.events.comment) | Should -Contain "Rotated"
                 $read.scannedBytes | Should -BeLessThan ((Get-Item $historical).Length + (Get-Item $active).Length + (Get-Item $newSegment).Length)
@@ -2588,6 +2590,146 @@
                 $selectedNames | Should -Contain "20260703.lgp"
                 $selectedNames | Should -Contain "20260704.lgp"
                 $selectedNames | Should -Contain "unknown-segment.lgp"
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps the oldest branch event-log cursor pending until verification completes" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-pending-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $logDir = Join-Path $tempRoot "ib\1Cv8Log"
+            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{1}"
+            $active = Join-Path $logDir "20260703.lgp"
+            Set-Content -LiteralPath $active -Encoding UTF8 -Value '{20260703100000,I,"Start"}'
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "ib")
+                    stateProjectRoot = $tempRoot
+                }
+
+                $first = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "separate-update"
+                $firstText = Get-Content -LiteralPath $first.path -Raw -Encoding UTF8
+                Add-Content -LiteralPath $active -Encoding UTF8 -Value '{20260703100500,E,"_$PerformError$_","Catalog.Items","New","Between update and check"}'
+                $second = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "check"
+                (Get-Content -LiteralPath $second.path -Raw -Encoding UTF8) | Should -BeExactly $firstText
+                $second.created | Should -BeFalse
+
+                $updates = Complete-DevBranchEventLogObservation -State $state -Status "failed" -Fingerprint "v3|broken" -ReportPath "errors.json"
+                $updates.eventLogDebtStatus | Should -Be "failed"
+                $updates.eventLogDebtFingerprint | Should -Be "v3|broken"
+                (Get-Content -LiteralPath $first.path -Raw -Encoding UTF8) | Should -Not -BeExactly $firstText
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "does not clear event-log debt on an unchanged command retry" {
+        & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $state = [pscustomobject]@{
+                eventLogDebtStatus = "failed"
+                eventLogDebtFingerprint = "v3|same"
+                eventLogDebtReportPath = "old-errors.json"
+            }
+            $passed = [pscustomobject]@{ status = "passed"; reason = "clean"; newErrorCount = 0 }
+
+            $command = Resolve-DevBranchEventLogDebt -State $state -Verification $passed -Fingerprint "v3|same" -Trigger "command"
+            $command.verification.status | Should -Be "failed"
+            $command.updates.eventLogDebtStatus | Should -Be "failed"
+
+            $repair = Resolve-DevBranchEventLogDebt -State $state -Verification $passed -Fingerprint "v3|same" -Trigger "repair"
+            $repair.verification.status | Should -Be "passed"
+            $repair.updates.eventLogDebtStatus | Should -Be ""
+
+            $changed = Resolve-DevBranchEventLogDebt -State $state -Verification $passed -Fingerprint "v3|fixed" -Trigger "command"
+            $changed.verification.status | Should -Be "passed"
+            $changed.updates.eventLogDebtStatus | Should -Be ""
+        }
+    }
+
+    It "migrates an existing branch from its baseline instead of accepting a cursor at upgrade time" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-migration-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $logDir = Join-Path $tempRoot "ib\1Cv8Log"
+            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{1}"
+            Set-Content -LiteralPath (Join-Path $logDir "20260703.lgp") -Encoding UTF8 -Value '{20260703120500,E,"_$PerformError$_","Catalog.Items","New","Pre-upgrade error"}'
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "ib")
+                    stateProjectRoot = $tempRoot
+                    eventLogBaselineCreatedAt = "2026-07-03T12:00:00Z"
+                    lastVanessaEventLogCheckedUntil = "2026-07-03T12:10:00Z"
+                }
+                $pending = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "upgrade"
+                $cursor = Get-Content -LiteralPath $pending.path -Raw -Encoding UTF8 | ConvertFrom-Json
+                $cursor.fallbackRequired | Should -BeTrue
+                $cursor.boundaryKind | Should -Be "baseline-migration"
+                ([datetime]$cursor.capturedAt).ToUniversalTime().ToString("o") | Should -Be "2026-07-03T12:00:00.0000000Z"
+
+                $selection = Get-DevBranchEventLogDeltaSelection -State $state -CursorPath $pending.path -FallbackStartTime $pending.capturedAt 6>$null
+                $selection.mode | Should -Be "fallback"
+                @($selection.selections).Count | Should -Be 1
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "fails verification for an update error written before Vanessa starts" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-update-window-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $logDir = Join-Path $tempRoot "ib\1Cv8Log"
+            $runDir = Join-Path $tempRoot "run"
+            New-Item -ItemType Directory -Force -Path $logDir, $runDir, (Join-Path $tempRoot ".agent-1c\event-log-baselines") | Out-Null
+            Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{1}"
+            $active = Join-Path $logDir "20260703.lgp"
+            Set-Content -LiteralPath $active -Encoding UTF8 -Value '{20260703115900,I,"Before update"}'
+            $baselinePath = Join-Path $tempRoot ".agent-1c\event-log-baselines\current-branch.json"
+            Set-Content -LiteralPath $baselinePath -Encoding UTF8 -Value '{"schemaVersion":2,"signatures":[]}'
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "ib")
+                    stateProjectRoot = $tempRoot
+                    eventLogBaselinePath = $baselinePath
+                }
+                $pending = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "update-dev-branch-base"
+                Add-Content -LiteralPath $active -Encoding UTF8 -Value '{20260703120500,E,"_$PerformError$_","Catalog.Items","Update","Update failed before Vanessa"}'
+
+                $verification = Test-DevBranchEventLogAfterVanessa `
+                    -State $state `
+                    -RunStartedAt ([datetime]"2026-07-03T12:10:00") `
+                    -RunFinishedAt ([datetime]"2026-07-03T12:20:00") `
+                    -RunDirectory $runDir `
+                    -CursorPath $pending.path `
+                    -BoundaryStartedAt ([datetime]"2026-07-03T12:00:00") `
+                    -CursorScope "lifecycle-pending"
+
+                $verification.status | Should -Be "failed"
+                $verification.newErrorCount | Should -Be 1
+                $verification.reason | Should -Match "Scope: lifecycle-pending"
+                $report = Get-Content -LiteralPath $verification.reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $report.cursor.scope | Should -Be "lifecycle-pending"
+                $report.cursor.sourceKey | Should -Be $pending.sourceKey
             }
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

@@ -610,7 +610,9 @@ if ($Mode -in @("Develop", "Release")) {
             $standWorktree = [System.IO.Path]::GetFullPath([string]$standConfig.worktreePath)
             $standRecord = [ordered]@{ projectRoot = $E2EProjectRoot; devBranchName = $devBranchName; worktreePath = $standWorktree; commit = ""; managedPackageSha256 = ""; unsafeActionProtectionConfirmed = $false; checkpoint = $null }
             Test-ManagedPackageAgreement -ExpectedInventory $managedInventory -TargetRoot $E2EProjectRoot -Label "E2E master"
-            Test-ManagedPackageAgreement -ExpectedInventory $managedInventory -TargetRoot $standWorktree -Label "E2E branch"
+            if ($ResumeMode -eq "Auto") {
+                Test-ManagedPackageAgreement -ExpectedInventory $managedInventory -TargetRoot $standWorktree -Label "E2E branch"
+            }
             $standRecord.managedPackageSha256 = $managedInventorySha
             $standRecord.commit = Get-GitValue -Root $standWorktree -Arguments @("rev-parse", "HEAD")
             $standBranch = Get-GitValue -Root $standWorktree -Arguments @("branch", "--show-current")
@@ -623,7 +625,11 @@ if ($Mode -in @("Develop", "Release")) {
             foreach ($lockRoot in @($E2EProjectRoot, $standWorktree)) {
                 $lockPath = Join-Path $lockRoot ".agent-1c\dependency-lock.json"
                 $installedLock = Get-JsonFile -Path $lockPath -Code "RELEASE_STAND_LOCK_INVALID" -Label "Installed workflow dependency lock"
-                if ($null -ne $installedLock) {
+                $restartWillRefreshBranch = $ResumeMode -eq "Restart" -and [string]::Equals(
+                    [System.IO.Path]::GetFullPath($lockRoot).TrimEnd('\', '/'),
+                    $standWorktree.TrimEnd('\', '/'),
+                    [StringComparison]::OrdinalIgnoreCase)
+                if ($null -ne $installedLock -and -not $restartWillRefreshBranch) {
                     Test-LockAgreement -Expected $vanessaLock -Actual $installedLock.dependencies.vanessaAutomation -Label $lockRoot
                     $installedWorkflowCommit = [string]$installedLock.dependencies.workflowPackage.commit
                     if ($installedWorkflowCommit -cne $commit) {

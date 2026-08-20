@@ -6824,6 +6824,8 @@ function Initialize-DevBranchRuntime {
             [string](Get-StateValue -State $state -Name "branchSeedBaselinePath" -Default "")
         }
         $state = Initialize-DevBranchEventLogBaseline -State $state -SeedBaselinePath $seedBaselinePath
+        Ensure-DevBranchEventLogPendingCursor -State $state -Reason "branch-copy" | Out-Null
+        $state = Read-DevBranchStateFile -Path $statePath
         $pendingHash = ConvertTo-Agent1cHashtable $state
         [void]$pendingHash.Remove("statePath")
         [void]$pendingHash.Remove("stateProjectRoot")
@@ -7895,6 +7897,9 @@ function Update-DevBranchBase {
     Assert-DevBranchExtensionInitialized -State $state -Operation "update-dev-branch-base"
     Assert-SingleManagedExtensionArtifact -State $state
     Sync-DevBranchContextToDotEnv -State $state
+    $state = Ensure-DevBranchEventLogBaseline -State $state
+    Ensure-DevBranchEventLogPendingCursor -State $state -Reason "update-dev-branch-base" | Out-Null
+    $state = Read-DevBranchState -Name $DevBranchName
 
     if ((Get-DevBranchKind -State $state) -eq "extension") {
         $extensionName = Require-DevBranchExtensionName -State $state
@@ -8878,9 +8883,16 @@ function Invoke-DevBranchCheck {
         Get-ItlMatchingVerificationRepairSession | Out-Null
         if ($fullProofEligible) { Use-ItlVerificationRepairAttempt }
     }
+    $state = Ensure-DevBranchEventLogBaseline -State $state
+    $eventLogCursor = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "check-dev-branch"
     Update-DevBranchBase
     Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
-    Invoke-ItlVerificationCycle -Trigger $trigger -ExplicitComponents $explicit
+    Invoke-ItlVerificationCycle `
+        -Trigger $trigger `
+        -ExplicitComponents $explicit `
+        -EventLogCursorPath $eventLogCursor.path `
+        -EventLogBoundaryAt $eventLogCursor.capturedAt `
+        -EventLogCursorScope "lifecycle-pending"
     if ($trigger -eq "repair" -and $fullProofEligible) {
         $verifiedState = Read-DevBranchState -Name $DevBranchName
         $verification = Get-VerificationState -State $verifiedState
