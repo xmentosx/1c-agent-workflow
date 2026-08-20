@@ -72,6 +72,81 @@ function Get-ExactTargetedRunProof {
     return $null
 }
 
+function Get-SourceDeliveryCandidateIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$Commit
+    )
+
+    $parentResult = Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("rev-list", "--parents", "-n", "1", $Commit) -AllowFailure
+    if ([int]$parentResult.exitCode -ne 0) { return $null }
+    $parts = @($parentResult.stdout.Trim() -split '\s+' | Where-Object { $_ })
+    if ($parts.Count -ne 3 -or $parts[0] -cne $Commit) { return $null }
+
+    $subjectResult = Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("show", "-s", "--format=%s", $Commit) -AllowFailure
+    if ([int]$subjectResult.exitCode -ne 0) { return $null }
+    $subject = $subjectResult.stdout.Trim()
+    if ($subject -notmatch "^Merge registered develop queue '(?<id>[^']+)' at (?<head>[a-f0-9]{40})$") { return $null }
+    if ([string]$Matches.head -cne [string]$parts[2]) { return $null }
+    $actualTree = Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("rev-parse", "$Commit^{tree}") -AllowFailure
+    $mergeTree = Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("merge-tree", "--write-tree", [string]$parts[1], [string]$parts[2]) -AllowFailure
+    if ([int]$actualTree.exitCode -ne 0 -or [int]$mergeTree.exitCode -ne 0 -or
+        $actualTree.stdout.Trim() -cne $mergeTree.stdout.Trim()) { return $null }
+
+    return [pscustomobject]@{
+        commit = $parts[0]
+        tree = $actualTree.stdout.Trim()
+        base = $parts[1]
+        queueHead = $parts[2]
+        queueId = [string]$Matches.id
+    }
+}
+
+function Get-WorkflowContinuationEndpoint {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$QualifiedCommit,
+        [Parameter(Mandatory = $true)][string]$CurrentCommit,
+        [Parameter(Mandatory = $true)][string]$CurrentTree
+    )
+
+    $actualTree = Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("rev-parse", "$CurrentCommit^{tree}") -AllowFailure
+    if ([int]$actualTree.exitCode -ne 0 -or $actualTree.stdout.Trim() -cne $CurrentTree) { return $null }
+
+    $ancestor = Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("merge-base", "--is-ancestor", $QualifiedCommit, $CurrentCommit) -AllowFailure
+    if ([int]$ancestor.exitCode -eq 0) {
+        return [pscustomobject]@{
+            kind = "ancestor"
+            targetedCommit = $CurrentCommit
+            targetedTree = $CurrentTree
+            sourceDeliveryBase = ""
+            qualifiedQueueHead = ""
+            currentQueueHead = ""
+        }
+    }
+
+    $qualifiedCandidate = Get-SourceDeliveryCandidateIdentity -RepositoryRoot $RepositoryRoot -Commit $QualifiedCommit
+    $currentCandidate = Get-SourceDeliveryCandidateIdentity -RepositoryRoot $RepositoryRoot -Commit $CurrentCommit
+    if (-not $qualifiedCandidate -or -not $currentCandidate -or
+        [string]$qualifiedCandidate.base -cne [string]$currentCandidate.base -or
+        [string]$qualifiedCandidate.queueId -cne [string]$currentCandidate.queueId) { return $null }
+    $queueAdvance = Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @(
+        "merge-base", "--is-ancestor", [string]$qualifiedCandidate.queueHead, [string]$currentCandidate.queueHead
+    ) -AllowFailure
+    if ([int]$queueAdvance.exitCode -ne 0) { return $null }
+    $queueTree = Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("rev-parse", "$([string]$currentCandidate.queueHead)^{tree}") -AllowFailure
+    if ([int]$queueTree.exitCode -ne 0) { return $null }
+
+    return [pscustomobject]@{
+        kind = "source-delivery-candidate"
+        targetedCommit = [string]$currentCandidate.queueHead
+        targetedTree = $queueTree.stdout.Trim()
+        sourceDeliveryBase = [string]$currentCandidate.base
+        qualifiedQueueHead = [string]$qualifiedCandidate.queueHead
+        currentQueueHead = [string]$currentCandidate.queueHead
+    }
+}
+
 function Get-WorkflowContinuationProof {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -85,14 +160,14 @@ function Get-WorkflowContinuationProof {
     if (-not (Get-Command Invoke-RepositoryGit -ErrorAction SilentlyContinue)) {
         . (Join-Path $PSScriptRoot "git-path-list.ps1")
     }
-    $ancestor = Invoke-RepositoryGit -RepositoryRoot $RepositoryRoot -Arguments @("merge-base", "--is-ancestor", $QualifiedCommit, $CurrentCommit) -AllowFailure
-    if ([int]$ancestor.exitCode -ne 0) { return $null }
+    $endpoint = Get-WorkflowContinuationEndpoint -RepositoryRoot $RepositoryRoot -QualifiedCommit $QualifiedCommit -CurrentCommit $CurrentCommit -CurrentTree $CurrentTree
+    if (-not $endpoint) { return $null }
     if (-not $CatalogPath) { $CatalogPath = Join-Path $RepositoryRoot "tests\quality-contracts.json" }
     if (-not (Test-Path -LiteralPath $CatalogPath -PathType Leaf)) { return $null }
     try { $catalog = Get-Content -LiteralPath $CatalogPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
     if (-not $catalog.PSObject.Properties["continuationScopes"]) { return $null }
 
-    $changedPaths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("diff", "--name-only", "-z", "$QualifiedCommit...$CurrentCommit", "--") | ForEach-Object { ([string]$_).Replace('\', '/') })
+    $changedPaths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("diff", "--name-only", "-z", $QualifiedCommit, $CurrentCommit, "--") | ForEach-Object { ([string]$_).Replace('\', '/') })
     if ($changedPaths.Count -eq 0) { return $null }
     $scopeNames = @($catalog.continuationScopes.PSObject.Properties | ForEach-Object { [string]$_.Name })
     $matchedScopes = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -109,12 +184,18 @@ function Get-WorkflowContinuationProof {
         if (-not $pathMatched) { return $null }
     }
 
-    $targeted = Get-ExactTargetedRunProof -RepositoryRoot $RepositoryRoot -Commit $CurrentCommit -Tree $CurrentTree
+    $targeted = Get-ExactTargetedRunProof -RepositoryRoot $RepositoryRoot -Commit ([string]$endpoint.targetedCommit) -Tree ([string]$endpoint.targetedTree)
     if (-not $targeted) { return $null }
     return [pscustomobject]@{
         qualifiedCommit = $QualifiedCommit
         currentCommit = $CurrentCommit
         currentTree = $CurrentTree
+        proofKind = [string]$endpoint.kind
+        targetedCommit = [string]$endpoint.targetedCommit
+        targetedTree = [string]$endpoint.targetedTree
+        sourceDeliveryBase = [string]$endpoint.sourceDeliveryBase
+        qualifiedQueueHead = [string]$endpoint.qualifiedQueueHead
+        currentQueueHead = [string]$endpoint.currentQueueHead
         paths = $changedPaths
         scopes = @($matchedScopes | Sort-Object)
         targetedRunPath = [string]$targeted.path
@@ -135,7 +216,11 @@ function Test-RecordedWorkflowContinuation {
         if (-not $path -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
         if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$Record.targetedRunSha256).ToLowerInvariant()) { return $false }
         $run = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($Record.PSObject.Properties["currentCommit"] -and [string]$Record.currentCommit -cne $Commit) { return $false }
+        if ($Record.PSObject.Properties["currentTree"] -and [string]$Record.currentTree -cne $Tree) { return $false }
+        $targetedCommit = if ($Record.PSObject.Properties["targetedCommit"] -and [string]$Record.targetedCommit) { [string]$Record.targetedCommit } else { $Commit }
+        $targetedTree = if ($Record.PSObject.Properties["targetedTree"] -and [string]$Record.targetedTree) { [string]$Record.targetedTree } else { $Tree }
         return [int]$run.schemaVersion -eq 1 -and [string]$run.mode -eq "Targeted" -and [string]$run.status -eq "passed" -and
-            [int]$run.exitCode -eq 0 -and [string]$run.commit -eq $Commit -and [string]$run.tree -eq $Tree
+            [int]$run.exitCode -eq 0 -and [string]$run.commit -eq $targetedCommit -and [string]$run.tree -eq $targetedTree
     } catch { return $false }
 }

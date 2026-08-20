@@ -1498,7 +1498,7 @@ function Test-E2EStageInputsUnchanged {
     foreach ($dependency in @($definition.dependsOn)) {
         if (-not (Test-E2EStageInputsUnchanged -Name ([string]$dependency) -QualifiedCommit $QualifiedCommit)) { return $false }
     }
-    foreach ($changedPath in @(Get-RepositoryGitPathList -RepositoryRoot $workflowRoot -Arguments @("diff", "--name-only", "-z", "$QualifiedCommit...$workflowCommit", "--"))) {
+    foreach ($changedPath in @(Get-RepositoryGitPathList -RepositoryRoot $workflowRoot -Arguments @("diff", "--name-only", "-z", $QualifiedCommit, $workflowCommit, "--"))) {
         foreach ($pattern in $patterns) {
             if (Test-WorkflowContinuationPattern -Path ([string]$changedPath) -Pattern ([string]$pattern)) { return $false }
         }
