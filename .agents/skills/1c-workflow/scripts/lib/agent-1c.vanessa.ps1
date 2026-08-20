@@ -1955,15 +1955,186 @@ function New-DevBranchEventLogCursor {
             startOffset = $(if ($null -ne $active -and $file.FullName -eq $active.FullName) { Get-OneCEventLogSafeTailOffset -Path $file.FullName } else { $null })
         }
     }
+    $sourceKeyKind = "event-log-header"
+    $sourceKey = try {
+        Get-DevBranchEventLogSourceKey -State $State
+    } catch {
+        $sourceKeyKind = "provisional-path"
+        $kind = [string](Get-StateValue -State $State -Name "infoBaseKind" -Default "file")
+        $normalizedLogDirectory = (Resolve-Agent1cFullPath -Path $logDirectory).ToLowerInvariant()
+        Get-StringSha256 -Value ("$kind|$normalizedLogDirectory|pending-event-log-header")
+    }
     $cursor = [ordered]@{
         schemaVersion = 1
-        sourceKey = Get-DevBranchEventLogSourceKey -State $State
+        sourceKey = $sourceKey
+        sourceKeyKind = $sourceKeyKind
         capturedAt = (Get-Date).ToUniversalTime().ToString("o")
         activeSegment = $(if ($null -ne $active) { $active.Name } else { "" })
         segments = @($segments)
     }
-    Write-Utf8Text -Path $Path -Value (($cursor | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
+    Write-Utf8TextAtomic -Path $Path -Value (($cursor | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
     return $Path
+}
+
+function Get-DevBranchEventLogPendingCursorPath {
+    param([object]$State)
+
+    $safeName = [string](Get-StateValue -State $State -Name "safeDevBranchName" -Default "")
+    if (-not $safeName) {
+        $safeName = ConvertTo-SafeName ([string](Get-StateValue -State $State -Name "devBranchName" -Default "current"))
+    }
+    $stateProjectRoot = [string](Get-StateValue -State $State -Name "stateProjectRoot" -Default $script:ProjectRoot)
+    return (Join-Path $stateProjectRoot ".agent-1c\event-log-cursors\$safeName.pending.json")
+}
+
+function Read-DevBranchEventLogCursorInfo {
+    param([string]$Path)
+
+    $cursor = Read-Utf8Text -Path $Path | ConvertFrom-Json
+    $capturedAt = [datetime]::MinValue
+    if (-not [datetime]::TryParse([string]$cursor.capturedAt, [ref]$capturedAt)) {
+        throw "Event log cursor capturedAt is invalid: $Path"
+    }
+    return [pscustomobject]@{
+        path = $Path
+        sourceKey = [string]$cursor.sourceKey
+        capturedAt = $capturedAt
+        activeSegment = [string]$cursor.activeSegment
+    }
+}
+
+function Ensure-DevBranchEventLogPendingCursor {
+    param(
+        [object]$State,
+        [string]$Reason = "workflow-operation"
+    )
+
+    $path = Get-DevBranchEventLogPendingCursorPath -State $State
+    $created = -not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)
+    if ($created) {
+        New-DevBranchEventLogCursor -State $State -Path $path | Out-Null
+        $previousCheck = [string](Get-StateValue -State $State -Name "lastVanessaEventLogCheckedUntil" -Default "")
+        if ($previousCheck) {
+            $baselineAtText = [string](Get-StateValue -State $State -Name "eventLogBaselineCreatedAt" -Default "")
+            if (-not $baselineAtText) {
+                $baselinePath = [string](Get-StateValue -State $State -Name "eventLogBaselinePath" -Default "")
+                if ($baselinePath -and (Test-Path -LiteralPath $baselinePath -PathType Leaf -ErrorAction SilentlyContinue)) {
+                    try { $baselineAtText = [string]((Read-Utf8Text -Path $baselinePath | ConvertFrom-Json).createdAt) } catch { $baselineAtText = "" }
+                }
+            }
+            $baselineAt = [datetime]::MinValue
+            if ($baselineAtText -and [datetime]::TryParse($baselineAtText, [ref]$baselineAt)) {
+                $migrationCursor = Read-Utf8Text -Path $path | ConvertFrom-Json
+                $physicalCapturedAt = [string]$migrationCursor.capturedAt
+                $migrationCursor.capturedAt = $baselineAt.ToString("o")
+                $migrationCursor | Add-Member -NotePropertyName fallbackRequired -NotePropertyValue $true -Force
+                $migrationCursor | Add-Member -NotePropertyName boundaryKind -NotePropertyValue "baseline-migration" -Force
+                $migrationCursor | Add-Member -NotePropertyName physicalCapturedAt -NotePropertyValue $physicalCapturedAt -Force
+                Write-Utf8TextAtomic -Path $path -Value (($migrationCursor | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
+            }
+        }
+    }
+    $info = Read-DevBranchEventLogCursorInfo -Path $path
+    $result = [pscustomobject]@{
+        path = $info.path
+        sourceKey = $info.sourceKey
+        capturedAt = $info.capturedAt
+        activeSegment = $info.activeSegment
+        reason = $Reason
+        created = $created
+    }
+
+    $statePath = [string](Get-StateValue -State $State -Name "statePath" -Default "")
+    if ($statePath -and (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        Update-DevBranchState -State $State -Updates @{
+            eventLogPendingCursorPath = $path
+            eventLogPendingCursorCreatedAt = $info.capturedAt.ToString("o")
+            eventLogPendingCursorSourceKey = $info.sourceKey
+            eventLogPendingCursorReason = $(if ($created) { $Reason } else { [string](Get-StateValue -State $State -Name "eventLogPendingCursorReason" -Default $Reason) })
+        }
+    }
+    return $result
+}
+
+function Complete-DevBranchEventLogObservation {
+    param(
+        [object]$State,
+        [ValidateSet("passed", "failed")][string]$Status,
+        [string]$Fingerprint = "",
+        [string]$ReportPath = ""
+    )
+
+    $path = Get-DevBranchEventLogPendingCursorPath -State $State
+    $previous = $null
+    if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) {
+        try { $previous = Read-DevBranchEventLogCursorInfo -Path $path } catch { $previous = $null }
+    }
+    New-DevBranchEventLogCursor -State $State -Path $path | Out-Null
+    $current = Read-DevBranchEventLogCursorInfo -Path $path
+    $updates = @{
+        eventLogPendingCursorPath = $path
+        eventLogPendingCursorCreatedAt = $current.capturedAt.ToString("o")
+        eventLogPendingCursorSourceKey = $current.sourceKey
+        eventLogPendingCursorReason = "verification-boundary"
+        lastEventLogObservationStatus = $Status
+        lastEventLogObservationStartedAt = $(if ($null -ne $previous) { $previous.capturedAt.ToString("o") } else { "" })
+        lastEventLogObservationCompletedAt = $current.capturedAt.ToString("o")
+    }
+    if ($Status -eq "failed") {
+        $updates["eventLogDebtStatus"] = "failed"
+        $updates["eventLogDebtFingerprint"] = $Fingerprint
+        $updates["eventLogDebtReportPath"] = $ReportPath
+        $updates["eventLogDebtDetectedAt"] = $current.capturedAt.ToString("o")
+    }
+    return $updates
+}
+
+function Resolve-DevBranchEventLogDebt {
+    param(
+        [object]$State,
+        [object]$Verification,
+        [string]$Fingerprint,
+        [ValidateSet("implicit", "command", "repair", "explicit")][string]$Trigger = "command"
+    )
+
+    $updates = @{}
+    $newErrorCount = [int](Get-StateValue -State $Verification -Name "newErrorCount" -Default 0)
+    if ([string]$Verification.status -eq "failed" -and $newErrorCount -gt 0) {
+        $updates["eventLogDebtStatus"] = "failed"
+        $updates["eventLogDebtFingerprint"] = $Fingerprint
+        $updates["eventLogDebtReportPath"] = [string](Get-StateValue -State $Verification -Name "reportPath" -Default "")
+        $updates["eventLogDebtDetectedAt"] = (Get-Date).ToString("o")
+        return [pscustomobject]@{ verification = $Verification; updates = $updates }
+    }
+
+    $debtStatus = [string](Get-StateValue -State $State -Name "eventLogDebtStatus" -Default "")
+    if ([string]$Verification.status -eq "passed" -and $debtStatus -eq "failed") {
+        $debtFingerprint = [string](Get-StateValue -State $State -Name "eventLogDebtFingerprint" -Default "")
+        if ($Trigger -ne "repair" -and $debtFingerprint -eq $Fingerprint) {
+            $reportPath = [string](Get-StateValue -State $State -Name "eventLogDebtReportPath" -Default "")
+            $Verification = [pscustomobject]@{
+                status = "failed"
+                reason = "A previous event-log failure remains unresolved for the same verification fingerprint. Change the verification scope or use /itl-verify-fix before accepting a clean retry. Previous evidence: $reportPath"
+                reader = [string](Get-StateValue -State $Verification -Name "reader" -Default "")
+                baselinePath = [string](Get-StateValue -State $Verification -Name "baselinePath" -Default "")
+                reportPath = $reportPath
+                newErrorCount = 0
+                legacyErrorCount = [int](Get-StateValue -State $Verification -Name "legacyErrorCount" -Default 0)
+                checkedUntil = Get-StateValue -State $Verification -Name "checkedUntil" -Default (Get-Date)
+                scannedBytes = [int64](Get-StateValue -State $Verification -Name "scannedBytes" -Default 0)
+                scanMode = [string](Get-StateValue -State $Verification -Name "scanMode" -Default "cursor")
+            }
+            $updates["eventLogDebtStatus"] = "failed"
+            $updates["eventLogDebtFingerprint"] = $debtFingerprint
+            $updates["eventLogDebtReportPath"] = $reportPath
+        } else {
+            $updates["eventLogDebtStatus"] = ""
+            $updates["eventLogDebtFingerprint"] = ""
+            $updates["eventLogDebtReportPath"] = ""
+            $updates["eventLogDebtDetectedAt"] = ""
+        }
+    }
+    return [pscustomobject]@{ verification = $Verification; updates = $updates }
 }
 
 function Test-OneCEventLogSegmentMayOverlapFallbackWindow {
@@ -2008,6 +2179,10 @@ function Get-DevBranchEventLogDeltaSelection {
         $cursor = Read-Utf8Text -Path $CursorPath | ConvertFrom-Json
         if ([int](Get-StateValue -State $cursor -Name "schemaVersion" -Default 0) -ne 1) { throw "cursor schema is invalid" }
         if ([string]$cursor.sourceKey -ne (Get-DevBranchEventLogSourceKey -State $State)) { throw "cursor source changed" }
+        if ([bool](Get-StateValue -State $cursor -Name "fallbackRequired" -Default $false)) {
+            Write-Host "[WARN] Event log cursor requests a one-time bounded fallback scan from its migration boundary."
+            $mode = "fallback"
+        }
     } catch {
         Write-Host "[WARN] Event log cursor cannot be used; scanning run-period segments: $($_.Exception.Message)"
         $mode = "fallback"
@@ -2311,10 +2486,20 @@ function Read-DevBranchEventLogErrors {
     if ($CursorPath) {
         $delta = Get-DevBranchEventLogDeltaSelection -State $State -CursorPath $CursorPath -FallbackStartTime ([datetime]$StartTime)
     }
+    $effectiveStartTime = $StartTime
+    $effectiveEndTime = $EndTime
+    if ($null -ne $delta -and $delta.mode -eq "cursor") {
+        # The byte cursor is authoritative for segment selection, while a
+        # skew-tolerant timestamp removes the deliberately repeated safe-tail
+        # record without discarding a newly appended record whose 1C clock is
+        # slightly behind the workflow clock.
+        $effectiveStartTime = $(if ($null -ne $StartTime) { ([datetime]$StartTime).AddSeconds(-(Get-VanessaEventLogClockSkewSeconds)) } else { $null })
+        $effectiveEndTime = $null
+    }
     if ($reader -eq "auto" -or $reader -eq "direct") {
         try {
             $events = if ($null -ne $delta) {
-                @(Read-OneCEventLogDirect -State $State -StartTime $StartTime -EndTime $EndTime -Levels $levels -SegmentSelections $delta.selections)
+                @(Read-OneCEventLogDirect -State $State -StartTime $effectiveStartTime -EndTime $effectiveEndTime -Levels $levels -SegmentSelections $delta.selections)
             } else {
                 @(Read-OneCEventLogDirect -State $State -StartTime $StartTime -EndTime $EndTime -Levels $levels)
             }
@@ -2510,7 +2695,9 @@ function Test-DevBranchEventLogAfterVanessa {
         [datetime]$RunStartedAt,
         [datetime]$RunFinishedAt,
         [string]$RunDirectory,
-        [string]$CursorPath = ""
+        [string]$CursorPath = "",
+        [Nullable[datetime]]$BoundaryStartedAt = $null,
+        [string]$CursorScope = "vanessa-only"
     )
 
     $stateWithBaseline = Ensure-DevBranchEventLogBaseline -State $State
@@ -2525,7 +2712,13 @@ function Test-DevBranchEventLogAfterVanessa {
 
     $skewSeconds = Get-VanessaEventLogClockSkewSeconds
     $endTime = $RunFinishedAt.AddSeconds($skewSeconds)
-    $readResult = Read-DevBranchEventLogErrors -State $stateWithBaseline -StartTime $RunStartedAt -EndTime $endTime -CursorPath $CursorPath
+    $effectiveStartTime = if ($null -ne $BoundaryStartedAt) { [datetime]$BoundaryStartedAt } else { $RunStartedAt }
+    $cursorInfo = $null
+    if ($CursorPath) {
+        try { $cursorInfo = Read-DevBranchEventLogCursorInfo -Path $CursorPath } catch { $cursorInfo = $null }
+    }
+    $readResult = Read-DevBranchEventLogErrors -State $stateWithBaseline -StartTime $effectiveStartTime -EndTime $endTime -CursorPath $CursorPath
+    $checkedUntil = Get-Date
 
     $newErrors = @()
     $legacyCount = 0
@@ -2542,11 +2735,18 @@ function Test-DevBranchEventLogAfterVanessa {
         $reportPath = Join-Path $RunDirectory "event-log-new-errors.json"
         $payload = [ordered]@{
             schemaVersion = 1
-            startedAt = $RunStartedAt.ToString("o")
+            startedAt = $effectiveStartTime.ToString("o")
             finishedAt = $RunFinishedAt.ToString("o")
-            checkedUntil = $endTime.ToString("o")
+            checkedUntil = $checkedUntil.ToString("o")
             reader = $readResult.reader
             baselinePath = $baselinePath
+            cursor = [ordered]@{
+                scope = $CursorScope
+                sourceKey = $(if ($null -ne $cursorInfo) { $cursorInfo.sourceKey } else { "" })
+                capturedAt = $(if ($null -ne $cursorInfo) { $cursorInfo.capturedAt.ToString("o") } else { "" })
+                activeSegment = $(if ($null -ne $cursorInfo) { $cursorInfo.activeSegment } else { "" })
+                scanMode = $readResult.scanMode
+            }
             newErrorCount = $newErrors.Count
             legacyErrorCount = $legacyCount
             errors = @($newErrors | ForEach-Object {
@@ -2566,9 +2766,9 @@ function Test-DevBranchEventLogAfterVanessa {
 
     $status = if ($newErrors.Count -gt 0) { "failed" } else { "passed" }
     $reason = if ($newErrors.Count -gt 0) {
-        "1C event log contains $($newErrors.Count) new error signature(s) not present in the branch baseline."
+        "1C event log contains $($newErrors.Count) new error signature(s) not present in the branch baseline. Scope: $CursorScope; scan mode: $($readResult.scanMode)."
     } else {
-        "1C event log contains no new error signatures. Legacy suppressed errors: $legacyCount."
+        "1C event log contains no new error signatures in scope '$CursorScope' from '$($effectiveStartTime.ToString("o"))'. Legacy suppressed errors: $legacyCount; scan mode: $($readResult.scanMode)."
     }
 
     return [pscustomobject]@{
@@ -2579,7 +2779,12 @@ function Test-DevBranchEventLogAfterVanessa {
         reportPath = $reportPath
         newErrorCount = $newErrors.Count
         legacyErrorCount = $legacyCount
-        checkedUntil = $endTime
+        checkedUntil = $checkedUntil
+        checkedFrom = $effectiveStartTime
+        cursorScope = $CursorScope
+        cursorSourceKey = $(if ($null -ne $cursorInfo) { $cursorInfo.sourceKey } else { "" })
+        cursorCapturedAt = $(if ($null -ne $cursorInfo) { $cursorInfo.capturedAt } else { $null })
+        cursorActiveSegment = $(if ($null -ne $cursorInfo) { $cursorInfo.activeSegment } else { "" })
         scannedErrorCount = $readResult.errorCount
         readerDurationMs = $readResult.durationMs
         scannedBytes = $readResult.scannedBytes
@@ -3699,7 +3904,12 @@ function Add-VanessaVerificationEvidenceUpdates {
 }
 
 function Run-DevBranchTests {
-    param([switch]$RecordFullVerificationEvidence)
+    param(
+        [switch]$RecordFullVerificationEvidence,
+        [string]$EventLogCursorPath = "",
+        [Nullable[datetime]]$EventLogBoundaryAt = $null,
+        [string]$EventLogCursorScope = "vanessa-only"
+    )
 
     if ($VerificationTrigger -eq "repair") {
         Get-ItlMatchingVerificationRepairSession | Out-Null
@@ -3776,8 +3986,21 @@ function Run-DevBranchTests {
 
     $runDirectory = New-VanessaRunDirectory
     $statusPath = Join-Path $runDirectory "status.json"
-    $eventLogCursorPath = Join-Path $runDirectory "event-log-cursor.json"
-    New-DevBranchEventLogCursor -State $state -Path $eventLogCursorPath | Out-Null
+    $runEventLogCursorPath = Join-Path $runDirectory "event-log-cursor.json"
+    if ($EventLogCursorPath) {
+        [System.IO.File]::Copy($EventLogCursorPath, $runEventLogCursorPath, $true)
+        $externalCursorInfo = Read-DevBranchEventLogCursorInfo -Path $runEventLogCursorPath
+        if ($null -eq $EventLogBoundaryAt) { $EventLogBoundaryAt = $externalCursorInfo.capturedAt }
+    } else {
+        New-DevBranchEventLogCursor -State $state -Path $runEventLogCursorPath | Out-Null
+        $localCursorInfo = Read-DevBranchEventLogCursorInfo -Path $runEventLogCursorPath
+        $EventLogBoundaryAt = $localCursorInfo.capturedAt
+        $EventLogCursorScope = "vanessa-only"
+    }
+    $runCursorEvidence = Read-Utf8Text -Path $runEventLogCursorPath | ConvertFrom-Json
+    $runCursorEvidence | Add-Member -NotePropertyName scope -NotePropertyValue $EventLogCursorScope -Force
+    $runCursorEvidence | Add-Member -NotePropertyName boundaryAt -NotePropertyValue ([datetime]$EventLogBoundaryAt).ToString("o") -Force
+    Write-Utf8TextAtomic -Path $runEventLogCursorPath -Value (($runCursorEvidence | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
     $paramsPath = New-VanessaParamsFile `
         -FeaturePath $featuresPath `
         -RunDirectory $runDirectory `
@@ -3817,6 +4040,8 @@ function Run-DevBranchTests {
     $runStartedAt = Get-Date
     $runFinishedAt = $null
     $eventLogVerification = $null
+    $eventLogDebtUpdates = @{}
+    $eventLogBoundaryUpdates = @{}
     $runnerStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $cleanupDurationMs = [int64]0
     $eventLogDurationMs = [int64]0
@@ -3880,9 +4105,17 @@ function Run-DevBranchTests {
             $eventLogVerification = if ($script:ItlSkipEventLogForVerification) {
                 [pscustomobject]@{ status = "skipped"; reason = "ITL_CHECK_EVENT_LOG=off skipped event-log verification."; reader = ""; baselinePath = ""; reportPath = ""; newErrorCount = 0; legacyErrorCount = 0; checkedUntil = $runFinishedAt; scannedBytes = 0; scanMode = "skipped" }
             } else {
-                Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $eventLogCursorPath
+                Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $runEventLogCursorPath -BoundaryStartedAt $EventLogBoundaryAt -CursorScope $EventLogCursorScope
             }
             $eventLogStopwatch.Stop(); $eventLogDurationMs = $eventLogStopwatch.ElapsedMilliseconds
+            if ($EventLogCursorScope -eq "lifecycle-pending" -and $eventLogVerification.status -ne "skipped") {
+                $debtResult = Resolve-DevBranchEventLogDebt -State $state -Verification $eventLogVerification -Fingerprint $currentFingerprint -Trigger $(if ($VerificationTrigger) { $VerificationTrigger } else { "command" })
+                $eventLogVerification = $debtResult.verification
+                $eventLogDebtUpdates = $debtResult.updates
+            }
+            if ($EventLogCursorScope -eq "lifecycle-pending" -and $eventLogVerification.scanMode -notin @("failed", "skipped")) {
+                $eventLogBoundaryUpdates = Complete-DevBranchEventLogObservation -State $state -Status $eventLogVerification.status -Fingerprint $currentFingerprint -ReportPath $eventLogVerification.reportPath
+            }
             $eventLogReason = $eventLogVerification.reason
         } catch {
             $eventLogReason = "1C event log check failed after Vanessa failure: $($_.Exception.Message)"
@@ -3915,7 +4148,12 @@ function Run-DevBranchTests {
             $updates["lastVanessaEventLogCheckedUntil"] = $eventLogVerification.checkedUntil.ToString("o")
             $updates["lastVanessaEventLogScannedBytes"] = $eventLogVerification.scannedBytes
             $updates["lastVanessaEventLogScanMode"] = $eventLogVerification.scanMode
+            $updates["lastVanessaEventLogCursorScope"] = [string](Get-StateValue -State $eventLogVerification -Name "cursorScope" -Default $EventLogCursorScope)
+            $updates["lastVanessaEventLogCursorSourceKey"] = [string](Get-StateValue -State $eventLogVerification -Name "cursorSourceKey" -Default "")
+            $updates["lastVanessaEventLogCursorCapturedAt"] = [string](Get-StateValue -State $eventLogVerification -Name "cursorCapturedAt" -Default $EventLogBoundaryAt)
         }
+        foreach ($key in $eventLogDebtUpdates.Keys) { $updates[$key] = $eventLogDebtUpdates[$key] }
+        foreach ($key in $eventLogBoundaryUpdates.Keys) { $updates[$key] = $eventLogBoundaryUpdates[$key] }
         $postProcessStopwatch.Stop()
         $updates["lastVanessaRunnerDurationMs"] = [int64]$runnerStopwatch.ElapsedMilliseconds
         $updates["lastVanessaCleanupDurationMs"] = $cleanupDurationMs
@@ -3960,7 +4198,7 @@ function Run-DevBranchTests {
         $eventLogVerification = if ($script:ItlSkipEventLogForVerification) {
             [pscustomobject]@{ status = "skipped"; reason = "ITL_CHECK_EVENT_LOG=off skipped event-log verification."; reader = ""; baselinePath = ""; reportPath = ""; newErrorCount = 0; legacyErrorCount = 0; checkedUntil = $runFinishedAt; scannedBytes = 0; scanMode = "skipped" }
         } else {
-            Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $eventLogCursorPath
+            Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $runEventLogCursorPath -BoundaryStartedAt $EventLogBoundaryAt -CursorScope $EventLogCursorScope
         }
         $eventLogStopwatch.Stop(); $eventLogDurationMs = $eventLogStopwatch.ElapsedMilliseconds
     } catch {
@@ -3978,6 +4216,12 @@ function Run-DevBranchTests {
             scannedBytes = 0
             scanMode = "failed"
         }
+    }
+    if ($EventLogCursorScope -eq "lifecycle-pending" -and $eventLogVerification.status -ne "skipped" -and $eventLogVerification.scanMode -ne "failed") {
+        $debtResult = Resolve-DevBranchEventLogDebt -State $state -Verification $eventLogVerification -Fingerprint $currentFingerprint -Trigger $(if ($VerificationTrigger) { $VerificationTrigger } else { "command" })
+        $eventLogVerification = $debtResult.verification
+        $eventLogDebtUpdates = $debtResult.updates
+        $eventLogBoundaryUpdates = Complete-DevBranchEventLogObservation -State $state -Status $eventLogVerification.status -Fingerprint $currentFingerprint -ReportPath $eventLogVerification.reportPath
     }
     $postProcessStopwatch.Stop()
     if ($eventLogVerification.status -eq "failed") {
@@ -4019,11 +4263,16 @@ function Run-DevBranchTests {
         lastVanessaEventLogCheckedUntil = $eventLogVerification.checkedUntil.ToString("o")
         lastVanessaEventLogScannedBytes = $eventLogVerification.scannedBytes
         lastVanessaEventLogScanMode = $eventLogVerification.scanMode
+        lastVanessaEventLogCursorScope = [string](Get-StateValue -State $eventLogVerification -Name "cursorScope" -Default $EventLogCursorScope)
+        lastVanessaEventLogCursorSourceKey = [string](Get-StateValue -State $eventLogVerification -Name "cursorSourceKey" -Default "")
+        lastVanessaEventLogCursorCapturedAt = [string](Get-StateValue -State $eventLogVerification -Name "cursorCapturedAt" -Default $EventLogBoundaryAt)
         lastVanessaRunnerDurationMs = [int64]$runnerStopwatch.ElapsedMilliseconds
         lastVanessaCleanupDurationMs = $cleanupDurationMs
         lastVanessaEventLogDurationMs = $eventLogDurationMs
         lastVanessaPostProcessDurationMs = [int64]$postProcessStopwatch.ElapsedMilliseconds
     }
+    foreach ($key in $eventLogDebtUpdates.Keys) { $updates[$key] = $eventLogDebtUpdates[$key] }
+    foreach ($key in $eventLogBoundaryUpdates.Keys) { $updates[$key] = $eventLogBoundaryUpdates[$key] }
     Add-VanessaVerificationEvidenceUpdates -Updates $updates -Status $verification.status -Reason $verification.reason -Commit $currentCommit -Fingerprint $currentFingerprint -ReportPath $runDirectory -LogPath $logPath -RecordFullVerificationEvidence:$RecordFullVerificationEvidence
     Update-DevBranchState -State $state -Updates $updates
 
@@ -4711,10 +4960,19 @@ function Write-VanessaTestStatusLines {
     if ($eventLogReport) {
         Write-Host "${Indent}Last event log new-error report: $eventLogReport"
     }
+    $pendingCursor = Get-StateValue -State $State -Name "eventLogPendingCursorPath" -Default ""
+    if ($pendingCursor) {
+        Write-Host "${Indent}Event log pending cursor: $pendingCursor"
+        Write-Host "${Indent}Event log pending boundary/reason: $(Get-StateValue -State $State -Name 'eventLogPendingCursorCreatedAt' -Default '<unknown>') / $(Get-StateValue -State $State -Name 'eventLogPendingCursorReason' -Default '<unknown>')"
+    }
+    if ([string](Get-StateValue -State $State -Name "eventLogDebtStatus" -Default "") -eq "failed") {
+        Write-Host "${Indent}Event log debt: failed; fingerprint=$(Get-StateValue -State $State -Name 'eventLogDebtFingerprint' -Default '<unknown>'); evidence=$(Get-StateValue -State $State -Name 'eventLogDebtReportPath' -Default '<none>')"
+    }
     $postProcessMs = Get-StateValue -State $State -Name "lastVanessaPostProcessDurationMs" -Default ""
     if ($postProcessMs -ne "") {
         Write-Host "${Indent}Last Vanessa runner/cleanup/event-log/post-process ms: $(Get-StateValue -State $State -Name 'lastVanessaRunnerDurationMs' -Default 0) / $(Get-StateValue -State $State -Name 'lastVanessaCleanupDurationMs' -Default 0) / $(Get-StateValue -State $State -Name 'lastVanessaEventLogDurationMs' -Default 0) / $postProcessMs"
         Write-Host "${Indent}Last event log scan mode/bytes: $(Get-StateValue -State $State -Name 'lastVanessaEventLogScanMode' -Default '<unknown>') / $(Get-StateValue -State $State -Name 'lastVanessaEventLogScannedBytes' -Default 0)"
+        Write-Host "${Indent}Last event log cursor scope/source: $(Get-StateValue -State $State -Name 'lastVanessaEventLogCursorScope' -Default '<unknown>') / $(Get-StateValue -State $State -Name 'lastVanessaEventLogCursorSourceKey' -Default '<unknown>')"
     }
 }
 
