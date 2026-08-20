@@ -170,7 +170,27 @@ function Start-PowerShellChildProcess {
     $stderrPath = Join-Path $outputRoot ($LogName + ".stderr.log")
     $argumentParts = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (ConvertTo-NativeArgument $ScriptPath))
     foreach ($argument in @($Arguments)) { $argumentParts += (ConvertTo-NativeArgument ([string]$argument)) }
-    $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($argumentParts -join " ") -WorkingDirectory $repoRoot -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
+    $originalPowerShellModulePath = $env:PSModulePath
+    $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core"
+    try {
+        # Start-Process does not apply PowerShell Core's native-command PSModulePath
+        # normalization. Remove the Core-only home while preserving shared roots.
+        if ($resetModulePathForWindowsPowerShell) {
+            $coreModuleRoot = [IO.Path]::GetFullPath((Join-Path $PSHOME "Modules")).TrimEnd('\')
+            $compatibleModuleRoots = @($originalPowerShellModulePath -split ';' | Where-Object {
+                if ([string]::IsNullOrWhiteSpace($_)) { return $false }
+                try { return -not [string]::Equals([IO.Path]::GetFullPath($_).TrimEnd('\'), $coreModuleRoot, [StringComparison]::OrdinalIgnoreCase) }
+                catch { return $true }
+            })
+            $env:PSModulePath = $compatibleModuleRoots -join ';'
+        }
+        $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($argumentParts -join " ") -WorkingDirectory $repoRoot -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
+    } finally {
+        if ($resetModulePathForWindowsPowerShell) {
+            if ($null -eq $originalPowerShellModulePath) { Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue }
+            else { $env:PSModulePath = $originalPowerShellModulePath }
+        }
+    }
     $null = $process.Handle
     return [pscustomobject]@{ process = $process; stdoutPath = $stdoutPath; stderrPath = $stderrPath; logName = $LogName; startedAt = [DateTime]::UtcNow }
 }

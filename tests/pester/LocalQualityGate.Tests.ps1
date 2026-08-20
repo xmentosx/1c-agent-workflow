@@ -4,6 +4,30 @@
     $RepoRoot = $context.RepoRoot
 }
 Describe "Local quality gate contract" {
+    It "lets Windows PowerShell gate children rebuild their native module path when launched from PowerShell Core" {
+        $path = Join-Path $RepoRoot "scripts\check.ps1"
+        $tokens = $null
+        $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $definition = $ast.Find({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq "Start-PowerShellChildProcess"
+        }, $true)
+        $definition | Should -Not -BeNullOrEmpty
+        $text = $definition.Extent.Text
+
+        $filterOffset = $text.IndexOf('$coreModuleRoot = [IO.Path]::GetFullPath((Join-Path $PSHOME "Modules"))', [StringComparison]::Ordinal)
+        $launchOffset = $text.IndexOf('Start-Process -FilePath "powershell.exe"', [StringComparison]::Ordinal)
+        $restoreOffset = $text.LastIndexOf('$env:PSModulePath = $originalPowerShellModulePath', [StringComparison]::Ordinal)
+        $text | Should -Match '\$resetModulePathForWindowsPowerShell = \[string\]\$PSVersionTable\.PSEdition -eq "Core"'
+        $filterOffset | Should -BeGreaterThan -1
+        $filterOffset | Should -BeLessThan $launchOffset
+        $restoreOffset | Should -BeGreaterThan $launchOffset
+        $text | Should -Match '\$env:PSModulePath = \$compatibleModuleRoots -join'
+        $text | Should -Match 'try\s*\{[\s\S]+Start-Process[\s\S]+\}\s*finally\s*\{'
+    }
+
     It "keeps the short modes cheap and reserves broad proof for Develop and Release" {
         $path = Join-Path $RepoRoot "scripts\check.ps1"
         $tokens = $null
