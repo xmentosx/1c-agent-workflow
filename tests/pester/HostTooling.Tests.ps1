@@ -305,6 +305,7 @@
             ($output -join [Environment]::NewLine) | Should -Match "Would install scheduled task 'ITL fixture watchdog'"
             ($output -join [Environment]::NewLine) | Should -Match "every 7 minute"
             ($output -join [Environment]::NewLine) | Should -Match "45-second initial delay"
+            ($output -join [Environment]::NewLine) | Should -Match ([regex]::Escape("powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden"))
             ($output -join [Environment]::NewLine) | Should -Match ([regex]::Escape("-Action watchdog-run"))
             ($output -join [Environment]::NewLine) | Should -Match ([regex]::Escape([System.IO.Path]::GetFullPath($configPath)))
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }

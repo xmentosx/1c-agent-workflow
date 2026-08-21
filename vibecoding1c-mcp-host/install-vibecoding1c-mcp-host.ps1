@@ -3164,7 +3164,7 @@ function Install-McpHostWatchdog {
     if ($script:HostInstallerPath.Contains('"') -or $resolvedConfigPath.Contains('"')) {
         throw "Watchdog installer and config paths must not contain double quotes."
     }
-    $taskArguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -Action watchdog-run -ConfigPath "{1}"' -f $script:HostInstallerPath, $resolvedConfigPath
+    $taskArguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Action watchdog-run -ConfigPath "{1}"' -f $script:HostInstallerPath, $resolvedConfigPath
 
     if ($DryRun) {
         Write-Host "Would install scheduled task '$($settings.taskName)' for the current user."
