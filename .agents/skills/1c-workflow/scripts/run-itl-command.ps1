@@ -264,17 +264,87 @@ function Invoke-InterruptedVanessaRunRecovery {
 }
 
 function Complete-RunnerOwnedLifecycleRecord {
-    param([string]$Path, [object]$Record, [int]$ExitCode, [string]$Message)
+    param(
+        [string]$Path,
+        [object]$Record,
+        [int]$ExitCode,
+        [string]$Message,
+        [string]$Phase = "runner.helper-exited",
+        [string]$ErrorCode = "LIFECYCLE_OPERATION_HELPER_EXITED"
+    )
     $now = (Get-Date).ToString("o")
     Set-ObjectValue -Object $Record -Name "status" -Value "failed"
     Set-ObjectValue -Object $Record -Name "updatedAt" -Value $now
     Set-ObjectValue -Object $Record -Name "finishedAt" -Value $now
-    Set-ObjectValue -Object $Record -Name "phase" -Value "runner.helper-exited"
+    Set-ObjectValue -Object $Record -Name "phase" -Value $Phase
     Set-ObjectValue -Object $Record -Name "detail" -Value $Message
     Set-ObjectValue -Object $Record -Name "exitCode" -Value $ExitCode
-    Set-ObjectValue -Object $Record -Name "errorCode" -Value "LIFECYCLE_OPERATION_HELPER_EXITED"
+    Set-ObjectValue -Object $Record -Name "errorCode" -Value $ErrorCode
     Set-ObjectValue -Object $Record -Name "errorMessage" -Value $Message
     Write-JsonFileAtomic -Path $Path -Value $Record
+}
+
+function Get-PositiveRunnerSetting {
+    param([string]$Name, [int]$Default)
+
+    $raw = [string][Environment]::GetEnvironmentVariable($Name, "Process")
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $Default }
+    [int]$parsed = 0
+    if (-not [int]::TryParse($raw, [ref]$parsed) -or $parsed -lt 1) {
+        throw "$Name must be a positive integer; actual='$raw'."
+    }
+    return $parsed
+}
+
+function Get-RunStatusFreshness {
+    param([object]$Status, [string]$Path)
+
+    $nowUtc = [DateTimeOffset]::UtcNow
+    $updatedAtText = [string](Get-ObjectValue -Object $Status -Name "updatedAt" -Default "")
+    [DateTimeOffset]$updatedAt = [DateTimeOffset]::MinValue
+    if ($updatedAtText -and [DateTimeOffset]::TryParse($updatedAtText, [ref]$updatedAt)) {
+        $age = ($nowUtc - $updatedAt.ToUniversalTime()).TotalSeconds
+        if ($age -ge -5) {
+            return [pscustomobject]@{ ageSeconds = [Math]::Max(0, $age); source = "updatedAt"; updatedAt = $updatedAtText }
+        }
+    }
+
+    $file = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if ($null -ne $file) {
+        $age = ([DateTime]::UtcNow - $file.LastWriteTimeUtc).TotalSeconds
+        return [pscustomobject]@{ ageSeconds = [Math]::Max(0, $age); source = "file-last-write"; updatedAt = $updatedAtText }
+    }
+    return [pscustomobject]@{ ageSeconds = 0; source = "unavailable"; updatedAt = $updatedAtText }
+}
+
+function Stop-RunnerOwnedProcessTree {
+    param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process)
+
+    $errors = [System.Collections.Generic.List[string]]::new()
+    try { $Process.Refresh() } catch {}
+    if ($Process.HasExited) {
+        return [pscustomobject]@{ confirmed = $true; error = "" }
+    }
+    try {
+        & taskkill.exe /PID ([string]$Process.Id) /T /F *> $null
+    } catch {
+        $errors.Add($_.Exception.Message) | Out-Null
+    }
+    try { $Process.WaitForExit(10000) | Out-Null } catch { $errors.Add($_.Exception.Message) | Out-Null }
+    try { $Process.Refresh() } catch {}
+    if (-not $Process.HasExited) {
+        try {
+            Stop-Process -Id $Process.Id -Force -ErrorAction Stop
+            $Process.WaitForExit(10000) | Out-Null
+        } catch {
+            $errors.Add($_.Exception.Message) | Out-Null
+        }
+    }
+    try { $Process.Refresh() } catch {}
+    return [pscustomobject]@{
+        confirmed = [bool]$Process.HasExited
+        error = ($errors -join "; ")
+    }
 }
 
 function Find-LauncherRunDirectory {
@@ -324,6 +394,8 @@ $exitCode = 1
 $runDirectory = ""
 $statusPath = ""
 $logPath = ""
+$runnerFailureMessage = ""
+$runnerFailureNoProgressSeconds = 0
 
 if ($windowed) {
     $launcherPath = Join-Path $PSScriptRoot "run-agent-1c-window.ps1"
@@ -372,6 +444,11 @@ try {
 [Environment]::Exit(`$helperExitCode)
 "@
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
+    $staleWarningSeconds = Get-PositiveRunnerSetting -Name "ITL_RUNNER_STATUS_STALE_WARNING_SECONDS" -Default 45
+    $staleTimeoutSeconds = Get-PositiveRunnerSetting -Name "ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS" -Default 120
+    if ($staleTimeoutSeconds -le $staleWarningSeconds) {
+        throw "ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS must be greater than ITL_RUNNER_STATUS_STALE_WARNING_SECONDS."
+    }
     $helperProcess = Start-Process `
         -FilePath "powershell" `
         -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
@@ -382,21 +459,43 @@ try {
         throw "Failed to start compact ITL helper: $helperPath"
     }
     $lastProgressStage = ""
+    $lastProgressLiveness = ""
     $lastProgressAt = [DateTime]::MinValue
     while (-not $helperProcess.HasExited) {
         $currentStatus = Read-JsonFile -Path $statusPath
         $currentStage = [string](Get-ObjectValue -Object $currentStatus -Name "stage" -Default "")
+        $publishedLiveness = [string](Get-ObjectValue -Object $currentStatus -Name "liveness" -Default "")
+        $freshness = Get-RunStatusFreshness -Status $currentStatus -Path $statusPath
+        $statusAgeSeconds = [int][Math]::Floor([double]$freshness.ageSeconds)
+        $staleStatus = $publishedLiveness -and $statusAgeSeconds -ge $staleWarningSeconds
+        $displayLiveness = if ($staleStatus) { "stale-status" } else { $publishedLiveness }
         $stageChanged = $currentStage -and $currentStage -ne $lastProgressStage
+        $livenessChanged = $currentStage -and $displayLiveness -ne $lastProgressLiveness
         $heartbeatDue = $currentStage -and ([DateTime]::UtcNow - $lastProgressAt).TotalSeconds -ge 30
-        if ($stageChanged -or $heartbeatDue) {
+        if ($stageChanged -or $livenessChanged -or $heartbeatDue) {
             $lastProgressStage = $currentStage
+            $lastProgressLiveness = $displayLiveness
             $lastProgressAt = [DateTime]::UtcNow
             $elapsed = [int][Math]::Floor(((Get-Date) - $startedAt).TotalSeconds)
             $detail = Limit-Text -Value (Get-ObjectValue -Object $currentStatus -Name "stageDetail" -Default "") -Length 300
-            $liveness = [string](Get-ObjectValue -Object $currentStatus -Name "liveness" -Default "")
-            $noProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0)
-            $timeoutRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "timeoutRemainingSeconds" -Default 0)
-            [Console]::Error.WriteLine("ITL progress: stage=$currentStage; elapsed=${elapsed}s; liveness=$liveness; noProgress=${noProgressSeconds}s; timeoutRemaining=${timeoutRemainingSeconds}s; detail=$detail")
+            $publishedNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0)
+            $publishedStallRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "stallTimeoutRemainingSeconds" -Default 0)
+            $publishedTimeoutRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "timeoutRemainingSeconds" -Default 0)
+            $noProgressSeconds = if ($staleStatus) { $publishedNoProgressSeconds + $statusAgeSeconds } else { $publishedNoProgressSeconds }
+            $stallRemainingSeconds = if ($staleStatus) { [Math]::Max(0, $publishedStallRemainingSeconds - $statusAgeSeconds) } else { $publishedStallRemainingSeconds }
+            $timeoutRemainingSeconds = if ($staleStatus) { [Math]::Max(0, $publishedTimeoutRemainingSeconds - $statusAgeSeconds) } else { $publishedTimeoutRemainingSeconds }
+            $freshnessDetail = if ($staleStatus) { "statusAge=${statusAgeSeconds}s; freshnessSource=$($freshness.source); publishedLiveness=$publishedLiveness; " } else { "" }
+            [Console]::Error.WriteLine("ITL progress: stage=$currentStage; elapsed=${elapsed}s; liveness=$displayLiveness; noProgress=${noProgressSeconds}s; stallTimeoutRemaining=${stallRemainingSeconds}s; timeoutRemaining=${timeoutRemainingSeconds}s; ${freshnessDetail}detail=$detail")
+        }
+        if ($publishedLiveness -and $statusAgeSeconds -ge $staleTimeoutSeconds) {
+            $runnerFailureNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0) + $statusAgeSeconds
+            $updatedAt = [string]$freshness.updatedAt
+            $runnerFailureMessage = "RUNNER_STATUS_STALE status.json was not updated for ${statusAgeSeconds}s while helper PID $($helperProcess.Id) reported liveness '$publishedLiveness' at stage '$currentStage' (updatedAt='$updatedAt'). The runner stopped only its helper process tree."
+            $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess
+            if (-not $termination.confirmed) {
+                throw "$runnerFailureMessage Helper process tree termination was not confirmed: $($termination.error)"
+            }
+            break
         }
         $helperProcess.WaitForExit(500) | Out-Null
     }
@@ -410,7 +509,9 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
     $now = Get-Date
     $effectiveExitCode = if ($exitCode -ne 0) { $exitCode } else { 1 }
     $previousStage = [string](Get-ObjectValue -Object $status -Name "stage" -Default "")
-    $message = "ITL helper exited with code $exitCode before writing a terminal status. Log: $logPath"
+    $message = if ($runnerFailureMessage) { $runnerFailureMessage } else { "ITL helper exited with code $exitCode before writing a terminal status. Log: $logPath" }
+    $runnerStage = if ($runnerFailureMessage) { "runner.status-stale" } else { "runner.helper-exited" }
+    $runnerErrorCode = if ($runnerFailureMessage) { "LIFECYCLE_OPERATION_STATUS_STALE" } else { "LIFECYCLE_OPERATION_HELPER_EXITED" }
     if (-not $windowed) {
         $lifecyclePath = Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json"
         $lifecycleRecord = Get-RunnerOwnedLifecycleRecord -Path $lifecyclePath -HelperProcessId $helperProcess.Id -Action $action -ProjectRoot $projectRoot
@@ -426,7 +527,7 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
             } elseif ($evidenceResult.present) {
                 $message += " Interrupted Vanessa cleanup was not attempted because $($evidenceResult.reason); broad cleanup was not attempted."
             }
-            Complete-RunnerOwnedLifecycleRecord -Path $lifecyclePath -Record $lifecycleRecord -ExitCode $effectiveExitCode -Message $message
+            Complete-RunnerOwnedLifecycleRecord -Path $lifecyclePath -Record $lifecycleRecord -ExitCode $effectiveExitCode -Message $message -Phase $runnerStage -ErrorCode $runnerErrorCode
         }
     }
     $detail = if ($previousStage) { "$message Last recorded stage: $previousStage." } else { $message }
@@ -450,10 +551,17 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
     Set-ObjectValue -Object $status -Name "exitCode" -Value $effectiveExitCode
     Set-ObjectValue -Object $status -Name "runLogPath" -Value $logPath
     Set-ObjectValue -Object $status -Name "errorMessage" -Value $message
+    Set-ObjectValue -Object $status -Name "errorCode" -Value $runnerErrorCode
     Set-ObjectValue -Object $status -Name "errorCategory" -Value "runner"
     Set-ObjectValue -Object $status -Name "requiredAction" -Value ""
-    Set-ObjectValue -Object $status -Name "stage" -Value "runner.helper-exited"
+    Set-ObjectValue -Object $status -Name "stage" -Value $runnerStage
     Set-ObjectValue -Object $status -Name "stageDetail" -Value $detail
+    if ($runnerFailureMessage) {
+        Set-ObjectValue -Object $status -Name "liveness" -Value "failed-stale-status"
+        Set-ObjectValue -Object $status -Name "noProgressSeconds" -Value $runnerFailureNoProgressSeconds
+        Set-ObjectValue -Object $status -Name "stallTimeoutRemainingSeconds" -Value 0
+        Set-ObjectValue -Object $status -Name "timeoutRemainingSeconds" -Value 0
+    }
     $exitCode = $effectiveExitCode
 }
 $errorText = Limit-Text -Value (Get-ObjectValue -Object $status -Name "errorMessage" -Default "") -Length 1400

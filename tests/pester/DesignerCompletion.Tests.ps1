@@ -127,6 +127,92 @@ Describe "1C Designer completion evidence" {
         $result.timedOut | Should -BeFalse
     }
 
+    It "surfaces a completion probe exception and runs bounded owned cleanup" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:CleanupCalls = 0
+            $script:StopCalls = 0
+            $fakeProcess = [pscustomobject]@{
+                Id = 4246
+                HasExited = $true
+                ExitCode = 0
+            }
+            $fakeProcess | Add-Member -MemberType ScriptMethod -Name Refresh -Value { }
+            $fakeProcess | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param([int]$Milliseconds); return $true }
+            function Start-Process { return $fakeProcess }
+            function Stop-NativeProcessForSafety {
+                param([object]$Process)
+                $script:StopCalls++
+                return [pscustomobject]@{ confirmed = $true; error = "" }
+            }
+
+            $processResult = Invoke-NativeProcessAndWaitResult `
+                -FilePath "fake.exe" `
+                -Arguments @() `
+                -TimeoutSeconds 5 `
+                -CompletionGraceSeconds 0 `
+                -CompletionProbe { throw "completion-probe-sentinel" } `
+                -OnTimeout { $script:CleanupCalls++ }
+            [pscustomobject]@{
+                processResult = $processResult
+                cleanupCalls = $script:CleanupCalls
+                stopCalls = $script:StopCalls
+            }
+        }
+
+        $result.processResult.completionProbeFailed | Should -BeTrue
+        $result.processResult.completionProbeErrorType | Should -Match 'RuntimeException$'
+        $result.processResult.completionProbeErrorMessage | Should -Be 'completion-probe-sentinel'
+        $result.processResult.terminationConfirmed | Should -BeTrue
+        $result.processResult.timedOut | Should -BeFalse
+        $result.cleanupCalls | Should -Be 1
+        $result.stopCalls | Should -Be 1
+    }
+
+    It "returns a stable Designer failure for a completion probe exception" {
+        $fixtureRoot = Join-Path $TestDrive "designer-probe-failure"
+        $basePath = Join-Path $fixtureRoot "base"
+        $platformPath = Join-Path $fixtureRoot "1cv8.exe"
+        New-Item -ItemType Directory -Force -Path $basePath | Out-Null
+        New-Item -ItemType File -Force -Path $platformPath | Out-Null
+        New-Item -ItemType File -Force -Path (Join-Path $basePath "1Cv8.1CD") | Out-Null
+
+        $message = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:Config = [pscustomobject]@{ platformPath = $platformPath; logsPath = "logs" }
+            function Invoke-NativeProcessAndWaitResult {
+                param(
+                    [string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 0,
+                    [scriptblock]$OnTimeout = $null, [scriptblock]$CompletionProbe = $null,
+                    [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
+                    [int]$MaxWorkingSetMb = 0
+                )
+                return [pscustomobject]@{
+                    processId = 4247; exitCode = 1; timedOut = $false
+                    memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
+                    peakWorkingSetMb = 0; workingSetLimitMb = 0
+                    terminationConfirmed = $true; terminationError = ""
+                    completedByProbe = $false; postExitProbeTimedOut = $false
+                    completionProbeFailed = $true
+                    completionProbeErrorType = "System.InvalidOperationException"
+                    completionProbeErrorMessage = "artifact-enumeration-sentinel"
+                }
+            }
+
+            try {
+                Invoke-Designer -InfoBasePath $basePath -InfoBaseKind file -DesignerArgs @("/UpdateDBCfg") 6>$null | Out-Null
+                ""
+            } catch {
+                $_.Exception.Message
+            }
+        }
+
+        $message | Should -Match '^DESIGNER_COMPLETION_PROBE_FAILED\b'
+        $message | Should -Match "errorType='System.InvalidOperationException'"
+        $message | Should -Match "detail='artifact-enumeration-sentinel'"
+        $message | Should -Match 'terminationConfirmed=True'
+    }
+
     It "tracks Designer descendants and the unique out log while ignoring unrelated 1C processes" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -232,8 +318,34 @@ Describe "1C Designer completion evidence" {
         $result.active.stage | Should -Be "config-load.designer-running"
         $result.stalled.liveness | Should -Be "stalled-suspected"
         $result.stalled.noProgressSeconds | Should -Be 31
+        $result.stalled.stallTimeoutRemainingSeconds | Should -Be 29
         $result.stalled.stage | Should -Be "config-load.designer-stalled-suspected"
         $result.memoryGuardPeak | Should -Be 777
+    }
+
+    It "clears Designer liveness before a non-monitor lifecycle stage" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:RunLiveness = "running-waiting-release"
+            $script:RunNoProgressSeconds = 17
+            $script:RunStallTimeoutRemainingSeconds = 583
+            $script:RunTimeoutRemainingSeconds = 3583
+            $script:RunOwnedProcessIds = @(9001)
+            Set-RunStage -Stage "refresh.merge" -Detail "Merging master into the development branch."
+            [pscustomobject]@{
+                liveness = $script:RunLiveness
+                noProgressSeconds = $script:RunNoProgressSeconds
+                stallTimeoutRemainingSeconds = $script:RunStallTimeoutRemainingSeconds
+                timeoutRemainingSeconds = $script:RunTimeoutRemainingSeconds
+                ownedProcessIds = @($script:RunOwnedProcessIds)
+            }
+        }
+
+        $result.liveness | Should -BeNullOrEmpty
+        $result.noProgressSeconds | Should -Be 0
+        $result.stallTimeoutRemainingSeconds | Should -Be 0
+        $result.timeoutRemainingSeconds | Should -Be 0
+        @($result.ownedProcessIds).Count | Should -Be 0
     }
 
     It "fails a sustained Designer stall and cleans up only exact tracked processes" {

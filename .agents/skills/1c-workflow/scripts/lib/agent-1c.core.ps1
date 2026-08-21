@@ -312,6 +312,7 @@ function Write-RunStatus {
         lastProcessWorkingSetLimitMb = [int]$script:LastProcessWorkingSetLimitMb
         liveness = $(if ($script:RunLiveness) { [string]$script:RunLiveness } else { "" })
         noProgressSeconds = [int]$script:RunNoProgressSeconds
+        stallTimeoutRemainingSeconds = [int]$script:RunStallTimeoutRemainingSeconds
         timeoutRemainingSeconds = [int]$script:RunTimeoutRemainingSeconds
         ownedProcessIds = @($script:RunOwnedProcessIds)
         cpuDeltaMilliseconds = [int]$script:RunCpuDeltaMilliseconds
@@ -417,6 +418,17 @@ function Set-RunStage {
         [string]$Detail = ""
     )
 
+    $designerMonitorStage = $Stage -match '(^|\.)designer-(running|wait|stalled-suspected|stalled-timeout)$'
+    if (-not $designerMonitorStage) {
+        $script:RunLiveness = ""
+        $script:RunNoProgressSeconds = 0
+        $script:RunStallTimeoutRemainingSeconds = 0
+        $script:RunTimeoutRemainingSeconds = 0
+        $script:RunOwnedProcessIds = @()
+        $script:RunCpuDeltaMilliseconds = 0
+        $script:RunWorkingSetMb = 0
+        $script:RunLogGrowthBytes = 0
+    }
     $script:RunStage = $Stage
     $script:RunStageDetail = $Detail
     if (-not [string]::IsNullOrWhiteSpace($RunStatusPath)) {
@@ -5264,6 +5276,7 @@ function Update-DesignerInvocationLiveness {
 
     $script:RunLiveness = $liveness
     $script:RunNoProgressSeconds = $noProgressSeconds
+    $script:RunStallTimeoutRemainingSeconds = $stallTimeoutRemainingSeconds
     $script:RunTimeoutRemainingSeconds = $timeoutRemainingSeconds
     $script:RunOwnedProcessIds = @($ProcessState.processIds)
     $script:RunCpuDeltaMilliseconds = $cpuDeltaMilliseconds
@@ -5511,6 +5524,9 @@ function Invoke-NativeProcessAndWaitResult {
     $launcherExitCode = $null
     $launcherExitedAtUtc = $null
     $postExitProbeTimedOut = $false
+    $completionProbeFailed = $false
+    $completionProbeErrorType = ""
+    $completionProbeErrorMessage = ""
     $memoryMonitorFailed = $false
     $memoryMonitorError = ""
     $terminationConfirmed = $true
@@ -5605,7 +5621,24 @@ function Invoke-NativeProcessAndWaitResult {
                     }
                     $probeComplete = [bool](& $CompletionProbe $probeContext)
                 } catch {
-                    $probeComplete = $false
+                    $completionProbeFailed = $true
+                    $completionProbeErrorType = $_.Exception.GetType().FullName
+                    $completionProbeErrorMessage = (($_.Exception.Message -replace '[\r\n]+', ' ').Trim())
+                    if ($null -ne $OnTimeout) {
+                        try {
+                            & $OnTimeout
+                        } catch {
+                            $cleanupError = (($_.Exception.Message -replace '[\r\n]+', ' ').Trim())
+                            if ($cleanupError) {
+                                $completionProbeErrorMessage = ($completionProbeErrorMessage + " Cleanup failed: " + $cleanupError).Trim()
+                            }
+                        }
+                    }
+                    $termination = Stop-NativeProcessForSafety -Process $process
+                    $terminationConfirmed = [bool]$termination.confirmed
+                    $terminationError = [string]$termination.error
+                    $finished = $true
+                    break
                 }
                 if ($probeComplete) {
                     if ($null -eq $probeObservedAt) {
@@ -5704,6 +5737,9 @@ function Invoke-NativeProcessAndWaitResult {
         terminationConfirmed = $terminationConfirmed
         terminationError = $terminationError
         completedByProbe = $completedByProbe
+        completionProbeFailed = $completionProbeFailed
+        completionProbeErrorType = $completionProbeErrorType
+        completionProbeErrorMessage = $completionProbeErrorMessage
         postExitProbeTimedOut = $postExitProbeTimedOut
         postExitProbeSeconds = $PostExitProbeSeconds
         launcherExited = $launcherExited
@@ -6015,6 +6051,13 @@ function Invoke-Designer {
         $terminationDetail = if ($result.terminationError) { " terminationError='$(([string]$result.terminationError) -replace '[\r\n]+', ' ')'" } else { "" }
         throw "DESIGNER_MEMORY_LIMIT_EXCEEDED pid=$($result.processId) limitMb=$maxWorkingSetMb peakWorkingSetMb=$($result.peakWorkingSetMb) terminationConfirmed=$($result.terminationConfirmed) log=$logPath$terminationDetail"
     }
+    if ([bool](Get-StateValue -State $result -Name "completionProbeFailed" -Default $false)) {
+        $probeErrorType = [string](Get-StateValue -State $result -Name "completionProbeErrorType" -Default "")
+        $probeErrorMessage = [string](Get-StateValue -State $result -Name "completionProbeErrorMessage" -Default "")
+        $cleanupError = if ($timeoutCleanupState.error) { " cleanupError='$(([string]$timeoutCleanupState.error) -replace '[\r\n]+', ' ')'" } else { "" }
+        $terminationError = if ($result.terminationError) { " terminationError='$(([string]$result.terminationError) -replace '[\r\n]+', ' ')'" } else { "" }
+        throw "DESIGNER_COMPLETION_PROBE_FAILED operation=$operationKind pid=$($result.processId) log=$logPath errorType='$probeErrorType' detail='$probeErrorMessage' ownedCleanupAttempted=$($timeoutCleanupState.attempted) ownedCleanupConfirmed=$($timeoutCleanupState.confirmed) ownedProcessIds=$(@($timeoutCleanupState.processIds) -join ',') terminationConfirmed=$($result.terminationConfirmed)$cleanupError$terminationError"
+    }
     if ($null -ne $invocationProbeState -and [bool]$invocationProbeState.stallTimeoutExceeded) {
         $targetDetail = if ($operationTarget) { " target='$operationTarget'" } else { "" }
         $stallCleanup = $invocationProbeState.stallCleanup
@@ -6246,6 +6289,12 @@ function Invoke-Enterprise {
                 -CompletionGraceSeconds $CompletionGraceSeconds `
                 -PostExitProbeSeconds $postExitProbeSeconds
         }
+    if ([bool](Get-StateValue -State $result -Name "completionProbeFailed" -Default $false)) {
+        $probeErrorType = [string](Get-StateValue -State $result -Name "completionProbeErrorType" -Default "")
+        $probeErrorMessage = [string](Get-StateValue -State $result -Name "completionProbeErrorMessage" -Default "")
+        $terminationError = if ($result.terminationError) { " terminationError='$(([string]$result.terminationError) -replace '[\r\n]+', ' ')'" } else { "" }
+        throw "ENTERPRISE_COMPLETION_PROBE_FAILED pid=$($result.processId) log=$logPath errorType='$probeErrorType' detail='$probeErrorMessage' terminationConfirmed=$($result.terminationConfirmed)$terminationError"
+    }
     if ($result.timedOut) {
         throw "1C Enterprise timed out after $TimeoutSeconds seconds. PID: $($result.processId). Log: $logPath"
     }

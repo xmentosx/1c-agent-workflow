@@ -274,6 +274,7 @@ $script:LastProcessPeakWorkingSetMb = 0
 $script:LastProcessWorkingSetLimitMb = 0
 $script:RunLiveness = ""
 $script:RunNoProgressSeconds = 0
+$script:RunStallTimeoutRemainingSeconds = 0
 $script:RunTimeoutRemainingSeconds = 0
 $script:RunOwnedProcessIds = @()
 $script:RunCpuDeltaMilliseconds = 0

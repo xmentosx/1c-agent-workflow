@@ -206,7 +206,7 @@ exit 0
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $now = Get-Date
-$running = [ordered]@{ schemaVersion=1; status='running'; action=$Action; stage='designer.wait'; stageDetail='Waiting for owned 1C processes and infobase release.'; errorMessage=''; exitCode=$null; lastLogPath=''; liveness='stalled-suspected'; noProgressSeconds=300; timeoutRemainingSeconds=3300 }
+$running = [ordered]@{ schemaVersion=1; status='running'; action=$Action; updatedAt=$now.ToString('o'); stage='designer.wait'; stageDetail='Waiting for owned 1C processes and infobase release.'; errorMessage=''; exitCode=$null; lastLogPath=''; liveness='stalled-suspected'; noProgressSeconds=300; stallTimeoutRemainingSeconds=300; timeoutRemainingSeconds=3300 }
 [IO.File]::WriteAllText($RunStatusPath,(($running | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
 Start-Sleep -Milliseconds 1200
 $done = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport='done' }
@@ -221,9 +221,60 @@ exit 0
             $normalizedProgress | Should -Match "ITLprogress:stage=designer.wait;"
             $normalizedProgress | Should -Match "liveness=stalled-suspected"
             $normalizedProgress | Should -Match "noProgress=300s"
+            $normalizedProgress | Should -Match "stallTimeoutRemaining=300s"
             $normalizedProgress | Should -Match "timeoutRemaining=3300s"
             $normalizedProgress | Should -Match "Waitingforowned1Cprocesses"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "fails a synchronously stale Designer status within the runner watchdog" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-stale-status-" + [guid]::NewGuid().ToString("N"))
+        $previousWarning = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "Process")
+        $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "Process")
+        $fixturePid = 0
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now = Get-Date
+$payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); stage='designer-wait'; stageDetail='completion probe entered'; liveness='running-waiting-release'; noProgressSeconds=4; stallTimeoutRemainingSeconds=596; timeoutRemainingSeconds=3596; exitCode=$null; errorMessage='' }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+Start-Sleep -Seconds 30
+exit 0
+'@
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "1", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "2", "Process")
+            $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch")
+            $stopwatch.Stop()
+
+            $processResult.exitCode | Should -Not -Be 0
+            $stopwatch.Elapsed.TotalSeconds | Should -BeLessThan 15
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be "failed"
+            $summary.stage | Should -Be "runner.status-stale"
+            $summary.liveness | Should -Be "failed-stale-status"
+            $summary.error | Should -Match '^RUNNER_STATUS_STALE\b'
+            $summary.noProgressSeconds | Should -BeGreaterThan 4
+            $summary.timeoutRemainingSeconds | Should -Be 0
+            $progress = $processResult.stderr -join "`n"
+            $progress | Should -Match 'liveness=stale-status'
+            $progress | Should -Match 'statusAge=[1-9][0-9]*s'
+            ([regex]::Matches($progress, 'liveness=running-waiting-release')).Count | Should -BeLessOrEqual 1
+
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $fixturePid = [int]$status.pid
+            $status.errorCode | Should -Be "LIFECYCLE_OPERATION_STATUS_STALE"
+            $status.stallTimeoutRemainingSeconds | Should -Be 0
+            @(Get-Process -Id $fixturePid -ErrorAction SilentlyContinue).Count | Should -Be 0
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", $previousWarning, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", $previousTimeout, "Process")
+            if ($fixturePid -gt 0) { Stop-Process -Id $fixturePid -Force -ErrorAction SilentlyContinue }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "finalizes a running status when the helper process exits with an error" {
