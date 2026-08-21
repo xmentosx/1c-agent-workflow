@@ -341,6 +341,7 @@ async def _call_direct_tool(tool_name: str, arguments: dict, fallback_prompt: st
 '''
 
         patched = patch_source(fixture)
+        compile(patched, "generated_mcp_server.py", "exec")
 
         self.assertIn("call_tool_with_transient_network_retry", patched)
         self.assertIn("send_with_transient_network_retry", patched)
