@@ -78,6 +78,12 @@
         $recall | Should -Match 'verify results against the current project'
         $remember.Length | Should -BeLessOrEqual $maximumLength
         $recall.Length | Should -BeLessOrEqual $maximumLength
+
+        $codechecker = $contract.servers.codechecker
+        $codechecker.toolCount | Should -Be 12
+        $codechecker.structuralSha256 | Should -Be "ddad947b18a4f4b535faeeb80301daa0fd11c1d0f04a0d162b3029ed49e1f5fa"
+        $codechecker.toolDescriptions.check_1c_logic.sourceSha256 | Should -Be "0bcab7643d1d868bfe15c52eb232110c2740b9bc01ff252408d01e318a958ffd"
+        $codechecker.toolDescriptions.check_1c_logic.compact | Should -Match 'without checking syntax or style'
     }
 
     It "bounds BookStack MCP responses and keeps explicit continuation" {

@@ -63,8 +63,8 @@
       }
     },
     "codechecker": {
-      "toolCount": 11,
-      "structuralSha256": "9ca8cb07c545bd26edefe173e881aa58844a2c4b3a75d98066351d1115cdd129",
+      "toolCount": 12,
+      "structuralSha256": "ddad947b18a4f4b535faeeb80301daa0fd11c1d0f04a0d162b3029ed49e1f5fa",
       "toolDescriptions": {
         "ask_1c_ai": {
           "sourceSha256": "7b30debb87f52ba56c299be0a1db97ac7f97b5131dbcc2391d3b7def1c5eb9b8",
@@ -73,6 +73,10 @@
         "check_1c_code": {
           "sourceSha256": "c234b00777e528219c7c714e597cf662e1d0eef94c65f56d8ddcce36e9716c6a",
           "compact": "Check 1C code for syntax, correctness, bugs, and performance. For style and standards use review_1c_code; for rewriting use rewrite_1c_code."
+        },
+        "check_1c_logic": {
+          "sourceSha256": "0bcab7643d1d868bfe15c52eb232110c2740b9bc01ff252408d01e318a958ffd",
+          "compact": "Check 1C code for logic, bugs, and performance without checking syntax or style."
         },
         "review_1c_code": {
           "sourceSha256": "8c6d2dab206fcc271e3b88ca8a1b7368e2d157a33458ea5d560c271339c5841a",

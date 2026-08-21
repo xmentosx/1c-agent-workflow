@@ -347,6 +347,7 @@ async def _call_direct_tool(tool_name: str, arguments: dict, fallback_prompt: st
         self.assertIn("send_with_reused_session_retry", patched)
         self.assertIn("from .observability import observe_stage, observe_tool", patched)
         self.assertIn('@observe_tool(\n    "check_1c_code"', patched)
+        self.assertIn('@observe_tool(\n    "check_1c_logic"', patched)
         self.assertIn('@observe_tool(\n    "review_1c_code"', patched)
         self.assertIn('@observe_tool(\n    "fetch_its"', patched)
         self.assertIn("snapshot_argument=None", patched)
@@ -354,13 +355,27 @@ async def _call_direct_tool(tool_name: str, arguments: dict, fallback_prompt: st
         self.assertIn('async with observe_stage(\n            "direct_tool"', patched)
         self.assertIn("if create_new_session:", patched)
         self.assertIn("except ApiError:\n        raise", patched)
-        self.assertEqual(11, patched.count("except ApiError:\n        raise"))
+        self.assertEqual(12, patched.count("except ApiError:\n        raise"))
         self.assertEqual(
-            13,
+            14,
             patched.count("if is_transient_network_error(e):\n            raise"),
         )
         self.assertNotIn("MCP_TOOL_CALL_MODE", patched)
         self.assertNotIn("assistant_uuid", patched)
+
+        logic_start = patched.index("async def check_1c_logic(")
+        review_start = patched.index("async def review_1c_code(", logic_start)
+        logic_tool = patched[logic_start:review_start]
+        self.assertIn("async def check_1c_logic(code: str) -> str:", logic_tool)
+        self.assertIn("return await _send_prompt(prompt)", logic_tool)
+        self.assertNotIn("_call_direct_tool", logic_tool)
+        self.assertNotIn("mcp__syntax-checker__validate", logic_tool)
+        self.assertNotIn("syntax_result", logic_tool)
+        self.assertEqual(1, patched.count("async def check_1c_logic("))
+
+        check_start = patched.index("async def check_1c_code(")
+        check_tool = patched[check_start:logic_start]
+        self.assertIn("return await _send_prompt(code)", check_tool)
 
 
 class ObservabilityTests(unittest.IsolatedAsyncioTestCase):
@@ -472,6 +487,29 @@ class ObservabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("tools-list-proxy", events[0]["transportPath"])
         self.assertEqual("success", events[-1]["outcome"])
         self.assertEqual(2, events[-1]["resultChars"])
+        self.assertNotIn(source, "\n".join(captured.output))
+
+    async def test_logic_only_tool_telemetry_keeps_snapshot_content_safe(self) -> None:
+        source = "Процедура СекретнаяЛогика()\nКонецПроцедуры"
+
+        @observe_tool("check_1c_logic", mode_resolver=lambda: "prompt")
+        async def checked(code: str) -> str:
+            async with observe_stage("prompt", inputChars=len(code)):
+                return "ok"
+
+        with self.assertLogs(
+            "MCP_1copilot.codechecker_observability",
+            level="INFO",
+        ) as captured:
+            await checked(source)
+
+        events = [json.loads(record.getMessage()) for record in captured.records]
+        self.assertEqual("check_1c_logic", events[0]["tool"])
+        self.assertEqual("prompt", events[0]["mode"])
+        self.assertEqual(
+            hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            events[0]["snapshotSha256"],
+        )
         self.assertNotIn(source, "\n".join(captured.output))
 
     async def test_fetch_its_parent_context_covers_direct_stage(self) -> None:

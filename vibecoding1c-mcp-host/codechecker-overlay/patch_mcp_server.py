@@ -85,6 +85,36 @@ CALL_DIRECT_TOOL_FUNCTION = '''async def _call_direct_tool(tool_name: str, argum
     return f"Инструмент {tool_name} не вернул результата."
 '''
 
+LOGIC_ONLY_TOOL = '''@mcp.tool()
+@observe_tool(
+    "check_1c_logic",
+    mode_resolver=lambda: "prompt",
+)
+async def check_1c_logic(code: str) -> str:
+    """Check 1C code for logic, bugs, and performance without checking syntax or style."""
+    code = _truncate_input(code)
+    if not code.strip():
+        return "Ошибка: код не может быть пустым"
+
+    prompt = (
+        "Проверь этот код 1С ТОЛЬКО на логические ошибки и проблемы производительности.\n"
+        "Не выполняй синтаксическую проверку и не проверяй стиль/стандарты.\n"
+        "Найди: ошибки логики, потенциальные баги, запросы в цикле, "
+        "неоптимальные конструкции.\n\n"
+        f"Код:\n```bsl\n{code}\n```"
+    )
+    try:
+        return await _send_prompt(prompt)
+    except ApiError:
+        raise
+    except Exception as e:
+        if is_transient_network_error(e):
+            raise
+        return f"Произошла неожиданная ошибка: {str(e)}"
+
+
+'''
+
 ASK_ORIGINAL = '''        client = _get_client()
         conversation_id = await client.get_or_create_session(create_new=create_new_session)
         answer = await client.send_message(conversation_id, _truncate_input(question))
@@ -157,6 +187,16 @@ def _replace_function(
     return text[:start] + replacement + text[end:]
 
 
+def _insert_before_tool(text: str, tool_name: str, insertion: str) -> str:
+    function_start = text.index(f"async def {tool_name}(")
+    decorator_start = text.rfind("@mcp.tool()", 0, function_start)
+    if decorator_start >= 0:
+        between = text[decorator_start + len("@mcp.tool()") : function_start]
+        if not between.strip():
+            function_start = decorator_start
+    return text[:function_start] + insertion + text[function_start:]
+
+
 def patch_source(source: str) -> str:
     if IMPORT_LINES in source:
         raise RuntimeError("The codechecker transport-retry overlay is already applied.")
@@ -183,6 +223,7 @@ def patch_source(source: str) -> str:
     tools_start = patched.index("# MCP Tools")
     before_tools = patched[:tools_start]
     tools = patched[tools_start:]
+    tools = _insert_before_tool(tools, "review_1c_code", LOGIC_ONLY_TOOL)
     for tool_name, decorator in TOOL_OBSERVABILITY.items():
         tools = _replace_once(
             tools,

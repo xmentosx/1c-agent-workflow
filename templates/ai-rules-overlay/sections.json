@@ -176,19 +176,19 @@
                               "path":  "AGENTS.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "0af764d24fbc2b6d25335daa9fdffd3125ee98a45b14735ac4d93f2cfe9faa22",
                               "baselineSha256":  "36c6dff82e759138ffb7ae3eea3f13bebe2afdfcc26d38b7de667fd3142f0503",
-                              "resultSha256":  "9f61354dabbe105aedd2849c907fb0841248cf5f8a1b63aa2aee15b4a7ba0a92"
+                              "resultSha256":  "c9ffd485b3f74e4fe7f542f2b6ebc8fce98fa36634e510162778c815e041d617"
                           },
                           {
                               "path":  "content/agents/error-fixer.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "95d70fb3c6d83b2dd8ec39bef1470f7b0d0e89e13729b7c038bb16b02f46a317",
                               "baselineSha256":  "95d70fb3c6d83b2dd8ec39bef1470f7b0d0e89e13729b7c038bb16b02f46a317",
-                              "resultSha256":  "90969a0425919c9ce07edbf0efb72781610f635e811c43246f5a0601d323b307"
+                              "resultSha256":  "173e16c7e02532ab442c63478f56303d755960759a0de34175ae47925cc749ff"
                           },
                           {
                               "path":  "content/commands/caveman.md",
@@ -743,10 +743,10 @@
                               "path":  "content/rules/dev-standards-env.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "9a1f694853c9a5984cafaa5049a1e9f3da5a7b3eba56fb01e10776155e27eea5",
                               "baselineSha256":  "9a1f694853c9a5984cafaa5049a1e9f3da5a7b3eba56fb01e10776155e27eea5",
-                              "resultSha256":  "7bbdf3e2d9261e10ecb0641f2ff5355870044e745b698d804d9009d78da92e53"
+                              "resultSha256":  "cea7ed0f4d99f6d651fad9e17fbbc094f0de1722169bbaa46e2b189edc06fb63"
                           },
                           {
                               "path":  "content/rules/extension-patterns.md",
@@ -779,19 +779,19 @@
                               "path":  "content/rules/subagents.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "0027e5dfb442a99d28292bbcde55af22d1bbc394c8729b9771c9e1e8ad1428a6",
                               "baselineSha256":  "0027e5dfb442a99d28292bbcde55af22d1bbc394c8729b9771c9e1e8ad1428a6",
-                              "resultSha256":  "3c2b7428d82024070c8be4af0d928e7ef03237afa6a9e9162c664e9262c9e558"
+                              "resultSha256":  "72f64a51e8a05bf8f78e3d4d8a5707ab056433ee05473098e254cfeb29229ea2"
                           },
                           {
                               "path":  "content/rules/systematic-debugging.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "e584093cfaf0247022243b3a9381e398c4b00071d7c35ba8fc6cf277be129250",
                               "baselineSha256":  "e584093cfaf0247022243b3a9381e398c4b00071d7c35ba8fc6cf277be129250",
-                              "resultSha256":  "7c1377d5b3b347e97567ca67debb32c9ab91e6103f2c0e1bd734386041d6f37d"
+                              "resultSha256":  "76cc364d49152e2aea085c2e237ecf5eb12f261738916358af65ec45b9e7bca0"
                           },
                           {
                               "path":  "content/skills/mcp-1c-tools/SKILL.md",
@@ -1344,12 +1344,12 @@
                           },
                           {
                               "path":  "README.md",
-                              "requirementId":  "ITL-GRILLING-001",
+                              "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-GRILLING-001 for r29 by documenting the new skill family while preserving prior release guidance.",
+                              "reason":  "Preserve prior release guidance and document the r31 standalone syntax plus logic-only CodeChecker route.",
                               "upstreamSha256":  "f9c6a2c905f87cc5d690e929e4cff5504934b246e566502d532f6f80ccb06da5",
                               "baselineSha256":  "ab70e48f31059d3203bfa05f8beb40a9b4cee73154024fc81cfcf8e1ad36b23a",
-                              "resultSha256":  "a4c3cbe62188c2423ae2bf626c4c67b802d2092beddd406063ae449432477b6d"
+                              "resultSha256":  "75a1e5357fd29d249568de45f3f1857c4e3b6a651f5669baf0146e81a2c811f7"
                           },
                           {
                               "path":  "scripts/check.ps1",
@@ -1481,46 +1481,46 @@
                               "path":  "content/agents/developer.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "fa924ce11cabe914fa649984a3247098c5f00fd2dc50362c4e1342f91b6216c9",
                               "baselineSha256":  "fa924ce11cabe914fa649984a3247098c5f00fd2dc50362c4e1342f91b6216c9",
-                              "resultSha256":  "1d4f8c8237c534868b3e519562e77645f9a1b5b9fce7e2634c3adcbd11e3ad45"
+                              "resultSha256":  "77e5e4951f3ec21d9a7fea6bc50ac6a9c88ae2934d306f93ed59854ef79236a6"
                           },
                           {
                               "path":  "content/agents/metadata-manager.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "41b33c19068c5215e19a0ab3010a18460076815e960a44ace041bebbbddcf387",
                               "baselineSha256":  "41b33c19068c5215e19a0ab3010a18460076815e960a44ace041bebbbddcf387",
-                              "resultSha256":  "94d5d080d9101c79a3d6c99d37e42ca88a15fbfb7ca2efd430ecebd1ef842ef6"
+                              "resultSha256":  "b43f901b718b6b020001ba92b31d50f764409710a0ef749524ad53b2c43f1f06"
                           },
                           {
                               "path":  "content/agents/performance-optimizer.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "d842a1d3dec545b6813ccd4d52a41ab90f74a6133994928a9ac106efe7888043",
                               "baselineSha256":  "d842a1d3dec545b6813ccd4d52a41ab90f74a6133994928a9ac106efe7888043",
-                              "resultSha256":  "3666fd6398b839b66488cea1233c2ce8d47b357132cbaae73b6a13eeedff3b0f"
+                              "resultSha256":  "75c6ff789040560761bb031c7b5c99d3b264655bbd1de91cb73f71b28e53f5e1"
                           },
                           {
                               "path":  "content/agents/refactoring.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "fb0b89ab5bbf080713eee79e7771dc5b7f56a3855b473481eed791a7917e99e0",
                               "baselineSha256":  "fb0b89ab5bbf080713eee79e7771dc5b7f56a3855b473481eed791a7917e99e0",
-                              "resultSha256":  "74b34b4fba7be9475406c9210d4cd83af574fc7aca0cf7c34498bc3e929a0a2f"
+                              "resultSha256":  "d2384ef335c6207d63f62ce16fa0b1fec98dd60e15fc74d43da99e035fcb6d89"
                           },
                           {
                               "path":  "content/commands/litemode.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "5144cb443c4ce5d3079828ba2a5d423f6315e268ced75eaeeccfa8415c82ec00",
                               "baselineSha256":  "5144cb443c4ce5d3079828ba2a5d423f6315e268ced75eaeeccfa8415c82ec00",
-                              "resultSha256":  "8af162862a8429a82589d243837445eae05f9c814a0c900955ab6bebd023b4da"
+                              "resultSha256":  "0fd4804682bfd494e97cf74b421d2099ce3119960504794f99af328121fcb2ee"
                           },
                           {
                               "path":  "content/openspec-bundle/claude-code/.claude/commands/opsx/archive.md",
@@ -1535,7 +1535,7 @@
                               "path":  "content/rules/model-adaptation.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "41fddcbb37d649b1faad9aaf30ebc9d6ff3e73f7fce473320adc4e37543ceb4e",
                               "baselineSha256":  "41fddcbb37d649b1faad9aaf30ebc9d6ff3e73f7fce473320adc4e37543ceb4e",
                               "resultSha256":  "bea70d244ca216fe802415abf7241f756e6f4c829d734e492ae86a0f6e46ed7e"
@@ -1544,82 +1544,181 @@
                               "path":  "content/rules/model-opus5.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "e0ff25cb3af1d6187690c987c5118dbdb1c9b8e96d95e2a95a43ebfa36d2a4f6",
                               "baselineSha256":  "e0ff25cb3af1d6187690c987c5118dbdb1c9b8e96d95e2a95a43ebfa36d2a4f6",
-                              "resultSha256":  "0dc7ffa1ab58ef80e3bba993e7c6608455aa72993c8a2d8e9c02d6a9a0250eda"
+                              "resultSha256":  "2955b86d0f6b492767f0c03d54745a527fce0eab8ff9bb2f2992ddaf8afb4e2a"
                           },
                           {
                               "path":  "content/rules/orchestrator-economy.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "e4db5f3c33b9de79b101de62c29aba639190a0cfa607738fde0e0e440be8feb7",
                               "baselineSha256":  "e4db5f3c33b9de79b101de62c29aba639190a0cfa607738fde0e0e440be8feb7",
-                              "resultSha256":  "d3f66bd8d8b183889b5aa1a4f8126f3d841d1bd4e62ca140025800375190ec68"
+                              "resultSha256":  "22abe2ac82f7d9f1257f0834ac08c2f21f16dcc5e4df021f62648ec3f9f6a7a2"
                           },
                           {
                               "path":  "content/rules/subagent-pipeline.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "b89c4a04b41f41489b1594c5dcf87fd6a4e980034de51b36cee0af0e5ce592fb",
                               "baselineSha256":  "b89c4a04b41f41489b1594c5dcf87fd6a4e980034de51b36cee0af0e5ce592fb",
-                              "resultSha256":  "53ab30b6a88aa5df3ef0221e6ec0f8853f34b546acb4b0a46f33a2fc8ee22d30"
+                              "resultSha256":  "90abdd2ebff2615f362d1b70918e5c259e1ac30a707608d17601394290ec6872"
                           },
                           {
                               "path":  "content/rules/tooling-playbooks.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "1601ef413ecf3cd27e4e545069afb96f86bf7efc6a831e2f37d24c8de0a03627",
                               "baselineSha256":  "1601ef413ecf3cd27e4e545069afb96f86bf7efc6a831e2f37d24c8de0a03627",
-                              "resultSha256":  "c3f665b02d1543dac9e4af2c87687dd11ccfb4f2067e90831327eab4f3e26c7b"
+                              "resultSha256":  "893bfba406a2d2ff30a19f408ba898e511508a5a6588c51bf97c4a756421fc2b"
                           },
                           {
                               "path":  "content/rules/verification-delivery.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "4ac9d8773d98203bc842a51f44a0e372431c07ab8c6b30037a39359066457fe4",
                               "baselineSha256":  "4ac9d8773d98203bc842a51f44a0e372431c07ab8c6b30037a39359066457fe4",
-                              "resultSha256":  "c700b6f3f3cc163a96c802b5c41c7e8d0b5604fa6ebc274229b0826c836b16aa"
+                              "resultSha256":  "60bd8e1e722d0a6049cd604f268db3b589dc22a677f89a2b1056cf0844362f44"
                           },
                           {
                               "path":  "content/rules/verification-gates.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "7d7fc8852461fad21b26a3dc7935e0bbef0cf694c2f655611d9d84aa40affa81",
                               "baselineSha256":  "7d7fc8852461fad21b26a3dc7935e0bbef0cf694c2f655611d9d84aa40affa81",
-                              "resultSha256":  "bf93c334b0160985aa3e17df28b593964cb2d65af958fd2c5af65f1c437609e8"
+                              "resultSha256":  "22c803e5beb52a2917e0af75b15297a7f862b78d082dac3e2133ef84704ef5c7"
                           },
                           {
                               "path":  "content/rules/verification-policy.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "bd93b9ada20c019d3044eef864e0b9bbff518f5b74bf34ca25ab68b25249165f",
                               "baselineSha256":  "bd93b9ada20c019d3044eef864e0b9bbff518f5b74bf34ca25ab68b25249165f",
-                              "resultSha256":  "65d9107220594eaa53d7e28a5d4a0df5e399a060633dba5b8db88e6436170c27"
+                              "resultSha256":  "8407283d18613b10d8060140bcb11a513428202222af61bf58a0871e99742f3c"
                           },
                           {
                               "path":  "content/skills/mcp-1c-tools/docs/1c-code-check-mcp.md",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r27 with closing-snapshot validator reuse while retaining Gates 1-3.",
+                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
                               "upstreamSha256":  "6b4438516ad5a5418c398379a42ae06b83f3469f830dfacada07594c42df71dd",
                               "baselineSha256":  "6b4438516ad5a5418c398379a42ae06b83f3469f830dfacada07594c42df71dd",
-                              "resultSha256":  "56bb958598f34c94199be756c65a83b29c97c8d4c7818ff37261066821e937c8"
+                              "resultSha256":  "ca39cff7005975b033eed7ac26801222d7022e0dc001f809cc0b58a51cbf54bd"
+                          },
+                          {
+                              "path":  "content/agents/code-reviewer.md",
+                              "requirementId":  "ITL-CODECHECKER-LATENCY-001",
+                              "disposition":  "resolved",
+                              "reason":  "Keep the r31 standalone syntax and logic-only CodeChecker route consistent at this call site.",
+                              "upstreamSha256":  "be0eb35ca8339d8c4da2548ae53d33ad51fa8ab5d2b3f2b4899cc1be10126dc7",
+                              "baselineSha256":  "be0eb35ca8339d8c4da2548ae53d33ad51fa8ab5d2b3f2b4899cc1be10126dc7",
+                              "resultSha256":  "869b2d9af4a2fee04a4e4b6e2548d0128f3a0ac9163162a0b0ec065ecff5ea63"
+                          },
+                          {
+                              "path":  "content/commands/checkmcp.md",
+                              "requirementId":  "ITL-CODECHECKER-LATENCY-001",
+                              "disposition":  "resolved",
+                              "reason":  "Expose check_1c_logic as an optional r31 CodeChecker capability without removing check_1c_code.",
+                              "upstreamSha256":  "3ab72bf39f7dc6dae8526428915df6ec053080c7f16a42f94ccd91265e5e483d",
+                              "baselineSha256":  "3ab72bf39f7dc6dae8526428915df6ec053080c7f16a42f94ccd91265e5e483d",
+                              "resultSha256":  "a65f0eabd50d5ba3a8512c4afd33722980a85ca6545a13c4c0bdaf088bb2790e"
+                          },
+                          {
+                              "path":  "content/commands/evolve.md",
+                              "requirementId":  "ITL-CODECHECKER-LATENCY-001",
+                              "disposition":  "resolved",
+                              "reason":  "Protect the complete r31 standalone syntax, logic-only fallback, and final review chain.",
+                              "upstreamSha256":  "4b30fa4976c02ac88862f06b05452e518a1078a6b66b02245ae021cdd5f7665e",
+                              "baselineSha256":  "4b30fa4976c02ac88862f06b05452e518a1078a6b66b02245ae021cdd5f7665e",
+                              "resultSha256":  "fc323c1c01071d45d55e4ece5b7dffc24408776c6dfeba8c89b7dcf3f90f9610"
+                          },
+                          {
+                              "path":  "content/rules/model-fable5.md",
+                              "requirementId":  "ITL-CODECHECKER-LATENCY-001",
+                              "disposition":  "resolved",
+                              "reason":  "Keep r31 verification evidence claims aligned with the separate three-validator chain.",
+                              "upstreamSha256":  "993dab9d622e3fb9058d097bab16518fa136a00add850d27189ef7a84e5d6f1a",
+                              "baselineSha256":  "993dab9d622e3fb9058d097bab16518fa136a00add850d27189ef7a84e5d6f1a",
+                              "resultSha256":  "053b4c53c74429fd3bcbb2d6be3264a62b710c441e586fae2a957e8ce1851a56"
+                          },
+                          {
+                              "path":  "content/rules/model-gpt56.md",
+                              "requirementId":  "ITL-CODECHECKER-LATENCY-001",
+                              "disposition":  "resolved",
+                              "reason":  "Keep r31 validator autonomy aligned with the optional logic-only tool and compatibility fallback.",
+                              "upstreamSha256":  "dc1306feb03d71e2f440cfad8b0c57219596a35b51e73359af3baf0f8d524afb",
+                              "baselineSha256":  "dc1306feb03d71e2f440cfad8b0c57219596a35b51e73359af3baf0f8d524afb",
+                              "resultSha256":  "766482c5a86b3d94877afc8531c11a9cbb1ad35f068605a197be9a8fb3f3ccd6"
+                          },
+                          {
+                              "path":  "content/rules/model-sonnet5.md",
+                              "requirementId":  "ITL-CODECHECKER-LATENCY-001",
+                              "disposition":  "resolved",
+                              "reason":  "Keep r31 blocking findings aligned with the active logic validator and final review.",
+                              "upstreamSha256":  "133263944b2dabb5ee0166e0a98efc3a76481954c4bef7b8426222648db66bcb",
+                              "baselineSha256":  "133263944b2dabb5ee0166e0a98efc3a76481954c4bef7b8426222648db66bcb",
+                              "resultSha256":  "8b8f0d4a9589746205a8a8d487e5ceedf688310490020cb53eb4f5c1675350d0"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/epf-manage.md",
+                              "requirementId":  "ITL-CODECHECKER-LATENCY-001",
+                              "disposition":  "resolved",
+                              "reason":  "Apply the r31 standalone syntax and logic-only CodeChecker route to EPF validation guidance.",
+                              "upstreamSha256":  "5ccb2733d1ba2b5eb8be6b7580607f01fda1c1b04552eee72e2fd648f93beca6",
+                              "baselineSha256":  "5ccb2733d1ba2b5eb8be6b7580607f01fda1c1b04552eee72e2fd648f93beca6",
+                              "resultSha256":  "c4ae5a06038eae28d51559beeb8dedd4efe3c0d40b279e47294137353a36670e"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/docs/meta-manage.md",
+                              "requirementId":  "ITL-CODECHECKER-LATENCY-001",
+                              "disposition":  "resolved",
+                              "reason":  "Apply the r31 standalone syntax and logic-only CodeChecker route to metadata module guidance.",
+                              "upstreamSha256":  "3962ca6312d21ed2597165f780da40769df7a4fd7ac631cbb03e78e84f7fe1cc",
+                              "baselineSha256":  "3962ca6312d21ed2597165f780da40769df7a4fd7ac631cbb03e78e84f7fe1cc",
+                              "resultSha256":  "2eeca9381ac0fec4f5512a77a911f3e8f229821bc51ec1ede23c0ee67584943a"
+                          },
+                          {
+                              "path":  "content/skills/handoff/SKILL.md",
+                              "requirementId":  "ITL-CODECHECKER-LATENCY-001",
+                              "disposition":  "resolved",
+                              "reason":  "Record the distinct r31 syntax, logic, and review evidence in handoffs.",
+                              "upstreamSha256":  "2456b0c9616120cd7abc5f11235c1e01a332c67bb8015e7df29815c2f8232e01",
+                              "baselineSha256":  "2456b0c9616120cd7abc5f11235c1e01a332c67bb8015e7df29815c2f8232e01",
+                              "resultSha256":  "dad64fe6f96f93d42d7d76456e1c024fc2a68efd6636843c391fe2a81ed66efe"
+                          },
+                          {
+                              "path":  "content/skills/mcp-1c-tools/docs/1c-data-mcp.md",
+                              "requirementId":  "ITL-CODECHECKER-LATENCY-001",
+                              "disposition":  "resolved",
+                              "reason":  "Keep r31 live-infobase escalation distinct from standalone syntax and logic-only static checks.",
+                              "upstreamSha256":  "8e8297fcd3a3fdf8abde6aa25eec09686b73fa674bec783801b01e41103c22a5",
+                              "baselineSha256":  "8e8297fcd3a3fdf8abde6aa25eec09686b73fa674bec783801b01e41103c22a5",
+                              "resultSha256":  "163548c71ca8a0fc093b225085cfec440e6c353aac3c395778a32dc88f5d7d6b"
+                          },
+                          {
+                              "path":  "content/skills/mcp-1c-tools/docs/1c-syntax-checker-mcp.md",
+                              "requirementId":  "ITL-CODECHECKER-LATENCY-001",
+                              "disposition":  "resolved",
+                              "reason":  "Keep the r31 standalone syntax budget distinct from logic-only CodeChecker and review budgets.",
+                              "upstreamSha256":  "f3de41fd44c79558797e88cb447803f30ad71fc7f4d13e2fa4fb399e98ab68db",
+                              "baselineSha256":  "f3de41fd44c79558797e88cb447803f30ad71fc7f4d13e2fa4fb399e98ab68db",
+                              "resultSha256":  "266850994c6323da09278956e8e1bdd72efe77e1b5c7d3fb80c3082f86a2af7c"
                           },
                           {
                               "path":  "tests/ValidatorExecutionPolicy.Tests.ps1",
                               "requirementId":  "ITL-CODECHECKER-LATENCY-001",
                               "disposition":  "downstream-only",
-                              "reason":  "Add the focused r27 regression for closing-snapshot validator reuse without weakening Gates 1-3.",
+                              "reason":  "Add the focused r31 regression for standalone syntax, logic-only routing, compatibility fallback, and final review.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "\u003cabsent\u003e",
-                              "resultSha256":  "d273f2dafaf685cf590d6f204ea22fb1b31b83a272a7f9ca394c4ab43056ef9b"
+                              "resultSha256":  "46a1647065ff3c66885d742752e53f05fa64d65bea898981c68c38e4f2bafaaa"
                           },
                           {
                               "path":  "USER-RULES.md",
