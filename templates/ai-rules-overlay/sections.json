@@ -66,12 +66,12 @@
                           },
                           {
                               "path":  "adapters/claude-code.yaml",
-                              "requirementId":  "ITL-ADAPTER-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-ADAPTER-001.",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-GRILLING-001 for r30 by publishing thin native command wrappers.",
                               "upstreamSha256":  "935425e5d18389caddfe3cf3c6e43bdb202f77d1d58a9bf403120a8a14743a0c",
                               "baselineSha256":  "163cf4c88253e3952f702ddc829aed5d3139abcb1b257dad21b08888816dafbc",
-                              "resultSha256":  "163cf4c88253e3952f702ddc829aed5d3139abcb1b257dad21b08888816dafbc"
+                              "resultSha256":  "6beb154b847ccc75ec02d08256307214967f84982b7849030d0d9ec11bb517d9"
                           },
                           {
                               "path":  "adapters/cline.yaml",
@@ -93,30 +93,30 @@
                           },
                           {
                               "path":  "adapters/command-code.yaml",
-                              "requirementId":  "ITL-ADAPTER-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-ADAPTER-001.",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-GRILLING-001 for r30 by publishing thin native command wrappers.",
                               "upstreamSha256":  "d334298348f1ae02c40717c684640750a2a95292428a50a4ebf76e99751751be",
                               "baselineSha256":  "cc75314de17cb9cedbc11a064a8dbaf4b8e2c4a798ef7639574bc381debf83c6",
-                              "resultSha256":  "cc75314de17cb9cedbc11a064a8dbaf4b8e2c4a798ef7639574bc381debf83c6"
+                              "resultSha256":  "0ec4843af43a0b08af75af89a180804d553f40e2148c4ee2876d96838cb01e8b"
                           },
                           {
                               "path":  "adapters/cursor.yaml",
-                              "requirementId":  "ITL-ADAPTER-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-ADAPTER-001.",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-GRILLING-001 for r30 by publishing thin native command wrappers.",
                               "upstreamSha256":  "aea09ae0b34372c8168acc405cc3601135888ad4e56d32cc33b35b0dc97bc5ef",
                               "baselineSha256":  "3214303d324f2a5d24978e71e43e413000128f98ea0594a64844ed9e426b277c",
-                              "resultSha256":  "3214303d324f2a5d24978e71e43e413000128f98ea0594a64844ed9e426b277c"
+                              "resultSha256":  "e71f544624944a5484345f7979786f2e1605f3757480925e3be49e31405341a3"
                           },
                           {
                               "path":  "adapters/kilocode.yaml",
-                              "requirementId":  "ITL-KILO-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-KILO-001.",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-GRILLING-001 for r30 by publishing thin native command wrappers.",
                               "upstreamSha256":  "a6002bef9cd7ae4a54a2dd18193c19038b4cec8f141a672efddf111dafbf18b4",
                               "baselineSha256":  "5460595e1ece72de7194b20d246478f405c595b26cba505d02c13add614b1b7f",
-                              "resultSha256":  "5460595e1ece72de7194b20d246478f405c595b26cba505d02c13add614b1b7f"
+                              "resultSha256":  "a015caaf40f80f27f938d11540b556bdb9ea07750b3e2fd3b0682a4363eaa6b4"
                           },
                           {
                               "path":  "adapters/kimi.yaml",
@@ -129,12 +129,12 @@
                           },
                           {
                               "path":  "adapters/opencode.yaml",
-                              "requirementId":  "ITL-ADAPTER-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-ADAPTER-001.",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-GRILLING-001 for r30 by publishing thin native command wrappers.",
                               "upstreamSha256":  "1ea30930755165bff71b7762c774732636c79ff863aa4ef12f1918542d12728f",
                               "baselineSha256":  "3fefa4ec7cfe5e087ff5241084a75de766a740415b8d01750c38b6f0f38fa71b",
-                              "resultSha256":  "3fefa4ec7cfe5e087ff5241084a75de766a740415b8d01750c38b6f0f38fa71b"
+                              "resultSha256":  "efe129935e9b2f2ca3ad42f99ccb11f54e0731f2574bc4b19cdfaa02013d0bac"
                           },
                           {
                               "path":  "adapters/other.yaml",
@@ -156,12 +156,12 @@
                           },
                           {
                               "path":  "adapters/qwen.yaml",
-                              "requirementId":  "ITL-ADAPTER-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-ADAPTER-001.",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-GRILLING-001 for r30 by publishing thin native command wrappers.",
                               "upstreamSha256":  "689b329a6f9dfbc1c1dddd5a3e339529f32fbc6c414b587ab0a903e2b150fac7",
                               "baselineSha256":  "12e1db892fdaeed3c68cae3cc7ac92ae319e1fc6f9f950debf3ce0b6b3f71f40",
-                              "resultSha256":  "12e1db892fdaeed3c68cae3cc7ac92ae319e1fc6f9f950debf3ce0b6b3f71f40"
+                              "resultSha256":  "37ed214e481341d7ebb3050405b229ed8bd6820d62eaeb65f533dc1415042355"
                           },
                           {
                               "path":  "AGENT-INSTALL.md",
@@ -198,6 +198,24 @@
                               "upstreamSha256":  "c4c3b339fe661a12006e9fcc65884b38302f2e8e59ea248f54ccea7deb87468d",
                               "baselineSha256":  "c4c3b339fe661a12006e9fcc65884b38302f2e8e59ea248f54ccea7deb87468d",
                               "resultSha256":  "6d7e8a148fe1036d1dfeecef5510411c8bf3aa1523f8db16cdfd0b460a675ba7"
+                          },
+                          {
+                              "path":  "content/commands/grill-me.md",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the thin r30 native command wrapper for grill-me.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "d84ee3d867b1388102b92044e907c3d85fb2381a778590a92cd31b3579ba3b4b"
+                          },
+                          {
+                              "path":  "content/commands/grill-with-docs.md",
+                              "requirementId":  "ITL-GRILLING-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the thin r30 native command wrapper for grill-with-docs.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "45beeff885a6863c08fef71c35cb4382dca56abffd9da5057f94354ef51b889a"
                           },
                           {
                               "path":  "content/commands/deploy-and-test.md",
@@ -1391,10 +1409,10 @@
                               "path":  "tests/GrillingSkills.Tests.ps1",
                               "requirementId":  "ITL-GRILLING-001",
                               "disposition":  "downstream-only",
-                              "reason":  "Add the focused r29 regression for portable aliases, frontier rounds, evidence routing, and domain-doc ownership.",
+                              "reason":  "Extend the focused grilling regression in r30 with native wrapper placement and installation coverage.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "\u003cabsent\u003e",
-                              "resultSha256":  "4b5eee8160e5d4a7f400163b35a5527ce0104d48981ed9544448f8d0bac2b7e9"
+                              "resultSha256":  "f354ebf54534695c5b3526bdecd716c738c33caa2037f5a0ab10291914906bf1"
                           },
                           {
                               "path":  "tests/LayoutAndManifest.Tests.ps1",
