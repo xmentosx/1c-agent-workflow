@@ -30,7 +30,7 @@ First publish and qualify the exact accumulated development candidate:
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r30-command-wrappers `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
@@ -45,7 +45,7 @@ the transactional variant:
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop -RequireRelease `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r30-command-wrappers `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
@@ -58,7 +58,7 @@ When that remote development commit is ready for the stable channel, run:
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action ReleaseMaster `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r30-command-wrappers `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
@@ -143,10 +143,21 @@ input in the qualified Git tree.
 
 `PublishDevelop` finalizes this contract after its required qualification and
 before pushing `develop`. A live URL with the locked SHA is read-only. A missing
-asset may be created only by `-RequireRelease` from the exact SHA-matching local
-candidate: the GitHub owner/repository, annotated tag, asset name, and candidate
+asset may be created only after Release, requested explicitly or selected by the
+owned-component plan, from the exact SHA-matching local candidate: the GitHub
+owner/repository, annotated tag, asset name, and candidate
 commit must all match. Existing tags and assets are never repointed or
 overwritten; any mismatch or failed remote verification preserves the queue.
+
+The finalizer covers every owned release surface: the controlled `ai_rules_1c`
+branch plus annotated tag, the patched Vanessa Automation asset, and the
+`itl-ondemand-mcp` asset. Missing high-risk assets automatically make
+`PublishDevelop` run Release even when `-RequireRelease` was not supplied. The
+rules release still requires an explicit clean `-AiRulesSource` with exact Full
+qualification and local immutable refs. External dependency locks are verified
+only and never republished. Component evidence is stored separately per exact
+workflow candidate so a safe retry continues idempotently after a partial
+cross-repository finalization.
 
 The public facade `tools/list` must contain exactly `resolve_tool` and
 `call_tool` for each family while the release probe still qualifies every tool

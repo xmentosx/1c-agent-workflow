@@ -211,4 +211,36 @@ Describe "controlled ai_rules_1c release overlay" {
         $projectUserRulesText | Should -Match 'Promotion triggers set only `executionPath=full-cycle`'
         $projectUserRulesText | Should -Not -Match 'classify each code/metadata edit as quick-fix or OpenSpec'
     }
+
+    It "blocks a workflow lock whose exact fork bytes do not match the overlay result ledger" {
+        $rulesRoot = Join-Path $TestDrive "rules repo with Кириллица"
+        $overlayPath = Join-Path $TestDrive "sections.json"
+        $trackedRelative = "content/Правила с пробелом.md"
+        $trackedPath = Join-Path $rulesRoot $trackedRelative.Replace('/', '\')
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $trackedPath) | Out-Null
+        [IO.File]::WriteAllText((Join-Path $rulesRoot '.gitattributes'), "* -text`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($trackedPath, "exact fork bytes`n", [Text.UTF8Encoding]::new($false))
+        & git -C $rulesRoot init --quiet
+        & git -C $rulesRoot config user.email tests@example.com
+        & git -C $rulesRoot config user.name Tests
+        & git -C $rulesRoot add -- .gitattributes $trackedRelative
+        & git -C $rulesRoot commit --quiet -m fixture
+        $expected = Get-NormalizedTextSha256 ([IO.File]::ReadAllText($trackedPath, [Text.UTF8Encoding]::new($false)))
+        $ledger = [ordered]@{
+            schemaVersion = 3
+            pathDecisions = @(
+                [ordered]@{ path = $trackedRelative; requirementId = "ITL-LOCK-001"; disposition = "resolved"; reason = "fixture"; resultSha256 = $expected },
+                [ordered]@{ path = "content/absent.md"; requirementId = "ITL-LOCK-001"; disposition = "downstream-only"; reason = "fixture"; resultSha256 = "<absent>" }
+            )
+        }
+        [IO.File]::WriteAllText($overlayPath, (($ledger | ConvertTo-Json -Depth 8) + "`n"), [Text.UTF8Encoding]::new($false))
+        $check = Join-Path $RepoRoot "scripts\test-ai-rules-overlay-lock.ps1"
+        $result = & $check -AiRulesRoot $rulesRoot -OverlayPath $overlayPath
+        $result.status | Should -Be "passed"
+        $result.decisions | Should -Be 2
+
+        $ledger.pathDecisions[0].resultSha256 = "0" * 64
+        [IO.File]::WriteAllText($overlayPath, (($ledger | ConvertTo-Json -Depth 8) + "`n"), [Text.UTF8Encoding]::new($false))
+        { & $check -AiRulesRoot $rulesRoot -OverlayPath $overlayPath } | Should -Throw "*does not match overlay result*"
+    }
 }

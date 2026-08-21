@@ -42,6 +42,7 @@ Describe "ITL on-demand MCP facade" {
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.sha256 | Should -Match '^[0-9a-f]{64}$'
         $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.8"
+        [string]$lock.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.8"
         [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.8/itl-ondemand-mcp-windows-amd64.exe"
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "05c391c7ea34bb027d380cd9d7a9debf37090cf624cb711a3afa8568b4e4317c"
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Not -Be "45debfd236dcb1b1b00dcfbf5343e236be05884cba0f00e42eb94ae72d1cfb13"

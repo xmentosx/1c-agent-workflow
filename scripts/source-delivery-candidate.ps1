@@ -83,6 +83,11 @@ function Get-DeliveryFileIdentity {
     return "$resolved|$((Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash.ToLowerInvariant())"
 }
 
+function Get-DeliveryComponentFinalizerIdentity {
+    $path = if ($script:ComponentFinalizerScript) { $script:ComponentFinalizerScript } else { Join-Path $script:Root "scripts\source-delivery-component.ps1" }
+    return Get-DeliveryFileIdentity -Path $path
+}
+
 function Get-DevelopPublicationIdentity {
     param(
         [Parameter(Mandatory = $true)][string]$RemoteBefore,
@@ -194,16 +199,17 @@ function New-DevelopPublicationAttempt {
         [Parameter(Mandatory = $true)][string]$RemoteBefore,
         [Parameter(Mandatory = $true)][object[]]$Entries,
         [Parameter(Mandatory = $true)][string]$Candidate,
-        [Parameter(Mandatory = $true)][string]$Tree
+        [Parameter(Mandatory = $true)][string]$Tree,
+        [AllowNull()][object]$ComponentPlan
     )
     $now = [DateTime]::UtcNow.ToString("o")
     $attempt = [pscustomobject]@{
         schemaVersion = 1; identity = $Identity; remote = $script:Remote; remoteBefore = $RemoteBefore
         candidate = $Candidate; tree = $Tree; requireRelease = [bool]$RequireRelease; phase = "candidate-built"
         gateIdentity = (Get-DeliveryFileIdentity -Path $script:GateScript)
-        componentFinalizerIdentity = (Get-DeliveryFileIdentity -Path $script:ComponentFinalizerScript)
+        componentFinalizerIdentity = (Get-DeliveryComponentFinalizerIdentity)
         queue = @($Entries | ForEach-Object { [pscustomobject]@{ id = [string]$_.id; base = [string]$_.base; head = [string]$_.head } })
-        componentPublication = $null; failures = @(); startedAt = $now; updatedAt = $now
+        componentPlan = $ComponentPlan; componentPublication = $null; failures = @(); startedAt = $now; updatedAt = $now
     }
     Write-DevelopPublicationAttempt -Attempt $attempt
     return $attempt
@@ -231,7 +237,7 @@ function Complete-InterruptedDevelopPublication {
     param([Parameter(Mandatory = $true)][string]$RemoteBefore, [Parameter(Mandatory = $true)][object[]]$Entries)
     $attempt = Read-DevelopPublicationAttempt
     if (-not $attempt -or (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 3 -or
-        [string]$attempt.candidate -ne $RemoteBefore -or [bool]$attempt.requireRelease -ne [bool]$RequireRelease) { return $null }
+        [string]$attempt.candidate -ne $RemoteBefore) { return $null }
     foreach ($entry in @($Entries)) {
         if ((Invoke-DeliveryGit -Arguments @("merge-base", "--is-ancestor", [string]$entry.head, $RemoteBefore) -AllowFailure).exitCode -ne 0) { return $null }
     }
@@ -240,7 +246,7 @@ function Complete-InterruptedDevelopPublication {
     Clear-PublishedQueueEntries -PublishedCommit $RemoteBefore
     Sync-LocalDevelopAfterPublish
     Remove-DevelopPublicationAttempt
-    return [pscustomobject]@{ status = "published"; branch = "develop"; commit = $RemoteBefore; tree = $remoteTree; releaseQualified = [bool]$RequireRelease; componentPublication = $attempt.componentPublication; recovered = $true }
+    return [pscustomobject]@{ status = "published"; branch = "develop"; commit = $RemoteBefore; tree = $remoteTree; releaseQualified = [bool]$attempt.requireRelease; componentPublication = $attempt.componentPublication; recovered = $true }
 }
 
 function Publish-AccumulatedDevelop {
@@ -260,11 +266,20 @@ function Publish-AccumulatedDevelop {
         Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries
         $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
+        $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
+        if ([bool]$componentPlan.requiresRelease -and -not [bool]$RequireRelease) {
+            Write-Host "Owned component publication requires exact-candidate Release qualification; PublishDevelop promoted itself to Develop + Release."
+        }
+        $RequireRelease = [bool]($RequireRelease -or [bool]$componentPlan.requiresRelease)
         $attemptIdentity = Get-DevelopPublicationIdentity -RemoteBefore $remoteBefore -Entries $entries -Candidate $candidate -Tree $candidateTree
         $attempt = Read-DevelopPublicationAttempt
         $priorAttempt = $attempt
         if (-not $attempt -or [string]$attempt.identity -ne $attemptIdentity) {
-            $attempt = New-DevelopPublicationAttempt -Identity $attemptIdentity -RemoteBefore $remoteBefore -Entries $entries -Candidate $candidate -Tree $candidateTree
+            $attempt = New-DevelopPublicationAttempt -Identity $attemptIdentity -RemoteBefore $remoteBefore -Entries $entries -Candidate $candidate -Tree $candidateTree -ComponentPlan $componentPlan
+        } elseif ($attempt.PSObject.Properties.Name -contains "componentPlan") {
+            $attempt.componentPlan = $componentPlan
+        } else {
+            $attempt | Add-Member -NotePropertyName componentPlan -NotePropertyValue $componentPlan
         }
         $exactDevelopQualificationRestored = Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree
         if (-not $exactDevelopQualificationRestored) {
@@ -304,7 +319,7 @@ function Publish-AccumulatedDevelop {
             }
         }
 
-        $currentFinalizerIdentity = Get-DeliveryFileIdentity -Path $script:ComponentFinalizerScript
+        $currentFinalizerIdentity = Get-DeliveryComponentFinalizerIdentity
         if ((Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -ge 3 -and [string]$attempt.componentFinalizerIdentity -ne $currentFinalizerIdentity) {
             $attempt.componentFinalizerIdentity = $currentFinalizerIdentity
             $attempt.componentPublication = $null

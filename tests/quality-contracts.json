@@ -227,7 +227,7 @@
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/AiRulesClients.Tests.ps1",
-      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.client*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.context-diagnostics.ps1", ".agents/skills/1c-workflow/opencode-plugin-templates/*", ".agents/skills/1c-workflow-fast/*", ".agents/skills/product-docs/*", ".agents/skills/itl-roctup-1c-data/*", "templates/ai-rules-*", "scripts/build-ai-rules-release.ps1", "scripts/test-ai-rules-compatibility.ps1", "scripts/promote-ai-rules-compatibility.ps1"],
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.ai-rules*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.client*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.context-diagnostics.ps1", ".agents/skills/1c-workflow/opencode-plugin-templates/*", ".agents/skills/1c-workflow-fast/*", ".agents/skills/product-docs/*", ".agents/skills/itl-roctup-1c-data/*", "templates/ai-rules-*", "scripts/build-ai-rules-release.ps1", "scripts/test-ai-rules-compatibility.ps1", "scripts/test-ai-rules-overlay-lock.ps1", "scripts/promote-ai-rules-compatibility.ps1"],
       "tests": ["tests/pester/AiRulesClients.Tests.ps1", "tests/pester/ClientAdaptersAndModes.Tests.ps1", "tests/pester/AiRulesMigration.Tests.ps1", "tests/pester/AiRulesOverlay.Tests.ps1", "tests/pester/KiloContextDiagnostics.Tests.ps1", "tests/pester/KiloVerificationRecovery.Tests.ps1", "tests/pester/OpenCodeWorkspace.Tests.ps1"]
     },
     {

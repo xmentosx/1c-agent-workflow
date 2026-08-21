@@ -122,6 +122,8 @@ try {
     }
     $installScript = Join-Path $rulesRoot "install.ps1"
     if (-not (Test-Path -LiteralPath $installScript -PathType Leaf)) { throw "ai_rules_1c install.ps1 was not found: $installScript" }
+    $overlayLockCheck = Join-Path $PSScriptRoot "test-ai-rules-overlay-lock.ps1"
+    & $overlayLockCheck -AiRulesRoot $rulesRoot -WorkingDirectory (Join-Path $workRoot "overlay-lock") | Out-Host
     $workflowHelper = Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
     if (-not (Test-Path -LiteralPath $workflowHelper -PathType Leaf)) { throw "Workflow helper was not found: $workflowHelper" }
     $promptBefore = Get-CodexPromptSnapshot -RulesRoot $rulesRoot

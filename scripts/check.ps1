@@ -384,6 +384,7 @@ function Get-WorkflowGateScriptPaths {
         (Join-Path $repoRoot "scripts\test-release-readiness.ps1"),
         (Join-Path $repoRoot "scripts\invoke-release-e2e.ps1"),
         (Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"),
+        (Join-Path $repoRoot "scripts\test-ai-rules-overlay-lock.ps1"),
         (Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"),
         (Join-Path $repoRoot "scripts\run-pester-shard.ps1"),
         (Join-Path $repoRoot "scripts\pester-timings.json"),

@@ -91,7 +91,7 @@ It "publishes develop only after the exact candidate passes Develop and required
             Remove-Item -LiteralPath $fixture.modeLog -Force -ErrorAction SilentlyContinue
 
             $env:ITL_TEST_FAIL_DELIVERY_RELEASE = "true"
-            $failed = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure
+            $failed = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"')) -AllowFailure
             $failed.exitCode | Should -Not -Be 0
             (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Not -Be $candidate
             @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -Not -BeNullOrEmpty
@@ -124,10 +124,10 @@ It "publishes develop only after the exact candidate passes Develop and required
             Remove-Item -LiteralPath $fixture.modeLog -Force -ErrorAction SilentlyContinue
             $env:ITL_TEST_FAIL_DELIVERY_RELEASE = "true"
 
-            (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure).exitCode | Should -Not -Be 0
-            (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure).exitCode | Should -Not -Be 0
+            (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"')) -AllowFailure).exitCode | Should -Not -Be 0
+            (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"')) -AllowFailure).exitCode | Should -Not -Be 0
             $beforeBlockedRetry = @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8))
-            $blocked = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure
+            $blocked = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"')) -AllowFailure
 
             $blocked.exitCode | Should -Not -Be 0
             $blocked.stderr | Should -Match "same failure twice"
@@ -160,7 +160,7 @@ It "rebuilds the same merge candidate after a failed release" {
             Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "a-change") | Out-Null
 
             $env:ITL_TEST_FAIL_DELIVERY_RELEASE = "true"
-            $failed = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) -AllowFailure
+            $failed = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"')) -AllowFailure
             $failed.exitCode | Should -Not -Be 0
             $failedCandidate = ((Get-Content -LiteralPath $fixture.candidateLog -Encoding UTF8 | Where-Object { $_ -like 'Release *' } | Select-Object -Last 1) -split ' ', 2)[1]
             $failedCandidate | Should -Match '^[0-9a-f]{40}$'
@@ -245,7 +245,7 @@ It "preserves the queue when origin develop moves during qualification" {
             Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) | Out-Null
             $failGate = Join-Path $fixture.root 'build\fail-gate.ps1'; New-Item -ItemType Directory -Force -Path (Split-Path $failGate) | Out-Null
             Set-Content -LiteralPath $failGate -Value 'param([string]$Mode, [string]$BaseRef, [string[]]$CoverageContract, [string]$AiRulesSource, [string]$E2EProjectRoot); exit 8'
-            (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $failGate + '"')) -AllowFailure).exitCode | Should -Not -Be 0
+            (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $failGate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"')) -AllowFailure).exitCode | Should -Not -Be 0
             $tree = (& git -C $fixture.root rev-parse "$($fixture.base)^{tree}").Trim()
             $drift = (& git -C $fixture.root commit-tree $tree -p $fixture.base -m "remote drift").Trim()
             $driftGate = Join-Path $fixture.root 'build\drift-gate.ps1'

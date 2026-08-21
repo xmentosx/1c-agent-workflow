@@ -29,12 +29,12 @@ function Get-DeliveryRemoteAssetState {
         try {
             try {
                 $download = Invoke-ItlImmutableFileDownload -Uri $Url -DestinationPath $downloadPath -ExpectedSha256 $ExpectedSha256 `
-                    -Label "Published Vanessa asset" -MaxAttempts $NetworkAttempts -TimeoutSeconds 300
+                    -Label "Published owned component asset" -MaxAttempts $NetworkAttempts -TimeoutSeconds 300
                 return [pscustomobject]@{ status = "matched"; sha256 = [string]$download.sha256 }
             } catch {
                 if ($_.Exception -is [System.IO.InvalidDataException]) { throw }
                 if ((Get-ItlHttpFailureStatusCode -ErrorRecord $_) -ne 404) {
-                    throw "Unable to verify the immutable Vanessa asset without mutation: $($_.Exception.Message)"
+                    throw "Unable to verify the immutable owned component asset without mutation: $($_.Exception.Message)"
                 }
                 if ($availabilityAttempt -ge $AvailabilityAttempts) {
                     return [pscustomobject]@{ status = "missing"; sha256 = "" }
@@ -88,6 +88,122 @@ function Get-DeliveryRemoteAnnotatedTagCommit {
     return $peeled
 }
 
+function ConvertTo-DeliveryRepositoryIdentity {
+    param([string]$Url)
+    $value = $Url.Replace('\', '/').TrimEnd('/')
+    if ($value.EndsWith('.git', [StringComparison]::OrdinalIgnoreCase)) { $value = $value.Substring(0, $value.Length - 4) }
+    $value = $value -replace '^git@github\.com:', 'https://github.com/'
+    $value = $value -replace '^ssh://git@github\.com/', 'https://github.com/'
+    return $value.ToLowerInvariant()
+}
+
+function Get-DeliveryAiRulesRemoteState {
+    param([string]$SourceRoot, [object]$Lock)
+    $tag = [string]$Lock.ref
+    $releaseBranch = "release/$tag"
+    $result = Invoke-WorktreeGit -Root $SourceRoot -Arguments @("ls-remote", "origin", "refs/heads/$releaseBranch", "refs/tags/$tag", "refs/tags/$tag^{}", "refs/heads/main") -AllowFailure
+    if ($result.exitCode -ne 0) { throw "Unable to inspect remote ai_rules_1c release '$tag'." }
+    $refs = @{}
+    foreach ($line in @($result.stdout -split "`r?`n" | Where-Object { $_ })) {
+        $parts = $line -split "\s+", 2
+        if ($parts.Count -eq 2) { $refs[$parts[1]] = $parts[0].ToLowerInvariant() }
+    }
+    $branchCommit = [string]$refs["refs/heads/$releaseBranch"]
+    $tagObject = [string]$refs["refs/tags/$tag"]
+    $tagCommit = [string]$refs["refs/tags/$tag^{}"]
+    $mainCommit = [string]$refs["refs/heads/main"]
+    $expected = ([string]$Lock.commit).ToLowerInvariant()
+    $presentCount = @($branchCommit, $tagObject, $tagCommit | Where-Object { $_ }).Count
+    $status = if ($presentCount -eq 0) {
+        "missing"
+    } elseif ($presentCount -eq 3 -and $branchCommit -ceq $expected -and $tagCommit -ceq $expected) {
+        "matched"
+    } elseif ($presentCount -lt 3) {
+        "partial"
+    } else {
+        "mismatch"
+    }
+    return [pscustomobject]@{
+        status = $status; releaseBranch = $releaseBranch; tag = $tag; branchCommit = $branchCommit
+        tagObject = $tagObject; tagCommit = $tagCommit; mainCommit = $mainCommit
+    }
+}
+
+function Get-DeliveryLocalAiRulesSource {
+    param([object]$Lock)
+    if ([string]::IsNullOrWhiteSpace($AiRulesSource) -or -not (Test-Path -LiteralPath $AiRulesSource -PathType Container)) {
+        throw "Owned ai_rules_1c publication requires explicit -AiRulesSource pointing to the clean locked release checkout."
+    }
+    $sourceRoot = [IO.Path]::GetFullPath($AiRulesSource)
+    $origin = (Invoke-WorktreeGit -Root $sourceRoot -Arguments @("remote", "get-url", "origin")).stdout.Trim()
+    if ((ConvertTo-DeliveryRepositoryIdentity -Url $origin) -cne (ConvertTo-DeliveryRepositoryIdentity -Url ([string]$Lock.repo))) {
+        throw "ai_rules_1c source origin does not match the canonical lock repository."
+    }
+    $status = (Invoke-WorktreeGit -Root $sourceRoot -Arguments @("status", "--porcelain", "--untracked-files=all")).stdout
+    if ($status) { throw "ai_rules_1c publication source must be clean: $sourceRoot" }
+    $head = (Invoke-WorktreeGit -Root $sourceRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim().ToLowerInvariant()
+    $expected = ([string]$Lock.commit).ToLowerInvariant()
+    if ($head -cne $expected) { throw "ai_rules_1c publication source is not the locked commit. expected='$expected'; actual='$head'." }
+    $tag = [string]$Lock.ref
+    $tagType = (Invoke-WorktreeGit -Root $sourceRoot -Arguments @("cat-file", "-t", "refs/tags/$tag") -AllowFailure).stdout.Trim()
+    $tagCommit = (Invoke-WorktreeGit -Root $sourceRoot -Arguments @("rev-parse", "refs/tags/$tag^{}") -AllowFailure).stdout.Trim().ToLowerInvariant()
+    if ($tagType -cne "tag" -or $tagCommit -cne $expected) { throw "Local ai_rules_1c tag '$tag' is not an annotated tag for '$expected'." }
+    $releaseBranch = "release/$tag"
+    $branchCommit = (Invoke-WorktreeGit -Root $sourceRoot -Arguments @("rev-parse", "refs/heads/$releaseBranch") -AllowFailure).stdout.Trim().ToLowerInvariant()
+    if ($branchCommit -cne $expected) { throw "Local ai_rules_1c release branch '$releaseBranch' does not match '$expected'." }
+    $tree = (Invoke-WorktreeGit -Root $sourceRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim().ToLowerInvariant()
+    $qualificationPath = Join-Path $sourceRoot "build\test-results\qualification\full.json"
+    if (-not (Test-Path -LiteralPath $qualificationPath -PathType Leaf)) { throw "Exact ai_rules_1c Full qualification is missing: $qualificationPath" }
+    $qualification = Get-Content -LiteralPath $qualificationPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([string]$qualification.kind -cne "itl-ai-rules-full-qualification" -or [string]$qualification.status -cne "passed" -or
+        -not [bool]$qualification.reusable -or [string]$qualification.repository.commit -cne $expected -or
+        [string]$qualification.repository.tree -cne $tree -or -not [bool]$qualification.repository.worktreeClean) {
+        throw "ai_rules_1c Full qualification does not match the exact locked commit and tree."
+    }
+    return [pscustomobject]@{ root = $sourceRoot; commit = $expected; tree = $tree; tag = $tag; releaseBranch = $releaseBranch; qualificationPath = $qualificationPath }
+}
+
+function Invoke-AiRulesComponentPublicationFinalize {
+    param([string]$CandidateRoot, [string]$CandidateCommit)
+    $lock = (Get-Content -LiteralPath (Join-Path $CandidateRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.aiRules1c
+    foreach ($field in @("repo", "ref", "commit", "upstreamCommit", "downstreamRevision")) {
+        if ($null -eq $lock.PSObject.Properties[$field] -or [string]::IsNullOrWhiteSpace([string]$lock.$field)) { throw "ai_rules_1c lock is missing '$field'." }
+    }
+    $local = Get-DeliveryLocalAiRulesSource -Lock $lock
+    $remote = Get-DeliveryAiRulesRemoteState -SourceRoot $local.root -Lock $lock
+    if ($remote.status -in @("partial", "mismatch")) {
+        throw "Remote ai_rules_1c release '$($lock.ref)' is $($remote.status); immutable refs will not be repaired or repointed."
+    }
+    $mutated = $false
+    if ($remote.status -eq "missing") {
+        if ($remote.mainCommit) {
+            $ancestor = Invoke-WorktreeGit -Root $local.root -Arguments @("merge-base", "--is-ancestor", $remote.mainCommit, [string]$lock.upstreamCommit) -AllowFailure
+            if ($ancestor.exitCode -ne 0) { throw "Remote ai_rules_1c main cannot fast-forward to locked upstream '$($lock.upstreamCommit)'." }
+        }
+        $pushRefs = @(
+            ([string]$lock.upstreamCommit + ":refs/heads/main"),
+            ("refs/heads/$($local.releaseBranch):refs/heads/$($local.releaseBranch)"),
+            ("refs/tags/$($local.tag):refs/tags/$($local.tag)")
+        )
+        $push = Invoke-WorktreeGit -Root $local.root -Arguments (@("push", "--atomic", "origin") + $pushRefs) -AllowFailure
+        if ($push.exitCode -ne 0) {
+            $raced = Get-DeliveryAiRulesRemoteState -SourceRoot $local.root -Lock $lock
+            if ($raced.status -cne "matched") { throw "Unable to publish the immutable ai_rules_1c release '$($lock.ref)' atomically." }
+        }
+        $mutated = $true
+        $remote = Get-DeliveryAiRulesRemoteState -SourceRoot $local.root -Lock $lock
+    }
+    if ($remote.status -cne "matched") { throw "Published ai_rules_1c refs do not match '$($lock.ref)@$($lock.commit)'." }
+    $evidence = [ordered]@{
+        schemaVersion = 1; status = "passed"; component = "aiRules1c"; candidateCommit = $CandidateCommit
+        releaseTag = [string]$lock.ref; releaseBranch = [string]$remote.releaseBranch; commit = ([string]$lock.commit).ToLowerInvariant()
+        upstreamCommit = ([string]$lock.upstreamCommit).ToLowerInvariant(); remoteMutated = $mutated
+        qualificationPath = [string]$local.qualificationPath; verifiedAt = [DateTime]::UtcNow.ToString("o")
+    }
+    Save-DeliveryComponentPublicationEvidence -CandidateCommit $CandidateCommit -FileName "ai-rules-1c.json" -Evidence $evidence
+    return [pscustomobject]$evidence
+}
+
 function Invoke-DeliveryGitHubCli {
     param([string[]]$Arguments, [switch]$AllowFailure)
     $gh = Get-Command gh -ErrorAction SilentlyContinue
@@ -99,10 +215,10 @@ function Invoke-DeliveryGitHubCli {
 }
 
 function Save-DeliveryComponentPublicationEvidence {
-    param([string]$CandidateCommit, [object]$Evidence)
+    param([string]$CandidateCommit, [string]$FileName, [object]$Evidence)
     $root = Join-Path (Get-DeliveryCommonGitDirectory) "itl\component-publications\$CandidateCommit"
     New-Item -ItemType Directory -Force -Path $root | Out-Null
-    [IO.File]::WriteAllText((Join-Path $root "vanessa-automation.json"), (($Evidence | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $root $FileName), (($Evidence | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
 }
 
 function Invoke-VanessaComponentPublicationFinalize {
@@ -181,13 +297,128 @@ function Invoke-VanessaComponentPublicationFinalize {
         releaseTag = [string]$lock.releaseTag; url = [string]$lock.url; assetName = [string]$lock.assetName; sha256 = $expectedSha
         githubRepository = $repository.slug; githubMutated = $mutated; verifiedAt = [DateTime]::UtcNow.ToString("o")
     }
-    Save-DeliveryComponentPublicationEvidence -CandidateCommit $CandidateCommit -Evidence $evidence
+    Save-DeliveryComponentPublicationEvidence -CandidateCommit $CandidateCommit -FileName "vanessa-automation.json" -Evidence $evidence
     return [pscustomobject]$evidence
+}
+
+function Get-DeliveryExactOnDemandMcpCandidate {
+    param([string]$CandidateRoot, [object]$Lock)
+    $expected = ([string]$Lock.sha256).ToLowerInvariant()
+    $override = [Environment]::GetEnvironmentVariable("ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE", "Process")
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($override)) { $candidates += [IO.Path]::GetFullPath($override) }
+    $candidates += Join-Path $CandidateRoot ("tools\itl-ondemand-mcp\build\" + [string]$Lock.assetName)
+    foreach ($path in @($candidates | Select-Object -Unique)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+        $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -cne $expected) { throw "On-demand MCP source-build SHA256 mismatch. expected='$expected'; actual='$actual'; path='$path'." }
+        return $path
+    }
+    throw "The immutable on-demand MCP URL is absent and no exact Release-qualified source build is available."
+}
+
+function Invoke-OnDemandMcpComponentPublicationFinalize {
+    param([string]$CandidateRoot, [string]$CandidateCommit)
+    $lock = (Get-Content -LiteralPath (Join-Path $CandidateRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.itlOndemandMcp
+    foreach ($field in @("releaseTag", "url", "assetName", "sha256", "version")) {
+        if ($null -eq $lock.PSObject.Properties[$field] -or [string]::IsNullOrWhiteSpace([string]$lock.$field)) { throw "On-demand MCP component lock is missing '$field'." }
+    }
+    $expectedSha = ([string]$lock.sha256).ToLowerInvariant()
+    if ($expectedSha -notmatch '^[a-f0-9]{64}$') { throw "On-demand MCP component lock has an invalid SHA256: $expectedSha" }
+    $repository = Get-DeliveryGitHubRepository -CandidateRoot $CandidateRoot
+    $uri = [Uri]([string]$lock.url)
+    $urlMatch = [regex]::Match($uri.AbsolutePath, '^/(?<owner>[^/]+)/(?<repo>[^/]+)/releases/download/(?<tag>[^/]+)/(?<asset>[^/]+)$')
+    if ($uri.Scheme -ne "https" -or $uri.Host -ne "github.com" -or -not $urlMatch.Success) { throw "On-demand MCP immutable URL is not an exact GitHub release asset URL: $($lock.url)" }
+    $urlOwner = [Uri]::UnescapeDataString($urlMatch.Groups["owner"].Value)
+    $urlRepo = [Uri]::UnescapeDataString($urlMatch.Groups["repo"].Value)
+    $urlTag = [Uri]::UnescapeDataString($urlMatch.Groups["tag"].Value)
+    $urlAsset = [Uri]::UnescapeDataString($urlMatch.Groups["asset"].Value)
+    if ($urlOwner -cne $repository.owner -or $urlRepo -cne $repository.repo -or $urlTag -cne [string]$lock.releaseTag -or $urlAsset -cne [string]$lock.assetName) {
+        throw "On-demand MCP immutable URL owner/repo/tag/asset does not match origin, releaseTag, and assetName."
+    }
+
+    $remote = Get-DeliveryRemoteAssetState -Url ([string]$lock.url) -ExpectedSha256 $expectedSha
+    $mutated = $false
+    if ($remote.status -eq "missing") {
+        if (-not $RequireRelease) { throw "The locked on-demand MCP asset is not published. Exact candidate Release qualification is mandatory." }
+        $candidatePath = Get-DeliveryExactOnDemandMcpCandidate -CandidateRoot $CandidateRoot -Lock $lock
+        $remoteTagCommit = Get-DeliveryRemoteAnnotatedTagCommit -CandidateRoot $CandidateRoot -Tag ([string]$lock.releaseTag)
+        if ($remoteTagCommit) {
+            if ($remoteTagCommit -cne $CandidateCommit) { throw "Remote component tag '$($lock.releaseTag)' points to '$remoteTagCommit', not exact candidate '$CandidateCommit'. Refusing to repoint it." }
+        } else {
+            $localTag = "refs/tags/$($lock.releaseTag)"
+            $localTagType = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("cat-file", "-t", $localTag) -AllowFailure).stdout.Trim()
+            if ($localTagType) {
+                $localTagCommit = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("rev-parse", "$localTag^{}") -AllowFailure).stdout.Trim()
+                if ($localTagType -cne "tag" -or $localTagCommit -cne $CandidateCommit) { throw "Local component tag '$($lock.releaseTag)' is not an annotated tag for exact candidate '$CandidateCommit'." }
+            } else {
+                [void](Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("tag", "-a", [string]$lock.releaseTag, $CandidateCommit, "-m", "ITL on-demand MCP $($lock.version)"))
+            }
+            $tagPush = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("push", $script:Remote, $localTag) -AllowFailure
+            if ($tagPush.exitCode -ne 0) {
+                $racedTagCommit = Get-DeliveryRemoteAnnotatedTagCommit -CandidateRoot $CandidateRoot -Tag ([string]$lock.releaseTag)
+                if ($racedTagCommit -cne $CandidateCommit) { throw "Unable to publish the immutable component tag '$($lock.releaseTag)' safely." }
+            }
+            $mutated = $true
+        }
+
+        $releaseView = Invoke-DeliveryGitHubCli -Arguments @("release", "view", [string]$lock.releaseTag, "--repo", $repository.slug, "--json", "assets") -AllowFailure
+        if ($releaseView.exitCode -ne 0) {
+            if ($releaseView.text -notmatch '(?i)(release not found|HTTP 404|not found)') { throw "Unable to inspect GitHub Release '$($lock.releaseTag)': $($releaseView.text)" }
+            [void](Invoke-DeliveryGitHubCli -Arguments @("release", "create", [string]$lock.releaseTag, "--repo", $repository.slug, "--verify-tag", "--title", [string]$lock.releaseTag, "--notes", "Immutable ITL on-demand MCP $($lock.version)."))
+            $mutated = $true
+            $releaseView = Invoke-DeliveryGitHubCli -Arguments @("release", "view", [string]$lock.releaseTag, "--repo", $repository.slug, "--json", "assets")
+        }
+        $release = $releaseView.text | ConvertFrom-Json
+        if (@($release.assets | Where-Object { [string]$_.name -ceq [string]$lock.assetName }).Count -eq 0) {
+            [void](Invoke-DeliveryGitHubCli -Arguments @("release", "upload", [string]$lock.releaseTag, $candidatePath, "--repo", $repository.slug))
+            $mutated = $true
+        }
+        $remote = Get-DeliveryRemoteAssetState -Url ([string]$lock.url) -ExpectedSha256 $expectedSha -AvailabilityAttempts 12
+        if ($remote.status -ne "matched") { throw "The on-demand MCP component was finalized, but its immutable URL is still unavailable." }
+    }
+
+    $evidence = [ordered]@{
+        schemaVersion = 1; status = "passed"; component = "itlOndemandMcp"; candidateCommit = $CandidateCommit
+        releaseTag = [string]$lock.releaseTag; url = [string]$lock.url; assetName = [string]$lock.assetName; sha256 = $expectedSha
+        githubRepository = $repository.slug; githubMutated = $mutated; verifiedAt = [DateTime]::UtcNow.ToString("o")
+    }
+    Save-DeliveryComponentPublicationEvidence -CandidateCommit $CandidateCommit -FileName "itl-ondemand-mcp.json" -Evidence $evidence
+    return [pscustomobject]$evidence
+}
+
+function Get-OwnedComponentPublicationPlan {
+    param([string]$CandidateRoot, [string]$CandidateCommit)
+    if ($script:ComponentFinalizerScript) {
+        return [pscustomobject]@{ status = "planned"; requiresRelease = [bool]$RequireRelease; components = @("test-seam") }
+    }
+    $lock = (Get-Content -LiteralPath (Join-Path $CandidateRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies
+    $vanessa = Get-DeliveryRemoteAssetState -Url ([string]$lock.vanessaAutomation.url) -ExpectedSha256 ([string]$lock.vanessaAutomation.sha256)
+    $onDemand = Get-DeliveryRemoteAssetState -Url ([string]$lock.itlOndemandMcp.url) -ExpectedSha256 ([string]$lock.itlOndemandMcp.sha256)
+    $rulesSource = Get-DeliveryLocalAiRulesSource -Lock $lock.aiRules1c
+    $rules = Get-DeliveryAiRulesRemoteState -SourceRoot $rulesSource.root -Lock $lock.aiRules1c
+    if ($rules.status -in @("partial", "mismatch")) { throw "Remote ai_rules_1c release '$($lock.aiRules1c.ref)' is $($rules.status)." }
+    return [pscustomobject]@{
+        status = "planned"; candidateCommit = $CandidateCommit
+        requiresRelease = [bool]($vanessa.status -eq "missing" -or $onDemand.status -eq "missing")
+        components = @(
+            [pscustomobject]@{ name = "aiRules1c"; status = $rules.status; releaseRequired = $false },
+            [pscustomobject]@{ name = "vanessaAutomation"; status = $vanessa.status; releaseRequired = [bool]($vanessa.status -eq "missing") },
+            [pscustomobject]@{ name = "itlOndemandMcp"; status = $onDemand.status; releaseRequired = [bool]($onDemand.status -eq "missing") }
+        )
+    }
 }
 
 function Invoke-ComponentPublicationFinalizer {
     param([string]$CandidateRoot, [string]$CandidateCommit)
-    if (-not $script:ComponentFinalizerScript) { return Invoke-VanessaComponentPublicationFinalize -CandidateRoot $CandidateRoot -CandidateCommit $CandidateCommit }
+    if (-not $script:ComponentFinalizerScript) {
+        $components = @(
+            Invoke-AiRulesComponentPublicationFinalize -CandidateRoot $CandidateRoot -CandidateCommit $CandidateCommit
+            Invoke-VanessaComponentPublicationFinalize -CandidateRoot $CandidateRoot -CandidateCommit $CandidateCommit
+            Invoke-OnDemandMcpComponentPublicationFinalize -CandidateRoot $CandidateRoot -CandidateCommit $CandidateCommit
+        )
+        return [pscustomobject]@{ status = "passed"; candidateCommit = $CandidateCommit; components = $components }
+    }
     if (-not (Test-Path -LiteralPath $script:ComponentFinalizerScript -PathType Leaf)) { throw "Component finalizer seam was not found: $($script:ComponentFinalizerScript)" }
     $arguments = @(
         "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $script:ComponentFinalizerScript,

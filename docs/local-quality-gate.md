@@ -64,7 +64,7 @@ Develop proof закрывают reuse. Это продолжение по finge
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r30-command-wrappers `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
@@ -107,6 +107,15 @@ release-qualified -> component-finalized -> remote-pushed`. Retry начинае
 одинаковых сбоя блокируют третий; повтор после диагностики требует
 `-RetryBlockedStage`. Scope `deliveryPostGate` сохраняет broad proof.
 
+Перед gate команда строит exact-candidate plan для всех owned release surfaces:
+controlled `ai_rules_1c`, patched Vanessa Automation и `itl-ondemand-mcp`.
+Совпавшие remote identities проверяются без мутации; отсутствующий rules branch/tag
+публикуется после Develop из явного clean `-AiRulesSource`, а отсутствующий Vanessa
+или on-demand asset автоматически повышает тот же запуск до Release. Partial или
+несовпадающие immutable refs/assets закрыто блокируют публикацию. Внешние npm,
+PyPI, ROCTUP, `client_mcp` и `VAExtension` остаются только lock-проверяемыми
+upstream-зависимостями; `PublishDevelop` их никогда не публикует.
+
 Develop состоит из двух независимо квалифицируемых journey через публичные
 поверхности workflow:
 
@@ -146,7 +155,7 @@ from the immutable locked URL. Every source is accepted only after the lock
 SHA-256 matches; an invalid explicit environment path fails closed.
 
 ```powershell
-.\scripts\check.ps1 -Mode Full -AiRulesSource D:\Git\itl_ai_rules_1c-r30-command-wrappers
+.\scripts\check.ps1 -Mode Full -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic
 ```
 
 После успешного Full `scripts/promote-ai-rules-compatibility.ps1` сверяет exact
@@ -157,7 +166,7 @@ Release требуют `compatibilityStatus=passed`.
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action ReleaseMaster `
-  -AiRulesSource D:\Git\itl_ai_rules_1c-r30-command-wrappers `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
