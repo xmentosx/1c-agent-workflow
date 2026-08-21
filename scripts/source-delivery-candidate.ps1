@@ -83,6 +83,43 @@ function Get-DeliveryFileIdentity {
     return "$resolved|$((Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash.ToLowerInvariant())"
 }
 
+function Get-DevelopPublicationEnvironmentIdentity {
+    if (-not $E2EProjectRoot) { return "none" }
+    $projectRoot = [IO.Path]::GetFullPath($E2EProjectRoot)
+    if (-not (Test-Path -LiteralPath $projectRoot -PathType Container)) { return "$projectRoot|missing" }
+    $standConfigPath = Join-Path $projectRoot ".agent-1c\release-e2e.json"
+    $developRoot = ""
+    if (Test-Path -LiteralPath $standConfigPath -PathType Leaf) {
+        try {
+            $standConfig = Get-Content -LiteralPath $standConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string]$standConfig.developWorktreePath) { $developRoot = [IO.Path]::GetFullPath([string]$standConfig.developWorktreePath) }
+        } catch { $developRoot = "invalid" }
+    }
+    $repositories = @()
+    foreach ($entry in @(
+        [pscustomobject]@{ role = "master"; root = $projectRoot },
+        [pscustomobject]@{ role = "develop"; root = $developRoot }
+    )) {
+        $head = "unavailable"; $trackedStatus = "unavailable"
+        if ([string]$entry.root -and [string]$entry.root -ne "invalid" -and (Test-Path -LiteralPath ([string]$entry.root) -PathType Container)) {
+            $headResult = Invoke-RepositoryGit -RepositoryRoot ([string]$entry.root) -Arguments @("rev-parse", "HEAD") -AllowFailure
+            $statusResult = Invoke-RepositoryGit -RepositoryRoot ([string]$entry.root) -Arguments @("status", "--porcelain", "--untracked-files=no") -AllowFailure
+            if ($headResult.exitCode -eq 0) { $head = $headResult.stdout.Trim() }
+            if ($statusResult.exitCode -eq 0) { $trackedStatus = Get-DeliveryTextSha256 -Text $statusResult.stdout }
+        }
+        $repositories += [ordered]@{ role = [string]$entry.role; root = ([string]$entry.root).ToLowerInvariant(); head = $head; trackedStatusSha256 = $trackedStatus }
+    }
+    $identity = [ordered]@{
+        schemaVersion = 1
+        projectRoot = $projectRoot.ToLowerInvariant()
+        projectConfig = Get-DeliveryFileIdentity -Path (Join-Path $projectRoot ".agent-1c\project.json")
+        standConfig = Get-DeliveryFileIdentity -Path $standConfigPath
+        devEnv = Get-DeliveryFileIdentity -Path (Join-Path $projectRoot ".dev.env")
+        repositories = $repositories
+    }
+    return Get-DeliveryTextSha256 -Text ($identity | ConvertTo-Json -Depth 8 -Compress)
+}
+
 function Get-DeliveryComponentFinalizerIdentity {
     $path = if ($script:ComponentFinalizerScript) { $script:ComponentFinalizerScript } else { Join-Path $script:Root "scripts\source-delivery-component.ps1" }
     return Get-DeliveryFileIdentity -Path $path
@@ -281,6 +318,7 @@ function Publish-AccumulatedDevelop {
         } else {
             $attempt | Add-Member -NotePropertyName componentPlan -NotePropertyValue $componentPlan
         }
+        $developEnvironmentIdentity = Get-DevelopPublicationEnvironmentIdentity
         $exactDevelopQualificationRestored = Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree
         if (-not $exactDevelopQualificationRestored) {
             $priorQualificationRestored = Restore-PriorDevelopPublicationQualification -CandidateRoot $worktree.path -PriorAttempt $priorAttempt -Candidate $candidate -Tree $candidateTree
@@ -292,12 +330,19 @@ function Publish-AccumulatedDevelop {
         if ((Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -ge 1 -and -not $exactDevelopQualificationRestored) {
             Set-DevelopPublicationPhase -Attempt $attempt -Phase "candidate-built"
         }
+        $recordedDevelopEnvironmentIdentity = if ($attempt.PSObject.Properties.Name -contains "developEnvironmentIdentity") { [string]$attempt.developEnvironmentIdentity } else { "" }
+        if ((Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -ge 1 -and $recordedDevelopEnvironmentIdentity -ne $developEnvironmentIdentity) {
+            Clear-DevelopPublicationStageFailure -Attempt $attempt -Stage "Release"
+            Set-DevelopPublicationPhase -Attempt $attempt -Phase "candidate-built"
+        }
         if ((Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 1) {
             Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage "Develop"
             Assert-DevelopPublicationOperationBudget -StartedAt $operationStartedAt -NextStage "Develop"
             try {
                 Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteBefore
                 [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
+                $attempt | Add-Member -NotePropertyName developEnvironmentIdentity -NotePropertyValue (Get-DevelopPublicationEnvironmentIdentity) -Force
+                Write-DevelopPublicationAttempt -Attempt $attempt
                 Clear-DevelopPublicationStageFailure -Attempt $attempt -Stage "Develop"
                 Set-DevelopPublicationPhase -Attempt $attempt -Phase "develop-qualified"
             } catch {
