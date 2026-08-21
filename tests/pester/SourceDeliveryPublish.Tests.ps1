@@ -146,6 +146,12 @@ It "rebuilds the same merge candidate after a failed release" {
             $standRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl delivery stand " + [guid]::NewGuid().ToString("N"))
             New-Item -ItemType Directory -Force -Path $standRoot | Out-Null
             Set-Content -LiteralPath (Join-Path $standRoot ".dev.env") -Encoding UTF8 -Value "IDENTITY=before"
+            & git -C $standRoot init | Out-Null
+            & git -C $standRoot config user.email "itl-tests@example.invalid"
+            & git -C $standRoot config user.name "ITL Tests"
+            & git -C $standRoot add -- .dev.env
+            & git -C $standRoot commit -m "test: create clean publication stand" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Unable to create clean publication stand fixture." }
             $base = $fixture.base
             New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
 
@@ -171,6 +177,9 @@ It "rebuilds the same merge candidate after a failed release" {
 
             $env:ITL_TEST_FAIL_DELIVERY_RELEASE = "false"
             Set-Content -LiteralPath (Join-Path $standRoot ".dev.env") -Encoding UTF8 -Value "IDENTITY=after"
+            & git -C $standRoot add -- .dev.env
+            & git -C $standRoot commit -m "test: change publication stand identity" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Unable to change publication stand fixture identity." }
             $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'), "-E2EProjectRoot", ('"' + $standRoot + '"'))
             $payload = $published.stdout | ConvertFrom-Json
             $payload.commit | Should -Be $failedCandidate

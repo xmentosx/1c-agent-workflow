@@ -105,7 +105,10 @@ function Get-DevelopPublicationEnvironmentIdentity {
             $headResult = Invoke-RepositoryGit -RepositoryRoot ([string]$entry.root) -Arguments @("rev-parse", "HEAD") -AllowFailure
             $statusResult = Invoke-RepositoryGit -RepositoryRoot ([string]$entry.root) -Arguments @("status", "--porcelain", "--untracked-files=no") -AllowFailure
             if ($headResult.exitCode -eq 0) { $head = $headResult.stdout.Trim() }
-            if ($statusResult.exitCode -eq 0) { $trackedStatus = Get-DeliveryTextSha256 -Text $statusResult.stdout }
+            if ($statusResult.exitCode -eq 0) {
+                $trackedStatusText = [string]$statusResult.stdout
+                $trackedStatus = if ($trackedStatusText.Length -eq 0) { "clean" } else { Get-DeliveryTextSha256 -Text $trackedStatusText }
+            }
         }
         $repositories += [ordered]@{ role = [string]$entry.role; root = ([string]$entry.root).ToLowerInvariant(); head = $head; trackedStatusSha256 = $trackedStatus }
     }
