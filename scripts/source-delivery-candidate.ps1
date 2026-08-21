@@ -273,6 +273,27 @@ function Restore-PriorDevelopPublicationQualification {
     } catch { return $false }
 }
 
+function Test-ExactPassedDeliveryRun {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet("Develop", "Release")][string]$Mode,
+        [Parameter(Mandatory = $true)][string]$Candidate,
+        [Parameter(Mandatory = $true)][string]$Tree,
+        [Parameter(Mandatory = $true)][DateTime]$NotBefore
+    )
+    $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"
+    if (-not (Test-Path -LiteralPath $runRoot -PathType Container)) { return $false }
+    foreach ($file in @(Get-ChildItem -LiteralPath $runRoot -File -Filter "*.json" | Sort-Object Name -Descending)) {
+        try {
+            $run = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string]$run.mode -cne $Mode -or [string]$run.status -cne "passed" -or [int]$run.exitCode -ne 0) { continue }
+            if ([string]$run.commit -cne $Candidate -or [string]$run.tree -cne $Tree) { continue }
+            if ((ConvertTo-DeliveryUtcDateTime -Value $run.startedAt) -lt $NotBefore.ToUniversalTime()) { continue }
+            return $true
+        } catch { continue }
+    }
+    return $false
+}
+
 function Complete-InterruptedDevelopPublication {
     param([Parameter(Mandatory = $true)][string]$RemoteBefore, [Parameter(Mandatory = $true)][object[]]$Entries)
     $attempt = Read-DevelopPublicationAttempt
@@ -333,8 +354,14 @@ function Publish-AccumulatedDevelop {
         if ((Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -ge 1 -and -not $exactDevelopQualificationRestored) {
             Set-DevelopPublicationPhase -Attempt $attempt -Phase "candidate-built"
         }
+        if ($RequireRelease -and (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 2 -and
+            $exactDevelopQualificationRestored -and
+            (Test-ExactPassedDeliveryRun -Mode "Release" -Candidate $candidate -Tree $candidateTree -NotBefore (ConvertTo-DeliveryUtcDateTime -Value $attempt.startedAt))) {
+            Clear-DevelopPublicationStageFailure -Attempt $attempt -Stage "Release"
+            Set-DevelopPublicationPhase -Attempt $attempt -Phase "release-qualified"
+        }
         $recordedDevelopEnvironmentIdentity = if ($attempt.PSObject.Properties.Name -contains "developEnvironmentIdentity") { [string]$attempt.developEnvironmentIdentity } else { "" }
-        if ((Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -ge 1 -and $recordedDevelopEnvironmentIdentity -ne $developEnvironmentIdentity) {
+        if ((Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -eq 1 -and $recordedDevelopEnvironmentIdentity -ne $developEnvironmentIdentity) {
             Clear-DevelopPublicationStageFailure -Attempt $attempt -Stage "Release"
             Set-DevelopPublicationPhase -Attempt $attempt -Phase "candidate-built"
         }

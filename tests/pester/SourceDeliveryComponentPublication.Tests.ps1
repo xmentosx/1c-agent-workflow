@@ -49,10 +49,38 @@ Describe "Source develop queue and delivery" {
         }
     }
 
-It "preserves the queue and develop branch when component finalization fails" {
-        $fixture = $null; $oldFailure = $env:ITL_TEST_FAIL_COMPONENT_FINALIZER
+    It "returns an expected GitHub CLI probe failure under Windows PowerShell error-stop semantics" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Invoke-DeliveryGitHubCli')) { Invoke-Expression $definition.Extent.Text }
+            $oldPath = $env:PATH
+            try {
+                $fakeBin = Join-Path $TestDrive "fake gh путь"
+                New-Item -ItemType Directory -Force -Path $fakeBin | Out-Null
+                $fakeGh = Join-Path $fakeBin "gh.cmd"
+                [IO.File]::WriteAllText($fakeGh, "@echo off`r`n1>&2 echo release not found`r`nexit /b 1`r`n", [Text.Encoding]::ASCII)
+                $env:PATH = $fakeBin + [IO.Path]::PathSeparator + $oldPath
+                $ErrorActionPreference = "Stop"
+
+                $result = Invoke-DeliveryGitHubCli -Arguments @("release", "view", "missing") -AllowFailure
+
+                $result.exitCode | Should -Be 1
+                $result.text | Should -Match "release not found"
+            } finally { $env:PATH = $oldPath }
+        }
+    }
+
+It "preserves passed gates and recovers their phase when component finalization fails" {
+        $fixture = $null; $standRoot = $null; $oldFailure = $env:ITL_TEST_FAIL_COMPONENT_FINALIZER
         try {
             $fixture = New-DeliveryFixture
+            $standRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl post release stand " + [guid]::NewGuid().ToString("N"))
+            New-Item -ItemType Directory -Force -Path $standRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $standRoot ".dev.env") -Encoding UTF8 -Value "IDENTITY=before"
+            & git -C $standRoot init --quiet
+            & git -C $standRoot config user.email "itl-tests@example.invalid"
+            & git -C $standRoot config user.name "ITL Tests"
+            & git -C $standRoot add -- .dev.env
+            & git -C $standRoot commit --quiet -m "test: create publication stand"
             New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
             Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\ComponentFinalize.Tests.ps1") -Encoding UTF8 -Value "Describe 'component finalize' { It 'works' { `$true | Should -BeTrue } }"
             & git -C $fixture.root add --all
@@ -61,24 +89,36 @@ It "preserves the queue and develop branch when component finalization fails" {
             Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "component-finalize") | Out-Null
 
             $env:ITL_TEST_FAIL_COMPONENT_FINALIZER = "true"
-            $failed = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"')) -AllowFailure
+            $publishArguments = @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'), "-E2EProjectRoot", ('"' + $standRoot + '"'))
+            $failed = Invoke-DeliveryTestPowerShell -Arguments $publishArguments -AllowFailure
 
             $failed.exitCode | Should -Not -Be 0
             $failed.stderr | Should -Match "Component publication finalizer failed"
-            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Targeted", "Develop")
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Targeted", "Develop", "Release")
             (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $fixture.base
             (& git -C $fixture.root rev-parse refs/itl/develop-queue/component-finalize/head).Trim() | Should -Be $candidate
             $finalizerRecord = Get-Content -LiteralPath $fixture.finalizerLog -Encoding UTF8 | Select-Object -Last 1 | ConvertFrom-Json
             $finalizerRecord.remoteHead | Should -Be $fixture.base
 
+            Set-Content -LiteralPath (Join-Path $standRoot ".dev.env") -Encoding UTF8 -Value "IDENTITY=after"
+            & git -C $standRoot add -- .dev.env
+            & git -C $standRoot commit --quiet -m "test: mutate post release stand"
+            (Invoke-DeliveryTestPowerShell -Arguments $publishArguments -AllowFailure).exitCode | Should -Not -Be 0
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Targeted", "Develop", "Release")
+
+            $attemptPath = Join-Path $fixture.root ".git\itl\publication-attempts\develop.json"
+            $attempt = Get-Content -LiteralPath $attemptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $attempt.phase = "candidate-built"
+            [IO.File]::WriteAllText($attemptPath, (($attempt | ConvertTo-Json -Depth 12) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
             $env:ITL_TEST_FAIL_COMPONENT_FINALIZER = "false"
-            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'))
+            $published = Invoke-DeliveryTestPowerShell -Arguments ($publishArguments + @("-RetryBlockedStage"))
             ($published.stdout | ConvertFrom-Json).status | Should -Be "published"
-            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Targeted", "Develop")
-            @((Get-Content -LiteralPath $fixture.finalizerLog -Encoding UTF8)).Count | Should -Be 2
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Targeted", "Develop", "Release")
+            @((Get-Content -LiteralPath $fixture.finalizerLog -Encoding UTF8)).Count | Should -Be 3
             (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $candidate
         } finally {
             $env:ITL_TEST_FAIL_COMPONENT_FINALIZER = $oldFailure
+            if ($standRoot) { Remove-Item -LiteralPath $standRoot -Recurse -Force -ErrorAction SilentlyContinue }
             Remove-DeliveryFixture -Fixture $fixture
         }
     }

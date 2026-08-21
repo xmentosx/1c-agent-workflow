@@ -208,8 +208,18 @@ function Invoke-DeliveryGitHubCli {
     param([string[]]$Arguments, [switch]$AllowFailure)
     $gh = Get-Command gh -ErrorAction SilentlyContinue
     if (-not $gh) { throw "GitHub CLI is required to finalize an unpublished Vanessa component." }
-    $output = @(& $gh.Source @Arguments 2>&1 | ForEach-Object { [string]$_ })
-    $exitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell converts native stderr redirected through the success
+        # stream into ErrorRecord objects. Keep the native exit code authoritative
+        # so expected probes such as `gh release view` for a missing release can be
+        # classified by the caller when -AllowFailure is used.
+        $ErrorActionPreference = "Continue"
+        $output = @(& $gh.Source @Arguments 2>&1 | ForEach-Object { [string]$_ })
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if (-not $AllowFailure -and $exitCode -ne 0) { throw "gh $($Arguments -join ' ') failed: $($output -join '; ')" }
     return [pscustomobject]@{ exitCode = [int]$exitCode; output = $output; text = ($output -join "`n") }
 }
