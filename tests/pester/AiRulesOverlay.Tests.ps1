@@ -213,9 +213,11 @@ Describe "controlled ai_rules_1c release overlay" {
     }
 
     It "blocks a workflow lock whose exact fork bytes do not match the overlay result ledger" {
-        $rulesRoot = Join-Path $TestDrive "rules repo with Кириллица"
+        $cyrillicSuffix = -join @([char]0x041a, [char]0x0438, [char]0x0440, [char]0x0438, [char]0x043b, [char]0x043b, [char]0x0438, [char]0x0446, [char]0x0430)
+        $cyrillicFile = -join @([char]0x041f, [char]0x0440, [char]0x0430, [char]0x0432, [char]0x0438, [char]0x043b, [char]0x0430, ' ', [char]0x0441, ' ', [char]0x043f, [char]0x0440, [char]0x043e, [char]0x0431, [char]0x0435, [char]0x043b, [char]0x043e, [char]0x043c)
+        $rulesRoot = Join-Path $TestDrive ("rules repo with " + $cyrillicSuffix)
         $overlayPath = Join-Path $TestDrive "sections.json"
-        $trackedRelative = "content/Правила с пробелом.md"
+        $trackedRelative = "content/$cyrillicFile.md"
         $trackedPath = Join-Path $rulesRoot $trackedRelative.Replace('/', '\')
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $trackedPath) | Out-Null
         [IO.File]::WriteAllText((Join-Path $rulesRoot '.gitattributes'), "* -text`n", [Text.UTF8Encoding]::new($false))
