@@ -1644,6 +1644,93 @@
         $result.legacy.effectiveStatus | Should -Be "stale"
     }
 
+    It "maps configuration source paths to full and partial repository transfer objects" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            [pscustomobject]@{
+                full = ConvertTo-ConfigRepositoryTransferPath -RelativePath "CommonModules/Общий модуль.xml"
+                partial = ConvertTo-ConfigRepositoryTransferPath -RelativePath "Catalogs/Договоры/Ext/ObjectModule.bsl"
+                nestedFull = ConvertTo-ConfigRepositoryTransferPath -RelativePath "Catalogs/Договоры/Forms/Форма элемента.xml"
+                nestedPartial = ConvertTo-ConfigRepositoryTransferPath -RelativePath "Subsystems/Управление/Subsystems/Настройки/Ext/Help.xml"
+                rootPartial = ConvertTo-ConfigRepositoryTransferPath -RelativePath "Ext/ManagedApplicationModule.bsl"
+                unknown = ConvertTo-ConfigRepositoryTransferPath -RelativePath "UnknownCollection/Объект.xml"
+            }
+        }
+
+        $result.full.objectName | Should -Be "ОбщийМодуль.Общий модуль"
+        $result.full.scope | Should -Be "full"
+        $result.partial.objectName | Should -Be "Справочник.Договоры"
+        $result.partial.scope | Should -Be "partial"
+        $result.partial.part | Should -Be "модуль объекта"
+        $result.nestedFull.objectName | Should -Be "Справочник.Договоры.Форма.Форма элемента"
+        $result.nestedFull.scope | Should -Be "full"
+        $result.nestedPartial.objectName | Should -Be "Подсистема.Управление.Настройки"
+        $result.nestedPartial.part | Should -Be "справочная информация"
+        $result.rootPartial.objectName | Should -Be "Конфигурация"
+        $result.rootPartial.part | Should -Be "модуль управляемого приложения"
+        $result.unknown | Should -BeNullOrEmpty
+    }
+
+    It "builds the repository transfer plan from committed dirty and untracked paths with Cyrillic and spaces" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-result-хранилище с пробелом-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $catalogRoot = Join-Path $tempRoot "src\cf\Catalogs\Каталог с пробелом"
+            $formRoot = Join-Path $catalogRoot "Forms\Форма элемента"
+            New-Item -ItemType Directory -Force -Path (Join-Path $catalogRoot "Ext"), (Join-Path $formRoot "Ext") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value "configuration-base"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor-base"
+            Set-Content -LiteralPath "$catalogRoot.xml" -Encoding UTF8 -Value "catalog-base"
+            Set-Content -LiteralPath (Join-Path $catalogRoot "Ext\ObjectModule.bsl") -Encoding UTF8 -Value "object-base"
+            Set-Content -LiteralPath "$formRoot.xml" -Encoding UTF8 -Value "form-base"
+            Set-Content -LiteralPath (Join-Path $formRoot "Ext\Form.xml") -Encoding UTF8 -Value "form-content-base"
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot config core.autocrlf false
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            & git -C $tempRoot branch -M master
+            $masterCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+
+            & git -C $tempRoot checkout --quiet -b itldev/test
+            Set-Content -LiteralPath (Join-Path $catalogRoot "Ext\ObjectModule.bsl") -Encoding UTF8 -Value "object-committed"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "catalog module" *> $null
+            Set-Content -LiteralPath (Join-Path $formRoot "Ext\Form.xml") -Encoding UTF8 -Value "form-content-dirty"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value "configuration-dirty"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor-dirty"
+            $moduleRoot = Join-Path $tempRoot "src\cf\CommonModules\Новый модуль"
+            New-Item -ItemType Directory -Force -Path (Join-Path $moduleRoot "Ext") | Out-Null
+            Set-Content -LiteralPath "$moduleRoot.xml" -Encoding UTF8 -Value "module-metadata"
+            Set-Content -LiteralPath (Join-Path $moduleRoot "Ext\Module.bsl") -Encoding UTF8 -Value "module-source"
+            $unknownPath = Join-Path $tempRoot "src\cf\UnknownCollection\Неизвестный объект.xml"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $unknownPath) | Out-Null
+            Set-Content -LiteralPath $unknownPath -Encoding UTF8 -Value "unknown"
+
+            $plan = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-MasterBranch { "master" }
+                Get-ConfigRepositoryTransferPlan -ExportPath "src/cf"
+            }
+
+            $plan.baseCommit | Should -Be $masterCommit
+            @($plan.items) | Should -HaveCount 3
+            @($plan.unresolvedPaths) | Should -Be @("src/cf/UnknownCollection/Неизвестный объект.xml")
+            $catalog = @($plan.items | Where-Object name -eq "Справочник.Каталог с пробелом")[0]
+            $catalog.scope | Should -Be "partial"
+            @($catalog.parts) | Should -Contain "модуль объекта"
+            $form = @($plan.items | Where-Object name -eq "Справочник.Каталог с пробелом.Форма.Форма элемента")[0]
+            $form.scope | Should -Be "partial"
+            @($form.parts) | Should -Contain "форма"
+            $module = @($plan.items | Where-Object name -eq "ОбщийМодуль.Новый модуль")[0]
+            $module.scope | Should -Be "full"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "exports a freshly verified dirty working tree without invoking the clean Git guard" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -1664,6 +1751,16 @@
             function Sync-DevBranchContextToDotEnv {}
             function Get-DevBranchKind { "configuration" }
             function Get-ExportPath { "src/cf" }
+            function Get-ConfigRepositoryTransferPlan {
+                [pscustomobject]@{
+                    baseCommit = "master-base"
+                    items = @(
+                        [pscustomobject]@{ name = "ОбщийМодуль.Полный"; scope = "full"; parts = @() },
+                        [pscustomobject]@{ name = "Справочник.Частичный"; scope = "partial"; parts = @("модуль объекта") }
+                    )
+                    unresolvedPaths = @("src/cf/UnknownCollection/Неизвестно.xml")
+                }
+            }
             function Get-CurrentCommit { "base-commit" }
             function Get-GitCommitOrEmpty { "master-commit" }
             function Get-VerificationState {
@@ -1736,6 +1833,10 @@
         $result.runResultManifestPath | Should -Be "C:\Результаты работы\branch1.cf.manifest.json"
         $result.userReport | Should -Match ([regex]::Escape("Файл: C:\Результаты работы\branch1.cf"))
         $result.userReport | Should -Match ([regex]::Escape("Манифест: C:\Результаты работы\branch1.cf.manifest.json"))
+        $result.userReport | Should -Match ([regex]::Escape("## Перенос в хранилище конфигурации"))
+        $result.userReport | Should -Match ([regex]::Escape("- ОбщийМодуль.Полный"))
+        $result.userReport | Should -Match ([regex]::Escape("- Справочник.Частичный: модуль объекта"))
+        $result.userReport | Should -Match ([regex]::Escape("- src/cf/UnknownCollection/Неизвестно.xml"))
         $result.devBranchCommit | Should -Be "base-commit"
         $result.sourceFingerprint | Should -Be "config-fingerprint"
         $result.verificationFingerprint | Should -Be "v3|fixture"; $result.checkDumpInfoRestored | Should -BeTrue; $result.verificationSawDirtyDumpInfo | Should -BeFalse; $result.dumpInfoRestored | Should -BeTrue

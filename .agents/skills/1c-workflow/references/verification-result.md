@@ -57,7 +57,10 @@ Goal: export a CF or CFE artifact from the current development branch.
 3. Apply `verificationPolicy`: default `warn` requires explicit unverified confirmation or `-AllowUnverifiedResult` when verification is missing, failed, stale, or unknown; `block` stops without an override path.
 4. Export CF for configuration branches and CFE for extension branches.
 5. Create `<artifact>.manifest.json` next to the exported artifact.
-6. Normalize the artifact and manifest to absolute paths, publish them as `resultPath` and `resultManifestPath` in run status/compact JSON, include both in `artifacts`, and return a short Russian `userReport` with the full paths. The manifest also retains SHA256, verification status, latest 1C log path, and the manual import note.
+6. Normalize the artifact and manifest to absolute paths, publish them as `resultPath` and `resultManifestPath` in run status/compact JSON, include both in `artifacts`, and return a short Russian `userReport` with the full paths.
+7. In the same report, list configuration-repository transfer objects from `merge-base(master, HEAD)` through the effective working tree. Include committed, staged, unstaged, and untracked files under the active CF/CFE export path. A changed metadata descriptor is reported as a full object; external-only changes are reported as partial with their affected parts. Exclude `ConfigDumpInfo.xml` and the membership-only root `Configuration.xml`; surface every unmapped source path for manual review instead of dropping it.
+
+The manifest also retains SHA256, verification status, latest 1C log path, and the manual import note.
 
 The result manifest records artifact SHA256, operation, branch metadata, master/development base commits, whether the source came from a clean commit or the effective working tree, configuration and verification fingerprints, verification status/report/log, latest 1C log path, publication URL, manual import note, and whether an unverified override was used. A development commit in a dirty-tree manifest is the base commit, not a claim that the exported content was committed.
 

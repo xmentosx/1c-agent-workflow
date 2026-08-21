@@ -1634,6 +1634,268 @@ function Get-GitCommitOrEmpty {
     return ([string]$output).Trim()
 }
 
+function Get-ConfigRepositoryMetadataCollectionLabel {
+    param([string]$Collection)
+
+    switch ($Collection) {
+        "AccountingRegisters" { return "РегистрБухгалтерии" }
+        "AccumulationRegisters" { return "РегистрНакопления" }
+        "BusinessProcesses" { return "БизнесПроцесс" }
+        "CalculationRegisters" { return "РегистрРасчета" }
+        "Catalogs" { return "Справочник" }
+        "ChartsOfAccounts" { return "ПланСчетов" }
+        "ChartsOfCalculationTypes" { return "ПланВидовРасчета" }
+        "ChartsOfCharacteristicTypes" { return "ПланВидовХарактеристик" }
+        "CommandGroups" { return "ГруппаКоманд" }
+        "CommonAttributes" { return "ОбщийРеквизит" }
+        "CommonCommands" { return "ОбщаяКоманда" }
+        "CommonForms" { return "ОбщаяФорма" }
+        "CommonModules" { return "ОбщийМодуль" }
+        "CommonPictures" { return "ОбщаяКартинка" }
+        "CommonTemplates" { return "ОбщийМакет" }
+        "Constants" { return "Константа" }
+        "DataProcessors" { return "Обработка" }
+        "DefinedTypes" { return "ОпределяемыйТип" }
+        "DocumentJournals" { return "ЖурналДокументов" }
+        "Documents" { return "Документ" }
+        "Enums" { return "Перечисление" }
+        "EventSubscriptions" { return "ПодпискаНаСобытие" }
+        "ExchangePlans" { return "ПланОбмена" }
+        "ExternalDataSources" { return "ВнешнийИсточникДанных" }
+        "FilterCriteria" { return "КритерийОтбора" }
+        "FunctionalOptions" { return "ФункциональнаяОпция" }
+        "FunctionalOptionsParameters" { return "ПараметрФункциональнойОпции" }
+        "HTTPServices" { return "HTTPСервис" }
+        "InformationRegisters" { return "РегистрСведений" }
+        "IntegrationServices" { return "СервисИнтеграции" }
+        "Languages" { return "Язык" }
+        "Reports" { return "Отчет" }
+        "Roles" { return "Роль" }
+        "ScheduledJobs" { return "РегламентноеЗадание" }
+        "Sequences" { return "Последовательность" }
+        "SessionParameters" { return "ПараметрСеанса" }
+        "SettingsStorages" { return "ХранилищеНастроек" }
+        "StyleItems" { return "ЭлементСтиля" }
+        "Styles" { return "Стиль" }
+        "Subsystems" { return "Подсистема" }
+        "Tasks" { return "Задача" }
+        "WebServices" { return "WebСервис" }
+        "WSReferences" { return "WSСсылка" }
+        "XDTOPackages" { return "ПакетXDTO" }
+        "Forms" { return "Форма" }
+        "Templates" { return "Макет" }
+        "Commands" { return "Команда" }
+        "Tables" { return "Таблица" }
+        "Cubes" { return "Куб" }
+        default { return "" }
+    }
+}
+
+function Get-ConfigRepositoryTransferPartLabel {
+    param([string[]]$Segments)
+
+    $parts = @($Segments | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    if ($parts.Count -gt 0 -and $parts[0] -ieq "Ext") {
+        $parts = @($parts | Select-Object -Skip 1)
+    }
+    if ($parts.Count -eq 0) { return "внутреннее содержимое" }
+
+    $leaf = [System.IO.Path]::GetFileNameWithoutExtension([string]$parts[-1])
+    switch ($leaf) {
+        "CommandModule" { return "модуль команды" }
+        "ExternalConnectionModule" { return "модуль внешнего соединения" }
+        "Form" { return "форма" }
+        "Help" { return "справочная информация" }
+        "ManagedApplicationModule" { return "модуль управляемого приложения" }
+        "ManagerModule" { return "модуль менеджера" }
+        "Module" { return "модуль" }
+        "ObjectModule" { return "модуль объекта" }
+        "OrdinaryApplicationModule" { return "модуль обычного приложения" }
+        "RecordSetModule" { return "модуль набора записей" }
+        "SessionModule" { return "модуль сеанса" }
+        "Template" { return "макет" }
+        "ValueManagerModule" { return "модуль менеджера значения" }
+        default { return ($parts -join "/") }
+    }
+}
+
+function ConvertTo-ConfigRepositoryTransferPath {
+    param([string]$RelativePath)
+
+    $normalized = ([string]$RelativePath).Replace("\", "/").Trim("/")
+    if (-not $normalized) { return $null }
+    $segments = @($normalized -split "/" | Where-Object { $_ })
+    if ($segments.Count -eq 0) { return $null }
+
+    if ($segments[0] -ieq "Ext") {
+        return [pscustomobject]@{
+            objectName = "Конфигурация"
+            scope = "partial"
+            part = Get-ConfigRepositoryTransferPartLabel -Segments $segments
+            path = $normalized
+        }
+    }
+
+    $collection = [string]$segments[0]
+    $collectionLabel = Get-ConfigRepositoryMetadataCollectionLabel -Collection $collection
+    if (-not $collectionLabel -or $segments.Count -lt 2) { return $null }
+
+    $nameSegment = [string]$segments[1]
+    $isDescriptor = $nameSegment.EndsWith(".xml", [System.StringComparison]::OrdinalIgnoreCase)
+    $name = if ($isDescriptor) { [System.IO.Path]::GetFileNameWithoutExtension($nameSegment) } else { $nameSegment }
+    $objectName = "$collectionLabel.$name"
+    $consumed = 2
+
+    while (-not $isDescriptor -and $consumed -lt $segments.Count) {
+        $childCollection = [string]$segments[$consumed]
+        if ($childCollection -ieq "Ext" -or ($consumed + 1) -ge $segments.Count) { break }
+        $childLabel = Get-ConfigRepositoryMetadataCollectionLabel -Collection $childCollection
+        if (-not $childLabel) { break }
+
+        $childNameSegment = [string]$segments[$consumed + 1]
+        $childDescriptor = $childNameSegment.EndsWith(".xml", [System.StringComparison]::OrdinalIgnoreCase)
+        $childName = if ($childDescriptor) { [System.IO.Path]::GetFileNameWithoutExtension($childNameSegment) } else { $childNameSegment }
+        if ($childCollection -ieq "Subsystems") {
+            $objectName += ".$childName"
+        } else {
+            $objectName += ".$childLabel.$childName"
+        }
+        $consumed += 2
+        $isDescriptor = $childDescriptor
+    }
+
+    $descriptorIsWholePath = $isDescriptor -and $consumed -eq $segments.Count
+    $remaining = if ($consumed -lt $segments.Count) { @($segments[$consumed..($segments.Count - 1)]) } else { @() }
+    return [pscustomobject]@{
+        objectName = $objectName
+        scope = $(if ($descriptorIsWholePath) { "full" } else { "partial" })
+        part = $(if ($descriptorIsWholePath) { "" } else { Get-ConfigRepositoryTransferPartLabel -Segments $remaining })
+        path = $normalized
+    }
+}
+
+function Get-DevBranchResultTransferBaseCommit {
+    $masterCommit = Get-GitCommitOrEmpty (Get-MasterBranch)
+    if (-not $masterCommit) {
+        throw "export-dev-branch-result could not resolve the local master commit for configuration repository transfer reporting."
+    }
+    $baseCommit = (Get-GitOutput @("merge-base", "HEAD", $masterCommit)).Trim()
+    if (-not $baseCommit) {
+        throw "export-dev-branch-result could not resolve merge-base between HEAD and local master for configuration repository transfer reporting."
+    }
+    return $baseCommit
+}
+
+function Get-ConfigRepositoryTransferPlan {
+    param(
+        [string]$ExportPath,
+        [string]$BaseCommit = ""
+    )
+
+    $normalizedExportPath = ([string]$ExportPath).Replace("\", "/").Trim("/")
+    if (-not $normalizedExportPath) {
+        throw "export-dev-branch-result cannot build a configuration repository transfer plan without an export path."
+    }
+    if (-not $BaseCommit) {
+        $BaseCommit = Get-DevBranchResultTransferBaseCommit
+    }
+
+    $tracked = @(Get-GitPathList -Arguments @(
+        "diff", "--no-renames", "--name-only", "-z", "--diff-filter=ACMRTUXBD", $BaseCommit, "--", $normalizedExportPath
+    ))
+    $untracked = @(Get-GitPathList -Arguments @(
+        "ls-files", "-z", "--others", "--exclude-standard", "--", $normalizedExportPath
+    ))
+    $repoPaths = @(
+        @($tracked) + @($untracked) |
+            ForEach-Object { ([string]$_).Replace("\", "/").Trim("/") } |
+            Where-Object { $_ } |
+            Sort-Object -Unique
+    )
+
+    $itemsByName = @{}
+    $unresolved = [System.Collections.Generic.List[string]]::new()
+    $prefix = $normalizedExportPath + "/"
+    foreach ($repoPath in $repoPaths) {
+        if (-not $repoPath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+        $relativePath = $repoPath.Substring($prefix.Length)
+        $leaf = [System.IO.Path]::GetFileName($relativePath)
+        if ($leaf -ieq "ConfigDumpInfo.xml" -or $relativePath -ieq "Configuration.xml") { continue }
+
+        $converted = ConvertTo-ConfigRepositoryTransferPath -RelativePath $relativePath
+        if ($null -eq $converted) {
+            $unresolved.Add($repoPath)
+            continue
+        }
+        if (-not $itemsByName.ContainsKey($converted.objectName)) {
+            $itemsByName[$converted.objectName] = [pscustomobject]@{
+                name = [string]$converted.objectName
+                scope = [string]$converted.scope
+                parts = @()
+                paths = @()
+            }
+        }
+        $item = $itemsByName[$converted.objectName]
+        if ($converted.scope -eq "full") { $item.scope = "full" }
+        if ($converted.part) { $item.parts = @($item.parts) + [string]$converted.part }
+        $item.paths = @($item.paths) + $repoPath
+    }
+
+    $items = @(
+        foreach ($name in @($itemsByName.Keys | Sort-Object)) {
+            $item = $itemsByName[$name]
+            $item.parts = @($item.parts | Sort-Object -Unique)
+            $item.paths = @($item.paths | Sort-Object -Unique)
+            $item
+        }
+    )
+    return [pscustomobject]@{
+        baseCommit = $BaseCommit
+        exportPath = $normalizedExportPath
+        items = $items
+        unresolvedPaths = @($unresolved | Sort-Object -Unique)
+    }
+}
+
+function Add-ConfigRepositoryTransferPlanRunUserReportLines {
+    param(
+        [System.Collections.Generic.List[string]]$Lines,
+        [object]$Plan
+    )
+
+    $items = @($Plan.items)
+    $full = @($items | Where-Object { $_.scope -eq "full" })
+    $partial = @($items | Where-Object { $_.scope -eq "partial" })
+    $unresolved = @($Plan.unresolvedPaths)
+    $Lines.Add("")
+    $Lines.Add("## Перенос в хранилище конфигурации")
+    Add-RunUserReportLine -Lines $Lines -Label "База сравнения (merge-base master)" -Value ([string]$Plan.baseCommit)
+    if (($full.Count + $partial.Count + $unresolved.Count) -eq 0) {
+        Add-RunUserReportLine -Lines $Lines -Label "Объекты для переноса" -Value "<нет>"
+        return
+    }
+
+    if ($full.Count -gt 0) {
+        $Lines.Add("")
+        $Lines.Add("### Полностью")
+        foreach ($item in $full) { $Lines.Add("- $([string]$item.name)") }
+    }
+    if ($partial.Count -gt 0) {
+        $Lines.Add("")
+        $Lines.Add("### Частично")
+        foreach ($item in $partial) {
+            $parts = @($item.parts)
+            $suffix = if ($parts.Count -gt 0) { ": $($parts -join ', ')" } else { "" }
+            $Lines.Add("- $([string]$item.name)$suffix")
+        }
+    }
+    if ($unresolved.Count -gt 0) {
+        $Lines.Add("")
+        $Lines.Add("### Требуют ручной проверки")
+        foreach ($path in $unresolved) { $Lines.Add("- $path") }
+    }
+}
+
 function New-ResultManifest {
     param(
         [object]$State,
@@ -8998,6 +9260,7 @@ function Export-DevBranchResult {
 
     $kind = Get-DevBranchKind -State $state
     $loadExportPath = if ($kind -eq "extension") { Assert-ExtensionFilesReady -State $state } else { Get-ExportPath }
+    $repositoryTransferPlan = Get-ConfigRepositoryTransferPlan -ExportPath $loadExportPath
     $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Resolve-Agent1cFullPath -Path $loadExportPath)
     try {
     if ($kind -eq "extension") {
@@ -9072,6 +9335,7 @@ function Export-DevBranchResult {
     Add-RunUserReportLine -Lines $reportLines -Label "Манифест" -Value $manifestPath
     Add-RunUserReportLine -Lines $reportLines -Label "Ветка" -Value $state.devBranch
     Add-RunUserReportLine -Lines $reportLines -Label "Проверка" -Value $(if ($unverifiedOverride) { "выгружено с явно подтверждённым исключением" } else { "fresh passed" })
+    Add-ConfigRepositoryTransferPlanRunUserReportLines -Lines $reportLines -Plan $repositoryTransferPlan
     Write-AndSetRunUserReport -Lines $reportLines
     Write-Host "Branch: $($state.devBranch)"
     Write-Host "Development branch commit: $devBranchCommit"

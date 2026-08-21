@@ -445,7 +445,7 @@ Show development branch worktree paths.
 What 1C workflow actions are available?
 ```
 
-`/itl-result` follows `VERIFICATION_POLICY`. On success its compact result and Russian `userReport` contain the normalized absolute CF/CFE path and adjacent manifest path; return that report unchanged to the developer. The default `warn` policy preserves the current explicit unverified override flow and records the override in the result manifest. When `VERIFICATION_POLICY=block`, result export must stop until `/itl-check` or `verify-dev-branch helper alias` is fresh passed; do not bypass that with `-AllowUnverifiedResult`. `close-dev-branch` remains an advanced helper action only when the developer explicitly wants to mark a branch closed and hide it from active lists.
+`/itl-result` follows `VERIFICATION_POLICY`. On success its compact result and Russian `userReport` contain the normalized absolute CF/CFE path, adjacent manifest path, and the full/partial configuration-repository transfer list for the current branch diff; return that report unchanged to the developer. The default `warn` policy preserves the current explicit unverified override flow and records the override in the result manifest. When `VERIFICATION_POLICY=block`, result export must stop until `/itl-check` or `verify-dev-branch helper alias` is fresh passed; do not bypass that with `-AllowUnverifiedResult`. `close-dev-branch` remains an advanced helper action only when the developer explicitly wants to mark a branch closed and hide it from active lists.
 
 ## Completion Report
 
