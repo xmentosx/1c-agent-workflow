@@ -2806,7 +2806,7 @@ Start-Sleep -Seconds 20
                     function Read-BranchSeedManifest { return $null }
                     function Test-BranchSeedArtifactReady { return $false }
                     function Ensure-BranchSeed { return [pscustomobject]@{ status = "ready"; syncId = "fixture" } }
-                    function Commit-BaselineDumpIfNeeded { param([string]$Message, [string]$ExportPath); $calls.Add("commit-dump") | Out-Null; return $false }
+                    function Commit-AuthoritativeExportPathIfChanged { param([string]$Message, [string]$ExportPath); $calls.Add("commit-dump") | Out-Null; return $false }
                     function Assert-BaselineDumpCommitted { param([string]$ExportPath) }
                     function Test-InitAiRulesReady { return $true }
                     function Install-AiRules1c { $calls.Add("install-ai-rules") | Out-Null }

@@ -112,7 +112,7 @@
 
     It "documentation budgets keep review thresholds below hard limits" {
         $budgets = @(
-            @{ path = "AGENTS.md"; maxWords = 1100; reviewApproxTokens = 2000; maxApproxTokens = 2200; rationale = "source-maintainer router plus source delivery, cross-process lock, component release, and non-ASCII path safety contracts" },
+            @{ path = "AGENTS.md"; maxWords = 1150; reviewApproxTokens = 2000; maxApproxTokens = 2200; rationale = "source-maintainer router plus delivery, lock, component release, non-ASCII path, and byte-preserving 1C source safety contracts" },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1600; rationale = "routine helper router" },
             @{ path = "templates\USER-RULES.append.md"; maxWords = 775; reviewApproxTokens = 1200; maxApproxTokens = 1600; rationale = "always-on ITL safety overlay with explicit routine routing precedence" },

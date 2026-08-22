@@ -2234,6 +2234,166 @@ function Ensure-GitIgnore {
     }
 }
 
+function Get-OneCSourceGitAttributesManagedLines {
+    return @(
+        "# BEGIN ITL MANAGED: preserve 1C source bytes",
+        "src/cf/** -text",
+        "src/cfe/** -text",
+        "# END ITL MANAGED: preserve 1C source bytes"
+    )
+}
+
+function Test-OneCSourceGitAttributesContractText {
+    param([object]$Text)
+
+    $required = @(Get-OneCSourceGitAttributesManagedLines)
+    $textValue = if ($Text -is [System.Array]) { @($Text) -join "`n" } else { [string]$Text }
+    $lines = @($textValue -split "`r?`n")
+    $startIndexes = @(
+        for ($index = 0; $index -lt $lines.Count; $index++) {
+            if ($lines[$index] -ceq $required[0]) { $index }
+        }
+    )
+    $endIndexes = @(
+        for ($index = 0; $index -lt $lines.Count; $index++) {
+            if ($lines[$index] -ceq $required[$required.Count - 1]) { $index }
+        }
+    )
+    if ($startIndexes.Count -ne 1 -or $endIndexes.Count -ne 1) {
+        return $false
+    }
+    $start = [int]$startIndexes[0]
+    $end = [int]$endIndexes[0]
+    if (($end - $start + 1) -ne $required.Count) {
+        return $false
+    }
+    for ($offset = 0; $offset -lt $required.Count; $offset++) {
+        if ($lines[$start + $offset] -cne $required[$offset]) {
+            return $false
+        }
+    }
+    for ($index = $end + 1; $index -lt $lines.Count; $index++) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$lines[$index])) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Ensure-OneCSourceGitAttributes {
+    $path = Join-Path $script:ProjectRoot ".gitattributes"
+    $required = @(Get-OneCSourceGitAttributesManagedLines)
+    $text = if (Test-Path -LiteralPath $path -PathType Leaf) { Read-Utf8Text -Path $path } else { "" }
+    if (Test-OneCSourceGitAttributesContractText -Text $text) {
+        return $false
+    }
+
+    $hasStart = $text.Contains($required[0])
+    $hasEnd = $text.Contains($required[$required.Count - 1])
+    if ($hasStart -or $hasEnd) {
+        throw "ITL_GIT_ATTRIBUTES_MANAGED_BLOCK_INVALID: the managed 1C source byte-preservation block in '$path' is incomplete or modified. Restore the four managed lines exactly before continuing."
+    }
+
+    $prefix = ""
+    if ($text.Length -gt 0 -and -not ($text.EndsWith("`r") -or $text.EndsWith("`n"))) {
+        $prefix = [Environment]::NewLine
+    }
+    Add-Utf8Text -Path $path -Value ($prefix + ($required -join [Environment]::NewLine) + [Environment]::NewLine)
+    return $true
+}
+
+function Test-OneCSourceGitAttributesAtCommit {
+    param([string]$Commit)
+
+    if (-not $Commit) {
+        return $false
+    }
+    $blobSpec = "${Commit}:.gitattributes"
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & git -C $script:ProjectRoot cat-file -e $blobSpec 2>$null
+        $exists = $LASTEXITCODE -eq 0
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if (-not $exists) {
+        return $false
+    }
+    $text = Get-GitOutput @("show", $blobSpec)
+    return (Test-OneCSourceGitAttributesContractText -Text $text)
+}
+
+function Rebuild-OneCSourceGitIndex {
+    param([string[]]$SourcePaths = @((Get-ExportPath), (Get-ExtensionsPath)))
+
+    $processed = [System.Collections.Generic.List[string]]::new()
+    foreach ($sourcePath in @($SourcePaths | Where-Object { $_ } | Sort-Object -Unique)) {
+        $repoPath = ([string]$sourcePath).Replace("\", "/").Trim("/")
+        if (-not $repoPath) {
+            continue
+        }
+        $projectRoot = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd("\", "/")
+        $absolutePath = Resolve-Agent1cFullPath -Path (Join-Path $projectRoot ($repoPath.Replace("/", "\")))
+        if (-not $absolutePath.StartsWith($projectRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "ITL_GIT_SOURCE_REINDEX_PATH_OUTSIDE_PROJECT: $repoPath"
+        }
+        $tracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--", $repoPath)).Count -gt 0
+        $present = Test-Path -LiteralPath $absolutePath -PathType Container
+        if (-not $tracked -and -not $present) {
+            continue
+        }
+
+        Invoke-Git @("rm", "-r", "--cached", "--ignore-unmatch", "--quiet", "--", $repoPath)
+        if ($present) {
+            Invoke-Git @("add", "--all", "--force", "--", $repoPath)
+        }
+        $processed.Add($repoPath) | Out-Null
+    }
+    return @($processed)
+}
+
+function Test-OneCSourceRepoPath {
+    param([string]$RepoPath)
+
+    $normalizedPath = ([string]$RepoPath).Replace("\", "/").TrimStart("/")
+    $exportPrefix = ((Get-ExportPath).Replace("\", "/").Trim("/")) + "/"
+    $extensionsPrefix = ((Get-ExtensionsPath).Replace("\", "/").Trim("/")) + "/"
+    return ($normalizedPath.StartsWith($exportPrefix, [System.StringComparison]::Ordinal) -or
+        $normalizedPath.StartsWith($extensionsPrefix, [System.StringComparison]::Ordinal))
+}
+
+function Update-OneCSourceGitIndexFromWorktreePaths {
+    param([string[]]$RepoPaths)
+
+    foreach ($rawPath in @($RepoPaths | Where-Object { $_ } | Sort-Object -Unique)) {
+        $repoPath = ([string]$rawPath).Replace("\", "/").TrimStart("/")
+        if (-not (Test-OneCSourceRepoPath -RepoPath $repoPath)) {
+            throw "ITL_GIT_SOURCE_REINDEX_PATH_OUTSIDE_CONTRACT: $repoPath"
+        }
+
+        $absolutePath = Resolve-Agent1cFullPath -Path (Join-Path $script:ProjectRoot ($repoPath.Replace("/", "\")))
+        if (-not $absolutePath.StartsWith($script:ProjectRoot.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "ITL_GIT_SOURCE_REINDEX_PATH_OUTSIDE_PROJECT: $repoPath"
+        }
+        if (-not (Test-Path -LiteralPath $absolutePath -PathType Leaf)) {
+            Invoke-Git @("update-index", "--force-remove", "--", $repoPath)
+            continue
+        }
+
+        $mode = "100644"
+        $stageRecords = @(Get-GitPathList -Arguments @("ls-files", "--stage", "-z", "--", $repoPath))
+        if ($stageRecords.Count -gt 0 -and [string]$stageRecords[0] -match '^(?<mode>[0-9]{6})\s') {
+            $mode = $Matches["mode"]
+        }
+        $blob = (Get-GitOutput @("hash-object", "-w", "--no-filters", "--", $repoPath)).Trim()
+        if ($blob -notmatch '^[a-f0-9]{40,64}$') {
+            throw "ITL_GIT_SOURCE_REINDEX_BLOB_INVALID: path='$repoPath' blob='$blob'"
+        }
+        Invoke-Git @("update-index", "--add", "--cacheinfo", "$mode,$blob,$repoPath")
+    }
+}
+
 function Resolve-PlatformExecutablePath {
     param([string]$Path)
 

@@ -2170,6 +2170,24 @@
         $body | Should -Not -Match 'Commit-IfChanged[^\r\n]+\$dumpResult\.exportPath'
     }
 
+    It "activates 1C byte preservation only with an authoritative dump commit" {
+        $init = [regex]::Match($HelperText, "(?s)function\s+Initialize-Project\s*\{(?<body>.*?)(?=`r?`nfunction\s+Sync-Master\s*\{)")
+        $update = [regex]::Match($HelperText, "(?s)function\s+Update-WorkflowPackage\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
+        $commit = [regex]::Match($HelperText, "(?s)function\s+Commit-AuthoritativeExportPathIfChanged\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
+        $resume = [regex]::Match($HelperText, "(?s)function\s+Resume-DevBranchLifecycleMergeIfPresent\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
+
+        $init.Success | Should -BeTrue
+        $update.Success | Should -BeTrue
+        $commit.Success | Should -BeTrue
+        $resume.Success | Should -BeTrue
+        $init.Groups["body"].Value | Should -Match "Commit-AuthoritativeExportPathIfChanged"
+        $update.Groups["body"].Value | Should -Not -Match "Ensure-OneCSourceGitAttributes"
+        $commit.Groups["body"].Value | Should -Match "Ensure-OneCSourceGitAttributes"
+        $commit.Groups["body"].Value | Should -Match "Rebuild-OneCSourceGitIndex"
+        $resume.Groups["body"].Value | Should -Match "Test-GitWorktreePathDiffersOnlyByCarriageReturnsAtEol"
+        $resume.Groups["body"].Value | Should -Match "Complete-OneCSourceByteContractMergeTransition"
+    }
+
     It "rebuilds the authoritative export index for case-only renames in both directions" {
         $renameCases = @(
             [pscustomobject]@{ oldName = "удалить_Тест"; newName = "Удалить_Тест" },
@@ -2240,6 +2258,112 @@
                     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
                 }
             }
+        }
+    }
+
+    It "preserves platform bytes with autocrlf true and migrates a changed Cyrillic branch path" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ИТЛ source bytes с пробелом " + [guid]::NewGuid().ToString("N"))
+        $checkoutRoot = Join-Path $tempRoot "checkout с пробелом"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & git -C $tempRoot init --quiet
+            & git -C $tempRoot config user.email "itl-tests@example.invalid"
+            & git -C $tempRoot config user.name "ITL Tests"
+            & git -C $tempRoot config core.autocrlf true
+
+            $cfDirectory = Join-Path $tempRoot "src\cf\Каталог с пробелом"
+            $cfeDirectory = Join-Path $tempRoot "src\cfe\Расширение с пробелом\Ext"
+            New-Item -ItemType Directory -Force -Path $cfDirectory, $cfeDirectory | Out-Null
+            $branchPath = "src/cf/Каталог с пробелом/Модуль.bsl"
+            $lfPath = "src/cf/Каталог с пробелом/Только LF.xml"
+            $mixedPath = "src/cf/Каталог с пробелом/Смешанный.xml"
+            $binaryPath = "src/cfe/Расширение с пробелом/Ext/Данные.bin"
+            $utf8 = [System.Text.UTF8Encoding]::new($false)
+            $baseBranchBytes = $utf8.GetBytes("Строка1`r`nСтрока2`r`n")
+            $branchBytes = $utf8.GetBytes("Строка1`r`nИзменение ветки`r`n")
+            $lfBytes = $utf8.GetBytes("<root>`n  <value>ЛФ</value>`n</root>`n")
+            $mixedBytes = $utf8.GetBytes("<root>`r`n  <value>mixed</value>`n</root>`r`n")
+            $binaryBytes = [byte[]](0, 13, 10, 255, 1, 10, 2, 13, 10, 0)
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ".gitattributes"), $utf8.GetBytes("*.md text eol=lf`n"))
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($branchPath.Replace("/", "\"))), $baseBranchBytes)
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($lfPath.Replace("/", "\"))), $lfBytes)
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($mixedPath.Replace("/", "\"))), $mixedBytes)
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($binaryPath.Replace("/", "\"))), $binaryBytes)
+            & git -C $tempRoot add --all
+            & git -C $tempRoot commit --quiet -m "baseline before byte contract"
+            & git -C $tempRoot branch "itldev/байты"
+
+            $masterCommitted = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Commit-AuthoritativeExportPathIfChanged -Message "sync: install byte contract" -ExportPath "src/cf"
+            }
+            $masterCommitted | Should -BeTrue
+            $masterCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+            (& git -C $tempRoot check-attr text -- $branchPath) | Should -Match 'text: unset'
+
+            & git -C $tempRoot checkout --quiet "itldev/байты"
+            & git -C $tempRoot reset --hard --quiet HEAD
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($branchPath.Replace("/", "\"))), $branchBytes)
+            & git -C $tempRoot add -- $branchPath
+            & git -C $tempRoot commit --quiet -m "branch source change"
+            $branchCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Merge-MasterPreservingBranchConfigDumpInfo -MasterBranch $masterCommit -BranchCommit $branchCommit
+            }
+
+            (& git -C $tempRoot status --porcelain) | Should -BeNullOrEmpty
+            (& git -C $tempRoot rev-list --parents -n 1 HEAD).Trim().Split(' ').Count | Should -Be 3
+            & git -C $tempRoot worktree add --detach --quiet $checkoutRoot HEAD
+            $attributesText = [System.IO.File]::ReadAllText((Join-Path $checkoutRoot ".gitattributes"))
+            $attributesText | Should -Match '^\*\.md text eol=lf'
+            $attributesText.TrimEnd() | Should -Match '# END ITL MANAGED: preserve 1C source bytes$'
+            $expectedByPath = [ordered]@{
+                $branchPath = $branchBytes
+                $lfPath = $lfBytes
+                $mixedPath = $mixedBytes
+                $binaryPath = $binaryBytes
+            }
+            foreach ($entry in $expectedByPath.GetEnumerator()) {
+                $actual = [System.IO.File]::ReadAllBytes((Join-Path $checkoutRoot ($entry.Key.Replace("/", "\"))))
+                [Convert]::ToBase64String($actual) | Should -Be ([Convert]::ToBase64String([byte[]]$entry.Value))
+                (& git -C $checkoutRoot check-attr text -- $entry.Key) | Should -Match 'text: unset'
+            }
+        } finally {
+            if (Test-Path -LiteralPath $checkoutRoot -ErrorAction SilentlyContinue) {
+                & git -C $tempRoot worktree remove --force $checkoutRoot *> $null
+            }
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                try { & git -C $tempRoot fsmonitor--daemon stop *> $null } catch {}
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "does not continue when a later attributes rule overrides the managed byte contract" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-attributes-override-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $attributesPath = Join-Path $tempRoot ".gitattributes"
+            $text = @(
+                "# BEGIN ITL MANAGED: preserve 1C source bytes",
+                "src/cf/** -text",
+                "src/cfe/** -text",
+                "# END ITL MANAGED: preserve 1C source bytes",
+                "src/cf/** text eol=lf"
+            ) -join "`n"
+            [System.IO.File]::WriteAllText($attributesPath, $text, [System.Text.UTF8Encoding]::new($false))
+
+            {
+                & {
+                    . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    Ensure-OneCSourceGitAttributes | Out-Null
+                }
+            } | Should -Throw "ITL_GIT_ATTRIBUTES_MANAGED_BLOCK_INVALID*"
+            [System.IO.File]::ReadAllText($attributesPath) | Should -BeExactly $text
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 

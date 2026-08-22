@@ -5843,18 +5843,20 @@ function Commit-AuthoritativeExportPathIfChanged {
     }
     $repoExportPath = $absoluteExportPath.Substring($projectRoot.Length).TrimStart("\", "/").Replace("\", "/")
 
-    Invoke-Git @("rm", "-r", "--cached", "--ignore-unmatch", "--quiet", "--", $repoExportPath)
-    Invoke-Git @("add", "--all", "--force", "--", $repoExportPath)
+    Ensure-OneCSourceGitAttributes | Out-Null
+    Invoke-Git @("add", "--", ".gitattributes")
+    $sourcePaths = @(Rebuild-OneCSourceGitIndex -SourcePaths @($repoExportPath, (Get-ExtensionsPath)))
     Assert-GitAuthoritativeExportPathHasNoCaseCollisions -ExportPath $repoExportPath
 
-    if (Test-GitHasStagedChanges -PathSpec @($repoExportPath)) {
+    $commitPaths = @(".gitattributes") + $sourcePaths
+    if (Test-GitHasStagedChanges -PathSpec $commitPaths) {
         # A commit pathspec re-reads case-insensitive worktree aliases instead of committing this rebuilt index.
         Invoke-Git @("commit", "--quiet", "-m", $Message)
         Write-Host "Committed: $Message"
         return $true
     }
 
-    Write-Host "No Git changes to commit for: $repoExportPath"
+    Write-Host "No Git changes to commit for: $($commitPaths -join ', ')"
     return $false
 }
 
@@ -6086,7 +6088,7 @@ function Initialize-Project {
     }
     $dumpMessage = if ($sourceUsesRepository) { "sync: export 1C configuration from repository" } else { "sync: export 1C configuration from source infobase" }
     Set-RunStage -Stage "init.commit-dump" -Detail "Committing baseline 1C configuration dump"
-    Commit-BaselineDumpIfNeeded -Message $dumpMessage -ExportPath $dumpResult.exportPath | Out-Null
+    Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath | Out-Null
     Assert-BaselineDumpCommitted -ExportPath $dumpResult.exportPath
 
     Set-RunStage -Stage "init.install-ai-rules" -Detail "Installing or updating ai_rules_1c"
@@ -6432,6 +6434,48 @@ function Restore-BranchConfigDumpInfoFromCommit {
     }
 }
 
+function Test-OneCSourceByteContractTransition {
+    param(
+        [string]$BranchCommit,
+        [string]$TargetCommit
+    )
+
+    return (-not (Test-OneCSourceGitAttributesAtCommit -Commit $BranchCommit) -and
+        (Test-OneCSourceGitAttributesAtCommit -Commit $TargetCommit))
+}
+
+function Complete-OneCSourceByteContractMergeTransition {
+    param(
+        [string]$BranchCommit,
+        [string]$TargetCommit,
+        [string[]]$CursorPaths = @()
+    )
+
+    $mergeBase = (Get-GitOutput @("merge-base", $BranchCommit, $TargetCommit)).Trim()
+    $branchChangedSourcePaths = @(Get-GitPathList -Arguments @(
+        "diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", $mergeBase, $BranchCommit,
+        "--", (Get-ExportPath), (Get-ExtensionsPath)
+    ))
+    Update-OneCSourceGitIndexFromWorktreePaths -RepoPaths @($branchChangedSourcePaths + $CursorPaths)
+    Invoke-Git @("checkout-index", "--force", "--all")
+}
+
+function Test-GitWorktreePathDiffersOnlyByCarriageReturnsAtEol {
+    param([string]$RepoPath)
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & git -C $script:ProjectRoot diff --ignore-cr-at-eol --quiet -- $RepoPath 2>$null
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -eq 0) { return $true }
+    if ($exitCode -eq 1) { return $false }
+    throw "Cannot compare the worktree path with the merge index while ignoring carriage returns at EOL: $RepoPath"
+}
+
 function Merge-MasterPreservingBranchConfigDumpInfo {
     param(
         [string]$MasterBranch = (Get-MasterBranch),
@@ -6441,9 +6485,18 @@ function Merge-MasterPreservingBranchConfigDumpInfo {
     $branchDumpInfoPaths = @(Get-ConfigDumpInfoRepoPathsAtCommit -Commit $BranchCommit)
     $targetDumpInfoPaths = @(Get-ConfigDumpInfoRepoPathsAtCommit -Commit $MasterBranch)
     $allDumpInfoPaths = @($branchDumpInfoPaths + $targetDumpInfoPaths | Sort-Object -Unique)
+    $sourceByteContractTransition = Test-OneCSourceByteContractTransition -BranchCommit $BranchCommit -TargetCommit $MasterBranch
+    $mergeArgs = @("merge", "--no-ff", "--no-commit")
+    if ($sourceByteContractTransition) {
+        # Old branch blobs were normalized to LF while their worktree bytes were
+        # materialized as CRLF. This option is limited to the one contract transition.
+        $mergeArgs += "-Xignore-space-at-eol"
+        Write-Host "Migrating the development branch to byte-preserving 1C source attributes during the master merge."
+    }
+    $mergeArgs += $MasterBranch
     $mergeException = $null
     try {
-        Invoke-Git @("merge", "--no-ff", "--no-commit", $MasterBranch)
+        Invoke-Git $mergeArgs
     } catch {
         $mergeException = $_
     }
@@ -6459,6 +6512,12 @@ function Merge-MasterPreservingBranchConfigDumpInfo {
     $remainingConflicts = @(Get-DevBranchMergeUnmergedPaths)
     if ($remainingConflicts.Count -gt 0) {
         throw "Master merge still has non-ConfigDumpInfo conflicts after preserving the branch synchronization cursor: $($remainingConflicts -join ', ')"
+    }
+    if ($sourceByteContractTransition) {
+        Complete-OneCSourceByteContractMergeTransition `
+            -BranchCommit $BranchCommit `
+            -TargetCommit $MasterBranch `
+            -CursorPaths $allDumpInfoPaths
     }
     Invoke-Git @("commit", "--no-edit")
 }
@@ -6681,12 +6740,25 @@ function Resume-DevBranchLifecycleMergeIfPresent {
                 -ConflictPaths $unmergedPaths
         }
 
+        $sourceByteContractTransition = Test-OneCSourceByteContractTransition `
+            -BranchCommit $transaction.branchCommit `
+            -TargetCommit $transaction.targetCommit
         $unstagedPaths = @(Get-DevBranchMergeUnstagedPaths)
-        if ($unstagedPaths.Count -gt 0) {
+        $conflictPathsStillUnstaged = @($unstagedPaths | Where-Object { @($transaction.conflictPaths) -ccontains $_ })
+        $unexpectedUnstagedPaths = @(if ($sourceByteContractTransition) {
+            @($unstagedPaths | Where-Object {
+                $conflictPathsStillUnstaged -ccontains $_ -or
+                -not (Test-OneCSourceRepoPath -RepoPath $_) -or
+                -not (Test-GitWorktreePathDiffersOnlyByCarriageReturnsAtEol -RepoPath $_)
+            })
+        } else {
+            $unstagedPaths
+        })
+        if ($unexpectedUnstagedPaths.Count -gt 0) {
             Stop-DevBranchLifecycleMergeForConflicts `
                 -Operation $Operation `
                 -Stage $ConflictStage `
-                -ConflictPaths $unstagedPaths `
+                -ConflictPaths $unexpectedUnstagedPaths `
                 -Reason "resolved files still have unstaged changes"
         }
         $untrackedPaths = @(Get-DevBranchMergeUntrackedPaths)
@@ -6700,6 +6772,24 @@ function Resume-DevBranchLifecycleMergeIfPresent {
         if ($unexpectedStagedPaths.Count -gt 0) {
             Set-RunFailureContext -Category "runner" -RequiredAction "remove-unrelated-staged-changes-then-repeat-same-itl-command"
             throw "LIFECYCLE_MERGE_UNEXPECTED_STAGED_FILES operation='$Operation' files='$($unexpectedStagedPaths -join ', ')'. The workflow will not include unrelated staged changes in its merge commit."
+        }
+
+        if ($sourceByteContractTransition) {
+            Complete-OneCSourceByteContractMergeTransition `
+                -BranchCommit $transaction.branchCommit `
+                -TargetCommit $transaction.targetCommit `
+                -CursorPaths $cursorPaths
+            $stagedPaths = @(Get-DevBranchMergeIndexPaths)
+            Set-PendingDevBranchMergeTransaction `
+                -State $State `
+                -Operation $Operation `
+                -Branch $transaction.branch `
+                -BranchCommit $transaction.branchCommit `
+                -TargetCommit $transaction.targetCommit `
+                -Stage "conflicts" `
+                -AllowedPaths $stagedPaths `
+                -ConflictPaths @()
+            $transaction = Get-PendingDevBranchMergeTransaction -State (Read-DevBranchState -Name $DevBranchName)
         }
 
         Invoke-Git @("commit", "--no-edit")
