@@ -2320,14 +2320,12 @@ function Get-AiRules1cOpenSpecStatus {
     if ($integrationRuleEntries.Count -eq 0) {
         return (New-ItlOpenSpecStatus -Mode unavailable -Reason "managed OpenSpec integration rule is absent from the ai_rules_1c manifest." -Cli $cli)
     }
-    $badRules = @($integrationRuleEntries | Where-Object {
+    $missingRules = @($integrationRuleEntries | Where-Object {
         $path = Join-Path $script:ProjectRoot $_.target
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $true }
-        $expected = [string](Get-ConfigValueFromObject -Object $_ -Path "installedHash" -Default "")
-        return (-not [string]::IsNullOrWhiteSpace($expected) -and (Get-ItlFileSha256 -Path $path) -ne $expected.ToLowerInvariant())
+        return (-not (Test-Path -LiteralPath $path -PathType Leaf))
     })
-    if ($badRules.Count -gt 0) {
-        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "managed OpenSpec integration rule is missing or damaged." -Cli $cli)
+    if ($missingRules.Count -gt 0) {
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "managed OpenSpec integration rule is missing." -Cli $cli)
     }
 
     $userRulesPath = Join-Path $script:ProjectRoot "USER-RULES.md"
@@ -2351,24 +2349,15 @@ function Get-AiRules1cOpenSpecStatus {
         return (New-ItlOpenSpecStatus -Mode unavailable -Reason "the manifest neither owns a native OpenSpec bundle nor records an intentional bundleSkipped entry for $client." -Cli $cli)
     }
 
-    $damagedBundleEntries = @($clientBundleEntries | Where-Object {
-        $path = Join-Path $script:ProjectRoot $_.target
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $true }
-        $expected = [string](Get-ConfigValueFromObject -Object $_ -Path "installedHash" -Default "")
-        return ([string]::IsNullOrWhiteSpace($expected) -or (Get-ItlFileSha256 -Path $path) -ne $expected.ToLowerInvariant())
-    })
-    if ($damagedBundleEntries.Count -gt 0) {
-        $targets = @($damagedBundleEntries | ForEach-Object { [string]$_.target } | Select-Object -Unique)
-        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "managed native OpenSpec artifact(s) for $client are missing or damaged: $($targets -join ', ')." -Cli $cli)
-    }
-
     $missing = @()
     $invocations = [ordered]@{}
     foreach ($stage in $requiredStages.Keys) {
         $tokens = @($requiredStages[$stage])
         $matches = @($entries | Where-Object {
             $source = $_.source.Replace('\', '/')
-            @($tokens | Where-Object { $source -match ("/" + [regex]::Escape($_) + "(?:/SKILL)?\.md$") }).Count -gt 0
+            $matchesStage = @($tokens | Where-Object { $source -match ("/" + [regex]::Escape($_) + "(?:/SKILL)?\.md$") }).Count -gt 0
+            if (-not $matchesStage) { return $false }
+            return (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $_.target) -PathType Leaf)
         })
         if ($matches.Count -eq 0) {
             $missing += $stage
@@ -2387,7 +2376,7 @@ function Get-AiRules1cOpenSpecStatus {
     }
 
     if ($missing.Count -gt 0) {
-        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "managed native OpenSpec phase(s) for $client are absent from the manifest: $($missing -join ', ')." -Cli $cli)
+        return (New-ItlOpenSpecStatus -Mode unavailable -Reason "required native OpenSpec phase(s) for $client are missing: $($missing -join ', ')." -Cli $cli)
     }
     return (New-ItlOpenSpecStatus -Mode native -Invocations $invocations -Cli $cli)
 }

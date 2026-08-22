@@ -153,6 +153,8 @@
         $architectureText | Should -Match ([regex]::Escape('A runtime check may block only when continuing can lose data, mutate the wrong target, violate an explicit safety boundary, or produce false success or verification evidence'))
         $architectureText | Should -Match ([regex]::Escape('Every other diagnostic discrepancy is `WARN`, not `FAIL`'))
         $architectureText | Should -Match ([regex]::Escape("ITL may duplicate one only after a reproduced cross-boundary failure"))
+        $architectureText | Should -Match ([regex]::Escape("Capability checks use only the minimum prerequisites needed to perform the operation"))
+        $architectureText | Should -Match ([regex]::Escape("integrity does not participate in capability detection unless exact identity is itself required for execution"))
         $agentsText | Should -Match ([regex]::Escape('fresh passed `/itl-check`'))
         foreach ($relativePath in @(
             ".agents/skills/1c-workflow/SKILL.md",

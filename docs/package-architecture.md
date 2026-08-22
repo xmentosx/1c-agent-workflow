@@ -20,6 +20,8 @@ A runtime check may block only when continuing can lose data, mutate the wrong t
 
 Keep integrity checks with their owning component. ITL may duplicate one only after a reproduced cross-boundary failure proves that the owner's check cannot protect the ITL operation.
 
+Capability checks use only the minimum prerequisites needed to perform the operation. File identity, update safety, and exact-result verification are separate contracts; integrity does not participate in capability detection unless exact identity is itself required for execution.
+
 Managed source-only maintenance references:
 
 - `local-quality-gate.md` — local Fast/Full checks;

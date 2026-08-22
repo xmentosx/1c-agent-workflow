@@ -177,7 +177,7 @@
         }
     }
 
-    It "reports native mode only for an intact managed bundle" {
+    It "reports native mode from present entrypoints without using Markdown identity" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-openspec-native-" + [guid]::NewGuid().ToString("N"))
         try {
             New-OpenSpecModeFixture -Root $tempRoot -Client codex -Mode native
@@ -189,10 +189,23 @@
             $status.invocations.apply | Should -Be '$opsx-apply'
             $status.invocations.archive | Should -Be '$opsx-archive'
 
+            $manifestPath = Join-Path $tempRoot ".ai-rules.json"
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($property in @($manifest.files.PSObject.Properties)) {
+                $property.Value.installedHash = ("0" * 64)
+            }
+            Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value (($manifest | ConvertTo-Json -Depth 10) + "`n")
+            Set-Content -LiteralPath (Join-Path $tempRoot ".fixture-rules/sdd-integrations.md") -Encoding UTF8 -Value "OpenSpec integration fixture`r`nUser clarification`r`n"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agents/skills/opsx-propose/SKILL.md") -Encoding UTF8 -Value "# explicit propose`r`nUser clarification`r`n"
+            $modified = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus }
+            $modified.mode | Should -Be "native"
+            $modified.invocations.propose | Should -Be '$opsx-propose'
+
             Remove-Item -LiteralPath (Join-Path $tempRoot ".agents/skills/openspec-apply-change/SKILL.md") -Force
+            Remove-Item -LiteralPath (Join-Path $tempRoot ".agents/skills/opsx-apply/SKILL.md") -Force
             $broken = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRules1cOpenSpecStatus }
             $broken.mode | Should -Be "unavailable"
-            $broken.reason | Should -Match "missing or damaged"
+            $broken.reason | Should -Match "required native OpenSpec phase"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
@@ -858,7 +871,7 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "keeps doctor read-only while checking provenance integrity OpenSpec modes and branch scope" {
+    It "keeps doctor read-only without duplicating managed-file integrity" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-doctor-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot ".agents\skills"), (Join-Path $tempRoot "openspec/specs"), (Join-Path $tempRoot "openspec/changes"), (Join-Path $tempRoot ".kilo/rules-1c") | Out-Null
@@ -888,6 +901,7 @@
             }
             $files[".dev.env"] = [ordered]@{ source = "content/root-templates/.dev.env"; installedHash = "upstream"; userModified = $true }
             Set-Content -LiteralPath (Join-Path $tempRoot ".ai-rules.json") -Encoding UTF8 -Value (([ordered]@{ protocol = "1.1"; tools = @("kilocode"); files = $files } | ConvertTo-Json -Depth 8) + "`n")
+            Add-Content -LiteralPath $rulePath -Encoding UTF8 -Value "User clarification"
             $lock = [ordered]@{ dependencies = [ordered]@{ aiRules1c = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-b4d9875b-r11"; commit = "af82570afca06c40a9588c8a678bf3665bba4870"; upstreamCommit = "b4d9875b15c6d93f493035aee51f077126e72a21"; downstreamRevision = 11; compatibilityStatus = "passed" } } }
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value (($lock | ConvertTo-Json -Depth 8) + "`n")
             & git -C $tempRoot init *> $null
@@ -896,8 +910,7 @@
             $output = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; function Get-ItlRtkStatus { [pscustomobject]@{ status = "SKIP"; detail = "fixture" } }; Show-ItlDoctor } 6>&1 | Out-String
             $after = (Get-ChildItem -LiteralPath $tempRoot -Recurse -File | ForEach-Object { "$($_.FullName.Substring($tempRoot.Length))=$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash)" }) -join "`n"
             $output | Should -Match '\[OK\] active-client'
-            $output | Should -Match '\[OK\] managed-integrity'
-            $output | Should -Match 'workflowOwned=1'
+            $output | Should -Not -Match 'managed-integrity'
             $output | Should -Match '\[OK\] openspec'
             $output | Should -Match '\[SKIP\] branch-infobase'
             $after | Should -Be $before
@@ -927,6 +940,16 @@
             } 6>&1 | Out-String
             $output | Should -Match '\[OK\] openspec: mode=natural'
             ($output -replace '\s+', '') | Should -Match 'intentionallyskipped'
+
+            Remove-Item -LiteralPath (Join-Path $tempRoot "openspec/project.md") -Force
+            $degraded = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-ItlRtkStatus { [pscustomobject]@{ status = "SKIP"; detail = "fixture" } }
+                Show-ItlDoctor
+                "doctor-completed"
+            } 6>&1 | Out-String
+            $degraded | Should -Match '\[WARN\] openspec: mode=unavailable'
+            $degraded | Should -Match 'doctor-completed'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 

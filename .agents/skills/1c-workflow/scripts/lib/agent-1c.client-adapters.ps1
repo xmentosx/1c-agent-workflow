@@ -1497,7 +1497,6 @@ function Show-ItlDoctor {
     $checks = [System.Collections.Generic.List[object]]::new()
     $client = ""
     $adapter = $null
-    $manifest = $null
     try {
         $client = Get-ItlActiveClient
         $adapter = Get-ItlClientAdapter -Client $client
@@ -1528,23 +1527,6 @@ function Show-ItlDoctor {
     } catch {
         $checks.Add([pscustomobject]@{ status = "FAIL"; name = "ai-rules-provenance"; detail = $_.Exception.Message })
     }
-    if ($manifest -and $manifest.files) {
-        $missing = @(); $drift = @(); $modified = @(); $workflowOwned = @()
-        foreach ($property in @($manifest.files.PSObject.Properties)) {
-            $relative = [string]$property.Name
-            $entry = $property.Value
-            if (Test-AiRulesManifestPathOwnedByWorkflow -Path $relative) { $workflowOwned += $relative; continue }
-            $path = Join-Path $script:ProjectRoot $relative
-            if ([bool](Get-ConfigValueFromObject -Object $entry -Path "userModified" -Default $false)) { $modified += $relative; continue }
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { $missing += $relative; continue }
-            $expected = [string](Get-ConfigValueFromObject -Object $entry -Path "installedHash" -Default "")
-            if ($expected -and (Get-ItlFileSha256 -Path $path) -ne $expected.ToLowerInvariant()) { $drift += $relative }
-        }
-        $integrityStatus = if ($missing.Count -gt 0 -or $drift.Count -gt 0) { "FAIL" } elseif ($modified.Count -gt 0) { "WARN" } else { "OK" }
-        $checks.Add([pscustomobject]@{ status = $integrityStatus; name = "managed-integrity"; detail = "files=$(@($manifest.files.PSObject.Properties).Count); missing=$($missing.Count); drift=$($drift.Count); userModified=$($modified.Count); workflowOwned=$($workflowOwned.Count)" })
-    } else {
-        $checks.Add([pscustomobject]@{ status = "FAIL"; name = "managed-integrity"; detail = "manifest file inventory is missing" })
-    }
     $itlSkills = @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")
     $missingSkills = @($itlSkills | Where-Object { -not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".agents\skills\$_\SKILL.md") -PathType Leaf) })
     $checks.Add([pscustomobject]@{ status = $(if ($missingSkills.Count -eq 0) { "OK" } else { "FAIL" }); name = "itl-skills"; detail = $(if ($missingSkills.Count -eq 0) { "all five installed" } else { "missing: $($missingSkills -join ', ')" }) })
@@ -1566,7 +1548,7 @@ function Show-ItlDoctor {
     } else {
         "mode=unavailable; $($openSpec.reason)"
     }
-    $checks.Add([pscustomobject]@{ status = $(if ($openSpec.isAvailable) { "OK" } else { "FAIL" }); name = "openspec"; detail = $openSpecDetail })
+    $checks.Add([pscustomobject]@{ status = $(if ($openSpec.isAvailable) { "OK" } else { "WARN" }); name = "openspec"; detail = $openSpecDetail })
     $devEnvPath = Join-Path $script:ProjectRoot ".dev.env"
     $checks.Add([pscustomobject]@{ status = $(if (Test-Path -LiteralPath $devEnvPath -PathType Leaf) { "OK" } else { "FAIL" }); name = "dev-env"; detail = $(if (Test-Path -LiteralPath $devEnvPath -PathType Leaf) { "present; values inspected without mutation" } else { "missing" }) })
     foreach ($component in @("vanessa", "event-log")) {
@@ -1642,7 +1624,7 @@ function Show-ItlDoctor {
         }
     }
     foreach ($check in $checks) { Write-Host ("[{0}] {1}: {2}" -f $check.status, $check.name, $check.detail) }
-    Write-Host "Doctor is read-only. Repair with pinned update-ai-rules, /itl-update-workflow, or /itl-refresh; on-demand backend control is private."
+    Write-Host "Doctor is read-only. Follow the named recovery action; ITL workflow state uses /itl-update-workflow or /itl-refresh."
     if (@($checks | Where-Object { $_.status -eq "FAIL" }).Count -gt 0) { throw "ITL doctor found failed checks." }
 }
 
