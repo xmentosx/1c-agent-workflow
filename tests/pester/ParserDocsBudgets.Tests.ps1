@@ -148,6 +148,11 @@
         $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action RegisterChange"))
         $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action PublishDevelop"))
         $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action ReleaseMaster"))
+        $agentsText | Should -Match ([regex]::Escape('follow the blocking policy in `docs/package-architecture.md`'))
+        $architectureText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\package-architecture.md") -Raw -Encoding UTF8
+        $architectureText | Should -Match ([regex]::Escape('A runtime check may block only when continuing can lose data, mutate the wrong target, violate an explicit safety boundary, or produce false success or verification evidence'))
+        $architectureText | Should -Match ([regex]::Escape('Every other diagnostic discrepancy is `WARN`, not `FAIL`'))
+        $architectureText | Should -Match ([regex]::Escape("ITL may duplicate one only after a reproduced cross-boundary failure"))
         $agentsText | Should -Match ([regex]::Escape('fresh passed `/itl-check`'))
         foreach ($relativePath in @(
             ".agents/skills/1c-workflow/SKILL.md",

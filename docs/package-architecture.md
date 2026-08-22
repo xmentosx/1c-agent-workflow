@@ -14,6 +14,12 @@ Client routine files are generated from `.agents/skills/1c-workflow/kilo-command
 
 The controlled `ai_rules_1c` fork owns general rules, the common OpenSpec workspace, upstream-native OpenSpec bundles, agents, and its installer manifest. ITL owns bootstrap, lifecycle, local MCP configuration, executable verification, result export, the five ITL skills, and host UX for the `native`/`natural`/`unavailable` OpenSpec states. ITL does not generate client bundles, install `@fission-ai/openspec`, or run `openspec update`. See `ai-rules-fork-upgrades.md` for the release boundary.
 
+## Runtime check blocking policy
+
+A runtime check may block only when continuing can lose data, mutate the wrong target, violate an explicit safety boundary, or produce false success or verification evidence. Every other diagnostic discrepancy is `WARN`, not `FAIL`.
+
+Keep integrity checks with their owning component. ITL may duplicate one only after a reproduced cross-boundary failure proves that the owner's check cannot protect the ITL operation.
+
 Managed source-only maintenance references:
 
 - `local-quality-gate.md` — local Fast/Full checks;
